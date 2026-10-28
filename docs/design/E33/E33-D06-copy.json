@@ -1,0 +1,1805 @@
+{
+  "pack": "E33-D06",
+  "version": "v1",
+  "base": "c888406d2",
+  "header": "The package must carry the security-relevant UI rules verbatim so they cannot be dropped in implementation",
+  "strings": {
+    "caveat.twap": {
+      "string": "CandleViewer runs this TWAP, not Bybit. It keeps running if you close this window. If CandleViewer's server stops or loses its connection to Bybit, no new slices are sent; a slice already at Bybit can still fill. Your stop-loss at Bybit keeps working.",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:187",
+      "frozen": "FZ-01"
+    },
+    "caveat.iceberg": {
+      "string": "CandleViewer runs this iceberg, not Bybit: Bybit only sees one small order at a time. It keeps running if you close this window. If CandleViewer's server stops or loses its connection to Bybit, nothing refills; the order already at Bybit can still fill. Your stop-loss at Bybit keeps working.",
+      "screen": "SCR-067",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:237",
+      "frozen": "FZ-01"
+    },
+    "caveat.chase": {
+      "string": "CandleViewer moves this order, not Bybit. It keeps chasing if you close this window. If CandleViewer's server stops or loses its connection to Bybit, the order stays at its last price at Bybit and can still fill there. Your stop-loss at Bybit keeps working.",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:287",
+      "frozen": "FZ-01"
+    },
+    "caveat.gap": {
+      "string": "(at most one more slice may already be on its way)",
+      "screen": "SCR-066, SCR-067",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:353",
+      "frozen": "FZ-03"
+    },
+    "tag.emulated.1": {
+      "string": "Emulated",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-069, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:354"
+    },
+    "tag.emulated.2": {
+      "string": "Emulated — run by CandleViewer, not Bybit",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-069, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:354"
+    },
+    "help.emulated": {
+      "string": "Bybit's API has no TWAP, iceberg, chase or OCO order type, so CandleViewer's server places and manages the individual orders for you.",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-069, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:355"
+    },
+    "stop.algo_builder.1": {
+      "string": "Every slice this {TWAP} sends carries a native stop-loss at Bybit — {63,900.0}, your position's stop or tighter. Bybit holds it whether or not CandleViewer is running.",
+      "screen": "SCR-066, SCR-067",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:356",
+      "params": ["TWAP", "63,900.0"],
+      "frozen": "FZ-06"
+    },
+    "stop.algo_builder.2": {
+      "string": "Every order this chase places (and each price change of it) carries a native stop-loss at Bybit — {63,900.0}, your position's stop or tighter. Bybit holds it whether or not CandleViewer is running.",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:356",
+      "params": ["63,900.0"],
+      "frozen": "FZ-06"
+    },
+    "stop.algo_builder.reduce_only": {
+      "string": "This {TWAP} is reduce-only: it cannot open a position, so it sends no new stop; your position's stop at Bybit, {63,900.0}, stays.",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:357",
+      "params": ["TWAP", "63,900.0"],
+      "frozen": "FZ-06"
+    },
+    "stop.disconnect": {
+      "string": "Stop-losses at Bybit are held by Bybit and work whether or not CandleViewer is running.",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-069, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:358"
+    },
+    "stop.at_bybit.1": {
+      "string": "Stop at Bybit ✓ 63,900.0",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-069",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:359"
+    },
+    "stop.at_bybit.2": {
+      "string": "stop at Bybit confirmed",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:359"
+    },
+    "stop.at_bybit.3": {
+      "string": "Stop at Bybit ✓ 63,900.0 (last known)",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:359"
+    },
+    "stop.reduce_only.2": {
+      "string": "reduce-only, no new stop",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:360"
+    },
+    "start.twap": {
+      "string": "Start TWAP: buy 2.000 BTC over 30 min · 10 slices · Main",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:361"
+    },
+    "start.iceberg": {
+      "string": "Start iceberg: buy 5.000 BTC, 0.250 BTC visible, Main",
+      "screen": "SCR-067",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:361"
+    },
+    "start.chase": {
+      "string": "Start chase: buy 1.000 BTC from 64,010.0, at most 20 ticks, 60 s, Main",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:361"
+    },
+    "start.demo": {
+      "string": "DEMO",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:361"
+    },
+    "start.starting": {
+      "string": "Starting…",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:362"
+    },
+    "close.note": {
+      "string": "Closing this window does not stop the {TWAP}.",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:363",
+      "params": ["TWAP"]
+    },
+    "cancel.run.1": {
+      "string": "Cancel {TWAP} a_12…",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:364",
+      "params": ["TWAP"]
+    },
+    "cancel.run.2": {
+      "string": "Cancel TWAP a_12 on BTCUSDT, Main?",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:364"
+    },
+    "cancel.flatten.1": {
+      "string": "Cancel and flatten…",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:365"
+    },
+    "cancel.flatten.2": {
+      "string": "Cancel TWAP a_12 and close the {filled} BTC it bought on Main (DEMO)?",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:365",
+      "params": ["filled"],
+      "frozen": "FZ-10"
+    },
+    "pause.confirm.1": {
+      "string": "Pause stops new orders. The order at Bybit stays and can fill.",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:366"
+    },
+    "pause.confirm.2": {
+      "string": "Pause stops repricing. …",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:366"
+    },
+    "state.2": {
+      "string": "Running",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.3": {
+      "string": "Checking with Bybit…",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.4": {
+      "string": "Paused by you — 1 order at Bybit (0.20 BTC) can still fill",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:367",
+      "rt": "RT-12"
+    },
+    "state.5": {
+      "string": "Waiting for Bybit — no new orders",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.6": {
+      "string": "Waiting — Bybit request limit reached; continues by itself",
+      "screen": "SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.7": {
+      "string": "Paused — price passed your limit 64,250.0; continues when it returns",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.8": {
+      "string": "Pausing 1 s — post-only rejected",
+      "screen": "SCR-067",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.9": {
+      "string": "Resting at 64,012.0 — at max distance",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.10": {
+      "string": "Timed out, resting at 64,011.0",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.11": {
+      "string": "Sending the rest at market — timed out",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.12": {
+      "string": "Finishing — last order working",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.13": {
+      "string": "Cancelling…",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "state.14": {
+      "string": "Completed",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:367",
+      "rt": "RT-10"
+    },
+    "state.15": {
+      "string": "Ended — 0.400 BTC not filled (window ended)",
+      "screen": "SCR-066, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:367",
+      "rt": "RT-10"
+    },
+    "state.16": {
+      "string": "Cancelled — by you",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:367",
+      "rt": "RT-10"
+    },
+    "state.17": {
+      "string": "Cancelled — at max distance",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:367",
+      "rt": "RT-10"
+    },
+    "state.18": {
+      "string": "Cancelled — timed out",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:367",
+      "rt": "RT-10"
+    },
+    "state.19": {
+      "string": "Halted by risk control — FREEZE by Owner at 14:02:30 UTC",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D02:367",
+      "rt": "RT-02"
+    },
+    "state.20": {
+      "string": "Failed — {reason}",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D02:367",
+      "params": ["reason"],
+      "rt": "RT-03"
+    },
+    "progress.1": {
+      "string": "6 of 10 slices · 60 %",
+      "screen": "SCR-066, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:368",
+      "rt": "RT-19"
+    },
+    "progress.2": {
+      "string": "1.25 of 5 BTC · 5 slices",
+      "screen": "SCR-067, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:368",
+      "rt": "RT-19"
+    },
+    "progress.3": {
+      "string": "repriced 7× · 3 ticks from start · 7 of 120",
+      "screen": "SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:368",
+      "rt": "RT-19"
+    },
+    "progress.4": {
+      "string": "repriced 7 times",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:368"
+    },
+    "next.1": {
+      "string": "next slice in 0:22",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:369",
+      "rt": "RT-23"
+    },
+    "next.2": {
+      "string": "resting at 64,010.0",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:369"
+    },
+    "next.3": {
+      "string": "waiting 0:21",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:369"
+    },
+    "next.4": {
+      "string": "—",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-069, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:369"
+    },
+    "at_bybit": {
+      "string": "At Bybit now: 1 order · 0.07 BTC",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:370"
+    },
+    "behind_plan.1": {
+      "string": "Behind plan: 2 slices (0.40 BTC) to catch up — larger slices from 14:10 UTC",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:371",
+      "rt": "RT-11"
+    },
+    "behind_plan.2": {
+      "string": "On plan",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:371"
+    },
+    "case2.status": {
+      "string": "No new algo orders: CandleViewer's live link to Bybit is down",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D02:372",
+      "rt": "RT-13",
+      "frozen": "FZ-04"
+    },
+    "case2.resumes": {
+      "string": "continues by itself once Bybit is back and the price is still inside your limit",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:373"
+    },
+    "case1.row.1": {
+      "string": "Not visible for 3 min 12 s",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:374"
+    },
+    "case1.row.2": {
+      "string": "Can't send — reconnecting",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:374"
+    },
+    "case3.resume": {
+      "string": "Back online after 3 min 51 s. While you were away: TWAP a_12 sent 1 slice (0.20 BTC)…",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D02:375",
+      "rt": "RT-09"
+    },
+    "halt.restart": {
+      "string": "Restart with remaining 0.80 BTC…",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:376"
+    },
+    "v.slice_min": {
+      "string": "Slices of {0.0004} BTC are below the minimum — reduce slice count.",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:377",
+      "params": ["0.0004"],
+      "frozen": "FZ-08"
+    },
+    "v.visible": {
+      "string": "Visible size must be at least the minimum lot and no more than half the total.",
+      "screen": "SCR-067",
+      "owner": "E33-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:378",
+      "frozen": "FZ-08"
+    },
+    "v.slice_floor": {
+      "string": "{2000} slices would send one every {0.9} s — the floor is 1 s; use at most {450}.",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:379",
+      "params": ["2000", "0.9", "450"]
+    },
+    "v.duration": {
+      "string": "Duration must be between 1 min and 24 h.",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:380"
+    },
+    "v.market_needs_limit": {
+      "string": "Market slices need a price limit or a participation cap.",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:381"
+    },
+    "v.visible_cap": {
+      "string": "Visible size must be at least {0.014} BTC so this iceberg needs no more than 450 orders.",
+      "screen": "SCR-067",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:382",
+      "params": ["0.014"]
+    },
+    "v.distance": {
+      "string": "Max distance must be greater than the offset ({20} > {0} ticks).",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:383",
+      "params": ["20", "0"]
+    },
+    "v.repricings": {
+      "string": "Max repricings must be between 1 and {500}.",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:384",
+      "params": ["500"]
+    },
+    "v.over_budget.1": {
+      "string": "Projected {5} requests a second — Main has {2} a second left. Try an interval of {500} ms or fewer repricings.",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:385",
+      "params": ["5", "2", "500"],
+      "frozen": "FZ-09"
+    },
+    "v.over_budget.2": {
+      "string": "Use {500} ms",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:385",
+      "params": ["500"]
+    },
+    "v.summary": {
+      "string": "Can't start — {n} problems",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "assertive",
+      "source": "D02:386",
+      "params": ["n"],
+      "rt": "RT-01"
+    },
+    "rate.line.1": {
+      "string": "Requests to Bybit: up to {2} price changes a second ({120} a minute); typically fewer · {n} of {4} a second left on Main, your running algos included",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:387",
+      "params": ["2", "120", "n", "4"]
+    },
+    "rate.line.2": {
+      "string": "(headroom not yet reported)",
+      "screen": "SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:387"
+    },
+    "rate.iceberg": {
+      "string": "about {20} orders in all · at most one every 250–500 ms",
+      "screen": "SCR-067",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:388",
+      "params": ["20"]
+    },
+    "rate.twap": {
+      "string": "1 order a minute",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:389"
+    },
+    "risk.sweep": {
+      "string": "if 0.40 BTC is left at 14:30 UTC, it is sent at market up to your limit, 64,250.0",
+      "screen": "SCR-066",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:390"
+    },
+    "risk.worst": {
+      "string": "64,012.0, 20 ticks from start",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:391"
+    },
+    "market.fallback": {
+      "string": "Send at market (opt-in): fills at whatever the book offers, beyond the max distance; slippage ≈ {n} ticks (estimated)",
+      "screen": "SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:393",
+      "params": ["n"]
+    },
+    "disconnect.line": {
+      "string": "If CandleViewer loses Bybit: no new orders are sent; what is already at Bybit stays and can fill. (Fixed in this release.)",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:394",
+      "frozen": "FZ-05"
+    },
+    "rejected.choices.1": {
+      "string": "If Bybit rejects a slice, the iceberg pauses and asks you: smaller slice, one order for the rest, or stop",
+      "screen": "SCR-067",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:395"
+    },
+    "rejected.choices.2": {
+      "string": "Paused — Bybit rejected a slice: {retMsg}",
+      "screen": "SCR-067",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "assertive",
+      "source": "D02:395",
+      "params": ["retMsg"],
+      "rt": "RT-05"
+    },
+    "not_started": {
+      "string": "Not started — nothing was sent",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-069",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "assertive",
+      "source": "D02:396",
+      "rt": "RT-28",
+      "frozen": "FZ-09"
+    },
+    "algo.finishing": {
+      "string": "Finishing — cancel its last order in Working orders.",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-070",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:404"
+    },
+    "pending.cooldown": {
+      "string": "Takes effect when the cooldown ends — {n} s",
+      "screen": "SCR-067, SCR-070",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:405",
+      "params": ["n"]
+    },
+    "env.name": {
+      "string": "{TWAP} builder - {BTCUSDT} - {DEMO} - {Main}",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:407",
+      "params": ["TWAP", "BTCUSDT", "DEMO", "Main"]
+    },
+    "region.before": {
+      "string": "Before you start",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:408"
+    },
+    "live.note": {
+      "string": "LIVE: R4 — the live confirmation is threat-model D8, owner decision pending",
+      "screen": "SCR-066, SCR-067, SCR-068",
+      "owner": "E33-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:409"
+    },
+    "caveat.oco_entry": {
+      "string": "CandleViewer links these two orders, not Bybit: as one fills, it shrinks or cancels the other. It keeps working if you close this window. If CandleViewer's server is down or has lost Bybit when one fills, the other stays live and can fill too, so you could hold both. Your position keeps its stop-loss at Bybit.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:360",
+      "frozen": "FZ-02"
+    },
+    "caveat.oco_exit": {
+      "string": "CandleViewer links these two exits, not Bybit: as one fills, it shrinks or cancels the other. It keeps working if you close this window. If CandleViewer's server is down at that moment, the other exit stays at Bybit until it is back; it is reduce-only, so it cannot add to your position.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:361",
+      "frozen": "FZ-02"
+    },
+    "stop.interim": {
+      "string": "CandleViewer places a stop-loss at Bybit as soon as the first part fills (its deadline is 2 s). If it cannot — the server is down, Bybit is unreachable, or Bybit refuses the stop — the filled part has no stop-loss until it can, and you are alerted.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:362",
+      "frozen": "FZ-03"
+    },
+    "stop.at_bybit.5": {
+      "string": "No stop at Bybit yet",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:367"
+    },
+    "stop.at_bybit.6": {
+      "string": "Checking stop with Bybit…",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:367"
+    },
+    "stop.at_bybit.8": {
+      "string": "No stop at Bybit — alert raised",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:367"
+    },
+    "oco.mode": {
+      "string": "As one fills, it shrinks or cancels the other (reduce_other).",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:368"
+    },
+    "oco.extra_exit": {
+      "string": "Your position's native stop stays at Bybit; this stop-market leg is an extra exit CandleViewer manages.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:369"
+    },
+    "oco.native_hint": {
+      "string": "A plain take-profit + stop-loss belongs on Bybit's own TP/SL — Edit SL/TP.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:370"
+    },
+    "oco.race": {
+      "string": "When one leg fills, CandleViewer shrinks the other by the filled size and cancels it when the first is fully filled. If both fill before either cancel lands, CandleViewer closes the extra size with a reduce-only market order and tells you.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:371",
+      "frozen": "FZ-07"
+    },
+    "oco.worst_case": {
+      "string": "both could fill: worst case 2 × 0.50 BTC",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:372"
+    },
+    "invalid.same_side": {
+      "string": "Both legs are on the same side of the mark (64,012.0) — one must be above and one below.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:373"
+    },
+    "invalid.qty_mismatch": {
+      "string": "Legs total 0.300 BTC; the position is 0.250 BTC — match the position or reduce a leg.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:374"
+    },
+    "invalid.stop_missing": {
+      "string": "This account requires a stop-loss on every order.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:375"
+    },
+    "refused.plain_tp_sl.1": {
+      "string": "This is a plain take-profit and stop-loss. Bybit holds those itself — set them in Edit SL/TP, where they survive without CandleViewer. [Open Edit SL/TP]",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:376",
+      "frozen": "FZ-07"
+    },
+    "refused.plain_tp_sl.2": {
+      "string": "[Use Bracket]",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:376"
+    },
+    "place.label.1": {
+      "string": "Place OCO: buy 0.500 BTC at 64,050.0 (stop 63,940.0) or 63,990.0 (stop 63,880.0), Main, DEMO",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:377"
+    },
+    "place.label.2": {
+      "string": "Place OCO: sell 0.250 BTC at 64,230.0 or stop 63,950.0, Main, DEMO",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:377"
+    },
+    "placed": {
+      "string": "Placed — OCO a_15 is running on CandleViewer's server; follow it in Algos",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:378",
+      "rt": "RT-17"
+    },
+    "residual.entry.1": {
+      "string": "While CandleViewer could not manage OCO a_15, both entries filled: you hold 1.000 BTC, not 0.500. CandleViewer sent a reduce-only order for the extra 0.500 BTC at 14:05:44 UTC — filled at 64,001.0.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:379",
+      "rt": "RT-04"
+    },
+    "residual.entry.2": {
+      "string": "… it did not fill: [Close 0.500 BTC]",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:379"
+    },
+    "residual.exit": {
+      "string": "The take-profit of OCO a_16 filled at 14:03:10 UTC while CandleViewer could not manage it; the other exit was cancelled at 14:05:44, 2 min 34 s later.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:380",
+      "rt": "RT-04"
+    },
+    "residual.todo.1": {
+      "string": "Nothing to do — the extra was closed.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:381"
+    },
+    "residual.todo.2": {
+      "string": "Close the extra 0.500 BTC, or keep it: it has a stop at Bybit, shown under Stop at Bybit.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:381"
+    },
+    "residual.todo.3": {
+      "string": "Nothing to do — the other exit was cancelled.",
+      "screen": "SCR-069",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:381"
+    },
+    "banner.case1": {
+      "string": "Can't reach CandleViewer's server, where your algos run. No contact for 3 min 12 s. If the server is up, they are still running; orders already at Bybit can still fill, and your stop-losses at Bybit keep working.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:382",
+      "rt": "RT-26"
+    },
+    "banner.case2.1": {
+      "string": "No new algo orders: CandleViewer's live link to Bybit is down. On Main since 14:02:11 UTC. Orders already at Bybit stay there and can still fill, and your stop-losses at Bybit keep working. You can still cancel the algos: [Cancel algos on Main]. Algos stay paused when the connection is back: press Resume.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:383",
+      "frozen": "FZ-04"
+    },
+    "banner.case2.2": {
+      "string": "Algos continue once the connection is back and checked.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:383"
+    },
+    "banner.resume.1": {
+      "string": "Back online after 3 min 51 s. While you were away: TWAP a_12 sent 1 slice (0.20 BTC); chase a_13 filled at 64,004.0; iceberg a_14 waited 0:21 for Bybit and is running again.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:384",
+      "rt": "RT-09"
+    },
+    "banner.resume.2": {
+      "string": "Running again at 14:02:32 UTC after 0:21 without Bybit — checked first.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D03:384",
+      "rt": "RT-12"
+    },
+    "header.checked.1": {
+      "string": "Checked with Bybit 12 s ago",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:386",
+      "rt": "RT-24"
+    },
+    "header.checked.2": {
+      "string": "Not checked with Bybit for 75 s",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D03:386",
+      "rt": "RT-18"
+    },
+    "header.at_bybit": {
+      "string": "If CandleViewer stops now: 7 orders (2.82 BTC) stay at Bybit and can fill; nothing new is sent",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D03:387",
+      "rt": "RT-21"
+    },
+    "header.count": {
+      "string": "5 algos running on CandleViewer's server",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:388"
+    },
+    "header.lockout": {
+      "string": "Main is locked: Bybit shows an order or a trade CandleViewer has no record of. New orders and algos wait until the Owner reviews it and releases the lock; cancel and close still work.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:389",
+      "rt": "RT-08"
+    },
+    "state.23": {
+      "string": "Leg filled — shrinking or cancelling the other",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "state.27": {
+      "string": "1 order at Bybit (0.07 BTC) can still fill",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "state.29": {
+      "string": "1 order at Bybit (1.000 BTC) can still fill",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "state.30": {
+      "string": "Paused — connection lost for over 30 s",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "state.31": {
+      "string": "1 order at Bybit (0.20 BTC) can still fill",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "state.32": {
+      "string": "Paused — price passed your limit while Bybit was away",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "state.34": {
+      "string": "Paused — 2 orders at Bybit need you",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:390",
+      "rt": "RT-07"
+    },
+    "state.35": {
+      "string": "both can still fill",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "state.37": {
+      "string": "Double fill — closing the extra 0.500 BTC",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:390",
+      "rt": "RT-04"
+    },
+    "state.41": {
+      "string": "Double fill corrected",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "state.45": {
+      "string": "Halted — maintenance",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:390",
+      "rt": "RT-02"
+    },
+    "orphan.1": {
+      "string": "Not linked to a run — placed by CandleViewer",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:392"
+    },
+    "orphan.2": {
+      "string": "Adopt into run",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:392"
+    },
+    "orphan.3": {
+      "string": "Untracked — CandleViewer has no record of it",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:392"
+    },
+    "orphan.4": {
+      "string": "Adopt waits for the owner's decision on untracked orders.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:392"
+    },
+    "progress.8": {
+      "string": "TP working · SL working",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D03:393",
+      "rt": "RT-19"
+    },
+    "progress.9": {
+      "string": "Entry A working · Entry B working",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D03:393",
+      "rt": "RT-19"
+    },
+    "progress.10": {
+      "string": "Leg A filled 0.250 — shrinking B",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "polite",
+      "source": "D03:393",
+      "rt": "RT-19"
+    },
+    "next.7": {
+      "string": "repricing every 0.5 s",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:394"
+    },
+    "next.8": {
+      "string": "waiting for a fill",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:394"
+    },
+    "control.1": {
+      "string": "Cancel TWAP a_12 on BTCUSDT, Main — its 0.07 BTC order at Bybit is cancelled too",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:395"
+    },
+    "control.2": {
+      "string": "Cancel TWAP a_12 and close the 1.200 BTC it bought on Main (DEMO)? The close is reduce-only.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:395",
+      "frozen": "FZ-10"
+    },
+    "control.3": {
+      "string": "Kill switch for Main…",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:395"
+    },
+    "control.4": {
+      "string": "Pause all…",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:395"
+    },
+    "control.5": {
+      "string": "Cancel all…",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:395"
+    },
+    "control.6": {
+      "string": "Acknowledge",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:395"
+    },
+    "control.7": {
+      "string": "Open in Working orders",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:395"
+    },
+    "bulk.cancel_all": {
+      "string": "Cancel 40 algos on Main · DEMO: 12 TWAPs, 9 chases, 14 icebergs, 5 OCOs. Their 31 orders at Bybit (2.14 BTC) are cancelled; reduce-only exits stay. Finishing runs (1) can't be cancelled here — cancel their last order in Working orders.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:396"
+    },
+    "bulk.result": {
+      "string": "38 cancelled · 2 failed — a_31 'Bybit did not answer' · a_37 'finishing — cancel its last order in Working orders'",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:397",
+      "rt": "RT-16"
+    },
+    "bulk.pause_all": {
+      "string": "Pause 27 algos on Main · DEMO now: 9 TWAPs, 7 chases, 11 icebergs; 2 icebergs cooling down pause when the cooldown ends. Their orders at Bybit stay and can fill. Skipped — they can't be paused: 5 OCO pairs, 3 TWAPs held by their price limit, 2 resting chases, 1 finishing run.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:398"
+    },
+    "bulk.pause_deferred.1": {
+      "string": "pauses when the cooldown ends — {n} s",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:399",
+      "params": ["n"]
+    },
+    "bulk.pause_deferred.2": {
+      "string": "paused",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:399"
+    },
+    "bulk.pause_deferred.3": {
+      "string": "skipped",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:399"
+    },
+    "bulk.pause_deferred.4": {
+      "string": "27 pause now · 2 pause when the cooldown ends · 11 skipped",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:399"
+    },
+    "bulk.pause_deferred.5": {
+      "string": "Pause 27 now · 2 when the cooldown ends",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:399"
+    },
+    "bulk.scope": {
+      "string": "Your 7 runs on Main and sub_01",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:400"
+    },
+    "empty.1": {
+      "string": "No algos running. Algos you start run on CandleViewer's server and keep running when this window is closed.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "empty.2": {
+      "string": "[Start an algo…]",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "loading": {
+      "string": "Loading algos from the server…",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:402"
+    },
+    "filter_empty": {
+      "string": "No algos match these filters. [Clear filters]",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:403",
+      "rt": "RT-15"
+    },
+    "density.caption": {
+      "string": "88 rows virtualised, not drawn; 3 ms, one ticker",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:404"
+    },
+    "announce.halt.1": {
+      "string": "Kill switch: 6 algos halted",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:405",
+      "rt": "RT-02"
+    },
+    "announce.halt.2": {
+      "string": "Main lost Bybit: 3 algos paused",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:405",
+      "rt": "RT-06"
+    },
+    "rbac.owner_only.1": {
+      "string": "Only the owner can adopt an order.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:409"
+    },
+    "rbac.owner_only.2": {
+      "string": "Only the owner can change another user's run.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:409"
+    },
+    "rbac.owner_only.3": {
+      "string": "Only the owner can resume this run.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:409"
+    },
+    "rbac.owner_only.4": {
+      "string": "Only the owner can restart this run.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:409"
+    },
+    "algo.submit.link_down": {
+      "string": "Can't start algos: CandleViewer's link to Bybit is down.",
+      "screen": "SCR-066, SCR-067, SCR-068, SCR-069, SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:417"
+    },
+    "algo.reconnecting": {
+      "string": "Can't send — reconnecting.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:418"
+    },
+    "algo.no_pause.oco": {
+      "string": "An OCO pair can't be paused — cancel it instead.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:420"
+    },
+    "algo.no_pause.parked": {
+      "string": "A resting chase can't be paused — cancel it instead.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:421"
+    },
+    "algo.no_pause.price_blocked": {
+      "string": "A TWAP at its price limit can't be paused — cancel it.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:422"
+    },
+    "algo.untracked": {
+      "string": "No CandleViewer record — cancel it in Working orders.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:423"
+    },
+    "notice.untracked": {
+      "string": "No CandleViewer record of this order. To cancel it, open Working orders → CANCEL ALL…",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:424"
+    },
+    "banner.account_down.1": {
+      "string": "Main lost Bybit for over 30 s, so its safety rule closed your positions and cancelled TWAP a_12 (0.80 BTC not sent).",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:236",
+      "rt": "RT-06"
+    },
+    "banner.account_down.2": {
+      "string": "… its safety rule cancelled 4 orders at Bybit. Resume places new orders: TWAP a_12 has 0.80 BTC left over 12 min.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:236",
+      "rt": "RT-06"
+    },
+    "banner.account_down.3": {
+      "string": "… nothing at Bybit was changed. Press Resume to continue.",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "binding-pending-owner",
+      "announce": "assertive",
+      "source": "D03:236",
+      "rt": "RT-06"
+    },
+    "state.halted_authority": {
+      "string": "Halted — {user} can no longer trade on {account} — {when}",
+      "screen": "SCR-070",
+      "owner": "E33-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:221",
+      "params": ["user", "account", "when"]
+    },
+    "progress.chase_accessible": {
+      "string": "repriced 7 times, 3 ticks from start, 7 of 120",
+      "screen": "SCR-068, SCR-070",
+      "owner": "E33-D04",
+      "status": "merged",
+      "announce": "none",
+      "source": "D04:236"
+    },
+    "state.halted_authority.manager_view": {
+      "string": "Halted — another user can no longer trade on {account}",
+      "screen": "SCR-070",
+      "owner": "E33-D05",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D05:509",
+      "params": ["account"]
+    },
+    "name.cancel_run": {
+      "string": "Cancel TWAP a_12 on BTCUSDT, Main",
+      "screen": "SCR-070",
+      "owner": "E33-D05",
+      "status": "merged",
+      "announce": "none",
+      "source": "D05:315"
+    },
+    "name.cancel_run.effect": {
+      "string": "its 0.07 BTC order at Bybit is cancelled too",
+      "screen": "SCR-070",
+      "owner": "E33-D05",
+      "status": "merged",
+      "announce": "none",
+      "source": "D05:315"
+    }
+  },
+  "events": [
+    {
+      "event": "algo.twap_previewed",
+      "class": "analytics",
+      "screen": "SCR-066",
+      "trigger": "the Before-you-start read-out renders or changes (S-01)",
+      "source": "`14`:1563"
+    },
+    {
+      "event": "algo.iceberg_previewed",
+      "class": "analytics",
+      "screen": "SCR-067",
+      "trigger": "the Before-you-start read-out renders or changes (S-09)",
+      "source": "`14`:1575"
+    },
+    {
+      "event": "algo.chase_previewed",
+      "class": "analytics",
+      "screen": "SCR-068",
+      "trigger": "the Before-you-start read-out renders or changes (S-13)",
+      "source": "D02:501"
+    },
+    {
+      "event": "algo.monitor_opened",
+      "class": "analytics",
+      "screen": "SCR-070",
+      "trigger": "the panel or the Algos tab mounts (S-22)",
+      "source": "E33.json:299"
+    },
+    {
+      "event": "algo.monitor_bulk_action",
+      "class": "analytics",
+      "screen": "SCR-070",
+      "trigger": "Pause all or Cancel all confirmed (S-29)",
+      "source": "E33.json:299"
+    },
+    {
+      "event": "algo.created",
+      "class": "audited",
+      "screen": "SCR-066",
+      "trigger": "the server creates a run, before its first child (S-05)",
+      "source": "TM:605"
+    },
+    {
+      "event": "algo.create_refused",
+      "class": "audited",
+      "screen": "SCR-068",
+      "trigger": "the server refuses a Start (S-13)",
+      "source": "TM:606"
+    },
+    {
+      "event": "algo.paused",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "a Pause is accepted (S-23)",
+      "source": "TM:607"
+    },
+    {
+      "event": "algo.resumed",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "a Resume is accepted (S-23)",
+      "source": "TM:607"
+    },
+    {
+      "event": "algo.cancelled",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "a Cancel or Cancel and flatten is accepted (S-29)",
+      "source": "TM:607"
+    },
+    {
+      "event": "algo.halted",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "a run is halted by risk control (S-24)",
+      "source": "TM:608"
+    },
+    {
+      "event": "algo.completed",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "a run completes (S-24)",
+      "source": "TM:609"
+    },
+    {
+      "event": "algo.failed",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "a run fails (S-24)",
+      "source": "TM:609"
+    },
+    {
+      "event": "algo.control_refused",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "the server refuses a verb (S-28)",
+      "source": "TM:610"
+    },
+    {
+      "event": "algo.orphan_adopted",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "an orphan is adopted (S-25)",
+      "source": "TM:611"
+    },
+    {
+      "event": "algo.orphan_cancelled",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "an orphan is cancelled (S-25)",
+      "source": "TM:611"
+    },
+    {
+      "event": "algo.cancel_all",
+      "class": "audited",
+      "screen": "SCR-070",
+      "trigger": "Cancel all is confirmed: one action, a result per run (S-29)",
+      "source": "TM:612"
+    },
+    {
+      "event": "algo.oco_residual_detected",
+      "class": "audited",
+      "screen": "SCR-069",
+      "trigger": "an OCO double fill is detected (S-20)",
+      "source": "TM:614"
+    }
+  ],
+  "carried_by_cite": [
+    {
+      "id": "rbac.view_as",
+      "owner": "E09-D09",
+      "source": "E09-D09:95"
+    },
+    {
+      "id": "rbac.permission",
+      "owner": "E09-D09",
+      "source": "E09-D09:89"
+    },
+    {
+      "id": "rbac.owner_only",
+      "owner": "E09-D09",
+      "source": "E09-D09:90"
+    },
+    {
+      "id": "rbac.account",
+      "owner": "E09-D09",
+      "source": "E09-D09:91"
+    },
+    {
+      "id": "rbac.account_read_only",
+      "owner": "E09-D09",
+      "source": "E09-D09:92"
+    },
+    {
+      "id": "notice.panel_read_only",
+      "owner": "E09-D09",
+      "source": "E09-D09:263"
+    },
+    {
+      "id": "lockout",
+      "owner": "E30-D02",
+      "source": "E30-D02:421"
+    },
+    {
+      "id": "frozen",
+      "owner": "E30-D02",
+      "source": "E30-D02:422"
+    },
+    {
+      "id": "preview.slippage",
+      "owner": "E30-D02",
+      "source": "E30-D02:429"
+    },
+    {
+      "id": "ratelimit.scope.exchange",
+      "owner": "E30-D03",
+      "source": "E30-D03:265"
+    },
+    {
+      "id": "ratelimit.permitted",
+      "owner": "E30-D03",
+      "source": "E30-D03:268"
+    },
+    {
+      "id": "sl.label",
+      "owner": "E32-D02",
+      "source": "E32-D02:207"
+    },
+    {
+      "id": "sl.reduce_only",
+      "owner": "E32-D02",
+      "source": "E32-D02:210"
+    },
+    {
+      "id": "e32.sl.note.draft",
+      "owner": "E32-D02",
+      "source": "E32-D02:342"
+    },
+    {
+      "id": "recon.reconciling",
+      "owner": "E29-D03",
+      "source": "E29-D03:336"
+    },
+    {
+      "id": "recon.desync",
+      "owner": "E29-D03",
+      "source": "E29-D03:337"
+    },
+    {
+      "id": "recon.stale",
+      "owner": "E29-D03",
+      "source": "E29-D03:338"
+    }
+  ]
+}
