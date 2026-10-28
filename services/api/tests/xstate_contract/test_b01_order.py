@@ -116,6 +116,11 @@ INVARIANTS: dict[str, str | tuple[str, ...]] = {
         "test_b01_order_recorded_stop.py::test_terms_changed_not_taken_changes_nothing_and_records_terms_refused",
         "test_b01_order_recorded_stop.py::test_terms_changed_hydration_replays_the_written_step",
     ),
+    "INV-B1-r": (
+        "test_inv_b1_r_an_exit_the_state_does_not_take_is_denied_and_recorded",
+        "test_inv_b1_r_an_exit_is_taken_or_refused_never_kept_property",
+        "test_b01_order_conformance.py::test_b01_version_6_is_version_5_with_the_exit_refusals_alone",
+    ),
 }
 
 
@@ -727,3 +732,87 @@ async def test_inv_b1_f_sl_present_only_from_the_exchange_property(
         assert attach == "failed" or ("sl_attach_ok", attach == "confirmed") in rec.guards
         if not set(events) & _LIFECYCLE_ONLY:  # nothing the protection region owns is deferred
             assert i.deferred_count == 0
+
+
+# --- #4808, chart version 6: an exit the order cannot take is denied and recorded ---------------
+
+
+#: The exits (24 §8.2 S10, §8.4) and the states whose arm takes each (INV-B1-r).
+_TAKES = {
+    "CANCEL": ("submitted", "triggered", "partially_filled"),
+    "AMEND": ("submitted", "partially_filled"),
+}
+#: The refusal that records an exit its state does not take, and `untracked`'s own (INV-B1-l).
+_REFUSAL, _UNOWNED_REFUSAL = "audit_operator_command_refused", "audit_command_refused_unowned"
+#: Every exit with each non-final state that does not take it.
+_DENIED = [(e, s) for e in sorted(_TAKES) for s in LIVE if s not in _TAKES[e]]
+
+
+def _refusal(state: str) -> str:
+    return _UNOWNED_REFUSAL if state == "untracked" else _REFUSAL
+
+
+@pytest.mark.parametrize(("exit_", "state"), _DENIED)
+async def test_inv_b1_r_an_exit_the_state_does_not_take_is_denied_and_recorded(
+    exit_: str, state: str, charts: Charts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every guard allowed: an exit in a non-final state that does not take it meets one ordered,
+    unguarded arm, whose refusal, run on its real action, records the exit and the state. No
+    other action runs, the configuration stays as it was, and the machine holds nothing: its
+    receipt says the exit was not deferred, which the OMS facade reads (S10)."""
+    arm = (node_at(CHART, f"lifecycle.{state}").get("on") or {}).get(exit_)
+    assert arm == {"actions": [_refusal(state)]}
+    real = {name: b01.ACTIONS[name] for name in (_REFUSAL, _UNOWNED_REFUSAL)}
+    rec = instrument("order", monkeypatch, "async_def", guards=dict.fromkeys(b01.GUARDS, True))
+    for name, action in real.items():
+        monkeypatch.setitem(b01.ACTIONS, name, action)
+    records: list[tuple[str, object]] = []
+
+    async def _hook(name: str, context: dict[str, Any]) -> None:
+        records.append((name, context.get("refused")))
+
+    monkeypatch.setattr(b01, "_hook", _hook)
+    res = await park("order", CHART, f"lifecycle.{state}", charts)
+    interp = res.interpreter
+    try:
+        await settle()
+        before, mark = set(interp.current_state_ids), len(rec.actions)
+        receipt = await interp.send(exit_, wait=True)
+        await settle()
+        assert (receipt.deferred, receipt.error) == (False, None)
+        assert (set(interp.current_state_ids), interp.deferred_count) == (before, 0)
+        assert rec.actions[mark:] == []  # the refusal alone: nothing written, sent or posted
+        refused = None if state == "untracked" else {"trigger": exit_, "state": state}
+        assert records == [(_refusal(state).removeprefix("audit_"), refused)]
+    finally:
+        await interp.stop()
+
+
+@_HYP
+@given(
+    start=st.sampled_from(LIVE),
+    events=st.lists(st.sampled_from(_EVENTS), max_size=6),
+    exit_=st.sampled_from(sorted(_TAKES)),
+)
+async def test_inv_b1_r_an_exit_is_taken_or_refused_never_kept_property(
+    start: str, events: list[str], exit_: str, charts: Charts
+) -> None:
+    """Whatever came before, every guard allowed: each exit sent to a non-final state is taken by
+    its arm (a step is written) or refused by the refusal arm alone, the configuration and the
+    deferred events as they were. So while the order is not final, the machine holds no exit
+    (24 §8.2 S10)."""
+    async with _at(start, charts, guards=dict.fromkeys(b01.GUARDS, True)) as (i, rec, _c):
+        for ev in [*events, exit_]:
+            state, before = _leaf(i), set(i.current_state_ids)
+            held, mark = i.deferred_count, len(rec.actions)
+            await i.send(ev, wait=True)
+            await settle()
+            if ev not in _TAKES or state in TERMINALS:
+                continue
+            if state in _TAKES[ev]:
+                assert "persist_event" in rec.actions[mark:] and _REFUSAL not in rec.actions[mark:]
+            else:
+                assert (set(i.current_state_ids), i.deferred_count) == (before, held)
+                assert rec.actions[mark:] == [_refusal(state)]
+        if _leaf(i) not in TERMINALS:
+            assert not {e.type for e in i._deferred_events} & set(_TAKES)

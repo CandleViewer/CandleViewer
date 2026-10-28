@@ -3,7 +3,8 @@ each quiescence point a real order rests in, on the real binding with the in-mem
 refused restore of a forged or foreign snapshot, and the named family invariants of B1.7 (INV-1,
 INV-2 and INV-5), on the library. Chart version 5 (#848): a recorded stop's terms step round trips
 and is refused forged, and a golden version-4 snapshot is refused on restore, its order rebuilt
-from its `order_events` (28 B1.8, the snapshot migration)."""
+from its `order_events` (28 B1.8, the snapshot migration). Chart version 6 (#4808) is version 5
+with its exit refusals alone, and a version-5 snapshot is refused on restore."""
 
 from __future__ import annotations
 
@@ -50,6 +51,10 @@ CHART = REGISTRY.get("order")
 TERMINALS = ("filled", "cancelled", "rejected", "expired", "killed")
 #: Chart version 4's `machine_hash` (28 B1.8): version 5's restore refuses a snapshot sealed at it.
 V4_HASH = "18d4f519f032b9394245f00f18b0c6fce9145d22969ef2eb3854f2695190c3dc"
+#: Chart version 5's `machine_hash` (28 B1.8): version 6's restore refuses a snapshot sealed at it.
+V5_HASH = "627c93f770bcff5d39dce0bed60d2a666c730860998327c6449b4e9e961ee019"
+#: Version 6's arm in each `lifecycle` state for an exit it does not take (INV-B1-r).
+_EXIT_REFUSAL = {"actions": ["audit_operator_command_refused"]}
 _GOLDEN = Path(__file__).resolve().parent / "golden"
 
 
@@ -214,13 +219,17 @@ def _another_order(envelope: SealedSnapshot) -> SealedSnapshot:
     return dataclasses.replace(envelope, key=key)
 
 
-@pytest.mark.parametrize("defect", [_wrong_hash, _bad_hmac, _another_order])
+def _version_5_hash(envelope: SealedSnapshot) -> SealedSnapshot:
+    return dataclasses.replace(envelope, machine_hash=V5_HASH)
+
+
+@pytest.mark.parametrize("defect", [_wrong_hash, _version_5_hash, _bad_hmac, _another_order])
 async def test_b01_a_forged_or_foreign_snapshot_is_refused(
     defect: Callable[[SealedSnapshot], SealedSnapshot],
 ) -> None:
-    """CV-C52, CV-C53, MUST-12: a snapshot of a filled order under another machine hash, with a
-    total edited after the seal, or sealed for another order, is quarantined and pages P1; it is
-    never loaded."""
+    """CV-C52, CV-C53, MUST-12: a snapshot of a filled order under another machine hash, version
+    5's included, with a total edited after the seal, or sealed for another order, is quarantined
+    and pages P1; it is never loaded."""
     async with _resting(("partially_filled", "sl_present")) as (_rig, order, interp):
         key, keys, audit, pager = (
             MachineKey("order", str(order.id), "demo"),
@@ -320,12 +329,34 @@ async def test_b01_terms_step_snapshot_forged_or_version_4_refused(
         await rig.facade.stop()
 
 
+def _version_5(chart: Mapping[str, Any]) -> dict[str, Any]:
+    """Chart version 5: version 6 without its exit refusals (28 B1.8), each the one arm that
+    records an exit its state does not take (INV-B1-r)."""
+    out = copy.deepcopy(dict(chart)) | {"version": 5}
+    for node in out["states"]["lifecycle"]["states"].values():
+        on = node.get("on") or {}
+        for event in ("CANCEL", "AMEND"):
+            if on.get(event) == _EXIT_REFUSAL:
+                del on[event]
+    return out
+
+
 def _version_4(chart: Mapping[str, Any]) -> dict[str, Any]:
     """Chart version 4: version 5 without its `TERMS_CHANGED` groups (28 B1.8)."""
-    out = copy.deepcopy(dict(chart)) | {"version": 4}
+    out = _version_5(chart) | {"version": 4}
     for node in out["states"]["lifecycle"]["states"].values():
         (node.get("on") or {}).pop("TERMS_CHANGED", None)
     return out
+
+
+def test_b01_version_6_is_version_5_with_the_exit_refusals_alone() -> None:
+    """28 B1.8 version 6: the chart is version 5 with one refusal arm for each exit a non-final
+    state does not take (INV-B1-r), and nothing else. Its hash moved from version 5's, so the
+    restore refuses a snapshot sealed at version 5 (MUST-12), and no upcaster carries one: B1
+    recovers from its `order_events`."""
+    assert CHART["version"] == 6 and REGISTRY.hash("order") != V5_HASH
+    assert machine_hash(_version_5(CHART)) == V5_HASH
+    assert not has_upcaster("order", V5_HASH, REGISTRY.hash("order"))
 
 
 async def test_b01_version_4_golden_snapshot_refused_then_rebuilt_from_order_events() -> None:

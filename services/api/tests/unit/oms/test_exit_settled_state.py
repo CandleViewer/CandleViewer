@@ -30,7 +30,7 @@ from candleviewer.oms.errors import (
     OrderStepRefused,
     VersionConflict,
 )
-from candleviewer.oms.order_machine import CommandEvent, PushEvent
+from candleviewer.oms.order_machine import CommandEvent, Legality, PushEvent
 from candleviewer.statechart import persistence
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.registry import Registry
@@ -433,10 +433,12 @@ def test_no_state_that_takes_an_exit_runs_an_invoke_or_a_timer() -> None:
     """The guarantee rests on B1's chart: no `lifecycle` state that takes an exit runs an invoke
     or an `after` timer, whose result B1 could take before the exit, and the region takes no exit
     of its own; what the `protection` region's invokes and timers answer moves only that
-    region."""
+    region. A state takes an exit as the facade's static table reads it: an arm that only records
+    the exit's refusal takes none (INV-B1-r)."""
     chart = Registry().get("order")
     lifecycle, protection = chart["states"]["lifecycle"], chart["states"]["protection"]
-    taking = [name for name, node in lifecycle["states"].items() if _EXITS & {*node.get("on", {})}]
+    handled = Legality.of(chart).handled
+    taking = [name for name in lifecycle["states"] if _EXITS & handled[name]]
     timed = [name for name in taking if {"invoke", "after"} & {*lifecycle["states"][name]}]
     assert taking and timed == [] and not _EXITS & {*lifecycle.get("on", {})}
     nodes = protection["states"].values()
