@@ -19,6 +19,7 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | CsrfRefusalAuditDegraded | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh` | synthetic | | | | | | pending |
 | NakedPositionDetected | page | 0m | `docs/plan/07-release-and-prr.md#alert-nakedpositiondetected` | synthetic | | | | | | pending |
 | OmsUnknownOrders | page | 1m | `docs/plan/07-release-and-prr.md#alert-omsunknownorders` | synthetic | | | | | | pending |
+| OmsPositionReadingOwed | page | 0m | `docs/plan/07-release-and-prr.md#alert-omspositionreadingowed` | synthetic | | | | | | pending (promtool: a reading owed 60 s fires at once, one owed 59 s stays silent, and a reading handed on clears it: `infra/prometheus/tests/system_alerts.test.yml`. A real drill needs a position reading the projection cannot hand on, such as a row dated more than 5 s ahead of the store's clock) |
 | PostgresDown | page | 1m | `docs/plan/07-release-and-prr.md#alert-postgresdown` | real+synthetic | | | | | | pending |
 | ClockDriftBlockingTrading | page | 1m | `docs/plan/07-release-and-prr.md#alert-clockdriftblockingtrading` | synthetic | | | | | | pending |
 | DiskCritical | page | 2m | `docs/plan/07-release-and-prr.md#alert-diskcritical` | synthetic | | | | | | pending |

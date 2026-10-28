@@ -766,6 +766,27 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'reconcil' | tail -20
 ```
 
+<a id="alert-omspositionreadingowed"></a>
+
+### OmsPositionReadingOwed
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | A position reading has been owed to protection for 60 s or more (`oms_position_reading_owed_age_seconds` >= 60): the private-stream consumer has not handed it to the orders that protect the position nor to `ProtectionReadings`, or the position store holds the row as dated ahead of its clock. Page.                                                                                   |
+| 2. User impact        | A stop lost on that position may be going undetected (C-2.6). At 120 s the `oms` check of `/readyz` reads `degraded`; order entry is not refused for it.                                                                                                                                                                                                                                     |
+| 3. What is still safe | Native stop-losses already on the exchange, and every other account's readings.                                                                                                                                                                                                                                                                                                              |
+| 5. Remediation        | If `ClockDriftBlockingTrading` is firing too, fix the clock first: a row held as dated ahead of the store's clock is applied again once the exchange clock is back in sync. Otherwise open the account's positions in the web app and on Bybit, and attach or tighten the stop on any position without one (Owner or the assigned Manager; audited). Never cancel a stop to clear the alert. |
+| 6. Escalation         | Owner immediately; never ticket-priority.                                                                                                                                                                                                                                                                                                                                                    |
+| 7. Verify recovery    | The gauge reads 0 and the `oms` check of `/readyz` is `ok`.                                                                                                                                                                                                                                                                                                                                  |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: value 0; no lines; `oms` ok.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=oms_position_reading_owed_age_seconds'
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -E 'position_(future_dated|reading_unavailable|reading_failed|store_failed)|stream_reapply_timeout' | tail -20
+curl -s http://127.0.0.1:8000/readyz
+```
+
 <a id="alert-postgresdown"></a>
 
 ### PostgresDown

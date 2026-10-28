@@ -51,6 +51,36 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: oms_position_reading_owed_age_seconds
+    values: 0+0x2 60+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: OmsPositionReadingOwed
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: oms
+      exp_annotations:
+        summary: A position reading has been owed to protection for a minute or more
+        runbook_url: docs/plan/07-release-and-prr.md#alert-omspositionreadingowed
+- interval: 1m
+  input_series:
+  - series: oms_position_reading_owed_age_seconds
+    values: 59+0x12
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: OmsPositionReadingOwed
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: oms_position_reading_owed_age_seconds
+    values: 0+0x2 75+0x4 0+0x10
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: OmsPositionReadingOwed
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: pg_up
     values: 0+0x10
   alert_rule_test:
