@@ -10430,32 +10430,59 @@ SEC_PIN_TXT = r"""
   ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
   pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the blocking danger
   form: the KEK-unavailable notice.``
-@ row CMP-035 · Tier and Purpose (`15:383`) ‖ Old (verbatim)
+@ row CMP-035 · Tier and Purpose (`15:384`) ‖ Old (verbatim)
   `- **Tier**: Atom · **Purpose**: bar-close countdown, admin re-auth token expiry countdown,
   secret auto-hide.`
-@ row CMP-035 · Tier and Purpose (`15:383`) ‖ New
+@ row CMP-035 · Tier and Purpose (`15:384`) ‖ New
   `- **Tier**: Atom · **Purpose**: bar-close countdown, admin re-auth token expiry countdown, the
   key-rotation overlap (SCR-127 stage 4: the served end time first, the time left second).`
-@ row CMP-035 · A11y (`15:385`) ‖ Old (verbatim)
+@ row CMP-035 · Props (`15:385`) ‖ Old (verbatim)
+  ``- **Props**: `expiresAt: number` (epoch ms) · `format: "mm:ss"|"words"` · `onExpire?`.
+  `format` adds `"hh:mm:ss"` and `"approx"` ("~4 s") (`docs/design/E05/E05-D02-rest.md` §6 J6,
+  RULED 6438042003); `thresholds?: number[]` (seconds, default `[60, 10, 0]`) and `announce?: (s)
+  => string`, the host's key for each threshold sentence (J7).``
+@ row CMP-035 · Props (`15:385`) ‖ New
+  ``- **Props**: `expiresAt: number` (epoch ms) · `format: "mm:ss"|"words"` · `onExpire?`.
+  `format` adds `"hh:mm:ss"` and `"approx"` ("~4 s") (`docs/design/E05/E05-D02-rest.md` §6 J6,
+  RULED 6438042003); `thresholds?: number[]` (seconds, default `[60, 10, 0]`) and `announce?: (s)
+  => string`, the host's key for each threshold sentence (J7). `showUntil?: boolean` (leads with
+  "until {hh:mm:ss} UTC"); `serverOffsetMs?: number` (the time left counts on server-corrected
+  time); `warnBelowS?: number|null` (`null`: no change under a threshold); `onExpire` never
+  advances a state the server owns; `expiresAt` may be a served time such as `overlap_until`.``
+@ row CMP-035 · A11y (`15:386`) ‖ Old (verbatim)
   ``- **A11y**: `aria-live="off"` visually (updates every second would flood SR) with a discrete
   polite announcement only at defined thresholds (e.g. 60s, 10s, 0s) — documented pattern reused
   wherever a countdown appears, except countdowns in a grid column, which announce nothing
-  (SCR-100 "Funding in", E08-D07 D22, §4.5).``
-@ row CMP-035 · A11y (`15:385`) ‖ New
+  (SCR-100 "Funding in", E08-D07 D22, §4.5). The visible digits are `aria-hidden="true"` and a
+  visually hidden twin holds the words; each threshold speaks once, politely, and a crossing of
+  several at once speaks the latest only (J7); a running clock that is not a deadline is the
+  host's `role="timer"` region, outside this component (J6).``
+@ row CMP-035 · A11y (`15:386`) ‖ New
   ``- **A11y**: `aria-live="off"` visually (updates every second would flood SR) with a discrete
   polite announcement only at defined thresholds (e.g. 60s, 10s, 0s) — documented pattern reused
   wherever a countdown appears, except countdowns in a grid column, which announce nothing
-  (SCR-100 "Funding in", E08-D07 D22, §4.5); each announcement carries the absolute time when
-  `showUntil` is set, and reaching 0 changes nothing by itself.``
-@ row CMP-035 · Tokens (`15:386`) ‖ Entry · field
-  CMP-035 · Tokens (`15:386`)
-@ row CMP-035 · Tokens (`15:386`) ‖ Old (verbatim)
-  ``- **Tokens**: `font.mono`, `color.text.warning` (under threshold).``
-@ row CMP-035 · Tokens (`15:386`) ‖ New
-  ``- **Tokens**: `type.num.base`; the time left `color.text.secondary`, the absolute time
-  `color.text.primary`; under a threshold the colour does not change (a host that marks one adds
-  the CMP-019 clock glyph in `color.status.warning.strong`). (Replaces the mono and warning-text
-  names, which are not shipped tokens.)``
+  (SCR-100 "Funding in", E08-D07 D22, §4.5). The visible digits are `aria-hidden="true"` and a
+  visually hidden twin holds the words; each threshold speaks once, politely, and a crossing of
+  several at once speaks the latest only (J7); a running clock that is not a deadline is the
+  host's `role="timer"` region, outside this component (J6). With `showUntil` each announcement
+  carries the absolute time, and reaching 0 changes nothing by itself: the stage advances on the
+  server's `state`.``
+@ row CMP-035 · Tokens (`15:387`) ‖ Entry · field
+  CMP-035 · Tokens (`15:387`)
+@ row CMP-035 · Tokens (`15:387`) ‖ Old (verbatim)
+  ``- **Tokens**: the digits `type.num.*` (`type.num.sm` by default), tabular, in the host
+  sentence's colour; no colour change under the threshold. Under the threshold a CMP-019 `clock`
+  glyph at `size.icon` in `color.status.warning.strong` leads the digits, `space.inset.xs` before
+  them (J1 (c), PROPOSED, owner approval pending (#2701); until then the number alone carries the
+  threshold). (Replaces `font.mono` and `color.text.warning`, which are not shipped tokens; J1.)``
+@ row CMP-035 · Tokens (`15:387`) ‖ New
+  ``- **Tokens**: the digits `type.num.*` (`type.num.sm` by default), tabular, in the host
+  sentence's colour; no colour change under the threshold. Under the threshold a CMP-019 `clock`
+  glyph at `size.icon` in `color.status.warning.strong` leads the digits, `space.inset.xs` before
+  them (J1 (c), PROPOSED, owner approval pending (#2701); until then the number alone carries the
+  threshold). (Replaces `font.mono` and `color.text.warning`, which are not shipped tokens; J1.)
+  With `showUntil` the absolute time is `color.text.primary` and the time left
+  `color.text.secondary`.``
 @ row CMP-035 · Hi-fi pointer (new; insert bef ‖ New
   ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
   pending; boards 03 and 07 pending on page `E27-D03 Accounts and key vault hi-fi`) — the 900 s
