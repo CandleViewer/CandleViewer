@@ -54,7 +54,7 @@ jobs:
   changed-paths:
     name: changed-paths
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       js: ${{ steps.filter.outputs.js }}
       py: ${{ steps.filter.outputs.py }}
@@ -583,7 +583,7 @@ jobs:
         id: gen
         if: ${{ !cancelled() }}
         continue-on-error: true
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           corepack enable
@@ -633,7 +633,7 @@ jobs:
   security-review-label:
     name: security-review-label
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: write
@@ -669,7 +669,7 @@ jobs:
   dependabot-alerts:
     name: dependabot-alerts
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
       # The job token lists the alerts with GitHub's read-only `vulnerability-alerts` permission,
@@ -726,7 +726,7 @@ jobs:
     needs: [changed-paths, py]
     if: ${{ always() && needs.changed-paths.outputs.py == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -845,7 +845,7 @@ jobs:
       - engine-bench
       - coverage-thresholds
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:

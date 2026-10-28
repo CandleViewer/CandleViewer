@@ -118,7 +118,9 @@ def collect(api_root: Path, expression: str | None, *targets: str) -> frozenset[
         env={**os.environ, "PYTEST_ADDOPTS": shlex.join([*options, *targets])},
         capture_output=True,
         text=True,
-        timeout=300,
+        # A whole-tree collect takes about 240 s on a quiet hosted runner and past 300 s when the
+        # runners are saturated (2026-10-28); the module's own pytest timeout is 900 s.
+        timeout=600,
         check=False,
     )
     output = result.stdout + result.stderr
