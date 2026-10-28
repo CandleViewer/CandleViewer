@@ -3,12 +3,13 @@ venue and a virtual clock: rows read while subscribing wait behind `resyncing`; 
 unanswered or broken required subscription recycles the socket and the optional one does not;
 `budget_blocked` waits for the window; and a stream that is closing sends nothing more at any
 step (each B13 hook checks it). Plus the registry's edges: an unknown environment, a failed
-build, a failed owned task, and the bounded key tables.
+build, a failed owned task, a drain begun after its last task ended, and the bounded key tables.
 """
 
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 from uuid import UUID
 
@@ -34,6 +35,9 @@ from tests.unit.exchange.bybit._private_venue import (
     until,
 )
 from tests.unit.exchange.bybit._trading import SIGNER_ID, account
+
+#: The bound on a helper thread's join, past which its drain spun (the drain test).
+JOIN_S = 5.0
 
 RECONNECTED = "resyncing:reconnected:2"
 FIRST_LIVE_2 = "resyncing:connected:2"
@@ -305,6 +309,42 @@ async def test_an_owned_task_that_fails_is_logged_by_its_type_only() -> None:
         await streams.drain()
     [logged] = [e for e in logs if e["event"] == "bybit_private_task_failed"]
     assert logged["error"] == "ValueError" and "detail" not in str(logs)
+
+
+def test_a_drain_begun_after_its_last_task_ended_returns() -> None:
+    """The registry's `drain` (#913 L1d-2b's code look, B1): a task that has ended stays in the
+    registry's set until its done callback (`_ended`) runs on a later turn, so each round of
+    `drain` must give the loop that turn. An await of `gather` over tasks that have all ended
+    never yields on CPython 3.12, so such a round spins for ever. The drain runs on a loop of its
+    own in a helper thread, joined within a bound, so a regression fails here and never hangs the
+    run; a spinning drain's set is emptied from here to end its thread. The join's bound
+    (`JOIN_S`) is this test's own, a stated exception to 03 Sec.14's rule that the suite's timeout
+    is a test's only time bound: that timeout alone would fail the test but leave the spinning
+    thread burning a core for the rest of the session."""
+    registries: list[ps.PrivateStreams] = []
+    drained: list[bool] = []
+
+    async def nothing() -> None:
+        return None
+
+    async def drains() -> None:
+        streams = make_streams(PrivateVenue(VirtualClock()))
+        registries.append(streams)
+        task = streams.spawn(nothing(), "private-ws-test")
+        await asyncio.sleep(0)  # the task ends in this turn; its callback waits for the next
+        assert task.done() and task in streams._tasks
+        await streams.drain()
+        drained.append(not streams._tasks)
+
+    thread = threading.Thread(target=asyncio.run, args=(drains(),), daemon=True)
+    thread.start()
+    thread.join(JOIN_S)
+    spun = thread.is_alive()
+    for streams in registries if spun else ():
+        streams._tasks.clear()
+    thread.join(JOIN_S)
+    assert not spun, "drain spun: the ended task's callback never ran"
+    assert drained == [True]
 
 
 async def test_a_stream_closed_during_the_budgets_wait_dials_nothing() -> None:

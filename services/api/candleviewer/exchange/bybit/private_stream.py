@@ -1103,9 +1103,13 @@ class PrivateStreams:
         await self.drain()
 
     async def drain(self) -> None:
-        """Until every task this registry handed off has ended."""
+        """Until every task this registry handed off has ended. Each round is an `asyncio.wait`,
+        which gives the loop a turn even when every task has already ended, so their callbacks
+        (`_ended`) run and empty the set: an await of `gather` over ended tasks never yields on
+        CPython 3.12 and would spin here. A cancelled drain cancels its wait only, never the
+        tasks, as `close_key`'s bound does."""
         while self._tasks:
-            await asyncio.gather(*list(self._tasks), return_exceptions=True)
+            await asyncio.wait(set(self._tasks))
 
     # -- the connection's I/O, bounded on the injected clock ---------------------------------------
 
