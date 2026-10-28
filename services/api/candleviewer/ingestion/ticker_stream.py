@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from decimal import Decimal
 from typing import Protocol
 
@@ -39,13 +39,17 @@ from candleviewer.ingestion.rejection import RejectionLog
 from candleviewer.ingestion.watchdog import FeedHealthEvent, feed_health, prune_unlisted
 from candleviewer.observability.context import spawn
 
-#: A merged ticker is publishable only once these are all known. The optional
-#: remainder (`open_interest_value`, `next_funding_time`) may legitimately stay
-#: absent and is carried forward when it does arrive.
-REQUIRED_FIELDS: frozenset[str] = frozenset(TICKER_FIELDS) - {
-    "open_interest_value",
-    "next_funding_time",
-}
+#: A merged ticker is publishable only once these are all known: a named list (24 §2.3), not
+#: every field a delta can carry. The optional remainder (`open_interest_value`,
+#: `next_funding_time`, `high_24h`, `low_24h`) may legitimately stay absent and is carried
+#: forward when it does arrive.
+REQUIRED_FIELDS: frozenset[str] = frozenset(
+    {
+        "last_price", "mark_price", "index_price", "bid1_price", "bid1_qty", "ask1_price",
+        "ask1_qty", "open_interest", "turnover_24h", "volume_24h", "price_24h_pcnt",
+        "funding_rate",
+    }
+)  # fmt: skip
 WRITE_QUEUE_MAXSIZE = 1024  # bounded write-behind (C-2.18); drop-oldest, counted
 
 
@@ -79,18 +83,28 @@ class TickerMerger:
         if not REQUIRED_FIELDS <= state.keys():
             ticker_merge_incomplete_total.labels(symbol=symbol_label(delta.symbol)).inc()
             return None
-        values: dict[str, Decimal | int | None] = {f: state.get(f) for f in TICKER_FIELDS}
-        return TickerEvent.model_validate(
-            {
-                "event_id": EventId(uuid7(delta.ts_event_us // 1000)),
-                "ts_event": delta.ts_event_us,
-                "ts_ingest": ts_ingest_us,
-                "source": "live",
-                "symbol": delta.symbol,
-                "is_delta": False,
-                **values,
-            }
+        return ticker_event(
+            delta.symbol, state, ts_event_us=delta.ts_event_us, ts_ingest_us=ts_ingest_us
         )
+
+
+def ticker_event(
+    symbol: str, state: Mapping[str, Decimal | int], *, ts_event_us: int, ts_ingest_us: int
+) -> TickerEvent:
+    """A fully-populated `TickerEvent` of `state` (`is_delta=False`; a field it lacks is `None`):
+    the merger's, and each row of the venue-wide snapshot's (`ticker_bulk`, E08-T08)."""
+    values: dict[str, Decimal | int | None] = {f: state.get(f) for f in TICKER_FIELDS}
+    return TickerEvent.model_validate(
+        {
+            "event_id": EventId(uuid7(ts_event_us // 1000)),
+            "ts_event": ts_event_us,
+            "ts_ingest": ts_ingest_us,
+            "source": "live",
+            "symbol": symbol,
+            "is_delta": False,
+            **values,
+        }
+    )
 
 
 def _now_us() -> int:
@@ -301,5 +315,6 @@ __all__ = [
     "TickerStream",
     "TickerWriter",
     "UnknownSymbolError",
+    "ticker_event",
     "uuid7",
 ]

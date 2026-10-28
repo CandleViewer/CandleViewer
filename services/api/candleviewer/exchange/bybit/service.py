@@ -63,6 +63,7 @@ from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.risk_limits import make_risk_limits_fetcher
 from candleviewer.exchange.bybit.ticker import parse_ticker_frame, ticker_topic
+from candleviewer.exchange.bybit.tickers import make_tickers_fetcher
 from candleviewer.exchange.bybit.trades import (
     parse_trade_frame,
     recent_trades_fetcher,
@@ -207,6 +208,8 @@ class ExchangeBybitService:
     instruments_fetcher = staticmethod(make_instruments_info_fetcher)
     #: S-RL (#913): one symbol's risk-limit tiers over a public governed client (`MARKET_DATA`).
     risk_limits_fetcher = staticmethod(make_risk_limits_fetcher)
+    #: E08-T08: every linear ticker in one read over a public governed client (`MARKET_DATA`).
+    tickers_fetcher = staticmethod(make_tickers_fetcher)
     #: E08-S05: order-book topic naming + frame parser.
     book_topic = staticmethod(book_topic)
     parse_book_frame = staticmethod(parse_book_frame)

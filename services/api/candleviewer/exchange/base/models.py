@@ -232,6 +232,9 @@ class TickerEvent(MarketEvent):
     turnover_24h: Notional | None
     volume_24h: Qty | None
     price_24h_pcnt: Decimal | None
+    #: E08-T08: the 24 h range; optional, so an event built without it stays valid (24 §2.3).
+    high_24h: Px | None = None
+    low_24h: Px | None = None
     funding_rate: Decimal | None
     next_funding_time: TsUs | None
     is_delta: bool

@@ -1731,6 +1731,254 @@
    "required": true
   }
  },
+ "rest.recorded": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].ask1Price": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].ask1Size": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].basis": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].basisRate": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].basisRateYear": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].bid1Price": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].bid1Size": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].curPreListingPhase": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].deliveryFeeRate": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].deliveryTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].fundingCap": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].fundingIntervalHour": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].fundingRate": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].highPrice24h": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].indexPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].lastPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].lowPrice24h": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].markPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].nextFundingTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].openInterest": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].openInterestValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].preOpenPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].preQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].predictedDeliveryPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].prevPrice1h": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].prevPrice24h": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].price24hPcnt": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].singleOpenInterest": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].singleOpenInterestValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].turnover24h": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].volume24h": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
  "rest.risk": {
   "": {
    "types": [

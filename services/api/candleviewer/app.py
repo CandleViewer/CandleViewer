@@ -183,6 +183,7 @@ from candleviewer.api.step_up import (
 from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
+from candleviewer.api.ticker import make_tickers_router
 from candleviewer.api.users import (
     AccountAccessStore,
     PermissionChangeNotifier,
@@ -243,6 +244,7 @@ from candleviewer.domain.events import InstrumentUpdatedEvent
 from candleviewer.exchange.base.instruments import InstrumentsFetcher, RiskLimitsFetcher
 from candleviewer.exchange.base.models import TickerEvent, TradeEvent
 from candleviewer.exchange.base.service import ExchangeBaseService
+from candleviewer.exchange.base.universe import UniverseTickerSource
 
 # Composition root: wires the one concrete exchange adapter (C-2.2).
 # nosemgrep: cv-adapter-isolation reason=B5-b owner=@CandleViewer/security review=2026-12-31
@@ -277,6 +279,7 @@ from candleviewer.ingestion.planner import SubscriptionPlanner
 from candleviewer.ingestion.reconnect import ReconnectPolicy
 from candleviewer.ingestion.rejection import EventWindow, corrected_now_us
 from candleviewer.ingestion.service import IngestionService
+from candleviewer.ingestion.ticker_bulk import AgeGauge, TickerBulkCache
 from candleviewer.ingestion.ticker_stream import TickerStream
 from candleviewer.ingestion.trade_stream import TradeStream
 from candleviewer.ingestion.watchdog import StalenessWatchdog
@@ -499,6 +502,7 @@ from candleviewer.ws.service import WsService
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import (
     IngestionUpstreamSink,
+    InstrumentRevisions,
     KillSwitchView,
     MachineRevocationAudit,
     StorePrincipalLoader,
@@ -511,6 +515,7 @@ from candleviewer.ws_wiring import (
     loop_call_later,
     recorder_topic,
     series_stale,
+    ticker_topic,
     wallet_topic,
 )
 
@@ -1750,6 +1755,13 @@ def create_app(
     # E16-T08 (#492): the recorder module's `recorder` topic; the recording status attaches below.
     ws_recorder = recorder_topic(ws_sequencing)
     snapshot_adapters["recorder"] = ws_recorder
+    # E08-T08 (#4707): the ingestion module's `ticker` topics, snapped from the ticker stream's
+    # merged state and fed by its bus topic; with the instrument revisions (23 §7.4), the runtime's.
+    ws_ticker = ticker_topic(ctx, ws_sequencing)
+    snapshot_adapters["ticker"] = ws_ticker
+    ws_revisions = InstrumentRevisions(
+        ctx.bus.bus, resolved.environment.value, ws_sequencing.instrument_revision
+    )
     # E17-T08: `sub` is authorised and snapped from `machine_states`, built above with the feed.
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
@@ -1786,7 +1798,9 @@ def create_app(
     app.state.ws_registry = ws_registry
     app.state.ws_hub = ws_hub
     app.state.ws_events = ws_events = WsEvents(ws_registry, ws_hub, kill_switch)
-    app.state.ws_runtime = WsRuntime(ws_hub, ws_upstream, resolved, machines=machine_states)
+    app.state.ws_runtime = WsRuntime(
+        ws_hub, ws_upstream, resolved, machines=machine_states, feeds=(ws_ticker, ws_revisions)
+    )
     # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, off by default. Without a config
     # the gateway keeps its 1 024-frame push bound: the flag swaps the bound, never removes it.
     ws_backpressure = (
@@ -2880,11 +2894,28 @@ def create_app(
             recording_started_at_us=recording_started_at_us(ctx),
         )
     )
-    _compose_instrument_catalogue(ctx, resolved, public_rest)
+    catalogue_rest = _compose_instrument_catalogue(ctx, resolved, public_rest)
     # E08-S03: merged ticker snapshot; session-backed resolver (501 only without identity).
     app.include_router(
         make_ticker_router(lambda: ctx.ingestion.tickers, principal_resolver=audit_resolver)
     )
+    # E08-T08 (#4707): `/market/tickers` from one venue-wide read shared by every caller, at most
+    # one per 5 s, wherever the app talks to the exchange: the catalogue's public client, so one
+    # governor and never the order reserve (C-12.7). Elsewhere (the dev and CI defaults) no read
+    # is ever made (C-13.5) and the route answers 503 after RBAC. Ingestion closes it on stop.
+    bulk_tickers: TickerBulkCache | None = None
+    if catalogue_rest is not None:
+        age = metrics_facade.get("ticker_bulk_cache_age_seconds").child()
+        bulk_tickers = TickerBulkCache(
+            ctx.exchange_bybit.tickers_fetcher(catalogue_rest.client),
+            refreshes=metrics_facade.get("ticker_bulk_cache_refresh_total"),
+            age=age if isinstance(age, AgeGauge) else None,  # a gauge's child, never the no-op
+        )
+        ctx.ingestion.attach_closer(bulk_tickers.aclose)
+    app.include_router(make_tickers_router(lambda: bulk_tickers, principal_resolver=audit_resolver))
+    # The same instance, read-only, for the scanner (#4708): one venue budget for both consumers.
+    ticker_universe: UniverseTickerSource | None = bulk_tickers
+    app.state.ticker_universe = ticker_universe
     # E24-T02: funding history + predicted rate; same resolver/fail-closed rules.
     app.include_router(
         make_funding_router(lambda: ctx.orderflow.funding, principal_resolver=audit_resolver)
@@ -3388,18 +3419,21 @@ def _compose_funding(ctx: AppContext, settings: Settings) -> Any:
 
 def _compose_instrument_catalogue(
     ctx: AppContext, settings: Settings, public_rest: PublicRest | None = None
-) -> None:
+) -> PublicRest | None:
     """#2561: attach the E08-S01-2 catalogue on the real backend whenever the app talks to the
     exchange: `CV_FEED=live`, or the public WS behind `ingestion_ws_enabled`, which admits only
     catalogue symbols. The dev and CI defaults (synthetic feed, flag off) make no exchange call
     (C-13.5); `/instruments` answers 503 there, or 501 without an identity provider. #2599: the
     catalogue fetches through the public WS's REST client when there is one, so one governor
-    (C-12.7). Ingestion stops the scheduler, then closes the client and the pool."""
+    (C-12.7). Ingestion stops the scheduler, then closes the client and the pool. Returns the
+    public client it fetches through (E08-T08 reads the venue's tickers through it too), or None
+    where the app talks to no exchange."""
     if settings.storage_backend != "real" or not (
         settings.feed is FeedMode.LIVE or settings.ingestion_ws_enabled
     ):
-        return
-    rest = (public_rest or PublicRest(ctx)).client
+        return None
+    holder = public_rest or PublicRest(ctx)
+    rest = holder.client
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "instruments")
     wire_instrument_catalogue(
         ctx,
@@ -3408,6 +3442,7 @@ def _compose_instrument_catalogue(
         fetch_risk_limits=ctx.exchange_bybit.risk_limits_fetcher(rest),
     )
     ctx.ingestion.attach_closer(relational.dispose)
+    return holder
 
 
 def wire_instrument_catalogue(

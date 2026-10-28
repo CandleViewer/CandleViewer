@@ -185,6 +185,14 @@ cv_ws_sequence_gaps_detected_total = Counter(
 cv_ws_stale_topics_in_use = Gauge(
     "cv_ws_stale_topics_in_use", "Topics whose last snapshot was stale."
 )
+#: 23 §16.6 W11 (E08-T08): a subscription still `snapshot_pending` past its family's bound stays
+#: pending, never an error, and counts once per wait; its family's adapter counts it.
+cv_ws_snapshot_overdue_total = Counter(
+    "cv_ws_snapshot_overdue_total",
+    "Subscriptions still snapshot_pending past their family's bound, once per wait (23 W11); "
+    "the topic label holds the topic family.",
+    labelnames=("topic",),
+)
 
 
 def _log() -> Any:

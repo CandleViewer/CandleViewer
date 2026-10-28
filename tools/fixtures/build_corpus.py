@@ -214,6 +214,11 @@ _RECORDED = {"capture_date": "2026-10-19",
 #: from the public `api.bybit.com` endpoint, no key; the redactor found nothing to redact.
 _RECORDED_RISK = {"capture_date": "2026-10-25",
                   "source": "capture_fixture.py --rest-path (redacted)"}  # fmt: skip
+#: E08-T08 (#4707): one `GET /v5/market/tickers` reply per symbol (`category=linear`), recorded by
+#: `capture_fixture.py --rest-path` from the public endpoint, no key; the full venue-wide reply is
+#: over the tool's 512 KB cap, so it is not recorded.
+_RECORDED_TICKERS = {"capture_date": "2026-10-28",
+                     "source": "capture_fixture.py --rest-path (redacted)"}  # fmt: skip
 #: #2877 ruling R2 (the #1778 group A pattern): order-path shapes no recording holds yet. Each
 #: file is its documentation page's Response Example, keys and values unchanged (for an error,
 #: its error-table row). E29-K01's recordings replace them;
@@ -378,6 +383,12 @@ def build() -> list[dict[str, Any]]:
                "recorded: one page of 35 linear tiers, empty nextPageCursor",
                host=PUBLIC_REST_HOST, cap=16_000) | _RECORDED_RISK
         for sym in ("BTCUSDT", "ETHUSDT")
+    ]  # fmt: skip
+    m += [
+        _entry(f"rest/recorded_tickers_{sym}.json", sym, "GET /v5/market/tickers",
+               f"recorded: one linear tickers reply for {sym} (highPrice24h / lowPrice24h "
+               "present), E08-T08 (#4707)", host=PUBLIC_REST_HOST, cap=4_000) | _RECORDED_TICKERS
+        for sym in ("BTCUSDT", "ETHUSDT", "SOLUSDT")
     ]  # fmt: skip
     m += [
         _entry(f"rest/{name}.json", symbol, stream, event, host="bybit-exchange.github.io",

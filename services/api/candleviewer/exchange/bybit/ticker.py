@@ -4,7 +4,13 @@ stays in `exchange/bybit/`).
 Mapping per `docs/plan/24-internal-schemas.md` §2.3. The linear stream is
 delta-encoded: only changed keys are present. Empty-string values are treated
 as absent (Bybit uses them for "no value", e.g. an empty book side) so they can
-never null out a previously known field. An explicit `"0"` is a real value.
+never null out a previously known field. An explicit `"0"` is a real value,
+except as the 24 h high or low (E08-T08): no price, so absent too, and a known
+range is kept.
+
+Numeric values are bounded in length and scale before they are stored
+(`MAX_NUMBER_CHARS`, `MAX_NUMBER_SCALE`), and the next funding time in length and to the
+event-time bound (`MAX_TS_MS`): past any, `out_of_bounds`.
 """
 
 from __future__ import annotations
@@ -12,10 +18,12 @@ from __future__ import annotations
 import json
 import re
 from decimal import Decimal, InvalidOperation
+from typing import Final
 
 from candleviewer.exchange.base.frame_guard import (
     MAX_PRICE,
     MAX_QTY,
+    MAX_TS_MS,
     FrameRejectedError,
     check_event_ts,
 )
@@ -37,10 +45,16 @@ _WIRE_TO_FIELD: dict[str, str] = {
     "turnover24h": "turnover_24h",
     "volume24h": "volume_24h",
     "price24hPcnt": "price_24h_pcnt",
+    "highPrice24h": "high_24h",
+    "lowPrice24h": "low_24h",
     "fundingRate": "funding_rate",
 }
 #: Fields that are prices: must be `> 0` and `<= MAX_PRICE` when present.
-_PRICES = frozenset({"last_price", "mark_price", "index_price", "bid1_price", "ask1_price"})
+_PRICES = frozenset(
+    {"last_price", "mark_price", "index_price", "bid1_price", "ask1_price", "high_24h", "low_24h"}
+)
+#: The 24 h range: a zero is no price, absent like an empty string (E08-T08).
+_RANGE = frozenset({"high_24h", "low_24h"})
 #: Fields that are sizes/aggregates: must be `>= 0` (an empty side is `"0"`).
 _NON_NEGATIVE = frozenset(
     {"bid1_qty", "ask1_qty", "open_interest", "open_interest_value", "turnover_24h", "volume_24h"}
@@ -48,6 +62,13 @@ _NON_NEGATIVE = frozenset(
 _ZERO = Decimal(0)
 _MAX_AGG = MAX_QTY * MAX_PRICE
 _HUGE = Decimal("1e30")  # signed rates/percentages: finite is the only constraint
+#: Numeric fields are bounded in length and scale before they are stored (E08-T08): at most
+#: `MAX_NUMBER_CHARS` characters of text, checked before the text is parsed, and at most
+#: `MAX_NUMBER_SCALE` decimal places; past either, `out_of_bounds`. The recorded values have at
+#: most 15 characters and 8 places (`packages/fixtures/bybit`); an aggregate up to `_MAX_AGG`
+#: with the 4 places the recorded ones carry has at most 30 characters.
+MAX_NUMBER_CHARS: Final = 32
+MAX_NUMBER_SCALE: Final = 20
 #: Hot path (C-2.20): wire key -> (field, lo, hi), inclusive; one chained compare.
 _BOUNDS: dict[str, tuple[str, Decimal, Decimal]] = {
     wire: (
@@ -87,26 +108,56 @@ def parse_ticker_frame(frame: str) -> TickerDelta | None:
     if not isinstance(ts, int) or isinstance(ts, bool) or ts <= 0:
         raise ValueError("ticker frame missing envelope ts")
     check_event_ts(ts, None, symbol=symbol)
+    return TickerDelta(symbol, kind == "snapshot", ts * 1000, _fields(data, symbol))
+
+
+def parse_ticker_row(row: object, *, ts_ms: int) -> TickerDelta:
+    """E08-T08: one row of the venue-wide REST read (`tickers.py`), read as a frame's `data`
+    (the same fields, bounds and crossed-book check), as a full snapshot at the reply's `ts_ms`.
+    `ValueError` (`FrameRejectedError` for plausibility) for a malformed or implausible row."""
+    if not isinstance(row, dict):
+        raise ValueError("ticker row is not an object")
+    symbol = row.get("symbol")
+    if not isinstance(symbol, str) or not _SYMBOL_RE.fullmatch(symbol):
+        raise ValueError("ticker row carries an invalid symbol")
+    return TickerDelta(symbol, True, ts_ms * 1000, _fields(row, symbol))
+
+
+def _fields(data: dict[str, object], symbol: str) -> dict[str, Decimal | int]:
+    """The neutral fields `data` carries; an empty string is absent, never a null."""
     fields: dict[str, Decimal | int] = {}
     try:
         for wire, name in _WIRE_TO_FIELD.items():
             raw = data.get(wire)
             if raw is None or raw == "":
                 continue
-            value = Decimal(str(raw))
+            text = str(raw)
+            if len(text) > MAX_NUMBER_CHARS:  # bounded before it is parsed
+                raise FrameRejectedError("out_of_bounds", name, symbol=symbol)
+            value = Decimal(text)
             _, lo, hi = _BOUNDS[wire]
             if not (value.is_finite() and lo <= value <= hi):
                 _plausible(name, value, symbol)
+            if _finer(value):
+                raise FrameRejectedError("out_of_bounds", name, symbol=symbol)
+            if name in _RANGE and value.is_zero():
+                continue
             fields[name] = value
         nft = data.get("nextFundingTime")
         if nft not in (None, ""):
-            fields["next_funding_time"] = int(str(nft)) * 1000  # ms -> µs
+            text = str(nft)
+            if len(text) > MAX_NUMBER_CHARS:  # bounded before it is parsed
+                raise FrameRejectedError("out_of_bounds", "next_funding_time", symbol=symbol)
+            ms = int(text)
+            if not 0 <= ms <= MAX_TS_MS:  # the event-time bound, as for `ts`
+                raise FrameRejectedError("out_of_bounds", "next_funding_time", symbol=symbol)
+            fields["next_funding_time"] = ms * 1000  # ms -> µs
     except InvalidOperation as exc:
         raise ValueError("unparseable ticker value") from exc
     bid, ask = fields.get("bid1_price"), fields.get("ask1_price")
     if bid is not None and ask is not None and bid > ask:  # crossed top of book (#1892)
         raise FrameRejectedError("crossed", "bid1 above ask1", symbol=symbol)
-    return TickerDelta(symbol, kind == "snapshot", ts * 1000, fields)
+    return fields
 
 
 def _plausible(name: str, value: Decimal, symbol: str) -> None:
@@ -125,3 +176,10 @@ def _plausible(name: str, value: Decimal, symbol: str) -> None:
             raise FrameRejectedError("out_of_bounds", name, symbol=symbol)
     elif not -_HUGE <= value <= _HUGE:
         raise FrameRejectedError("out_of_bounds", name, symbol=symbol)
+
+
+def _finer(value: Decimal) -> bool:
+    """More decimal places than `MAX_NUMBER_SCALE`; a non-finite value, refused before it gets
+    here, counts as finer too."""
+    exponent = value.as_tuple().exponent
+    return not isinstance(exponent, int) or exponent < -MAX_NUMBER_SCALE

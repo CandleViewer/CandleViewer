@@ -8,11 +8,13 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   `(symbol, family)` on the ingestion streams' existing `acquire`/`release` interface. Families
   with no ingestion stream yet are a logged no-op; a refused symbol never fails the socket.
 * **Snapshots** (E17-S03 port): `SnapshotRouter` dispatches per topic family to the owning
-  module's adapter: `book_snapshot_source` (#2196), `BarsSnapshotSource` (#2195) and the accounts
+  module's adapter: `book_snapshot_source` (#2196), `BarsSnapshotSource` (#2195), the accounts
   module's `wallet` topic (`wallet_topic`, #837), which the account health runtime attaches to
-  and publishes its deltas on. Until order-flow (#2197) lands, its families map to
-  `PendingSnapshotSource`, which raises `NotImplementedError`; the router turns that into `None`,
-  so the subscription reports `snapshot_pending` and no `d` is ever emitted.
+  and publishes its deltas on, and the ingestion module's `ticker` topic (`ticker_topic`, #4707),
+  whose deltas `WsRuntime` runs with the `InstrumentRevisions` bridge (23 §7.4). Until order-flow
+  (#2197) lands, its families map to `PendingSnapshotSource`, which raises
+  `NotImplementedError`; the router turns that into `None`, so the subscription reports
+  `snapshot_pending` and no `d` is ever emitted.
 * **Principal** (E09, #2505): `StorePrincipalLoader` reads a user's roles, permission codes and
   account grants from the store at every `auth` and every re-evaluation. It fails closed to the
   deny-all snapshot and never raises.
@@ -34,7 +36,7 @@ import contextlib
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Final, Protocol
@@ -47,6 +49,11 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot, scoped_account_ids
 from candleviewer.book.resync import BookEngine
 from candleviewer.book.snapshot_source import BookSnapshotSource, Record
+from candleviewer.bus import Bus, QueuePolicy, TopicPattern
+from candleviewer.bus import Subscription as BusSubscription
+from candleviewer.bus.models import WILDCARD
+from candleviewer.domain.events import InstrumentUpdatedEvent
+from candleviewer.ingestion.ticker_topic import TickerTopic
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.recorder.ws_topic import RecorderTopic
@@ -59,7 +66,12 @@ from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
 from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import count_audit_failure
 from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, Subscription
-from candleviewer.ws.sequencing import SequencingHub, SnapshotBody, SnapshotSource
+from candleviewer.ws.sequencing import (
+    SequencingHub,
+    SnapshotBody,
+    SnapshotSource,
+    cv_ws_snapshot_overdue_total,
+)
 from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs
 
 if TYPE_CHECKING:
@@ -273,6 +285,73 @@ def alerts_topic(hub: SequencingHub) -> AlertsTopic[SnapshotBody]:
     or resyncs an owner's subscriptions through it. The composition root attaches the deliveries
     reader; before, `build` gives `None`."""
     return AlertsTopic(hub.publish, hub.flush_pending, hub.resnapshot, SnapshotBody)
+
+
+def ticker_topic(ctx: AppContext, hub: SequencingHub) -> TickerTopic[SnapshotBody]:
+    """E08-T08 (#4707): the `ticker` family's adapter, which the ingestion module owns: snapshots
+    from the ticker stream's merged state (resolved per call: attached only with the public WS),
+    deltas from its bus topic through `hub`, at most one frame per window (23 §6.1, §8), and the
+    W11 count of its overdue waits. `WsRuntime` starts and stops it."""
+    return TickerTopic(
+        hub.subscriptions,
+        hub.publish,
+        hub.resnapshot,
+        SnapshotBody,
+        reader=lambda: ctx.ingestion.tickers,
+        bus=ctx.bus.bus,
+        env=ctx.settings.environment.value,
+        overdue=cv_ws_snapshot_overdue_total.labels(topic="ticker"),  # served at 0 from now
+    )
+
+
+#: The revision bridge's queue (C-2.18): revisions are rare, so a full one makes the catalogue
+#: refresh that publishes them wait (`NEVER_DROP`), never a hot path, and none is lost.
+REVISION_QUEUE_MAX: Final = 1024
+
+
+class InstrumentRevisions:
+    """E08-T08 (#4707, 23 §7.4): each `InstrumentUpdatedEvent` on `{env}.instruments.*.updated`
+    re-snaps its symbol's subscriptions (`SequencingHub.instrument_revision`). `start` holds the
+    pattern (one environment, never a replay's) and drains it on one owned task; `stop` lets go of
+    both. A revision that raises is logged by symbol and error class and the next still runs; an
+    item that is no revision is skipped."""
+
+    def __init__(self, bus: Bus, environment: str, revise: Callable[[str], int]) -> None:
+        self._bus, self._revise = bus, revise
+        self.pattern = TopicPattern(
+            env=environment, domain="instruments", symbol=WILDCARD, detail="updated"
+        )
+        self._running: tuple[BusSubscription, asyncio.Task[None]] | None = None
+
+    def start(self) -> None:
+        if self._running is None:
+            sub = self._bus.subscribe(
+                "ws-instrument-revisions",
+                self.pattern,
+                QueuePolicy.NEVER_DROP,
+                maxsize=REVISION_QUEUE_MAX,
+            )
+            self._running = (sub, spawn(self._run(sub), name="ws-instrument-revisions"))
+
+    async def stop(self) -> None:
+        running, self._running = self._running, None
+        if running is not None:
+            sub, task = running
+            self._bus.unsubscribe(sub)
+            task.cancel()
+            await asyncio.wait({task})
+
+    async def _run(self, sub: BusSubscription) -> None:
+        while True:
+            event = await sub.get()
+            if not isinstance(event, InstrumentUpdatedEvent):
+                continue
+            try:
+                self._revise(event.symbol)
+            except Exception as exc:  # contained: the next revision still re-snaps
+                logger().warning(
+                    "ws instrument revision failed", symbol=event.symbol, error=type(exc).__name__
+                )
 
 
 def recorder_topic(hub: SequencingHub) -> RecorderTopic[SnapshotBody]:
@@ -502,7 +581,9 @@ class _Refresher(Protocol):
 
 class WsRuntime:
     """Lifespan owner of the gateway's background work and its planned shutdown. It also starts
-    and stops `recorder_status`, the 1 Hz recording status (E16-T08), once the app sets it."""
+    and stops `recorder_status`, the 1 Hz recording status (E16-T08), once the app sets it, and its
+    `feeds`, the publishers the gateway's topics need (E08-T08: the `ticker` topic and the
+    instrument revisions), stopped first so no frame starts after the notice."""
 
     def __init__(
         self,
@@ -512,6 +593,7 @@ class WsRuntime:
         *,
         clock: Callable[[], float] = time.monotonic,
         machines: MachineStateRegistry | None = None,
+        feeds: Sequence[_Refresher] = (),
     ) -> None:
         self.hub = hub
         self.upstream = upstream
@@ -521,6 +603,7 @@ class WsRuntime:
         self._sweeper: asyncio.Task[None] | None = None
         self._notified = False
         self.recorder_status: _Refresher | None = None
+        self.feeds = tuple(feeds)
 
     def start(self) -> None:
         self._notified = False
@@ -529,6 +612,8 @@ class WsRuntime:
             self._sweeper = spawn(self.upstream.run(self._clock), name="ws-upstream-sweeper")
         if self.recorder_status is not None:
             self.recorder_status.start()
+        for feed in self.feeds:
+            feed.start()
 
     async def stop(self) -> int:
         """§9.4: `shutdown_notice`, grace, `bye` + `1001`; then wait (bounded) for the sockets
@@ -540,6 +625,8 @@ class WsRuntime:
         notified = 0
         if self.recorder_status is not None:  # no status frame starts after the notice
             await self.recorder_status.stop()
+        for feed in self.feeds:  # nor a `ticker` frame or a revision's `snap`
+            await feed.stop()
         if not self._notified:
             self._notified = True
             s = self._settings

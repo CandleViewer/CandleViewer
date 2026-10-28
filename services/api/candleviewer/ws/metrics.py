@@ -286,6 +286,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_snapshot_build_seconds",
         "cv_ws_sequence_gaps_detected_total",
         "cv_ws_stale_topics_in_use",
+        "cv_ws_snapshot_overdue_total",
         "cv_ws_fanout_seconds",
         "cv_ws_frame_encode_seconds",
         "cv_ws_frame_bytes",

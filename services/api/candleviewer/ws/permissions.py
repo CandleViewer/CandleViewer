@@ -111,6 +111,7 @@ from candleviewer.ws.topics import (
     EntityScope,
     ParsedTopic,
     TopicError,
+    check_instruments,
     effective_options,
     is_topic_name,
     machine_refusal,
@@ -662,6 +663,8 @@ class ConnectionAuthz:
         if fam.family == SYSTEM_TOPIC:  # §6.2: implicit and permanent - already attached
             return {"ch": SYSTEM_TOPIC, "ok": True, "sub_id": SYSTEM_TOPIC}, None
         opts = validate_options(fam, entry.get("opts") if isinstance(entry, dict) else None)
+        if fam.family == "ticker" and topic.symbol is None:  # E08-T08: instruments, as named
+            check_instruments(opts.get("symbols") or (), self.services.instrument_known)
         rs = _replay_id(replay_session_id)
         if rs is not None and fam.private:
             raise TopicError("invalid_options", "Private topics cannot be replayed.", "ch")
