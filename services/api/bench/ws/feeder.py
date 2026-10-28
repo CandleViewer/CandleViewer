@@ -23,6 +23,10 @@ encoding, the writer and the socket are the gateway's own.
 - **Trades.** A print's `ts_ms` is the wall clock at publish (the reference of budget #3) and its
   id `<recorded id>.<round>`, unique across replays of the tape.
 - **Determinism.** The seed fixes offsets, phases and content; only wall timing varies.
+- **Two seams** (#571): `live(ch)` says whether a topic has a subscriber and a `Sink` takes what a
+  step produced. In process (the default) they are the hub's `subscriptions` and `HubSink`, which
+  publishes into the hub and the bus as before; `feed_proc` runs the same schedule in a child
+  process with every topic live and a sink that writes lines to the backend.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import Topic
@@ -79,7 +83,7 @@ def scale_int(value: str | Decimal, scale: int) -> int:
     return whole
 
 
-def _places(value: Decimal) -> int:
+def places(value: Decimal) -> int:
     exp = value.as_tuple().exponent
     return max(0, -exp) if isinstance(exp, int) else 0
 
@@ -112,6 +116,16 @@ class Book:
                 else:
                     side[lv.price] = (str(lv.price), str(lv.qty))
 
+    def apply_rows(self, bids: Sequence[Sequence[str]], asks: Sequence[Sequence[str]]) -> None:
+        """Rows as the wire states them, `[price text, size text]`: size `"0"` deletes the level,
+        as `window_delta` writes a level that left the window."""
+        for side, rows in ((self.bids, bids), (self.asks, asks)):
+            for price, size in rows:
+                if size == "0":
+                    side.pop(Decimal(price), None)
+                else:
+                    side[Decimal(price)] = (price, size)
+
     def top(self, depth: int) -> tuple[dict[str, str], dict[str, str]]:
         """The `depth` best levels per side as the wire states them (price text -> size text)."""
         bids = sorted(self.bids, reverse=True)[:depth]
@@ -136,8 +150,8 @@ class Corpus:
         for sym, frames in self.tapes.items():
             prints = [p for f in frames for p in _corpus.normalize(f) if isinstance(p, TradePrint)]
             self.scales[sym] = (
-                max(_places(p.price) for p in prints),
-                max(_places(p.qty) for p in prints),
+                max(places(p.price) for p in prints),
+                max(places(p.qty) for p in prints),
             )
 
     def book_at(self, offsets: Sequence[int]) -> list[Book]:
@@ -154,7 +168,7 @@ class Corpus:
         return [books[o].copy() for o in offsets]
 
 
-class _Feed:
+class Feed:
     """One symbol: its book, tape cursor and the numbers its snapshots and frames are built from."""
 
     def __init__(self, name: str, rank: int, tier: Tier, corpus: Corpus, book: Book, at: int):
@@ -186,11 +200,30 @@ class _Feed:
         return self.buffer.popleft(), self.round
 
 
+class SnapshotFeed(Protocol):
+    """What the snapshot sources read of a symbol: a `Feed`, or `feed_proc`'s mirror of one."""
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def book(self) -> Book: ...
+    @property
+    def xu(self) -> int: ...
+    @property
+    def ring(self) -> deque[dict[str, str | int]]: ...
+    @property
+    def trades_gen(self) -> int: ...
+    @property
+    def price_scale(self) -> int: ...
+    @property
+    def qty_scale(self) -> int: ...
+
+
 class BookSource:
     """`SnapshotSource` of `book.*` over the feeder's server books, shaped as the production
     `BookSnapshotSource` shapes it (§14.1: `xu`, `xseq`, both encodings)."""
 
-    def __init__(self, feeds: Mapping[str, _Feed]) -> None:
+    def __init__(self, feeds: Mapping[str, SnapshotFeed]) -> None:
         self._feeds = feeds
 
     def build(self, sub: Subscription) -> SnapshotBody | None:
@@ -225,7 +258,7 @@ class BookSource:
 class TradesSource:
     """`SnapshotSource` of `trades.*`: the last 200 prints of the symbol (§6.1)."""
 
-    def __init__(self, feeds: Mapping[str, _Feed]) -> None:
+    def __init__(self, feeds: Mapping[str, SnapshotFeed]) -> None:
         self._feeds = feeds
 
     def build(self, sub: Subscription) -> SnapshotBody | None:
@@ -260,7 +293,7 @@ class TradesSource:
 
 @dataclass(slots=True)
 class _Stream:
-    feed: _Feed
+    feed: Feed
     kind: str  # "book" | "trades"
     interval: float
     start: float
@@ -268,13 +301,137 @@ class _Stream:
     published: int = 0
 
 
+class Slot(Protocol):
+    """A stream as the schedule counts it."""
+
+    @property
+    def kind(self) -> str: ...
+    @property
+    def interval(self) -> float: ...
+    @property
+    def start(self) -> float: ...
+    @property
+    def published(self) -> int: ...
+
+
+def schedule_stats(streams: Sequence[Slot], now: float) -> dict[str, tuple[int, int]]:
+    """Per kind, `(scheduled by `now` seconds after t0, published)`."""
+    out = {"book": (0, 0), "trades": (0, 0)}
+    for s in streams:
+        due = max(0, int((now - s.start) / s.interval) + 1) if now >= s.start else 0
+        sched, pub = out[s.kind]
+        out[s.kind] = (sched + due, pub + s.published)
+    return out
+
+
+#: One depth's window delta of a book step: `(depth, bids, asks, CVWB records)`.
+BookMove = tuple[int, list[list[str]], list[list[str]], tuple[tuple[int, int, int], ...]]
+
+
+class Sink(Protocol):
+    """Where a step's output goes (module docstring, "Two seams")."""
+
+    def book(self, feed: Feed, moves: Sequence[BookMove]) -> None: ...
+
+    async def trades(
+        self,
+        feed: Feed,
+        prints: Sequence[tuple[TradePrint, str]],
+        items: list[dict[str, str | int]],
+        now_ms: int,
+        live: bool,
+    ) -> None: ...
+
+
+def print_fields(p: TradePrint, tick: Decimal) -> tuple[int, Decimal]:
+    """A print's `price_ticks` and `notional`, as its `TradeEvent` carries them."""
+    return int((p.price / tick).to_integral_value()), p.price * p.qty
+
+
+def trade_event(
+    symbol: str,
+    seq: int,
+    tid: str,
+    p: tuple[Decimal, Decimal, str, int, Decimal],
+    ts_us: int,
+) -> TradeEvent:
+    """The bus event of one print, `p` = `(price, qty, side, price_ticks, notional)`: one builder
+    for both feeder modes, so the bars lanes get equal events from either."""
+    price, qty, side, ticks, notional = p
+    return TradeEvent.model_validate(
+        {
+            "event_id": uuid7(ts_us // 1000),
+            "ts_event": ts_us,
+            "ts_ingest": ts_us,
+            "source": "live",
+            "symbol": symbol,
+            "trade_id": tid,
+            "price": price,
+            "qty": qty,
+            "side": side,
+            "is_block_trade": False,
+            "price_ticks": ticks,
+            "notional": notional,
+            "seq": seq,
+        }
+    )
+
+
+class HubSink:
+    """The in-process sink: the hub's frames and the bus's `TradeEvent`s, as the feeder has always
+    published them."""
+
+    def __init__(self, hub: SequencingHub, bus: Bus) -> None:
+        self._hub, self._bus = hub, bus
+
+    def book(self, feed: Feed, moves: Sequence[BookMove]) -> None:
+        for d, bids, asks, records in moves:
+            part = Frame(
+                BOOK_DELTA, records, price_scale=BOOK_PRICE_SCALE, qty_scale=BOOK_QTY_SCALE
+            )
+            body = {"symbol": feed.name, "xu": feed.xu, "xseq": feed.xu, "bids": bids, "asks": asks}
+            self._hub.publish(f"book.{feed.name}.{d}", body, part=part)
+
+    async def trades(
+        self,
+        feed: Feed,
+        prints: Sequence[tuple[TradePrint, str]],
+        items: list[dict[str, str | int]],
+        now_ms: int,
+        live: bool,
+    ) -> None:
+        events: list[TradeEvent] = []
+        for k, (p, tid) in enumerate(prints):
+            feed.seq += 1
+            fields = (p.price, p.qty, p.side, *print_fields(p, feed.tick))
+            events.append(trade_event(feed.name, feed.seq, tid, fields, now_ms * 1000 + k))
+        ch = f"trades.{feed.name}"
+        if live:
+            ps, qs = feed.price_scale, feed.qty_scale
+            records = tuple(
+                (
+                    0,
+                    scale_int(str(i["price"]), ps),
+                    scale_int(str(i["size"]), qs),
+                    0 if i["side"] == "buy" else 1,
+                    0,
+                )
+                for i in items
+            )
+            part = Frame(TRADES, records, price_scale=ps, qty_scale=qs, ts_base_ms=now_ms)
+            self._hub.publish(ch, {"symbol": feed.name, "trades": items}, part=part)
+        topic = Topic(env=_ENV, domain="md", symbol=feed.name, detail="trade")
+        for ev in events:  # the bars lanes: a NEVER_DROP queue, so a slow lane slows the feeder
+            await self._bus.publish(topic, ev)
+
+
 class Feeder:
     """Publishes the symbols' streams into `hub` and `bus` on the schedule (module docstring)."""
 
     def __init__(
         self,
-        hub: SequencingHub,
-        bus: Bus,
+        hub: SequencingHub | None,
+        bus: Bus | None,
         symbols: Sequence[str],
         tiers: Sequence[Tier],
         *,
@@ -283,17 +440,29 @@ class Feeder:
         corpus: Corpus | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_ms: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
+        live: Callable[[str], bool] | None = None,
+        sink: Sink | None = None,
     ) -> None:
+        """`live` and `sink` default to `hub` and `bus` (the in-process feeder); a feeder given both
+        needs neither (`feed_proc`'s child)."""
         if len(symbols) != len(tiers):
             raise ValueError("one tier per symbol")
-        self._hub, self._bus, self._depths = hub, bus, tuple(depths)
+        if live is None or sink is None:
+            if hub is None or bus is None:
+                raise ValueError(
+                    "a feeder without `live` and `sink` publishes into a hub and a bus"
+                )
+            on_hub = hub
+            live = live or (lambda ch: bool(on_hub.subscriptions(ch)))
+            sink = sink or HubSink(hub, bus)
+        self._live, self._sink, self._depths = live, sink, tuple(depths)
         self._clock, self._wall_ms = clock, wall_ms
         rng = random.Random(seed)  # noqa: S311 - seeded, reproducible feed; not security
         self.corpus = corpus or Corpus()
         offsets = [rng.randrange(len(self.corpus.deltas)) for _ in symbols]
         books = self.corpus.book_at(offsets)
-        self.feeds: dict[str, _Feed] = {
-            s: _Feed(s, r, tiers[r], self.corpus, books[r], offsets[r])
+        self.feeds: dict[str, Feed] = {
+            s: Feed(s, r, tiers[r], self.corpus, books[r], offsets[r])
             for r, s in enumerate(symbols)
         }
         self.streams: list[_Stream] = []
@@ -307,7 +476,7 @@ class Feeder:
     def scales(self, symbol: str) -> tuple[int, int] | None:
         """A symbol's bars scales: its tick's places and the qty places of its tape."""
         feed = self.feeds.get(symbol)
-        return None if feed is None else (max(1, _places(feed.tick)), feed.qty_scale)
+        return None if feed is None else (max(1, places(feed.tick)), feed.qty_scale)
 
     def tick_size(self, symbol: str) -> Decimal | None:
         feed = self.feeds.get(symbol)
@@ -328,15 +497,11 @@ class Feeder:
     def stats(self) -> dict[str, tuple[int, int]]:
         """Per kind, `(scheduled so far, published)`: published short of scheduled is a feeder that
         fell behind (a validity guard of the run)."""
-        now, out = self._clock() - self.t0, {"book": (0, 0), "trades": (0, 0)}
-        for s in self.streams:
-            due = max(0, int((now - s.start) / s.interval) + 1) if now >= s.start else 0
-            sched, pub = out[s.kind]
-            out[s.kind] = (sched + due, pub + s.published)
-        return out
+        return schedule_stats(self.streams, self._clock() - self.t0)
 
-    async def run(self) -> None:
-        self.t0 = self._clock()
+    async def run(self, t0: float | None = None) -> None:
+        """The schedule from `t0` (now, unless the caller already told someone its t0)."""
+        self.t0 = self._clock() if t0 is None else t0
         heap = [(self.t0 + s.start, i) for i, s in enumerate(self.streams)]
         heapq.heapify(heap)
         while True:
@@ -364,8 +529,8 @@ class Feeder:
             await self._trades_step(stream.feed)
         stream.published += 1
 
-    def _book_step(self, feed: _Feed) -> None:
-        live = [d for d in self._depths if self._hub.subscriptions(f"book.{feed.name}.{d}")]
+    def _book_step(self, feed: Feed) -> None:
+        live = [d for d in self._depths if self._live(f"book.{feed.name}.{d}")]
         before = {d: feed.book.top(d) for d in live}
         moved: dict[int, tuple[list[list[str]], list[list[str]]]] = {}
         for _ in range(MAX_SKIPS):
@@ -375,76 +540,37 @@ class Feeder:
             moved = {d: self._windows(feed, d, before[d]) for d in live}
             if not live or any(b or a for b, a in moved.values()):
                 break
+        moves: list[BookMove] = []
         for d, (bids, asks) in moved.items():
             records = tuple(
                 (side, *_scaled(p, s, BOOK_PRICE_SCALE, BOOK_QTY_SCALE))
                 for side, rows in ((0, bids), (1, asks))
                 for p, s in rows
             )
-            part = Frame(
-                BOOK_DELTA, records, price_scale=BOOK_PRICE_SCALE, qty_scale=BOOK_QTY_SCALE
-            )
-            body = {"symbol": feed.name, "xu": feed.xu, "xseq": feed.xu, "bids": bids, "asks": asks}
-            self._hub.publish(f"book.{feed.name}.{d}", body, part=part)
+            moves.append((d, bids, asks, records))
+        if moves:
+            self._sink.book(feed, moves)
 
     @staticmethod
     def _windows(
-        feed: _Feed, depth: int, before: tuple[dict[str, str], dict[str, str]]
+        feed: Feed, depth: int, before: tuple[dict[str, str], dict[str, str]]
     ) -> tuple[list[list[str]], list[list[str]]]:
         bids, asks = feed.book.top(depth)
         return window_delta(before[0], bids), window_delta(before[1], asks)
 
-    async def _trades_step(self, feed: _Feed) -> None:
+    async def _trades_step(self, feed: Feed) -> None:
         now_ms = self._wall_ms()
+        prints: list[tuple[TradePrint, str]] = []
         items: list[dict[str, str | int]] = []
-        events: list[TradeEvent] = []
-        for k in range(feed.tier.prints_per_batch):
+        for _ in range(feed.tier.prints_per_batch):
             p, rnd = feed.next_print()
             tid = f"{p.trade_id}.{rnd}"
+            prints.append((p, tid))
             item: dict[str, str | int] = {"id": tid, "ts_ms": now_ms, "price": str(p.price)}
             items.append(item | {"size": str(p.qty), "side": p.side})
-            feed.seq += 1
-            events.append(self._event(feed, p, tid, now_ms * 1000 + k))
         feed.ring.extend(items)
         feed.trades_gen += 1
-        ch = f"trades.{feed.name}"
-        if self._hub.subscriptions(ch):
-            ps, qs = feed.price_scale, feed.qty_scale
-            records = tuple(
-                (
-                    0,
-                    scale_int(str(i["price"]), ps),
-                    scale_int(str(i["size"]), qs),
-                    0 if i["side"] == "buy" else 1,
-                    0,
-                )
-                for i in items
-            )
-            part = Frame(TRADES, records, price_scale=ps, qty_scale=qs, ts_base_ms=now_ms)
-            self._hub.publish(ch, {"symbol": feed.name, "trades": items}, part=part)
-        topic = Topic(env=_ENV, domain="md", symbol=feed.name, detail="trade")
-        for ev in events:  # the bars lanes: a NEVER_DROP queue, so a slow lane slows the feeder
-            await self._bus.publish(topic, ev)
-
-    @staticmethod
-    def _event(feed: _Feed, p: TradePrint, tid: str, ts_us: int) -> TradeEvent:
-        return TradeEvent.model_validate(
-            {
-                "event_id": uuid7(ts_us // 1000),
-                "ts_event": ts_us,
-                "ts_ingest": ts_us,
-                "source": "live",
-                "symbol": feed.name,
-                "trade_id": tid,
-                "price": p.price,
-                "qty": p.qty,
-                "side": p.side,
-                "is_block_trade": False,
-                "price_ticks": int((p.price / feed.tick).to_integral_value()),
-                "notional": p.price * p.qty,
-                "seq": feed.seq,
-            }
-        )
+        await self._sink.trades(feed, prints, items, now_ms, self._live(f"trades.{feed.name}"))
 
 
 def _scaled(price: str, size: str, ps: int, qs: int) -> tuple[int, int]:

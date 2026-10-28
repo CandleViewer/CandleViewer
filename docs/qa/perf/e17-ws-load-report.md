@@ -97,6 +97,25 @@ measured. Sessions are a real `SessionService` over the fake repository, so no c
 
 Warm-up (5 min, 20 s for the smoke) comes before the steady window and is never measured.
 
+**The feeder out of process (#571).** `--feeder proc` (runner and `fixture_app`; the workflow's `feeder` input)
+runs the same seeded `Feeder` in a child process (`bench/ws/feed_proc.py`), so a saturated run can tell the
+gateway's cost from the harness's; `inproc`, the default, is the feeder on the backend's loop as before. The child
+parses the corpus, keeps the server books, computes the depth-50 window deltas and their CVWB records, and writes a
+JSON line per slot into a pipe bounded at 16 KiB (about 0.15 s of profile B), so a backend that stops reading stalls
+the child within that and its skipped slots show up as `feeder_behind`. On the backend's loop a receiver applies
+each line to a mirror of the window, publishes the frames into the real `SequencingHub`, builds each print's
+`TradeEvent` with the same validated builder and awaits the `Bus` publish, stamping prints with its own wall clock
+(budget #3's reference), and yields after every line. `cv_bench_feed_published_total` counts what reached the hub;
+the child's CPU is `cv_bench_feeder_cpu_seconds_total`, reported apart (`feeder_cpu_cores` in `run.json`, a line in
+the report) and left out of the co-tenant figure, so `backend_cpu_s_per_s` is the gateway's alone. The child runs on
+k6's cpuset (4-7 on `cv-bench-01`; `--feeder-cpus` overrides), never the backend's, but inside the backend's systemd
+scope, so it shares the scope's `CPUQuota=400%`. Two differences are by design: a re-snapshot of a book sorts the
+50-level window, not the full book, and while a book topic has no subscriber the child still skips deltas that move
+no window level, so the replay position differs from `inproc`'s from then on (with every topic subscribed, the two
+modes publish the same frames and bus events, which a test pins). `feeder` is recorded in `run.json` and in a
+baseline; the gate and the reproducibility check refuse runs of mixed modes, and a baseline gates only runs of its
+own mode (an artefact without `feeder` is `inproc`, the only mode there was).
+
 ### Recorded deviations from the written shapes
 
 - **The 8-series cap binds below the written shapes.** `bars.*` and `footprint.*` each lease a bar series, and the
@@ -125,7 +144,7 @@ Warm-up (5 min, 20 s for the smoke) comes before the steady window and is never 
 4. k6 offers `permessage-deflate` as its WebSocket library can (no context takeover), so wire bytes are an upper
    bound and server deflate CPU differs from a browser session's.
 5. The feeder's own work (parse, book upkeep) runs on the gateway's loop and is inside the backend CPU numbers,
-   as ingestion's would be.
+   as ingestion's would be. `--feeder proc` (above) takes it out.
 6. The fixture runs on the stdlib asyncio loop, so that its Python socket guard sees every lookup, while production
    (`server.run()`, uvicorn `loop=auto`) picks uvloop, which the lock file installs. Fan-out, event-loop lag, the
    window timers and backend CPU (so the W5 CPU per family) are loop-sensitive and err on the pessimistic side

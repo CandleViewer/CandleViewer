@@ -24,11 +24,15 @@ cannot be pointed at a stub exchange (no setting overrides the hosts).
   handler. `ws_path` (default `/ws`) is where k6 connects; under another prefix it is served too.
 - **Logs.** The project's `configure_logging()` (JSON, `RedactionFilter`) writes to stderr, which
   the runner keeps as `backend.err`; stdout carries the ready line alone.
+- **Feeder.** `--feeder inproc` (the default) runs the feeder on this loop, as it always has;
+  `--feeder proc` runs it in a child process (`feed_proc`), pinned to `--feeder-cpus` when given,
+  and only its receiver stays here, so the backend's `process_*` numbers are the gateway's and the
+  child's CPU is `cv_bench_feeder_cpu_seconds_total` (#571).
 - **Bench-only knobs** (environment, read here only): `CV_BENCH_WS_SEND_DELAY_MS` delays every
   outbound `websocket.send` inside the `cv_ws_fanout_seconds` span (the self-check), and
   `CV_BENCH_FEED_SEED`. Ready line on stdout: `CV_BENCH_WS_READY port=<p> pid=<n> tokens=<path>`.
 
-    uv run python -m bench.ws.fixture_app --profile A --flag on --out DIR
+    uv run python -m bench.ws.fixture_app --profile A --flag on --out DIR [--feeder proc]
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import structlog
 import uvicorn
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Histogram, generate_latest
@@ -58,6 +63,7 @@ from prometheus_client.registry import Collector
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from bench.ws import HARNESS_VERSION, READY, profiles
+from bench.ws.feed_proc import RemoteFeeder
 from bench.ws.feeder import BookSource, Feeder, TradesSource, tier_plan
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
@@ -184,10 +190,16 @@ class SendDelay:
         await self.app(scope, receive, slow if scope["type"] == "websocket" else send)
 
 
-class _FeedCollector(Collector):
-    """`cv_bench_feed_{scheduled,published}_total{kind}`: the feeder's schedule and what it did."""
+#: The two feeder modes (`--feeder`): on the backend's loop, or in a child process.
+FEEDERS = ("inproc", "proc")
 
-    def __init__(self, feeder: Feeder) -> None:
+
+class _FeedCollector(Collector):
+    """`cv_bench_feed_{scheduled,published}_total{kind}`: the feeder's schedule and what it did.
+    Out of process also `cv_bench_feed_missed_total{kind}` (slots the child skipped) and
+    `cv_bench_feeder_cpu_seconds_total` (the child's CPU, outside `process_*`)."""
+
+    def __init__(self, feeder: Feeder | RemoteFeeder) -> None:
         self._feeder = feeder
 
     def collect(self) -> Iterator[CounterMetricFamily]:
@@ -198,6 +210,18 @@ class _FeedCollector(Collector):
             for kind, pair in self._feeder.stats().items():
                 fam.add_metric([kind], pair[idx])
             yield fam
+        if isinstance(self._feeder, RemoteFeeder):
+            fam = CounterMetricFamily(
+                "cv_bench_feed_missed", "Feeder slots the child skipped", labels=["kind"]
+            )
+            for kind, n in self._feeder.missed.items():
+                fam.add_metric([kind], n)
+            yield fam
+            yield CounterMetricFamily(
+                "cv_bench_feeder_cpu_seconds",
+                "CPU seconds of the out-of-process feeder",
+                value=self._feeder.cpu_seconds(),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +236,8 @@ class BackendConfig:
     send_delay_ms: int = 0
     depths: tuple[int, ...] = (50,)
     ws_path: str = "/ws"
+    feeder: str = "inproc"  # FEEDERS
+    feeder_cpus: str | None = None  # the child's cpus (`--feeder proc`); None: the backend's
 
     @classmethod
     def for_profile(
@@ -223,6 +249,8 @@ class BackendConfig:
         seed: int,
         send_delay_ms: int = 0,
         ws_path: str = "",
+        feeder: str = "inproc",
+        feeder_cpus: str | None = None,
     ) -> BackendConfig:
         p = profiles.resolve(table, name)
         feed = table["feeds"][p["feed"]]
@@ -237,6 +265,8 @@ class BackendConfig:
             send_delay_ms=send_delay_ms or int(p.get("send_delay_ms", 0)),
             depths=tuple(feed["book_depths"]),
             ws_path=profiles.ws_path(ws_path or p["ws_path"]),
+            feeder=feeder,
+            feeder_cpus=feeder_cpus or None,
         )
 
 
@@ -250,9 +280,16 @@ class Backend:
         self.settings = Settings(ws_shutdown_grace_ms=100, ws_backpressure_enabled=cfg.flag)
         self.hub, self.bus = SequencingHub(), Bus()
         tiers = tier_plan(len(cfg.symbols), cfg.hot, cfg.warm, table["tiers"])
-        self.feeder = Feeder(
-            self.hub, self.bus, cfg.symbols, tiers, seed=cfg.seed, depths=cfg.depths
-        )
+        if cfg.feeder not in FEEDERS:
+            raise ValueError(f"feeder {cfg.feeder!r}: one of {', '.join(FEEDERS)}")
+        self.feeder: Feeder | RemoteFeeder = (
+            RemoteFeeder(
+                self.hub, self.bus, cfg.symbols, tiers, seed=cfg.seed, depths=cfg.depths,
+                cpus=cfg.feeder_cpus,
+            )
+            if cfg.feeder == "proc"
+            else Feeder(self.hub, self.bus, cfg.symbols, tiers, seed=cfg.seed, depths=cfg.depths)
+        )  # fmt: skip
         self.sessions = SessionService(
             FakeSessionRepository(), Hasher(), clock=lambda: datetime.now(UTC)
         )
@@ -360,12 +397,15 @@ class Backend:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(self.tokens, fh)
+        if isinstance(self.feeder, RemoteFeeder):  # its hello holds the scales the bars ask for
+            await self.feeder.start()
         await self.bars.start()
         self._tasks = [
             spawn(self.server.serve(sockets=[self.sock]), name="bench-ws-uvicorn"),
             spawn(self.feeder.run(), name="bench-ws-feeder"),
             spawn(self._sample_lag(), name="bench-ws-lag"),
         ]
+        self._tasks[1].add_done_callback(feeder_ended)  # a feed that dies is logged as it dies
         while not self.server.started:
             if self._tasks[0].done():
                 self._tasks[0].result()
@@ -381,8 +421,20 @@ class Backend:
         for task in self._tasks[1:]:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
+        if isinstance(self.feeder, RemoteFeeder):  # no orphan: the child is ended and reaped
+            await self.feeder.close()
         await self.bars.stop()
         self.sock.close()
+
+
+def feeder_ended(task: asyncio.Task[Any]) -> None:
+    """Log a feeder task that ends with an error (a receiver whose child closed its pipe, a
+    publish that raised), as it ends: the run's `feeder_behind` guard trips later, but the cause
+    is named in `backend.err` at once. A cancellation is the shutdown's doing, not a failure."""
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        structlog.get_logger(__name__).error(
+            "bench_feeder_ended", task=task.get_name(), error=type(exc).__name__, detail=str(exc)
+        )
 
 
 async def serve(args: argparse.Namespace) -> None:
@@ -390,6 +442,7 @@ async def serve(args: argparse.Namespace) -> None:
     cfg = BackendConfig.for_profile(
         table, args.profile, flag=args.flag == "on", seed=args.seed,
         send_delay_ms=args.send_delay_ms, ws_path=args.ws_path,
+        feeder=args.feeder, feeder_cpus=args.feeder_cpus,
     )  # fmt: skip
     out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="cv-bench-ws-"))
     out.mkdir(parents=True, exist_ok=True)
@@ -406,6 +459,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--send-delay-ms", type=int, default=int(os.environ.get(ENV_SEND_DELAY, "0")))
     ap.add_argument("--out", default="")
     ap.add_argument("--ws-path", default="", help="k6's path; /ws and /api/v1/ws are always served")
+    ap.add_argument("--feeder", choices=FEEDERS, default="inproc", help="the feeder's process")
+    ap.add_argument("--feeder-cpus", default="", help="--feeder proc: the child's cpus")
     args = ap.parse_args(argv)
     with contextlib.redirect_stdout(sys.stderr):  # the handler binds stdout, the ready line's
         configure_logging(

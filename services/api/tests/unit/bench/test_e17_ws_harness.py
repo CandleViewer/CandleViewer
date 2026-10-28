@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import fcntl
 import itertools
 import json
 import logging
@@ -25,11 +26,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import orjson
 import pytest
 import structlog
 import websockets
+from structlog.testing import capture_logs
 
-from bench.ws import budgets, fixture_app, profiles, runner, w5
+from bench.ws import budgets, feed_proc, fixture_app, profiles, runner, w5
 from bench.ws import feeder as feed
 from bench.ws.feeder import Feeder, Tier, scale_int, tier_plan
 from candleviewer.bars.leases import CAP_PER_USER
@@ -148,12 +151,241 @@ async def drive(f: Feeder, steps: int) -> None:
         await f.step(f.streams[i])
 
 
-async def test_the_feeder_is_deterministic_per_seed() -> None:
-    a, b, c = Recorder(), Recorder(), Recorder()
-    for rec, seed in ((a, 7), (b, 7), (c, 8)):
-        await drive(make_feeder(seed, rec), 300)
-    assert a.calls == b.calls and a.calls
-    assert a.calls != c.calls  # another seed: other offsets, other phases
+class SpyBus:
+    """Stands in for the bus: every event the bars lanes would get (its random id aside)."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    async def publish(self, topic: object, ev: Any) -> None:
+        self.events.append((str(topic), ev.model_dump(exclude={"event_id"})))
+
+
+def proc_plan(seed: int, n: int = 4) -> dict[str, Any]:
+    tiers = tier_plan(n, 1, 1, TABLE["tiers"])
+    return feed_proc.plan_of(TABLE["symbols"][:n], tiers, seed=seed, depths=(50,))
+
+
+async def child_lines(seed: int, steps: int, n: int = 4) -> tuple[Feeder, list[bytes]]:
+    """The child's feeder and the lines it writes for the hello and its first `steps` slots."""
+    out: list[bytes] = []
+    child = feed_proc.child_feeder(proc_plan(seed, n), out.append)
+    out.append(feed_proc.hello(child, 50))
+    await drive(child, steps)
+    return child, out
+
+
+def remote(
+    rec: Recorder, bus: SpyBus | None = None, seed: int = 7, n: int = 4, **kw: Any
+) -> feed_proc.RemoteFeeder:
+    """The receiver of `seed`'s child, publishing into `rec` (every topic subscribed)."""
+    return feed_proc.RemoteFeeder(
+        cast(SequencingHub, rec), cast(Bus, bus or SpyBus()), TABLE["symbols"][:n],
+        tier_plan(n, 1, 1, TABLE["tiers"]), seed=seed, wall_ms=lambda: NOW_MS, **kw,
+    )  # fmt: skip
+
+
+async def relay(lines: list[bytes], rf: feed_proc.RemoteFeeder) -> None:
+    for line in b"".join(lines).splitlines():
+        await rf.handle(orjson.loads(line))
+
+
+@pytest.mark.parametrize("mode", ["inproc", "proc"])
+async def test_the_feeder_is_deterministic_per_seed(mode: str) -> None:
+    """Either mode: the seed fixes what reaches the hub (out of process, through the lines)."""
+
+    async def calls(seed: int) -> list[Any]:
+        rec = Recorder()
+        if mode == "inproc":
+            await drive(make_feeder(seed, rec), 300)
+        else:
+            await relay((await child_lines(seed, 300))[1], remote(rec, seed=seed))
+        return rec.calls
+
+    a, b, c = await calls(7), await calls(7), await calls(8)
+    assert a == b and a
+    assert a != c  # another seed: other offsets, other phases
+
+
+async def test_with_every_topic_subscribed_both_modes_publish_the_same_frames_and_bus_events() -> (
+    None
+):
+    """#571: the receiver publishes what the in-process feeder publishes, frame for frame and
+    `TradeEvent` for `TradeEvent` (built and validated by the same builder), when every topic has
+    a subscriber (the child always assumes one; the steady state of profile B)."""
+    rec_in, bus_in, rec_out, bus_out = Recorder(), SpyBus(), Recorder(), SpyBus()
+    symbols, tiers = TABLE["symbols"][:4], tier_plan(4, 1, 1, TABLE["tiers"])
+    f = Feeder(
+        cast(SequencingHub, rec_in), cast(Bus, bus_in), symbols, tiers, seed=7,
+        wall_ms=lambda: NOW_MS,
+    )  # fmt: skip
+    await drive(f, 1500)
+    await relay((await child_lines(7, 1500))[1], remote(rec_out, bus_out))
+    assert rec_in.calls == rec_out.calls and len(rec_in.calls) == 1500
+    assert bus_in.events == bus_out.events and len(bus_in.events) > 1000
+
+
+async def test_a_client_applying_the_remote_feeders_window_deltas_stays_equal_to_its_book() -> None:
+    """The twin of the in-process property: from the hello's window, the published deltas
+    rebuild the receiver's mirror, which is the child's server book's top 50."""
+    rec = Recorder()
+    child, lines = await child_lines(7, 2000)
+    rf = remote(rec)
+    await relay(lines[:1], rf)  # the hello: the window a first snapshot shows
+    bids, asks = rf.feeds["BTCUSDT"].book.top(50)
+    held = {"bid": dict(bids), "ask": dict(asks)}
+    await relay(lines[1:], rf)
+    deltas = [body for ch, body, _ in rec.calls if ch == "book.BTCUSDT.50"]
+    assert len(deltas) > 100
+    for body in deltas:
+        for side, rows in (("bid", body["bids"]), ("ask", body["asks"])):
+            for price, size in rows:
+                if Decimal(size) == 0:
+                    held[side].pop(price, None)
+                else:
+                    held[side][price] = size
+    mirror = rf.feeds["BTCUSDT"]
+    assert (held["bid"], held["ask"]) == mirror.book.top(50) == child.feeds["BTCUSDT"].book.top(50)
+    assert len(mirror.book.bids) == len(mirror.book.asks) == 50  # the window, never the full book
+    assert mirror.xu == child.feeds["BTCUSDT"].xu
+
+
+async def test_the_receiver_counts_what_it_published_stamps_prints_and_yields_after_each_line() -> (
+    None
+):
+    """Out of the pipe: `published` is what reached the hub, per stream as the child scheduled it,
+    `scheduled` the in-process formula over the child's `t0`; a print's `ts_ms` is the receiver's
+    wall clock; and no two lines are handled in one loop turn (#4833's yield, kept)."""
+    child, lines = await child_lines(7, 200)
+    data = b"".join(lines) + orjson.dumps(["0", 100.0]) + b"\n"
+    assert len(data) < 60_000  # the default pipe holds it all: the writer never blocks here
+    turns, at_line = 0, []
+
+    class Counting(feed_proc.RemoteFeeder):
+        async def handle(self, msg: list[Any]) -> None:
+            at_line.append(turns)
+            await super().handle(msg)
+
+    rf = Counting(
+        cast(SequencingHub, Recorder()), cast(Bus, SpyBus()), TABLE["symbols"][:4],
+        tier_plan(4, 1, 1, TABLE["tiers"]), seed=7, wall_ms=lambda: NOW_MS, clock=lambda: 101.0,
+    )  # fmt: skip
+    r, w = os.pipe()
+    os.write(w, data)
+    os.close(w)
+    os.set_blocking(r, False)
+    rf._fd = r
+
+    async def tick() -> None:
+        nonlocal turns
+        while True:
+            turns += 1
+            await asyncio.sleep(0)
+
+    ticker = asyncio.create_task(tick())
+    try:
+        with pytest.raises(feed_proc.FeederGone):  # the writer's end closed: the pipe's EOF
+            async with asyncio.timeout(30):  # a hang guard, never a latency bound
+                await rf.run()
+    finally:
+        ticker.cancel()
+        await asyncio.gather(ticker, return_exceptions=True)
+        os.close(r)
+    rf._fd = -1
+    assert max(len(list(g)) for _, g in itertools.groupby(at_line)) == 1
+    assert rf.stats() == feed.schedule_stats(child.streams, 1.0)
+    assert sum(pub for _, pub in rf.stats().values()) == 200
+    assert {int(t["ts_ms"]) for f in rf.feeds.values() for t in f.ring} == {NOW_MS}
+    assert rf.scales("BTCUSDT") == child.scales("BTCUSDT")
+    assert rf.tick_size("ETHUSDT") == child.tick_size("ETHUSDT")
+
+
+async def test_the_child_process_writes_the_lines_the_child_feeder_writes() -> None:
+    """`python -m bench.ws.feed_proc --steps N`: the real entry point, no clock, byte for byte."""
+    plan = proc_plan(7, 2)
+    argv = [sys.executable, "-m", "bench.ws.feed_proc", "--plan", json.dumps(plan)]
+    done = await asyncio.to_thread(
+        subprocess.run, [*argv, "--steps", "300"], cwd=feed_proc.API, capture_output=True,
+        timeout=300, check=False,
+    )  # fmt: skip
+    assert done.returncode == 0, done.stderr.decode()
+    assert done.stdout == b"".join((await child_lines(7, 300, 2))[1])
+
+
+async def spawn_child(seed: int = 7) -> tuple[asyncio.subprocess.Process, bytes]:
+    """The real child, started the way `RemoteFeeder.start` does, and its hello line."""
+    argv = [sys.executable, "-m", "bench.ws.feed_proc", "--plan", json.dumps(proc_plan(seed, 2))]
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        cwd=feed_proc.API, limit=1 << 24,
+    )  # fmt: skip
+    assert proc.stdout is not None
+    async with asyncio.timeout(180):
+        return proc, await proc.stdout.readline()
+
+
+async def test_the_child_schedules_nothing_before_go_and_starts_its_clock_at_it() -> None:
+    proc, line = await spawn_child()
+    try:
+        assert proc.stdout is not None and proc.stdin is not None
+        assert orjson.loads(line)[0] == "h"
+        with pytest.raises(TimeoutError):  # a bounded wait: no `0`, no slot, before the go
+            async with asyncio.timeout(2.0):
+                await proc.stdout.readline()
+        assert proc.returncode is None
+        before = time.monotonic()
+        proc.stdin.write(b"go\n")
+        await proc.stdin.drain()
+        async with asyncio.timeout(60):
+            first = orjson.loads(await proc.stdout.readline())
+        assert first[0] == "0" and float(first[1]) >= before  # t0 is taken at the go
+    finally:
+        if proc.stdin is not None:
+            proc.stdin.close()
+        async with asyncio.timeout(60):
+            code = await proc.wait()
+    assert code == 0
+
+
+async def test_the_child_exits_on_eof_before_the_go() -> None:
+    proc, line = await spawn_child()
+    assert orjson.loads(line)[0] == "h" and proc.stdin is not None
+    proc.stdin.close()
+    async with asyncio.timeout(60):
+        assert await proc.wait() == 0
+    assert proc.stdout is not None
+    assert await proc.stdout.read() == b""  # it never wrote a `0` or a slot
+
+
+@pytest.mark.parametrize("end", ["stdin", "stdout"])
+async def test_the_child_exits_when_the_backend_closes_its_end(end: str) -> None:
+    """No orphan: EOF on its stdin (the backend's lifeline) ends it while its lines are still
+    read, and so does EPIPE when the backend stops reading and closes its end."""
+    rf = remote(Recorder(), n=2)
+    await rf.start()
+    assert rf.proc is not None and rf.feeds.keys() == {"BTCUSDT", "ETHUSDT"}
+    # bounded: a backend that stops reading stalls the child within PIPE_BYTES, not 64 KiB
+    assert fcntl.fcntl(rf._fd, getattr(fcntl, "F_GETPIPE_SZ", 1032)) == feed_proc.PIPE_BYTES
+    reader: asyncio.Task[None] | None = None
+    try:
+        if end == "stdin":
+            reader = asyncio.create_task(rf.run())  # drained: only the EOF can end it
+            assert rf.proc.stdin is not None
+            rf.proc.stdin.close()
+        else:  # stdin stays open: only the broken pipe can end it
+            await rf.go()  # the schedule runs, so its next write finds the pipe closed
+            os.close(rf._fd)
+            rf._fd = -1
+        async with asyncio.timeout(60):  # a hang guard
+            code = await rf.proc.wait()
+        assert code == 0
+        if reader is not None:
+            with pytest.raises(feed_proc.FeederGone):
+                await reader
+    finally:
+        if reader is not None and not reader.done():
+            reader.cancel()
+        await rf.close()
 
 
 async def test_a_client_applying_the_published_window_deltas_stays_equal_to_the_server_book() -> (
@@ -466,13 +698,16 @@ def apply(state: dict[str, dict[int, int]], frame: Frame, *, reset: bool) -> Non
             book[price] = size
 
 
-@pytest.mark.parametrize("flag", [True, False])
+@pytest.mark.parametrize(("flag", "feeder"), [(True, "inproc"), (False, "inproc"), (True, "proc")])
 async def test_the_backend_serves_the_real_gateway_and_a_client_ends_consistent(
-    flag: bool, tmp_path: Path
+    flag: bool, feeder: str, tmp_path: Path
 ) -> None:
+    """`feeder="proc"` (#571): the same, fed by the child through the receiver; the child is
+    reaped when the backend exits."""
     cfg = fixture_app.BackendConfig(
-        symbols=("BTCUSDT", "ETHUSDT"), hot=1, warm=1, users=1, connections=1, flag=flag
-    )
+        symbols=("BTCUSDT", "ETHUSDT"), hot=1, warm=1, users=1, connections=1, flag=flag,
+        feeder=feeder,
+    )  # fmt: skip
     async with fixture_app.Backend(cfg, TABLE, tmp_path) as be:
         assert (tmp_path / "tokens.json").stat().st_mode & 0o777 == 0o600
         url = f"ws://127.0.0.1:{be.port}/ws"
@@ -556,6 +791,12 @@ async def test_the_backend_serves_the_real_gateway_and_a_client_ends_consistent(
             and 'cv_bench_feed_scheduled_total{kind="book"}' in scrape
         )
         assert "event_loop_lag_seconds" in scrape and "process_resident_memory_bytes" in scrape
+        assert ("cv_bench_feeder_cpu_seconds_total" in scrape) is (feeder == "proc")
+    if feeder == "proc":
+        proc = cast(feed_proc.RemoteFeeder, be.feeder).proc
+        assert proc is not None and proc.returncode is not None  # ended and reaped
+        with pytest.raises(ProcessLookupError):
+            os.kill(proc.pid, 0)
 
 
 async def test_the_refresh_double_rotates_a_session_and_the_socket_re_auths_in_place(
@@ -1094,6 +1335,64 @@ def test_a_run_plan_applies_the_overrides_to_the_resolved_profile() -> None:
     assert p.prof["gate_on"] == "including" and p.prof["reauth_after_s"] == 45  # the smoke's own
     assert runner.baseline_name({"profile": "A", "flag": "off"}) == "A-flag-off"
     assert runner._cpus("0-7") == 8 and runner._cpus("0,2-3") == 3
+    assert (p.feeder, p.feeder_cpus) == ("inproc", None)  # a namespace without it: as before
+
+
+def test_a_proc_feeder_runs_off_the_backends_cpus_on_k6s_unless_given_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def plan(**over: Any) -> runner.Plan:
+        return runner.plan(TABLE, args(**over), "smoke", tmp_path)
+
+    p = plan(feeder="proc", staging=True)
+    assert (p.feeder, p.backend_cpus, p.feeder_cpus) == ("proc", "0-7", "8-15")
+    assert plan(feeder="proc", k6_cpus="4-7", feeder_cpus="3").feeder_cpus == "3"
+    assert plan(feeder="proc").feeder_cpus is None  # no cpusets at all: the runner's own set
+    assert plan(k6_cpus="4-7").feeder_cpus is None  # in process there is no child to pin
+    assert plan(feeder="proc", backend_cpus="0-3", k6_cpus="4-7").feeder_cpus == "4-7"
+    assert plan(feeder="proc", backend_cpus="0-3", feeder_cpus="5").feeder_cpus == "5"
+    assert plan(backend_cpus="0-3").feeder_cpus is None  # in process nothing is refused
+    with pytest.raises(ValueError, match="feeder 'x'"):
+        plan(feeder="x")
+    seen: list[list[str]] = []
+
+    def popen(argv: list[str], **_: Any) -> None:
+        seen.append(argv)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(runner, "subprocess", SimpleNamespace(Popen=popen, PIPE=-1))
+    for p in (plan(), plan(feeder="proc", k6_cpus="4-7")):
+        with pytest.raises(RuntimeError, match="stop here"):
+            runner.start_backend(p)
+    assert seen[0][-2:] == ["--feeder", "inproc"]
+    assert seen[1][-4:] == ["--feeder", "proc", "--feeder-cpus", "4-7"]
+    cfg = fixture_app.BackendConfig.for_profile(TABLE, "B", flag=True, seed=1, feeder="proc")
+    assert (cfg.feeder, cfg.feeder_cpus) == ("proc", None)
+
+
+def test_a_proc_feeder_with_a_pinned_backend_and_no_cpus_of_its_own_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The child would inherit the backend's own cpus while the report said `any`: exit 2."""
+    with pytest.raises(SystemExit) as refused:
+        runner.plan(TABLE, args(feeder="proc", backend_cpus="0-3"), "smoke", tmp_path)
+    assert refused.value.code == 2
+    out = capsys.readouterr().out
+    assert "--feeder-cpus" in out and "0-3" in out and out.startswith("::error::")
+
+
+def test_an_unpinned_proc_feeder_is_reported_as_inheriting_not_as_any(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t0 = "process_cpu_seconds_total 1\ncv_bench_feeder_cpu_seconds_total 0\n"
+    t1 = "process_cpu_seconds_total 31\ncv_bench_feeder_cpu_seconds_total 15.5\n"
+    out = execute_virtually(tmp_path / "p", monkeypatch, [t0, t1], 30.0, feeder="proc")
+    res, facts = runner.judge(out)
+    report = runner.render(res, facts, runner.compare(res, facts, 0.05))
+    assert "on cpus 0:" in report
+    facts = facts | {"feeder_cpus": None}
+    report = runner.render(res, facts, runner.compare(res, facts, 0.05))
+    assert "cpus any:" not in report and "inherited, not pinned" in report
 
 
 def test_a_plan_keeps_the_profiles_own_length_apart_from_the_overridden_one(tmp_path: Path) -> None:
@@ -1126,6 +1425,9 @@ def test_execute_writes_the_profiles_own_length_the_loop_and_the_host_to_run_jso
     assert (facts["profile_duration_s"], facts["profile_warmup_s"]) == (3600.0, 300.0)
     assert runner.run_profile(facts) == "smoke"
     assert facts["loop"] == "asyncio"
+    assert (facts["feeder"], facts["feeder_cpus"], facts["feeder_cpu_cores"]) == (
+        "inproc", None, None,
+    )  # fmt: skip
     assert facts["same_host"] is True  # the runner starts both; k6 refuses a remote target
     assert backend.poll() is not None  # stopped, not left running
 
@@ -1211,7 +1513,7 @@ def fake_proc(poll: Callable[[], int | None]) -> SimpleNamespace:
 
 def execute_virtually(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[object], duration_s: float,
-    k6_cores: float = 0.0,
+    k6_cores: float = 0.0, **plan_over: Any,
 ) -> Path:  # fmt: skip
     """`runner.execute` in virtual time, no sleeps, k6 and the backend stood in: each `/metrics`
     request takes the next of `answers` (an exception takes the 15 s it waits); k6 is gone once
@@ -1245,8 +1547,40 @@ def execute_virtually(
         ("_proc_cpu_s", lambda pid: k6_cores * (clock[0] - 1_000.0)),
     ):  # fmt: skip
         monkeypatch.setattr(runner, name, stand_in)
-    a = args(duration_s=duration_s, warmup_s=0.0, k6_cpus="0")
+    a = args(duration_s=duration_s, warmup_s=0.0, k6_cpus="0", **plan_over)
     return runner.execute(runner.plan(TABLE, a, "A", tmp_path / "out"), "k6")
+
+
+def test_a_proc_run_reports_the_feeders_cpu_apart_and_leaves_it_out_of_the_co_tenant_figure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#571: out of process the backend's `process_*` is the gateway's alone, and the child's CPU
+    is read from its own counter, reported apart and not counted as a co-tenant's."""
+    t0 = "process_cpu_seconds_total 0\ncv_bench_feeder_cpu_seconds_total 0\n"
+    t1 = "process_cpu_seconds_total 31\ncv_bench_feeder_cpu_seconds_total 15.5\n"
+    runs = {
+        mode: json.loads(
+            (execute_virtually(tmp_path / mode, monkeypatch, [t0, t1], 30.0, feeder=mode)
+             / "run.json").read_text(encoding="utf-8")
+        )
+        for mode in ("inproc", "proc")
+    }  # fmt: skip
+    inproc, proc = runs["inproc"], runs["proc"]
+    assert (proc["feeder"], proc["feeder_cpus"]) == ("proc", "0")  # k6's cpuset, not the backend's
+    span = proc["steady_actual_s"]
+    assert (
+        proc["feeder_cpu_cores"] == pytest.approx(15.5 / span)
+        and inproc["feeder_cpu_cores"] is None
+    )
+    other = inproc["variance"]["other_cores"] - proc["variance"]["other_cores"]
+    assert other == pytest.approx(15.5 / span)  # in process the counter is not there to subtract
+    res, facts = runner.judge(tmp_path / "proc" / "out")
+    report = runner.render(res, facts, runner.compare(res, facts, 0.05))
+    assert f"Feeder out of process (`--feeder proc`) on cpus 0: {15.5 / span:.2f} core(s)" in report
+    res, facts = runner.judge(tmp_path / "inproc" / "out")
+    assert "Feeder out of process" not in runner.render(
+        res, facts, runner.compare(res, facts, 0.05)
+    )
 
 
 @pytest.mark.parametrize("boundary", ["t0", "t1"])
@@ -1583,6 +1917,54 @@ def without_loop(out: Path) -> Path:
     return out
 
 
+def test_a_baseline_of_the_other_feeder_mode_is_not_compared_and_one_records_its_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#571: in process the feeder's CPU and loop time are in the backend's numbers, out of it they
+    are not, so a baseline gates runs of its own mode only; one from before the mode was recorded
+    is `inproc`, the only mode there was."""
+    runs = baseline_15_percent_better(tmp_path, monkeypatch)
+    res, facts = runner.judge(runs[0])
+    assert "feeder" not in facts and runner.compare(res, facts, 0.05, 3).failures  # both legacy
+    g = runner.compare(res, facts | {"feeder": "proc"}, 0.05, 3)
+    assert not g.gated and g.failures == [] and g.reason == "no baseline recorded"  # no `A-proc`
+    base = tmp_path / "base"
+    legacy = (base / "A.json").read_text(encoding="utf-8")
+    (base / "A-proc.json").write_text(legacy, encoding="utf-8")  # a misfiled one: mode inproc
+    g = runner.compare(res, facts | {"feeder": "proc"}, 0.05, 3)
+    assert not g.gated and "baseline feeder inproc, this run's proc" in g.reason
+    (base / "A-proc.json").write_text(
+        json.dumps(json.loads(legacy) | {"feeder": "proc"}), encoding="utf-8"
+    )
+    assert runner.compare(res, facts | {"feeder": "inproc"}, 0.05, 3).failures  # A.json, as before
+    assert runner.compare(res, facts | {"feeder": "proc"}, 0.05, 3).failures  # its own mode gates
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "rec")
+    written = runner.record_baseline(res, facts | {"feeder": "proc"})
+    assert json.loads(written.read_text(encoding="utf-8"))["feeder"] == "proc"
+
+
+def test_a_proc_baseline_has_its_own_file_and_leaves_the_inproc_one_where_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert runner.baseline_name({"profile": "A", "flag": "on"}) == "A"
+    assert runner.baseline_name({"profile": "A", "flag": "on", "feeder": "inproc"}) == "A"
+    assert runner.baseline_name({"profile": "A", "flag": "off", "feeder": "inproc"}) == "A-flag-off"
+    assert runner.baseline_name({"profile": "A", "flag": "on", "feeder": "proc"}) == "A-proc"
+    off = {"profile": "A", "flag": "off", "feeder": "proc"}
+    assert runner.baseline_name(off) == "A-flag-off-proc"
+    runs = baseline_15_percent_better(tmp_path, monkeypatch)
+    res, facts = runner.judge(runs[0])
+    monkeypatch.delenv("CI", raising=False)
+    base = tmp_path / "coexist"
+    monkeypatch.setattr(runner, "BASELINES", base)
+    first = runner.record_baseline(res, facts)
+    second = runner.record_baseline(res, facts | {"feeder": "proc"})
+    assert (first.name, second.name) == ("A.json", "A-proc.json")
+    assert json.loads(first.read_text(encoding="utf-8"))["feeder"] == "inproc"
+    assert json.loads(second.read_text(encoding="utf-8"))["feeder"] == "proc"
+
+
 def test_runs_that_record_no_loop_are_not_compared_with_ones_that_do(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1631,7 +2013,7 @@ def args(**over: Any) -> argparse.Namespace:
     names = ("duration_s", "warmup_s", "rtt_delay_ms", "reauth_after_s", "probe_every_s")
     base: dict[str, Any] = dict.fromkeys((*names, "send_delay_ms", "gate_on", "ws_path"))
     base |= {"flag": "on", "staging": False, "seed": 7, "trace_sp": False}
-    base |= {"backend_cpus": None, "k6_cpus": None}
+    base |= {"backend_cpus": None, "k6_cpus": None, "feeder": "inproc", "feeder_cpus": None}
     return argparse.Namespace(**(base | over))
 
 
@@ -1689,6 +2071,9 @@ def test_a_shortened_run_is_never_recorded_as_the_full_baseline(
         ),
         ([{}, {"flag": "off"}, {}], 2, "differ in flag"),
         ([{}, {"loop": "uvloop"}, {}], 2, "differ in loop: asyncio, uvloop"),
+        # #571: one proc run among legacy ones (no `feeder`: inproc, the only mode there was)
+        ([{}, {"feeder": "proc"}, {}], 2, "differ in feeder: inproc, proc"),
+        ([{"feeder": "inproc"}, {}, {"feeder": "proc"}], 2, "differ in feeder: inproc, proc"),
         ([{}, {}, {"steady_s": 600.0}], 2, "differ in steady_s"),
         ([{}, {}], 2, "the gate needs 3"),
         ([{}, {"bandwidth": 1126.4}, {}], 1, "run1 missed a budget: s16_3.bandwidth"),
@@ -2020,3 +2405,27 @@ def test_the_backend_runs_on_the_stdlib_loop_and_logs_through_the_redacting_hand
     assert out == ""  # stdout is the ready line's alone
     assert "kept" in err and "kept2" in err and "[redacted:jwt-shape]" in err
     assert shape not in err  # redacted, as every project logger is (C-12.6)
+
+
+async def test_a_feeder_task_that_ends_with_an_error_is_logged_as_it_ends() -> None:
+    """#4852 (a Fable carry): a feed that dies mid-run, such as a receiver whose child closed its
+    pipe, is named in the log when it dies, not only by the `feeder_behind` guard at the end. A
+    cancelled feeder (the shutdown) logs nothing."""
+
+    async def gone() -> None:
+        raise RuntimeError("the feeder process closed its pipe")
+
+    async def idle() -> None:
+        await asyncio.Event().wait()
+
+    failed = asyncio.create_task(gone(), name="bench-ws-feeder")
+    await asyncio.wait({failed})
+    cancelled = asyncio.create_task(idle(), name="bench-ws-feeder")
+    cancelled.cancel()
+    await asyncio.wait({cancelled})
+    with capture_logs() as logs:
+        fixture_app.feeder_ended(failed)
+        fixture_app.feeder_ended(cancelled)
+    assert [(e["event"], e["log_level"], e["error"]) for e in logs] == [
+        ("bench_feeder_ended", "error", "RuntimeError")
+    ]

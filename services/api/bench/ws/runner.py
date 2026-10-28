@@ -29,6 +29,13 @@ scope (`CPUQuota=400%`, `MemoryMax=8G`, no swap) on cpuset 0-7, k6 on 8-15, so t
 a CPU (`--backend-cpus` and `--k6-cpus` set the cpusets alone, as on a 4 vCPU runner). It is not
 a VPS: one asyncio loop is bound by single-core speed, which a laptop core beats, and the report
 says so. k6 never phones home (`K6_NO_USAGE_REPORT=true`, no extension resolution).
+
+`--feeder proc` runs the bench feeder in a child of the backend (`bench.ws.feed_proc`, #571) so
+the backend CPU is the gateway's alone; the child runs on `--feeder-cpus`, by default k6's cpuset
+(never the backend's), and inside the backend's systemd scope, so under `--staging` it shares the
+scope's CPU quota. Its CPU is reported apart (`feeder_cpu_cores`) and taken out of the co-tenant
+figure. `feeder` is in `run.json` and in a baseline, and runs or baselines of another mode are
+never compared (an artefact that records none is `inproc`, the only mode there was).
 """
 
 from __future__ import annotations
@@ -98,6 +105,9 @@ OVERRIDES = (
     "probe_every_s",
     "send_delay_ms",
 )
+#: The feeder modes (`fixture_app.FEEDERS`), and the one an artefact without `feeder` ran.
+FEEDERS, LEGACY_FEEDER = ("inproc", "proc"), "inproc"
+FEEDER_CPU = "cv_bench_feeder_cpu_seconds_total"
 
 
 def get(port: int, path: str) -> str:
@@ -213,6 +223,8 @@ class Plan:
     #: these is not the profile (`run_profile`).
     nominal_duration_s: float = 0.0
     nominal_warmup_s: float = 0.0
+    feeder: str = "inproc"
+    feeder_cpus: str | None = None  # the child's cpuset under `--feeder proc`
 
     @property
     def duration_s(self) -> float:
@@ -231,9 +243,22 @@ def plan(
         prof["ws_path"] = profiles.ws_path(a.ws_path)
     backend = a.backend_cpus or (STAGING["backend"] if a.staging else None)
     k6 = a.k6_cpus or (STAGING["k6"] if a.staging else None)
+    feeder = getattr(a, "feeder", None) or "inproc"
+    if feeder not in FEEDERS:
+        raise ValueError(f"feeder {feeder!r}: one of {', '.join(FEEDERS)}")
+    # the child keeps off the backend's cpus: on k6's unless told otherwise
+    feeder_cpus = (getattr(a, "feeder_cpus", None) or k6) if feeder == "proc" else None
+    if feeder == "proc" and backend and not feeder_cpus:
+        # the child inherits the backend's affinity: the backend's own cpus, which the child must
+        # not share (as k6 is kept off them); the runner refuses what it cannot record truthfully
+        print(
+            f"::error::--feeder proc: the backend is pinned to cpus {backend} and the child would "
+            "inherit them: give it its own with --feeder-cpus (or --k6-cpus, or --staging)"
+        )
+        raise SystemExit(2)
     return Plan(
         profile, prof, a.flag == "on", out, a.staging, a.seed, backend, k6, a.trace_sp,
-        float(nominal["duration_s"]), float(nominal["warmup_s"]),
+        float(nominal["duration_s"]), float(nominal["warmup_s"]), feeder, feeder_cpus,
     )  # fmt: skip
 
 
@@ -293,7 +318,11 @@ def start_backend(p: Plan) -> tuple[subprocess.Popen[str], int, int]:
         str(int(p.prof.get("send_delay_ms", 0))),
         "--ws-path",
         str(p.prof["ws_path"]),
+        "--feeder",
+        p.feeder,
     ]
+    if p.feeder_cpus:
+        argv += ["--feeder-cpus", p.feeder_cpus]
     if p.backend_cpus:
         argv = ["taskset", "-c", p.backend_cpus, *argv]
     if p.staging:
@@ -453,15 +482,21 @@ def execute(p: Plan, k6: str) -> Path:
     cpus = _cpus(p.k6_cpus) if p.k6_cpus else os.cpu_count() or 1
     other: float | None = None  # null when not read (a lost boundary): never 0.0
     actual: float | None = None  # t0 to t1 as answered; none when a boundary was lost
+    feeder_cores: float | None = None  # the child's CPU (`--feeder proc`), in cores
     if len(stat) == 2 and not scrapes.missing:
         actual = stat["1"][1] - stat["0"][1]
-    if len(stat) == len(k6cpu) == 2 and not scrapes.missing:  # busy CPU less backend and k6
+        if p.feeder == "proc" and actual > 0:
+            d = budgets.delta(budgets.parse_scrape(t0 or ""), budgets.parse_scrape(t1 or ""))
+            feeder_cores = budgets.total(d, FEEDER_CPU) / actual
+    if len(stat) == len(k6cpu) == 2 and not scrapes.missing:  # busy CPU less backend, k6, feeder
         (busy0, w0), (busy1, w1) = stat["0"], stat["1"]
         (c0, u0), (c1, u1) = k6cpu["0"], k6cpu["1"]
         if w1 > w0 and u1 > u0:
             d = budgets.delta(budgets.parse_scrape(t0 or ""), budgets.parse_scrape(t1 or ""))
             backend_rate = budgets.total(d, "process_cpu_seconds_total") / (w1 - w0)
-            other = _other_cores(busy1 - busy0, w1 - w0, [backend_rate, (c1 - c0) / (u1 - u0)])
+            ours = [backend_rate, (c1 - c0) / (u1 - u0)]
+            ours += [budgets.total(d, FEEDER_CPU) / (w1 - w0)] if p.feeder == "proc" else []
+            other = _other_cores(busy1 - busy0, w1 - w0, ours)
     facts = {
         "harness": HARNESS_VERSION,
         "profile": p.profile,
@@ -478,6 +513,9 @@ def execute(p: Plan, k6: str) -> Path:
         "cpus": [p.backend_cpus, p.k6_cpus],
         "cgroup": STAGING["label"] if p.staging else "none",
         "loop": LOOP,
+        "feeder": p.feeder,
+        "feeder_cpus": p.feeder_cpus,
+        "feeder_cpu_cores": feeder_cores,
         # true by construction: the runner starts both, and ws_load.js refuses non-loopback
         "same_host": True,
         "scrapes": asdict(scrapes),
@@ -543,7 +581,8 @@ def judge(out: Path) -> tuple[Result, dict[str, Any]]:
 
 
 def baseline_name(facts: Mapping[str, Any]) -> str:
-    return str(facts["profile"]) + ("" if facts["flag"] == "on" else "-flag-off")
+    mode = "-proc" if feeder_of(facts) == "proc" else ""  # inproc keeps the names it always had
+    return str(facts["profile"]) + ("" if facts["flag"] == "on" else "-flag-off") + mode
 
 
 def run_profile(facts: Mapping[str, Any]) -> str:
@@ -590,6 +629,12 @@ def compare(
             reason=f"baseline loop {base.get('loop') or 'not recorded'}, this run's "
             f"{facts.get('loop') or 'not recorded'}: loop-sensitive numbers are not comparable "
             "across loops, or without one",
+        )
+    if base is not None and feeder_of(base) != feeder_of(facts):
+        return gate.GateResult(  # the feeder's CPU and loop time are in one side's numbers only
+            gated=False,
+            reason=f"baseline feeder {feeder_of(base)}, this run's {feeder_of(facts)}: a feeder on "
+            "the backend's loop and one in its own process are not comparable",
         )
     g = gate.compare(
         res.verdict,
@@ -649,6 +694,15 @@ def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
     ]
     backend_cpus, k6_cpus = facts.get("cpus", (None, None))
     lines.append(f"- CPU sets: backend {backend_cpus or 'any'}, k6 {k6_cpus or 'any'}")
+    if facts.get("feeder") == "proc":  # an inproc report reads as it always has
+        cores = facts.get("feeder_cpu_cores")
+        used = "not read" if cores is None else f"{cores:.2f} core(s)"
+        lines.append(
+            f"- Feeder out of process (`--feeder proc`) on cpus "
+            f"{facts.get('feeder_cpus') or 'any (inherited, not pinned)'}: {used}, "
+            "outside the backend CPU"
+            + (" (inside the backend's systemd scope and its quota)" if facts["staging"] else "")
+        )
     if not facts["staging"]:
         lines.append("- Not staged: no systemd scope, so no CPU quota and no memory cap")
     if (cs := res.clock_skew) is not None:  # why the validity guard let the run through, or not
@@ -720,6 +774,7 @@ def record_baseline(res: Result, facts: Mapping[str, Any]) -> Path:
     against a `warn-only` one). `gate.record` refuses under CI, so a run never rewrites it."""
     extra = {k: facts[k] for k in ("commit", "k6_version", "cpu_model", "cgroup", "loop")}
     extra["flag"] = facts["flag"]
+    extra["feeder"] = feeder_of(facts)
     named = Verdict(baseline_name(facts), list(res.verdict.checks), dict(res.verdict.metrics))
     scaling = f"steady {facts['steady_s']:.0f} s"
     return gate.record(
@@ -738,10 +793,16 @@ def merge(runs: Sequence[tuple[Result, dict[str, Any]]]) -> tuple[Result, dict[s
     return Result(merged, [x for r, _ in runs for x in r.invalid]), runs[0][1]
 
 
+def feeder_of(facts: Mapping[str, Any]) -> str:
+    """The feeder mode a run or a baseline records: one from before the mode was recorded ran the
+    only mode there was, `inproc`."""
+    return str(facts.get("feeder") or LEGACY_FEEDER)
+
+
 def comparable(runs: Sequence[tuple[Result, dict[str, Any]]], names: Sequence[str]) -> list[str]:
     """Why these runs cannot be compared with each other: an INVALID run proves nothing, nor does a
-    run that records no event loop, and runs of another profile, flag, machine, length or event
-    loop are not samples of one thing. Empty when they can."""
+    run that records no event loop, and runs of another profile, flag, machine, length, event
+    loop or feeder mode are not samples of one thing. Empty when they can."""
     why = [
         f"{name} is {res.status} ({'; '.join(res.invalid)}{_missed(res)})"
         for name, (res, _) in zip(names, runs, strict=True)
@@ -756,6 +817,9 @@ def comparable(runs: Sequence[tuple[Result, dict[str, Any]]], names: Sequence[st
         seen = sorted({str(facts.get(key, "not recorded")) for _, facts in runs})
         if len(seen) > 1:
             why.append(f"the runs differ in {key}: {', '.join(seen)}")
+    modes = sorted({feeder_of(facts) for _, facts in runs})
+    if len(modes) > 1:  # the feeder's CPU is in the backend's numbers in one mode only
+        why.append(f"the runs differ in feeder: {', '.join(modes)}")
     return why
 
 
@@ -956,6 +1020,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             sp.add_argument("--backend-cpus", help="taskset cpuset of the backend (--staging: 0-7)")
             sp.add_argument("--k6-cpus", help="taskset cpuset of k6 (--staging: 8-15)")
+            sp.add_argument(
+                "--feeder", choices=FEEDERS, default="inproc",
+                help="the feeder on the backend's loop (inproc) or in a child process (proc)",
+            )  # fmt: skip
+            sp.add_argument("--feeder-cpus", help="--feeder proc: the child's cpuset (k6's)")
             sp.add_argument("--seed", type=int, default=7)
             sp.add_argument("--ws-path", help="k6's path: /ws (default), or /api/v1/ws")
             sp.add_argument("--gate-on", choices=("including", "excluding"))
