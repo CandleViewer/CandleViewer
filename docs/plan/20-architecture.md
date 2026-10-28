@@ -1654,7 +1654,7 @@ Once the gateway has sent a frame that carries a span id `sp` (23 §3.1, E17-T06
 
 ### 12.3 Tracing
 
-OpenTelemetry spans for the two paths that matter: **order path** (`http.request → oms.validate → oms.fanout → exchange.place_order → private_ws.fill`) and **replay session start**. Market-data hot loops are _not_ traced per event (sampling would distort the loop); they are covered by metrics instead.
+OpenTelemetry spans for the two paths that matter: the **order path** and **replay session start**. A single order is one trace: `http.request` (on `placeOrder`) → `oms.submit` → `exchange.place_order`. `oms.submit` has three children: `oms.validate` (24 §8.4 steps 1–8), `oms.persist` (step 9) and `oms.send` (steps 10–11). B1 sends the create from its own invoke, outside the request's context, so `oms.send` hands the venue call a W3C trace context and `exchange.place_order` starts under it as `oms.send`'s child; a create resumed after a restart has none and starts a trace of its own. A trade group's legs add `oms.fanout` (E34-S01), and a fill is `private_ws.fill`, a trace of its own. Span attributes are ids and bounded codes only (`tracing.py`'s allow-list): `oms.submit` carries `symbol`, `env`, `order_link_id` and its `result` code, and `http.request` its method, route and status code. A span that ends in an exception records the exception's class, never its message or traceback (C-12.6). Market-data hot loops are _not_ traced per event (sampling would distort the loop); they are covered by metrics instead.
 
 ### 12.4 Dashboards (provisioned in `infra/grafana`)
 

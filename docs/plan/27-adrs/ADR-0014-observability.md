@@ -143,3 +143,7 @@ Residual items: the K01 absolute overhead numbers still need a re-run on the ref
   `cv_machine_live_count{kind}` flat across a 24 h soak — stays **unmeasured** until the 24 h demo run
   with B13/B14 wired (owner exception #1778 A). Only consistent figure: book apply p95 0.011 ms at
   depth 200, in line with ADR-0016's "15–60 µs of real work" hot-path premise.
+
+## Addendum (2026-10-28) — E29-T04 order-path spans
+
+§5's order-path span names are maintained in `20-architecture.md` §12.3. #913 (E29-T04) adds `oms.submit`, with `oms.validate`, `oms.persist` and `oms.send` as its children, and a span records an exception's class, never its message (C-12.6). No decision is overturned.
