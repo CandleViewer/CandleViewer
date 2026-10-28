@@ -251,70 +251,70 @@ BINDINGS = (
 # doc | line at the base | text the line must hold, unique in the file; a `14` / `15` line below
 # the pointer line may sit one lower (the shift is counted, never assumed).
 CITED_TABLE = """
-14 | 1522 | **Type:** Modal. Split size across N orders
-14 | 1538 | `POST /api/v1/orders` (backend places N children and tracks them as one algo)
-14 | 1539 | ("Child 5 is below the minimum — reduce the order count")
-14 | 1540 | placing (per-child progress) · partial placement failure with retry.
-14 | 1541 | CMP-130 SlippageEstimateChip, CMP-228 PreviewTile.
-14 | 1544 | Preview recomputes locally within one frame
-14 | 1545 | `algo.scaled_created` with `{symbol, side, levels, totalQty
-14 | 1546 | (flat / linear / exponential / custom) drawn
-14 | 1547 | recommendations PROPOSED pending the owner's sessions: the preview as a real table
+14 | 1525 | **Type:** Modal. Split size across N orders
+14 | 1541 | `POST /api/v1/orders` (backend places N children and tracks them as one algo)
+14 | 1542 | ("Child 5 is below the minimum — reduce the order count")
+14 | 1543 | placing (per-child progress) · partial placement failure with retry.
+14 | 1544 | CMP-130 SlippageEstimateChip, CMP-228 PreviewTile.
+14 | 1547 | Preview recomputes locally within one frame
+14 | 1548 | `algo.scaled_created` with `{symbol, side, levels, totalQty
+14 | 1549 | (flat / linear / exponential / custom) drawn
+14 | 1550 | recommendations PROPOSED pending the owner's sessions: the preview as a real table
 15 | 139 | ### CMP-010 Slider
 15 | 144 | `role="slider"`, `aria-valuenow/min/max/text`
-15 | 225 | ### CMP-019 Icon
-15 | 262 | ### CMP-023 Progress Bar
-15 | 524 | ### CMP-049 Table (base data table)
-15 | 527 | `virtualized?: boolean` (default true above 50 rows)
-15 | 811 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
-15 | 1323 | ### CMP-118 AlgoProgressCard (emulated TWAP/Iceberg/Chase/Scaled)
-15 | 1348 | ### CMP-119 BracketEditor (SL/TP attach widget)
-15 | 1483 | ### CMP-130 SlippageEstimateChip
-15 | 1803 | ### CMP-158 SafetyInvariantNotice
-15 | 2667 | ### CMP-228 PreviewTile
-15 | 2669 | the live miniature preview inside settings dialogs
-22 | 6467 | /trade-groups:
-22 | 6501 | summary: Place one ticket across N accounts (fan-out) with per-leg overrides
-22 | 6517 | `403 risk_limit_breached` with one `errors[]` entry per offending leg: its `field`
-22 | 6551 | Fan-out is scheduled against a **per-UID** rate budget
-22 | 6764 | /trade-groups/{tradeGroupId}/amend:
-22 | 6829 | operationId: cancelTradeGroup
-22 | 12940 | /trade-groups/preview:
-22 | 12954 | who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
-22 | 14693 | name: X-Arm-Token
-22 | 17532 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600 }
-22 | 17673 | max_concurrent_orders: { type: ["integer", "null"], minimum: 1, maximum: 500 }
-22 | 17677 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600, default: 30 }
-22 | 18526 | levels: { type: integer, minimum: 2, maximum: 50 }
-22 | 18529 | distribution: { type: string, enum: [equal, linear, geometric] }
-22 | 18533 | description: ">1 weights size toward `to_price`.",
-22 | 18806 | CreateTradeGroupRequest:
-22 | 18850 | ResolvedLegParams:
-22 | 18884 | TradeGroupLeg:
-22 | 18935 | LegError:
-22 | 18952 | retryable: { type: boolean }
-22 | 21666 | TradeGroupPreview:
-22 | 21697 | rate_budget_exhausted,
-23 | 3144 | ### 14.8 `TickerUpdate`
-23 | 3310 | ### 15.1 `OrderUpdate`
-23 | 3720 | ### 15.5 `TradeGroupUpdate`
+15 | 231 | ### CMP-019 Icon
+15 | 271 | ### CMP-023 Progress Bar
+15 | 549 | ### CMP-049 Table (base data table)
+15 | 552 | `virtualized?: boolean` (default true above 50 rows)
+15 | 844 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
+15 | 1357 | ### CMP-118 AlgoProgressCard (emulated TWAP/Iceberg/Chase/Scaled)
+15 | 1382 | ### CMP-119 BracketEditor (SL/TP attach widget)
+15 | 1517 | ### CMP-130 SlippageEstimateChip
+15 | 1841 | ### CMP-158 SafetyInvariantNotice
+15 | 2712 | ### CMP-228 PreviewTile
+15 | 2714 | the live miniature preview inside settings dialogs
+22 | 6731 | /trade-groups:
+22 | 6772 | summary: Place one ticket across N accounts (fan-out) with per-leg overrides
+22 | 6788 | `403 risk_limit_breached` with one `errors[]` entry per offending leg: its `field`
+22 | 6822 | Fan-out is scheduled against a **per-UID** rate budget
+22 | 7046 | /trade-groups/{tradeGroupId}/amend:
+22 | 7111 | operationId: cancelTradeGroup
+22 | 13563 | /trade-groups/preview:
+22 | 13577 | who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
+22 | 15330 | name: X-Arm-Token
+22 | 18273 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600 }
+22 | 18414 | max_concurrent_orders: { type: ["integer", "null"], minimum: 1, maximum: 500 }
+22 | 18418 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600, default: 30 }
+22 | 19297 | levels: { type: integer, minimum: 2, maximum: 50 }
+22 | 19300 | distribution: { type: string, enum: [equal, linear, geometric] }
+22 | 19304 | description: ">1 weights size toward `to_price`.",
+22 | 19622 | CreateTradeGroupRequest:
+22 | 19666 | ResolvedLegParams:
+22 | 19700 | TradeGroupLeg:
+22 | 19751 | LegError:
+22 | 19768 | retryable: { type: boolean }
+22 | 22786 | TradeGroupPreview:
+22 | 22843 | rate_budget_exhausted,
+23 | 3149 | ### 14.8 `TickerUpdate`
+23 | 3327 | ### 15.1 `OrderUpdate`
+23 | 3737 | ### 15.5 `TradeGroupUpdate`
 24 | 135 | `mode="conservative"` rounds a buy limit _down_ and a sell limit _up_
-24 | 2077 | ### 8.7 Rate budgeting
-24 | 2108 | submission fails fast with `RATE_BUDGET_EXCEEDED`
-24 | 2115 | ### 8.8 Safety invariant — native stop-loss
-24 | 2493 | | `risk_caps.max_orders_per_minute`
-24 | 2597 | **9.3.1 Stop resolution.**
-24 | 2640 | ### 9.4 Fan-out algorithm
-24 | 2680 | 4. **Rate budget is checked across all UIDs before the first send.**
-24 | 2963 | ### 10.6 Scaled (laddered) orders
-24 | 2970 | distribution: Literal["equal","linear","geometric","custom"] = "equal"
-24 | 2976 | batch_size: int = 10
-24 | 2979 | duplicate prices after rounding are **merged**
-24 | 2981 | Submission uses Bybit's batch endpoint (1
-24 | 4928 | ### 15.5 Audited action vocabulary (closed set)
-28 | 1914 | ## B2 — TradeGroup
-28 | 2183 | ### B2.2 States
-28 | 2198 | ### B2.3 Events and transitions
+24 | 2086 | ### 8.7 Rate budgeting
+24 | 2117 | submission fails fast with `RATE_BUDGET_EXCEEDED`
+24 | 2124 | ### 8.8 Safety invariant — native stop-loss
+24 | 2511 | | `risk_caps.max_orders_per_minute`
+24 | 2615 | **9.3.1 Stop resolution.**
+24 | 2661 | ### 9.4 Fan-out algorithm
+24 | 2701 | 4. **Rate budget is checked across all UIDs before the first send.**
+24 | 2984 | ### 10.6 Scaled (laddered) orders
+24 | 2991 | distribution: Literal["equal","linear","geometric","custom"] = "equal"
+24 | 2997 | batch_size: int = 10
+24 | 3000 | duplicate prices after rounding are **merged**
+24 | 3002 | Submission uses Bybit's batch endpoint (1
+24 | 5007 | ### 15.5 Audited action vocabulary (closed set)
+28 | 2005 | ## B2 — TradeGroup
+28 | 2274 | ### B2.2 States
+28 | 2289 | ### B2.3 Events and transitions
 11 | 3261 | #### US-ALGO-004 — Scaled entry orders · Should
 11 | 3271 | and I can retry only the failed leg
 11 | 3399 | #### US-ALGO-009 — DCA / scale-in safety ladders · Should
@@ -325,7 +325,7 @@ CITED_TABLE = """
 16 | 113 | | **Compact** (default for trading surfaces)
 16 | 114 | | **Comfortable** (default for admin/onboarding/settings)
 16 | 125 | 1. Density changes spacing-token resolution only
-23 | 4350 | `oms.account_stale`
+23 | 4380 | `oms.account_stale`
 E32-D02 | 285 | Account stale (`oms.account_stale`
 E32-D02 | 369 | `ladder.cancel.confirm` · `ladder.cancelled`
 E32-D02 | 466 | stale refuses order entry, never a tighten
@@ -1480,7 +1480,7 @@ def main(argv: list[str]) -> int:
     numbers["reason_keys_proposed"] = sum(
         not r.startswith("rbac.") and r not in REGISTERED_REASONS for r in reasons
     )
-    numbers["checklist_items"] = count(r"^\| 14:1534 ", spec)
+    numbers["checklist_items"] = count(r"^\| 14:1537 ", spec)
     numbers["missing_tokens"] = len(missing)
     numbers["banned_copy_words"] = len(BANNED_COPY)
     numbers["rows"] = ROWS
