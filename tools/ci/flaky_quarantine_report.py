@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """E02-T10: flaky-test quarantine report generator (C-9.3).
 
-Scans pytest test files for `@pytest.mark.flaky` decorators and Vitest test
+Scans pytest test files for `@pytest.mark.flaky` decorators (read as tokens, so a
+marker inside a string literal or a comment is not one) and Vitest test
 files for a `.flaky` tag convention (`it.flaky("...")` / `describe.flaky(...)`,
 mirroring Vitest's own `.skip`/`.only` modifier style), and requires each one
 to carry a ticket reference on the same or the immediately preceding line
@@ -18,9 +19,11 @@ Stdlib only.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import sys
+import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -65,19 +68,37 @@ def _find_ticket_near(lines: list[str], idx: int) -> str | None:
     return None
 
 
+def _flaky_decorator_lines(source: str) -> list[int]:
+    """The 1-based lines of `@pytest.mark.flaky` decorators, read as tokens, so a marker inside
+    a string literal or a comment (a test's fixture text, a docstring) is never counted. A file
+    that does not tokenize falls back to the line scan, so a marker is never missed."""
+    skip = {tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT}
+    try:
+        tokens = [
+            t for t in tokenize.generate_tokens(io.StringIO(source).readline) if t.type not in skip
+        ]
+    except (tokenize.TokenError, SyntaxError):
+        return [i + 1 for i, line in enumerate(source.splitlines()) if PYTEST_FLAKY_RE.search(line)]
+    return [
+        t.start[0]
+        for i, t in enumerate(tokens)
+        if t.type == tokenize.OP
+        and t.string == "@"
+        and [n.string for n in tokens[i + 1 : i + 6]] == ["pytest", ".", "mark", ".", "flaky"]
+    ]
+
+
 def scan_pytest_file(path: Path, repo_root: Path) -> list[QuarantineEntry]:
-    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    entries = []
-    for i, line in enumerate(lines):
-        if PYTEST_FLAKY_RE.search(line):
-            entries.append(
-                QuarantineEntry(
-                    path=str(path.relative_to(repo_root)).replace("\\", "/"),
-                    line=i + 1,
-                    ticket=_find_ticket_near(lines, i),
-                )
-            )
-    return entries
+    source = path.read_text(encoding="utf-8", errors="ignore")
+    lines = source.splitlines()
+    return [
+        QuarantineEntry(
+            path=str(path.relative_to(repo_root)).replace("\\", "/"),
+            line=line,
+            ticket=_find_ticket_near(lines, line - 1),
+        )
+        for line in _flaky_decorator_lines(source)
+    ]
 
 
 def scan_vitest_file(path: Path, repo_root: Path) -> list[QuarantineEntry]:
