@@ -2293,8 +2293,8 @@ SECURITY_ALLOWED: tuple[tuple[str, str, int], ...] = (
     ("spec", '(C-12.2); "no reveal control anywhere', 1),
     ("spec", "itself a misrepresentation (E27-D03 §2.3).``", 1),
     ("spec", "buttons) · `revealed?: boolean` (never", 1),
-    ("spec", "mount) · `onToggleReveal` · `autoHideMs?:", 1),
-    ("spec", "`onToggleReveal` · `autoHideMs?: number` (default", 1),
+    ("spec", "mount) · `onToggleReveal?` · `autoHideMs?:", 1),
+    ("spec", "`onToggleReveal?` · `autoHideMs?: number` (default", 1),
     ("spec", "automatically) · `copyable?: boolean` (default", 1),
     ("spec", "value's length), revealed (only after", 1),
     ("spec", "press of the toggle), expiring (the", 1),
@@ -9876,6 +9876,17 @@ SEC_PIN_TXT = r"""
   validity form, `type.ui.heading-md`, and `blocking` defined as `live="off"`, never dismissible
   and an `id`; every other #4414 addition is kept as written. The boards PR re-reads this row
   before it draws the confirm or the notice.
+@ row D03-C18 ‖ Row
+  **#4847's CMP-034 and CMP-028 lines.** #4847 changed both entries after this spec was based: one
+  name in CMP-034's Props gained its optional `?`, and CMP-028's Unprotected story is now
+  ProtectionPendingSolidEdge, the solid edge until the hatched-edge token ships (its As built
+  line). **Decision:** Appendix A's CMP-034 Props row and CMP-028 Storybook row are re-based on
+  that text: each Old quotes the entry as #4847 left it, at `15:393` and `15:332`, and each New
+  says only what is still to change. BQ-8's ruling stands unchanged: CMP-034's Props carry the
+  served masked id and a label only (§2.3); CMP-028's Storybook keeps ProtectionPendingSolidEdge
+  and adds the three KEK-notice stories (BQ-9).
+@ row D03-C18 ‖ Owner
+  the `15` owner (CMP-034, CMP-028)
 @ row D03-G1 ‖ Row
   **The egress IP before any check.** `EgressIp` is served only inside a verification result — a
   test this client ran, a `422` refusal or a rotation's (`22:2745-2749`, `22:16965`, `22:16995`) —
@@ -10344,15 +10355,15 @@ SEC_PIN_TXT = r"""
   response exposes only key metadata (C-12.2); "no reveal control anywhere in the app or API"
   (US-ACCT-002); only the last 4 characters of a key id are stored in clear; and a value that
   looks as if it could open is itself a misrepresentation (E27-D03 §2.3).``
-@ row CMP-034 · Props (`15:374`) ‖ Entry · field
-  CMP-034 · Props (`15:374`)
-@ row CMP-034 · Props (`15:374`) ‖ Old (verbatim)
+@ row CMP-034 · Props (`15:393`) ‖ Entry · field
+  CMP-034 · Props (`15:393`)
+@ row CMP-034 · Props (`15:393`) ‖ Old (verbatim)
   ``- **Props**: `value: string` (a value the client holds in the current flow, never a stored
   secret: C-2.7) · `label: string` (what it is, e.g. "API secret"; names the group and the
-  buttons) · `revealed?: boolean` (never `true` at mount) · `onToggleReveal` · `autoHideMs?:
+  buttons) · `revealed?: boolean` (never `true` at mount) · `onToggleReveal?` · `autoHideMs?:
   number` (default 10000, re-masks automatically) · `copyable?: boolean` (default `false`;
   CMP-033).``
-@ row CMP-034 · Props (`15:374`) ‖ New
+@ row CMP-034 · Props (`15:393`) ‖ New
   ``- **Props**: `maskedId: string` (the served `key_id_masked`, `...` plus 4 characters; any
   other value renders nothing and warns without echoing it) · `label: string` (what it identifies,
   e.g. "API key"; names the group).``
