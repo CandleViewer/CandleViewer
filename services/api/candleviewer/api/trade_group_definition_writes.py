@@ -10,6 +10,16 @@ common symbols (400 `no_common_symbol`). Then the `risk_caps` step-up (SR-E28-02
 environment and the member count, never the name; then the store, `trade_group_definition.created`
 ahead of its commit (C-2.9; unwritten, 503 with nothing stored; `audit_definition_write` serves
 every definition write), a live name in any letter case `409 conflict`. Logs carry no value.
+
+`updateTradeGroupDefinition` and `deleteTradeGroupDefinition` (S2d) are admitted alike, meet the
+flag alike, then read the definition as the Owner: missing, deleted or of another environment, one
+404 (SEC-2-03, C-2.11). A replace's body is `validated` with another `environment` than the stored
+one refused first (`400 write_once`); its `If-Match`, when sent, must be the `ETag` of the row read
+(412), whose `updated_at` the store compares under its row lock (412), and without one the last
+write wins. Their challenges name the definition by its id. On every write, after RBAC and before
+the flag, which a replay never meets (21 Sec.10.7), this principal's kept `2xx` to the same request
+(SR-E28-17) is answered behind the step-up; another request under its key is `409
+idempotency_key_reuse`.
 """
 
 from __future__ import annotations
@@ -18,10 +28,11 @@ import inspect
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, cast
+from datetime import datetime
+from typing import Annotated, Any, Final, Protocol, cast
 
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
@@ -36,11 +47,18 @@ from candleviewer.accounts.trade_group_readiness import ReadinessSource
 from candleviewer.api import profile_body as edge
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
+from candleviewer.api.idempotency import (
+    IdempotencyCache,
+    IdempotencyKeyReuse,
+    remember,
+    replay,
+    request_fingerprint,
+)
 from candleviewer.api.profile_audit import Emitter
 from candleviewer.api.profiles import AccountReads, problem
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.step_up import RequestElevation, demand_elevation
-from candleviewer.api.step_up_challenge import definition_write_text, quote_label
+from candleviewer.api.step_up_challenge import ChallengeText, definition_write_text, quote_label
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.trade_group_definitions import definition_document, definition_readiness
 from candleviewer.api.trade_groups_gate import TradeGroupsGate
@@ -59,6 +77,10 @@ from candleviewer.storage.repositories.accounts import OwnerScope
 MAX_DEFINITION_BODY_BYTES: Final = 16_384
 _WRITE: Final = Permission.ACCOUNTS_WRITE
 _NOT_OWNER: Final = f"not_owner:{_WRITE.value}:{Scope.GRANTED_ACCOUNTS.value}"  # as `enforce`
+_STALE: Final = "If-Match does not name this definition's current version. Nothing was changed."
+_WRITE_ONCE: Final = ProfileFieldError(
+    "environment", "write_once", "A definition's environment cannot change."
+)
 
 
 def _log() -> Any:
@@ -66,12 +88,16 @@ def _log() -> Any:
     return structlog.get_logger(__name__)
 
 
+class DefinitionRows(port.DefinitionStore, port.DefinitionReads, Protocol):
+    """The writes' store: its writes, and the read a replace and a delete answer 404 from."""
+
+
 @dataclass(frozen=True, slots=True)
 class DefinitionWrites:
     """The store, readiness for the answer, the members' accounts (in the Owner's scope), their
     bound profiles (`get_effective_profile`) and the listing of this environment (C-2.11)."""
 
-    store: port.DefinitionStore
+    store: DefinitionRows
     readiness: ReadinessSource
     accounts: AccountReads
     profiles: EffectiveProfiles
@@ -80,7 +106,7 @@ class DefinitionWrites:
 
 @dataclass(frozen=True, slots=True)
 class _Caller:
-    """A create past admission; a refusal's record names the caller's session (#4174)."""
+    """A write past admission; a refusal's record names the caller's session (#4174)."""
 
     principal: PrincipalSnapshot
     writes: DefinitionWrites
@@ -91,6 +117,28 @@ class _Caller:
 
 class _Rejected(edge.Refused):
     """A body the rules refuse: `400 validation_failed` (a shape refusal is 422)."""
+
+
+class _Missing(Exception):
+    """No live definition of this process's environment: missing, deleted or another's (404)."""
+
+
+def _expected(request: Request, held: port.DefinitionRecord) -> datetime | None:
+    """`If-Match` (22): absent, `None`, and the last write wins; else exactly the `ETag` of the row
+    read, whose `updated_at` the store then compares under its row lock. Anything else (`*`, a
+    list, two headers, another version) is `IfMatchRefused` (412)."""
+    if not (sent := request.headers.getlist("if-match")):
+        return None
+    tag = domain.definition_etag(domain.stored_definition(held))  # the hash of the row read
+    if len(sent) > 1 or sent[0].strip(" \t") != tag:  # RFC 9110's optional whitespace aside
+        raise edge.IfMatchRefused
+    return held.definition.updated_at
+
+
+def _restated(verb: str, raw: bytes, of: uuid.UUID | None = None) -> ChallengeText:
+    """A kept create's or replace's challenge, from its own body, which passed the model then."""
+    sent = api.TradeGroupDefinitionInput.model_validate(edge.decode(raw))
+    return definition_write_text(verb, sent.environment, len(sent.members), of)
 
 
 def _forbidden() -> JSONResponse:
@@ -169,10 +217,12 @@ def make_trade_group_definition_writes_router(
     writes: DefinitionWrites | None, gate: TradeGroupsGate, audit: Emitter,
     resolver: SnapshotResolver | None, *, auth: SessionsLike | None = None,
     elevation: RequestElevation | None = None, new_id: Callable[[], uuid.UUID] = uuid.uuid4,
+    replays: IdempotencyCache | None = None,
 ) -> APIRouter:  # fmt: skip
-    """The create over `writes` (`None`: 503); `resolver=None`: 501; `elevation` demands the
-    `risk_caps` step-up (`None`: 503, nothing stored)."""
+    """The writes over `writes` (`None`: 503); `resolver=None`: 501; `elevation` demands the
+    `risk_caps` step-up (`None`: 503, nothing stored); `replays` keeps their `2xx` answers."""
     router = APIRouter(tags=["trading"])
+    cache = IdempotencyCache() if replays is None else replays
 
     async def admit(request: Request) -> _Caller | Response:
         if resolver is None:
@@ -199,8 +249,31 @@ def make_trade_group_definition_writes_router(
         except errors.AccountNotFoundError:
             return None
 
-    async def validated(got: _Caller, body: object) -> domain.DefinitionInput:
-        """`body` as the domain takes it, judged in the module docstring's order."""
+    def kept(
+        got: _Caller, request: Request, operation: str, raw: bytes
+    ) -> tuple[str | None, str, Response | None]:
+        """The key, the request's fingerprint, and this principal's kept answer to both."""
+        key = edge.idempotency(request, operation)
+        digest = request_fingerprint(request.method, request.url.path, raw)
+        return key, digest, replay(cache, str(got.principal.user_id), key, digest)
+
+    async def replayed(request: Request, hit: Response, text: ChallengeText) -> Response:
+        """A kept answer, behind the step-up its write took; never the flag (21 Sec.10.7)."""
+        return await demand_elevation(elevation, request, text) or hit
+
+    async def current(got: _Caller, definition_id: uuid.UUID) -> port.DefinitionRecord:
+        """The live definition as the Owner reads it; one of another environment is answered as a
+        missing or deleted one (C-2.11, SEC-2-03), as the profile writes answer an account."""
+        found = await got.writes.store.get(OwnerScope(got.principal.user_id), definition_id)
+        if found is None or found.definition.env != got.writes.instruments.environment:
+            raise _Missing
+        return found
+
+    async def validated(
+        got: _Caller, body: object, stored: port.DefinitionRecord | None = None
+    ) -> domain.DefinitionInput:
+        """`body` as the domain takes it, judged in the module docstring's order; a replace's
+        `environment` must be the `stored` one's, judged before its members."""
         try:
             sent = api.TradeGroupDefinitionInput.model_validate(body)
             member = domain.DefinitionMember
@@ -217,6 +290,8 @@ def make_trade_group_definition_writes_router(
             field = f"members[{exc.index}].exchange_account_id"
             repeated = ProfileFieldError(field, "duplicate_account", "This account is a member.")
             raise edge.refused([repeated]) from None
+        if stored is not None and definition.environment != stored.definition.env:
+            raise _Rejected([_WRITE_ONCE], "A definition's environment is write-once.")
         held, scope = got.writes, OwnerScope(got.principal.user_id)
         accounts = [await held.accounts.get_account(scope, m.account_id) for m in members]
         envs = cast(Mapping[AccountId, Environment], {a.id: a.env.value for a in accounts})
@@ -235,9 +310,15 @@ def make_trade_group_definition_writes_router(
         return definition
 
     async def answer(exc: Exception, got: _Caller) -> Response:
-        """A create that stored nothing, answered as 22 says; a defect is raised."""
+        """A write that stored nothing, answered as 22 says; a defect is raised."""
         if isinstance(exc, port.DefinitionStoreError):
             exc = domain.definition_error(exc)  # a fresh error holding a name alone (C-12.6)
+        if isinstance(exc, _Missing):
+            return problem("not_found", "No such trade-group definition.")
+        if isinstance(exc, IdempotencyKeyReuse):
+            return problem("idempotency_key_reuse", "The key was used for another request.")
+        if isinstance(exc, edge.IfMatchRefused | errors.AccountVersionConflictError):
+            return problem("version_conflict", _STALE)
         if isinstance(exc, edge.Refused):
             status = 400 if isinstance(exc, _Rejected) else 422
             entries = [entry.to_dict() for entry in exc.errors]
@@ -255,7 +336,7 @@ def make_trade_group_definition_writes_router(
             return problem("account_scope_denied", detail, status=403)
         if isinstance(exc, errors.AccountConflictError) and exc.constraint == "ux_tgd_name":
             return problem("conflict", "A live definition has that name, in any letter case.")
-        if isinstance(exc, errors.AccountRuleError):  # the store's own rule `validated` missed
+        if isinstance(exc, errors.AccountRuleError):  # the store's own rule the checks missed
             _log().error("trade_group_definition_refused_by_constraint", rule=exc.rule)
             return problem("validation_failed", "The definition breaks a stored rule.", status=400)
         if isinstance(exc, errors.AccountScopeDeniedError):  # the stores' live-owner gate (SR-051)
@@ -281,11 +362,14 @@ def make_trade_group_definition_writes_router(
     async def create_trade_group_definition(request: Request) -> Response:
         if isinstance(got := await admit(request), Response):
             return got
-        if (off := gate.refusal()) is not None:
-            return off
         owner = got.principal.user_id
         try:
             raw = await edge.read_capped(request, MAX_DEFINITION_BODY_BYTES)
+            key, digest, hit = kept(got, request, "createTradeGroupDefinition", raw)
+            if hit is not None:
+                return await replayed(request, hit, _restated("create", raw))
+            if (off := gate.refusal()) is not None:
+                return off
             definition = await validated(got, edge.decode(raw))
             text = definition_write_text("create", definition.environment, len(definition.members))
             if (challenge := await demand_elevation(elevation, request, text)) is not None:
@@ -297,6 +381,66 @@ def make_trade_group_definition_writes_router(
         except Exception as exc:  # mapped, or raised as a defect
             return await answer(exc, got)
         doc = definition_document(stored, definition_readiness(stored, got.writes.readiness))
-        return JSONResponse(doc, 201, {"ETag": domain.definition_etag(stored)})
+        out = JSONResponse(doc, 201, {"ETag": domain.definition_etag(stored)})
+        return remember(cache, str(owner), key, digest, out)
+
+    @router.put("/trade-group-definitions/{definitionId}")
+    async def update_trade_group_definition(
+        request: Request, definition_id: Annotated[uuid.UUID, Path(alias="definitionId")]
+    ) -> Response:
+        if isinstance(got := await admit(request), Response):
+            return got
+        owner = got.principal.user_id
+        try:
+            raw = await edge.read_capped(request, MAX_DEFINITION_BODY_BYTES)
+            key, digest, hit = kept(got, request, "updateTradeGroupDefinition", raw)
+            if hit is not None:
+                return await replayed(request, hit, _restated("replace", raw, definition_id))
+            if (off := gate.refusal()) is not None:
+                return off
+            held = await current(got, definition_id)
+            definition = await validated(got, edge.decode(raw), held)
+            expected, size = _expected(request, held), len(definition.members)
+            text = definition_write_text("replace", definition.environment, size, definition_id)
+            if (challenge := await demand_elevation(elevation, request, text)) is not None:
+                return challenge
+            ahead = audit_definition_write(audit, owner, got.ip, got.request_id)
+            new = domain.new_definition(definition_id, definition)
+            made = await got.writes.store.replace(
+                OwnerScope(owner), definition_id, new, expected_updated_at=expected,
+                write_ahead=ahead,
+            )  # fmt: skip
+            if made is None:  # deleted since the read: it takes no member (SEC-2-03)
+                raise _Missing
+            stored = domain.stored_definition(made)
+        except Exception as exc:  # mapped, or raised as a defect
+            return await answer(exc, got)
+        doc = definition_document(stored, definition_readiness(stored, got.writes.readiness))
+        out = JSONResponse(doc, 200, {"ETag": domain.definition_etag(stored)})
+        return remember(cache, str(owner), key, digest, out)
+
+    @router.delete("/trade-group-definitions/{definitionId}", status_code=204)
+    async def delete_trade_group_definition(
+        request: Request, definition_id: Annotated[uuid.UUID, Path(alias="definitionId")]
+    ) -> Response:
+        if isinstance(got := await admit(request), Response):
+            return got
+        owner, scope = got.principal.user_id, OwnerScope(got.principal.user_id)
+        text = definition_write_text("delete", got.writes.instruments.environment, 0, definition_id)
+        try:
+            key, digest, hit = kept(got, request, "deleteTradeGroupDefinition", b"")  # no body
+            if hit is not None:
+                return await replayed(request, hit, text)
+            if (off := gate.refusal()) is not None:
+                return off
+            await current(got, definition_id)
+            if (challenge := await demand_elevation(elevation, request, text)) is not None:
+                return challenge
+            ahead = audit_definition_write(audit, owner, got.ip, got.request_id)
+            if await got.writes.store.soft_delete(scope, definition_id, write_ahead=ahead) is None:
+                raise _Missing  # deleted since the read
+        except Exception as exc:  # mapped, or raised as a defect
+            return await answer(exc, got)
+        return remember(cache, str(owner), key, digest, Response(status_code=204))
 
     return router

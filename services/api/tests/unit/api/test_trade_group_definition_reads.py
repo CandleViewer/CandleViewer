@@ -48,7 +48,8 @@ def record(
 
 
 class Store:
-    """`DefinitionReads` as Postgres scopes it: a grant reads one if it holds every member's."""
+    """`DefinitionReads` as Postgres scopes it: a grant reads one if it holds every member's, and
+    no scope reads one with no member (the store skips it)."""
 
     def __init__(self, *records: port.DefinitionRecord) -> None:
         self.records, self.deleted = {r.definition.id: r for r in records}, set[UUID]()
@@ -59,11 +60,11 @@ class Store:
         self.reads += 1
         if self.fails is not None:
             raise self.fails
-        live = [r for i, r in self.records.items() if i not in self.deleted]
+        live = [r for i, r in self.records.items() if i not in self.deleted and r.members]
         if isinstance(scope, OwnerScope):
             return live
-        held = scope.account_ids  # a definition with no member is no grant's
-        return [r for r in live if r.members and {m.exchange_account_id for m in r.members} <= held]
+        held = scope.account_ids
+        return [r for r in live if {m.exchange_account_id for m in r.members} <= held]
 
     async def get(self, scope: AccountScope, key: UUID) -> port.DefinitionRecord | None:
         return next((r for r in self._seen(scope) if r.definition.id == key), None)
@@ -218,7 +219,8 @@ def test_a_member_whose_account_row_is_off_reads_account_disabled(world: World) 
 
 def test_faults_are_refused_or_503_logged_by_class_and_sqlstate_or_500(world: World) -> None:
     """The owner gate (SR-051) audited as `enforce` would, a record unwritten logged, still 403; a
-    timeout or a row the model refuses, 503 logged by class and SQLSTATE (C-12.6); a defect 500."""
+    timeout or a row the model refuses (21 members, which the schema allows), 503 logged by class
+    and SQLSTATE (C-12.6); a defect 500."""
     world.store.fails = port.DefinitionScopeDeniedError()
     assert world.read(PAIR).status_code == 403
     assert [(r["reason"], r["object_id"]) for r in world.records] == [
@@ -230,7 +232,7 @@ def test_faults_are_refused_or_503_logged_by_class_and_sqlstate_or_500(world: Wo
         bare, world.principal = world.read(), principal("owner")
         world.store.fails = StorageQueryFailed("57014")
         timeout, world.store.fails = world.read(), None
-        world.store.records[PAIR] = record(PAIR, "Pair")  # no member: the model refuses it
+        world.store.records[PAIR] = record(PAIR, "Pair", *(UUID(int=n) for n in range(100, 121)))
         unreadable, world.store.fails = world.read(PAIR), TypeError("a defect")
         defect = world.read()
     sent = [r.status_code for r in (gated, bare, timeout, unreadable, defect)]

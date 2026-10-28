@@ -1,7 +1,7 @@
-"""Contract, provider side (E28-T05 #909, S2b; C-6.2): each status the two definition reads
-declare in 22, answered by their router over the unit test's world, validates against its schema.
-Unwired, both answer 501, which 22 does not declare (the profile reads' precedent; a later contract
-delta adds it)."""
+"""Contract, provider side (E28-T05 #909, S2b to S2d; C-6.2): each status the definition reads
+and writes declare in 22, answered by their routers over the unit tests' worlds, validates against
+its schema. Unwired, they answer 501, which 22 does not declare (the profile reads' precedent; a
+later contract delta adds it)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from tests.contract._admin_support import SPEC, validate_example
 from tests.unit.api.test_trade_group_definition_create import L, caller, payload
 from tests.unit.api.test_trade_group_definition_create import World as Writes
 from tests.unit.api.test_trade_group_definition_reads import CORE3, MISSING, A, C, World, principal
+from tests.unit.api.test_trade_group_definition_update import World as Updates
 
 CALLERS = {"owner": principal("owner"), "manager": principal("manager", A, C), "anonymous": None}
 CALLERS["bare"] = principal("viewer", read=False)  # the forbidden-role case
@@ -70,3 +71,38 @@ def test_each_create_answer_is_one_22_declares(
     media = "application~1" + ("json" if status == 201 else media)
     assert resp.status_code == status
     validate_example(f"{declared.get('$ref', own)[1:]}/content/{media}/schema", resp.json())
+
+
+@pytest.mark.parametrize(
+    ("method", "role", "fault", "status"),
+    [
+        ("PUT", "owner", None, 200), ("PUT", "owner", "live", 400), ("PUT", None, None, 401),
+        ("PUT", "manager", None, 403), ("PUT", "owner", "flag", 403), ("PUT", "owner", "gone", 404),
+        ("PUT", "owner", "Pair", 409), ("PUT", "owner", "stale", 412),
+        ("PUT", "owner", "twice", 422), ("PUT", "owner", "audit", 503),
+        ("DELETE", "owner", None, 204), ("DELETE", None, None, 401),
+        ("DELETE", "manager", None, 403), ("DELETE", "owner", "flag", 403),
+        ("DELETE", "owner", "gone", 404), ("DELETE", "owner", "audit", 503),
+    ],
+)  # fmt: skip
+def test_each_replace_and_delete_answer_is_one_22_declares(
+    method: str, role: str | None, fault: str | None, status: int
+) -> None:
+    """S2d, on Core3: Pair's name is taken; a `204` has no body to validate."""
+    world = Updates()
+    world.principal, world.flag = None if role is None else caller(role), fault != "flag"
+    world.faults = {"audit": RuntimeError("not started")} if fault == "audit" else {}
+    key, tag = MISSING if fault == "gone" else CORE3, 'W/"0000000000000000"'
+    sent = {"live": payload(L, env="live"), "Pair": payload(A, C, name="Pair")}
+    body = sent.get(fault or "", payload(A, A) if fault == "twice" else None)
+    if method == "PUT":
+        resp = world.put(body, key, if_match=tag if fault == "stale" else None)
+    else:
+        resp = world.delete(key)
+    assert resp.status_code == status
+    if status != 204:
+        path = "/trade-group-definitions/{definitionId}"
+        declared = SPEC["paths"][path][method.lower()]["responses"][str(status)]
+        own = "#/paths/" + path.replace("/", "~1") + f"/{method.lower()}/responses/{status}"
+        media = "application~1" + ("json" if status == 200 else "problem+json")
+        validate_example(f"{declared.get('$ref', own)[1:]}/content/{media}/schema", resp.json())

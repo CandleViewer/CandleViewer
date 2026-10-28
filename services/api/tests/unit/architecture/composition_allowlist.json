@@ -30,10 +30,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "DELETE /trade-group-definitions/{definitionId}": {
-      "reason": "contract-first operation (E28-T02 P-1a contract slice); E28-T05 serves it",
-      "ticket": "E28-T05"
-    },
     "GET /admin/security/summary": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -321,10 +317,6 @@
     "PUT /settings/hotkeys/{hotkeyProfileId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
-    },
-    "PUT /trade-group-definitions/{definitionId}": {
-      "reason": "contract-first operation (E28-T02 P-1a contract slice); E28-T05 serves it",
-      "ticket": "E28-T05"
     }
   },
   "lifespan_locals": {

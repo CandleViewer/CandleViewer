@@ -10,7 +10,7 @@ Given the process's bus, the facade announces each committed write on it (`BusPr
 #906 D3a; 24 Sec.9.2). The writes' stores share that pool: the accounts the writes resolve and the
 armed rules a delete names (#906 D2-m); `profile_writes` builds the routes' `ProfileWrites` over
 them, with this environment's catalogue (C-2.11). `definition_writes` builds the definition
-create's `DefinitionWrites` over the same accounts, cache and catalogue (E28-T05 S2c).
+writes' `DefinitionWrites` over the same accounts, cache and catalogue (E28-T05 S2c, S2d).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from candleviewer.accounts.profile_cache import EffectiveProfiles
 from candleviewer.accounts.profile_repository import ArmedRules, ProfilesRepository
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.api.profile_writes import ProfileWrites
-from candleviewer.api.trade_group_definition_writes import DefinitionWrites
+from candleviewer.api.trade_group_definition_writes import DefinitionRows, DefinitionWrites
 from candleviewer.bus import Topic
 from candleviewer.domain.primitives import Environment
 from candleviewer.instrument_limits_wiring import CatalogueLimits
@@ -46,7 +46,6 @@ if TYPE_CHECKING:
     from candleviewer.ingestion.service import IngestionService
     from candleviewer.observability.metrics import Metrics
     from candleviewer.settings import Settings
-    from candleviewer.storage.repositories.trade_group_definitions import DefinitionStore
 
 __all__ = [
     "DISPOSE_S",
@@ -149,14 +148,15 @@ def profile_writes(
 
 def definition_writes(
     profiles: ProfilesWiring | None,
-    definitions: DefinitionStore | None,
+    definitions: DefinitionRows | None,
     readiness: ReadinessSource,
     ctx: _Context,
 ) -> DefinitionWrites | None:
-    """The definition create's ports (E28-T05 S2c): the definition store, the readiness its 201
-    answers with, the wiring's accounts and its one effective-profile cache (the order path's,
-    SR-E28-15), and the catalogue of the process's environment, read per call as it is attached
-    late (C-2.11); `None` with no wiring or no store (the fake backend: 503)."""
+    """The definition writes' ports (E28-T05 S2c, S2d): the definition store, which a replace and
+    a delete read first, the readiness a write answers with, the wiring's accounts and its one
+    effective-profile cache (the order path's, SR-E28-15), and the catalogue of the process's
+    environment, read per call as it is attached late (C-2.11); `None` with no wiring or no store
+    (the fake backend: 503)."""
     if profiles is None or definitions is None:
         return None
     env: Environment = ctx.settings.environment.value

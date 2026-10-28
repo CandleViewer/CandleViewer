@@ -4,13 +4,16 @@ The port imports the stdlib and two driver-free sibling ports only (whose own im
 `test_trade_groups_port.py` pins), each error carries a name and nothing else (C-12.6), and the
 grant predicate is the trade-group store's SR-E28-21 predicate over a definition's members. On
 that store's fake unit of work: every read statement carries the scope, a read is capped and an
-Owner's gated first, a read leaves out one with no member, an empty read-back denies a write.
+Owner's gated first, a read sees one snapshot and skips one with no member, logging its id, an
+empty read-back denies a write.
 """
 
 from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import fields
 from datetime import UTC, datetime
 from typing import Any
@@ -18,6 +21,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.db import models
 from candleviewer.storage.errors import WriteAheadTimeout
@@ -27,7 +31,8 @@ from candleviewer.storage.repositories import trade_groups_sqlalchemy as groups
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 from tests.unit.storage import test_trade_groups_store as fake
 from tests.unit.storage.test_trade_groups_port import _DRIVERS, _imports
-from tests.unit.storage.test_trade_groups_store import _Rel, _Result
+from tests.unit.storage.test_trade_groups_store import _Rel as _GroupRel
+from tests.unit.storage.test_trade_groups_store import _Result
 
 _sql, _params, _marked = fake._sql, fake._params, fake._binds_as_markers
 _ID, _CALLER, _ACCOUNT = UUID(int=1), UUID(int=2), UUID(int=3)
@@ -38,6 +43,28 @@ _NEW = port.NewDefinition(id=_ID, name="Core3", env="demo", members=())
 _OTHER: Any = (UUID(int=4), "Pair", "demo", None, None, _AT, _AT)
 _MEMBER: Any = (_ID, _ACCOUNT, True, "demo", False)
 _FIRST = port.DefinitionRecord(port.DefinitionRow(*_ROW), (port.MemberRow(*_MEMBER[1:]),))
+
+
+class _Rel(_GroupRel):
+    """The group store's fake, which also answers the snapshot statement; `opened` holds each unit
+    of work's first statement."""
+
+    def __init__(self, *script: _Result | BaseException) -> None:
+        super().__init__(*script)
+        self.opened: list[Any] = []
+
+    @asynccontextmanager
+    async def unit_of_work(self) -> AsyncIterator[Any]:
+        async with super().unit_of_work() as uow:
+            run, first = uow.session.execute, len(self.opened)
+
+            async def execute(stmt: Any, params: dict[str, Any] | None = None) -> Any:
+                if len(self.opened) == first:
+                    self.opened.append(stmt)
+                return _Result() if stmt is pg.READ_SNAPSHOT else await run(stmt, params)
+
+            uow.session.execute = execute
+            yield uow
 
 
 def _store(rel: _Rel, **caps: Any) -> pg.SqlAlchemyDefinitionStore:
@@ -135,16 +162,32 @@ async def test_the_store_runs_under_the_caps_it_is_given() -> None:
 
 
 async def test_a_page_reads_its_members_in_one_statement_and_drops_one_that_lost_them() -> None:
-    """A grant reads one whose members it lost in between as nothing. A definition always has a
-    member, so an Owner's page drops one that reads none (a soft delete came between) and answers
-    the others, where the record would 503 it; its get is a 404. A write's read-back keeps it."""
+    """A read skips one that read no member, logging its id alone (C-12.6): in one snapshot, one
+    stored with none, which the record would 503. A page answers the others, a get is a 404, and
+    a write's read-back keeps it."""
     grant = _Rel(_Result([_ROW, _OTHER]), _Result([_MEMBER]))
-    assert await _store(grant).page(_GRANT, after=("Core", _ID), limit=2) == (_FIRST,)
+    with capture_logs() as logs:
+        assert await _store(grant).page(_GRANT, after=("Core", _ID), limit=2) == (_FIRST,)
+        owner = _Rel(_Result(), _Result([_ROW, _OTHER]), _Result([_MEMBER]))  # the gate first
+        assert await _store(owner).page(_OWNER, after=None, limit=2) == (_FIRST,)
+        gone = _Rel(_Result(), _Result([_ROW]), _Result([]))
+        assert await _store(gone).get(_OWNER, _ID) is None
     assert "trade_group_definitions.id IN ($3::UUID, $4::UUID)" in _sql(grant.calls[1])
-    owner = _Rel(_Result(), _Result([_ROW, _OTHER]), _Result([_MEMBER]))  # the owner gate first
-    assert await _store(owner).page(_OWNER, after=None, limit=2) == (_FIRST,)
-    gone = _Rel(_Result(), _Result([_ROW]), _Result([]))
-    assert await _store(gone).get(_OWNER, _ID) is None
+    skipped = {"event": "trade_group_definition.read_skipped", "log_level": "warning"}
+    assert logs == [skipped | {"definition_id": str(key)} for key in (_OTHER[0], _OTHER[0], _ID)]
     empty = _Rel()  # an empty grant runs no SQL
     assert await _store(empty).page(GrantScope(_CALLER, frozenset()), after=None, limit=2) == ()
     assert empty.calls == empty.caps == []
+
+
+async def test_a_read_sees_one_snapshot_and_a_write_reads_committed() -> None:
+    """A read's statements share one snapshot, set before any query fixes it, so a definition
+    deleted between them is read whole and a page is short only at the listing's end; a write's
+    row lock must see the last commit, so it keeps READ COMMITTED."""
+    reads = _Rel(_Result([_ROW]), _Result([_MEMBER]), _Result([]))
+    assert await _store(reads).get(_GRANT, _ID) == _FIRST
+    assert await _store(reads).page(_GRANT, after=None, limit=2) == ()
+    write = _Rel(_Result(), _Result([]))  # the owner gate, then the row lock: not live
+    assert await _store(write).soft_delete(_OWNER, _ID, write_ahead=AsyncMock()) is None
+    assert (reads.opened, write.opened) == ([pg.READ_SNAPSHOT] * 2, [groups.SET_TIMEOUT])
+    assert pg.READ_SNAPSHOT.text == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"

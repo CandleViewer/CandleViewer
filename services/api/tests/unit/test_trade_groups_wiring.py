@@ -4,13 +4,14 @@ switch, the live gate and the account row, the first reason winning. The ports a
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
@@ -183,3 +184,26 @@ def test_the_root_mounts_the_definition_create_over_the_composed_writes(
 
     monkeypatch.setattr(appmod, "wire_profiles", wired)
     assert answer() == (403, "trading_disabled")
+
+
+def _writes(routes: Any, prefix: str = "") -> Iterator[tuple[str, APIRoute]]:
+    """Each definition write served, walked as `deny_by_default.served_operations` walks them."""
+    for route in routes:
+        if (inner := getattr(route, "original_router", None)) is not None:
+            context = getattr(getattr(route, "include_context", None), "prefix", "") or ""
+            yield from _writes(inner.routes, prefix + context)
+        elif isinstance(route, APIRoute) and route.path.startswith(PATH):
+            for method in sorted((route.methods or set()) & {"POST", "PUT", "DELETE"}):
+                yield f"{method} {prefix}{route.path}", route
+
+
+def test_the_root_gates_each_definition_write_with_the_risk_caps_step_up() -> None:
+    """SR-E28-02, PF-S02: each mounted write demands its step-up through the root's `elevation`,
+    of class `risk_caps` as the registry declares, read off the closures as `test_suite_meta.py`
+    reads a guard's permission (no route test sees the class: each injects its own)."""
+    classes = {}
+    for key, route in _writes(appmod.create_app(principal_resolver=World()).routes):
+        elevation = inspect.getclosurevars(route.endpoint).nonlocals["elevation"]
+        classes[key] = inspect.getclosurevars(elevation).nonlocals["action_class"]
+    one = f"{PATH}/{{definitionId}}"
+    assert classes == dict.fromkeys([f"POST {PATH}", f"PUT {one}", f"DELETE {one}"], "risk_caps")

@@ -48,6 +48,8 @@ E09-S03-F1's contract PR (#4743) adds the contract-first `authLock`: 87.
 #915 PR 1 (E29-T07) serves seven frozen reads (`listOrders`, `getOrder`, `getOrderDiagnostics`,
 `listPositions`, `getPosition`, `listExecutions`, `listClosedPnl`): 80, frozen 75.
 E09-S03-F1's implementation PR (#4743) serves `authLock`: 79.
+#909 S2d serves the contract-first `updateTradeGroupDefinition` and
+`deleteTradeGroupDefinition`: 76 (set from the list's count; #5031 had left it one high).
 Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that
@@ -79,7 +81,7 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 79
+PENDING_BASELINE = 76
 FROZEN_BASELINE = 75
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")

@@ -718,8 +718,8 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("PUT", "/exchange-accounts/{accountId}/profiles/{profileId}", "risk_caps"),
     ("DELETE", "/exchange-accounts/{accountId}/profiles/{profileId}", "risk_caps"),
     ("PUT", "/exchange-accounts/{accountId}/default-profile", "risk_caps"),
-    # E28-T05 (#909, SR-E28-02): the definition writes, after RBAC, the flag, the body and the
-    # members' lookups; S2d mounts the replace and the delete (`_PENDING_HANDLER_GATES` until then).
+    # E28-T05 (#909, SR-E28-02): the definition writes, after RBAC, the flag, the body, the
+    # members' lookups and, on a replace and a delete, the definition's read and `If-Match`.
     ("POST", "/trade-group-definitions", "risk_caps"),  # createTradeGroupDefinition
     ("PUT", "/trade-group-definitions/{definitionId}", "risk_caps"),
     ("DELETE", "/trade-group-definitions/{definitionId}", "risk_caps"),
