@@ -1284,7 +1284,8 @@ def test_om_d13_bounds_concurrent_folds_by_the_command_ports_watches() -> None:
         f"(a request works up to `ACCOUNTS_AT_ONCE`, {ACCOUNTS_AT_ONCE}, accounts together)",
         f"at most `MAX_WATCHES` ({MAX_WATCHES:,}) across the port: past it the oldest watch is "
         "dropped, logged at ERROR (`oms_exit_watch_dropped`) and answered None",
-        "degrades only that exit's answer, a venue refusal's exact code, to `timeout`",
+        "degrades only that exit's answer, a venue refusal's exact code, to `timeout`, and its "
+        "call's own records read `attribution: unregistered` (SEC-4662-01)",
     )
     [parse] = [_words(line) for line in lines if "| The burst's parse saturates" in line]
     assert not _missing(
@@ -1297,3 +1298,4 @@ def test_om_d13_bounds_concurrent_folds_by_the_command_ports_watches() -> None:
     assert "Revision 26 records #913 S4-G3:" in header
     [logged] = [_words(line) for line in lines if "| Revision 26, #913 S4-G3," in line]
     assert logged.endswith("No STRIDE row, rating or count changes |")
+    assert "and its call's own records read `attribution: unregistered` (SEC-4662-01)" in logged
