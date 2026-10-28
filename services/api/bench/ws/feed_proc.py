@@ -48,7 +48,7 @@ import os
 import sys
 import time
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -87,6 +87,17 @@ STOP_TIMEOUT_S: Final = 10.0
 STATS_EVERY_S: Final = 1.0
 F_SETPIPE_SZ: Final = getattr(fcntl, "F_SETPIPE_SZ", 1031)
 _ENV: Final = "demo"
+
+
+#: The only variables the feeder child inherits (#4852's Fable carry): it runs this venv's
+#: interpreter by path from the API directory, so it needs no credential, token or setting of the
+#: backend's environment, and none can reach it.
+CHILD_ENV_KEYS: Final = ("PATH", "LANG", "LC_ALL", "TZ")
+
+
+def child_env(parent: Mapping[str, str]) -> dict[str, str]:
+    """The child's whole environment: `CHILD_ENV_KEYS` as `parent` has them, nothing else."""
+    return {key: parent[key] for key in CHILD_ENV_KEYS if key in parent}
 
 
 class FeederGone(RuntimeError):
@@ -355,7 +366,7 @@ class RemoteFeeder:
             argv = [sys.executable, "-m", "bench.ws.feed_proc", "--plan", json.dumps(self._plan)]
             argv += ["--cpus", self._cpus] if self._cpus else []
             self.proc = await asyncio.create_subprocess_exec(
-                *argv, stdin=asyncio.subprocess.PIPE, stdout=w, cwd=API
+                *argv, stdin=asyncio.subprocess.PIPE, stdout=w, cwd=API, env=child_env(os.environ)
             )
         except BaseException:
             os.close(r)

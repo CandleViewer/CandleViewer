@@ -2766,3 +2766,11 @@ def test_overhead_is_a_runner_subcommand(tmp_path: Path) -> None:
     off = overhead_run(tmp_path / "off", cpu_s=600.0, ttd=3.0, lag=LAG_OFF, instrumentation="off")
     assert runner.main(["overhead", str(on), str(off), "--out-dir", str(tmp_path / "o")]) == 0
     assert (tmp_path / "o" / "overhead.json").is_file()
+
+
+def test_the_feeder_child_inherits_only_the_allowed_variables() -> None:
+    """#4852 (a Fable carry): the child's environment is an allow-list, so nothing of the backend's
+    own (a credential, a token, a setting) reaches it, whatever the parent holds."""
+    parent = {"PATH": "/usr/bin", "TZ": "UTC", "CV_SECRET": "x", "AWS_SESSION_TOKEN": "y"}
+    assert feed_proc.child_env(parent) == {"PATH": "/usr/bin", "TZ": "UTC"}
+    assert set(feed_proc.CHILD_ENV_KEYS) == {"PATH", "LANG", "LC_ALL", "TZ"}
