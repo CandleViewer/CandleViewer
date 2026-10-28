@@ -212,6 +212,7 @@ def test_the_guard_refuses_while_either_soak_holds_the_runner_and_fails_closed_o
 def test_the_follow_up_steps_test_the_run_count_they_need() -> None:
     gate, repro = _named("Regression gate")["if"], _named("Reproducibility")["if"]
     assert "steps.load.outputs.runs == '3'" in gate
+    assert "inputs.instrumentation == 'on'" in gate  # #571: an off run is never gated
     assert 'fromJSON(\'["2","3"]\'), steps.load.outputs.runs' in repro
     assert (
         "!= '1'" not in repro
@@ -238,6 +239,7 @@ def _load(
         "DURATION": "",
         "WS_PATH": "/ws",
         "FEEDER": "inproc",
+        "INSTRUMENTATION": "on",
     }
     done = subprocess.run(
         [bash, "-e", "-c", _named("WS load run")["run"]],
@@ -307,6 +309,36 @@ def test_the_feeder_input_reaches_every_run_through_env_and_inproc_is_the_defaul
     assert all(c[c.index("--feeder") + 1] == feeder for c in calls)
 
 
+@pytest.mark.parametrize("mode", ["on", "off"])
+def test_the_instrumentation_input_reaches_every_run_through_env_and_on_is_the_default(
+    tmp_path: Path, mode: str
+) -> None:
+    """#571: the `instrumentation` input is a choice defaulting to `on` (the runs as before),
+    reaches the step as `INSTRUMENTATION` (never an expression in the script) and every `run` as
+    `--instrumentation`."""
+    inputs = _doc()[True]["workflow_dispatch"]["inputs"]
+    assert inputs["instrumentation"]["options"] == ["on", "off"]
+    assert inputs["instrumentation"]["default"] == "on"
+    step = _named("WS load run")
+    assert step["env"]["INSTRUMENTATION"] == "${{ inputs.instrumentation }}"
+    assert '"$INSTRUMENTATION"' in step["run"]
+    assert "inputs.instrumentation" not in step["run"]
+    done, calls, _ = _load(tmp_path, "0", INSTRUMENTATION=mode)
+    assert done.returncode == 0, done.stderr
+    assert len(calls) == 3
+    runner = [c[c.index("bench.ws.runner") + 1 :][:4] for c in calls]
+    assert runner == [["run", "A", "--instrumentation", mode]] * 3  # an option of `run`
+
+
+@pytest.mark.parametrize("profile", ["selfcheck", "W5"])
+def test_instrumentation_off_is_refused_for_the_self_check_and_w5_before_uv(
+    tmp_path: Path, profile: str
+) -> None:
+    done, calls, outputs = _load(tmp_path, "0", PROFILE=profile, INSTRUMENTATION="off")
+    assert done.returncode == 2 and calls == [] and "runs=" not in outputs
+    assert "smoke, A, B and C only" in done.stderr
+
+
 @pytest.mark.parametrize(("profile", "runs"), [("selfcheck", "1"), ("W5", "1")])
 def test_the_self_check_and_w5_run_once(
     tmp_path: Path, profile: str, runs: str
@@ -314,6 +346,7 @@ def test_the_self_check_and_w5_run_once(
     done, calls, outputs = _load(tmp_path, "0", PROFILE=profile)
     assert done.returncode == 0, done.stderr
     assert len(calls) == 1 and f"runs={runs}" in outputs
+    assert "--instrumentation" not in calls[0]  # neither subcommand has the option
 
 
 @pytest.mark.parametrize(
@@ -327,6 +360,9 @@ def test_the_self_check_and_w5_run_once(
         {"FEEDER": "x"},
         {"FEEDER": "proc --staging"},
         {"FEEDER": ""},
+        {"INSTRUMENTATION": "x"},
+        {"INSTRUMENTATION": "off --record-baseline"},
+        {"INSTRUMENTATION": ""},
     ],
 )
 def test_an_input_that_fails_validation_ends_the_step_before_uv_and_leaves_no_run_count(

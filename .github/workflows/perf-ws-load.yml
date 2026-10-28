@@ -34,6 +34,11 @@ name: perf-ws-load
 # on k6's cpus 4-7, inside the backend's systemd scope and its quota), so the backend's CPU and loop
 # are the gateway's alone; `inproc` (the default) is the feeder on the backend's loop, as before.
 # Runs and baselines of one mode are never gated against the other.
+# The `instrumentation` input (#571) runs the same build with E17-T06's hot-path series stood in by
+# no-ops (`off`, profiles smoke, A, B and C only): the uninstrumented half of the overhead pair that
+# `bench.ws.runner overhead` compares with an `on` dispatch of the same profile, flag and feeder.
+# Such runs are judged in overhead mode (no budget #6), never gated and never a baseline, so the
+# gate step is skipped for them.
 on:
   workflow_dispatch:
     inputs:
@@ -65,6 +70,11 @@ on:
         type: choice
         options: [inproc, proc]
         default: inproc
+      instrumentation:
+        description: "E17-T06's WS series as built (on) or stood in by no-ops (off: the uninstrumented half of #571's overhead pair; smoke, A, B, C only)"
+        type: choice
+        options: ["on", "off"]
+        default: "on"
 permissions:
   actions: read # the guard lists the soak's jobs
   contents: read
@@ -138,7 +148,7 @@ jobs:
           tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
           ./k6 version | grep -F "k6 ${K6_VERSION} "
           echo "K6_BIN=$dir/k6" >> "$GITHUB_ENV"
-      - name: WS load run (${{ inputs.profile }}, flag ${{ inputs.flag }}, ${{ inputs.runs }} run(s), feeder ${{ inputs.feeder }})
+      - name: WS load run (${{ inputs.profile }}, flag ${{ inputs.flag }}, ${{ inputs.runs }} run(s), feeder ${{ inputs.feeder }}, instrumentation ${{ inputs.instrumentation }})
         id: load
         working-directory: services/api
         env:
@@ -148,6 +158,7 @@ jobs:
           DURATION: ${{ inputs.duration_s }}
           WS_PATH: ${{ inputs.ws_path }}
           FEEDER: ${{ inputs.feeder }}
+          INSTRUMENTATION: ${{ inputs.instrumentation }}
         run: |
           set -uo pipefail
           set +e # the runner's bash -e would end the step at the first red run
@@ -155,6 +166,7 @@ jobs:
           [[ "$RUNS" =~ ^[1-3]$ ]] || { echo "runs must be 1, 2 or 3" >&2; exit 2; }
           [[ "$WS_PATH" =~ ^(/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)*/ws$ ]] || { echo "ws_path must be /ws or a prefix and /ws" >&2; exit 2; }
           [[ "$FEEDER" =~ ^(inproc|proc)$ ]] || { echo "feeder must be inproc or proc" >&2; exit 2; }
+          [[ "$INSTRUMENTATION" =~ ^(on|off)$ ]] || { echo "instrumentation must be on or off" >&2; exit 2; }
           extra=(--feeder "$FEEDER" --ws-path "$WS_PATH")
           if [ -n "$DURATION" ]; then
             [[ "$DURATION" =~ ^[0-9]+$ ]] || { echo "duration_s must be whole seconds" >&2; exit 2; }
@@ -163,9 +175,10 @@ jobs:
           staging=(--backend-cpus 0-3 --k6-cpus 4-7)
           if systemd-run --user --scope --quiet true 2>/dev/null; then staging+=(--staging); fi
           case "$PROFILE" in
+            selfcheck | W5) [ "$INSTRUMENTATION" = on ] || { echo "instrumentation off is for smoke, A, B and C only" >&2; exit 2; } ;;&
             selfcheck) cmd=(selfcheck); RUNS=1 ;;
             W5) cmd=(w5); RUNS=1 ;;
-            smoke | A | B | C) cmd=(run "$PROFILE") ;;
+            smoke | A | B | C) cmd=(run "$PROFILE" --instrumentation "$INSTRUMENTATION") ;;
             *) echo "unknown profile" >&2; exit 2 ;;
           esac
           out="$GITHUB_WORKSPACE/ws-load"
@@ -180,7 +193,7 @@ jobs:
           done
           exit "$worst"
       - name: Regression gate (5 % on the median of 3 runs, C-13.9)
-        if: ${{ !cancelled() && steps.load.outputs.runs == '3' && contains(fromJSON('["smoke","A","B","C"]'), inputs.profile) }}
+        if: ${{ !cancelled() && steps.load.outputs.runs == '3' && inputs.instrumentation == 'on' && contains(fromJSON('["smoke","A","B","C"]'), inputs.profile) }}
         working-directory: services/api
         run: uv run python -m bench.ws.runner gate "$GITHUB_WORKSPACE"/ws-load/run-1 "$GITHUB_WORKSPACE"/ws-load/run-2 "$GITHUB_WORKSPACE"/ws-load/run-3
       - name: Reproducibility (AC 5, within 15 % or a named variance source)
