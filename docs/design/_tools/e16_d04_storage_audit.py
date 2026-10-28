@@ -6964,6 +6964,29 @@ RULED_PIN_TXT = r"""
    `IMPORT/running-with-skips` (the warning subtle rows), `SCR-142/view-as` (the T2 pair); the
    measured ratios in the title | light | `docs/design/E16/img/E16-D04-10-light-twins.png` |
    pending |
+@ §0 › Contract-truth update (p#1 ¶1 ‖ heading
+  ### Contract-truth update (post-#4597, `22` :15035 / :15040 / :15046 / :15086)
+@ §0 › Contract-truth update (p#1 ¶2 ‖ paragraph
+  The text merged before #4597 reworded the purge route in `22`. This boards PR carries the
+   as-built
+  update, ruled for this PR (no separate spec PR). Nothing else in the spec changes.
+@ §0 › Contract-truth update (p#1 ¶3 ‖ list
+  - **Step-up class:** `recorder` → `recorder_purge` wherever the purge's class is named (BQ-10,
+  BQ-11, the §7 action table and prose, `PURGE/step-up`'s producer, the roles line, D04-Q1).
+  `recorder_purge` is no-grace (`22` :12495, :15040), so `PURGE/step-up` states that every purge
+  takes a fresh code instead of the grace-window sentence.
+  - **`before` field:** the purge dialog gains the contract's required `before` field
+  (`required: [symbol, confirm_symbol, reason, before]`, `22` :15086): its label, the help line
+  "Data recorded at or after this time is kept." and the T4 reason "Choose a time no later than
+  now." (`422 validation_failed before_in_future`). The three strings are `new` (PROPOSED here) in
+  §14; `PURGE/dialog` and `PURGE/dialog-validity` draw them (board script r5).
+  - **`retention_pinned_refused`:** cited at its current line (`22` :15045–15046) where the
+   dialog's
+  refusals are listed.
+  - **Cites:** every `22` cite is re-pinned to `main` by content (the purge block's six needles
+   plus the
+  line drift #4597 caused across the file); the audit tool's `purge_sentences` needles and RULED
+  pin table move with them (`--repin-ruled`), with one new mutation for the `before` field.
 @ §1#1 ¶1 ‖ heading
   ## 1. Purpose, locked inputs, the rules stated once, the classification
 @ §1 › §1.1#1 ¶1 ‖ heading
