@@ -108,6 +108,23 @@ def parse_ticker_frame(frame: str) -> TickerDelta | None:
     if not isinstance(ts, int) or isinstance(ts, bool) or ts <= 0:
         raise ValueError("ticker frame missing envelope ts")
     check_event_ts(ts, None, symbol=symbol)
+    return TickerDelta(symbol, kind == "snapshot", ts * 1000, _fields(data, symbol))
+
+
+def parse_ticker_row(row: object, *, ts_ms: int) -> TickerDelta:
+    """E08-T08: one row of the venue-wide REST read (`tickers.py`), read as a frame's `data`
+    (the same fields, bounds and crossed-book check), as a full snapshot at the reply's `ts_ms`.
+    `ValueError` (`FrameRejectedError` for plausibility) for a malformed or implausible row."""
+    if not isinstance(row, dict):
+        raise ValueError("ticker row is not an object")
+    symbol = row.get("symbol")
+    if not isinstance(symbol, str) or not _SYMBOL_RE.fullmatch(symbol):
+        raise ValueError("ticker row carries an invalid symbol")
+    return TickerDelta(symbol, True, ts_ms * 1000, _fields(row, symbol))
+
+
+def _fields(data: dict[str, object], symbol: str) -> dict[str, Decimal | int]:
+    """The neutral fields `data` carries; an empty string is absent, never a null."""
     fields: dict[str, Decimal | int] = {}
     try:
         for wire, name in _WIRE_TO_FIELD.items():
@@ -140,7 +157,7 @@ def parse_ticker_frame(frame: str) -> TickerDelta | None:
     bid, ask = fields.get("bid1_price"), fields.get("ask1_price")
     if bid is not None and ask is not None and bid > ask:  # crossed top of book (#1892)
         raise FrameRejectedError("crossed", "bid1 above ask1", symbol=symbol)
-    return TickerDelta(symbol, kind == "snapshot", ts * 1000, fields)
+    return fields
 
 
 def _plausible(name: str, value: Decimal, symbol: str) -> None:

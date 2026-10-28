@@ -1047,6 +1047,32 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E27",
         max_series=1,
     ),
+    # --- Venue-wide ticker snapshot (E08-T08, #4707): `ingestion.ticker_bulk` -------------------
+    # Behind `GET /market/tickers`, composed only where the app talks to the exchange.
+    _s(
+        "ticker_bulk_cache_refresh_total",
+        "counter",
+        "reads",
+        ("outcome",),
+        "Venue-wide ticker reads behind GET /market/tickers, by outcome (ok, error, timeout); at "
+        "most one per 5 s, however many callers ask.",
+        "dashboard only (sustained error or timeout: callers get stale items, then a 503)",
+        _L,
+        "E08",
+        max_series=3,  # the three outcomes
+    ),
+    _s(
+        "ticker_bulk_cache_age_seconds",
+        "gauge",
+        "seconds",
+        (),
+        "Age of the venue-wide ticker snapshot since its receipt, read at scrape time (+Inf before "
+        "the first read); its items are stale past 5 s and refused past 15 s.",
+        "dashboard only",
+        _L,
+        "E08",
+        max_series=1,
+    ),
     # --- Bar builder set (E12-T03); served by bars.metrics.export_bars_metrics ------
     _s(
         "bar_builder_specs_in_use",
