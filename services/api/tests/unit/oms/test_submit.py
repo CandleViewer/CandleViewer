@@ -1068,6 +1068,28 @@ async def test_a_send_that_does_not_commit_abandons_the_order_and_is_503(
     )
 
 
+async def test_a_send_b1_does_not_settle_for_is_refused_unsent_and_the_order_abandoned(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#4807: `SEND` is judged on the state B1 settled in, so one B1 does not settle for within
+    `QUIESCE_TIMEOUT` is refused before anything is sent, and answered as a refused send is: the
+    order killed from `validated` by a KILL that waits for no settling, the request 503, its
+    denied record written at the send step."""
+    monkeypatch.setattr("candleviewer.oms.order_machine.quiescent", lambda _interp: False)
+    monkeypatch.setattr("candleviewer.oms.order_machine.QUIESCE_TIMEOUT", 0.0)
+    assert isinstance(await _refused(rig), StoreUnavailable)
+    await rig.quiet()
+    [row] = rig.store._orders.values()
+    assert (row.lifecycle_state, row.submit_attempts) == ("killed", 0)
+    assert rig.calls() == [] and rig.port.port._watches == {}
+    [record] = _denied(rig)
+    assert (record.object_id, record.detail["step"], record.detail["code"]) == (
+        row.id,
+        "send",
+        "store_unavailable",
+    )
+
+
 async def test_an_unsent_order_that_cannot_be_abandoned_is_tried_twice_and_paged(
     rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:

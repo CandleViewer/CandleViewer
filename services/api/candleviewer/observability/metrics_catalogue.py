@@ -2965,6 +2965,33 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E29",
     ),
     _s(
+        "oms_command_unsettled_total",
+        "counter",
+        "refusals",
+        (),
+        "Order commands other than the exits (SEND, OPERATOR_RESOLVED, ADOPT, TRANSPORT_FAULT, "
+        "MISMATCH, RECON_FOUND_*, RECON_MISS) the order facade refused as B1 had not settled "
+        "within QUIESCE_TIMEOUT: never judged, nothing sent, refused as ILLEGAL_TRANSITION "
+        "(#4807); kept apart from oms_illegal_transitions_total, the static table's refusals, and "
+        "from oms_exit_unsettled_total, the exits'.",
+        "dashboard",
+        _P,
+        "E29",
+    ),
+    _s(
+        "oms_command_deferred_total",
+        "counter",
+        "commands",
+        (),
+        "Order commands other than the exits whose receipt said B1 held them for later, against "
+        "the guarantee that B1 never does (#4807, 24 Sec.8.2 S10): each is logged "
+        "oms_command_deferred at ERROR with the order's id and the command's kind and paged by the "
+        "order facade, the command answered as before.",
+        "> 0 (page; the facade pages each)",
+        _P,
+        "E29",
+    ),
+    _s(
         "oms_reconcile_anomaly_total",
         "counter",
         "anomalies",
