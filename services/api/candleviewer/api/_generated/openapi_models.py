@@ -3929,6 +3929,18 @@ class RuleTrigger(BaseModel):
     debounce_ms: Annotated[JsonInt, Field(ge=0)] = 0
 
 
+class RuleIrScope(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    level: Literal["global", "account", "symbol", "position", "trade_group"]
+    account_ids: list[UUID] = []
+    symbols: Annotated[list[Symbol], Field(validate_default=True)] = []
+    applies_to: Literal["open_positions", "pending_orders", "account", "any"] = "any"
+    environments: list[Literal["live", "demo", "testnet"]] = ["demo"]
+    exclude_algo_children: StrictBool = True
+
+
 class RuleBindings(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -3936,7 +3948,6 @@ class RuleBindings(BaseModel):
     exchange_account_ids: list[UUID] | None = None
     symbols: list[Symbol] | None = None
     trade_group_ids: list[UUID] | None = None
-    __null_refused = field_validator("exchange_account_ids", "symbols", "trade_group_ids", mode="before")(_refuse_null)
 
 
 class Tag(RootModel[str]):
@@ -7901,12 +7912,13 @@ class RuleIr(BaseModel):
         ),
     ]
     actions: Annotated[list[RuleAction], Field(max_length=10, min_length=1)]
+    scope: RuleIrScope | None = None
     limits: RuleLimits | None = None
     variables: Annotated[
         dict[str, RuleMetricRef | RuleOperand1 | RuleArithmeticNode] | None,
         Field(description="Named intermediate expressions, evaluated before `conditions`."),
     ] = None
-    __null_refused = field_validator("limits", "variables", mode="before")(_refuse_null)
+    __null_refused = field_validator("scope", "limits", "variables", mode="before")(_refuse_null)
 
 
 class AlertConditionIr(BaseModel):
@@ -7935,7 +7947,6 @@ class RuleInput(BaseModel):
     scope: Literal["global", "account", "symbol", "position", "trade_group"]
     editor: Literal["form", "graph"] = "form"
     tags: list[Tag] | None = None
-    bindings: RuleBindings | None = None
     ir: RuleIr
     graph_layout: Annotated[
         dict[str, Any] | None,
@@ -7944,7 +7955,34 @@ class RuleInput(BaseModel):
         ),
     ] = None
     note: Annotated[str | None, Field(max_length=280)] = None
-    __null_refused = field_validator("description", "tags", "bindings", "graph_layout", "note", mode="before")(_refuse_null)
+    __null_refused = field_validator("description", "tags", "graph_layout", "note", mode="before")(_refuse_null)
+
+
+class RuleUpdateInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[str, Field(max_length=120, min_length=1)]
+    description: Annotated[str | None, Field(max_length=1000)] = None
+    scope: Literal["global", "account", "symbol", "position", "trade_group"]
+    editor: Literal["form", "graph"] = "form"
+    tags: list[Tag] | None = None
+    ir: RuleIr
+    graph_layout: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Node/edge coordinates for the node-graph editor. Ignored by the engine."
+        ),
+    ] = None
+    note: Annotated[str | None, Field(max_length=280)] = None
+    expected_version: Annotated[
+        JsonInt | None,
+        Field(
+            description="The rule version the client edited, read only when `If-Match` is absent.",
+            ge=1,
+        ),
+    ] = None
+    __null_refused = field_validator("description", "tags", "graph_layout", "note", "expected_version", mode="before")(_refuse_null)
 
 
 class RuleDetail(Rule):

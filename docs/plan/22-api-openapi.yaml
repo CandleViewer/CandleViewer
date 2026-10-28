@@ -7852,6 +7852,12 @@ paths:
         class `safety`, at `actions[i].type` or `actions[i].params.only_tighten`, with the reason
         "Not available — rules never loosen a stop." `validateRule` and `compileRule` report the
         same issue, and an imported rule is refused with it.
+
+        **One place for a rule's accounts (E35, #4835).** The body names a rule's accounts only
+        in `ir.scope.account_ids`, and the version a save stores echoes exactly them. A body
+        member `RuleInput` does not name, or an account key in a member outside `ir`, is
+        refused with an audited `422 rule_ir_invalid` naming the member, and nothing is stored
+        (`RuleInput`).
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: recommended
       parameters:
@@ -7873,11 +7879,6 @@ paths:
                   scope: position
                   editor: form
                   tags: [risk, auto-stop]
-                  bindings:
-                    {
-                      exchange_account_ids: ["a1000000-0000-4000-8000-000000000001"],
-                      symbols: ["BTCUSDT"],
-                    }
                   ir:
                     ir_version: 1
                     trigger: { type: on_position_update, debounce_ms: 500 }
@@ -7911,6 +7912,12 @@ paths:
                         type: send_notification
                         params:
                           { severity: info, message: "Break-even applied on {{position.symbol}}" }
+                    scope:
+                      {
+                        level: position,
+                        account_ids: ["a1000000-0000-4000-8000-000000000001"],
+                        symbols: ["BTCUSDT"],
+                      }
                     limits: { max_fires_per_hour: 4, cooldown_ms: 60000, once_per: position }
               tapeSpikeGraph:
                 summary: Tape-acceleration scale-out, authored in the node editor
@@ -7918,7 +7925,6 @@ paths:
                   name: "Scale out on tape spike"
                   scope: symbol
                   editor: graph
-                  bindings: { symbols: ["BTCUSDT"] }
                   ir:
                     ir_version: 1
                     trigger:
@@ -7939,6 +7945,7 @@ paths:
                       - node_id: a1
                         type: scale_out
                         params: { pct: "50", order_type: market }
+                    scope: { level: symbol, symbols: ["BTCUSDT"] }
                     limits: { max_fires_per_hour: 2, cooldown_ms: 300000 }
                   graph_layout:
                     nodes:
@@ -7998,7 +8005,8 @@ paths:
         and the stop rule of `createRule`, also a save that matches an existing version.
         `If-Match` carries the rule version the client edited (a decimal version number,
         optionally quoted); without it, and without `expected_version` in the body, the answer
-        is `400`.
+        is `400`. The body is held to `createRule`'s rule for accounts and members
+        (`RuleUpdateInput`).
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
@@ -8007,7 +8015,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/RuleInput" }
+            schema: { $ref: "#/components/schemas/RuleUpdateInput" }
       responses:
         "200":
           description: New version created.
@@ -20504,9 +20512,11 @@ components:
         identical `ir_hash`.
 
         This object is the *executable core only*. Rule identity and lifecycle
-        (`id`, `name`, `mode`, `scope`, `editor`, `version`) live on `Rule` / `RuleInput`
+        (`id`, `name`, `mode`, `editor`, `version`) live on `Rule` / `RuleInput`
         and in the `rules` table - they are deliberately not duplicated here, so an IR can
-        be validated, hashed and compared without carrying database identity.
+        be validated, hashed and compared without carrying database identity. The rule's
+        scope is part of the IR (`scope`, `RuleIrScope`), and `Rule.scope` is its level only:
+        `scope.account_ids` is the one place a rule names its accounts.
 
         `x-cv-limit-caps` names the hard cap of each capped `limits` field (SR-104); a rule
         saved above one is refused (`createRule`). The server takes the caps from
@@ -20523,11 +20533,31 @@ components:
             maxItems: 10,
             items: { $ref: "#/components/schemas/RuleAction" },
           }
+        scope: { $ref: "#/components/schemas/RuleIrScope" }
         limits: { $ref: "#/components/schemas/RuleLimits" }
         variables:
           type: object
           additionalProperties: { $ref: "#/components/schemas/RuleOperand" }
           description: Named intermediate expressions, evaluated before `conditions`.
+    RuleIrScope:
+      type: object
+      additionalProperties: false
+      required: [level]
+      description: |
+        The rule's scope, as the server stores it in the IR (24-internal-schemas.md section
+        11.2, `RuleScope`). `account_ids` is the one place a rule names its accounts: a save
+        sends them there and nowhere else (`RuleInput`), and the version it stores echoes
+        exactly them. An empty list means every account the rule's owner holds a grant on when
+        the rule fires.
+      properties:
+        level: { $ref: "#/components/schemas/RuleScope" }
+        account_ids: { type: array, default: [], items: { type: string, format: uuid } }
+        symbols: { type: array, default: [], items: { $ref: "#/components/schemas/Symbol" } }
+        applies_to:
+          { type: string, enum: [open_positions, pending_orders, account, any], default: any }
+        environments:
+          { type: array, default: [demo], items: { $ref: "#/components/schemas/Environment" } }
+        exclude_algo_children: { type: boolean, default: true }
     AlertConditionIr:
       type: object
       additionalProperties: false
@@ -20554,19 +20584,50 @@ components:
       type: object
       additionalProperties: false
       required: [name, scope, ir]
+      description: |
+        The body of `createRule`; `updateRule` takes `RuleUpdateInput`, these members and
+        `expected_version`. A rule names its accounts in one place, `ir.scope.account_ids`
+        (`RuleIrScope`), never in a member outside `ir`. A body member this schema does not
+        name, or a member outside `ir` that holds an account key at any depth (`account_id`,
+        `account_ids`, or either with a prefix such as `exchange_account_ids`), is refused for
+        every role, the Owner included, with `422 rule_ir_invalid`, whose `errors` name each
+        such member in `field`. The refusal is audited (`rules.scope_denied`) and nothing is
+        stored.
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         description: { type: string, maxLength: 1000 }
         scope: { $ref: "#/components/schemas/RuleScope" }
         editor: { type: string, enum: [form, graph], default: form }
         tags: { type: array, items: { type: string, maxLength: 40 } }
-        bindings: { $ref: "#/components/schemas/RuleBindings" }
         ir: { $ref: "#/components/schemas/RuleIr" }
         graph_layout:
           type: object
           additionalProperties: true
           description: Node/edge coordinates for the node-graph editor. Ignored by the engine.
         note: { type: string, maxLength: 280 }
+    RuleUpdateInput:
+      type: object
+      additionalProperties: false
+      required: [name, scope, ir]
+      description: |
+        The body of `updateRule`: the members of `RuleInput`, under its rules, and
+        `expected_version`.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+        scope: { $ref: "#/components/schemas/RuleScope" }
+        editor: { type: string, enum: [form, graph], default: form }
+        tags: { type: array, items: { type: string, maxLength: 40 } }
+        ir: { $ref: "#/components/schemas/RuleIr" }
+        graph_layout:
+          type: object
+          additionalProperties: true
+          description: Node/edge coordinates for the node-graph editor. Ignored by the engine.
+        note: { type: string, maxLength: 280 }
+        expected_version:
+          type: integer
+          minimum: 1
+          description: The rule version the client edited, read only when `If-Match` is absent.
     Rule:
       type: object
       required: [id, name, mode, scope]

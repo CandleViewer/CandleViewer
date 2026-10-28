@@ -5068,6 +5068,12 @@ export interface paths {
      *     class `safety`, at `actions[i].type` or `actions[i].params.only_tighten`, with the reason
      *     "Not available — rules never loosen a stop." `validateRule` and `compileRule` report the
      *     same issue, and an imported rule is refused with it.
+     *
+     *     **One place for a rule's accounts (E35, #4835).** The body names a rule's accounts only
+     *     in `ir.scope.account_ids`, and the version a save stores echoes exactly them. A body
+     *     member `RuleInput` does not name, or an account key in a member outside `ir`, is
+     *     refused with an audited `422 rule_ir_invalid` naming the member, and nothing is stored
+     *     (`RuleInput`).
      */
     post: operations["createRule"];
     delete?: never;
@@ -5108,7 +5114,8 @@ export interface paths {
      *     and the stop rule of `createRule`, also a save that matches an existing version.
      *     `If-Match` carries the rule version the client edited (a decimal version number,
      *     optionally quoted); without it, and without `expected_version` in the body, the answer
-     *     is `400`.
+     *     is `400`. The body is held to `createRule`'s rule for accounts and members
+     *     (`RuleUpdateInput`).
      */
     put: operations["updateRule"];
     post?: never;
@@ -10295,8 +10302,17 @@ export interface components {
       /** Format: date-time */
       ts?: string;
     };
+    /**
+     * @description The body of `createRule`; `updateRule` takes `RuleUpdateInput`, these members and
+     *     `expected_version`. A rule names its accounts in one place, `ir.scope.account_ids`
+     *     (`RuleIrScope`), never in a member outside `ir`. A body member this schema does not
+     *     name, or a member outside `ir` that holds an account key at any depth (`account_id`,
+     *     `account_ids`, or either with a prefix such as `exchange_account_ids`), is refused for
+     *     every role, the Owner included, with `422 rule_ir_invalid`, whose `errors` name each
+     *     such member in `field`. The refusal is audited (`rules.scope_denied`) and nothing is
+     *     stored.
+     */
     RuleInput: {
-      bindings?: components["schemas"]["RuleBindings"];
       description?: string;
       /**
        * @default form
@@ -10321,9 +10337,11 @@ export interface components {
      *     identical `ir_hash`.
      *
      *     This object is the *executable core only*. Rule identity and lifecycle
-     *     (`id`, `name`, `mode`, `scope`, `editor`, `version`) live on `Rule` / `RuleInput`
+     *     (`id`, `name`, `mode`, `editor`, `version`) live on `Rule` / `RuleInput`
      *     and in the `rules` table - they are deliberately not duplicated here, so an IR can
-     *     be validated, hashed and compared without carrying database identity.
+     *     be validated, hashed and compared without carrying database identity. The rule's
+     *     scope is part of the IR (`scope`, `RuleIrScope`), and `Rule.scope` is its level only:
+     *     `scope.account_ids` is the one place a rule names its accounts.
      *
      *     `x-cv-limit-caps` names the hard cap of each capped `limits` field (SR-104); a rule
      *     saved above one is refused (`createRule`). The server takes the caps from
@@ -10336,11 +10354,39 @@ export interface components {
       /** @enum {integer} */
       ir_version: 1;
       limits?: components["schemas"]["RuleLimits"];
+      scope?: components["schemas"]["RuleIrScope"];
       trigger: components["schemas"]["RuleTrigger"];
       /** @description Named intermediate expressions, evaluated before `conditions`. */
       variables?: {
         [key: string]: components["schemas"]["RuleOperand"];
       };
+    };
+    /**
+     * @description The rule's scope, as the server stores it in the IR (24-internal-schemas.md section
+     *     11.2, `RuleScope`). `account_ids` is the one place a rule names its accounts: a save
+     *     sends them there and nowhere else (`RuleInput`), and the version it stores echoes
+     *     exactly them. An empty list means every account the rule's owner holds a grant on when
+     *     the rule fires.
+     */
+    RuleIrScope: {
+      /** @default [] */
+      account_ids: string[];
+      /**
+       * @default any
+       * @enum {string}
+       */
+      applies_to: "open_positions" | "pending_orders" | "account" | "any";
+      /**
+       * @default [
+       *       "demo"
+       *     ]
+       */
+      environments: components["schemas"]["Environment"][];
+      /** @default true */
+      exclude_algo_children: boolean;
+      level: components["schemas"]["RuleScope"];
+      /** @default [] */
+      symbols: components["schemas"]["Symbol"][];
     };
     /** @description Safety limiters applied by the engine before any action is dispatched. Named `limits` in the IR (not `guards`) to match 24-internal-schemas.md section 11.2. */
     RuleLimits: {
@@ -10479,6 +10525,29 @@ export interface components {
         | "on_book_update"
         | "on_liquidation";
     } & (unknown & unknown & unknown & unknown);
+    /**
+     * @description The body of `updateRule`: the members of `RuleInput`, under its rules, and
+     *     `expected_version`.
+     */
+    RuleUpdateInput: {
+      description?: string;
+      /**
+       * @default form
+       * @enum {string}
+       */
+      editor: "form" | "graph";
+      /** @description The rule version the client edited, read only when `If-Match` is absent. */
+      expected_version?: number;
+      /** @description Node/edge coordinates for the node-graph editor. Ignored by the engine. */
+      graph_layout?: {
+        [key: string]: unknown;
+      };
+      ir: components["schemas"]["RuleIr"];
+      name: string;
+      note?: string;
+      scope: components["schemas"]["RuleScope"];
+      tags?: string[];
+    };
     RuleValidationIssue: {
       /** @enum {string} */
       class?: "syntax" | "semantics" | "safety" | "performance";
@@ -19849,7 +19918,7 @@ export interface operations {
     };
     requestBody: {
       content: {
-        "application/json": components["schemas"]["RuleInput"];
+        "application/json": components["schemas"]["RuleUpdateInput"];
       };
     };
     responses: {

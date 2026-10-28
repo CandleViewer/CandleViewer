@@ -6239,3 +6239,9 @@ This number follows `main`'s last entry, §19.50; an entry that lands first take
 This number follows `main`'s last entry, §19.51; an entry that lands first takes it, and this one moves to the next free number.
 
 - §15.5: `api_key.revoked` loses "not registered yet, B3": the closing B3 slice registers it in `audit/actions.py` with `revokeApiKey`, which writes it keyed by the key's id, once per revoke. No chart or `machine_hash` change.
+
+### 19.53 2026-10-29 — 22 `/rules` saves: one place for a rule's accounts, and closed save bodies (E35, #4835)
+
+This number follows `main`'s last entry, §19.52; an entry that lands first takes it, and this one moves to the next free number.
+
+- 22 `createRule` and `updateRule`: a rule's accounts travel only in `ir.scope.account_ids`. `RuleIr` gains `scope` (`RuleIrScope`, closed), the server's own scope of §11.2, and `Rule.scope` is its level only. `RuleInput` drops `bindings`, and `updateRule` takes `RuleUpdateInput`: `RuleInput`'s members plus `expected_version`, which its `If-Match` text already names. A member a body does not name, or an account key in a member outside `ir`, is refused with an audited `422 rule_ir_invalid` naming the member, and nothing is stored. The audit shapes of §15.5 and the IR grammar of §11 are unchanged. No WS, table, column, chart or `machine_hash` change.
