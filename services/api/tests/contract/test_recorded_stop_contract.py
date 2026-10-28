@@ -16,6 +16,7 @@ import re
 import pytest
 
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
+from candleviewer.oms.stream_consumer import REAPPLY_TIMEOUT_S
 
 _PLAN = OPENAPI_SPEC_PATH.parent
 _DOC = (_PLAN / "21-database-schema.md").read_text(encoding="utf-8")
@@ -639,3 +640,42 @@ def test_rule_7_releases_a_record_only_by_its_successors_bind() -> None:
         "binding is released only by its successor's bind (E29-T05, #848)\n"
     )
     assert log in _INTERNAL_DOC
+
+
+def test_8_12_says_the_runtime_runs_the_consumer_and_logs_it_as_19_51() -> None:
+    """E29-T05 S8b (#848): 24 section 8.12 as built, logged as section 19.51 after E08-T09's 19.50.
+    The banner no longer says nothing runs the consumer; `StreamedAccounts` is account health's
+    last good tracking read, read in place, never an account tracked for a replayed or owed call
+    alone; the runtime's `stream` phase announces the stand-ins; and a position row held as dated
+    ahead of the store's clock is applied again once the clock is back in sync, which the
+    consumer's re-sync now runs, bounded."""
+    head = "### 8.12 The private-stream consumer (E29-T05)"
+    section = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n---\n", 1)[0])
+    assert "contract first: nothing runs it yet" not in section
+    assert not _missing(
+        section,
+        "_Added for E29-T05 (#848); as built since its wiring slice (S8b): the OMS runtime runs "
+        "it._",
+        "The consumer's dead-man's-switch window opens at its start, where the OMS runtime sets "
+        "`ready`, not at boot,",
+        "which is the set account health monitors: its last good tracking read "
+        "(`AccountHealthRuntime.streamed`), read in place from the lane, never an account it "
+        "tracks for a replayed or owed dead-man's-switch call alone,",
+        "The OMS runtime's `stream` phase announces each stand-in it binds,",
+        "the OMS runtime wires it on the real backend, and the fake backend composes no OMS.",
+        "and applied again once the clock is back in sync.",
+        "**Readiness (the orchestrator's ruling of 2026-10-25).** Once the runtime is `ready`, "
+        "the `/readyz` `oms` check (`20-architecture.md` §6.2) is `degraded` while the consumer "
+        "has not started, while it has faulted",
+    )
+    assert "While the consumer runs, the `/readyz`" not in section  # fails closed from `ready`
+    log = "### 19.51 2026-10-28 — §8.12: the private-stream consumer runs (E29-T05, #848)\n"
+    assert log in _INTERNAL_DOC  # a later entry may follow it: slice 4's gap test keeps them whole
+    entry = _words(_INTERNAL_DOC.split(log, 1)[1].split("\n### ", 1)[0])
+    assert not _missing(
+        entry,
+        "This number follows `main`'s last entry, §19.50; an entry that lands first takes it",
+        f"bounded at {REAPPLY_TIMEOUT_S:g} s and counted `reapply_timeout`",
+        "the Readiness paragraph names the not-started case.",
+        "No REST, WS, table, column, chart or `machine_hash` change;",
+    )
