@@ -161,15 +161,15 @@ action's `loading` itself.
 
 ### ConfirmDialog (CMP-044, APG Alert Dialog; APG Dialog (Modal) for an order confirm)
 
-| Keys                               | Action                                                                                                                 |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| On open                            | Focus on Cancel (H32); nothing is sent until Confirm.                                                                  |
-| Tab / Shift+Tab                    | The trap in DOM order from Cancel: Confirm, the close button (an order confirm), the body's controls, back to Cancel.  |
-| Enter / Space / a press on Confirm | Confirms, unless the press began in the first `confirmDelayMs` (400 ms) after opening; key repeats are always ignored. |
-| Typing in the typed field          | Confirm enables when the text matches the token exactly (paste allowed); Enter in the field never confirms.            |
-| Esc                                | Cancels (`onCancel("escape")`); focus returns to the opener, else `fallbackFocusRef`.                                  |
-| Enter / Space on a T2 Confirm      | Nothing; the reason is re-shown with one polite announcement.                                                          |
-| A press on the scrim               | Nothing for an `alertdialog`; Cancel (`"scrim"`) for an order `dialog`.                                                |
+| Keys                               | Action                                                                                                                   |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| On open                            | Focus on Cancel (H32); nothing is sent until Confirm.                                                                    |
+| Tab / Shift+Tab                    | The trap in DOM order from Cancel: Confirm, the close button (an order confirm), the body's controls, back to Cancel.    |
+| Enter / Space / a press on Confirm | Confirms once, unless the press began in the first `confirmDelayMs` (at least 400 ms) of the guard; repeats never count. |
+| Typing in the typed field          | Confirm enables when the text matches the token exactly (paste allowed); Enter in the field never confirms.              |
+| Esc                                | Cancels (`onCancel("escape")`); focus returns to the opener, else `fallbackFocusRef`.                                    |
+| Enter / Space on a T2 Confirm      | Nothing; the reason is re-shown with one polite announcement.                                                            |
+| A press on the scrim               | Nothing for an `alertdialog`; Cancel (`"scrim"`) for an order `dialog`.                                                  |
 
 | Element     | Role                                             | Name                                                   | ARIA                                                                                                                                               |
 | ----------- | ------------------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -185,3 +185,16 @@ action's `loading` itself.
 alike. A typed mismatch, a loading summary and a sent confirm (`busy`) are not T2; only a reason
 given while open (H30) is, and focus stays on Confirm. A partial failure is CMP-027's inline error
 with its Retry, above the footer.
+
+The guard is a safety control. `confirmDelayMs` below 400 (or not a finite number) is raised to 400
+with a dev warning. The window restarts when Confirm becomes available (a typed match, the summary
+loaded, a T2 reason cleared) and when the title or Confirm's label changes while open. A press that
+began inside the window is rejected even when it ends after it, across a blur or a pointercancel;
+the click that ends it clears the mark. `onConfirm` fires at most once per opening: a new `failure`
+message or `busy` going false allows one more. The clock is `performance.now` (monotonic). A `Space`
+released on Cancel or Confirm activates only when its own press began there.
+
+Not yet in this slice: `variant="hold"` and `autoCancelMs` (an expiry that cancels, never confirms)
+come with slice 6, so no host should rely on an auto-cancel here yet. With `summaryLoading` set while
+Confirm holds focus, Confirm becomes natively disabled and focus is lost; that inherited spec gap is
+open for the host or the spec to decide.

@@ -41,7 +41,10 @@ export interface ConfirmFailure {
 export interface ConfirmDialogProps {
   /** Controlled: the host closes the dialog after its outcome, or on `onCancel`. */
   open: boolean;
-  /** Called once per accepted activation, past the guard and every gate. */
+  /**
+   * Called at most once per opening, past the guard and every gate; a new `failure` message or `busy` going
+   * false re-allows one more (a host's Retry path). The host still sets `busy` at once.
+   */
   onConfirm: (meta: ConfirmMeta) => void;
   /** Cancel, `Esc`, the close button (a `dialog`) or a scrim press (a `dialog`); nothing was sent. */
   onCancel: (reason: ConfirmCancelReason) => void;
@@ -77,7 +80,12 @@ export interface ConfirmDialogProps {
   typedInstruction?: string | undefined;
   /** The summary is still loading: Confirm is natively disabled (availability, not T2). */
   summaryLoading?: boolean | undefined;
-  /** Activations that begin within this many ms of opening are ignored (default 400; E30-D03 D3 (2)). */
+  /**
+   * Activations that begin within this many ms of opening are ignored (default and floor 400; E30-D03 D3 (2)).
+   * A smaller or non-finite value is raised to 400 with a dev warning: no prop turns the guard off (C-4.14).
+   * The window rearms when Confirm becomes available (a typed match, the summary loaded, a reason cleared) and
+   * when the title or Confirm's label changes while open.
+   */
   confirmDelayMs?: number | undefined;
   /** After Confirm: the Confirm `loading`, the field read-only, `aria-busy` on the card. */
   busy?: boolean | undefined;
@@ -87,7 +95,7 @@ export interface ConfirmDialogProps {
   confirmDisabledReason?: string | undefined;
   /** Where focus returns when the opener is gone; never `body`. */
   fallbackFocusRef?: RefObject<HTMLElement | null> | undefined;
-  /** The clock, ms (`Date.now` by default); injectable for tests. */
+  /** The clock, ms (monotonic `performance.now` by default); injectable for tests. */
   now?: (() => number) | undefined;
 }
 
@@ -100,18 +108,47 @@ const warn = (message: string): void => {
   if (import.meta.env?.DEV) console.warn(`ConfirmDialog: ${message}`);
 };
 
+/** The guard's floor and default, ms (E30-D03 D3 (2)). */
+const CONFIRM_DELAY_FLOOR_MS = 400;
+
+const monotonic = (): number => performance.now();
+
 const isActivationKey = (key: string): boolean => key === "Enter" || key === " ";
 
-/** A held key repeats: the repeat never activates (the first press is the one that counts). */
-const ignoreRepeat = (event: KeyboardEvent<HTMLButtonElement>): void => {
-  if (event.repeat && isActivationKey(event.key)) event.preventDefault();
+/**
+ * Key handlers for a footer button: a held key's repeats never activate, and a `Space` released on the
+ * button activates only when its own non-repeat `Space` press began there (browsers click on `Space` keyup).
+ */
+const useKeyGuard = (
+  onPress?: () => void,
+): {
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onKeyUp: (event: KeyboardEvent<HTMLButtonElement>) => void;
+} => {
+  const spaceDown = useRef(false);
+  return {
+    onKeyDown: (event) => {
+      if (!isActivationKey(event.key)) return;
+      if (event.repeat) {
+        event.preventDefault();
+        return;
+      }
+      if (event.key === " ") spaceDown.current = true;
+      onPress?.();
+    },
+    onKeyUp: (event) => {
+      if (event.key !== " ") return;
+      if (!spaceDown.current) event.preventDefault();
+      spaceDown.current = false;
+    },
+  };
 };
 
 /**
  * CMP-044: a confirm gate on CMP-043 (APG Alert Dialog; APG Dialog (Modal) for an order confirm). Focus opens
  * on Cancel and Tab runs in DOM order from there: Confirm, the close button (a `dialog`), the body. Confirm
- * ignores any press (Enter, Space or a pointer) that begins in the first `confirmDelayMs` after opening, and
- * every key repeat. `typed`: Confirm stays natively disabled until the summary has loaded and the field matches
+ * ignores any press (Enter, Space or a pointer) that begins in the first `confirmDelayMs` after opening (or
+ * after it rearms), the click that ends such a press however late, and every key repeat; it fires once. `typed`: Confirm stays natively disabled until the summary has loaded and the field matches
  * the token exactly (form validity, not T2); `Enter` in the field never confirms. A reason given mid-dialog
  * turns Confirm into CMP-001's T2 form in place, with one assertive announcement when it held focus.
  */
@@ -140,7 +177,7 @@ export function ConfirmDialog({
   failure,
   confirmDisabledReason,
   fallbackFocusRef,
-  now = Date.now,
+  now = monotonic,
 }: ConfirmDialogProps): JSX.Element | null {
   const id = useId();
   const confirmId = `${id}-confirm`;
@@ -150,8 +187,15 @@ export function ConfirmDialog({
   const cancelRef = useRef<HTMLSpanElement | null>(null);
   /** When the dialog opened, by `now`; null while closed. */
   const openedAt = useRef<number | null>(null);
-  /** When the press that will become Confirm's click began (pointer down, or the first key down). */
-  const pressedAt = useRef<number | null>(null);
+  /** When the guard window last (re)started: the opening, Confirm becoming available, a new intent. */
+  const armedAt = useRef<number | null>(null);
+  /**
+   * A press began on Confirm inside the guard window: the click that ends it is rejected, whenever it lands
+   * and whatever blur or pointercancel came between. Cleared by that click or by a press begun after the window.
+   */
+  const tripped = useRef(false);
+  /** onConfirm already ran for this opening (the single-fire latch). */
+  const fired = useRef(false);
   const [typed, setTyped] = useState("");
   const [polite, setPolite] = useState<Spoken>({ n: 0, text: "" });
   const [assertive, setAssertive] = useState<Spoken>({ n: 0, text: "" });
@@ -165,10 +209,17 @@ export function ConfirmDialog({
   const matched = !isTyped || (token !== "" && typed === token);
   const ready = !summaryLoading && matched;
   const instruction = typedInstruction ?? `Type ${token} to confirm`;
+  const available = ready && reason === undefined;
+  const delayMs = Number.isFinite(confirmDelayMs)
+    ? Math.max(confirmDelayMs, CONFIRM_DELAY_FLOOR_MS)
+    : CONFIRM_DELAY_FLOOR_MS;
+  const failureKey = failure === undefined ? null : failure.message;
 
   useLayoutEffect(() => {
     openedAt.current = open ? clock.current() : null;
-    pressedAt.current = null;
+    armedAt.current = openedAt.current;
+    tripped.current = false;
+    fired.current = false;
     if (open) {
       setTyped("");
       setPolite({ n: 0, text: "" });
@@ -176,12 +227,30 @@ export function ConfirmDialog({
     }
   }, [open]);
 
+  // Rearm the guard when Confirm becomes available or its intent changes under an open dialog.
+  useLayoutEffect(() => {
+    if (open && available) armedAt.current = clock.current();
+  }, [open, available, title, confirmLabel]);
+
+  // A new failure, or the host's busy ending, re-allows one confirm (a Retry-less host's second try).
+  const wasBusy = useRef(busy);
+  useLayoutEffect(() => {
+    const before = wasBusy.current;
+    wasBusy.current = busy;
+    if (before && !busy) fired.current = false;
+  }, [busy]);
+  useLayoutEffect(() => {
+    fired.current = false;
+  }, [failureKey]);
+
   useEffect(() => {
     if (!open) return;
     if (confirmLabel.trim().toLowerCase() === "confirm")
       warn('confirmLabel names the effect, never "Confirm" (H24).');
     if (isTyped && token === "") warn("variant typed needs a non-empty typedConfirmValue.");
-  }, [open, confirmLabel, isTyped, token]);
+    if (delayMs !== confirmDelayMs)
+      warn(`confirmDelayMs below ${String(CONFIRM_DELAY_FLOOR_MS)} ms is raised to it.`);
+  }, [open, confirmLabel, isTyped, token, delayMs, confirmDelayMs]);
 
   // H30: gated mid-dialog while Confirm held focus, one assertive announcement; focus stays.
   const wasGated = useRef(reason !== undefined);
@@ -193,26 +262,34 @@ export function ConfirmDialog({
       setAssertive((s) => ({ n: s.n + 1, text: reason }));
   }, [reason, open, confirmId]);
 
+  const inWindow = (at: number): boolean =>
+    armedAt.current === null || at - armedAt.current < delayMs;
+
   const startPress = (): void => {
-    pressedAt.current = clock.current();
+    tripped.current = inWindow(clock.current());
   };
 
   const confirm = (): void => {
     const at = clock.current();
-    const started = pressedAt.current ?? at;
-    pressedAt.current = null;
     const opened = openedAt.current;
-    // The guard: a press that began before `confirmDelayMs` had passed does nothing, whenever it lands.
-    if (opened === null || started - opened < confirmDelayMs) return;
+    // The guard: a press that began in the window does nothing, whenever it lands; so does a click in it.
+    const rejected = tripped.current || inWindow(at);
+    tripped.current = false;
+    if (opened === null || rejected || fired.current) return;
+    // `busy` and T2 are Button's too (it drops the click); kept here as defence in depth.
     if (!ready || busy || reason !== undefined) return;
+    fired.current = true;
     onConfirm({ variant, gate: isTyped ? "typed" : "click", elapsedMs: at - opened });
   };
+
+  const cancelKeys = useKeyGuard();
+  const confirmKeys = useKeyGuard(startPress);
 
   const footer = (
     <>
       {/* The initial focus target: Dialog focuses the first tab stop inside a ref that is none. */}
       <span ref={cancelRef} className="cv-confirm__cancel">
-        <Button onKeyDown={ignoreRepeat} onClick={() => onCancel("cancel")}>
+        <Button {...cancelKeys} onClick={() => onCancel("cancel")}>
           {cancelLabel}
         </Button>
       </span>
@@ -223,21 +300,8 @@ export function ConfirmDialog({
         {...(reason === undefined ? {} : { disabledReason: reason })}
         {...(isTyped ? { "aria-describedby": instructionId } : {})}
         loading={busy}
-        onKeyDown={(event) => {
-          if (!isActivationKey(event.key)) return;
-          if (event.repeat) {
-            event.preventDefault();
-            return;
-          }
-          startPress();
-        }}
+        {...confirmKeys}
         onPointerDown={startPress}
-        onPointerCancel={() => {
-          pressedAt.current = null;
-        }}
-        onBlur={() => {
-          pressedAt.current = null;
-        }}
         onClickCapture={() => {
           // T2: Enter, Space or a press re-shows the reason with one polite announcement (D09 §9.3).
           if (reason !== undefined) setPolite((s) => ({ n: s.n + 1, text: reason }));
@@ -247,7 +311,8 @@ export function ConfirmDialog({
         {confirmLabel}
       </Button>
       {reason === undefined ? null : (
-        // Visible for a sighted user; the accessible description is CMP-001's own reason node.
+        // H30 (a): the host's reason under the footer (15 CMP-044 States), besides CMP-001's echo; the
+        // accessible description is CMP-001's own reason node.
         <p className="cv-confirm__reason" aria-hidden="true">
           {reason}
         </p>

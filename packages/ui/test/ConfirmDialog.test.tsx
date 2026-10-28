@@ -183,11 +183,15 @@ describe("ConfirmDialog (CMP-044)", () => {
     expect(fireEvent.keyDown(field, { key: "Enter" })).toBe(false);
     await userEvent.type(field, "{Enter}");
     expect(onConfirm).not.toHaveBeenCalled();
+    // The match rearmed the guard: a click on the instant Confirm enables does nothing.
+    await userEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    t = 3400;
     await userEvent.click(confirm);
     expect(onConfirm).toHaveBeenLastCalledWith<[ConfirmMeta]>({
       variant: "typed",
       gate: "typed",
-      elapsedMs: 2000,
+      elapsedMs: 2400,
     });
   });
 
@@ -386,6 +390,11 @@ describe("ConfirmDialog (CMP-044)", () => {
     await userEvent.keyboard("{Enter}");
     expect(onConfirm).not.toHaveBeenCalled();
     expect(within(node).getByRole("status")).toHaveTextContent(reason);
+    // The same reason again is a new node in the live region, so a screen reader speaks it again.
+    const spoken = within(node).getByRole("status").firstElementChild;
+    await userEvent.keyboard("{Enter}");
+    expect(within(node).getByRole("status").firstElementChild).not.toBe(spoken);
+    expect(within(node).getByRole("status")).toHaveTextContent(reason);
     // The same reason again: still one assertive announcement.
     await act(async () => gate(` ${reason} `));
     expect(within(node).getAllByText(reason, { selector: "[role=alert] span" })).toHaveLength(1);
@@ -461,5 +470,179 @@ describe("ConfirmDialog (CMP-044)", () => {
     expect(within(node).queryByRole("group", { name: "What this does" })).toBeNull();
     expect(within(node).getByRole("table", { name: "Legs" })).toBeInTheDocument();
     expect(within(node).getByText("Step-up verified.")).toBeVisible();
+  });
+
+  it("single fire: two clicks or two Enters past the guard, with no busy from the host, confirm once", async () => {
+    const onConfirm = vi.fn();
+    await openHost({ onConfirm });
+    t = 2000;
+    const confirm = confirmButton();
+    await userEvent.dblClick(confirm);
+    await act(async () => confirm.focus());
+    await userEvent.keyboard("{Enter}{Enter}");
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("single fire: a new failure, or busy ending, allows one more confirm", async () => {
+    const onConfirm = vi.fn();
+    let set: (next: Pick<ConfirmDialogProps, "busy" | "failure">) => void = () => undefined;
+    function Retrying(): JSX.Element {
+      const [state, setState] = useState<Pick<ConfirmDialogProps, "busy" | "failure">>({});
+      set = setState;
+      return (
+        <ConfirmDialog
+          open
+          title="Freeze sub_001?"
+          confirmLabel="Freeze sub_001"
+          now={now}
+          onConfirm={onConfirm}
+          onCancel={vi.fn()}
+          {...state}
+        />
+      );
+    }
+    await mount(<Retrying />);
+    t = 2000;
+    await userEvent.click(button("Freeze sub_001"));
+    await userEvent.click(button("Freeze sub_001"));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    await act(async () => set({ failure: { message: "1 of 3 orders was not cancelled." } }));
+    await userEvent.click(button("Freeze sub_001"));
+    await userEvent.click(button("Freeze sub_001"));
+    expect(onConfirm).toHaveBeenCalledTimes(2);
+    await act(async () =>
+      set({ busy: true, failure: { message: "1 of 3 orders was not cancelled." } }),
+    );
+    await act(async () => set({ failure: { message: "1 of 3 orders was not cancelled." } }));
+    await userEvent.click(button("Freeze sub_001"));
+    expect(onConfirm).toHaveBeenCalledTimes(3);
+  });
+
+  it("confirmDelayMs: a longer guard holds; a shorter or non-finite one is raised to 400 with a warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const onConfirm = vi.fn();
+    await openHost({ onConfirm, confirmDelayMs: 1000 });
+    t = 1999;
+    await userEvent.click(confirmButton());
+    expect(onConfirm).not.toHaveBeenCalled();
+    t = 2000;
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    for (const confirmDelayMs of [0, -5, Number.NaN]) {
+      await escape();
+      document.body.replaceChildren();
+      t = 1000;
+      onConfirm.mockClear();
+      await openHost({ onConfirm, confirmDelayMs });
+      t = 1399;
+      await userEvent.click(confirmButton());
+      expect(onConfirm).not.toHaveBeenCalled();
+      t = 1400;
+      await userEvent.click(confirmButton());
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+    }
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("confirmDelayMs below 400 ms"));
+  });
+
+  it("a press begun inside the guard stays rejected across a blur or a pointercancel", async () => {
+    const onConfirm = vi.fn();
+    await openHost({ onConfirm });
+    const target = confirmButton();
+    t = 1150;
+    fireEvent.pointerDown(target);
+    await act(async () => target.focus());
+    await act(async () => target.blur());
+    fireEvent.pointerCancel(target);
+    t = 1700;
+    await act(async () => {
+      fireEvent.click(target);
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+    // That click consumed the trip: a later press-less click (assistive technology) is measured on its own.
+    await act(async () => {
+      fireEvent.click(target);
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("the guard rearms when Confirm becomes available or the intent changes while open", async () => {
+    const onConfirm = vi.fn();
+    let set: (next: Partial<ConfirmDialogProps>) => void = () => undefined;
+    function Changing(): JSX.Element {
+      const [props, setProps] = useState<Partial<ConfirmDialogProps>>({ summaryLoading: true });
+      set = setProps;
+      return (
+        <ConfirmDialog
+          open
+          title="Freeze sub_001?"
+          confirmLabel="Freeze sub_001"
+          now={now}
+          onConfirm={onConfirm}
+          onCancel={vi.fn()}
+          {...props}
+        />
+      );
+    }
+    await mount(<Changing />);
+    t = 3000;
+    await act(async () => set({}));
+    t = 3399;
+    await userEvent.click(button("Freeze sub_001"));
+    expect(onConfirm).not.toHaveBeenCalled();
+    t = 5000;
+    await act(async () => set({ confirmLabel: "Freeze sub_002" }));
+    t = 5399;
+    await userEvent.click(button("Freeze sub_002"));
+    expect(onConfirm).not.toHaveBeenCalled();
+    t = 5400;
+    await userEvent.click(button("Freeze sub_002"));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("a click during the exit fade, after the host closed it, does nothing", async () => {
+    const onConfirm = vi.fn();
+    let close: () => void = () => undefined;
+    function Closing(): JSX.Element {
+      const [open, setOpen] = useState(true);
+      close = () => setOpen(false);
+      return (
+        <ConfirmDialog
+          open={open}
+          title="Freeze sub_001?"
+          confirmLabel="Freeze sub_001"
+          now={now}
+          onConfirm={onConfirm}
+          onCancel={vi.fn()}
+        />
+      );
+    }
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
+      element.classList.contains("cv-dialog__scrim")
+        ? ({ transitionDuration: "200ms" } as unknown as CSSStyleDeclaration)
+        : real(element, pseudo),
+    );
+    await mount(<Closing />);
+    const confirm = button("Freeze sub_001");
+    await act(async () => close());
+    expect(document.querySelector(".cv-dialog-layer")).toHaveAttribute("data-state", "closing");
+    t = 5000;
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("Space released on a button activates only when its own press began there", async () => {
+    await openHost();
+    const cancel = button("Cancel");
+    // A Space held from elsewhere: its repeats and its release on Cancel are cancelled.
+    expect(fireEvent.keyDown(cancel, { key: " ", repeat: true })).toBe(false);
+    expect(fireEvent.keyUp(cancel, { key: " " })).toBe(false);
+    expect(fireEvent.keyDown(cancel, { key: " " })).toBe(true);
+    expect(fireEvent.keyUp(cancel, { key: " " })).toBe(true);
+    expect(fireEvent.keyUp(confirmButton(), { key: " " })).toBe(false);
+    expect(fireEvent.keyUp(cancel, { key: "a" })).toBe(true);
   });
 });
