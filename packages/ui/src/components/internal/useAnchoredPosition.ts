@@ -1,18 +1,48 @@
-import { autoUpdate, computePosition, flip, offset, shift, size } from "@floating-ui/dom";
+import {
+  autoUpdate,
+  computePosition,
+  flip,
+  offset,
+  shift,
+  size,
+  type VirtualElement,
+} from "@floating-ui/dom";
 import { useEffect, type RefObject } from "react";
 
-/** The four sides an anchored surface can take (conventions 30); alignment is always centred. */
+/** The four sides an anchored surface can take (conventions 30). */
 export type AnchoredSide = "top" | "right" | "bottom" | "left";
+
+/** Centred on the anchor (the default), or lined up with its start edge (a submenu, a context menu). */
+export type AnchoredAlign = "center" | "start";
+
+/** An element, or a rectangle with no element (floating-ui's virtual reference): positioning only. */
+export type AnchorReference = Element | VirtualElement;
+
+/** A zero-size reference at a viewport point (a right-click), for a context menu. */
+export const pointAnchor = (x: number, y: number): VirtualElement => ({
+  getBoundingClientRect: () => ({
+    x,
+    y,
+    width: 0,
+    height: 0,
+    top: y,
+    left: x,
+    right: x,
+    bottom: y,
+  }),
+});
 
 export interface AnchoredPositionOptions {
   /** Positions only while true: no listener, observer or frame exists while the surface is closed. */
   readonly open: boolean;
-  /** The anchor (the trigger). Read when `open` turns true. */
-  readonly reference: RefObject<Element | null>;
+  /** The anchor (the trigger, or a point through `pointAnchor`). Read when `open` turns true. */
+  readonly reference: RefObject<AnchorReference | null>;
   /** The floating surface, `position: fixed` in its own CSS. */
   readonly floating: RefObject<HTMLElement | null>;
   /** The preferred side; the surface flips to the opposite side when the viewport has no room. */
   readonly side: AnchoredSide;
+  /** Default `center`. */
+  readonly align?: AnchoredAlign;
   /**
    * The custom property that holds the gap to the anchor and the clearance to the viewport edge
    * (conventions 30: `space.inset.xs`). Read from the floating element, so the theme owns the value.
@@ -45,6 +75,7 @@ export function useAnchoredPosition({
   reference,
   floating,
   side,
+  align = "center",
   gapToken = "--space-inset-xs",
   fit = false,
 }: AnchoredPositionOptions): void {
@@ -77,7 +108,7 @@ export function useAnchoredPosition({
         );
       void computePosition(anchor, surface, {
         strategy: "fixed",
-        placement: side,
+        placement: align === "start" ? `${side}-start` : side,
         middleware,
       })
         .then(({ x, y, placement }) => {
@@ -99,5 +130,5 @@ export function useAnchoredPosition({
       surface.style.removeProperty("--cv-anchor-width");
       surface.style.removeProperty("--cv-available-height");
     };
-  }, [open, reference, floating, side, gapToken, fit]);
+  }, [open, reference, floating, side, align, gapToken, fit]);
 }

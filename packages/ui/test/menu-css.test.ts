@@ -112,4 +112,18 @@ describe("menu.css contract (CMP-041)", () => {
     );
     expect(forced).not.toMatch(/var\(--/);
   });
+
+  it("submenus: sized by their items, the open item's row on surface.hover, a secondary chevron", () => {
+    expect(find(normal, ".cv-menu--submenu", "min-width")).toContain("min-width: 0");
+    expect(normal).toMatch(/\.cv-menu__row\[data-expanded\],\s*\.cv-menu__row:has/);
+    expect(find(normal, ".cv-menu__chevron", "color")).toContain(
+      "color: var(--color-text-secondary)",
+    );
+    expect(find(forced, ".cv-menu__row[data-expanded]", "outline")).toContain(
+      "outline: thin solid CanvasText",
+    );
+    expect(
+      find(forced, ".cv-menu__row:has(.cv-menu__item:focus) .cv-menu__chevron", "color"),
+    ).toContain("color: HighlightText");
+  });
 });

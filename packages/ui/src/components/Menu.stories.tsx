@@ -1,10 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { useState, type JSX } from "react";
+import { useRef, useState, type JSX } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { Button } from "./Button.js";
 import { Dialog } from "./Dialog.js";
 import { IconButton } from "./IconButton.js";
-import { Menu, type MenuItem, type MenuProps } from "./Menu.js";
+import { Menu, type MenuButtonProps, type MenuItem } from "./Menu.js";
 
 /** Room below and above the trigger, so the preferred placement is the one drawn. */
 const stage = {
@@ -31,7 +31,7 @@ const treeRow: MenuItem[] = [
   },
 ];
 
-type DemoProps = Omit<MenuProps, "trigger"> & { label?: string };
+type DemoProps = Omit<MenuButtonProps, "trigger" | "contextTarget"> & { label?: string };
 
 function Demo({ label = "Layer actions", ...props }: DemoProps): JSX.Element {
   return (
@@ -341,6 +341,110 @@ export const Scrolling: Story = {
     );
     await userEvent.tab();
     await expect(menu).not.toBeVisible();
+  },
+};
+
+/** E40's alert row menu: Snooze opens its presets (KM-5). */
+const alertRow: MenuItem[] = [
+  { id: "ack", label: "Acknowledge", icon: "check", onSelect: noop },
+  {
+    id: "snooze",
+    label: "Snooze",
+    icon: "pending",
+    items: [
+      { id: "15m", label: "15 m", onSelect: noop },
+      { id: "1h", label: "1 h", onSelect: noop },
+      { id: "tomorrow", label: "Until tomorrow", onSelect: noop },
+    ],
+  },
+  { id: "mute", label: "Mute", onSelect: noop },
+];
+
+/** ItemState=submenu: Snooze open on its presets, beside its row; ← or Esc closes it alone. */
+export const NestedSubmenu: Story = {
+  render: () => <Demo label="Alert actions" items={alertRow} />,
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Alert actions");
+    await userEvent.keyboard("{ArrowDown}{ArrowRight}");
+    const snooze = page.getByRole("menuitem", { name: "Snooze" });
+    await expect(snooze).toHaveAttribute("aria-expanded", "true");
+    const sub = page.getByRole("menu", { name: "Snooze" });
+    await waitFor(() => expect(sub).toHaveAttribute("data-positioned"));
+    await expect(page.getByRole("menuitem", { name: "15 m" })).toHaveFocus();
+    // Beside its row: right of the parent menu (or left at the edge), its top on the row's.
+    const parent = page.getByRole("menu", { name: "Alert actions" }).getBoundingClientRect();
+    const box = sub.getBoundingClientRect();
+    await expect(box.left >= parent.right - 1 || box.right <= parent.left + 1).toBe(true);
+    await expect(Math.abs(box.top - snooze.getBoundingClientRect().top)).toBeLessThan(24);
+    await userEvent.keyboard("{Escape}");
+    await expect(page.queryByRole("menu", { name: "Snooze" })).toBeNull();
+    await expect(snooze).toHaveFocus();
+  },
+};
+
+/** Trigger=context: a grid row whose right-click, Shift+F10 or Menu key opens the row menu. */
+function ContextRow(): JSX.Element {
+  const row = useRef<HTMLDivElement>(null);
+  return (
+    <div style={stage}>
+      <div role="grid" aria-label="Watchlist">
+        <div
+          ref={row}
+          tabIndex={0}
+          role="row"
+          aria-label="BTCUSDT row"
+          style={{
+            padding: "var(--space-inset-md)",
+            border: "calc(var(--border-hairline) * 1px) solid var(--color-border-default)",
+            borderRadius: "var(--radius-control)",
+            color: "var(--color-text-primary)",
+          }}
+        >
+          <span role="gridcell">BTCUSDT · right-click, Shift+F10 or the Menu key</span>
+        </div>
+      </div>
+      <Menu contextTarget={row} aria-label="BTCUSDT actions" items={alertRow} />
+    </div>
+  );
+}
+
+/** Trigger=context (right-click): it opens at the pointer; Esc returns focus to the row. */
+export const ContextMenu: Story = {
+  render: () => <ContextRow />,
+  play: async ({ canvasElement }) => {
+    const row = within(canvasElement).getByRole("row", { name: "BTCUSDT row" });
+    const at = row.getBoundingClientRect();
+    const coords = { clientX: Math.round(at.left + 24), clientY: Math.round(at.top + 8) };
+    await userEvent.pointer({ keys: "[MouseRight]", target: row, coords });
+    const menu = page.getByRole("menu", { name: "BTCUSDT actions" });
+    await waitFor(() => expect(menu).toHaveAttribute("data-positioned"));
+    await expect(page.getByRole("menuitem", { name: "Acknowledge" })).toHaveFocus();
+    const box = menu.getBoundingClientRect();
+    await expect(Math.abs(box.left - coords.clientX)).toBeLessThan(2);
+    await expect(box.top).toBeGreaterThanOrEqual(coords.clientY);
+    await expect(box.top - coords.clientY).toBeLessThan(16);
+    await userEvent.keyboard("{Escape}");
+    await expect(row).toHaveFocus();
+  },
+};
+
+/** Trigger=context (keyboard): Shift+F10 on the focused row opens it below the row's start. */
+export const ContextMenuKeyboard: Story = {
+  render: () => <ContextRow />,
+  play: async ({ canvasElement }) => {
+    const row = within(canvasElement).getByRole("row", { name: "BTCUSDT row" });
+    row.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = page.getByRole("menu", { name: "BTCUSDT actions" });
+    await waitFor(() => expect(menu).toHaveAttribute("data-positioned"));
+    const box = menu.getBoundingClientRect();
+    const at = row.getBoundingClientRect();
+    await expect(Math.abs(box.left - at.left)).toBeLessThan(2);
+    await expect(box.top).toBeGreaterThanOrEqual(at.bottom);
+    await userEvent.keyboard("{ArrowDown}{ArrowRight}");
+    await expect(page.getByRole("menuitem", { name: "15 m" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}{Escape}");
+    await expect(row).toHaveFocus();
   },
 };
 

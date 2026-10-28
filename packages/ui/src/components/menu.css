@@ -4,7 +4,9 @@
  * writes `--cv-anchor-width` (at least as wide as its trigger) and `--cv-available-height` (the room on its side:
  * past it the menu scrolls, conventions 39). Items are `size.row.height` tall (24 / 32 by density) and wrap.
  * Motion (conventions 35): it takes focus, so it opens at once; it closes with a `fast` / `accelerate` fade with no
- * pointer events; reduced motion is a cut. Stacking: portalled, no z-index, as CMP-017.
+ * pointer events; reduced motion is a cut. Stacking: portalled, no z-index, as CMP-017. A submenu is the same
+ * surface beside its item's row (`right-start`, flipped to the left at the edge); it switches at once. A context
+ * menu opens below-start of the pointer or of the focused element.
  */
 .cv-menu {
   position: fixed;
@@ -28,6 +30,11 @@
     var(--type-ui-body-line-height) var(--type-ui-body-font-family);
   overflow-wrap: break-word;
   opacity: 1;
+}
+
+/* A submenu is sized by its own items, not by the row it opens from. */
+.cv-menu--submenu {
+  min-width: 0;
 }
 
 /* The menu itself takes focus only when it has no item (conventions 32); it is not a control. */
@@ -78,6 +85,7 @@
 }
 
 .cv-menu__row:hover,
+.cv-menu__row[data-expanded],
 .cv-menu__row:has(.cv-menu__item:focus) {
   background: var(--color-surface-hover);
 }
@@ -127,6 +135,15 @@
   margin-inline-start: var(--space-inset-sm);
   color: var(--color-text-tertiary);
   font-size: var(--type-num-sm-font-size);
+}
+
+/* A submenu item's trailing `chevron-right`, in secondary. */
+.cv-menu__chevron {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin-inline-start: var(--space-inset-sm);
+  color: var(--color-text-secondary);
 }
 
 /* Plain disabled: `opacity.disabled`, reached, never activated. */
@@ -213,8 +230,14 @@
   .cv-menu__second,
   .cv-menu__kbd,
   .cv-menu__lead,
+  .cv-menu__chevron,
   .cv-menu__row[data-danger] .cv-menu__lead {
     color: CanvasText;
+  }
+
+  /* An open submenu's item keeps a CanvasText edge while focus is in the submenu. */
+  .cv-menu__row[data-expanded] {
+    outline: thin solid CanvasText;
   }
 
   /* T2 is not greyed: its lock, label and reason stay CanvasText (slice 3 conventions 29). */
@@ -242,7 +265,8 @@
   .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__item,
   .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__lead,
   .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__second,
-  .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__kbd {
+  .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__kbd,
+  .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__chevron {
     color: HighlightText;
   }
 }
