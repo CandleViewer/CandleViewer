@@ -69,6 +69,9 @@ export type {
 export { FormField } from "./FormField.js";
 export type { FormFieldLayout, FormFieldProps } from "./FormField.js";
 
+export { FormSection } from "./FormSection.js";
+export type { FormSectionProps } from "./FormSection.js";
+
 export { Avatar } from "./Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Avatar.js";
 
@@ -144,6 +147,8 @@ export { RbacGate } from "./RbacGate.js";
 export type { RbacGateChild, RbacGateProps } from "./RbacGate.js";
 export { RBAC_REASONS, formatRbacReason } from "./rbacReasons.js";
 export type { RbacReasonArgs, RbacReasonFills, RbacReasonKey } from "./rbacReasons.js";
+export { SearchBox } from "./SearchBox.js";
+export type { SearchBoxProps } from "./SearchBox.js";
 
 export { SegmentedControl } from "./SegmentedControl.js";
 export type {

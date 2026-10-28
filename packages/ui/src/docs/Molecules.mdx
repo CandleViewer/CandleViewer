@@ -49,3 +49,43 @@ The field owns the control's id: a field atom takes the field's `htmlFor` (or a 
 any id of its own, so set a control's id on the field. RadioGroup, Slider, SegmentedControl and
 Checkbox do not read the field yet; name them with `aria-labelledby` set to the field's `labelId`
 until a later E05-S03 (#266) slice wires them.
+
+### FormSection (CMP-065, collapsible: the WAI-ARIA APG Disclosure pattern)
+
+| Keys                       | Action                                                                                               |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab            | The disclosure button (collapsible only), then the fields; a collapsed section's fields are skipped. |
+| Enter / Space (the button) | Shows or hides the fields; focus stays on the button.                                                |
+| Submit (the host's form)   | A collapsed section around an invalid field opens, and focus reaches the field.                      |
+
+| Element           | Role                           | Name                      | ARIA                                                                                     |
+| ----------------- | ------------------------------ | ------------------------- | ---------------------------------------------------------------------------------------- |
+| section           | group (`<fieldset>`)           | the legend's heading text | `aria-labelledby` → the heading; `aria-describedby` → the description                    |
+| heading           | heading, `h{headingLevel}` (3) | `title`                   | inside the `<legend>`                                                                    |
+| disclosure button | button                         | `title`                   | `aria-expanded`, `aria-controls` → the body; `aria-describedby` → the errors-within line |
+| errors within     | text                           | —                         | "2 problems" with the `danger` glyph (`aria-hidden`), shown only while collapsed         |
+| T2 notice         | text                           | —                         | the `aria-describedby` target of every gated field inside (one notice, many pointers)    |
+
+The count is `errorCount`, else the FormFields inside that show an error. A native constraint
+failure (`required`) opens the section before the browser moves focus; a host-validated error opens
+it in the render after the submit, and focus moves to the first invalid control unless it is
+already on one. Plain disabled is `<fieldset disabled>`; the disclosure button, inside the legend,
+stays usable. The T2 gate reaches FormFields only: a bare control inside the section is not wired.
+
+### SearchBox (CMP-054, no widget pattern: a native search field)
+
+| Keys                   | Action                                                                  |
+| ---------------------- | ----------------------------------------------------------------------- |
+| Tab / Shift+Tab        | The field, then the clear button when it shows.                         |
+| Typing                 | Changes the query; the host filters after its debounce or on Enter.     |
+| Esc                    | Clears a non-empty query and keeps focus; on an empty query it bubbles. |
+| Enter / Space on Clear | Clears; focus returns to the field.                                     |
+
+| Element      | Role                                       | Name                         | ARIA                                                        |
+| ------------ | ------------------------------------------ | ---------------------------- | ----------------------------------------------------------- |
+| field        | searchbox (native `<input type="search">`) | `label` through `aria-label` | the placeholder is never the name; `disabled` when disabled |
+| search glyph | none                                       | —                            | `aria-hidden="true"`                                        |
+| clear button | button                                     | "Clear search"               | rendered only with a value                                  |
+
+The host announces its result count, politely, once per settled query. A search is a read and is
+never gated, so SearchBox has no `disabledReason`.

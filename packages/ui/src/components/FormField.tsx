@@ -1,5 +1,7 @@
 import {
+  useContext,
   useId,
+  useLayoutEffect,
   useMemo,
   useState,
   type CSSProperties,
@@ -11,6 +13,7 @@ import { useDisabledReason } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
 import { FieldContext, type FieldContextValue } from "./internal/fieldContext.js";
 import { FieldMessage } from "./internal/fieldParts.js";
+import { SectionContext } from "./internal/sectionContext.js";
 
 export type FormFieldLayout = "stacked" | "inline";
 
@@ -79,7 +82,11 @@ export function FormField({
   const helpId = useId();
   const controlId = htmlFor ?? ownControlId;
   const nameId = labelId ?? ownLabelId;
-  const reason = useDisabledReason(disabled, disabledReason);
+  const own = useDisabledReason(disabled, disabledReason);
+  const section = useContext(SectionContext);
+  // Inside a gated or plain-disabled CMP-065 section the section's gate wins: one notice, many pointers.
+  const fromSection = section !== null && (section.reason.gated || section.reason.disabled);
+  const reason = fromSection ? section.reason : own;
   const [reported, setReported] = useState<string | undefined>(undefined);
   const [labelledBy, setLabelledBy] = useState(false);
 
@@ -89,6 +96,13 @@ export function FormField({
   const invalid = message !== undefined && message !== "";
   // Error then help; while T2 the reason id alone (D02F CMP-040 a11y table, D09 §9.2); the help line stays visible.
   const describedBy = reason.gated ? reason.ariaDescribedBy : cx(errorId, hasHelp && helpId);
+
+  const reportInvalid = section?.reportInvalid;
+  useLayoutEffect(() => {
+    if (reportInvalid === undefined) return undefined;
+    reportInvalid(controlId, invalid);
+    return () => reportInvalid(controlId, false);
+  }, [reportInvalid, controlId, invalid]);
 
   const context = useMemo<FieldContextValue>(
     () => ({
@@ -140,7 +154,7 @@ export function FormField({
       </label>
       <div className="cv-formfield__body">
         <FieldContext.Provider value={context}>{children}</FieldContext.Provider>
-        {reason.gated ? (
+        {reason.gated && !fromSection ? (
           <div id={reason.reasonId} className="cv-formfield__line">
             {reason.reason}
           </div>

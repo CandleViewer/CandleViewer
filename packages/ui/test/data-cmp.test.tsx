@@ -5,9 +5,11 @@ import {
   Button,
   Checkbox,
   FormField,
+  FormSection,
   IconButton,
   NumericStepperInput,
   RadioGroup,
+  SearchBox,
   SegmentedControl,
   Select,
   Slider,
@@ -53,6 +55,17 @@ const atoms: [string, () => JSX.Element][] = [
       <FormField label="Name">
         <TextInput />
       </FormField>
+    ),
+  ],
+  ["CMP-054", () => <SearchBox label="Search users" value="alex" onChange={noop} onClear={noop} />],
+  [
+    "CMP-065",
+    () => (
+      <FormSection title="Offsets">
+        <FormField label="Name">
+          <TextInput />
+        </FormField>
+      </FormSection>
     ),
   ],
 ];

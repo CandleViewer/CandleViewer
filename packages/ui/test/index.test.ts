@@ -5,9 +5,11 @@ import type {
   ButtonProps,
   CheckboxProps,
   FormFieldProps,
+  FormSectionProps,
   IconButtonProps,
   NumericStepperInputProps,
   RadioGroupProps,
+  SearchBoxProps,
   SegmentedControlProps,
   SelectProps,
   SliderProps,
@@ -61,15 +63,16 @@ describe("@candleviewer/ui control atoms (E05-S01)", () => {
 });
 
 describe("@candleviewer/ui molecules (E05-S03)", () => {
-  it.each([["FormField", Atoms.FormField]])(
-    "exports %s from the package entry as a component function",
-    (_name, component) => {
-      expect(typeof component).toBe("function");
-    },
-  );
+  it.each([
+    ["FormField", Atoms.FormField],
+    ["FormSection", Atoms.FormSection],
+    ["SearchBox", Atoms.SearchBox],
+  ])("exports %s from the package entry as a component function", (_name, component) => {
+    expect(typeof component).toBe("function");
+  });
 
   it("exports each molecule's props type (checked by the typechecker)", () => {
-    const props: [FormFieldProps] | null = null;
+    const props: [FormFieldProps, FormSectionProps, SearchBoxProps] | null = null;
     expect(props).toBeNull();
   });
 });
