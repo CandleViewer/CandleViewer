@@ -50,7 +50,7 @@ def test_model_constraint_and_index_names_match_sql() -> None:
     }
     assert {i.name for i in models.layout_panes.indexes} == {"ix_lp_layout", "ix_lp_symbol"}
     assert "ix_dr_layout" in {i.name for i in models.drawings.indexes}
-    assert list(models.PANE_KINDS) == _KINDS
+    assert list(models.PANE_KINDS) == [*_KINDS, "scanner"]  # 0054_scanner_presets widens lp_kind
 
 
 def test_upgrade_sql_has_tables_composite_fks_and_indexes() -> None:

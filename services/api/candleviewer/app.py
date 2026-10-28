@@ -168,6 +168,7 @@ from candleviewer.api.recording_writes import make_recording_writes_router
 from candleviewer.api.response_headers import NoSniff
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
+from candleviewer.api.scanner import make_scanner_router
 from candleviewer.api.session_backstop_audit import SessionBackstopAudit
 from candleviewer.api.session_snapshot import SessionSnapshotResolver
 from candleviewer.api.sessions import AuditEmitter, make_session_router
@@ -449,6 +450,9 @@ from candleviewer.storage.repositories.rows import (
     TradeTotals,
 )
 from candleviewer.storage.repositories.rules_sqlalchemy import SqlAlchemyRulesRepository
+from candleviewer.storage.repositories.scanner_presets_sqlalchemy import (
+    SqlAlchemyScannerPresetRepository,
+)
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.storage.repositories.sessions_sqlalchemy import (
     SqlAlchemySessionRepository,
@@ -3188,6 +3192,23 @@ def create_app(
             _LazyAuditEmitter(ctx.audit),
             indicator_catalogue,
             metrics=app.state.indicator_presets_metrics,
+        )
+    )
+    # E08-T09 (#4708): the static `/scanner/criteria` and owner-scoped `/scanner/presets*`
+    # (`scope: self`, writes audited ahead). Postgres on the real backend only: the fake backend
+    # answers the presets 503 without any I/O.
+    app.state.scanner_presets_repository = (
+        SqlAlchemyScannerPresetRepository(
+            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "scanner-presets")
+        )
+        if resolved.storage_backend == "real"
+        else None
+    )
+    app.include_router(
+        make_scanner_router(
+            lambda: app.state.scanner_presets_repository,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
         )
     )
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).

@@ -21,9 +21,10 @@ from candleviewer.api.workspaces_models import (
     canonical_json,
 )
 
-_MIGRATION = (
-    Path(__file__).resolve().parents[3] / "candleviewer/migrations/versions/0022_workspaces.py"
-)
+_VERSIONS = Path(__file__).resolve().parents[3] / "candleviewer/migrations/versions"
+_MIGRATION = _VERSIONS / "0022_workspaces.py"
+#: The revision that last set each CHECK: `lp_kind` gained `scanner` in 0054 (E08-T09, #4708).
+_LATEST = {"lp_kind": _VERSIONS / "0054_scanner_presets.py"}
 
 
 def pane(slot: int = 0, **kw: Any) -> dict[str, Any]:
@@ -56,7 +57,8 @@ def _check_list(ddl: str, name: str) -> tuple[str, ...]:
     [("lp_kind", wm.PANE_KINDS), ("lp_scale", wm.SCALE_MODES), ("lay_preset", wm.GRID_PRESETS)],
 )
 def test_enum_equals_db_check_list(check: str, values: tuple[str, ...]) -> None:
-    assert _check_list(_ddl(), check) == values
+    ddl = _LATEST[check].read_text(encoding="utf-8") if check in _LATEST else _ddl()
+    assert _check_list(ddl, check) == values
 
 
 def test_slot_and_hotkey_bounds_equal_db_checks() -> None:

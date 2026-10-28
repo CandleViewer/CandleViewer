@@ -3348,9 +3348,18 @@ CREATE INDEX ix_dr_layout ON drawings (layout_id) WHERE layout_id IS NOT NULL;
 
 `ix_lp_symbol` is what the recorder queries to decide which symbols are "chart open" for auto-recording.
 
-`22`'s `PaneKind` lists `scanner` (SCR-104, E08-T09 #4708) ahead of this table: `lp_kind` and the
-API's pane-kind list gain `scanner` in E08-T09's implementation revision, the one that creates
-`scanner_presets` (§3.8.7), and the API refuses the kind with `422` until then.
+`22`'s `PaneKind` lists `scanner` (SCR-104, E08-T09 #4708). Alembic `0054_scanner_presets`, the
+revision that creates `scanner_presets` (§3.8.7), widens `lp_kind` to it with the block below, and
+the API's pane-kind list gains it in the same PR. The CHECK is replaced `NOT VALID` and validated
+in its own statement, so the scan holds SHARE UPDATE EXCLUSIVE, not ACCESS EXCLUSIVE (C-5.6). The
+downgrade refuses while a layout holds a `scanner` pane, then restores the list above.
+
+```sql
+ALTER TABLE layout_panes
+  DROP CONSTRAINT lp_kind,
+  ADD CONSTRAINT lp_kind CHECK (pane_kind IN ('chart','dom','tape','profile','cvd','oi','deep_stats','regime','positions','journal','watchlist','alerts','scanner')) NOT VALID;
+ALTER TABLE layout_panes VALIDATE CONSTRAINT lp_kind;
+```
 
 #### 3.8.2 `chart_templates`
 
@@ -3518,11 +3527,11 @@ CREATE UNIQUE INDEX ux_wl_name ON watchlists (user_id, lower(name));
 #### 3.8.7 `scanner_presets`
 
 A user's saved SCR-104 scanner criteria (`22` `/scanner/presets*`, E08-T09 #4708): a name, a
-`ScannerFilter`, a ranking key and the default flag, **never results**. Specified here by the
-contract PR; the table ships with E08-T09's implementation revision (no migration yet). The API
-reads and writes only the caller's own rows. A delete is a hard delete, so a name is free again at
-once; the write-ahead `scanner_preset.deleted` audit record keeps the preset's content hash (`24`
-§15.5). `filter` is stored as written, so a criterion the server later stops knowing, or lists with
+`ScannerFilter`, a ranking key and the default flag, **never results**. Shipped as Alembic
+`0054_scanner_presets` (E08-T09 PR 2a), DDL below verbatim, with `lp_kind`'s widening (§3.8.1);
+its downgrade refuses while any preset exists. The API reads and writes only the caller's own
+rows. A delete is a hard delete, so a name is free again at once; the write-ahead
+`scanner_preset.deleted` audit record keeps the preset's content hash (`24` §15.5). `filter` is stored as written, so a criterion the server later stops knowing, or lists with
 `available: false`, stays in the row and is reported in `unavailable_criteria`, never dropped, until a save replaces the filter.
 `sp_filter_shape` is the database half of the API's 4 KiB `filter` bound, measured as Postgres
 prints `jsonb`; `sp_sort` checks the shape only, since `ScannerSortKey` is open-ended. `version`
@@ -3558,7 +3567,10 @@ check compares names with Postgres `lower()` (as the index does), not a client-s
 create or update that sets `is_default` clears the previous default and writes the row in one
 transaction; a concurrent default that still trips `ux_sp_default` is retried once, then answered
 `409 conflict`. A refused write whose write-ahead audit record was already written gets a second
-record with `outcome` `failure` (24 §15.5).
+record with `outcome` `failure` (24 §15.5). Every write takes a per-owner advisory lock first,
+so the cap and the default being cleared cannot race another write of the same owner; a write
+that sets the default also refuses with `409 conflict` when the owner's default is no longer the
+one, at the `version`, its write-ahead record names (the clear is keyed on both).
 
 ### 3.9 Settings & feature flags
 
@@ -4920,6 +4932,7 @@ NAMING_CONVENTION = {
 | `0050_ea_identity_write_once`   | trigger `trg_ea_identity_write_once` (§3.2.1): `exchange_accounts.id`, `exchange_uid` and `kind` are write-once — **#3968** (SR-E27-13); the downgrade (rollback only) drops the trigger and its function                                                                                                                               |
 | `0051_replay_symbols_streams`   | `replay_sessions.symbols`, `streams` and CHECKs `rps_symbols`, `rps_streams` (§3.6.4): every symbol and stream a session replays, what the retention guard reads; existing rows backfilled — **#2674** (E26 G7); the downgrade refuses while a row holds a list the backfill cannot rebuild                                             |
 | `0053_tg_frozen_after_draft`    | trigger `trg_tg_write_once` (§3.3.2): once a group leaves `draft` it never returns, and `symbol`, `side`, `entry_type`, `origin`, `is_paper`, `algo`, `algo_params`, `created_at`, `origin_rule_id` and `origin_rule_run_id` are frozen — **E28-T05 #909** (SEC-2-04); the downgrade (rollback only) restores 0039's function           |
+| `0054_scanner_presets`          | `scanner_presets` (§3.8.7) with `ux_sp_name` and `ux_sp_default`, and `scanner` added to `lp_kind` (§3.8.1) — **E08-T09 #4708**; the downgrade refuses while any preset or a `scanner` pane exists                                                                                                                                      |
 
 ---
 

@@ -1864,7 +1864,8 @@ drawings = Table(
 )
 
 
-#: `workspaces`, `layouts`, `layout_panes` (E15-T01, revision 0022_workspaces).
+#: `workspaces`, `layouts`, `layout_panes` (E15-T01, revision 0022_workspaces); `scanner` added
+#: to `lp_kind` by 0054_scanner_presets (E08-T09).
 PANE_KINDS: tuple[str, ...] = (
     "chart",
     "dom",
@@ -1878,6 +1879,7 @@ PANE_KINDS: tuple[str, ...] = (
     "journal",
     "watchlist",
     "alerts",
+    "scanner",
 )
 
 workspaces = Table(
@@ -2037,6 +2039,31 @@ indicator_presets = Table(
         postgresql_where=text("is_favourite AND deleted_at IS NULL"),
     ),
 )
+
+#: `scanner_presets` (E08-T09, revision 0054_scanner_presets): 21 Sec.3.8.7 verbatim.
+scanner_presets = Table(
+    "scanner_presets",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("name", Text, nullable=False),
+    Column("filter", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("sort", Text, nullable=False, server_default=text("'turnover_24h'")),
+    Column("is_default", Boolean, nullable=False, server_default=text("false")),
+    Column("version", Integer, nullable=False, server_default=text("1")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("char_length(name) BETWEEN 1 AND 80", name="sp_name_len"),
+    CheckConstraint(
+        "jsonb_typeof(filter) = 'object' AND octet_length(filter::text) <= 4096",
+        name="sp_filter_shape",
+    ),
+    CheckConstraint("sort ~ '^[a-z][a-z0-9_]{0,39}$'", name="sp_sort"),
+    CheckConstraint("version >= 1", name="sp_version"),
+    Index("ux_sp_name", "user_id", text("lower(name)"), unique=True),
+    Index("ux_sp_default", "user_id", unique=True, postgresql_where=text("is_default")),
+)
+
 
 #: `settings` (E42-T01, revision 0025_settings): 21-database-schema.md Sec.3.9, `settings` only.
 settings = Table(

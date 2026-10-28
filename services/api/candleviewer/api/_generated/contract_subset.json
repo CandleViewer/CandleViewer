@@ -2252,7 +2252,7 @@
         "type": "string"
       },
       "PaneKind": {
-        "description": "Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). `scanner` (SCR-104) also shows many symbols and carries\nneither, but holds no account data: its rows are `runScanner`'s public market values. The\nserver accepts `scanner` once E08-T09's implementation adds it to `lp_kind`; until then a\nlayout naming it is refused with `422`. A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n",
+        "description": "Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). `scanner` (SCR-104) also shows many symbols and carries\nneither, but holds no account data: its rows are `runScanner`'s public market values;\nE08-T09 PR 2a (`0054_scanner_presets`) added it to `lp_kind`. A heatmap lives in the\n`dom` pane and orders in the `positions` pane. A footprint is a `chart` pane; until chart\ntemplates exist (#2411) it is marked by `pane_config.settings.footprint: true`, its\noptions as further flat `footprint_*` settings.\n",
         "enum": [
           "chart",
           "dom",
@@ -2872,6 +2872,188 @@
           "message"
         ],
         "type": "object"
+      },
+      "ScannerClassSet": {
+        "additionalProperties": false,
+        "description": "Matches a row whose class is any of `classes`, each one `listScannerCriteria` lists for the criterion (`422` rule `unknown_regime_class`); an empty set is `422` rule `classes_empty`.\n",
+        "properties": {
+          "classes": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]{0,31}$",
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "classes"
+        ],
+        "type": "object"
+      },
+      "ScannerCriterionId": {
+        "description": "A criterion id. `ScannerFilter` lists the ids in force; a stored preset may still name one the server no longer knows or lists with `available: false` (`ScannerPreset.unavailable_criteria`, which also carries a stored `sort` key that `sort_keys` lists with `available: false`).\n",
+        "pattern": "^[a-z][a-z0-9_]{0,39}$",
+        "type": "string"
+      },
+      "ScannerFilter": {
+        "additionalProperties": false,
+        "description": "A closed set of criteria, each optional and applied together (AND); `{}` filters\nnothing. Bounds are `Decimal` strings in the unit `listScannerCriteria` gives, both\ninclusive; `min` must be below `max` (`422` rule `range_inverted`). A key outside the\nset is `422` rule `unknown_criterion`, and a key `listScannerCriteria` lists with\n`available: false` is `422` rule `criterion_unavailable`. Criteria with\n`needs_recording: true` are\nskipped for `live_only` rows (`runScanner`). Adding a criterion is additive; removing\none makes stored presets that name it report it in `unavailable_criteria`.\n",
+        "properties": {
+          "funding_rate": {
+            "$ref": "#/components/schemas/ScannerRange"
+          },
+          "oi_change_pct_24h": {
+            "$ref": "#/components/schemas/ScannerRange"
+          },
+          "price_change_pct_24h": {
+            "$ref": "#/components/schemas/ScannerRange"
+          },
+          "range_pct_24h": {
+            "$ref": "#/components/schemas/ScannerRange"
+          },
+          "regime": {
+            "$ref": "#/components/schemas/ScannerClassSet"
+          },
+          "spread_bps": {
+            "$ref": "#/components/schemas/ScannerRange"
+          },
+          "tape_speed_zscore": {
+            "$ref": "#/components/schemas/ScannerRange"
+          },
+          "turnover_24h": {
+            "$ref": "#/components/schemas/ScannerRange"
+          }
+        },
+        "type": "object"
+      },
+      "ScannerPreset": {
+        "description": "Response object. Readers must ignore unknown properties (C-6.3).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "filter": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScannerFilter"
+              }
+            ],
+            "description": "The stored criteria the server knows today."
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sort": {
+            "$ref": "#/components/schemas/ScannerSortKey"
+          },
+          "unavailable_criteria": {
+            "description": "Criteria the stored filter names that the server no longer knows or lists with `available: false`, never silently dropped (and the stored `sort` key when `sort_keys` lists it with `available: false`; `sort` is returned as stored): they are left out of `filter` and `runScanner`, and listed here until a `PUT` saves the preset without them. Usually empty.\n",
+            "items": {
+              "$ref": "#/components/schemas/ScannerCriterionId"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "description": "1 on create, raised by one on every change; informative only (no `If-Match`).",
+            "minimum": 1,
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "filter",
+          "sort",
+          "is_default",
+          "unavailable_criteria",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ScannerPresetInput": {
+        "additionalProperties": false,
+        "description": "Writable preset fields. `PUT` is a full replacement: an omitted field takes its default.\nOnly the server sets `id`, the owner (the caller), `version`, `unavailable_criteria`,\n`created_at` and `updated_at`: sent in a body, each is refused (`422`) like any other\nunknown property. `name` is at most 80 characters as sent (rule `string_too_long`),\nthen sanitised as `WorkspaceInput.name` is; empty after sanitising is rule\n`string_too_short`, and a lone surrogate is rule `invalid_unicode`. `filter` is at most\n4 KiB as stored JSON (rule `filter_too_large`). A preset never stores results.\n",
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/ScannerFilter"
+          },
+          "is_default": {
+            "default": false,
+            "description": "The preset a new scanner pane opens with. At most one per owner: setting it clears the owner's previous default (`createScannerPreset`).",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "At most 80 characters as sent, at least 1 after sanitising (above). Unique per owner, case-insensitive (`409 conflict`, rule `name_taken`).",
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sort": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScannerSortKey"
+              }
+            ],
+            "default": "turnover_24h",
+            "description": "The ranking the preset applies; omitted means `turnover_24h`."
+          }
+        },
+        "required": [
+          "name",
+          "filter"
+        ],
+        "type": "object"
+      },
+      "ScannerRange": {
+        "additionalProperties": false,
+        "description": "An inclusive range: at least one bound (`422` rule `range_empty`), and `min` below `max` when both are given (`422` rule `range_inverted` for `min >= max`).\n",
+        "minProperties": 1,
+        "properties": {
+          "max": {
+            "$ref": "#/components/schemas/Decimal"
+          },
+          "min": {
+            "$ref": "#/components/schemas/Decimal"
+          }
+        },
+        "type": "object"
+      },
+      "ScannerSortKey": {
+        "default": "volume_24h",
+        "description": "A `runScanner` ranking key. **Open-ended for readers** (C-6.3); a writer sends a listed value that `listScannerCriteria`'s `sort_keys` does not list with `available: false`. A preset stores one.\n",
+        "enum": [
+          "volume_24h",
+          "price_change_pct_24h",
+          "cvd",
+          "tape_speed",
+          "open_interest",
+          "liquidation_intensity",
+          "turnover_24h",
+          "funding_rate",
+          "spread_bps",
+          "range_pct_24h",
+          "tape_speed_zscore",
+          "oi_change_pct_24h"
+        ],
+        "type": "string"
       },
       "Symbol": {
         "description": "Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
@@ -6120,6 +6302,47 @@
     },
     "/scanner/presets": {
       "get": {
+        "description": "The caller's presets, never another user's, whatever the caller's role, ordered by\ncase-insensitive `name` then `id`. A preset holds criteria and a ranking, never results.\nA user holds at most 100 presets, so the list is not paged. Any query parameter is\nrefused with `422` (SR-026).\n",
+        "operationId": "listScannerPresets",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/ScannerPreset"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Presets."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "List saved scanner presets",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "marketdata:read"
@@ -6128,6 +6351,77 @@
         }
       },
       "post": {
+        "description": "Saves a preset owned by the caller; the server mints its `id` and sets `version` to 1.\nIts `filter` is checked against the current criteria as `runScanner` checks `filters`.\nNothing is stored on any refusal.\n\n- `413 payload_too_large`: the body is over 8 KiB, refused before it is parsed.\n- `422 validation_failed` (`ScannerPresetInput` gives each field's rules): an unknown\n  property (`id`, `version`, `unavailable_criteria` and the timestamps included), the\n  `name` rules and `invalid_unicode`, an unknown `sort`, `runScanner`'s filter rules\n  with `errors[].field` `filter.<criterion id>` (else `filter`), and\n  `criterion_unavailable` on `filter.<criterion id>` or `sort`, as `runScanner` refuses\n  them. Any query parameter is refused (SR-026).\n- `409 conflict`: rule `name_taken` (the caller has a preset with this name,\n  case-insensitive), `limit_reached` (100 presets) or `conflict` (a concurrent default\n  that still trips the one-default index after one retry).\n- `503`: `store_unavailable` when storage fails, `audit_unavailable` when the write-ahead\n  audit record cannot be written.\n\n`is_default: true` makes this the caller's one default preset: in the same transaction\nthe server clears the flag on the caller's previous default, a change recorded as that\npreset's `scanner_preset.updated` with its `version` raised.\n",
+        "operationId": "createScannerPreset",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "momentum": {
+                  "value": {
+                    "filter": {
+                      "funding_rate": {
+                        "max": "0.0005"
+                      },
+                      "price_change_pct_24h": {
+                        "min": "0.05"
+                      },
+                      "turnover_24h": {
+                        "min": "50000000"
+                      }
+                    },
+                    "is_default": false,
+                    "name": "Momentum",
+                    "sort": "turnover_24h"
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/ScannerPresetInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScannerPreset"
+                }
+              }
+            },
+            "description": "Created."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Save a scanner preset",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:write"
@@ -6138,6 +6432,37 @@
     },
     "/scanner/presets/{presetId}": {
       "delete": {
+        "description": "Hard delete: the row goes and its name can be used again at once; the write-ahead\n`scanner_preset.deleted` record keeps its content hash. Deleting the default leaves the\ncaller with none. No precondition. A preset that is missing, already deleted or another\nuser's returns the same `404`; a malformed `presetId` is `422` rule `uuid_parsing`, and\nany query parameter is refused (SR-026). `503` as on `createScannerPreset`.\n",
+        "operationId": "deleteScannerPreset",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Delete a scanner preset",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:write"
@@ -6145,7 +6470,66 @@
           "scope": "self"
         }
       },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/PresetId"
+        }
+      ],
       "put": {
+        "description": "Full replacement of one of the caller's presets (an omitted field takes its default);\nthe server raises `version` by one. No precondition: the last write wins. A preset that\nis missing, deleted or another user's returns the same `404`. A malformed `presetId` is\n`422` rule `uuid_parsing`. `is_default`, `409`, `413`, the other `422` rules and `503`\nas on `createScannerPreset`. Saving a preset whose stored filter names an unavailable\ncriterion stores the body's `filter` only, so the criterion is dropped by that save and\nno other way.\n\nEvaluation order for `/scanner/presets*` (steps that do not apply are skipped): `401`;\n`403` (permission, CSRF); `413`; `422` (path, query, body, none of which reads a stored\npreset); `404` (missing, deleted or another user's, identical); `409`; the write. `503`\nwherever storage or the write-ahead audit record fails.\n",
+        "operationId": "updateScannerPreset",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScannerPresetInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScannerPreset"
+                }
+              }
+            },
+            "description": "Replaced."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Replace a scanner preset",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:write"

@@ -1357,36 +1357,31 @@ operations:
     permissions: ['marketdata:read']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; E08-T09 (#4708) PR 2 mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /scanner/presets:
     permissions: ['marketdata:read']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; E08-T09 (#4708) PR 2 mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /scanner/presets:
     permissions: ['workspaces:write']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; E08-T09 (#4708) PR 2 mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   PUT /scanner/presets/{presetId}:
     permissions: ['workspaces:write']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; E08-T09 (#4708) PR 2 mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   DELETE /scanner/presets/{presetId}:
     permissions: ['workspaces:write']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; E08-T09 (#4708) PR 2 mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /schemas/rule-ir.json:
     permissions: ['rules:read']

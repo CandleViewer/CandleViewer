@@ -277,4 +277,5 @@ def test_the_table_and_the_audit_actions_are_documented() -> None:
     internal = (PLAN / "24-internal-schemas.md").read_text(encoding="utf-8")
     closed = internal[internal.index("### 15.5 Audited action vocabulary") :]
     for action in ("created", "updated", "deleted"):
-        assert f"`scanner_preset.{action}` (not registered yet, E08-T09)" in closed
+        assert f"`scanner_preset.{action}`," in closed  # registered by PR 2a (audit/actions.py)
+        assert f"`scanner_preset.{action}` (not registered yet" not in closed
