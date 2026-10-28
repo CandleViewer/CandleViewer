@@ -25,6 +25,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import get_args
+from uuid import UUID
 
 from starlette.requests import Request
 
@@ -294,9 +295,10 @@ _DEFINITION_VERBS = {
 
 
 def definition_write_text(
-    verb: str, environment: str, members: int, definition_id: object = None
+    verb: str, environment: str, members: int, definition_id: UUID | None = None
 ) -> ChallengeText:
-    """The definition writes (`verb`: create, replace, delete), after their checks."""
+    """The definition writes (`verb`: create, replace, delete), after their checks. The id is a
+    `UUID`, so no caller can put free text into what the Owner confirms."""
     count = f"{int(members)} member{'' if members == 1 else 's'}"
     env = _restated(environment, _ACCOUNT_ENVIRONMENTS, "environment")
     text = _DEFINITION_VERBS[verb].format(environment=env, members=count, definition=definition_id)

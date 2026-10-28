@@ -6,7 +6,7 @@ the write-ahead hook's membership change and the challenge's restatement."""
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 from uuid import UUID
 
@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.errors import AccountNotFoundError
@@ -24,6 +25,7 @@ from candleviewer.api import trade_group_definition_writes as writes
 from candleviewer.api.step_up_challenge import ChallengeText, definition_write_text
 from candleviewer.api.trade_group_definitions import make_trade_group_definitions_router
 from candleviewer.api.trade_groups_gate import TradeGroupsGate
+from candleviewer.audit.actions import validate_action
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
@@ -47,6 +49,18 @@ def caller(role: str, user: UUID = OWNER) -> PrincipalSnapshot:
     held = frozenset({read, Permission.ACCOUNTS_WRITE} if owner else {read})
     grants = () if owner else tuple(AccountGrant(a, True, True, False) for a in (A, B, C))
     return PrincipalSnapshot(user if owner else reads.MANAGER_ID, frozenset({role}), held, grants)
+
+
+def denied() -> float:
+    """`authz_denied_total` for `accounts:write`, process-wide: admission counts a refused role and
+    the stores' live-owner gate a lapsed Owner (SR-125)."""
+    return REGISTRY.get_sample_value("authz_denied_total", {"permission": "accounts:write"}) or 0.0
+
+
+def state_of(*members: tuple[UUID, bool]) -> dict[str, Any]:
+    """Core3 as a record holds it: the name, the environment and each member's `(id, enabled)`."""
+    named = [{"exchange_account_id": str(a), "enabled": on} for a, on in members]
+    return {"name": "Core3", "environment": "demo", "members": named}
 
 
 def payload(*members: UUID, name: str = "Core3", env: str = "demo") -> dict[str, Any]:
@@ -221,7 +235,7 @@ def test_a_refused_body_is_never_challenged(world: World) -> None:
 @pytest.mark.parametrize("role", ["manager", "viewer"])
 def test_a_manager_and_a_viewer_get_403(world: World, role: str) -> None:
     """SR-E28-31: audited, whatever the flag says (RBAC first); unaudited, 503."""
-    world.principal = caller(role)
+    world.principal, before = caller(role), denied()
     answers = [world.post()]
     world.flag = False
     answers.append(world.post(payload(A, A)))
@@ -229,6 +243,7 @@ def test_a_manager_and_a_viewer_get_403(world: World, role: str) -> None:
     assert [r["action"] for r in world.audited] == ["rbac.denied"] * 2 and world.texts == []
     world.faults["audit"] = AuditUnavailable("down")
     assert world.post().json()["code"] == "audit_unavailable" and world.records.keys() == {PAIR}
+    assert denied() - before == 3  # counted before the record is written, so the unwritten one too
 
 
 @pytest.mark.parametrize("fault", [AuditUnavailable("down"), RuntimeError("off"), TimeoutError()])
@@ -250,10 +265,12 @@ def test_faults_are_refused_or_503_logged_by_class_and_never_the_name(world: Wor
         (StorageQueryFailed("57014"), {}), (port.DefinitionRuleError("trg_tgdm_env"), {}),
         (None, {"listing": InstrumentLimitsUnavailable("down")}), (TypeError(), {}),
     ]  # fmt: skip
+    before = denied()
     with capture_logs() as logs:
         answers = []
         for world.fails, world.faults in faults:
             answers.append(world.post())
+    assert denied() - before == 2  # the live-owner gate counts its two refusals, audited or not
     assert [(r.status_code, r.json()["code"] if r.status_code != 500 else "") for r in answers] == [
         (403, "forbidden"), (503, "audit_unavailable"), (503, "store_unavailable"),
         (400, "validation_failed"), (503, "instrument_cache_unavailable"), (500, ""),
@@ -272,7 +289,32 @@ def test_no_resolver_is_501_and_a_body_past_its_cap_422(world: World) -> None:
     assert World("resolver").post().status_code == 501
 
 
-def test_the_membership_change_names_members_added_removed_and_switched() -> None:
+async def test_the_hook_names_created_updated_and_deleted_with_their_states(world: World) -> None:
+    """S2d's replace and delete hand the store this hook. Its one f-string names the three actions,
+    which the literal-action guard cannot see: each is registered, and carries the states as the
+    store read them and the change, a delete's `after` the change alone."""
+    was = reads.record(reads.CORE3, "Core3", A, B, C, paused=C)
+    now = reads.record(reads.CORE3, "Core3", A, C, L)
+    hook = writes.audit_definition_write(world, OWNER, None, None)
+    for pair in ((None, now), (was, now), (was, None)):
+        await hook(*pair)
+    old = state_of((A, True), (B, True), (C, False))
+    new = state_of((A, True), (C, True), (L, True))
+    created = {"added": [str(A), str(C), str(L)], "removed": [], "toggled": []}
+    updated = {"added": [str(L)], "removed": [str(B)], "toggled": [str(C)]}
+    deleted = {"added": [], "removed": [str(A), str(B), str(C)], "toggled": []}
+    rows = world.audited
+    assert [(validate_action(r["action"]), r["before_state"], r["after_state"]) for r in rows] == [
+        ("trade_group_definition.created", None, new | {"membership_change": created}),
+        ("trade_group_definition.updated", old, new | {"membership_change": updated}),
+        ("trade_group_definition.deleted", old, {"membership_change": deleted}),
+    ]
+    who = (OWNER, "demo", "trade_group_definition", str(reads.CORE3), "success")
+    keys = ("actor_user_id", "env", "object_kind", "object_id", "outcome")
+    assert {tuple(r[k] for k in keys) for r in rows} == {who}
+
+
+def test_the_membership_change_names_members_added_removed_and_toggled() -> None:
     """S2d's replace and delete hand the store the same hook, before and after as it read them."""
     before = reads.record(reads.CORE3, "Core3", A, B, C, paused=C)
     after = reads.record(reads.CORE3, "Core3", A, C, L)
@@ -296,7 +338,7 @@ def test_the_challenge_names_a_definition_by_its_id_or_a_create_by_its_size() ->
 
 @pytest.mark.parametrize("value", [False, None, 1, "true"])
 def test_the_trade_groups_gate_refuses_unless_the_flag_reads_true(value: object) -> None:
-    refusal = TradeGroupsGate(lambda: value).refusal()  # type: ignore[arg-type, return-value]
+    refusal = TradeGroupsGate(cast(Callable[[], bool], lambda: value)).refusal()  # any value
     body = json.loads(bytes(refusal.body)) if refusal is not None else {}
     assert (body["code"], body["status"], "reason" in body) == ("trading_disabled", 403, False)
     assert TradeGroupsGate(lambda: True).refusal() is None

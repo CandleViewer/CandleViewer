@@ -20,9 +20,12 @@ from candleviewer.accounts.trade_group_readiness import ReadinessMember, Readine
 from candleviewer.domain.order_entry import REFUSAL_REASONS, OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
 from candleviewer.oms_wiring import InterimKillSwitch
+from candleviewer.profiles_wiring import wire_profiles
 from candleviewer.settings import Settings
 from candleviewer.trade_groups_wiring import GATE_REASONS, GateReadiness, NoLockouts
+from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 from tests.unit.accounts._fakes import ACC
+from tests.unit.api.test_trade_group_definition_create import PATH, caller, payload
 from tests.unit.api.test_trade_group_definition_reads import CORE3, World
 
 NOT_A_BOOL = cast(bool, 1)  # truthy, and not the bool the type promises
@@ -153,3 +156,30 @@ def test_the_root_wires_the_definition_reads_and_announces_the_interim_lockouts_
     # a router given no store or no readiness answers 503, not this
     got = TestClient(app, client=("127.0.0.1", 50000)).get(f"/trade-group-definitions/{CORE3}")
     assert got.status_code == 200 and got.json()["readiness"]["total"] == 3
+
+
+def test_the_root_mounts_the_definition_create_over_the_composed_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E28-T05 S2c (#909): with no profile wiring (the fake backend) an Owner's create answers 503;
+    given one, the root hands the router the writes it composes, so the same POST reaches the flag's
+    gate (off: 403 `trading_disabled`). The wiring's pool is lazy: nothing connects."""
+    world = World()
+    world.principal = caller("owner")
+    monkeypatch.setattr(appmod, "definition_store", lambda _settings: world.store)
+
+    def answer() -> tuple[int, str]:
+        app = appmod.create_app(principal_resolver=world)
+        wire_fake_sessions(app, "owner")  # SR-041: a state-changing request needs a bearer
+        client = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
+        got = client.post(PATH, json=payload(), headers={"Authorization": "Bearer owner"})
+        return got.status_code, got.json()["code"]
+
+    assert answer() == (503, "store_unavailable")
+    real = Settings(storage_backend="real")
+
+    def wired(_settings: Settings, metrics: Any, bus: Any = None) -> Any:
+        return wire_profiles(real, metrics, bus)
+
+    monkeypatch.setattr(appmod, "wire_profiles", wired)
+    assert answer() == (403, "trading_disabled")

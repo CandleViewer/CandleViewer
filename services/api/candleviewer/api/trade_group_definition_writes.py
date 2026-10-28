@@ -128,7 +128,8 @@ def definition_state(found: port.DefinitionRecord) -> dict[str, object]:
 def membership_change(
     before: port.DefinitionRecord | None, after: port.DefinitionRecord | None
 ) -> dict[str, list[str]]:
-    """The members added, removed and switched by account id; `None` is no definition."""
+    """The members added, removed and toggled (`enabled` flipped) by account id; `None` is no
+    definition."""
     was = {} if before is None else {m.exchange_account_id: m.enabled for m in before.members}
     now = {} if after is None else {m.exchange_account_id: m.enabled for m in after.members}
     return {
