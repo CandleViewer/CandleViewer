@@ -24,7 +24,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.accounts import selfcheck
 from candleviewer.accounts.health import AccountHealthMonitor
-from candleviewer.accounts.key_standing import REACTIONS, KeyStandings
+from candleviewer.accounts.key_standing import REACTIONS, HoldReason, KeyStandings
 from candleviewer.accounts.order_gate import AccountHealthCheck, DisabledReason, KeyStanding
 from candleviewer.accounts.selfcheck import FRESHNESS_GRACE, KeyCheck, Outcome
 from candleviewer.accounts.verification import Refusal, Rule
@@ -550,3 +550,128 @@ def test_the_rejections_held_are_bounded_by_the_accounts_the_last_read_listed() 
     standings.observe([key_row(ACC)])  # ACC_B leaves the read
     standings.observe([key_row(ACC), key_row(ACC_B)])  # and comes back
     assert (standings.standing(ACC), standings.standing(ACC_B)) == (NO_KEY, ACTIVE)
+
+
+# -- #898 B3b1 (24 §8.4.1, ruling 9): the routes' holds, synchronous and outliving every read --
+
+
+@pytest.mark.parametrize("reason", ["account_disabled", "account_deleted"])
+def test_a_lifecycle_hold_disables_the_account_by_policy_at_once(reason: HoldReason) -> None:
+    standings, _, _ = _world()
+    standings.hold(ACC, reason)
+    assert standings.standing(ACC) == SWITCHED_OFF
+    assert _reason(standings) == "account_disabled_by_policy"
+    assert standings.standing(ACC_B) is None  # another account is not held
+
+
+@pytest.mark.parametrize("reason", ["account_disabled", "account_deleted"])
+@pytest.mark.parametrize("begun", ["before", "after", "unsaid"])
+def test_no_tracking_read_releases_a_lifecycle_hold_whenever_it_began(
+    reason: HoldReason, begun: str
+) -> None:
+    """Ruling 9: a read in flight lists the account as it was, and a read begun after it lists it
+    as the store holds it; neither releases the hold, which only the re-enable does."""
+    standings, _, _ = _world()
+    began = standings.read_begins()
+    standings.hold(ACC, reason)
+    if begun == "after":
+        began = standings.read_begins()
+    for _ in range(2):
+        standings.observe([key_row(ACC)], began=None if begun == "unsaid" else began)
+        assert standings.standing(ACC) == SWITCHED_OFF
+
+
+def test_only_the_re_enable_releases_a_disable_and_the_rows_decide_again() -> None:
+    standings, _, _ = _world()
+    standings.hold(ACC, "account_disabled")
+    assert standings.release(ACC) is True
+    assert standings.standing(ACC) == ACTIVE
+    assert standings.release(ACC) is False  # nothing held
+
+
+def test_a_deletes_hold_is_never_released_and_a_later_disable_never_weakens_it() -> None:
+    standings, _, _ = _world()
+    standings.hold(ACC, "account_deleted")
+    standings.hold(ACC, "account_disabled")
+    assert standings.release(ACC) is False
+    standings.observe([key_row(ACC)], began=standings.read_begins())
+    assert standings.standing(ACC) == SWITCHED_OFF
+
+
+def test_a_hold_is_held_before_it_is_logged_so_a_logging_fault_withholds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fault(*_args: object, **_fields: object) -> None:
+        raise RuntimeError("a structlog processor fault")
+
+    standings, _, _ = _world(key_row(ACC), key_row(ACC_B))
+    target = "candleviewer.accounts.key_standing.logger"
+    monkeypatch.setattr(target, lambda: SimpleNamespace(warning=fault))
+    with pytest.raises(RuntimeError):
+        standings.hold(ACC, "account_disabled")
+    with pytest.raises(RuntimeError):
+        standings.revoke(ACC_B, key_of(ACC_B))
+    assert (standings.standing(ACC), standings.standing(ACC_B)) == (SWITCHED_OFF, NO_KEY)
+
+
+def test_a_revoked_key_leaves_the_standing_at_once_and_the_others_stay_active() -> None:
+    standings, _, _ = _world(key_row(ACC), key_row(ACC, key=NEW_KEY))
+    standings.revoke(ACC, KEY)
+    assert standings.standing(ACC) == ACTIVE  # the account's other signable key
+    standings.revoke(ACC, NEW_KEY)
+    assert standings.standing(ACC) == NO_KEY and _reason(standings) == "no_active_key"
+
+
+def test_a_revoked_keys_hold_outlives_a_read_begun_before_it_and_ends_with_one_after() -> None:
+    """A read in flight when the key is revoked lists it as it was: its rows never bring the key
+    back. The route stores the revoke before it tells, so a read begun after it no longer lists
+    the key, and the hold ends with that read; one that still lists it keeps the hold."""
+    standings, _, _ = _world()
+    began = standings.read_begins()  # a read is in flight ...
+    standings.revoke(ACC, KEY)  # ... when the route tells the standing
+    standings.observe([key_row(ACC)], began=began)  # and lands with the rows as they were
+    assert standings.standing(ACC) == NO_KEY
+    standings.observe([key_row(ACC)], began=standings.read_begins())  # still listed: kept
+    assert standings.standing(ACC) == NO_KEY
+    standings.observe([key_row(ACC, key=NEW_KEY)], began=standings.read_begins())  # gone: ends
+    standings.observe([key_row(ACC)], began=standings.read_begins())  # a key with KEY's id
+    assert standings.standing(ACC) == ACTIVE
+
+
+def test_a_read_that_does_not_say_when_it_began_ends_no_revoked_key() -> None:
+    standings, _, _ = _world()
+    standings.revoke(ACC, KEY)
+    standings.observe([key_row(ACC, key=NEW_KEY)])
+    standings.observe([key_row(ACC)])
+    assert standings.standing(ACC) == NO_KEY
+
+
+def test_no_pass_of_a_revoked_key_clears_a_rejection_and_another_keys_pass_does() -> None:
+    """`credential_rejected` is unchanged for the account's other keys."""
+    standings, job, clock = _world(key_row(ACC), key_row(ACC, key=NEW_KEY))
+    standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
+    standings.revoke(ACC, KEY)
+    clock.advance(1)
+    job.results[KEY] = _check("passed", last_pass=clock.now())
+    assert standings.standing(ACC) == NO_KEY
+    job.results[NEW_KEY] = _check("passed", key=NEW_KEY, last_pass=clock.now())
+    assert standings.standing(ACC) == ACTIVE
+
+
+def test_a_release_keeps_the_revoked_keys_out() -> None:
+    standings, _, _ = _world()
+    standings.hold(ACC, "account_disabled")
+    standings.revoke(ACC, KEY)
+    assert standings.release(ACC) is True
+    assert standings.standing(ACC) == NO_KEY
+
+
+def test_the_holds_are_bounded_one_per_account_and_a_spent_hold_leaves_nothing() -> None:
+    """C-2.18: a revoked key leaves with the read that no longer lists it, and an account with
+    neither a lifecycle hold nor a revoked key holds no entry."""
+    standings, _, _ = _world()
+    standings.revoke(ACC, KEY)
+    standings.hold(ACC_B, "account_disabled")
+    standings.observe([key_row(ACC, key=NEW_KEY)], began=standings.read_begins())
+    assert standings.release(ACC_B) is True
+    assert standings._state.holds == {}

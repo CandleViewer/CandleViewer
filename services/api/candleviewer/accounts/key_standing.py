@@ -30,24 +30,34 @@ answers from memory only, synchronously and with no I/O (C-2.21):
   should the pass leave the evidence first, the rejection is in force again (it refuses longer,
   never less). One fact per listed account, so what is held is bounded by the read (C-2.18); one
   for an unlisted account is logged and dropped (it is refused).
+- A route that disables, deletes or revokes (E27-S04, #898; 24 §8.4.1) holds the standing
+  synchronously, once its change is stored and before it returns. The lifecycle hold
+  (`hold`, `account_disabled` or `account_deleted`) disables the account by policy and only the
+  re-enable's `release` lifts it, and only an `account_disabled` one: no tracking read releases
+  it, whenever that read began. A revoke's hold (`revoke`) leaves the revoked key out of the
+  account's keys, so its passes neither make the account active nor clear a rejection; it ends
+  only with a read that began after it (`read_begins`, given back to `observe`) and no longer
+  lists the key, since a read begun before may list it as it was. One hold per account, and its
+  revoked keys end with the reads (C-2.18); `credential_rejected` is unchanged for the other
+  keys' passes.
 
 Codes only, never exchange text, a key id or a permission list. The durable section 8.6 reaction
 (the key marked `invalid`, the account disarmed) is the submit pipeline's (#913); a restart forgets
 the fact, and the boot self-check judges the key afresh. A call reads the account's own keys only.
 
 Read from the order lane; written on the serving loop (#913 slice 3 L4, 20-architecture.md 6.2).
-`observe` and `credential_rejected` run on the serving loop only (the tracking loop, the
-reconciler, the lane's notices), and each publishes anew the one snapshot a read answers from
-(`_State`: the accounts the last good read listed, their rejections and that read's age),
-by a single assignment, never changing one in place. `standing()` writes nothing and takes that
-reference once, by one attribute read, which runs no Python code another thread could interleave:
-a read on another thread meets a write whole or not at all, and every read that begins after a
-write returns sees it. It reads the self-check's results once a call too, a key at a time with one
-`get` each, never iterating them: the job replaces the mapping at each pass's key-list read and
-stores each key's result in it, on the serving loop, never clearing or popping it. A UUID key's
-hash and comparison are Python code, so a store can land inside a `get`, but CPython restarts a
-lookup whose mapping changed under it: each `get` answers from the mapping before the store or
-after it.
+`observe`, `credential_rejected`, `hold`, `release` and `revoke` run on the serving loop only (the
+tracking loop, the reconciler, the lane's notices, the account routes), and each publishes anew the
+one snapshot a read answers from (`_State`: the accounts the last good read listed, their
+rejections, the holds and that read's age), by a single assignment, never changing one in place.
+`standing()` writes nothing and takes that reference once, by one attribute read, which runs no
+Python code another thread could interleave: a read on another thread meets a write whole or not at
+all, and every read that begins after a write returns sees it. It reads the self-check's results
+once a call too, a key at a time with one `get` each, never iterating them: the job replaces the
+mapping at each pass's key-list read and stores each key's result in it, on the serving loop, never
+clearing or popping it. A UUID key's hash and comparison are Python code, so a store can land inside
+a `get`, but CPython restarts a lookup whose mapping changed under it: each `get` answers from the
+mapping before the store or after it.
 """
 
 from __future__ import annotations
@@ -55,7 +65,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
@@ -78,6 +88,8 @@ REACTIONS: Final[Mapping[Refusal, DisabledReason | None]] = {
     Refusal.IP_NOT_ALLOWED: DisabledReason.KEY_IP_WHITELIST_MISMATCH,
 }
 _POLICY: Final[Mapping[str | None, DisabledReason]] = {r.value: r for r in DisabledReason}
+#: What the lifecycle hold names (24 §8.4.1): only the re-enable's `release` lifts the first.
+type HoldReason = Literal["account_disabled", "account_deleted"]
 
 
 def logger() -> Any:
@@ -130,6 +142,18 @@ class _Rejection:
 
 
 @dataclass(frozen=True, slots=True)
+class _Hold:
+    """What the routes held of one account: the lifecycle hold's reason, if any, and each revoked
+    key with the generation of its telling (`KeyStandings.read_begins`)."""
+
+    reason: HoldReason | None
+    revoked: Mapping[UUID, int]
+
+
+_NO_HOLD: Final = _Hold(None, {})
+
+
+@dataclass(frozen=True, slots=True)
 class _State:
     """What a read answers from, published anew by each write and never changed in place (module
     docstring): each account the last good read listed, the rejections held for them (one a later
@@ -139,6 +163,7 @@ class _State:
     accounts: Mapping[UUID, _Account]
     rejections: Mapping[UUID, _Rejection]
     read_at: float
+    holds: Mapping[UUID, _Hold]
 
 
 class KeyStandings:
@@ -156,15 +181,19 @@ class KeyStandings:
     ) -> None:
         self._selfcheck, self._interval_s, self._clock = selfcheck, interval_s, clock
         self._stale_after_s = stale_after_s
-        #: Published anew by `observe` and `credential_rejected`, never changed in place.
-        self._state = _State({}, {}, float("-inf"))
+        #: Published anew by every write, never changed in place.
+        self._state = _State({}, {}, float("-inf"), {})
+        self._told = 0  # the holds' generation: one per `revoke`
 
-    def observe(self, rows: Iterable[SelfCheckTargetRow]) -> None:
+    def observe(self, rows: Iterable[SelfCheckTargetRow], *, began: int | None = None) -> None:
         """Take one usable-key read of the environment whole, reduced at once to each account's
         keys (id, stored pass, error code) and armed flag, keeping no row, and publish it with the
         rejections still in force: an account it does not list has no standing and loses its
         rejection, and a rejection a later pass has cleared, as this read and the self-check's
-        result judge it, is dropped here, never by a read. A failed read never gets here."""
+        result judge it, is dropped here, never by a read. A failed read never gets here. A
+        revoked key told before the read began (`began`, from `read_begins`) and not listed by it
+        leaves its hold; a read that does not say when it began ends none, and no read ends a
+        lifecycle hold."""
         keys: dict[UUID, list[_Key]] = {}
         armed: dict[UUID, bool] = {}
         for row in rows:
@@ -173,13 +202,15 @@ class KeyStandings:
             keys.setdefault(account.id, []).append(stored)
             armed[account.id] = account.is_enabled and account.trading_enabled
         accounts = {a: _Account(armed[a], tuple(listed)) for a, listed in keys.items()}
-        results = self._results()
+        state, results = self._state, self._results()
+        holds = state.holds if began is None else _ended(state.holds, accounts, began)
         rejections = {
             a: r
-            for a, r in self._state.rejections.items()
-            if a in accounts and _held(r, _judge(accounts[a], results)) is not None
+            for a, r in state.rejections.items()
+            if a in accounts
+            and _held(r, _judge(accounts[a], results, holds.get(a, _NO_HOLD))) is not None
         }
-        self._state = _State(accounts, rejections, self._clock.monotonic())
+        self._state = _State(accounts, rejections, self._clock.monotonic(), holds)
 
     @property
     def read_once(self) -> bool:
@@ -196,7 +227,8 @@ class KeyStandings:
         account = state.accounts.get(account_id)
         if account is None or self._clock.monotonic() - state.read_at > self._stale_after_s:
             return None
-        keys = _judge(account, self._results())
+        hold = state.holds.get(account_id, _NO_HOLD)
+        keys = _judge(account, self._results(), hold)
         rejection = _held(state.rejections.get(account_id), keys)
         now, interval_s = self._clock.now(), self._interval_s
         active = any(
@@ -209,9 +241,54 @@ class KeyStandings:
         if rejection is not None:
             active = active and not rejection.no_key
             disabled = disabled or rejection.disabled
-        if disabled is None and not account.armed:
+        if disabled is None and (hold.reason is not None or not account.armed):
             disabled = DisabledReason.ACCOUNT_DISABLED
         return KeyStanding(active, disabled)
+
+    def read_begins(self) -> int:
+        """Called as a tracking read begins, before its await: its generation, which `observe`
+        takes back as `began`, so a read in flight when a key is revoked never ends that hold."""
+        return self._told
+
+    def hold(self, account_id: UUID, reason: HoldReason) -> None:
+        """The account's disable or delete is stored: from now on it is disabled by policy, held
+        before it is logged, until the re-enable's `release` (an `account_disabled` hold only; a
+        delete's is never released). No tracking read ends it, whenever that read began. A delete
+        held over a disable stays a delete."""
+        state = self._state
+        prior = state.holds.get(account_id, _NO_HOLD)
+        kept: HoldReason = "account_deleted" if prior.reason == "account_deleted" else reason
+        self._publish(state, account_id, _Hold(kept, prior.revoked))
+        logger().warning("account.standing_held", account_id=str(account_id), reason=kept)
+
+    def release(self, account_id: UUID) -> bool:
+        """The account's re-enable is stored: its `account_disabled` hold ends (`True`), and the
+        tracking read's rows decide again. A delete's hold, or none, is left as it is (`False`);
+        a revoked key stays out until a read lets it go."""
+        state = self._state
+        prior = state.holds.get(account_id, _NO_HOLD)
+        if prior.reason != "account_disabled":
+            return False
+        self._publish(state, account_id, _Hold(None, prior.revoked))
+        logger().info("account.standing_released", account_id=str(account_id))
+        return True
+
+    def revoke(self, account_id: UUID, key_id: UUID) -> None:
+        """The revoke of `key_id` is stored: from now on it is no key of the account here, so its
+        passes make nothing active and clear no rejection, held before it is logged, until a
+        read begun after this call no longer lists it (module docstring)."""
+        self._told += 1
+        state = self._state
+        prior = state.holds.get(account_id, _NO_HOLD)
+        revoked = {**prior.revoked, key_id: self._told}
+        self._publish(state, account_id, _Hold(prior.reason, revoked))
+        logger().warning("account.standing_key_revoked", account_id=str(account_id))
+
+    def _publish(self, state: _State, account_id: UUID, hold: _Hold) -> None:
+        holds = {**state.holds, account_id: hold}
+        if hold == _NO_HOLD:
+            del holds[account_id]
+        self._state = _State(state.accounts, state.rejections, state.read_at, holds)
 
     def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None:
         """Hold the section 8.6 reaction to `refusal` for the account, at once and before it is
@@ -224,7 +301,7 @@ class KeyStandings:
         state = self._state
         account = state.accounts.get(account_id)
         if account is not None:
-            keys = _judge(account, self._results())
+            keys = _judge(account, self._results(), state.holds.get(account_id, _NO_HOLD))
             prior = _held(state.rejections.get(account_id), keys)
             disabled = REACTIONS.get(refusal)
             rejection = _Rejection(
@@ -234,7 +311,7 @@ class KeyStandings:
                 seen=frozenset((key.key_id, key.last_pass_at) for key in keys),
             )
             rejections = {**state.rejections, account_id: rejection}
-            self._state = _State(state.accounts, rejections, state.read_at)
+            self._state = _State(state.accounts, rejections, state.read_at, state.holds)
         logger().error(
             "account.credential_rejected",
             account_id=str(account_id),
@@ -247,12 +324,29 @@ class KeyStandings:
         return {} if self._selfcheck is None else self._selfcheck.results
 
 
-def _judge(account: _Account, results: Mapping[UUID, KeyCheck]) -> list[_Judged]:
-    """Each of the account's keys as the self-check judges it: its result in `results` when the job
-    holds one, otherwise the stored pass and error code (decision 3 on #836). One `dict.get` a key:
-    the mapping is never iterated."""
+def _ended(
+    holds: Mapping[UUID, _Hold], accounts: Mapping[UUID, _Account], began: int
+) -> dict[UUID, _Hold]:
+    """`holds` after a read that began at generation `began` and listed `accounts`: a revoked key
+    told before it began and not listed by it leaves; the lifecycle reason always stays."""
+    kept: dict[UUID, _Hold] = {}
+    for account_id, hold in holds.items():
+        account = accounts.get(account_id)
+        listed = set() if account is None else {key.key_id for key in account.keys}
+        revoked = {k: told for k, told in hold.revoked.items() if told > began or k in listed}
+        if hold.reason is not None or revoked:
+            kept[account_id] = _Hold(hold.reason, revoked)
+    return kept
+
+
+def _judge(account: _Account, results: Mapping[UUID, KeyCheck], hold: _Hold) -> list[_Judged]:
+    """Each of the account's keys but the revoked ones the hold names, as the self-check judges it:
+    its result in `results` when the job holds one, otherwise the stored pass and error code
+    (decision 3 on #836). One `dict.get` a key: the mapping is never iterated."""
     judged = []
     for key in account.keys:
+        if key.key_id in hold.revoked:
+            continue
         check = results.get(key.key_id)
         if check is None:
             failed = key.error_code in STANDING_FAILURE_CODES

@@ -856,6 +856,7 @@ type PrivateStreamReason = Literal[
     "key_rotated",
     "key_unusable",
     "auth_refused",
+    "account_disabled",
     "consumer_closed",
 ]
 """Why, from a closed set per state (`PRIVATE_STREAM_REASONS`)."""
@@ -873,6 +874,7 @@ PRIVATE_STREAM_REASONS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
                 "key_rotated",
                 "key_unusable",
                 "auth_refused",
+                "account_disabled",
                 "consumer_closed",
             }
         ),

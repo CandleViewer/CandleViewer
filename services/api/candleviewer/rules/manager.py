@@ -12,7 +12,7 @@ import copy
 import unicodedata
 import uuid
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 from uuid import UUID
@@ -183,6 +183,10 @@ class Actor:
 Audit = Callable[[str, dict[str, Any]], Awaitable[None]]
 Broadcast = Callable[[dict[str, Any]], Awaitable[None]]
 Metric = Callable[[str, dict[str, str]], None]
+
+
+#: The fields `set_mode`'s `record` may add to a transition's audit record (#898 rulings 1, 2).
+_RECORD_EXTRAS: Final = frozenset({"scope", "executed_as", "actor_role"})
 
 
 async def _noop_audit(_action: str, _payload: dict[str, Any]) -> None:
@@ -838,6 +842,7 @@ class RulesManager:
         *,
         flatten_ack: bool = False,
         override_reason: str | None = None,
+        record: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         """Move a rule to *target* by sending the matching event to its B9 chart.
 
@@ -845,7 +850,12 @@ class RulesManager:
         200 no-op (no event, no audit, no broadcast), so a retried arm can never arm twice,
         also across restarts and workers. The bounded per-process cache only replays the
         first response byte-for-byte; it is keyed by actor and consulted after the RBAC
-        visibility check, so another user's key never returns this user's result."""
+        visibility check, so another user's key never returns this user's result.
+        `record` adds fields to the transition's audit record only, never to the broadcast:
+        a lifecycle disarm's `scope` and `executed_as` (E27-S04, #898 rulings 1 and 2), which
+        replace the IR's `scope` level there (kept as `scope_level`)."""
+        if record is not None and not set(record) <= _RECORD_EXTRAS:
+            raise ValueError("a transition record adds only scope, executed_as and actor_role")
         if not idempotency_key:
             raise RuleError(
                 400,
@@ -861,7 +871,9 @@ class RulesManager:
         if target != "armed":
             await self._guard_system(row, actor, f"mode:{target}")
         try:
-            out = await self._transition(row, target, actor, flatten_ack, override_reason)
+            out = await self._transition(
+                row, target, actor, flatten_ack, override_reason, record or {}
+            )
         except RuleError as exc:
             self._metric(
                 "rule_mode_transitions_total", {"from": prev, "to": target, "result": exc.code}
@@ -940,6 +952,7 @@ class RulesManager:
         actor: Actor,
         flatten_ack: bool,
         override_reason: str | None,
+        record: Mapping[str, str],
     ) -> dict[str, Any]:
         if target not in MODES:
             raise RuleError(
@@ -988,8 +1001,11 @@ class RulesManager:
         if override_reason:
             payload["override_reason"] = override_reason
         action = {"armed": "rule.armed", "disabled": "rule.disarmed"}.get(target, "rule.simulated")
+        recorded = payload | raised
+        if record:
+            recorded |= {"scope_level": payload.get("scope"), **record}
         if not await self._record_b9(
-            row, event, action, payload | raised, session=actor.session_id, **ev_payload
+            row, event, action, recorded, session=actor.session_id, **ev_payload
         ):
             raise RuleError(422, "illegal_transition", _illegal(leaf, target))
         self._metric("rule_mode_transitions_total", {"from": prev, "to": row.mode, "result": "ok"})

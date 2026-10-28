@@ -51,6 +51,7 @@ from candleviewer.exchange.bybit.private_stream import (
     PrivateStreams,
     StreamConnect,
     StreamOpener,
+    TombstoneReason,
 )
 from candleviewer.exchange.bybit.public_ws import (
     PublicSocket,
@@ -393,13 +394,14 @@ class ExchangeBybitService:
         return await self._streams().open(account, clock_offset_ms=clock_offset_ms)
 
     async def close_private_streams(
-        self, key_ref: str, *, reason: Literal["key_revoked", "key_rotated"] = "key_revoked"
+        self, key_ref: str, *, reason: TombstoneReason = "key_revoked"
     ) -> tuple[AccountId, ...]:
         """G-8b (SR-E27-17, KV-E13, AC-28): close every private stream on `key_ref` before
         returning, and return their accounts. E27-S04 (#898) calls it before a revoke,
-        force-disable, mark-compromised or account-disable returns, and with `key_rotated` at the
-        start of a rotation's overlap (the consumer then subscribes with the new key). The key is
-        tombstoned first, here, whether or not a registry exists yet, so every registry the
+        force-disable, mark-compromised or account-disable returns (`account_disabled` for each
+        signable key of a disabled account, until its re-enable lifts it), and with `key_rotated`
+        at the start of a rotation's overlap (the consumer then subscribes with the new key). The
+        key is tombstoned first, here, whether or not a registry exists yet, so every registry the
         adapter builds refuses it (RC-G8B-03). Past `KEY_CLOSE_BOUND_S` it pages and raises
         `PrivateStreamCloseOverran` (`exchange.base.errors`) while the close runs on. Any
         exception means the close is not done; what its caller answers and audits, and what a
@@ -409,10 +411,17 @@ class ExchangeBybitService:
         streams = self._private_streams
         return () if streams is None else await streams.close_key(key_ref, reason=reason)
 
-    def reopen_private_streams(self, key_ref: str) -> bool:
-        """G-8b ruling 10: an operator lets a key that three `auth` refusals closed open streams
-        again, whether or not a registry exists; `True` when it was so marked. A revoked or
-        rotated key stays closed."""
+    def reopen_private_streams(
+        self, key_ref: str, *, reason: Literal["auth_refused", "account_disabled"] = "auth_refused"
+    ) -> bool:
+        """Let a key open streams again, whether or not a registry exists; `True` when `reason`
+        held it. `auth_refused` is G-8b ruling 10's operator action on a key that three `auth`
+        refusals closed; `account_disabled` is E27-S04's re-enable (#898), lifting that tombstone
+        alone, before or in the same step as the account counts as enabled again, so the order
+        lane's consumer subscribes on its next refresh. A revoked or rotated key stays closed
+        whichever is asked."""
+        if reason == "account_disabled":
+            return self._tombstones.lift(key_ref)
         return self._tombstones.reopen(key_ref)
 
     def _streams(self) -> PrivateStreams:

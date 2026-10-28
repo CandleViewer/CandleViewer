@@ -4,8 +4,9 @@
 `MAX_STREAMS`, all drawing on the adapter's one `ConnectionBudget` (C-12.7). It serves the loop of
 its first stream's `open` (#913 L1d-2a, D6). `open(account)` refuses before anything is signed,
 dialled or built: a call from any other loop, another environment's account, a `key_ref` that is no
-`api_keys` id, a key its `KeyTombstones` holds (closed by a revoke or rotation, or marked by three
-`auth` refusals; the adapter shares one table with every registry it builds), an account that has
+`api_keys` id, a key its `KeyTombstones` holds (closed by a revoke, a rotation or an account's
+disable, or marked by three `auth` refusals; the adapter shares one table with every registry it
+builds), an account that has
 a stream, and a stream past the cap (`RateBudgetExceededError`, `reason` `stream_cap`). Then it
 builds the account's B13 `ws_conn` chart through the factory (lane `platform`) and returns the
 stream, which raises nothing more: it yields events and `PrivateStreamStatus`es in arrival order
@@ -106,6 +107,7 @@ __all__ = [
     "MAX_AUTH_REFUSALS",
     "MAX_STREAMS",
     "OPTIONAL_OPS",
+    "PERMANENT_TOMBSTONES",
     "PING_INTERVAL_S",
     "REQUIRED_OPS",
     "STABLE_RESET_S",
@@ -117,6 +119,7 @@ __all__ = [
     "StreamConnect",
     "StreamOpener",
     "StreamSocket",
+    "TombstoneReason",
 ]
 
 
@@ -168,8 +171,19 @@ REQUIRED_OPS: Final = (("order.linear", "execution.linear", "position.linear"), 
 OPTIONAL_OPS: Final = (("execution.fast.linear",),)
 
 type ClosedReason = Literal[
-    "shutdown", "key_revoked", "key_rotated", "key_unusable", "auth_refused", "consumer_closed"
+    "shutdown",
+    "key_revoked",
+    "key_rotated",
+    "key_unusable",
+    "auth_refused",
+    "account_disabled",
+    "consumer_closed",
 ]
+#: Why `close_key` closed a key (24 §14.2 rule 13): a revoke and a rotation for good, an account's
+#: disable until its re-enable lifts it (`KeyTombstones.lift`, E27-S04 #898).
+type TombstoneReason = Literal["key_revoked", "key_rotated", "account_disabled"]
+#: The tombstones nothing lifts: `close` never weakens one to `account_disabled`.
+PERMANENT_TOMBSTONES: Final = frozenset({"key_revoked", "key_rotated"})
 type DownReason = Literal["socket_closed", "pong_timeout", "subscribe_refused", "slow_consumer"]
 type _AuthResult = Literal[
     "granted",
@@ -218,24 +232,37 @@ class PrivateStreamsWrongLoop(RuntimeError):
 
 
 class KeyTombstones:
-    """The keys a revoke or a rotation closed, with the reason, and the keys three `auth` refusals
-    marked, each remembered up to `KEYS_REMEMBERED`, oldest dropped first (M2 refuses a destroyed
-    key either way). The adapter holds one and shares it, by reference, with every registry it
-    builds (RC-G8B-03): a key closed before any registry existed, or through another one, is
-    refused by all of them. Only an operator's `reopen` clears a mark; a closed key stays
-    closed. It takes no lock: the serving loop owns it, as it owns the registries over it, and
-    makes every write but one, a mis-wired `close_private_streams` from another loop, which still
-    records its key here, fail-safe, before the registry refuses the call and pages."""
+    """The keys a revoke, a rotation or an account's disable closed, with the reason, and the keys
+    three `auth` refusals marked, each remembered up to `KEYS_REMEMBERED`, oldest dropped first
+    (M2 refuses a destroyed key either way). The adapter holds one and shares it, by reference,
+    with every registry it builds (RC-G8B-03): a key closed before any registry existed, or
+    through another one, is refused by all of them. Only an operator's `reopen` clears a mark, and
+    only the account's re-enable (`lift`) an `account_disabled` tombstone; a revoked or rotated key
+    stays closed, and a later `account_disabled` never weakens it. It takes no lock: the serving
+    loop owns it, as it owns the registries over it, and makes every write but one, a mis-wired
+    `close_private_streams` from another loop, which still records its key here, fail-safe, before
+    the registry refuses the call and pages."""
 
     def __init__(self) -> None:
-        self._closed: OrderedDict[str, ClosedReason] = OrderedDict()
+        self._closed: OrderedDict[str, TombstoneReason] = OrderedDict()
         self._refused: OrderedDict[str, None] = OrderedDict()
 
-    def close(self, key_ref: str, reason: Literal["key_revoked", "key_rotated"]) -> None:
+    def close(self, key_ref: str, reason: TombstoneReason) -> None:
         """Tombstone the key; a `key_ref` that is no `api_keys` id is refused (`ValueError`) before
-        anything is recorded."""
+        anything is recorded. A key already closed for good keeps that reason."""
         key_ref_id(key_ref)
-        _remember(self._closed, key_ref, reason)
+        held = self._closed.get(key_ref)
+        _remember(self._closed, key_ref, held if held in PERMANENT_TOMBSTONES else reason)
+
+    def lift(self, key_ref: str) -> bool:
+        """The account's re-enable (E27-S04, #898): `True` when an `account_disabled` tombstone
+        held the key, which may open streams again; a revoked or rotated key stays closed, and a
+        mark of three refusals stays for the operator's `reopen`."""
+        if self._closed.get(key_ref) != "account_disabled":
+            return False
+        del self._closed[key_ref]
+        logger().warning("bybit_private_key_lifted")
+        return True
 
     def mark_refused(self, key_ref: str) -> None:
         _remember(self._refused, key_ref, None)
@@ -1028,9 +1055,7 @@ class PrivateStreams:
     def mark_refused(self, key_ref: str) -> None:
         self.tombstones.mark_refused(key_ref)
 
-    async def close_key(
-        self, key_ref: str, *, reason: Literal["key_revoked", "key_rotated"]
-    ) -> tuple[AccountId, ...]:
+    async def close_key(self, key_ref: str, *, reason: TombstoneReason) -> tuple[AccountId, ...]:
         """SR-E27-17 (KV-E13, AC-28): close every stream on `key_ref` before returning, and name
         their accounts for the caller's audit. The key is tombstoned first, so no dial or `auth`
         uses it from then on and a stream on it is refused (`AuthError`); each stream stops at
