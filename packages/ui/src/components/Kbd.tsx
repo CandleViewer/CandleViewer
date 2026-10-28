@@ -3,8 +3,21 @@ import { cx } from "./internal/cx.js";
 
 /** Pointer words of the keymap's chords ("Ctrl+click", "Shift+wheel", "Space+drag"): text, never a cap. */
 const POINTER_WORDS: ReadonlySet<string> = new Set(["click", "drag", "wheel"]);
-/** A digit range in the keymap's form ("1..9"). */
-const RANGE = /^(.+?)\.\.(.+)$/;
+/** ECMAScript's line terminators: a digit range sits on one line. */
+const LINE_TERMINATORS: readonly string[] = ["\n", "\r", "\u2028", "\u2029"];
+
+/**
+ * A digit range in the keymap's form ("1..9"): the text before the first ".." that starts after the
+ * first character, and the text after that "..", both non-empty and on one line. A fixed number of
+ * left-to-right scans, so a key of any length costs linear time; no RegExp backtracks over it.
+ */
+const splitRange = (key: string): { from: string; to: string } | undefined => {
+  if (LINE_TERMINATORS.some((terminator) => key.includes(terminator))) return undefined;
+  const at = key.indexOf("..", 1);
+  return at === -1 || at + 2 >= key.length
+    ? undefined
+    : { from: key.slice(0, at), to: key.slice(at + 2) };
+};
 
 /**
  * The catalogue's spoken words ("Control plus Shift plus H"). Every other key word belongs to the
@@ -30,9 +43,8 @@ type Part =
   | { kind: "word"; word: string };
 
 const parse = (key: string): Part => {
-  const range = RANGE.exec(key);
-  if (range?.[1] !== undefined && range[2] !== undefined)
-    return { kind: "range", from: range[1], to: range[2] };
+  const range = splitRange(key);
+  if (range !== undefined) return { kind: "range", ...range };
   return POINTER_WORDS.has(key) ? { kind: "word", word: key } : { kind: "cap", key };
 };
 
