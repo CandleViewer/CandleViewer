@@ -155,4 +155,6 @@ shell's TopBar, env band, StatusBar and announcer regions, H23); the shell can i
 `--cv-scrim-inset-top` and `--cv-scrim-inset-bottom`. The page does not scroll, and the scrollbar's
 width is given back as padding (`--cv-scroll-lock-gutter` for fixed bars), so nothing shifts. A
 Popover, Tooltip or nested Dialog rendered inside portals into the dialog's layer. There is no
-NoEscClose: `Esc` always cancels before a send, and closes the view after one (H22).
+NoEscClose: `Esc` always cancels before a send, and closes the view after one (H22). `busy` sets only
+`aria-busy` on the card; the dialog does not drive its footer, so the host sets its primary
+action's `loading` itself.

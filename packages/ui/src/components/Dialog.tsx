@@ -49,7 +49,10 @@ export interface DialogProps {
   initialFocusRef?: RefObject<HTMLElement | null>;
   /** Where focus returns when the opener is gone (E40-D02's bell); never `body`. */
   fallbackFocusRef?: RefObject<HTMLElement | null>;
-  /** A request is in flight: `aria-busy`; `Esc` still closes the view and cancels nothing (H22). */
+  /**
+   * A request is in flight: `aria-busy` on the card; `Esc` still closes the view and cancels nothing
+   * (H22). The dialog does not drive its footer: the host sets its primary action's `loading` itself.
+   */
   busy?: boolean;
   /** The footer: a CMP-001 row, `Cancel` first, the primary or danger action last. */
   footer?: ReactNode;
@@ -138,6 +141,9 @@ export function Dialog({
   const rendered = open || exiting;
   const initialFocus = useRef(initialFocusRef);
   initialFocus.current = initialFocusRef;
+  /** Read at open only: a role change while open does not move focus. */
+  const latestRole = useRef(role);
+  latestRole.current = role;
   const latestClose = useRef(onOpenChange);
   latestClose.current = onOpenChange;
   const close = (reason: DialogCloseReason): void => latestClose.current(false, reason);
@@ -175,31 +181,48 @@ export function Dialog({
   useEffect(() => {
     const surface = card.current;
     if (!open || surface === null) return;
+    const alert = latestRole.current === "alertdialog";
     const ref = initialFocus.current?.current ?? undefined;
     const given = ref === undefined || ref.tabIndex >= 0 ? ref : (visibleTabbables(ref)[0] ?? ref);
-    if (given === undefined && role === "alertdialog") warnAlertFocus();
+    if (given === undefined && alert) warnAlertFocus();
     const field =
-      role === "alertdialog" || body.current === null
+      alert || body.current === null
         ? undefined
         : visibleTabbables(body.current).find((element) => element.matches(FIELD));
     const first = given ?? field ?? heading.current ?? surface;
     first.focus({ preventScroll: true });
     lastInside.current = first;
-  }, [open, role]);
+  }, [open]);
 
   // Overflow=scrolls with no control inside: the body takes a Tab stop (WCAG 2.1.1; axe
-  // scrollable-region-focusable). Re-measured as the card or its content resizes.
+  // scrollable-region-focusable). Re-measured as the card or its content resizes, and as content is
+  // added or removed (a child added later is observed too: the capped body itself does not resize).
   useEffect(() => {
     const node = body.current;
-    if (!open || node === null || typeof ResizeObserver === "undefined") return undefined;
+    if (!open || node === null) return undefined;
     const measure = (): void => {
       setReadable(node.scrollHeight > node.clientHeight && visibleTabbables(node).length === 0);
     };
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    for (const child of node.children) observer.observe(child);
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    const observeChildren = (): void => {
+      if (resize === null) return;
+      resize.observe(node);
+      for (const child of node.children) resize.observe(child);
+    };
+    const mutation =
+      typeof MutationObserver === "undefined"
+        ? null
+        : new MutationObserver(() => {
+            observeChildren();
+            measure();
+          });
+    observeChildren();
+    mutation?.observe(node, { childList: true, subtree: true });
     measure();
-    return () => observer.disconnect();
+    return () => {
+      resize?.disconnect();
+      mutation?.disconnect();
+    };
   }, [open]);
 
   // The card's own listeners: the Tab trap, and the last focused element for the guard.

@@ -240,6 +240,61 @@ describe("Dialog (CMP-043)", () => {
     expect(screen().queryByRole("dialog")).toBeNull();
   });
 
+  it("a scrim click with no press that began on it does nothing", async () => {
+    const onOpenChange = vi.fn();
+    await openHost(<Host onOpenChange={onOpenChange} />);
+    const scrim = document.querySelector(".cv-dialog__scrim");
+    if (scrim === null) throw new Error("no scrim");
+    await click(scrim);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(dialogNode("Rename layout")).toBeVisible();
+  });
+
+  it("a scrim press that began while a layer was stacked above it does not close it", async () => {
+    const onOpenChange = vi.fn();
+    function Stacked(): JSX.Element {
+      const [open, setOpen] = useState(false);
+      const [picking, setPicking] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          <Dialog
+            open={open}
+            title="Edit alert"
+            onOpenChange={(next, reason) => {
+              onOpenChange(next, reason);
+              setOpen(next);
+            }}
+          >
+            <button type="button" onClick={() => setPicking(true)}>
+              Pick colour
+            </button>
+            <Dialog open={picking} title="Colour" onOpenChange={() => setPicking(false)} />
+          </Dialog>
+        </>
+      );
+    }
+    await openHost(<Stacked />);
+    await click(screen().getByRole("button", { name: "Pick colour" }));
+    const [outer] = document.querySelectorAll(".cv-dialog__scrim");
+    if (outer === undefined) throw new Error("no scrim");
+    await act(async () => {
+      fireEvent.pointerDown(outer);
+    });
+    await key("Escape");
+    expect(screen().queryByRole("dialog", { name: "Colour" })).toBeNull();
+    await click(outer);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(dialogNode("Edit alert")).toBeVisible();
+    await act(async () => {
+      fireEvent.pointerDown(outer);
+      fireEvent.click(outer);
+    });
+    expect(onOpenChange).toHaveBeenLastCalledWith(false, "scrim");
+  });
+
   it("aria-label overrides the title as the name; size, busy and className reach the card", async () => {
     await openHost(
       <Host aria-label="Confirm order - BTCUSDT - LIVE - Main" size="lg" busy className="extra" />,
@@ -470,5 +525,197 @@ describe("the overlay layer stack", () => {
     });
     expect(screen().getByRole("dialog", { name: "Outer" })).toBeVisible();
     expect(inner).toBeVisible();
+  });
+});
+
+describe("Dialog exit fade", () => {
+  const layerNode = (): Element | null => document.querySelector(".cv-dialog-layer");
+  const scrimNode = (): Element => {
+    const scrim = document.querySelector(".cv-dialog__scrim");
+    if (scrim === null) throw new Error("no scrim");
+    return scrim;
+  };
+  /** The scrim fades over 200 ms (the longest of its transitions); nothing else transitions. */
+  const stubFade = (): void => {
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
+      element.classList.contains("cv-dialog__scrim")
+        ? ({ transitionDuration: "0.1s, 200ms" } as unknown as CSSStyleDeclaration)
+        : real(element, pseudo),
+    );
+  };
+  const advance = async (ms: number): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(ms);
+    });
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+    document.documentElement.removeAttribute("data-motion");
+  });
+
+  it("keeps the layer inert through the fade, then removes it at the fallback timer", async () => {
+    stubFade();
+    await openHost();
+    vi.useFakeTimers();
+    await key("Escape");
+    const layer = layerNode();
+    expect(layer).toHaveAttribute("data-state", "closing");
+    expect(layer).toHaveAttribute("inert");
+    await advance(299);
+    expect(layerNode()).not.toBeNull();
+    await advance(1);
+    expect(layerNode()).toBeNull();
+  });
+
+  it("ends on the scrim's own transitionend or transitioncancel, not a descendant's", async () => {
+    stubFade();
+    await openHost();
+    vi.useFakeTimers();
+    await key("Escape");
+    // A transition bubbling up from inside the scrim is not the scrim's own fade.
+    const inner = scrimNode().appendChild(document.createElement("span"));
+    await act(async () => {
+      fireEvent.transitionEnd(inner);
+    });
+    expect(layerNode()).not.toBeNull();
+    await act(async () => {
+      fireEvent.transitionEnd(scrimNode());
+    });
+    expect(layerNode()).toBeNull();
+
+    await click(screen().getByRole("button", { name: "Open" }));
+    await key("Escape");
+    expect(layerNode()).not.toBeNull();
+    await act(async () => {
+      fireEvent(scrimNode(), new Event("transitioncancel"));
+    });
+    expect(layerNode()).toBeNull();
+  });
+
+  it("reduced motion is a cut: the layer goes at once", async () => {
+    stubFade();
+    document.documentElement.setAttribute("data-motion", "reduce");
+    await openHost();
+    await key("Escape");
+    expect(layerNode()).toBeNull();
+  });
+
+  it("reopened mid-exit: the fade's timer and listeners are cleared and the dialog stays", async () => {
+    stubFade();
+    const host = await openHost();
+    vi.useFakeTimers();
+    await key("Escape");
+    const scrim = scrimNode();
+    await click(within(host).getByRole("button", { name: "Open" }));
+    const layer = layerNode();
+    expect(layer).toHaveAttribute("data-state", "open");
+    expect(layer).not.toHaveAttribute("inert");
+    await advance(1000);
+    await act(async () => {
+      fireEvent.transitionEnd(scrim);
+    });
+    expect(dialogNode("Rename layout")).toBeVisible();
+    expect(screen().getByRole("textbox", { name: "Name" })).toHaveFocus(); // A stale timer or listener would have cleared the exit: the next close would be a cut.
+    await key("Escape");
+    expect(layerNode()).toHaveAttribute("data-state", "closing");
+    await advance(300);
+    expect(layerNode()).toBeNull();
+  });
+});
+
+describe("Dialog readable body", () => {
+  let overflowing = false;
+  const observed: Element[] = [];
+  let resized: (() => void) | undefined;
+
+  const stubLayout = (): void => {
+    overflowing = false;
+    observed.length = 0;
+    resized = undefined;
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains("cv-dialog__body") && overflowing ? 900 : 100;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resized = callback;
+        }
+        observe(target: Element): void {
+          observed.push(target);
+        }
+        disconnect(): void {
+          resized = undefined;
+        }
+      },
+    );
+  };
+  const bodyNode = (): HTMLElement => {
+    const node = document.querySelector<HTMLElement>(".cv-dialog__body");
+    if (node === null) throw new Error("no body");
+    return node;
+  };
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("a body that scrolls with no control in it is a Tab stop named by the title", async () => {
+    stubLayout();
+    overflowing = true;
+    await openHost(<Host>{<p>Long terms of use.</p>}</Host>);
+    const group = screen().getByRole("group", { name: "Rename layout" });
+    expect(group).toBe(bodyNode());
+    expect(group).toHaveAttribute("tabindex", "0");
+  });
+
+  it("with aria-label, the body is named by it", async () => {
+    stubLayout();
+    overflowing = true;
+    await openHost(<Host aria-label="Terms of use">{<p>Long terms of use.</p>}</Host>);
+    expect(screen().getByRole("group", { name: "Terms of use" })).toBe(bodyNode());
+    expect(bodyNode()).not.toHaveAttribute("aria-labelledby");
+  });
+
+  it("a body that scrolls with a control in it, or that fits, is no Tab stop", async () => {
+    stubLayout();
+    overflowing = true;
+    await openHost();
+    expect(bodyNode()).not.toHaveAttribute("tabindex");
+    expect(bodyNode()).not.toHaveAttribute("role");
+    await key("Escape");
+    overflowing = false;
+    await openHost(<Host>{<p>Short.</p>}</Host>);
+    expect(bodyNode()).not.toHaveAttribute("tabindex");
+  });
+
+  it("re-measures on a resize, and observes and measures content added while open", async () => {
+    stubLayout();
+    function Growing(): JSX.Element {
+      const [more, setMore] = useState(false);
+      return (
+        <Host footer={<Button onClick={() => setMore(true)}>More</Button>}>
+          <p>Short.</p>
+          {more ? <p>Much longer text.</p> : null}
+        </Host>
+      );
+    }
+    await openHost(<Growing />);
+    expect(bodyNode()).not.toHaveAttribute("tabindex");
+    expect(observed).toContain(bodyNode());
+
+    overflowing = true;
+    await click(screen().getByRole("button", { name: "More" }));
+    await act(async () => Promise.resolve());
+    const added = screen().getByText("Much longer text.");
+    expect(observed).toContain(added);
+    expect(bodyNode()).toHaveAttribute("tabindex", "0");
+
+    overflowing = false;
+    await act(async () => resized?.());
+    expect(bodyNode()).not.toHaveAttribute("tabindex");
   });
 });
