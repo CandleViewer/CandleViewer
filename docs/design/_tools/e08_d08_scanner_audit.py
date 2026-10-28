@@ -2,8 +2,9 @@
 """E08-D08 (#176) audit: SCR-104, the scanner panel (spec + hand-off).
 
 Standalone, offline, stdlib only; it executes no repo code and runs under `python3 -I`. It reads,
-AS TEXT at the pinned base `2cf551f4af` (`git show`): the token JSON (`themes.json` layering:
-dark = primitives + semantic-dark, light = + semantic-light, hc = + semantic-hc), the plan texts
+AS TEXT at the pinned base `533b011c88` (`git show`; `22`'s scanner shapes at `2cf551f4af`,
+D08-C20): the token JSON (`themes.json` layering: dark = primitives + semantic-dark, light =
++ semantic-light, hc = + semantic-hc), the plan texts
 the spec cites, the merged design docs it cites, the RBAC seed, the keymap, the ticket JSON
 (`E08.json`) and the QA plan; then this ticket's spec and hand-off from the working tree, and the
 working-tree files RULED BQ-3 keeps untouched.
@@ -33,9 +34,11 @@ working-tree files RULED BQ-3 keeps untouched.
    Old cells are not claims) and each ruled behaviour also has synonyms refused. Measured gates
    read the tables column by column (criteria, states, frames, pairs, C-rows, the G-ledger, the
    dry run, Table A). G-UNTOUCHED compares committed and uncommitted paths with
-   `git merge-base HEAD origin/main` and FAILs when it does not resolve; only this PR's four files
-   may differ. G-CHARSET, G-CELLS (escaped pipes kept), G-CLOSE, G-BUDGET close the set. The
-   lens folds of 2026-10-27 add G-FILTERBAR (chips, the remove button, the popover's names,
+   `git merge-base HEAD origin/main` and FAILs when it does not resolve; only the ticket's four
+   files, the PNGs §0 names, `sheets/e08-d08/` and `sheets/MANIFEST.sha256` may differ. G-BOARDS
+   reads each §0 Status cell against its PNG's IHDR and §0's r2 sha256 against the committed board
+   script (M-59 to M-62). G-CHARSET, G-CELLS (escaped pipes kept), G-CLOSE, G-BUDGET close the set.
+   The lens folds of 2026-10-27 add G-FILTERBAR (chips, the remove button, the popover's names,
    Regime's classes), G-HANDOFF (§A ticks and evidence, §F) and G-WALK's item-by-item need lists
    (hand-off §G); the synonyms were re-run against the adversary lens's 36 paraphrases, each
    caught after a repin.
@@ -68,6 +71,7 @@ import io
 import json
 import math
 import re
+import struct
 import subprocess
 import sys
 import unicodedata
@@ -78,7 +82,10 @@ from fractions import Fraction
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "2cf551f4af"  # every cite was read here (the spec's Inputs line; the merge-base at start)
+BASE = "533b011c88"  # every cite was read here (the spec's Inputs line; the boards PR's merge-base)
+# `22`'s scanner shapes as the text reads them: #4825's base, before #4848 landed the scanner
+# contract (D08-C20); `runScanner`'s `sort` enum, `ScannerRow` and the schema names are read here
+CONTRACT_BASE = "2cf551f4af"
 HEAD = "origin/main"  # G-VERSION: a cited line that drifts here FAILs
 MULTI = re.MULTILINE
 
@@ -89,12 +96,19 @@ DS_SRC_REL = "packages/ui/tokens"
 # RULED BQ-3 and the standing list: never edited by this ticket
 UNTOUCHED = ("14", "15", "16", "22", "23")
 UNTOUCHED_DOCS = ("D04", "D07", "E08-D06", "E09-D09", "E25-D05", "KM", "SEED")
-# the only paths this PR may add or change against the merge-base (the PR 2 boards come later)
+# the ticket's own paths against the merge-base; the boards PR adds the PNGs §0 names, the
+# committed board-script kit and the manifest (G-UNTOUCHED), nothing else
 OWN_PATHS = (
     "docs/design/E08/E08-D08.md",
     "docs/design/E08/E08-D08-handoff.md",
     "docs/design/_tools/e08_d08_scanner_audit.py",
     "docs/design/_tools/e08_d08_ruled_pins.txt",
+)
+OWN_SHEETS = re.compile(r"docs/design/_tools/sheets/(?:e08-d08/[A-Za-z0-9._-]+|MANIFEST\.sha256)")
+BOARD_SCRIPT = "docs/design/_tools/sheets/e08-d08/e08-d08-board.js.txt"  # the r2 script §0 names
+DRAWN_CELL = re.compile(
+    r"drawn \(r2\): board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`(?P<png>[^`]+)` \((?P<w>\d+) × (?P<h>\d+)\)"
 )
 CITE_FILES: dict[str, str] = {
     "D04": "docs/design/E08/E08-D04.md",
@@ -155,10 +169,10 @@ CONSUMERS = (
 
 # CITE values: key -> (cite id, line, pattern whose group 1 is the value)
 CITE_VALUES: dict[str, tuple[str, int, str]] = {
-    "cap": ("14", 2273, r"capped at (\d+)"),
-    "cadence": ("14", 2272, r"on a (\d+) s cadence"),
-    "poll-hz": ("14", 2277, r"<=(\d+(?:\.\d+)?) Hz"),
-    "scan-budget": ("14", 2277, r"returns in <=(\d+) s"),
+    "cap": ("14", 2279, r"capped at (\d+)"),
+    "cadence": ("14", 2278, r"on a (\d+) s cadence"),
+    "poll-hz": ("14", 2283, r"<=(\d+(?:\.\d+)?) Hz"),
+    "scan-budget": ("14", 2283, r"returns in <=(\d+) s"),
     "t2": ("D07", 86, r"T2 = (\d+) s"),
     "resort": ("D07", 90, r"at most every (\d+) s"),
     "conn-cap": ("23", 397, r"\|\s*(\d+)\s*\|\s*distinct symbols"),
@@ -168,12 +182,12 @@ CITE_VALUES: dict[str, tuple[str, int, str]] = {
     "row.compact": ("16", 113, r"\|\s*(\d+)px"),
     "row.comfortable": ("16", 114, r"\|\s*(\d+)px"),
     "zoom": ("05", 131, r"(\d+)% browser"),
-    "virtualise": ("15", 528, r"default true above (\d+) rows"),
-    "limit.max": ("22", 14868, r"maximum: (\d+)"),
-    "limit.default": ("22", 14868, r"default: (\d+)"),
-    "filters.max": ("22", 13034, r"maxLength: (\d+)"),
+    "virtualise": ("15", 552, r"default true above (\d+) rows"),
+    "limit.max": ("22", 15256, r"maximum: (\d+)"),
+    "limit.default": ("22", 15256, r"default: (\d+)"),
+    "filters.max": ("22", 13238, r"maxLength: (\d+)"),
     "preset.name-max": ("E08J", 614, r"`name` \(1–(\d+)\)"),
-    "list-cap": ("22", 21807, r"maxItems: (\d+)"),
+    "list-cap": ("22", 22248, r"maxItems: (\d+)"),
     "target.min": ("05", 100, r"≥(\d+)×\d+ CSS px"),
     "clock-hz": ("D07", 107, r"One shared (\d+) Hz clock"),
     "cache": ("E08J", 614, r"\(≤ (\d+) s\)"),
@@ -183,37 +197,37 @@ CITE_VALUES: dict[str, tuple[str, int, str]] = {
     "mount": ("14", 87, r"panel mount ≤(\d+) ms"),
     "d07.funding-dp": ("D07", 94, r"Funding (\d+) dp"),
     "spread.dp": ("D07", 176, r"(\d+) dp, neutral"),
-    "scroll-fps": ("15", 534, r"@(\d+)fps"),
+    "scroll-fps": ("15", 558, r"@(\d+)fps"),
 }
 # load-bearing fragments: (cite id, line at the base, text the line must hold)
 CITED: tuple[tuple[str, int, str], ...] = (
-    ("14", 2269, "### SCR-104 — Scanner / screener panel"),
-    ("14", 2271, "saved screens"),
-    ("14", 2273, "Minimum must be less than maximum"),
-    ("14", 2276, "result count is announced on change"),
-    ("14", 2277, "or subscribes to a scan topic"),
-    ("14", 2278, "`scanner.alert_created_from_result`"),
-    ("14", 2279, "scanning is limited to live metrics for symbols we are not recording"),
-    ("14", 3093, '"(estimated)" labelling'),
+    ("14", 2275, "### SCR-104 — Scanner / screener panel"),
+    ("14", 2277, "saved screens"),
+    ("14", 2279, "Minimum must be less than maximum"),
+    ("14", 2282, "result count is announced on change"),
+    ("14", 2283, "or subscribes to a scan topic"),
+    ("14", 2284, "`scanner.alert_created_from_result`"),
+    ("14", 2285, "scanning is limited to live metrics for symbols we are not recording"),
+    ("14", 3099, '"(estimated)" labelling'),
     ("14", 85, "never hidden"),
     ("14", 88, "Every state-changing action emits an append-only audit record"),
     ("14", 1245, "`Ctrl+F` filter"),
-    ("14", 2944, "Every empty surface uses the same anatomy"),
-    ("15", 2675, "CMP-133 is the only host today"),
-    ("15", 2679, "never from a catalogue adjective"),
-    ("15", 529, "implied whenever a body column is interactive"),
-    ("15", 587, "`space.filterbar.*`"),
-    ("22", 13022, "operationId: runScanner"),
-    ("22", 13029, "x-rbac: { permissions: [marketdata:read], scope: none }"),
-    ("22", 13033, "`ScannerFilter`"),
-    ("22", 21814, "ScannerRow:"),
-    ("22", 21832, "rather than evaluated as zero"),
-    ("22", 16678, "Present only where a cheap exact count exists."),
-    ("22", 20476, "PaneKind:"),
-    ("22", 20497, "account panes"),
+    ("14", 2950, "Every empty surface uses the same anatomy"),
+    ("15", 2704, "CMP-133 is the only host today"),
+    ("15", 2708, "never from a catalogue adjective"),
+    ("15", 553, "implied whenever a body column is interactive"),
+    ("15", 611, "`space.filterbar.*`"),
+    ("22", 13184, "operationId: runScanner"),
+    ("22", 13233, "x-rbac: { permissions: [marketdata:read], scope: none }"),
+    ("22", 13237, "`ScannerFilter`"),
+    ("22", 22259, "ScannerRow:"),
+    ("22", 22282, "rather than evaluated as zero"),
+    ("22", 17073, "Present only where a cheap exact count exists."),
+    ("22", 20901, "PaneKind:"),
+    ("22", 20923, "account panes"),
     ("23", 397, "max_symbols_per_connection"),
-    ("24", 1057, "| `tape_speed` "),
-    ("24", 1058, "`tape_speed_zscore`"),
+    ("24", 1061, "| `tape_speed` "),
+    ("24", 1062, "`tape_speed_zscore`"),
     ("E08J", 482, "Planned for Sprint 07 (2026-11-06"),
     ("32", 43, "Schedule & capacity"),
     ("VAL", 56, '"R9 Advice boundary"'),
@@ -266,6 +280,7 @@ Values = dict[str, str]
 Fetch = Callable[[str, str], str | None]
 DRIFT: list[tuple[str, int, str]] = []  # self-test lever: (path, line, text) read at HEAD
 BROKEN: list[str] = []  # self-test lever: "head" or "merge-base" does not resolve
+EXTRA_PATHS: list[str] = []  # self-test lever: paths pretended changed (G-UNTOUCHED)
 # a gate finding: (gate tag, message, doc, section); doc / section None for a repo-level finding
 Finding = tuple[str, str, str | None, str | None]
 
@@ -901,21 +916,31 @@ def yaml_block(text: str, head: str, indent: int) -> list[str]:
     return out
 
 
+@functools.lru_cache(maxsize=1)
+def contract_22() -> str:
+    """`22` at CONTRACT_BASE: the scanner shapes the G-ledger reads (D08-C20)."""
+    rel = plan_rel("22")
+    text = git_show(CONTRACT_BASE, rel) if rel else None
+    if text is None:
+        raise SystemExit(f"FAIL parse: `22` is not readable at {CONTRACT_BASE}")
+    return text
+
+
 @functools.lru_cache(maxsize=8)
 def schema_props(name: str) -> tuple[str, ...]:
-    block = yaml_block(plan("22"), name, 4)
+    block = yaml_block(contract_22(), name, 4)
     return tuple(m[1] for ln in block if (m := re.match(r"^ {8}([a-z_0-9]+):", ln)))
 
 
 @functools.lru_cache(maxsize=1)
 def schema_names() -> frozenset[str]:
-    return frozenset(re.findall(r"^ {4}([A-Z][A-Za-z0-9]+):", plan("22"), MULTI))
+    return frozenset(re.findall(r"^ {4}([A-Z][A-Za-z0-9]+):", contract_22(), MULTI))
 
 
 @functools.lru_cache(maxsize=1)
 def sort_enum() -> tuple[str, ...]:
     """`runScanner`'s `sort` enum, read after its operationId up to the closing bracket."""
-    text = plan("22")
+    text = contract_22()
     start = text.find("operationId: runScanner")
     m = re.search(r"- name: sort\n.*?enum:\s*\[(.*?)\]", text[start:], re.DOTALL)
     if start < 0 or not m:
@@ -1062,7 +1087,7 @@ def is_twin(row: list[str]) -> bool:
 
 FRAME_HEAD = "16.1 The frame register"
 FR_COLS = ("Frame", "Board", "Theme", "State", "Components", "Copy", "Tokens", "Status")
-FRAME_STATUS = "to draw (PR 2)"
+FRAME_STATUS = "drawn"  # each frame of §16.1 (its board's Status cell holds the evidence)
 
 
 def frames(spec: str) -> list[dict[str, str]]:
@@ -1104,7 +1129,7 @@ def count_values(spec: str) -> Values:
         "COUNT:criteria.missing": str(missing_criteria()),
         "COUNT:states": str(len(table_rows(section(spec, STATES_HEAD)))),
         "COUNT:states.t": str(len(t_scope_states())),
-        "COUNT:states.14": str(len(re.split(r" · ", base_line("14", 2273).split(":**", 1)[1]))),
+        "COUNT:states.14": str(len(re.split(r" · ", base_line("14", 2279).split(":**", 1)[1]))),
         "COUNT:states.d04": str(d04_states()),
         "COUNT:pairs": str(len(PAIRS)),
         "COUNT:themes": str(len(themes)),
@@ -1542,7 +1567,7 @@ def g_boards(t: Texts) -> list[Finding]:
         bad.append(F("G-BOARDS", f"board numbers {ids}", "spec", sec))
     by = {r[0]: r for r in rows}
     for r in rows:
-        if len(r) < 5 or r[4] != FRAME_STATUS or not r[1].startswith(f"`E08-D08 / {r[0]} "):
+        if len(r) < 5 or not drawn_cell_ok(r) or not r[1].startswith(f"`E08-D08 / {r[0]} "):
             bad.append(F("G-BOARDS", f"board {r[0]}: name or status", "spec", sec))
             continue
         m = re.fullmatch(r"(light|high-contrast) twin of (\d{2})", r[2])
@@ -1555,6 +1580,10 @@ def g_boards(t: Texts) -> list[Finding]:
             bad.append(F("G-BOARDS", f"board {r[0]}: a first board not in dark", "spec", sec))
     if {f.get("Board") for f in frames(t.spec)} != set(by):
         bad.append(F("G-BOARDS", "a board draws no frame of §16.1", "spec", sec))
+    script = ROOT / BOARD_SCRIPT
+    sha = hashlib.sha256(script.read_bytes()).hexdigest() if script.is_file() else "missing"
+    if f"r2, sha256 `{sha}`" not in section(t.spec, "0. Status"):
+        bad.append(F("G-BOARDS", f"§0 does not name {BOARD_SCRIPT}'s sha256", "spec", sec))
     body = norm_text(section(t.spec, "0. Status"))
     for n in (
         "each frame a",
@@ -1566,6 +1595,43 @@ def g_boards(t: Texts) -> list[Finding]:
         if norm_text(n) not in body:
             bad.append(F("G-BOARDS", f"§0 lacks {n!r}", "spec", sec))
     return bad
+
+
+def own_pngs(spec: str) -> frozenset[str]:
+    """The PNGs §0's board rows name (`E08-D08 / NN slug`); G-UNTOUCHED admits these."""
+    out = set()
+    for r in board_rows(spec):
+        m = re.fullmatch(rf"`E08-D08 / {r[0]} ([a-z0-9-]+)`", r[1]) if len(r) > 1 else None
+        if m:
+            out.add(f"docs/design/E08/img/E08-D08-{r[0]}-{m[1]}.png")
+    # §14's CVD renders of a named board (cvd_sim.py's two suffixes), each named in full
+    for stem, kind in re.findall(
+        r"`(E08-D08-\d\d-[a-z0-9-]+?)-(greyscale|deuteranopia)\.png`", spec
+    ):
+        if f"docs/design/E08/img/{stem}.png" in out:
+            out.add(f"docs/design/E08/img/{stem}-{kind}.png")
+    return frozenset(out)
+
+
+def png_size(rel: str) -> tuple[int, int] | None:
+    """Width and height from a working-tree PNG's IHDR, else None."""
+    path = ROOT / rel
+    head = path.read_bytes()[:24] if path.is_file() else b""
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", head[16:24])
+    return int(w), int(h)
+
+
+def drawn_cell_ok(row: list[str]) -> bool:
+    """A §0 Status cell reads `drawn (r2): board id `<uuid>`, `<its export path>` (W × H)`: the
+    path its own slug names, W × H its PNG header."""
+    slug = re.fullmatch(rf"`E08-D08 / {row[0]} ([a-z0-9-]+)`", row[1]) if len(row) > 1 else None
+    m = DRAWN_CELL.fullmatch(row[-1])
+    if not slug or not m:
+        return False
+    want = f"docs/design/E08/img/E08-D08-{row[0]}-{slug[1]}.png"
+    return m["png"] == want and png_size(want) == (int(m["w"]), int(m["h"]))
 
 
 def g_frame(t: Texts) -> list[Finding]:
@@ -1939,7 +2005,7 @@ def g_estimated(t: Texts) -> list[Finding]:
         "the badge follows the descriptor",
         "never from a catalogue adjective",
         'the cell text is never "est."',
-        "(a departure from `15`:2675 at the base: d08-c8, a-12)",
+        "(a departure from `15`:2704 at the base: d08-c8, a-12)",
         "the embedded look is presentational: no role, no tabindex, its glyph `aria-hidden`",
         "the one-line note (w-3, w-4) stands in for it",
         "the header's accessible name is its text, the word once",
@@ -2045,9 +2111,9 @@ def g_range(t: Texts) -> list[Finding]:
     ):
         if norm_text(n) not in body:
             bad.append(F("G-RANGE", f"§4.2 lacks {n!r}", "spec", sec))
-    core = grab(r'\("([^"]+)"\)', base_line("14", 2273), "14:2273 error")
+    core = grab(r'\("([^"]+)"\)', base_line("14", 2279), "14:2279 error")
     if deck(t.spec).get("W-7") != f"{{Funding %}}: {core}.":
-        msg = "W-7 is not the criterion + `14`:2273 verbatim"
+        msg = "W-7 is not the criterion + `14`:2279 verbatim"
         bad.append(F("G-RANGE", msg, "spec", spec_sec(t, "13. Copy deck")))
     return bad
 
@@ -2185,7 +2251,7 @@ g_cap_words = lexicon(
 
 
 def g_liveonly(t: Texts) -> list[Finding]:
-    """BQ-13: included and flagged; the chip; the cells' name; the note in `14`:2279's words;
+    """BQ-13: included and flagged; the chip; the cells' name; the note in `14`:2285's words;
     the split count; the recorded-history criteria."""
     head = "6. Symbols we do not record"
     sec = spec_sec(t, head)
@@ -2196,7 +2262,7 @@ def g_liveonly(t: Texts) -> list[Finding]:
         'it carries the "live only" chip',
         "not a new state",
         '"—" with the accessible name "not evaluated: not recorded"',
-        "`14`:2279's words",
+        "`14`:2285's words",
         '"scanning is limited to live metrics for symbols we are not recording."',
         '"143 matches · 38 live only"',
     ):
@@ -2211,9 +2277,9 @@ def g_liveonly(t: Texts) -> list[Finding]:
     if len(status) < 3 or "both when both apply" not in status[2]:
         msg = "§8.1's Status cell drops one of two chips"
         bad.append(F("G-LIVEONLY", msg, "spec", spec_sec(t, "8.1 Columns")))
-    words = grab(r"'([^']+)' note", base_line("14", 2279), "14:2279 note")
+    words = grab(r"'([^']+)' note", base_line("14", 2285), "14:2285 note")
     if w_segments(t.spec, "W-12")[-1].lower().rstrip(".") != words.lower():
-        bad.append(F("G-LIVEONLY", "W-12's note is not `14`:2279's words", "spec", sec))
+        bad.append(F("G-LIVEONLY", "W-12's note is not `14`:2285's words", "spec", sec))
     return bad
 
 
@@ -2247,7 +2313,10 @@ def g_pane(t: Texts) -> list[Finding]:
         "G-PANE",
         "2.1 Placement",
         (
-            "of the pane kind d08-g10 asks for (no `scanner` `panekind` at the base)",
+            (
+                "of the pane kind d08-g10 asks for (no `scanner` `panekind` at `2cf551f4af`;"
+                " #4848 adds one, d08-c20)"
+            ),
             "binds neither `symbol` nor `interval_code`",
             "one pane is one filter set and one poll",
             "share t09's server cache",
@@ -2727,11 +2796,11 @@ def g_events(t: Texts) -> list[Finding]:
     head = "15.1 Analytics"
     sec = spec_sec(t, head)
     rows = table_rows(section(t.spec, head))
-    names = re.findall(r"`(scanner\.[a-z_]+)`", base_line("14", 2278))
+    names = re.findall(r"`(scanner\.[a-z_]+)`", base_line("14", 2284))
     bad: list[Finding] = []
     got = [re.sub(r"[`*]", "", r[0]).split(" ")[0] for r in rows]
     if got[:4] != names:
-        bad.append(F("G-EVENTS", f"§15.1's first rows {got[:4]} are not `14`:2278's", "spec", sec))
+        bad.append(F("G-EVENTS", f"§15.1's first rows {got[:4]} are not `14`:2284's", "spec", sec))
     for r in rows:
         if r[0].split("`")[1] not in names and "(PROPOSED)" not in r[0]:
             bad.append(F("G-EVENTS", f"{r[0]}: an unmarked new event", "spec", sec))
@@ -2890,13 +2959,14 @@ C_ROWS = {
     "D08-C10": "T DoD",
     "D08-C11": "R9 Advice boundary",
     "D08-C12": "saved screens",
-    "D08-C13": "`14`:2273 lists",
+    "D08-C13": "`14`:2279 lists",
     "D08-C14": "account panes",
     "D08-C15": "(estimated) labelling",
     "D08-C16": "D07:345",
     "D08-C17": "E15-D07",
     "D08-C18": "send matches to watchlist",
     "D08-C19": "Inputs stale",
+    "D08-C20": "#4848",
 }
 
 
@@ -2951,7 +3021,7 @@ def g_grows(t: Texts) -> list[Finding]:
     if LEDGER_DUE_HEAD not in raw:
         bad.append(F("G-GROWS", "the ledger's due column cites no sprint start", "spec", sec))
     for r in rows:
-        if r[0] in ("D08-G2", "D08-G3") and not ("raw trades/s" in r[1] and "`24`:1057" in r[1]):
+        if r[0] in ("D08-G2", "D08-G3") and not ("raw trades/s" in r[1] and "`24`:1061" in r[1]):
             bad.append(
                 F("G-GROWS", f"{r[0]}: `tape_speed` is not said to be raw trades/s", "spec", sec)
             )
@@ -3136,7 +3206,12 @@ def g_untouched(t: Texts) -> list[Finding]:
         rel = cite_path(nn)
         if rel is None or text != (git_show(ref, rel) or ""):
             bad.append(F("G-UNTOUCHED", f"`{nn}` differs from {ref[:10]}", None, None))
-    bad += [F("G-UNTOUCHED", f"{p} is not this PR's path", None, None) for p in stray_paths()]
+    own = own_pngs(t.spec)
+    bad += [
+        F("G-UNTOUCHED", f"{p} is not this PR's path", None, None)
+        for p in sorted({*stray_paths(), *EXTRA_PATHS})
+        if p not in own and not OWN_SHEETS.fullmatch(p)
+    ]
     return bad
 
 
@@ -3860,7 +3935,7 @@ def add_board(text: str, _v: Values) -> str:
     rows = [ln for ln in section(text, "0. Status").split("\n") if ln.startswith("| 10 ")]
     if not rows:
         return text
-    extra = "| 11  | `E08-D08 / 11 capped-light` | light twin of 04 | light | to draw (PR 2) |"
+    extra = "| 11  | `E08-D08 / 11 capped-light` | light twin of 04 | light | drawn |"
     return text.replace(rows[0], rows[0] + "\n" + extra, 1)
 
 
@@ -3928,7 +4003,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-4",
         "G-VERSION",
         "brief: a cited line that drifts at origin/main FAILs",
-        patch=drift("14", 2276, "- **A11y:** moved"),
+        patch=drift("14", 2282, "- **A11y:** moved"),
     ),
     Mutation(
         "M-5",
@@ -4284,6 +4359,31 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-CLOSE",
         "BQ-1: PR 1 is Refs #176",
         spec=say_in("19.3 Deviations", "PR 1 closes #176."),
+    ),
+    # the boards PR: each §0 Status cell against its PNG, the board script's sha256, the paths
+    Mutation(
+        "M-59",
+        "G-BOARDS",
+        "BQ-24: a Status cell's size is its PNG header's",
+        spec=line_edit("| 01  | `E08-D08 / 01", "(2720 × 1357)", "(2720 × 1358)"),
+    ),
+    Mutation(
+        "M-60",
+        "G-BOARDS",
+        "BQ-24: §0 names the committed board script's sha256",
+        spec=line_edit("**The scanner UI is unbuilt.**", "r2, sha256 `8c36", "r2, sha256 `8c37"),
+    ),
+    Mutation(
+        "M-61",
+        "G-UNTOUCHED",
+        "BQ-3: only the PNGs §0 names",
+        patch=pushed(EXTRA_PATHS, "docs/design/E08/img/E08-D08-11-extra.png"),
+    ),
+    Mutation(
+        "M-62",
+        "G-UNTOUCHED",
+        "BQ-3: only the PNGs §0 and §14 name",
+        patch=pushed(EXTRA_PATHS, "docs/design/E08/img/E08-D08-06-stale-protanopia.png"),
     ),
     # X-n: the tool's own mutations, one per remaining ruled sentence or paraphrase class
     Mutation(
@@ -4665,8 +4765,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "X-59",
         "G-ESTIMATED",
-        "lens 1 m2: the option host departs from `15`:2675",
-        spec=sub_in("3.3 Estimated", " (a departure from `15`:2675 at the base: D08-C8, A-12)", ""),
+        "lens 1 m2: the option host departs from `15`:2704",
+        spec=sub_in("3.3 Estimated", " (a departure from `15`:2704 at the base: D08-C8, A-12)", ""),
     ),
     Mutation(
         "X-60",
@@ -5084,7 +5184,7 @@ MUTATIONS: tuple[Mutation, ...] = (
             "17.2 The G-ledger",
             "D08-G3",
             1,
-            lambda c: c.replace(" (its `tape_speed` ranks raw trades/s, `24`:1057)", ""),
+            lambda c: c.replace(" (its `tape_speed` ranks raw trades/s, `24`:1061)", ""),
         ),
     ),
     # one per pin class (G-RULED-PIN only)
