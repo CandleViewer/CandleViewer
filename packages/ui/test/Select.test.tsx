@@ -2,7 +2,7 @@
 import { composeStories } from "@storybook/react-vite";
 import { useState, type JSX } from "react";
 import { act } from "react";
-import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
+import { expect, fireEvent, fn, userEvent, waitFor, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { Select, type SelectProps } from "../src/components/index.js";
 import * as stories from "../src/components/Select.stories.js";
@@ -286,7 +286,9 @@ describe("Select (CMP-009)", () => {
     const host = await mount(<Host value="a" />);
     await userEvent.click(box(host));
     await userEvent.hover(options(host)[2] as HTMLElement);
-    expect(activeLabel(host)).toBe("Charlie");
+    // The mouse move runs outside `act`, so React commits the new active option on its own scheduler turn, which a
+    // loaded run can delay past the end of `hover`: wait for the commit, do not assume it.
+    await waitFor(() => expect(activeLabel(host)).toBe("Charlie"));
     await userEvent.hover(options(host)[1] as HTMLElement);
     expect(activeLabel(host)).toBe("Charlie");
     fireEvent.mouseMove(options(host)[2] as HTMLElement);
