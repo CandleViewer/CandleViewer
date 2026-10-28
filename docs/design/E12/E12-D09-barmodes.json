@@ -1,0 +1,117 @@
+{
+  "$comment": "E12-D09 (#244) bar-mode registry: one record per mode, the source of the consistency contract (E12-D09 section 10) and of CMP-220's catalogue-level test. Built from E12-D03 section 2 and its copy deck (C-n) and E12-D05 section 4.1 at 8f652abb16; checked cell by cell by docs/design/_tools/e12_d09_ds_audit.py.",
+  "base": "8f652abb16",
+  "order": ["time", "tick", "volume", "range", "delta", "renko", "pnf"],
+  "modes": [
+    {
+      "key": "time",
+      "offered": true,
+      "label": "Time",
+      "short_labels": ["15m"],
+      "description_key": "C-1",
+      "description": "One bar per clock interval.",
+      "field_label": "Interval",
+      "unit": null,
+      "accessible_name": "Interval",
+      "first_use_default": "the chart's own",
+      "message_keys": ["C-13", "C-14"],
+      "messages": [
+        "Use whole minutes or hours from 1m to 24h, for example 7m or 2h.",
+        "Seconds and weekly intervals are not available yet."
+      ]
+    },
+    {
+      "key": "tick",
+      "offered": true,
+      "label": "Tick",
+      "short_labels": ["Tick 1,000"],
+      "description_key": "C-2",
+      "description": "Bars close on trade count, so busy periods make more bars.",
+      "field_label": "Trades per bar",
+      "unit": "trades",
+      "accessible_name": "Trades per bar, trades",
+      "first_use_default": "1,000",
+      "message_keys": ["C-7"],
+      "messages": ["Enter 100 to 1,000,000 trades."]
+    },
+    {
+      "key": "volume",
+      "offered": true,
+      "label": "Volume",
+      "short_labels": ["Vol 50 BTC", "Vol 50"],
+      "description_key": "C-3",
+      "description": "Bars close on traded volume; one big trade can close several.",
+      "field_label": "Volume per bar",
+      "unit": "the base asset",
+      "accessible_name": "Volume per bar, BTC",
+      "first_use_default": "50",
+      "message_keys": ["C-8", "C-10"],
+      "messages": [
+        "Whole {BTC} only in this release; at least {1} {BTC} per bar.",
+        "Enter at most 1,000,000,000,000 {BTC}."
+      ]
+    },
+    {
+      "key": "range",
+      "offered": true,
+      "label": "Range",
+      "short_labels": ["Range 40"],
+      "description_key": "C-4",
+      "description": "Bars close on a fixed high-low range; quiet markets add few.",
+      "field_label": "Range per bar",
+      "unit": "ticks",
+      "accessible_name": "Range per bar, ticks",
+      "first_use_default": "40",
+      "message_keys": ["C-11"],
+      "messages": ["Enter 2 to 100,000 ticks."]
+    },
+    {
+      "key": "delta",
+      "offered": true,
+      "label": "Delta",
+      "short_labels": ["Delta 25 BTC"],
+      "description_key": "C-5",
+      "description": "Bars close once net buying or selling reaches the size.",
+      "field_label": "Delta per bar (±)",
+      "unit": "the base asset",
+      "accessible_name": "Delta per bar (±), BTC",
+      "first_use_default": "25",
+      "message_keys": ["C-9", "C-10"],
+      "messages": [
+        "Whole {BTC} only in this release; at least {1} {BTC} of delta per bar.",
+        "Enter at most 1,000,000,000,000 {BTC}."
+      ]
+    },
+    {
+      "key": "renko",
+      "offered": true,
+      "label": "Renko",
+      "short_labels": ["Renko 30"],
+      "description_key": "C-6",
+      "description": "Equal bricks; reversals need two bricks, hiding small swings.",
+      "field_label": "Brick size",
+      "unit": "ticks",
+      "accessible_name": "Brick size, ticks",
+      "first_use_default": "30",
+      "message_keys": ["C-11", "C-12"],
+      "messages": [
+        "Enter 2 to 100,000 ticks.",
+        "ATR bricks are not available yet. Enter a brick size in ticks."
+      ]
+    },
+    {
+      "key": "pnf",
+      "offered": false,
+      "label": "Point & Figure",
+      "short_labels": [],
+      "description_key": null,
+      "description": null,
+      "field_label": null,
+      "unit": null,
+      "accessible_name": null,
+      "first_use_default": null,
+      "message_keys": [],
+      "messages": []
+    }
+  ]
+}
