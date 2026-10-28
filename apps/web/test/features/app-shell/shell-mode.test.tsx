@@ -238,10 +238,15 @@ const overlay = (): HTMLElement => {
 const assertiveSeq = (): string | null =>
   document.querySelector('[aria-live="assertive"] p')?.getAttribute("data-seq") ?? null;
 
-/** The store before the router renders: the claims, `/me` and the live link. */
+/**
+ * The store as the app's boot leaves it for the router, which `main.tsx` renders only after the
+ * bootstrap: the claims, `/me`, an environment and the live link. The app's `runBootstrap` writes
+ * `/me` and the environment its session names in one update; this fixture's `/me` names none, so
+ * the environment is seeded here, before the first render, as the boot would leave it.
+ */
 function bootShell(role: Role): void {
   setMeClaims({ authenticated: true, role, permissions: [] });
-  set({ connection: LIVE, me: me(role) });
+  set({ connection: LIVE, me: me(role), environment: "live" });
 }
 
 /**
@@ -330,13 +335,17 @@ const MATRIX = STATES.flatMap(([mode, patch]) =>
 const MATRIX_TITLE =
   "%s × %s: the badge shows, Admin only for the owner, the read-only overlay for a viewer, axe-clean";
 
-/** A matrix case once the shell has rendered: its one write, then every check that takes no wait. */
+/**
+ * A matrix case once the shell has rendered: its mode's write, then every check that takes no wait.
+ * The environment is the boot's (`bootShell`), so the badge never waits for the shell's store
+ * subscriptions; a mode's write moves the probe, whose render runs any pending effect first.
+ */
 function checkShellMatrix(
   mode: ShellMode,
   role: (typeof MATRIX_ROLES)[number],
   patch: Parameters<typeof setShellState>[0],
 ): void {
-  set({ environment: "live", ...patch });
+  set(patch);
   // A viewer's normal shell is read-only; under any other mode the overlay rides along.
   const expected = role === "viewer" && mode === "normal" ? "read-only" : mode;
   expect(probe()).toBe(`${expected}:${role === "viewer" ? "role" : "-"}`);
