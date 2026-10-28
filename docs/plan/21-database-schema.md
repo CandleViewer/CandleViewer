@@ -423,6 +423,7 @@ erDiagram
     chart_templates ||--o{ layout_panes : styles
     users ||--o{ drawings : draws
     users ||--o{ indicator_presets : saves
+    users ||--o{ scanner_presets : saves
     users ||--o{ hotkey_profiles : configures
     users ||--o{ watchlists : keeps
     users ||--o{ settings : personalises
@@ -438,6 +439,7 @@ erDiagram
     chart_templates { uuid id PK  text name  jsonb config }
     drawings { uuid id PK  symbol_code symbol  jsonb geometry }
     indicator_presets { uuid id PK  text indicator_code  jsonb params }
+    scanner_presets { uuid id PK  uuid user_id FK  jsonb filter }
     hotkey_profiles { uuid id PK  jsonb bindings }
     watchlists { uuid id PK  uuid user_id FK  text name  int version }
     settings { uuid id PK  text key  jsonb value }
@@ -3346,6 +3348,10 @@ CREATE INDEX ix_dr_layout ON drawings (layout_id) WHERE layout_id IS NOT NULL;
 
 `ix_lp_symbol` is what the recorder queries to decide which symbols are "chart open" for auto-recording.
 
+`22`'s `PaneKind` lists `scanner` (SCR-104, E08-T09 #4708) ahead of this table: `lp_kind` and the
+API's pane-kind list gain `scanner` in E08-T09's implementation revision, the one that creates
+`scanner_presets` (§3.8.7), and the API refuses the kind with `422` until then.
+
 #### 3.8.2 `chart_templates`
 
 ```sql
@@ -3506,6 +3512,51 @@ CREATE TABLE watchlists (
 );
 CREATE UNIQUE INDEX ux_wl_name ON watchlists (user_id, lower(name));
 ```
+
+#### 3.8.7 `scanner_presets`
+
+A user's saved SCR-104 scanner criteria (`22` `/scanner/presets*`, E08-T09 #4708): a name, a
+`ScannerFilter`, a ranking key and the default flag, **never results**. Specified here by the
+contract PR; the table ships with E08-T09's implementation revision (no migration yet). The API
+reads and writes only the caller's own rows. A delete is a hard delete, so a name is free again at
+once; the write-ahead `scanner_preset.deleted` audit record keeps the preset's content hash (`24`
+§15.5). `filter` is stored as written, so a criterion the server later stops knowing, or lists with
+`available: false`, stays in the row and is reported in `unavailable_criteria`, never dropped, until a save replaces the filter.
+`sp_filter_shape` is the database half of the API's 4 KiB `filter` bound, measured as Postgres
+prints `jsonb`; `sp_sort` checks the shape only, since `ScannerSortKey` is open-ended. `version`
+starts at 1 and every change raises it, clearing the default included; it is informative (no
+`If-Match`). `ux_sp_default` keeps one default per user: setting one clears the previous default in
+the same transaction.
+
+```sql
+CREATE TABLE scanner_presets (
+  id          uuid PRIMARY KEY,
+  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  filter      jsonb NOT NULL DEFAULT '{}'::jsonb,   -- a ScannerFilter as written; never results
+  sort        text NOT NULL DEFAULT 'turnover_24h', -- a ScannerSortKey
+  is_default  boolean NOT NULL DEFAULT false,
+  version     integer NOT NULL DEFAULT 1,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT sp_name_len     CHECK (char_length(name) BETWEEN 1 AND 80),
+  CONSTRAINT sp_filter_shape CHECK (jsonb_typeof(filter) = 'object' AND octet_length(filter::text) <= 4096),
+  CONSTRAINT sp_sort         CHECK (sort ~ '^[a-z][a-z0-9_]{0,39}$'),
+  CONSTRAINT sp_version      CHECK (version >= 1)
+);
+CREATE UNIQUE INDEX ux_sp_name    ON scanner_presets (user_id, lower(name));
+CREATE UNIQUE INDEX ux_sp_default ON scanner_presets (user_id) WHERE is_default;
+```
+
+The per-user cap (100 presets, `409` rule `limit_reached`) is an application check, as the other
+preset caps are.
+The indexes are the backstops of the application checks, and a violation is answered as the check
+would answer it, never as a `500`: `ux_sp_name` maps to `409` rule `name_taken`, and the duplicate
+check compares names with Postgres `lower()` (as the index does), not a client-side case fold. A
+create or update that sets `is_default` clears the previous default and writes the row in one
+transaction; a concurrent default that still trips `ux_sp_default` is retried once, then answered
+`409 conflict`. A refused write whose write-ahead audit record was already written gets a second
+record with `outcome` `failure` (24 §15.5).
 
 ### 3.9 Settings & feature flags
 
@@ -3716,7 +3767,7 @@ Inserts into `audit_log` are **serialised** by an advisory lock (`pg_advisory_xa
 The same revision gives `audit_chain()` a `search_path` of its own, `pg_catalog, public, pg_temp` (#4032), so what it calls (`digest()`, and `audit_field()`, which runs under that path when the chain calls it), the `audit_log` it reads and the `audit_log_id_seq` it draws from no longer resolve through the inserting session's path: a schema that session puts first, with a `digest()` of its own, cannot forge the hash. `pg_catalog` first; `public`, where the tables, the sequence and pgcrypto live; `pg_temp` last, so a temporary table never stands in for `audit_log`. The pin holds while `public` stays closed to other roles: a better-typed overload created there (a `pg_advisory_xact_lock(int4)`, a `nextval(text)`) would still win over `pg_catalog`'s. `cv_owner` owns `public`, `pg_bootstrap.sql` revokes CREATE on it from PUBLIC (PostgreSQL's default since 15), and the role privilege matrix pins it for `cv_app` (`test_cv_app_may_use_schema_public_but_not_create_in_it`); schema-qualified calls in a later revision would remove the dependency. `forbid_mutation()` and `audit_refuse_truncate()` only raise, so they resolve nothing and keep no path of their own. The bodies above are 0003's but for the id line, so the hash input is unchanged; CI-MIG-003 exempts that revision only in its reviewed shape, each statement's text pinned by its sha256.
 
 Actions that MUST be audited (non-exhaustive, enforced by a Semgrep rule on the service layer):
-`auth.login`, `auth.login_failed`, `auth.logout`, `auth.session_created`, `auth.session_refreshed`, `auth.session_revoked`, `auth.disabled_user_session_revoked`, `auth.idle_locked`, `auth.refresh_reuse_detected`, `auth.refresh_reuse_replayed`, `auth.session_fixation_attempt`, `auth.session_revoke_denied`, `auth.mfa_enroll`, `auth.mfa_reset`, `auth.password_change`, `users.create`, `users.disable`, `roles.grant`, `roles.revoke`, `accounts.create`, `accounts.enable_trading`, `api_key.import`, `api_key.rotate`, `api_key.revoke`, `api_key.reveal_attempt`, `profile.created`, `profile.updated`, `profile.deleted`, `profile.bound`, `profile.unbound`, `profile.save_refused`, `orders.submit`, `orders.cancel`, `orders.amend`, `trade_group.submit`, `trade_group.override_refused`, `positions.flatten`, `risk.freeze_manager`, `risk.unfreeze_manager`, `rules.arm`, `rules.disarm`, `rules.version_create`, `alert.created`, `alert.updated`, `alert.enabled`, `alert.disabled`, `alert.deleted`, `alert.denied`, `alert.scope_refused`, `alert.fired`, `alert.disarmed`, `alert.delivery_acked`, `alert.deliveries_acked`, `alert.desktop_outcome`, `indicator_preset.created`, `indicator_preset.updated`, `indicator_preset.deleted`, `indicator_preset.imported`, `watchlist.created`, `watchlist.updated`, `watchlist.deleted`, `recorder.start`, `recorder.stop`, `recorder.update`, `retention.change`, `retention.purge`, `flags.change`, `settings.change`, `onboarding.checklist_tamper_rejected`, `backup.run`, `backup.restore`, `backup.verified`, `backup.downloaded`, `backup.deleted`, `env.switch_live`.
+`auth.login`, `auth.login_failed`, `auth.logout`, `auth.session_created`, `auth.session_refreshed`, `auth.session_revoked`, `auth.disabled_user_session_revoked`, `auth.idle_locked`, `auth.refresh_reuse_detected`, `auth.refresh_reuse_replayed`, `auth.session_fixation_attempt`, `auth.session_revoke_denied`, `auth.mfa_enroll`, `auth.mfa_reset`, `auth.password_change`, `users.create`, `users.disable`, `roles.grant`, `roles.revoke`, `accounts.create`, `accounts.enable_trading`, `api_key.import`, `api_key.rotate`, `api_key.revoke`, `api_key.reveal_attempt`, `profile.created`, `profile.updated`, `profile.deleted`, `profile.bound`, `profile.unbound`, `profile.save_refused`, `orders.submit`, `orders.cancel`, `orders.amend`, `trade_group.submit`, `trade_group.override_refused`, `positions.flatten`, `risk.freeze_manager`, `risk.unfreeze_manager`, `rules.arm`, `rules.disarm`, `rules.version_create`, `alert.created`, `alert.updated`, `alert.enabled`, `alert.disabled`, `alert.deleted`, `alert.denied`, `alert.scope_refused`, `alert.fired`, `alert.disarmed`, `alert.delivery_acked`, `alert.deliveries_acked`, `alert.desktop_outcome`, `indicator_preset.created`, `indicator_preset.updated`, `indicator_preset.deleted`, `indicator_preset.imported`, `watchlist.created`, `watchlist.updated`, `watchlist.deleted`, `scanner_preset.created`, `scanner_preset.updated`, `scanner_preset.deleted`, `recorder.start`, `recorder.stop`, `recorder.update`, `retention.change`, `retention.purge`, `flags.change`, `settings.change`, `onboarding.checklist_tamper_rejected`, `backup.run`, `backup.restore`, `backup.verified`, `backup.downloaded`, `backup.deleted`, `env.switch_live`.
 
 #### 3.10.2 `system_events`
 
@@ -5204,6 +5255,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `workspaces`, `layouts`, `layout_panes`                | `name`, `grid_spec`, `pane_config`      | P0         | text / jsonb                                    | User layout preferences; never logged. Pane settings must never carry credentials or account identifiers                                        |
 | `indicator_presets`                                    | `name`, `params`, `style`               | P0         | text / jsonb                                    | User indicator settings (`name` is free text); no credentials or PII intended; never logged or audited                                          |
 | `watchlists`                                           | `name`, `symbols`, `columns`            | P0         | text / text[]                                   | User list preferences; no credentials or PII beyond the owning `user_id`; never logged; audited by name, count and version only                 |
+| `scanner_presets`                                      | `name`, `filter`                        | P0         | text / jsonb                                    | User scanner criteria (`name` is free text); never results; no credentials or PII intended; never logged; audit carries a content hash only     |
 | `journal_trades`                                       | all P&L columns                         | P1         | plaintext                                       | Financial personal data                                                                                                                         |
 | `exchange_accounts`                                    | `exchange_uid`, `label`                 | P1         | plaintext                                       | Account identifiers                                                                                                                             |
 | `exchange_accounts`                                    | `policy_disarm_code` and its times      | P0         | plaintext                                       | A fixed rule code and two times (0031), never text, an IP or a UID; Viewers read the same code in `account.disabled_by_policy`                  |
