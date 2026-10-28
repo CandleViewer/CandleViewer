@@ -7,7 +7,7 @@ sleeps: every wait is on a frame or an event, bounded by `asyncio.timeout`.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, cast
 from unittest.mock import Mock
 
@@ -53,13 +53,18 @@ def _counts(since: list[float] | None = None) -> list[float]:
 
 
 def _attached(
-    levels: int = 2, max_frame_bytes: int | None = None, now: float = 0.0, **config: Any
+    levels: int = 2,
+    max_frame_bytes: int | None = None,
+    now: float = 0.0,
+    stalled: Callable[[], float] = lambda: 0.0,
+    **config: Any,
 ) -> tuple[ConnectionPipeline, list[str], Conn]:
     """A pipeline attached to a `Conn` (a book of `levels` bids) whose emitter pushes into it,
     with a close that takes the terminal slot as `_Connection.close_with` does, and, as `run_auth`
     attaches it, `push_system` of a bare `_Connection` as its `notify`: a `connection_quality`
     notice (§8.3) is framed, cut for the principal's role and queued by production (SR-188,
-    #3537), not by this module. It attaches at `now` on the conn's clock."""
+    #3537), not by this module. It attaches at `now` on the conn's clock; `stalled` is the server
+    loop's stall reference its RTT probe reads (#4833), never stalled by default."""
     source = Source()
     for symbol in ("BTCUSDT", "ETHUSDT"):
         source.books[symbol] = Book(symbol)
@@ -78,6 +83,7 @@ def _attached(
         close=close,
         wall_ms=lambda: BASE_MS,
         connection_id="ws_test",
+        stalled=stalled,
     )
     shell = _Connection(
         cast(WebSocket, None),  # `push_system` queues the frame: no socket, no writer

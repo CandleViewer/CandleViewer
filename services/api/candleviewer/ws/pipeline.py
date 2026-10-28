@@ -36,7 +36,9 @@ in either direction, is announced through `_Connection.push_system` (§15.9's vi
 priority lane, after a budget check, since `apply` may fold a window. Right after it the RTT probe
 (§9.1) queues a `ping` on the priority lane when none is outstanding; its `pong` comes back
 through `pong`, where any other id costs one comparison and keeps nothing (an unanswered probe is
-retired after 10 s). The gateway's idle heartbeat `ping` is unchanged, but the probe keeps the
+retired after 10 s). The probe leaves out what `stalled` (the gateway's `LoopStall`) says the
+server's own loop stalled meanwhile (#4833). The gateway's idle heartbeat `ping` is unchanged, but
+the probe keeps the
 outbound traffic from idling for its 20 s, so it does not fire while the probe runs; a socket with
 no inbound traffic for 45 s still closes `heartbeat_timeout` (§9.1). E17-T06 counts each attached
 connection under its class in `cv_ws_connection_class` until `release`, and each classification
@@ -121,7 +123,7 @@ from candleviewer.ws.outbound import (
     encode,
     json_payload,
 )
-from candleviewer.ws.pacing import CLASS_COUNTS, ConnectionClass, Pacer
+from candleviewer.ws.pacing import CLASS_COUNTS, ConnectionClass, Pacer, never_stalled
 from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES, TopicEmitter
 from candleviewer.ws.topics import FAMILIES
 
@@ -215,6 +217,7 @@ class ConnectionPipeline:
         close: Close,
         wall_ms: Callable[[], int],
         connection_id: str,
+        stalled: Callable[[], float] = never_stalled,
     ) -> None:
         self.config = config
         self.queue = OutboundQueue(config.max_bytes, config.max_frames)
@@ -267,6 +270,8 @@ class ConnectionPipeline:
         #: E17-T06: the class this connection counts under in `cv_ws_connection_class`, from
         #: `attach` to `release`; None while it counts under none.
         self._counted: ConnectionClass | None = None
+        #: #4833: the server loop's stall to date (`LoopStall`), which the RTT probe leaves out.
+        self._stalled = stalled
 
     @property
     def deadline(self) -> float | None:
@@ -282,7 +287,7 @@ class ConnectionPipeline:
         """The first `auth_ok`: the ladder over this queue, and the `Pacer` that the hub's deltas
         go through from now on (this pipeline is the connection's sink, module docstring). The
         first classification is one interval on; `notify` queues its notices on `system`."""
-        self._live, pacer = authz.by_id, Pacer(emitter, self._interval_s)
+        self._live, pacer = authz.by_id, Pacer(emitter, self._interval_s, stalled=self._stalled)
         pacer.on_error = partial(self._failed, "update", pacer)
         pacer.on_arm = self._wake_for
         self.ladder = Backpressure(self.queue, pacer, partial(self._snapshot, emitter))
