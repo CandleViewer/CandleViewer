@@ -7,7 +7,8 @@ lane's bridges, and the one reader of the runtime off the app's state.
   coroutine of a bridge is listed here with the class whose same-named coroutine it wraps, and
   takes exactly its parameters, by name, kind and default: `OnLane` and `OnLaneGroups` against
   the pipeline, the anchors and the reads they wrap, `OnLaneExits` and `OnLaneCancelAll` against
-  their services.
+  their services. The bridge the other way, `LaneStreams` (#913 L1d-2b), opens and closes on the
+  serving loop through the adapter's stream registry, `PrivateStreams`, and takes its parameters.
 - `app.state.oms_runtime` is read only through `app.oms_runtime_of`, typed, so the type checker
   holds the runtime to each route's protocol: the composition root assigns it, and nothing else
   reads Starlette's untyped attribute.
@@ -27,11 +28,13 @@ from starlette.datastructures import State
 import candleviewer
 from candleviewer import app
 from candleviewer.accounts.trade_group_repository import TradeGroupReader
+from candleviewer.exchange.bybit.private_stream import PrivateStreams
 from candleviewer.oms.cancel_all import CancelAll
 from candleviewer.oms.exits import OrderExits
 from candleviewer.oms.idempotency import AnchorService
 from candleviewer.oms.repository import OrderRepository
 from candleviewer.oms.submit import OrderSubmission
+from candleviewer.oms_streams import LaneStreams
 from candleviewer.oms_wiring import (
     OnLane,
     OnLaneCancelAll,
@@ -55,6 +58,7 @@ WRAPPED: dict[type, dict[str, type]] = {
         ("scope", "accounts_in_scope", "deny", "cancel_admitted", "amend"), OrderExits
     ),
     OnLaneCancelAll: dict.fromkeys(("scope", "run"), CancelAll),
+    LaneStreams: dict.fromkeys(("open", "aclose"), PrivateStreams),
 }
 HOPS = [(bridge, name) for bridge, wrapped in WRAPPED.items() for name in wrapped]
 

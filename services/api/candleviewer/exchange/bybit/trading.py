@@ -295,7 +295,7 @@ def _windows(start: TsUs, end: TsUs) -> list[tuple[int, int]]:
 class BybitTradingPort:
     """`TradingPort` for one environment, over one signed client per account.
 
-    Built by `ExchangeBybitService.trading_port` (the process's environment, its one
+    Built by `ExchangeBybitService.exposure_port` (the process's environment, its one
     governor and its private streams). Each method refuses an account of another environment
     before a client exists, a token is taken or anything is signed (C-2.11). `clock_offset_ms`
     is the exchange clock's measured offset, `None` while unmeasured: REST signs on the host's

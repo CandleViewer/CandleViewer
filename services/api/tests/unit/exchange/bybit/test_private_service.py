@@ -1,12 +1,12 @@
 """The adapter's private streams as its service builds them (G-8b, #3963; 24 §14.2 rule 13).
 
-Every trading port of the adapter opens streams from its one registry, so one stream per account
-and the cap hold across ports; the streams dial with the connector the composition root injects
-(the dev-only account fixture's, #2893) or production's; they draw on the adapter's one
-connection budget; and `stop()` ends each with `closed(shutdown)` before it returns. #913 L1d-2a:
-`open_private_stream` opens from that one registry, signed by the adapter's own capability, and
-the order lane's port opens through the stream source it is given, after its own environment
-check. Nothing here waits on a clock: each read is guarded by a bound only.
+Every stream the adapter opens comes from its one registry, so one stream per account and the cap
+hold across its ports and `open_private_stream`; the streams dial with the connector the
+composition root injects (the dev-only account fixture's, #2893) or production's; they draw on
+the adapter's one connection budget; and `stop()` ends each with `closed(shutdown)` before it
+returns. #913 L1d-2a: `open_private_stream` opens from that one registry, signed by the adapter's
+own capability, and the order lane's port opens through the stream source it is given, after its
+own environment check. Nothing here waits on a clock: each read is guarded by a bound only.
 """
 
 from __future__ import annotations
@@ -40,6 +40,10 @@ def _adapter(venue: PrivateVenue, calls: list[Call] | None = None) -> ExchangeBy
     )
 
 
+def _ignore(_: Exception) -> None:
+    """An exposure port's failure hook that keeps nothing."""
+
+
 async def _statuses(stream: PrivateStream, count: int) -> list[str]:
     seen: list[str] = []
     async with asyncio.timeout(5):  # a guard only: the chart reaches `live` with no clock
@@ -53,11 +57,10 @@ async def _statuses(stream: PrivateStream, count: int) -> list[str]:
 async def test_every_port_of_the_adapter_shares_its_one_registry() -> None:
     venue = PrivateVenue(VirtualClock())
     adapter = _adapter(venue)
-    first, second = adapter.trading_port("demo"), adapter.trading_port("demo")
-    stream = await first.subscribe_private(account())
+    stream = await adapter.exposure_port("demo", on_failure=_ignore).subscribe_private(account())
     with pytest.raises(ValueError, match="already has a private stream"):
-        await second.subscribe_private(account())
-    other = await second.subscribe_private(account(ACCOUNT_B))
+        await adapter.open_private_stream(account())
+    other = await adapter.open_private_stream(account(ACCOUNT_B))
     for opened in (stream, other):
         await opened.aclose()
     await adapter.stop(5.0)
@@ -67,7 +70,7 @@ async def test_the_streams_dial_with_the_injected_connector_and_count_in_the_bud
     venue, calls = PrivateVenue(VirtualClock()), list[Call]()
     adapter = _adapter(venue, calls)
     before = adapter.ws_connection_budget.remaining("private")
-    stream = await adapter.trading_port("demo").subscribe_private(account())
+    stream = await adapter.open_private_stream(account())
     assert await _statuses(stream, 2) == ["heartbeat:evidence", "resyncing:connected"]
     assert venue.dialled == [PRIVATE_WS_URLS["demo"]]
     assert [c[2] for c in calls] == ["sign_ws_auth"]
@@ -79,13 +82,13 @@ async def test_the_streams_dial_with_the_injected_connector_and_count_in_the_bud
 async def test_stop_ends_every_stream_with_closed_shutdown_and_closes_its_socket() -> None:
     venue = PrivateVenue(VirtualClock())
     adapter = _adapter(venue)
-    stream = await adapter.trading_port("demo").subscribe_private(account())
+    stream = await adapter.open_private_stream(account())
     await _statuses(stream, 2)
     await adapter.stop(5.0)
     assert await _statuses(stream, 1) == ["closed:shutdown"]
     assert venue.sockets[0].closed
     with pytest.raises(RuntimeError, match="shut down"):
-        await adapter.trading_port("demo").subscribe_private(account(ACCOUNT_B))
+        await adapter.open_private_stream(account(ACCOUNT_B))
 
 
 def test_production_dials_the_stream_with_the_streams_own_connector() -> None:
@@ -112,7 +115,7 @@ async def test_open_private_stream_opens_from_the_one_registry_signed_by_the_ada
     """#913 L1d-2a (24 §14.1): the registry is built on first use with the adapter's own
     capability, never the order lane's borrower, even with a lane port built first; each dial's
     `auth` is signed on the calling thread under `sign_ws_auth`, B13 is built on lane `platform`,
-    and the trading port shares the same registry (one stream per account, SR-E29-02)."""
+    and a second open of the account is refused (one stream per account, SR-E29-02)."""
     venue, calls, lane_calls = PrivateVenue(VirtualClock()), list[Call](), list[Call]()
     threads = list[int]()
     adapter = ExchangeBybitService(
@@ -131,7 +134,7 @@ async def test_open_private_stream_opens_from_the_one_registry_signed_by_the_ada
     assert ([c[2] for c in calls], lane_calls) == (["sign_ws_auth"], [])
     assert threads == [threading.get_ident()] and lanes == ["ws_conn:platform"]
     with pytest.raises(ValueError, match="already has a private stream"):
-        await adapter.trading_port("demo").subscribe_private(account())
+        await adapter.open_private_stream(account())
     await stream.aclose()
     await adapter.stop(5.0)
 

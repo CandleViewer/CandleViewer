@@ -224,6 +224,19 @@ def _reset_in(seconds: float) -> dict[str, str]:
     return {"X-Bapi-Limit-Reset-Timestamp": str(int((time.time() + seconds) * 1000))}
 
 
+def _lane_port(svc: ExchangeBybitService, venue: Venue, **kwargs: Any) -> BybitTradingPort:
+    """The order lane's port of a fixture-mode service, as the OMS builds it (#913 L1d-1): its
+    own borrower and its own transport to `venue`, never the adapter's."""
+    transport = httpx.MockTransport(venue.handler)
+    return svc.lane_trading_port(
+        "demo", credentials=fake_capability(SIGNER_ID), transport=transport, **kwargs
+    )
+
+
+def _ignore(_: Exception) -> None:
+    """An exposure port's failure hook that keeps nothing."""
+
+
 async def test_a_critical_exit_answered_10006_retries_within_its_wait() -> None:
     clock = FakeClock()
     governor = RecordingGovernor(clock=clock.now, sleep=clock.sleep)
@@ -310,14 +323,14 @@ async def test_a_token_refused_for_a_retry_returns_the_answer_not_nothing_sent()
 
 
 async def test_the_service_port_answers_a_10018_as_an_ack_with_its_default_retries() -> None:
-    """The factory's port (three retries, the process governor, real sleeps) answers at once."""
+    """The lane's port (three retries, the process governor, real sleeps) answers at once."""
     venue = Venue().on("/v5/order/cancel", LIMITED_10018, headers=_reset_in(600.0))
     svc = ExchangeBybitService(
         credentials=fake_capability(SIGNER_ID),
         environment="demo",
         rest_transport=httpx.MockTransport(venue.handler),
     )
-    port = svc.trading_port("demo")
+    port = _lane_port(svc, venue)
 
     async with asyncio.timeout(5.0):  # a regression would sleep out the 600 s hold
         ack = await port.cancel_order(_cancel())
@@ -412,7 +425,7 @@ async def test_the_service_factory_hands_the_port_its_clock_offset_and_entry_wai
         environment="demo",
         rest_transport=httpx.MockTransport(venue.handler),
     )
-    port = svc.trading_port("demo", clock_offset_ms=lambda: 4_000, entry_wait_s=0.2)
+    port = _lane_port(svc, venue, clock_offset_ms=lambda: 4_000, entry_wait_s=0.2)
     before_ms = int(time.time() * 1000)
     await port.cancel_order(_cancel())
     after_ms = int(time.time() * 1000)
@@ -422,13 +435,33 @@ async def test_the_service_factory_hands_the_port_its_clock_offset_and_entry_wai
     await port.aclose()
 
 
+async def test_the_exposure_port_signs_on_the_offset_its_caller_hands_it() -> None:
+    """The serving loop's factory hands its port the measured offset too: the exposure read
+    signs about 4 s ahead of the host's clock."""
+    empty = {"retCode": 0, "result": {"category": "linear", "nextPageCursor": "", "list": []}}
+    venue = Venue().on("/v5/position/list", empty)
+    svc = ExchangeBybitService(
+        credentials=fake_capability(SIGNER_ID),
+        environment="demo",
+        rest_transport=httpx.MockTransport(venue.handler),
+    )
+    port = svc.exposure_port("demo", on_failure=_ignore, clock_offset_ms=lambda: 4_000)
+    before_ms = int(time.time() * 1000)
+    assert await port.positions(account()) == []
+    after_ms = int(time.time() * 1000)
+    [request] = venue.sent
+    assert before_ms + 4_000 <= int(request.headers["X-BAPI-TIMESTAMP"]) <= after_ms + 4_000
+    await port.aclose()
+
+
 @pytest.mark.parametrize("entry_wait_s", [trading.DEFAULT_ENTRY_WAIT_S, 0.2])
 def test_the_service_names_the_lane_waits_of_the_port_it_builds(entry_wait_s: float) -> None:
     """#913 ruling Q19: the OMS router's lane bounds are the port's own, read off the service."""
     svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
-    port = svc.trading_port("demo", entry_wait_s=entry_wait_s)
+    port = svc.lane_trading_port("demo", credentials=fake_capability(), entry_wait_s=entry_wait_s)
     assert svc.lane_waits(entry_wait_s) == port._waits
-    assert ExchangeBybitService.lane_waits() == svc.trading_port("demo")._waits
+    default = svc.lane_trading_port("demo", credentials=fake_capability())
+    assert ExchangeBybitService.lane_waits() == default._waits
 
 
 # -- 3. one governor per process (OM-D08, R5) ---------------------------------------------------
@@ -436,7 +469,7 @@ def test_the_service_names_the_lane_waits_of_the_port_it_builds(entry_wait_s: fl
 
 def test_the_service_builds_one_governor_for_every_client() -> None:
     svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
-    port = svc.trading_port("demo")
+    port = svc.exposure_port("demo", on_failure=_ignore)
     assert port._governor is svc._governor
     lane = svc.lane_trading_port("demo", credentials=fake_capability())  # the OMS's, #913 L1d
     assert lane._governor is svc._governor  # one budget per UID across both loops (C-12.7)
@@ -563,15 +596,16 @@ async def test_every_ack_says_rest() -> None:
 
 def test_the_factory_pins_the_process_environment() -> None:
     svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
-    assert svc.trading_port("demo").environment == "demo"
-    assert svc.trading_port("demo").capabilities.supports_ws_order_entry is False
+    assert svc.exposure_port("demo", on_failure=_ignore).environment == "demo"
+    port = svc.exposure_port("demo", on_failure=_ignore)
+    assert port.capabilities.supports_ws_order_entry is False
     with pytest.raises(ValueError, match="process's environment"):
-        svc.trading_port("live")
+        svc.exposure_port("live", on_failure=_ignore)
     testnet = ExchangeBybitService(credentials=fake_capability(), environment="testnet")
     with pytest.raises(ValueError, match="no trading capability record"):
-        testnet.trading_port("testnet")
+        testnet.exposure_port("testnet", on_failure=_ignore)
     with pytest.raises(RuntimeError, match="no signing capability"):
-        ExchangeBybitService(environment="demo").trading_port("demo")
+        ExchangeBybitService(environment="demo").exposure_port("demo", on_failure=_ignore)
 
 
 def test_the_factory_and_port_signatures_hold_no_trade_transport() -> None:
@@ -935,8 +969,8 @@ async def test_an_exit_cancelled_in_its_retry_backoff_propagates() -> None:
 
 
 async def test_the_factorys_port_waits_its_default_entry_bound() -> None:
-    """`ExchangeBybitService.trading_port` with its defaults: an entry waits 0.75 s at most,
-    an exit 5 s (T04's rate step, 24 §8.7)."""
+    """`ExchangeBybitService.lane_trading_port` with its defaults: an entry waits 0.75 s at
+    most, an exit 5 s (T04's rate step, 24 §8.7)."""
     created = with_result(rest("rest/trading-create-reply.json"), orderLinkId=link())
     venue = Venue().on("/v5/order/create", created).on("/v5/order/cancel", CANCEL)
     svc = ExchangeBybitService(
@@ -946,7 +980,7 @@ async def test_the_factorys_port_waits_its_default_entry_bound() -> None:
     )
     governor = RecordingGovernor()
     svc._governor = governor
-    port = svc.trading_port("demo")
+    port = _lane_port(svc, venue)
     await port.place_order(place())
     await port.cancel_order(
         CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id=ORDER_ID)

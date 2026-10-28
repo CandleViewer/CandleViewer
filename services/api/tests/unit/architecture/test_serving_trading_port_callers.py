@@ -1,14 +1,16 @@
-"""#913 L1d-1: no product module builds the adapter's serving-loop port.
+"""#913 L1d-1 and L1d-2c: no product module builds the adapter's serving-loop port, and the
+adapter no longer has one.
 
-`ExchangeBybitService.trading_port` builds a `TradingPort` that M2's serving-loop borrower signs
+`ExchangeBybitService.trading_port` built a `TradingPort` that M2's serving-loop borrower signed
 for, on the adapter's own account transport. Since L1d-1 the OMS trades through the adapter's
-lane port (`lane_trading_port`), signed on the order lane, so nothing in `candleviewer/` or
-`cvdev/` calls `trading_port`: a port built from it would sign on the serving loop and send
-outside the OMS's anchors and write-ahead audit (C-2.9). An attribute `trading_port` anywhere
-there, called or passed on, or a call that reaches it by its name, fails here, and a security
-review decides it (C-2.2). Whether the method stays is L1d-2's call (E29's ticket map,
-`E29-oms.md` §11): the private streams stay on the serving loop (ruling Q2 (b)), and its own
-tests still call it.
+lane port (`lane_trading_port`), signed on the order lane, and L1d-2c removed the method (E29's
+ticket map, `E29-oms.md` §11): its tests build the lane's port or an exposure port, or open the
+account's stream from the adapter's one registry (`open_private_stream`). A port built on the
+serving loop for trading would sign there and send outside the OMS's anchors and write-ahead
+audit (C-2.9). An attribute `trading_port` anywhere in `candleviewer/` or `cvdev/`, called or
+passed on, a call that reaches it by its name, or the method added back fails here, and a
+security review decides it (C-2.2). The file also pins `exposure_port`, the serving loop's one
+remaining port builder, to its one product caller, the exposure read (`exposure_wiring.py`).
 
 Limits: these are AST checks, as in `test_account_rest_transport_callers.py`: an alias of the
 method or a name built at run time is not caught.
@@ -26,8 +28,12 @@ import cvdev
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 
 ROOTS = (Path(candleviewer.__file__).resolve().parent, Path(cvdev.__file__).resolve().parent)
-#: The adapter's method that builds a port signed on the serving loop.
+#: The adapter's method that built a port signed on the serving loop, removed in #913 L1d-2c.
 NAME = "trading_port"
+#: The serving loop's one remaining port builder (#913 L1d-2c), and its one product caller: the
+#: exposure read (#898 B2a).
+EXPOSURE = "exposure_port"
+EXPOSURE_CALLERS = ["candleviewer/exposure_wiring.py"]
 #: The calls that reach an attribute by its name.
 BY_NAME = frozenset({"getattr", "attrgetter", "methodcaller"})
 
@@ -38,29 +44,29 @@ def _name(node: ast.expr) -> str | None:
     return node.attr if isinstance(node, ast.Attribute) else None
 
 
-def _uses(source: str) -> list[int]:
-    """The line of each attribute `trading_port`, called or passed on, and of each call that
-    reaches it by its name (`getattr`, `operator.attrgetter`, `operator.methodcaller`)."""
+def _uses(source: str, name: str = NAME) -> list[int]:
+    """The line of each attribute `name`, called or passed on, and of each call that reaches it
+    by its name (`getattr`, `operator.attrgetter`, `operator.methodcaller`)."""
     lines = []
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Attribute) and node.attr == NAME:
+        if isinstance(node, ast.Attribute) and node.attr == name:
             lines.append(node.lineno)
         elif (
             isinstance(node, ast.Call)
             and _name(node.func) in BY_NAME
-            and any(isinstance(arg, ast.Constant) and arg.value == NAME for arg in node.args)
+            and any(isinstance(arg, ast.Constant) and arg.value == name for arg in node.args)
         ):
             lines.append(node.lineno)
     return lines
 
 
-def _found() -> list[str]:
+def _found(name: str = NAME) -> list[str]:
     found = []
     for root in ROOTS:
         for path in sorted(root.rglob("*.py")):
-            text, name = path.read_text(encoding="utf-8"), path.relative_to(root.parent).as_posix()
-            if NAME in text:
-                found += [f"{name}:{line}" for line in _uses(text)]
+            text, where = path.read_text(encoding="utf-8"), path.relative_to(root.parent).as_posix()
+            if name in text:
+                found += [f"{where}:{line}" for line in _uses(text, name)]
     return found
 
 
@@ -95,7 +101,15 @@ def test_a_non_use_is_allowed(source: str) -> None:
 
 
 def test_no_product_module_builds_the_adapters_serving_loop_port() -> None:
-    """Counted, none: the OMS's port is the lane's (#913 L1d-1). The method is still there, so
-    the count guards something until L1d-2 decides whether it stays."""
-    assert callable(getattr(ExchangeBybitService, NAME, None))
+    """Counted, none: the OMS's port is the lane's (#913 L1d-1), and the adapter has no
+    `trading_port` to build one with (#913 L1d-2c)."""
+    assert not hasattr(ExchangeBybitService, NAME)
     assert _found() == []
+
+
+def test_the_serving_loops_one_remaining_port_keeps_its_one_product_caller() -> None:
+    """`exposure_port` builds the serving loop's one remaining port, signed for by M2's
+    serving-loop borrower. Its one product caller is the exposure read; another would be a trading
+    path outside the OMS's anchors and write-ahead audit (C-2.9), so it fails here and a security
+    review decides it (C-2.2)."""
+    assert sorted({use.rsplit(":", 1)[0] for use in _found(EXPOSURE)}) == EXPOSURE_CALLERS

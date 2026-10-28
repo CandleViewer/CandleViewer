@@ -43,7 +43,7 @@ TRADING_NAMES = {
     "BybitSigner",
     "place_order",
     "cancel_all",
-    "trading_port",  # G-8 (#2877): the adapter's factory of the trading port
+    "trading_port",  # G-8 (#2877): the adapter's serving-loop port, removed by #913 L1d-2c
     # G-8b (#3963): the private stream, its registry, its connector and the adapter's key hooks
     "subscribe_private",
     "PrivateStreams",

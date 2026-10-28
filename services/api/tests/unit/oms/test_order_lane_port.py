@@ -101,7 +101,10 @@ async def test_no_venue_call_hops_to_the_serving_loop(monkeypatch: pytest.Monkey
     """R3: on a real order lane, each coroutine member of the trading port, the private stream's
     included, called through the router's port there (S4-F's fold port), runs on the lane's
     thread, and nothing hops to the serving loop: no `Serving.call` or `notify`, its two hops
-    since L4 removed `block` (CR-S3L1B-05's parity, inverted)."""
+    since L4 removed `block` (CR-S3L1B-05's parity, inverted). The hops are read before the stop,
+    whose `private_streams` closer then makes the one call, on the serving loop (#913 L1d-2b); the
+    adapter's own port opens a private stream across the lane's bridge
+    (`test_order_lane_streams.py`)."""
     hops, ran, refused = list[str](), list[tuple[str, threading.Thread]](), list[str]()
     for name in ("call", "notify"):
         monkeypatch.setattr(Serving, name, _hopping(getattr(Serving, name), name, hops))
@@ -122,7 +125,9 @@ async def test_no_venue_call_hops_to_the_serving_loop(monkeypatch: pytest.Monkey
             return threading.current_thread()
 
         on_lane = await parts.lane.call(every_call())
-    assert (hops, refused) == ([], [])
+        crossed = list(hops)
+    assert (crossed, refused) == ([], [])
+    assert hops == ["call"]  # the stop's `private_streams` closer
     assert ran == [(name, on_lane) for name in VENUE_CALLS]
 
 
@@ -256,7 +261,9 @@ async def test_the_stop_closes_the_port_then_the_signing_then_its_writer_each_on
     a signing refused at the close records through after it (`credential_sign_failed`), then the
     OMS's pool, the heartbeat's cancel and last the environment's lock (SEC-S3N-01); each of those
     six runs on the lane, the port's clients first, so no signing outlives the store it reads or
-    the writer it records through, and nothing that signs or sends outlives the lock."""
+    the writer it records through, and nothing that signs or sends outlives the lock. The private
+    streams the lane's bridge holds close between the sink and the port, on the serving loop
+    (#913 L1d-2b)."""
     world = World()
     steps, run = world.binder.log, Heart.run
 
@@ -290,11 +297,12 @@ async def test_the_stop_closes_the_port_then_the_signing_then_its_writer_each_on
         names = [name for name, _ in parts.closers]
         on_lane = await parts.lane.call(_thread())
     assert names == [
-        "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink", "trading_port",
-        "loop_signing", "audit", "pool", "heartbeat", "environment_lock",
+        "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink",
+        "private_streams", "trading_port", "loop_signing", "audit", "pool", "heartbeat",
+        "environment_lock",
     ]  # fmt: skip
     closing = [step for step in steps if step[0] not in ("bind", "self_check")]
-    assert closing == [(name, on_lane) for name in names[6:]]
+    assert closing == [(name, on_lane) for name in names[7:]]
 
 
 async def test_each_start_binds_a_new_signing_and_its_stop_closes_it() -> None:

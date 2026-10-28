@@ -64,6 +64,7 @@ from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import NoDayFigures, PositionKey, SubmitActor
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LaneStopped
+from candleviewer.oms_streams import LaneStreams
 from candleviewer.oms_wiring import (
     ENVIRONMENT_FENCE_GRACE_S,
     ENVIRONMENT_LOCK_TIMEOUT_S,
@@ -127,29 +128,59 @@ class LaneCall:
     transport: Any
     clock_offset_ms: Any
     thread: threading.Thread
+    private_streams: Any = None
+
+
+class Stream:
+    """A private stream of the adapter's registry, as the lane's bridge holds it (#913 L1d-2b): it
+    yields nothing, and each close is noted in the world's log with the thread it ran on."""
+
+    def __init__(self, log: list[str]) -> None:
+        self.log, self.closes = log, list[threading.Thread]()
+
+    def __aiter__(self) -> Stream:
+        return self
+
+    async def __anext__(self) -> Any:
+        await asyncio.Event().wait()
+
+    async def aclose(self) -> None:
+        self.closes.append(threading.current_thread())
+        self.log.append("stream.close")
 
 
 @dataclass
 class Venue:
     """The adapter's service: the lane's port per call (`lane_trading_port`, #913 L1d), each call
-    noted, refused with `refuse` when set; and the adapter's lane waits."""
+    noted, refused with `refuse` when set; the private streams it opens on the serving loop
+    (`open_private_stream`, #913 L1d-2b); and the adapter's lane waits."""
 
     ports: list[Port] = field(default_factory=list)
     lane_calls: list[LaneCall] = field(default_factory=list)
     refuse: Exception | None = None
+    streams: list[Stream] = field(default_factory=list)
+    log: list[str] = field(default_factory=list)
 
     def port(self, env: str) -> Port:
         return Port(environment=cast(Environment, env))
 
     def lane_trading_port(
-        self, env: str, *, credentials: Any, transport: Any = None, clock_offset_ms: Any = None
-    ) -> Port:
+        self, env: str, *, credentials: Any, transport: Any = None, clock_offset_ms: Any = None,
+        private_streams: Any = None,
+    ) -> Port:  # fmt: skip
         thread = threading.current_thread()
-        self.lane_calls.append(LaneCall(env, credentials, transport, clock_offset_ms, thread))
+        called = LaneCall(env, credentials, transport, clock_offset_ms, thread, private_streams)
+        self.lane_calls.append(called)
         if self.refuse is not None:
             raise self.refuse
         self.ports.append(self.port(env))
         return self.ports[-1]
+
+    async def open_private_stream(
+        self, account: AccountRef, *, clock_offset_ms: Any = None
+    ) -> Stream:
+        self.streams.append(Stream(self.log))
+        return self.streams[-1]
 
     def lane_waits(self) -> Mapping[RateLane, float]:
         return {"critical": 5.0, "entry": 0.75, "poll": 5.0}
@@ -463,7 +494,7 @@ class World:
     lane_transport: Callable[[], Transport] | None = None
 
     def __post_init__(self) -> None:
-        self.writer.log = self.lock.log = self.log
+        self.writer.log = self.lock.log = self.venue.log = self.log
         self.health = FakeClockHealth(self.clock)
         self.health.measure()
         self.ingestion = SimpleNamespace(
@@ -636,7 +667,8 @@ async def test_the_lock_is_released_last_when_an_exchange_feed_composes_a_catalo
     process whose exchange feed composes the instrument catalogue (S4-S-d's `tier_requests`
     bridge) and the tickers (`ticker_demand`): each lands before the heartbeat, never after the
     lock, so no watchdog tick reads the released lock as lost (`oms_environment_lock_lost`). The
-    stop's log is read first, the hazard itself, then the closers by name, in full: 14 with both."""
+    stop's log is read first, the hazard itself, then the closers by name, in full: 15 with both,
+    the private streams' among them (#913 L1d-2b)."""
     world = World()
     world.ingestion.instruments = SimpleNamespace(snapshot=lambda: {cr.SYMBOL: instrument()})
     if tickers:
@@ -651,8 +683,45 @@ async def test_the_lock_is_released_last_when_an_exchange_feed_composes_a_catalo
     demand = ["ticker_demand"] if tickers else []
     assert names == [
         "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink", *demand,
-        "trading_port", "loop_signing", "audit", "pool", "tier_requests", "heartbeat",
-        "environment_lock",
+        "private_streams", "trading_port", "loop_signing", "audit", "pool", "tier_requests",
+        "heartbeat", "environment_lock",
+    ]  # fmt: skip
+
+
+#: An account the OMS streams, as its consumer subscribes it on the lane's port (#913 L1d-2b).
+STREAMED = AccountRef(
+    account_id=AccountId(order_rig.ACCOUNT), uid="100001", environment="demo",
+    key_ref=str(UUID(int=7)),
+)  # fmt: skip
+
+
+async def test_the_private_streams_closer_runs_on_the_serving_loop_before_the_trading_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R22 (#913 L1d-2b, 20 Sec.6.2): the lane's port opens through the composition's bridge, and
+    its closer, `private_streams`, closes the streams the bridge still holds once, on the serving
+    loop, never through the lane, after the sink and ahead of the trading port, inserted by name:
+    H3b's first three closers and S4-F's fold index keep their places, and the heartbeat and the
+    environment's lock stay last. With the lane dead too: `test_order_lane.py`."""
+    world, lane = World(), Recording()
+
+    async def closes(self: Port) -> None:
+        world.log.append("port.close")
+
+    monkeypatch.setattr(Port, "aclose", closes)
+    async with started(world.runtime(lane=lambda: lane)) as runtime:
+        names = [name for name, _ in runtime._composed().closers]
+        [call] = world.venue.lane_calls
+        assert isinstance(call.private_streams, LaneStreams)
+        await call.private_streams.open(STREAMED)  # the inline lane is this loop
+    assert names == CLOSERS
+    assert names[:4] == ["exits", "stop_gate", "machines", "cancel_all_folds"]
+    [stream] = world.venue.streams
+    assert stream.closes == [threading.current_thread()]
+    assert not [hop for hop, _ in lane.hops if hop.startswith("LaneStreams.")]
+    assert world.log == [
+        *STARTED, "sink.stop", "stream.close", "port.close", "audit.stop", "pool.release",
+        "heartbeat.end", "lock.release",
     ]  # fmt: skip
 
 
@@ -662,10 +731,11 @@ STARTED = ["lock.acquire", "audit.start", "sink.start"]
 STOPPED = ["sink.stop", "audit.stop", "pool.release", "heartbeat.end", "lock.release"]
 #: The closers a composed runtime's stop runs, by name, in order (#913 L1d-1 on L2b-2): the lane's
 #: trading port, its signing, its writer and the pool, everything that can sign or send, close
-#: before the heartbeat's cancel and, last, the environment's lock's release.
+#: before the heartbeat's cancel and, last, the environment's lock's release; the private streams
+#: the lane's bridge still holds close on the serving loop ahead of the port (#913 L1d-2b).
 CLOSERS = [
-    "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink", "trading_port",
-    "loop_signing", "audit", "pool", "heartbeat", "environment_lock",
+    "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink", "private_streams",
+    "trading_port", "loop_signing", "audit", "pool", "heartbeat", "environment_lock",
 ]  # fmt: skip
 _SINK_WAL = Path(Settings().machine_event_wal_path)
 _BESIDE = str(_SINK_WAL.with_name(f"oms_lane.{_SINK_WAL.name}"))
@@ -1895,11 +1965,11 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    # 14 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
+    # 15 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
     # wait, the exits, the stop gate (CR-S3H3B-01), the machines, the cancel-all folds, the
-    # commands, then the hung sink, which costs a seventh of what is left, the trading port, its
-    # loop signing (#913 L1d), the lane's audit writer (#913 L2), the pool, the lane's heartbeat and
-    # the environment's lock (SEC-S3N-01)
+    # commands, then the hung sink, which costs an eighth of what is left, the private streams
+    # (#913 L1d-2b), the trading port, its loop signing (#913 L1d), the lane's audit writer (#913
+    # L2), the pool, the lane's heartbeat and the environment's lock (SEC-S3N-01)
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:

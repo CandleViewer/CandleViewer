@@ -122,8 +122,8 @@ async def test_an_operator_reopens_a_key_three_refusals_marked() -> None:
 
 
 async def test_the_adapter_closes_a_keys_streams_and_reopens_through_its_hooks() -> None:
-    """E27-S04 (#898) wires these: the service's hooks reach its one registry. Before any trading
-    port exists there is no stream to close, and the key is tombstoned all the same (#913
+    """E27-S04 (#898) wires these: the service's hooks reach its one registry. Before any stream
+    is opened there is no stream to close, and the key is tombstoned all the same (#913
     L1d-2a, RC-G8B-03), so these first calls name another key."""
     from candleviewer.exchange.bybit.service import ExchangeBybitService
 
@@ -133,7 +133,7 @@ async def test_the_adapter_closes_a_keys_streams_and_reopens_through_its_hooks()
     )
     assert await adapter.close_private_streams(NEW_KEY) == ()
     assert adapter.reopen_private_streams(NEW_KEY) is False  # closed, never marked
-    stream = await adapter.trading_port("demo").subscribe_private(account())
+    stream = await adapter.open_private_stream(account())
     async with asyncio.timeout(5):  # a guard only: no clock is needed to reach `live`
         for _ in range(2):  # heartbeat, resyncing
             await stream.__anext__()
