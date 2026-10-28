@@ -179,7 +179,7 @@ jobs:
             --out "$RUNNER_TEMP/cv/owner-rows.json"
 
       - name: Write the plan (nightly_plans.py, importing the contract cut to the surface)
-        run: uv run --frozen --project services/api python security/zap/nightly_plans.py --profile "$ZAP_PROFILE" --out "$WORK"
+        run: uv run --frozen --project services/api python security/zap/nightly_plans.py --profile "$ZAP_PROFILE" --out "$WORK" --role "$ZAP_ROLE"
 
       - name: The passive and active scan, as the scan role
         run: |

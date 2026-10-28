@@ -3,7 +3,8 @@ name: dast-recording-nightly
 # E16-X02 (#494): the nightly low-privilege OWASP ZAP scan of the recorder's surface
 # (/recording* and /admin/recorder*; plan: .zap/recording.yaml), once as a synthetic Viewer and
 # once as a synthetic Manager on throwaway stacks (_dast-low-priv.yml, #3991). Before each scan the
-# plan sends the purge and pin requests the role is refused: any status but 403 fails the run.
+# plan sends the purge and pin requests the role is refused: any status but the planned one fails
+# the run (403, or 503 for the Manager's pin while the CI stack binds no recorder runtime).
 # Gate: the scan stays signed in with every requestor answered as planned, and no High/Medium
 # alert outside .zap/recording-baseline.json. Nightly and by hand, never per-PR; never a live
 # exchange; no repository secret.

@@ -18,7 +18,7 @@ bearer (the synthetic Viewer's, or the Manager's for `drawings`) and SR-041 CSRF
 environment and adds them to each request to the surface `ZAP_PROFILE` names: no token is written
 here. Stdlib and PyYAML only.
 
-Usage: nightly_plans.py --profile {drawings,market,recording,rules} --out DIR
+Usage: nightly_plans.py --profile {drawings,market,recording,rules} --out DIR [--role ROLE]
 
 `--out` is a relative directory without `..`: ZAP mounts the checkout at /zap/wrk, so the plan
 must sit inside it to be read there (an absolute or climbing path is refused).
@@ -48,6 +48,9 @@ PROFILES: dict[str, tuple[Path, tuple[str, ...]]] = {
 }
 #: A profile's fixture: the rows its examples aim at (E14-X03).
 SEEDS: dict[str, Path] = {"drawings": REPO_ROOT / ".zap/e14-drawings-seed.json"}
+#: A requestor's status per scan role, where the roles are answered differently (#4868).
+ROLE_CODES = "x-cv-role-response-code"
+ROLES = ("viewer", "manager")
 #: What a `$ref` that closes a cycle becomes.
 OPEN: dict[str, str] = {"type": "object", "description": "a recursive reference, cut for ZAP"}
 
@@ -138,12 +141,29 @@ def pin_seed(api: dict[str, Any], seed: dict[str, Any]) -> None:
     schemas["DrawingInput"]["example"] = {**first["drawing"], "label": "zap probe"}
 
 
-def scan_plan(template: dict[str, Any], api_file: str) -> dict[str, Any]:
-    """The template, importing `api_file` (the cut contract, as ZAP sees the checkout)."""
+def _requests(plan: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    for job in plan["jobs"]:
+        if job["type"] == "requestor":
+            yield from job.get("requests", [])
+
+
+def role_dependent(template: dict[str, Any]) -> bool:
+    """Whether a requestor in `template` answers the scan roles differently."""
+    return any(ROLE_CODES in request for request in _requests(template))
+
+
+def scan_plan(template: dict[str, Any], api_file: str, role: str | None = None) -> dict[str, Any]:
+    """The template, importing `api_file` (the cut contract, as ZAP sees the checkout). A
+    request's `ROLE_CODES` map sets its `responseCode` for `role` and is dropped, so ZAP never
+    reads it (#4868)."""
     plan = copy.deepcopy(template)
     for job in plan["jobs"]:
         if job["type"] == "openapi":
             job["parameters"]["apiFile"] = api_file
+    for request in _requests(plan):
+        codes = request.pop(ROLE_CODES, {})
+        if role in codes:
+            request["responseCode"] = codes[role]
     return plan
 
 
@@ -155,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         required=True,
         help="a relative directory, without '..', in the checkout ZAP mounts at /zap/wrk",
+    )
+    parser.add_argument(
+        "--role",
+        choices=ROLES,
+        help="the scan role, required where a template's requestors answer the roles differently",
     )
     args = parser.parse_args(argv)
     if args.out.is_absolute() or ".." in args.out.parts:
@@ -175,11 +200,14 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    template = yaml.safe_load(template_path.read_text(encoding="utf-8"))
+    if args.role is None and role_dependent(template):
+        print(f"nightly_plans: {args.profile}'s requestors need --role", file=sys.stderr)
+        return 2
     args.out.mkdir(parents=True, exist_ok=True)
     api_path = args.out / f"{args.profile}-openapi.yaml"
     api_path.write_text(yaml.safe_dump(api, sort_keys=False), encoding="utf-8")
-    template = yaml.safe_load(template_path.read_text(encoding="utf-8"))
-    plan = scan_plan(template, f"/zap/wrk/{api_path.as_posix()}")  # the checkout at /zap/wrk
+    plan = scan_plan(template, f"/zap/wrk/{api_path.as_posix()}", args.role)  # checkout: /zap/wrk
     plan_path = args.out / f"{args.profile}-scan.yaml"
     plan_path.write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8")
     components = sum(len(group) for group in api["components"].values())

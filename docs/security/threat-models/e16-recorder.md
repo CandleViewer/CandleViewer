@@ -109,7 +109,7 @@ New requirements are named `E16-FR-nn` and are raised as findings against the ow
 | R-D4 | C2 | WAL exhaustion: QuestDB down, spill grows | A4 | M | H | High | WAL bounded at 1 GB (ADR-0015 point 8); beyond bound lowest-priority symbols stop first; conservative QuestDB commit-lag (E07 S10); the bound has a performance cost and MUST NOT be optimised away without security review | Low | `recorder_wal_bytes`; alert at 75 % of bound |
 | R-D5 | C3 | Reaper starvation: a permanently held read lease (replay/export) blocks partition drop so the disk never shrinks | A1, A2 | M | H | High | Leases carry a TTL (default 1 h), heartbeat-renewed only by live sessions; reaper force-releases expired leases and logs it; **E16-FR-09** reaper priority independent of readers | Low | `recorder_reaper_blocked_partitions` alert |
 | R-D6 | C3, C4 | Roll-off/compaction I/O starves live ingestion | A4 | M | M | Medium | Off-peak schedule, I/O rate limit, atomic rename (E07 S16); sampling cadence has a perf cost and must not be tuned away without review | Low | ingestion lag metric |
-| R-D7 | C7 | Repeated dry-run/preview or status calls hammer storage metadata | A1, A2 | M | L | Low | Per-user rate limits, cached projections | Low | rate-limit rejection metric |
+| R-D7 | C7 | Repeated dry-run/preview or status calls hammer storage metadata | A1, A2 | M | L | Low | Per-user rate limits, cached projections. The recorded-set writes allow 30 a minute per user, admitted once the key, body, query and path id parse and before any store or audit effect (#4868): a malformed request answers 422 or 404 and spends no budget. Its parse cost is bounded by the 4 096-byte body cap, refused with 413 before any parse, and reachable only by an authenticated `recording:write` actor | Low | rate-limit rejection metric |
 | R-D8 | C8 | WS topic flood to slow clients | A1 | L | L | Low | Bounded per-client queue, coalesced progress frames (C-2.18) | Low | WS desync rate |
 
 Disk-pressure acceptance thresholds (for E16-Q04): at 75 % an alert fires; at 90 % the recorder pauses non-pinned recording within 60 s; pinned data is never deleted; the order path (submit, cancel, SL) stays functional with V-REC at 100 %; recording resumes only below 85 % (hysteresis).
@@ -183,6 +183,8 @@ Threats with a control but no detection: R-I1, R-I2, R-I4, R-E5 (test-only or no
 Residual risks: all rows Low after controls and findings land. Until the findings ship, R-D2, R-D3, R-E3 stay High. Accepting owner: Owner (repository owner). Performance-costly controls (WAL bound, sampling cadence, lease TTL) must not be removed without security review.
 
 Relax guard (R-I2, E16-T08): an unpin or a lower `retention_days` from a restricted caller on a row that a cause outside the caller's view holds is refused with one constant 403 body whatever the cause, and one denied `retention.change` record names the refusal; that this answer shows a cause outside the caller's view holds the row is an accepted residual of R-I2.
+
+Open item for the owner's security pass (#4868): whether one app-level request-body limit should back every HTTP route, beside the per-operation caps that routes such as the recorded-set writes (4 096 B, R-D7) apply.
 
 ## 9. Sign-off
 

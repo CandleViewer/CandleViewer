@@ -1,9 +1,9 @@
-"""#492 S7 and S8: `POST /recording/symbols`, `PUT …/{id}/pin`, `PATCH` and `DELETE …/{id}`
-over a bare app, the fake control behind them. RBAC first (403 with `rbac.denied`, AC5), a user
-actor, the per-user write limit (429), the key and body (422), the store (503), the `recorder`
-step-up where a write changes retention, a replay, the entry in the settings' env (404), then
-the write, which the policy records ahead of the store. A non-Owner reads every answer through
-the restricted view, and a refused stop by restricted refusal parity."""
+"""#492 S7 and S8: `POST /recording/symbols`, `PUT …/{id}/pin`, `PATCH` and `DELETE …/{id}` over a
+bare app, the fake control behind them. RBAC first (403 with `rbac.denied`, AC5), a user actor, the
+body's size (413), the key and body (422), a malformed id (404), the per-user write limit (429), the
+store (503), the `recorder` step-up where a write changes retention, a replay, the entry in the
+settings' env (404), then the write, which the policy records ahead of the store. A non-Owner reads
+every answer through the restricted view, and a refused stop by restricted refusal parity."""
 
 from __future__ import annotations
 
@@ -197,6 +197,79 @@ async def test_past_the_per_user_write_limit_a_write_is_429_with_retry_after() -
     assert (await env.add(symbol="BTCUSDT")).status_code == 200
     env.now, env.caller = 60.0, first
     assert (await env.add(symbol="BTCUSDT")).status_code == 200
+
+
+_BAD_ID = "{recordedSymbolId} AND 1=1 -- "
+#: route, then (method, path or None for the entry's own, request kwargs, the answer it gets)
+_MALFORMED: dict[str, tuple[str, str | None, dict[str, Any], int]] = {
+    "add_body": ("POST", _ADD, {"json": {"symbol": "BTCUSDT", "streams": ["trades AND 1=1"]}}, 422),
+    "add_key": (
+        "POST",
+        _ADD,
+        {"json": {"symbol": "BTCUSDT"}, "headers": {"Idempotency-Key": "x"}},
+        422,
+    ),
+    "pin_body": ("PUT", None, {"json": {"pinned": "false' OR '1'='1"}}, 422),
+    "patch_body": ("PATCH", None, {"json": {"depth": "202-2"}}, 422),
+    "delete_query": ("DELETE", None, {"params": {"force": "false ASC -- "}}, 422),
+    "delete_id": ("DELETE", f"{_ADD}/{_BAD_ID}", {}, 404),
+    "patch_id": ("PATCH", f"{_ADD}/{_BAD_ID}", {"json": {"depth": 200}}, 404),
+    "pin_id": ("PUT", f"{_ADD}/{_BAD_ID}/pin", {"json": {"pinned": True}}, 404),
+}
+
+
+@pytest.mark.parametrize("route", sorted(_MALFORMED))
+async def test_past_the_limit_a_malformed_request_is_answered_and_spends_no_budget(
+    route: str,
+) -> None:
+    # #4868: the limit is admitted after the key, the body, the query and the path id parse, so
+    # a request that is no write answers its 422 or 404, touches nothing and costs no budget
+    method, path, kwargs, status = _MALFORMED[route]
+    fake = FakeRecorder()
+    entry = fake.put("ETHUSDT")
+    env = _Env(fake, *W)
+    for _ in range(29):
+        await env.add(symbol="BTCUSDT")
+    seen, stored = env.actions(), dict(fake.entries)
+    # a case without its own path targets the existing entry: the pin route or the entry route
+    target = path or (_PIN if method == "PUT" else f"{_ADD}/{{}}").format(entry.id)
+    for _ in range(3):  # past the limit, were they counted
+        answer = await env.http.request(method, target, **kwargs)
+        assert answer.status_code == status
+    assert env.actions() == seen and fake.entries == stored
+
+
+async def test_after_malformed_requests_the_30th_write_still_lands_and_the_31st_is_429() -> None:
+    env = _Env(None, *W)
+    for _ in range(29):
+        await env.add(symbol="BTCUSDT")
+    for _ in range(5):  # malformed bodies past the 29th write: none of them is counted
+        assert (await env.http.post(_ADD, json={"symbol": "btc"})).status_code == 422
+    assert (await env.add(symbol="SOLUSDT")).status_code == 201
+    assert (await env.add(symbol="SOLUSDT")).status_code == 429
+
+
+async def test_a_body_over_the_cap_is_413_before_any_parse_or_the_limit() -> None:
+    env = _Env(None, *W)
+    big = b"{}" + b" " * (writes.MAX_WRITE_BODY_BYTES - 1)  # 4 097 B: one past the cap
+    assert len(big) == writes.MAX_WRITE_BODY_BYTES + 1
+    for _ in range(31):  # past the limit too: the cap answers first, and spends nothing
+        refused = await env.http.post(_ADD, content=big)
+        assert (refused.status_code, refused.json()["code"]) == (413, "payload_too_large")
+    assert env.fake.entries == {} and env.actions() == []
+    assert (await env.add(symbol="BTCUSDT")).status_code == 201
+
+
+async def test_the_429_detail_is_one_sentence_and_the_countdown_rides_its_own_fields() -> None:
+    # #4868: differential scanners compare bodies; the number is in Retry-After and the extension
+    env = _Env(None, *W)
+    for _ in range(30):
+        await env.add(symbol="BTCUSDT")
+    early = await env.add(symbol="BTCUSDT")
+    env.now = 30.0
+    later = await env.add(symbol="BTCUSDT")
+    assert early.json()["detail"] == later.json()["detail"]
+    assert (early.headers["Retry-After"], later.headers["Retry-After"]) == ("60", "30")
 
 
 def test_the_write_limiter_keeps_at_most_its_tracked_users() -> None:

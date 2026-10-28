@@ -391,6 +391,7 @@ def test_the_recording_plan_sends_the_refusals_after_the_first_me_and_before_the
         ("POST", "${ZAP_TARGET}/admin/recorder/purge", 403),
         ("PUT", "${ZAP_TARGET}/recording/symbols/00000000-0000-4000-8000-0000000000ff/pin", 403),
     ]
+    assert [r.get(plans.ROLE_CODES) for r in requests] == [None, None, {"manager": 503}]
     bodies = [json.loads(r["data"]) for r in requests]
     assert bodies[0]["confirm_symbol"] == bodies[0]["symbol"] == "BTCUSDT"
     assert bodies[1]["confirm_symbol"] != bodies[1]["symbol"]
@@ -399,6 +400,28 @@ def test_the_recording_plan_sends_the_refusals_after_the_first_me_and_before_the
     assert len(set(keys)) == 3 and all(uuid.UUID(key).version == 4 for key in keys)
     for role in ("viewer", "manager_without_grant"):  # the matrix refuses both roles the purge
         assert MATRIX["operations"]["POST /admin/recorder/purge"]["outcomes"][role] == "403"
+
+
+@pytest.mark.parametrize(("role", "pin"), [("viewer", 403), ("manager", 503)])
+def test_the_recording_plan_expects_the_pin_status_of_its_scan_role(role: str, pin: int) -> None:
+    """#4868: one template, two roles. The Viewer is refused by RBAC (403); the Manager reaches the
+    write, which the CI stack answers 503 with no recorder runtime (#2188 S4b). ZAP never sees the
+    role map, and the purges stay 403 for both."""
+    plan = plans.scan_plan(TEMPLATES["recording"], "/zap/wrk/w/recording-openapi.yaml", role)
+    name = "purge-and-pin-refused-for-this-role"
+    (refusals,) = [job for job in plan["jobs"] if job.get("name") == name]
+    assert [r["responseCode"] for r in refusals["requests"]] == [403, 403, pin]
+    assert not any(plans.ROLE_CODES in r for r in refusals["requests"])
+
+
+def test_main_refuses_a_role_dependent_plan_without_a_role_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert plans.main(["--profile", "recording", "--out", "w"]) == 2
+    assert list(tmp_path.iterdir()) == []
+    assert plans.main(["--profile", "recording", "--out", "w", "--role", "manager"]) == 0
+    assert plans.main(["--profile", "rules", "--out", "w"]) == 0  # no role map: no role needed
 
 
 def test_the_recording_scan_uses_the_admin_profiles_injection_policy() -> None:

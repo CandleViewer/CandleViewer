@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from pydantic import BaseModel, ValidationError
+from pydantic import AwareDatetime, BaseModel, Field, ValidationError, field_validator
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from candleviewer.api import drawings_models as dm
@@ -360,6 +360,74 @@ def test_format_errors_entries_have_exactly_field_rule_message_and_never_echo_va
         DrawingIn.model_validate(body(symbol="SECRET-VALUE"))
     (e,) = format_errors(ei.value)
     assert set(e) == {"field", "rule", "message"} and "SECRET-VALUE" not in json.dumps(e)
+
+
+class _Parsed(BaseModel):
+    at: AwareDatetime | None = None
+    id: UUID | None = None
+
+
+@pytest.mark.parametrize(
+    ("field", "values"),
+    [
+        ("at", ("from%", "fromXYZABCDEFGHIJ", "2026-13-01T00:00:00Z")),
+        ("id", ("{recordedSymbolId} AND 1=1 -- ", "00000000-0000-4000-8000-0000000000ff OR 1=1")),
+    ],
+)
+def test_format_errors_parse_failures_answer_one_message_whatever_the_input(
+    field: str, values: tuple[str, ...]
+) -> None:
+    # #4868: pydantic's parse detail ("found `{` at 1") is derived from the input, so two bad
+    # values answered two bodies: input text in the body, and a differential for a scanner.
+    entries = []
+    for value in values:
+        with pytest.raises(ValidationError) as ei:
+            _Parsed.model_validate({field: value})
+        entries.append(format_errors(ei.value))
+    assert all(e == entries[0] for e in entries)
+    assert "`" not in entries[0][0]["message"] and " at " not in entries[0][0]["message"]
+
+
+class _Sized(BaseModel):
+    xs: Annotated[list[int], Field(min_length=1, max_length=2)]
+
+
+def _messages(raws: tuple[str, ...]) -> list[str]:
+    out = []
+    for raw in raws:
+        with pytest.raises(ValidationError) as ei:
+            _Sized.model_validate_json(raw)
+        out.append(format_errors(ei.value)[0]["message"])
+    return out
+
+
+def test_format_errors_a_length_bound_answers_its_bound_not_the_count() -> None:
+    assert (
+        _messages(('{"xs": [1, 2, 3]}', '{"xs": [1, 2, 3, 4, 5]}'))
+        == ["List should have at most 2 items after validation"] * 2
+    )
+
+
+def test_format_errors_broken_json_answers_a_fixed_sentence() -> None:
+    assert _messages(('{"xs": [1', '{"xs": [1, 2, 3')) == ["The body is not valid JSON."] * 2
+
+
+class _Checked(BaseModel):
+    n: int
+
+    @field_validator("n")
+    @classmethod
+    def _even(cls, v: int) -> int:
+        if v % 2:
+            raise ValueError("n must be even")
+        return v
+
+
+def test_format_errors_keeps_a_validators_own_message() -> None:
+    # value_error carries the validator's fixed text in the same ctx slot; it is not parse detail
+    with pytest.raises(ValidationError) as ei:
+        _Checked.model_validate({"n": 3})
+    assert format_errors(ei.value)[0]["message"] == "Value error, n must be even"
 
 
 def test_format_errors_is_limited_to_limit_entries() -> None:
