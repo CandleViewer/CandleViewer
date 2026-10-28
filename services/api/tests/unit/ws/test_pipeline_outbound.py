@@ -33,6 +33,7 @@ import json
 import struct
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from itertools import groupby
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -1320,3 +1321,48 @@ async def test_teardown_releases_the_pipeline() -> None:
     assert conn.authz is not None and (conn.authz.on_drop, conn.authz.on_settle) == (None, None)
     pipe.push(_d("system"))
     assert len(pipe.queue) == 0
+
+
+class _TurnWire(_Wire):
+    """`_Wire`, which never suspends a send (a writable loopback socket), recording at each send
+    how many loop turns `tick` had taken by then."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.turns = 0
+        self.at_send: list[int] = []
+
+    async def tick(self) -> None:
+        while True:  # a turn counts as it is taken, the first one too
+            self.turns += 1
+            await asyncio.sleep(0)
+
+    async def _send(self, kind: str, payload: str | bytes) -> None:
+        self.at_send.append(self.turns)
+        await super()._send(kind, payload)
+
+
+@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag-off", "flag-on"])
+async def test_the_writer_gives_the_loop_a_turn_while_it_drains_a_backlog(
+    backpressure: BackpressureConfig | None,
+) -> None:
+    """#571: a send to a writable socket never suspends, so a writer that suspends only on an
+    empty queue writes its whole backlog (up to 2 000 frames) in one loop turn, and every other
+    connection, the loop's timers and the `/metrics` listener on the same loop wait for all of it.
+    Each writer yields after at most `WRITER_SLICE_FRAMES` sends in a row: no run of sends at one
+    loop-turn count is longer."""
+    rig, sock = _Rig(backpressure), _TurnWire()
+    n = 4 * gateway.WRITER_SLICE_FRAMES + 5
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, _conn = await rig.open(sock)
+        await rig.sub(sock)
+        for i in range(n):  # queued in one synchronous turn: the writer finds them all waiting
+            rig.book_delta(i)
+        before = len(sock.at_send)  # the handshake's sends, made before the ticker counts
+        ticker = asyncio.create_task(sock.tick())
+        await sock.next(n)
+        ticker.cancel()
+        handler.cancel()
+        await asyncio.wait({handler, ticker})
+    runs = [len(list(sends)) for _, sends in groupby(sock.at_send[before:])]
+    assert max(runs) <= gateway.WRITER_SLICE_FRAMES, runs
