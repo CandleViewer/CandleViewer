@@ -837,7 +837,7 @@ class _Connection:
         else:
             cv_ws_overflow_total.labels(reason=CLOSE_FLUSH_DEADLINE).inc()
             fields = {"connection_id": self.connection_id, "reason": reason}
-            _log().warning("ws close deadline passed", **fields)
+            _log().warning("ws close deadline passed", **fields, flush_abandoned=True)
 
     # -- outbound -----------------------------------------------------------
 
@@ -955,7 +955,11 @@ class _Connection:
             for item in (frame, _CLOSE, code):
                 self.outbound.put_nowait(item)
             self.arm_flush_deadline(self.close_flush_s)  # #415: the flag on's bound, flag off
-        _log().info(
+        # #571: at its audit row's severity, with step 3's trigger when step 3 closed it.
+        pipe = self.pipeline
+        step3 = {} if pipe is None or pipe.trigger is None else {"trigger": pipe.trigger}
+        log = _log().warning if bye_reason in WARNING_CLOSES else _log().info
+        log(
             "ws close",
             connection_id=self.connection_id,
             reason=reason,
@@ -963,6 +967,33 @@ class _Connection:
             dropped=dropped,
             user_id=str(self.user_id) if self.user_id else None,
             session_id=self.session_id,
+            **step3,
+        )
+
+    def log_ended(self, fault: BaseException | None, *, server_shutting_down: bool) -> None:
+        """#571: `ws connection ended`, once per connection at its teardown, authenticated or
+        not, whoever closed it: `warning` for `internal_error`, else `info`. The close code is
+        the server's 1011 after a fault, else its `bye`'s, else the client's (None when the drop
+        carried none); the class is the pipeline's last, none with the flag off or unattached."""
+        reason = closed_reason(self, fault, server_shutting_down=server_shutting_down)
+        if fault is not None:
+            code: int | None = int(CLOSE_REASONS["internal_error"][0])
+        elif self.bye_frame is not None:
+            code = int(self.bye_frame["p"]["code"])
+        else:
+            code = self.disconnect_code
+        ladder = None if self.pipeline is None else self.pipeline.ladder
+        cls = {} if ladder is None else {"connection_class": str(ladder.pacer.cls)}
+        log = _log().warning if reason == "internal_error" else _log().info
+        log(
+            "ws connection ended",
+            connection_id=self.connection_id,
+            initiator="client" if reason == "client_closed" else "server",
+            close_code=code,
+            reason=reason,
+            duration_ms=round((self.clock() - self.opened_at) * 1000),
+            authenticated=self.user_id is not None,
+            **cls,
         )
 
     def _seal(self) -> int:
@@ -2142,6 +2173,8 @@ def make_ws_router(
                 if conn.session_id is not None:
                     with _step(conn, "revocation"):
                         revocation_hub.unregister(conn.session_id, conn.closer)
+                with _step(conn, "ended"):
+                    conn.log_ended(fault, server_shutting_down=gateway_hub.shutting_down)
                 try:
                     await audit_close(conn, fault)
                 finally:
