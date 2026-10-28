@@ -199,36 +199,51 @@ async def test_past_the_per_user_write_limit_a_write_is_429_with_retry_after() -
     assert (await env.add(symbol="BTCUSDT")).status_code == 200
 
 
-async def test_past_the_limit_a_malformed_request_is_422_and_spends_no_budget() -> None:
+_BAD_ID = "{recordedSymbolId} AND 1=1 -- "
+#: route, then (method, path or None for the entry's own, request kwargs, the answer it gets)
+_MALFORMED: dict[str, tuple[str, str | None, dict[str, Any], int]] = {
+    "add_body": ("POST", _ADD, {"json": {"symbol": "BTCUSDT", "streams": ["trades AND 1=1"]}}, 422),
+    "add_key": (
+        "POST",
+        _ADD,
+        {"json": {"symbol": "BTCUSDT"}, "headers": {"Idempotency-Key": "x"}},
+        422,
+    ),
+    "pin_body": ("PUT", None, {"json": {"pinned": "false' OR '1'='1"}}, 422),
+    "patch_body": ("PATCH", None, {"json": {"depth": "202-2"}}, 422),
+    "delete_query": ("DELETE", None, {"params": {"force": "false ASC -- "}}, 422),
+    "delete_id": ("DELETE", f"{_ADD}/{_BAD_ID}", {}, 404),
+    "patch_id": ("PATCH", f"{_ADD}/{_BAD_ID}", {"json": {"depth": 200}}, 404),
+    "pin_id": ("PUT", f"{_ADD}/{_BAD_ID}/pin", {"json": {"pinned": True}}, 404),
+}
+
+
+@pytest.mark.parametrize("route", sorted(_MALFORMED))
+async def test_past_the_limit_a_malformed_request_is_answered_and_spends_no_budget(
+    route: str,
+) -> None:
     # #4868: the limit is admitted after the key, the body, the query and the path id parse, so
-    # a request that is no write answers its 422 (or 404) and the 429 countdown stays for writes
+    # a request that is no write answers its 422 or 404, touches nothing and costs no budget
+    method, path, kwargs, status = _MALFORMED[route]
     fake = FakeRecorder()
     entry = fake.put("ETHUSDT")
     env = _Env(fake, *W)
-    for _ in range(30):
-        assert (await env.add(symbol="BTCUSDT")).status_code in {200, 201}
-    one = f"{_ADD}/{entry.id}"
-    malformed = [
-        await env.http.post(_ADD, json={"symbol": "BTCUSDT", "streams": ["trades AND 1=1 -- "]}),
-        await env.http.post(_ADD, json={"symbol": "BTCUSDT"}, headers={"Idempotency-Key": "x"}),
-        await env.http.put(_PIN.format(entry.id), json={"pinned": "false' OR '1'='1"}),
-        await env.http.patch(one, json={"depth": "202-2"}),
-        await env.http.delete(one, params={"force": "false ASC -- "}),
-    ]
-    assert [m.status_code for m in malformed] == [422] * 5
-    assert {m.json()["code"] for m in malformed} == {"validation_failed"}
-    bad_ids = ["{recordedSymbolId} AND 1=1 -- ", "00000000-0000-4000-8000-0000000000ff OR 1=1"]
-    for bad in bad_ids:
-        assert (await env.http.delete(f"{_ADD}/{bad}")).status_code == 404
-        assert (await env.http.patch(f"{_ADD}/{bad}", json={"depth": 200})).status_code == 404
-    limited = await env.add(symbol="BTCUSDT")  # the 31st well-formed write: still limited
-    assert (limited.status_code, limited.json()["retry_after_seconds"]) == (429, 60)
-    assert fake.entries.keys() == {"ETHUSDT", "BTCUSDT"}
+    for _ in range(29):
+        await env.add(symbol="BTCUSDT")
+    seen, stored = env.actions(), dict(fake.entries)
+    target = path or (_PIN if method == "PUT" else f"{_ADD}/{{}}").format(entry.id)
+    for _ in range(3):  # past the limit, were they counted
+        answer = await env.http.request(method, target, **kwargs)
+        assert answer.status_code == status
+    assert env.actions() == seen and fake.entries == stored
+    assert (await env.add(symbol="SOLUSDT")).status_code == 201  # the 30th write
+    assert (await env.add(symbol="SOLUSDT")).status_code == 429
 
 
 async def test_a_body_over_the_cap_is_413_before_any_parse_or_the_limit() -> None:
     env = _Env(None, *W)
-    big = b'{"symbol": "BTCUSDT", "pad": "' + b"x" * writes.MAX_WRITE_BODY_BYTES + b'"}'
+    big = b"{}" + b" " * (writes.MAX_WRITE_BODY_BYTES - 1)  # 4 097 B: one past the cap
+    assert len(big) == writes.MAX_WRITE_BODY_BYTES + 1
     for _ in range(31):  # past the limit too: the cap answers first, and spends nothing
         refused = await env.http.post(_ADD, content=big)
         assert (refused.status_code, refused.json()["code"]) == (413, "payload_too_large")

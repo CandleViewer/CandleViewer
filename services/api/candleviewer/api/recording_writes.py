@@ -97,8 +97,8 @@ class Limited(common.Problem):
     def __init__(self, wait: int) -> None:
         # one sentence: the countdown rides `Retry-After` and the extension, never the detail,
         # so two refusals a second apart answer one body (#4868)
-        super().__init__(429, ErrorCode.RATE_LIMITED, "Too many recording writes; retry after "
-                         "Retry-After.", retry_after_seconds=wait)  # fmt: skip
+        super().__init__(429, ErrorCode.RATE_LIMITED, "Too many recording writes; retry later.",
+                         retry_after_seconds=wait)  # fmt: skip
 
     def response(self) -> JSONResponse:
         out = super().response()

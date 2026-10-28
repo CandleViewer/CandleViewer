@@ -184,6 +184,8 @@ Residual risks: all rows Low after controls and findings land. Until the finding
 
 Relax guard (R-I2, E16-T08): an unpin or a lower `retention_days` from a restricted caller on a row that a cause outside the caller's view holds is refused with one constant 403 body whatever the cause, and one denied `retention.change` record names the refusal; that this answer shows a cause outside the caller's view holds the row is an accepted residual of R-I2.
 
+Open item for the owner's security pass (#4868): whether one app-level request-body limit should back every HTTP route, beside the per-operation caps that routes such as the recorded-set writes (4 096 B, R-D7) apply.
+
 ## 9. Sign-off
 
 Per the Agent-delivery adaptation, Security engineer / Architect / backend-lead sign-off is replaced by owner approval. Pending: owner approval on this PR. Abuse cases AC-01..AC-15 are handed to E16-Q01 for acceptance as executable.
