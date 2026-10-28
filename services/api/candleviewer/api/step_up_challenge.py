@@ -25,6 +25,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import get_args
+from uuid import UUID
 
 from starlette.requests import Request
 
@@ -282,6 +283,26 @@ def register_account_text(
     )
     under = "" if parent is None else f" under account {parent}"
     return ChallengeText(f"Register a {what} account, UID {exchange_uid}{under}")
+
+
+#: E28-T05 (#909, SR-E28-02): a definition by its id, never its name (free text); a create, with no
+#: id yet, by its contract environment and its member count.
+_DEFINITION_VERBS = {
+    "create": "Create a {environment} trade-group definition of {members}",
+    "replace": "Replace trade-group definition {definition} with {members} ({environment})",
+    "delete": "Delete trade-group definition {definition}",
+}
+
+
+def definition_write_text(
+    verb: str, environment: str, members: int, definition_id: UUID | None = None
+) -> ChallengeText:
+    """The definition writes (`verb`: create, replace, delete), after their checks. The id is a
+    `UUID`, so no caller can put free text into what the Owner confirms."""
+    count = f"{int(members)} member{'' if members == 1 else 's'}"
+    env = _restated(environment, _ACCOUNT_ENVIRONMENTS, "environment")
+    text = _DEFINITION_VERBS[verb].format(environment=env, members=count, definition=definition_id)
+    return ChallengeText(text)
 
 
 #: ECMAScript Number.prototype.toString uses plain digits for exponents -6 < n <= 21.

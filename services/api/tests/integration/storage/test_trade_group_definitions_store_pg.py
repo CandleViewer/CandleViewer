@@ -60,7 +60,7 @@ def pg_dsn(bootstrapped: str) -> str:
 
 @pytest.fixture
 def store(rel: SqlAlchemyRelationalRepository) -> Store:
-    return pg.SqlAlchemyDefinitionStore(rel)
+    return pg.SqlAlchemyDefinitionStore(rel, statement_timeout_ms=10_000)
 
 
 def _new(
@@ -72,6 +72,15 @@ def _new(
 
 def _member(account: UUID, enabled: bool = True) -> port.MemberRow:
     return port.MemberRow(account, enabled, "demo", True)
+
+
+async def _pages(store: Store, scope: Any) -> list[list[port.DefinitionRecord]]:
+    """Each page of two, from past the last one read; 50 at most: a `>=` keyset fails, not loops."""
+    pages = [list(await store.page(scope, after=None, limit=2))]
+    while pages[-1] and len(pages) < 50:
+        last = pages[-1][-1].definition
+        pages.append(list(await store.page(scope, after=(last.name, last.id), limit=2)))
+    return pages[:-1]
 
 
 def _put(
@@ -291,3 +300,29 @@ async def test_a_non_owner_scope_cannot_write(store: Store, pg_dsn: str) -> None
             await attempt
     assert hook.seen == [] and tg._sql(pg_dsn, _COUNT, denied.id, denied.id) == [(0, 0)]
     assert await store.get(ME, PAIR) == pair
+
+
+async def test_a_page_is_keyset_by_name_then_id(store: Store, pg_dsn: str) -> None:
+    """`ux_tgd_name`'s order: a grant pages what its gets read; the Owner every live one, once."""
+    x, y, reader = tg._account(pg_dsn), tg._account(pg_dsn), tg._user(pg_dsn)
+    for account in (x, y):
+        tg._grant(pg_dsn, reader, account)
+    made = {"Kz delta": (x,), "kz Bravo": (x, y), "KZ alpha": (y,), "kz charlie": (x, A)}
+    made["kz echo"] = (y,)  # after the hidden one: it takes no slot of page 2
+    for name, members in made.items():  # A is not granted: "kz charlie" is not the grant's
+        await store.create(ME, _new(name, *members), write_ahead=_Hook())
+    gone = await store.create(ME, _new("kz bravo 2", x), write_ahead=_Hook())
+    await store.soft_delete(ME, gone.definition.id, write_ahead=_Hook())  # paged by no one
+    grant = GrantScope(reader, frozenset({x, y}))
+    pages = await _pages(store, grant)
+    names = [[r.definition.name for r in p] for p in pages]
+    assert names == [["KZ alpha", "kz Bravo"], ["Kz delta", "kz echo"]]  # not C's: K, Z, then k
+    read = [r for p in pages for r in p]
+    assert read == [await store.get(grant, r.definition.id) for r in read]
+    assert [len(r.members) for r in read] == [1, 2, 1, 1]
+    live = (  # a member-less one (the grant test's "Empty") is read by no one
+        "SELECT id FROM trade_group_definitions d WHERE deleted_at IS NULL AND EXISTS "
+        "(SELECT 1 FROM trade_group_definition_members WHERE definition_id = d.id)"
+    )
+    owned = [r.definition.id for p in await _pages(store, ME) for r in p]
+    assert owned == [row[0] for row in tg._sql(pg_dsn, live + " ORDER BY lower(name), id")]

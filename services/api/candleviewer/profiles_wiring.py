@@ -9,7 +9,8 @@ routes answer `503 store_unavailable`. Nothing here does I/O; `main._lifespan` c
 Given the process's bus, the facade announces each committed write on it (`BusProfileChanges`,
 #906 D3a; 24 Sec.9.2). The writes' stores share that pool: the accounts the writes resolve and the
 armed rules a delete names (#906 D2-m); `profile_writes` builds the routes' `ProfileWrites` over
-them, with this environment's catalogue (C-2.11).
+them, with this environment's catalogue (C-2.11). `definition_writes` builds the definition
+create's `DefinitionWrites` over the same accounts, cache and catalogue (E28-T05 S2c).
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from candleviewer.accounts.profile_cache import EffectiveProfiles
 from candleviewer.accounts.profile_repository import ArmedRules, ProfilesRepository
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.api.profile_writes import ProfileWrites
+from candleviewer.api.trade_group_definition_writes import DefinitionWrites
 from candleviewer.bus import Topic
 from candleviewer.domain.primitives import Environment
 from candleviewer.instrument_limits_wiring import CatalogueLimits
@@ -39,12 +41,21 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 if TYPE_CHECKING:
     from candleviewer.accounts.profile_changes import ProfilesChanged
     from candleviewer.accounts.profile_validator import SizingWarningsPort
+    from candleviewer.accounts.trade_group_readiness import ReadinessSource
     from candleviewer.bus import Bus
     from candleviewer.ingestion.service import IngestionService
     from candleviewer.observability.metrics import Metrics
     from candleviewer.settings import Settings
+    from candleviewer.storage.repositories.trade_group_definitions import DefinitionStore
 
-__all__ = ["DISPOSE_S", "BusProfileChanges", "ProfilesWiring", "profile_writes", "wire_profiles"]
+__all__ = [
+    "DISPOSE_S",
+    "BusProfileChanges",
+    "ProfilesWiring",
+    "definition_writes",
+    "profile_writes",
+    "wire_profiles",
+]
 
 #: The shutdown's wait, as `key_import_wiring.DRAIN_S`: the container's stop budget (#2565).
 DISPOSE_S: Final = 5.0
@@ -112,7 +123,7 @@ def wire_profiles(
 
 
 class _Context(Protocol):
-    """What `profile_writes` reads of `app.AppContext`."""
+    """What `profile_writes` and `definition_writes` read of `app.AppContext`."""
 
     @property
     def settings(self) -> Settings: ...
@@ -134,3 +145,20 @@ def profile_writes(
     return ProfileWrites(
         wiring.repository, wiring.accounts, limits, wiring.rules, env, warnings=warnings
     )
+
+
+def definition_writes(
+    profiles: ProfilesWiring | None,
+    definitions: DefinitionStore | None,
+    readiness: ReadinessSource,
+    ctx: _Context,
+) -> DefinitionWrites | None:
+    """The definition create's ports (E28-T05 S2c): the definition store, the readiness its 201
+    answers with, the wiring's accounts and its one effective-profile cache (the order path's,
+    SR-E28-15), and the catalogue of the process's environment, read per call as it is attached
+    late (C-2.11); `None` with no wiring or no store (the fake backend: 503)."""
+    if profiles is None or definitions is None:
+        return None
+    env: Environment = ctx.settings.environment.value
+    limits = CatalogueLimits(env, lambda: ctx.ingestion.instruments)
+    return DefinitionWrites(definitions, readiness, profiles.accounts, profiles.effective, limits)

@@ -27,6 +27,7 @@ from candleviewer.profiles_wiring import (
     DISPOSE_S,
     BusProfileChanges,
     ProfilesWiring,
+    definition_writes,
     profile_writes,
     wire_profiles,
 )
@@ -248,3 +249,24 @@ def test_profile_writes_share_the_reads_wiring_and_the_process_environment() -> 
     assert writes.limits.catalogue() is catalogue
     assert profile_writes(None, cast(Any, ctx)) is None
     assert wire_profiles(Settings(storage_backend="fake"), _metrics()) is None
+
+
+def test_definition_writes_share_the_profile_wiring_and_the_process_environment() -> None:
+    """E28-T05 S2c (#909): the create's accounts and effective-profile cache are the wiring's own,
+    each in the slot of its name (one cache, SR-E28-15), its store and readiness are those given,
+    and the catalogue is the process environment's, read per call as it is attached late (C-2.11);
+    no wiring, or no store (the fake backend), gives no writes (503)."""
+    settings = Settings(environment=Environment.TESTNET, storage_backend="real")
+    wired = wire_profiles(settings, _metrics())
+    assert wired is not None
+    ctx = SimpleNamespace(settings=settings, ingestion=SimpleNamespace(instruments=None))
+    store, source = cast(Any, object()), cast(Any, object())
+    writes = definition_writes(wired, store, source, cast(Any, ctx))
+    assert writes is not None and writes.store is store and writes.readiness is source
+    assert writes.accounts is wired.accounts and writes.profiles is wired.effective
+    assert isinstance(writes.instruments, CatalogueLimits)
+    assert writes.instruments.environment == "testnet"
+    ctx.ingestion.instruments = catalogue = cast(Any, object())
+    assert writes.instruments.catalogue() is catalogue
+    assert definition_writes(None, store, source, cast(Any, ctx)) is None
+    assert definition_writes(wired, None, source, cast(Any, ctx)) is None

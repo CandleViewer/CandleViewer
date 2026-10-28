@@ -184,6 +184,11 @@ from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.ticker import make_tickers_router
+from candleviewer.api.trade_group_definition_writes import (
+    make_trade_group_definition_writes_router,
+)
+from candleviewer.api.trade_group_definitions import make_trade_group_definitions_router
+from candleviewer.api.trade_groups_gate import TradeGroupsGate
 from candleviewer.api.users import (
     AccountAccessStore,
     PermissionChangeNotifier,
@@ -320,7 +325,7 @@ from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oms.service import OmsService
-from candleviewer.oms_wiring import OmsAudit, OmsRuntime, build_oms_runtime
+from candleviewer.oms_wiring import InterimKillSwitch, OmsAudit, OmsRuntime, build_oms_runtime
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
@@ -329,7 +334,7 @@ from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.profile_notices_wiring import ProfileNotices
 from candleviewer.profile_warnings_wiring import SaveTimeFigures
-from candleviewer.profiles_wiring import profile_writes, wire_profiles
+from candleviewer.profiles_wiring import definition_writes, profile_writes, wire_profiles
 from candleviewer.recorder.control import RecordingControl, StoredRecordingControl
 from candleviewer.recorder.control_runtime import RecorderWiring, RuntimeRecordingControl
 from candleviewer.recorder.coverage import CoverageService
@@ -470,6 +475,7 @@ from candleviewer.storage.retention.workspaces_tasks import (
     WorkspacesPurgeTask,
 )
 from candleviewer.storage.service import StorageService
+from candleviewer.trade_groups_wiring import GateReadiness, NoLockouts, definition_store
 from candleviewer.user_cascade_wiring import build_user_disable_service, build_users_purge_task
 from candleviewer.view_as_wiring import (
     IdentityLabels,
@@ -2410,6 +2416,28 @@ def create_app(
     app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
         account_health.order_entry_check
     )
+    # E28-T05 S2b (#909): the definition reads, readiness from each account row, that gate, the
+    # B18 kill switch (the OMS's interim) and the live gate. No rollout flag gates a read (22).
+    app.state.trade_group_readiness = readiness = GateReadiness(
+        app.state.order_entry_gate, kill_switch=InterimKillSwitch().refusal,
+        live_enabled=resolved.trading_live_enabled, live_flag=feature_flags.live_enabled,
+        lockouts=NoLockouts(),
+    )  # fmt: skip
+    readiness.announce()  # once, at startup
+    definitions = definition_store(resolved)
+    app.include_router(  # in the caller's grants, as the profile reads; a refusal names the session
+        make_trade_group_definitions_router(
+            definitions, readiness, _LazyAuditEmitter(ctx.audit), profiles_resolver, auth=ctx.auth
+        )
+    )
+    # E28-T05 S2c (#909): the definition create, behind `trading.trade_groups` (the preview stays
+    # refused until S3c builds the gate `preview_ready`), over this environment's catalogue.
+    app.state.trade_groups_gate = TradeGroupsGate(feature_flags.trade_groups)
+    app.include_router(make_trade_group_definition_writes_router(
+        definition_writes(profiles, definitions, readiness, ctx),
+        app.state.trade_groups_gate, _LazyAuditEmitter(ctx.audit), profiles_resolver,
+        auth=ctx.auth, elevation=request_elevation(ctx.auth, "risk_caps"),
+    ))  # fmt: skip
     # #913 slice 3E (20 Sec.6.2): the OMS runtime over that gate, the shared profile cache above
     # and the persistence bundle's latch when there is one; its audit writer and sink are its order
     # lane's own (#913 L2). The lifespan starts it after the account health runtime and stops it

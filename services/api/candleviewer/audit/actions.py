@@ -185,6 +185,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "sl.attached",
         "sl.modified",
         "tp.modified",
+        # E28-T05 (#909, 24 Sec.15.5): a definition write, ahead of its commit, with its members
+        # before and after (`api.trade_group_definition_writes`); no `.granted`: nothing grants one.
+        "trade_group_definition.created",
+        "trade_group_definition.updated",
+        "trade_group_definition.deleted",
         "trade_group.submit",
         # #2635 (F-01; ADR-0040 Decision 1, proposed): a trade-group request refused whole because a
         # leg would exceed its bound profile's caps or risk budget, written ahead of the `403

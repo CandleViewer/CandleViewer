@@ -725,6 +725,9 @@ _PENDING_HANDLER_GATES = {
     ("PATCH", "/exchange-accounts/{accountId}"),
     ("DELETE", "/exchange-accounts/{accountId}"),
     ("DELETE", "/exchange-accounts/{accountId}/keys/{keyId}"),
+    # E28-T05 (#909): S2d mounts the definition's replace and delete, with its handler test.
+    ("PUT", "/trade-group-definitions/{definitionId}"),
+    ("DELETE", "/trade-group-definitions/{definitionId}"),
 }
 
 
@@ -1069,6 +1072,16 @@ def test_the_sweep_catches_a_mounted_profile_write_whose_row_is_dropped(
     rows = tuple(r for r in HANDLER_GATED_ROUTES if r not in dropped)
     monkeypatch.setattr(sys.modules[__name__], "HANDLER_GATED_ROUTES", rows)
     assert _ungated_dangerous_writes(app) == [(method, path)]
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "DELETE"])
+def test_a_definition_write_is_handler_gated_with_risk_caps(method: str) -> None:
+    """#909 (SR-E28-02): after RBAC, the flag and the body; replace and delete pending (S2d)."""
+    path = "/trade-group-definitions" + ("" if method == "POST" else "/{definitionId}")
+    assert DANGEROUS_PATH_PATTERN.match(path) and not _ungated(method, path)
+    assert dangerous_action_class(method, _concrete(path)) is None  # a handler's gate, no path row
+    assert _registered_classes(method, path) == {"risk_caps"}
+    assert ((method, path) in _PENDING_HANDLER_GATES) is (method != "POST")
 
 
 def test_no_mounted_route_is_path_gated() -> None:

@@ -1484,22 +1484,19 @@ operations:
     permissions: ['accounts:read']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /trade-group-definitions:
     permissions: ['accounts:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /trade-group-definitions/{definitionId}:
     permissions: ['accounts:read']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   PUT /trade-group-definitions/{definitionId}:
     permissions: ['accounts:write']

@@ -11,13 +11,22 @@ from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
+from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
+from candleviewer import app as appmod
+from candleviewer import trade_groups_wiring
 from candleviewer.accounts.trade_group_readiness import ReadinessMember, ReadinessReason, readiness
 from candleviewer.domain.order_entry import REFUSAL_REASONS, OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
+from candleviewer.oms_wiring import InterimKillSwitch
+from candleviewer.profiles_wiring import wire_profiles
+from candleviewer.settings import Settings
 from candleviewer.trade_groups_wiring import GATE_REASONS, GateReadiness, NoLockouts
+from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 from tests.unit.accounts._fakes import ACC
+from tests.unit.api.test_trade_group_definition_create import PATH, caller, payload
+from tests.unit.api.test_trade_group_definition_reads import CORE3, World
 
 NOT_A_BOOL = cast(bool, 1)  # truthy, and not the bool the type promises
 
@@ -123,3 +132,54 @@ def test_no_lockout_is_reported_until_e39() -> None:
     with capture_logs() as logs:
         assert not _source(None).announce()  # a real lockout source: nothing to say
     assert logs == []
+
+
+def test_the_root_wires_the_definition_reads_and_announces_the_interim_lockouts_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert trade_groups_wiring.definition_store(Settings(storage_backend="fake")) is None
+    real = Settings(storage_backend="real", oms_statement_timeout_ms=3000)  # not the 2000 default
+    store = trade_groups_wiring.definition_store(real)
+    assert store is not None and (store._timeout, store._audit_timeout_s) == ("3000", 5.0)
+    world = World()  # the reads' store, and an owner who may read
+    monkeypatch.setattr(appmod, "definition_store", lambda _settings: world.store)
+    with capture_logs() as logs:
+        app = appmod.create_app(principal_resolver=world)
+    source = app.state.trade_group_readiness
+    assert source._gate is app.state.order_entry_gate and isinstance(source._lockouts, NoLockouts)
+    assert [log["event"] for log in logs].count("trade_groups_interim_port") == 1
+    assert source._live_enabled is False  # the setting's default
+    assert source._live_flag is app.state.feature_flags.live_enabled  # the OMS's view of the flag
+    assert isinstance(getattr(source._kill_switch, "__self__", None), InterimKillSwitch)
+    gate = app.state.trade_groups_gate  # S2c: over the flag's view; the preview's not ready (S3c)
+    assert (gate._enabled, gate._preview_ready) == (app.state.feature_flags.trade_groups, False)
+    # a router given no store or no readiness answers 503, not this
+    got = TestClient(app, client=("127.0.0.1", 50000)).get(f"/trade-group-definitions/{CORE3}")
+    assert got.status_code == 200 and got.json()["readiness"]["total"] == 3
+
+
+def test_the_root_mounts_the_definition_create_over_the_composed_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E28-T05 S2c (#909): with no profile wiring (the fake backend) an Owner's create answers 503;
+    given one, the root hands the router the writes it composes, so the same POST reaches the flag's
+    gate (off: 403 `trading_disabled`). The wiring's pool is lazy: nothing connects."""
+    world = World()
+    world.principal = caller("owner")
+    monkeypatch.setattr(appmod, "definition_store", lambda _settings: world.store)
+
+    def answer() -> tuple[int, str]:
+        app = appmod.create_app(principal_resolver=world)
+        wire_fake_sessions(app, "owner")  # SR-041: a state-changing request needs a bearer
+        client = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
+        got = client.post(PATH, json=payload(), headers={"Authorization": "Bearer owner"})
+        return got.status_code, got.json()["code"]
+
+    assert answer() == (503, "store_unavailable")
+    real = Settings(storage_backend="real")
+
+    def wired(_settings: Settings, metrics: Any, bus: Any = None) -> Any:
+        return wire_profiles(real, metrics, bus)
+
+    monkeypatch.setattr(appmod, "wire_profiles", wired)
+    assert answer() == (403, "trading_disabled")

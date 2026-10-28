@@ -129,7 +129,12 @@ class DefinitionStore(Protocol):
 
 
 class DefinitionReads(Protocol):
-    """The live definition when the scope sees it, else `None`; an empty `GrantScope` runs no
-    SQL. The keyset page lands with `listTradeGroupDefinitions`."""
+    """The live definitions the scope sees; an empty `GrantScope` runs no SQL. `get` answers one,
+    else `None`; `page` up to `limit`, in `ux_tgd_name`'s order (`lower(name)`, then the id), from
+    past `after`, a stored name and an id."""
 
     async def get(self, scope: AccountScope, definition_id: UUID) -> DefinitionRecord | None: ...
+
+    async def page(
+        self, scope: AccountScope, *, after: tuple[str, UUID] | None, limit: int
+    ) -> tuple[DefinitionRecord, ...]: ...
