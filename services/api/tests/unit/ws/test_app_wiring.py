@@ -561,8 +561,8 @@ def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _K
     client, _ = world
     catalogued = {s.name for s in CATALOGUE if s.name.startswith(("cv_ws_", "cv_machine_ws_"))}
     # #415: two record counters; E40-T04: `cv_ws_alerts_subscriptions_in_use`; E16-T08: the
-    # recorder's.
-    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 38
+    # recorder's; E08-T08: `cv_ws_snapshot_overdue_total` (23 W11).
+    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 39
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         ws.send_json({"t": "auth", "id": "x", "p": {}})  # one failed re-auth

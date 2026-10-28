@@ -235,6 +235,7 @@
 ["cv_ws_sequence_gaps_detected_total", "counter", [], "live", "E17"]
 ["cv_ws_snapshot_build_seconds", "histogram", ["topic"], "live", "E17"]
 ["cv_ws_snapshot_bytes", "histogram", ["topic"], "live", "E17"]
+["cv_ws_snapshot_overdue_total", "counter", ["topic"], "live", "E08"]
 ["cv_ws_stale_topics_in_use", "gauge", [], "live", "E17"]
 ["cv_ws_subscribe_denied_unaudited_total", "counter", [], "live", "E17"]
 ["cv_ws_subscribe_granted_unaudited_total", "counter", [], "live", "E17"]
