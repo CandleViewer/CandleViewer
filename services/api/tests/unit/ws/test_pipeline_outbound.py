@@ -45,6 +45,7 @@ from structlog.testing import capture_logs
 from candleviewer.audit.models import Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.observability.fast_histogram import FastHistogramChild
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S, Settings
 from candleviewer.ws import codec, gateway, outbound, pipeline
 from candleviewer.ws.backpressure_config import BackpressureConfig
@@ -60,7 +61,6 @@ from candleviewer.ws.metrics import (
     MSGPACK_FRAME_BYTES,
     MSGPACK_KIND,
     SAMPLE_EVERY,
-    FastHistogramChild,
     cv_ws_closes_total,
     cv_ws_malformed_updates_total,
     cv_ws_overflow_total,

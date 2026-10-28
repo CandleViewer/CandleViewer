@@ -21,9 +21,9 @@ from hypothesis import strategies as st
 from prometheus_client import CollectorRegistry, Histogram, generate_latest
 from prometheus_client.openmetrics.exposition import generate_latest as _openmetrics_latest
 
+from candleviewer.observability.fast_histogram import FastHistogram, _Exposition
 from candleviewer.observability.metrics import MetricsError, ReexportCollector
 from candleviewer.observability.metrics_catalogue import FANOUT_BUCKETS
-from candleviewer.ws.metrics import FastHistogram, _Exposition
 
 _CREATED = 1_760_000_000.25
 #: The library's OpenMetrics renderer is untyped: it takes a registry and returns bytes.

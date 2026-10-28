@@ -25,6 +25,7 @@ import msgpack
 import pytest
 from prometheus_client import REGISTRY, CollectorRegistry
 
+from candleviewer.observability.fast_histogram import FastHistogram
 from candleviewer.observability.metrics_catalogue import (
     CATALOGUE,
     FRAME_ENCODE_BUCKETS,
@@ -39,7 +40,6 @@ from candleviewer.ws.metrics import (
     JSON_KIND,
     MSGPACK_KIND,
     SAMPLE_EVERY,
-    FastHistogram,
     cv_ws_frame_bytes,
     cv_ws_frame_encode_seconds,
 )
