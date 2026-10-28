@@ -145,13 +145,16 @@ export const LoadError: Story = {
   },
 };
 
-/** Inline, loading: `aria-busy` on the region, base-surface rows. */
+/** Inline, loading: `aria-busy` on the values part only (the heading and static text stay readable). */
 export const InlineLoading: Story = {
   render: () => <Demo variant="inline" defaultOpen loading />,
   play: async ({ canvasElement }) => {
-    await expect(
-      within(canvasElement).getByRole("region", { name: "Iceberg detector" }),
-    ).toHaveAttribute("aria-busy", "true");
+    const region = within(canvasElement).getByRole("region", { name: "Iceberg detector" });
+    await expect(region).not.toHaveAttribute("aria-busy");
+    await expect(region.querySelector(".cv-info-panel__values")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
   },
 };
 

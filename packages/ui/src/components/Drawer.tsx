@@ -70,7 +70,9 @@ const reachable = (element: HTMLElement | null | undefined): element is HTMLElem
  * the page inert and not scrolling, Tab cycling inside. Non-modal: a `role="dialog"` without
  * `aria-modal`, no scrim, the page live; it follows its opener in the Tab order (Tab from the opener goes
  * in, Tab past its last control goes on to the page after the opener, Shift+Tab before its first goes
- * back to the opener) and stays open when focus leaves it; `Esc` closes it while focus is inside. Both:
+ * back to the opener) and stays open when focus leaves it; `Esc` closes it while focus is inside. With
+ * neither the opener nor `fallbackFocusRef` reachable it has no anchor: Tab keeps the browser's order,
+ * and the drawer, portalled last in `body`, passes Tab on past the page. Both:
  * focus to `initialFocusRef`, else the heading; `Esc` and Close return focus to the opener, else
  * `fallbackFocusRef`. It slides in opaque from the first frame and out over `fast`; reduced motion is a
  * cut. Overlays inside it portal into its layer.
@@ -192,6 +194,7 @@ export function Drawer({
       const active = document.activeElement;
       const onItem = items.some((item) => item === active);
       const from = anchor();
+      // No anchor (opener and fallback both gone): the browser's own order, documented above.
       if (from === undefined) return;
       if (event.shiftKey && (active === items[0] || !onItem)) {
         event.preventDefault();

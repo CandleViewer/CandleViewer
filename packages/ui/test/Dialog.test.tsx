@@ -560,7 +560,10 @@ describe("Dialog exit fade", () => {
     const real = window.getComputedStyle.bind(window);
     vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
       element.classList.contains("cv-dialog__scrim")
-        ? ({ transitionDuration: "0.1s, 200ms" } as unknown as CSSStyleDeclaration)
+        ? ({
+            transitionDuration: "0.1s, 200ms",
+            getPropertyValue: () => "",
+          } as unknown as CSSStyleDeclaration)
         : real(element, pseudo),
     );
   };

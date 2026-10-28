@@ -381,6 +381,37 @@ describe("Drawer (CMP-046) non-modal", () => {
     expect(button("Alerts")).toHaveFocus();
   });
 
+  it("with neither the opener nor a fallback reachable, Tab keeps the browser's order", async () => {
+    function Anchorless(): JSX.Element {
+      const [open, setOpen] = useState(false);
+      const [opener, setOpener] = useState(true);
+      return (
+        <>
+          {opener ? (
+            <button type="button" onClick={() => setOpen(true)}>
+              Open
+            </button>
+          ) : null}
+          <button type="button">Chart</button>
+          <Drawer open={open} modal={false} title="Alert detail" onOpenChange={setOpen}>
+            <Button onClick={() => setOpener(false)}>Remove opener</Button>
+          </Drawer>
+        </>
+      );
+    }
+    await openHost(<Anchorless />);
+    await click(button("Remove opener"));
+    await focus(button("Remove opener"));
+    // No anchor: the drawer neither takes Tab past its last control nor Shift+Tab before its first.
+    expect(await key("Tab")).toBe(true);
+    await focus(button("Close Alert detail"));
+    expect(await key("Tab", true)).toBe(true);
+    // The page's Tab is not redirected into the drawer either.
+    await focus(button("Chart"));
+    expect(await key("Tab", true)).toBe(true);
+    expect(drawerNode("Alert detail")).toBeVisible();
+  });
+
   it("Esc on the page stays the page's: the drawer stays open and the key is not taken", async () => {
     const onOpenChange = vi.fn();
     await openHost(<Host modal={false} onOpenChange={onOpenChange} />);
@@ -465,6 +496,39 @@ describe("Drawer slide out", () => {
     expect(layerNode()).not.toBeNull();
     await act(async () => {
       fireEvent.transitionEnd(panel);
+    });
+    expect(layerNode()).toBeNull();
+  });
+
+  it("waits for the property that ends last, not a shorter one on the same panel", async () => {
+    const real = window.getComputedStyle.bind(window);
+    const lists: Record<string, string> = {
+      "transition-property": "opacity, transform",
+      "transition-duration": "50ms, 150ms",
+      "transition-delay": "0s",
+    };
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
+      element.classList.contains("cv-drawer")
+        ? ({
+            transitionDuration: "50ms, 150ms",
+            getPropertyValue: (name: string) => lists[name] ?? "",
+          } as unknown as CSSStyleDeclaration)
+        : real(element, pseudo),
+    );
+    await openHost();
+    const panel = drawerNode();
+    await key("Escape");
+    // jsdom has no TransitionEvent: an Event carrying the property name stands in for one.
+    const ended = (propertyName: string): Event =>
+      Object.defineProperty(new Event("transitionend", { bubbles: true }), "propertyName", {
+        value: propertyName,
+      });
+    await act(async () => {
+      fireEvent(panel, ended("opacity"));
+    });
+    expect(layerNode()).not.toBeNull();
+    await act(async () => {
+      fireEvent(panel, ended("transform"));
     });
     expect(layerNode()).toBeNull();
   });

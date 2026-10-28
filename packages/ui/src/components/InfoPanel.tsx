@@ -1,8 +1,10 @@
 import {
   useEffect,
   useId,
+  useReducer,
   useRef,
   type JSX,
+  type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
   type RefObject,
@@ -45,7 +47,10 @@ export interface InfoPanelProps {
   trigger: (props: InfoPanelTriggerProps) => ReactNode;
   /** The current parameter values, under the methodology (`GET /api/v1/detectors/config`). */
   values?: ReactNode;
-  /** The values are loading: CMP-015 rows in their place and `aria-busy` on the body; the static text stays. */
+  /**
+   * The values are loading: CMP-015 rows in their place and `aria-busy` on the part that loads (the
+   * drawer's body; the inline form's values), so the static text stays readable.
+   */
   loading?: boolean;
   /** The values failed to load: a polite CMP-027 inline error in their place; the static text stays. */
   error?: string;
@@ -100,44 +105,47 @@ export function InfoPanel({
   const [open, setHeld] = useControllable(openProp, defaultOpen);
   const triggerNode = useRef<HTMLElement | null>(null);
   const heading = useRef<HTMLHeadingElement | null>(null);
-  const region = useRef<HTMLElement | null>(null);
-  /** Set by the trigger, so the inline form takes focus on a user's open only (never at mount). */
+  /**
+   * Set by the trigger, so the inline form takes focus on a user's open only (never at mount). The
+   * trigger also forces a commit, so the effect below reads the flag on the very next render and clears
+   * it whether or not a controlled host took the change: a later programmatic open never steals focus.
+   */
   const opening = useRef(false);
+  const [, rerender] = useReducer((count: number) => count + 1, 0);
 
   const change = (next: boolean): void => {
     setHeld(next);
     onOpenChange?.(next);
   };
 
-  // Inline: a user's open moves focus to the heading (E12-D03 §6.4).
+  // Inline: a user's open moves focus to the heading (E12-D03 §6.4). Runs after every commit on purpose:
+  // the trigger's own commit consumes the flag (see `opening`).
   useEffect(() => {
-    if (variant !== "inline" || !open || !opening.current) return;
+    if (!opening.current) return;
     opening.current = false;
-    heading.current?.focus({ preventScroll: true });
-  }, [open, variant]);
+    if (variant === "inline" && open) heading.current?.focus({ preventScroll: true });
+  });
 
-  // Inline: `Esc` inside closes it, focus back on the trigger (E12-D03 §6.4). Read at the document, after
-  // React's root listener, so an `Esc` a control inside already took (a defaultPrevented one) stays its own.
-  const latestChange = useRef(change);
-  latestChange.current = change;
-  useEffect(() => {
-    const node = region.current;
-    if (variant !== "inline" || !open || node === null) return undefined;
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (!(event.target instanceof Node) || !node.contains(event.target)) return;
-      event.preventDefault();
-      latestChange.current(false);
-      const back = triggerNode.current;
-      (back?.isConnected === true ? back : triggerOf(panelId))?.focus();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, variant, panelId]);
+  /**
+   * Inline: `Esc` inside closes it, focus back on the trigger (E12-D03 §6.4). A React handler on the
+   * region: it runs after the handlers of the controls inside (an `Esc` one of them took, a
+   * defaultPrevented one, stays its own) and before the overlay layer stack's document listener, so an
+   * inline panel inside a Dialog or Drawer collapses first; the next `Esc` closes the overlay. Only a key
+   * from the region's own DOM counts: a popover portalled out of it keeps its `Esc`.
+   */
+  const onRegionKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
+    if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
+    event.preventDefault();
+    change(false);
+    const back = triggerNode.current;
+    (back?.isConnected === true ? back : triggerOf(panelId))?.focus();
+  };
 
   const onTrigger = (event: MouseEvent<HTMLElement>): void => {
     triggerNode.current = event.currentTarget;
     opening.current = !open;
+    rerender();
     change(!open);
   };
 
@@ -158,7 +166,12 @@ export function InfoPanel({
     <>
       <div className="cv-info-panel__content">{content}</div>
       {valuesPart === undefined || valuesPart === null ? null : (
-        <div className="cv-info-panel__values">{valuesPart}</div>
+        <div
+          className="cv-info-panel__values"
+          aria-busy={variant === "inline" && loading ? true : undefined}
+        >
+          {valuesPart}
+        </div>
       )}
     </>
   );
@@ -201,15 +214,15 @@ export function InfoPanel({
     <>
       {trigger({ "aria-expanded": open, "aria-controls": panelId, onClick: onTrigger })}
       {open ? (
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- the Disclosure's `Esc` (E12-D03 §6.4) bubbling from the controls inside; the region is no widget (see onRegionKeyDown)
         <section
           id={panelId}
           aria-labelledby={headingId}
-          aria-busy={loading ? true : undefined}
           className={cx("cv-info-panel", className)}
           data-cmp="CMP-069"
           data-variant="inline"
           data-detector={relatedDetector}
-          ref={region}
+          onKeyDown={onRegionKeyDown}
         >
           <Tag ref={heading} id={headingId} className="cv-info-panel__title" tabIndex={-1}>
             {title}

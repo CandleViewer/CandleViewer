@@ -4,6 +4,8 @@ import { expect, fireEvent, within } from "storybook/test";
 import { afterEach, describe, it, vi } from "vitest";
 import {
   Button,
+  Dialog,
+  Drawer,
   InfoPanel,
   type InfoPanelProps,
   type InfoPanelTriggerProps,
@@ -190,11 +192,100 @@ describe("InfoPanel (CMP-069) inline", () => {
     expect(button("Estimated")).toHaveFocus();
   });
 
-  it("loading: aria-busy on the region with base-surface rows", async () => {
+  it("loading: aria-busy on the values part only, base-surface rows; the heading and text stay", async () => {
     await mount(<Host variant="inline" defaultOpen loading />);
     const region = screen().getByRole("region", { name: "Iceberg detector" });
-    expect(region).toHaveAttribute("aria-busy", "true");
-    expect(region.querySelector('[data-cmp="CMP-015"]')).not.toHaveAttribute("data-surface");
+    expect(region).not.toHaveAttribute("aria-busy");
+    const values = region.querySelector(".cv-info-panel__values");
+    expect(values).toHaveAttribute("aria-busy", "true");
+    expect(values?.querySelector('[data-cmp="CMP-015"]')).not.toHaveAttribute("data-surface");
+    expect(within(region).getByText("Flags a level that refills after each print.")).toBeVisible();
+  });
+
+  it("not loading: no aria-busy anywhere in the region", async () => {
+    await mount(<Host variant="inline" defaultOpen />);
+    const region = screen().getByRole("region", { name: "Iceberg detector" });
+    expect(region.querySelector("[aria-busy]")).toBeNull();
+  });
+
+  it("a click a controlled host ignores never makes a later programmatic open take focus", async () => {
+    function Ignoring(): JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <Host variant="inline" open={open} onOpenChange={() => undefined} />
+          <button type="button" onClick={() => setOpen(true)}>
+            Open from the host
+          </button>
+        </>
+      );
+    }
+    await mount(<Ignoring />);
+    const trigger = button("Estimated");
+    await focus(trigger);
+    await click(trigger);
+    expect(screen().queryByRole("region")).toBeNull();
+    const external = button("Open from the host");
+    await focus(external);
+    await click(external);
+    expect(screen().getByRole("region", { name: "Iceberg detector" })).toBeVisible();
+    expect(screen().getByRole("heading", { name: "Iceberg detector" })).not.toHaveFocus();
+    expect(external).toHaveFocus();
+  });
+
+  it("controlled: the trigger's open, taken by the host, moves focus to the heading", async () => {
+    function Taking(): JSX.Element {
+      const [open, setOpen] = useState(false);
+      return <Host variant="inline" open={open} onOpenChange={setOpen} />;
+    }
+    await mount(<Taking />);
+    await focus(button("Estimated"));
+    await click(button("Estimated"));
+    expect(screen().getByRole("heading", { name: "Iceberg detector" })).toHaveFocus();
+  });
+
+  it("inside a modal Dialog: Esc collapses the panel first, the next Esc closes the dialog", async () => {
+    const onDialog = vi.fn();
+    await mount(
+      <Dialog open title="Detector settings" onOpenChange={onDialog}>
+        <Host variant="inline" />
+      </Dialog>,
+    );
+    const dialog = screen().getByRole("dialog", { name: "Detector settings" });
+    const trigger = within(dialog).getByRole("button", { name: "Estimated" });
+    await focus(trigger);
+    await click(trigger);
+    expect(within(dialog).getByRole("heading", { name: "Iceberg detector" })).toHaveFocus();
+    expect(await key("Escape")).toBe(false);
+    expect(within(dialog).queryByRole("region")).toBeNull();
+    expect(trigger).toHaveFocus();
+    expect(onDialog).not.toHaveBeenCalled();
+    await key("Escape");
+    expect(onDialog).toHaveBeenLastCalledWith(false, "escape");
+  });
+
+  it("inside a modal Drawer: Esc collapses the panel, the drawer stays open", async () => {
+    const onDrawer = vi.fn();
+    await mount(
+      <Drawer open title="Detector settings" onOpenChange={onDrawer}>
+        <Host variant="inline" />
+      </Drawer>,
+    );
+    const drawer = screen().getByRole("dialog", { name: "Detector settings" });
+    const trigger = within(drawer).getByRole("button", { name: "Estimated" });
+    await focus(trigger);
+    await click(trigger);
+    await key("Escape");
+    expect(within(drawer).queryByRole("region")).toBeNull();
+    expect(onDrawer).not.toHaveBeenCalled();
+    expect(drawer).toBeVisible();
+  });
+
+  it("an Esc from outside the region (a sibling on the page) is not the panel's", async () => {
+    await mount(<Host variant="inline" defaultOpen />);
+    await focus(button("Next on the page"));
+    expect(await key("Escape")).toBe(true);
+    expect(screen().getByRole("region", { name: "Iceberg detector" })).toBeVisible();
   });
 
   it("an Esc another handler already took is left alone", async () => {
