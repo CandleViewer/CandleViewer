@@ -29,9 +29,10 @@ jobs:
         method: GET
         responseCode: 200 # a 401 here fails the run: an unauthenticated scan is no clean scan
   # The destructive paths, refused to both roles before the scan (matrix.yaml): the Viewer lacks
-  # recording:write, a Manager's purge is owner-only (capability 9a) and a pin needs `recorder`
-  # step-up. RBAC and owner-only come before the body is read, so a mismatched confirmation is
-  # refused the same way. Any other status fails the run (check_liveness.py, `requestors: 3`).
+  # recording:write, a Manager's purge is owner-only (capability 9a) and a pin is refused (503 on
+  # this stack, see the probe). RBAC and owner-only come before the body is read, so a mismatched
+  # confirmation is refused the same way. Any other status fails the run (check_liveness.py,
+  # `requestors: 3`).
   - type: requestor
     name: purge-and-pin-refused-for-this-role
     requests:
@@ -55,7 +56,9 @@ jobs:
           - "Content-Type: application/json"
           - "Idempotency-Key: 6f1c2b7e-0000-4000-8000-000000000496"
         data: '{"pinned":true}'
-        responseCode: 403
+        # 503: the CI stack binds no recorder runtime, so every recorded-set write is 503 before
+        # the pin's step-up (#2188 S4b); restore 403 once S4b binds it. Never a success either way.
+        responseCode: 503
   - type: openapi
     parameters:
       apiFile: /zap/wrk/docs/plan/22-api-openapi.yaml # replaced by the cut recording-openapi.yaml

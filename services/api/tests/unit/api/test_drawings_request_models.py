@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from pydantic import AwareDatetime, BaseModel, ValidationError, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, ValidationError, field_validator
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from candleviewer.api import drawings_models as dm
@@ -386,6 +386,27 @@ def test_format_errors_parse_failures_answer_one_message_whatever_the_input(
         entries.append(format_errors(ei.value))
     assert all(e == entries[0] for e in entries)
     assert "`" not in entries[0][0]["message"] and " at " not in entries[0][0]["message"]
+
+
+class _Sized(BaseModel):
+    xs: Annotated[list[int], Field(min_length=1, max_length=2)]
+
+
+@pytest.mark.parametrize(
+    "raws",
+    [
+        ('{"xs": [1, 2, 3]}', '{"xs": [1, 2, 3, 4, 5]}'),  # too_long
+        ('{"xs": [1', '{"xs": [1, 2, 3'),  # json_invalid, its position differing
+    ],
+)
+def test_format_errors_lengths_and_broken_json_answer_one_message(raws: tuple[str, ...]) -> None:
+    entries = []
+    for raw in raws:
+        with pytest.raises(ValidationError) as ei:
+            _Sized.model_validate_json(raw)
+        entries.append(format_errors(ei.value))
+    assert entries[0] == entries[1]
+    assert ", not " not in entries[0][0]["message"] and " column " not in entries[0][0]["message"]
 
 
 class _Checked(BaseModel):

@@ -531,6 +531,13 @@ _MAX_SEGMENT: Final = 64
 _MAX_MESSAGE: Final = 200
 _TAG_MESSAGE: Final = "op must be one of create, update, delete"
 _OWN_MESSAGE: Final = frozenset({"value_error", "assertion_error"})  # a validator's fixed text
+#: Rules whose pydantic message carries input-derived text another way (`json_invalid` puts
+#: the parser's position after a colon), so they answer a fixed sentence (#4868).
+_FIXED: Final = {
+    "union_tag_invalid": _TAG_MESSAGE,
+    "union_tag_not_found": _TAG_MESSAGE,
+    "json_invalid": "The body is not valid JSON.",
+}
 
 
 def _clip(value: str, limit: int) -> str:
@@ -564,9 +571,11 @@ def format_errors(
                 parts.append(_clip(tok, _MAX_SEGMENT) if isinstance(tok, str) else str(tok))
             prev = tok
         rule = err["type"]
-        msg = _TAG_MESSAGE if rule in ("union_tag_invalid", "union_tag_not_found") else err["msg"]
-        detail = err.get("ctx", {}).get("error")
-        if detail is not None and rule not in _OWN_MESSAGE:
+        msg = _FIXED.get(rule) or err["msg"]
+        ctx = err.get("ctx", {})
+        if (detail := ctx.get("error")) is not None and rule not in _OWN_MESSAGE:
             msg = msg.removesuffix(f", {detail}")
+        if (count := ctx.get("actual_length")) is not None:  # the input's length, not the bound
+            msg = msg.removesuffix(f", not {count}")
         out.append({"field": ".".join(parts), "rule": rule, "message": _clip(msg, _MAX_MESSAGE)})
     return out
