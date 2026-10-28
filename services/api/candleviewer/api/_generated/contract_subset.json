@@ -2424,6 +2424,14 @@
             "description": "Correlation id, `urn:cv:req:{uuid}`; matches the `X-Correlation-Id` header and the audit entry.",
             "type": "string"
           },
+          "recording_started_at": {
+            "description": "`no_data_recorded` from `GET /market/bars` only: when recording of the symbol's trade tape began, so the client can offer the first recorded window; null when nothing was ever recorded for the symbol. Optional, additive (C-6.3).\n",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "required_permissions": {
             "items": {
               "type": "string"
