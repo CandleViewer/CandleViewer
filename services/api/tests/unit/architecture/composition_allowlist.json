@@ -42,10 +42,6 @@
       "reason": "contract-first operation (E28-T02 P-1a contract slice); E28-T05 serves it",
       "ticket": "E28-T05"
     },
-    "DELETE /watchlists/{watchlistId}": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "GET /admin/security/summary": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -230,10 +226,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "GET /watchlists": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "GET /workspaces/{workspaceId}/export": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -346,10 +338,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "POST /watchlists": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "PUT /auth/password": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -377,10 +365,6 @@
     "PUT /trade-group-definitions/{definitionId}": {
       "reason": "contract-first operation (E28-T02 P-1a contract slice); E28-T05 serves it",
       "ticket": "E28-T05"
-    },
-    "PUT /watchlists/{watchlistId}": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
     }
   },
   "lifespan_locals": {

@@ -354,6 +354,7 @@
 ["ticker_bulk_cache_refresh_total", "counter", ["outcome"], "live", "E08"]
 ["topic_staleness_seconds", "gauge", ["topic"], "live", "E04"]
 ["users_invites_rejected_total", "counter", ["reason"], "live", "E09"]
+["watchlist_write_conflicts_total", "counter", [], "planned", "E08"]
 ["ws_clients", "gauge", [], "planned", "E17"]
 ["ws_connection_state", "gauge", ["socket"], "live", "E04"]
 ["ws_message_bytes_total", "counter", [], "live", "E04"]

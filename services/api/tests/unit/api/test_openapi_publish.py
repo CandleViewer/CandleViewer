@@ -285,7 +285,8 @@ def test_the_app_publishes_only_its_schema_routes_and_validates() -> None:
     """The real app: the raw-body operations in its document are exactly the served routes
     FastAPI puts in the schema (`include_in_schema=False` ones excluded), each carrying the
     contract's operation (the drawings router is mounted, so its operations are published, and
-    so are the profile writes and the binding's move, #906 D2-m)."""
+    so are the profile writes and the binding's move, #906 D2-m, and the four watchlist
+    operations, #4706)."""
     app = create_app(Settings(git_sha="test", version="0.0.0-test"))
     doc = app.openapi()
     assert_spec_is_valid(doc)
@@ -303,8 +304,18 @@ def test_the_app_publishes_only_its_schema_routes_and_validates() -> None:
     writes = {("post", profiles), ("put", f"{profiles}/{{profileId}}")}
     writes |= {("delete", f"{profiles}/{{profileId}}")}
     assert writes | {("put", "/exchange-accounts/{accountId}/default-profile")} <= served
+    lists, one = "/watchlists", "/watchlists/{watchlistId}"
+    assert {("get", lists), ("post", lists), ("put", one), ("delete", one)} <= served
     for method, path in served:
         assert doc["paths"][path][method] == SUBSET["paths"][path][method]
+    # The contract's forms, not FastAPI's: the bodies, `If-Match` and the declared statuses.
+    replace = doc["paths"][one]["put"]
+    assert {p.get("name") for p in replace["parameters"] if "name" in p} == {"If-Match"}
+    for method, path in (("post", lists), ("put", one)):
+        body = doc["paths"][path][method]["requestBody"]["content"]["application/json"]
+        assert body["schema"] == {"$ref": "#/components/schemas/WatchlistInput"}
+    assert set(replace["responses"]) >= {"200", "404", "409", "412", "413", "422", "428", "503"}
+    assert doc["components"]["schemas"]["Watchlist"]["additionalProperties"] is False
 
 
 # The HTTP edge (#2767). The refusal tests above call `app.openapi()` directly, on bare apps

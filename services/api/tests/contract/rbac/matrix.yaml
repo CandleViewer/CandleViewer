@@ -1658,29 +1658,30 @@ operations:
     permissions: ['workspaces:read']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /watchlists:
     permissions: ['workspaces:write']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
+    request:
+      json: {name: Majors, symbols: [BTCUSDT, ETHUSDT]}
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   PUT /watchlists/{watchlistId}:
     permissions: ['workspaces:write']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
+    request:
+      json: {name: Majors, symbols: [BTCUSDT, ETHUSDT]}
+      headers: {If-Match: 'W/"00000000-0000-4000-8000-0000000000ff:1"'}
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   DELETE /watchlists/{watchlistId}:
     permissions: ['workspaces:write']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /workspaces:
     permissions: ['workspaces:read']

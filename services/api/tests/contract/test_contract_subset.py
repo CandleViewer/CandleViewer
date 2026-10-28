@@ -229,6 +229,9 @@ def test_raw_body_prefixes_match_whole_segments() -> None:
     assert cc.under_raw_body_prefix("/exchange-accounts/{accountId}/default-profile")
     assert not cc.under_raw_body_prefix("/exchange-accounts/{accountId}/profiles-v2")
     assert not cc.under_raw_body_prefix("/exchange-accounts/{accountId}")
+    assert cc.under_raw_body_prefix("/watchlists")  # #4706: the watchlists' raw bodies
+    assert cc.under_raw_body_prefix("/watchlists/{watchlistId}")
+    assert not cc.under_raw_body_prefix("/watchlists-v2")
 
 
 def test_the_yaml_path_is_resolved_on_use_not_at_import() -> None:
