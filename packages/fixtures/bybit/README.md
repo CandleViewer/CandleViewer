@@ -35,6 +35,7 @@ own `capture_date` (the `recorded_*` files below).
 | Delisted symbol + changed tick size                   | `rest/instruments_before.json` -> `rest/instruments_after.json`              |
 | Live feed fields (#3447): `RPI`, `seq`, newer tickers | `ws/recorded_publicTrade_BTCUSDT.jsonl`, `ws/recorded_tickers_BTCUSDT.jsonl` |
 | Risk-limit tiers (#913): one recorded page each       | `rest/risk_limit_BTCUSDT.json`, `rest/risk_limit_ETHUSDT.json`               |
+| Bulk ticker route (#4707): one recorded reply each    | `rest/recorded_tickers_{BTCUSDT,ETHUSDT,SOLUSDT}.json`                       |
 | Order path (#2877): trade replies, reads, two errors  | `rest/trading-*.json` (docs-transcribed, below)                              |
 | Private stream (#3963): replies and topic pushes      | `ws/private-*.jsonl` (docs-transcribed, below)                               |
 
@@ -79,6 +80,25 @@ Each line: file; source; date; symbol; env; redaction.
 
 - `risk_limit_BTCUSDT.json`: source: recorded, `capture_fixture.py --rest-path /v5/market/risk-limit`; 2026-10-25 18:45Z; symbol BTCUSDT (35 tiers); env live public endpoint, no key; redaction: `redact()` / `find_leaks()` clean, no credential fields.
 - `risk_limit_ETHUSDT.json`: source: recorded, `capture_fixture.py --rest-path /v5/market/risk-limit`; 2026-10-25 18:45Z; symbol ETHUSDT (35 tiers); env live public endpoint, no key; redaction: `redact()` / `find_leaks()` clean, no credential fields.
+
+### Recorded bulk-ticker replies (#4707, E08-T08)
+
+Three `GET /v5/market/tickers` replies (`category=linear`, one symbol each), recorded once with
+`capture_fixture.py --rest-path` from Bybit's public `api.bybit.com` endpoint on 2026-10-28, with
+no key and no signing, from the orchestrator's host (the VPS lane's run was refused with HTTP 403
+by the endpoint, so the orchestrator ran the same command). The full `category=linear` reply
+exceeds the tool's 512 KB cap and was not recorded; the bulk route's shape is the same envelope
+with a longer `list`, which `tests/_tickers.py` assembles from these recorded items for the
+120-symbol case (symbol and price varied only, as the test docstring says). Each reply carries
+`highPrice24h` / `lowPrice24h`, the fields E08-T08 maps to `high_24h` / `low_24h`. The tool
+redacted and leak-checked each body as received; a public ticker holds no credential or account
+field, so nothing was replaced.
+
+Each line: file; source; date; symbol; env; redaction.
+
+- `recorded_tickers_BTCUSDT.json`: source: recorded, `capture_fixture.py --rest-path /v5/market/tickers --param category=linear --param symbol=BTCUSDT`; 2026-10-28 12:45Z; symbol BTCUSDT; env live public endpoint, no key; redaction: `redact()` / `find_leaks()` clean, no credential fields.
+- `recorded_tickers_ETHUSDT.json`: source: recorded, same command with `symbol=ETHUSDT`; 2026-10-28 12:45Z; symbol ETHUSDT; env live public endpoint, no key; redaction: clean, no credential fields.
+- `recorded_tickers_SOLUSDT.json`: source: recorded, same command with `symbol=SOLUSDT`; 2026-10-28 12:45Z; symbol SOLUSDT; env live public endpoint, no key; redaction: clean, no credential fields.
 
 ### Docs-transcribed order-path shapes (#2877, ruling R2)
 
