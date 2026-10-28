@@ -34,6 +34,7 @@ import "../src/components/confirmdialog.css";
 import "../src/components/copybutton.css";
 import "../src/components/countdown.css";
 import "../src/components/crash.css";
+import "../src/components/datepicker.css";
 import "../src/components/dialog.css";
 import "../src/components/divider.css";
 import "../src/components/drawer.css";

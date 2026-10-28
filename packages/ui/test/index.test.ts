@@ -6,6 +6,7 @@ import type {
   CardProps,
   CheckboxProps,
   ConfirmDialogProps,
+  DatePickerProps,
   DialogProps,
   DrawerProps,
   FormFieldProps,
@@ -76,6 +77,7 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
   it.each([
     ["Card", Atoms.Card],
     ["ConfirmDialog", Atoms.ConfirmDialog],
+    ["DatePicker", Atoms.DatePicker],
     ["Dialog", Atoms.Dialog],
     ["Drawer", Atoms.Drawer],
     ["FormField", Atoms.FormField],
@@ -95,6 +97,7 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
       | [
           CardProps,
           ConfirmDialogProps,
+          DatePickerProps,
           DialogProps,
           DrawerProps,
           FormFieldProps,

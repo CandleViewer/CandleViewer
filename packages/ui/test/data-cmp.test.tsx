@@ -6,6 +6,7 @@ import {
   Card,
   Checkbox,
   ConfirmDialog,
+  DatePicker,
   Dialog,
   Drawer,
   FormField,
@@ -99,6 +100,7 @@ const molecules: [string, () => JSX.Element][] = [
     ),
   ],
   ["CMP-045", () => <Toast title="Session extended" />],
+  ["CMP-047", () => <DatePicker aria-label="Go to date" value="2026-10-23" onChange={noop} />],
   ["CMP-050", () => <Card title="Accounts">Body</Card>],
 ];
 

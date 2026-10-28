@@ -46,6 +46,9 @@ export type { CopyButtonProps, CopyStatus, UseCopyOptions, UseCopyResult } from 
 export { Countdown } from "./Countdown.js";
 export type { CountdownFormat, CountdownPhase, CountdownProps } from "./Countdown.js";
 
+export { DatePicker } from "./DatePicker.js";
+export type { DatePickerProps } from "./DatePicker.js";
+
 export { Dialog } from "./Dialog.js";
 export type { DialogCloseReason, DialogProps, DialogRole, DialogSize } from "./Dialog.js";
 
