@@ -29,6 +29,9 @@ export default defineConfig({
           name: "unit",
           environment: vitestPreset.test.environment,
           globals: vitestPreset.test.globals,
+          // C-9.3: `it.flaky` and its tag (E02-T10), as every suite that spreads the preset has.
+          setupFiles: vitestPreset.test.setupFiles,
+          tags: vitestPreset.test.tags,
           include: ["test/**/*.test.{ts,tsx}"],
         },
       },
