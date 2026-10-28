@@ -470,3 +470,7 @@ filtered-empty render the host's CMP-026 (`emptyState`) across every column; an 
 with Retry, spoken once by the table's region (the panel itself is not live). v0 renders every row
 and is not virtualised: above 200 rows it warns in development (#266). Grid mode, selection, row
 actions and the stacked reflow are later E05-S03 slices.
+
+The polite line clears as a load, a pending sort or a Retry starts, so a result identical to the
+last one (the same row count after a reload, the same failure after a Retry) is said again. The
+default empty title "No rows to show" is PROPOSED copy, pending E05-D05 review.

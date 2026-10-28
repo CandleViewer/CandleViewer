@@ -190,6 +190,82 @@ describe("Table (CMP-049), table mode", () => {
     expect(host.querySelector(".cv-table__region")).not.toHaveAttribute("tabindex");
   });
 
+  it("emits data-density on the root, and none when absent (inherit)", async () => {
+    const compact = await mount(base({ density: "compact" }));
+    expect(compact.querySelector<HTMLElement>('[data-cmp="CMP-049"]')?.dataset["density"]).toBe(
+      "compact",
+    );
+    const inherit = await mount(base());
+    expect(inherit.querySelector('[data-cmp="CMP-049"]')).not.toHaveAttribute("data-density");
+  });
+
+  it("observes the region and its table, re-measures on resize, and disconnects on content change and unmount", async () => {
+    interface Stub {
+      readonly measure: () => void;
+      readonly observed: Element[];
+      disconnected: boolean;
+    }
+    const observers: Stub[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        private readonly stub: Stub;
+        constructor(callback: () => void) {
+          this.stub = { measure: callback, observed: [], disconnected: false };
+          observers.push(this.stub);
+        }
+        observe(target: Element): void {
+          this.stub.observed.push(target);
+        }
+        disconnect(): void {
+          this.stub.disconnected = true;
+        }
+      },
+    );
+    let overflowing = false;
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() =>
+      overflowing ? 400 : 100,
+    );
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+    const Toggle = (): JSX.Element => {
+      const [shown, setShown] = useState(true);
+      const [rows, setRows] = useState<readonly User[]>(USERS);
+      return (
+        <>
+          <button type="button" onClick={() => setRows(USERS.slice(0, 1))}>
+            Fewer
+          </button>
+          <button type="button" onClick={() => setShown(false)}>
+            Hide
+          </button>
+          {shown ? base({ rows }) : null}
+        </>
+      );
+    };
+    const host = await mount(<Toggle />);
+    const region = host.querySelector(".cv-table__region");
+    const first = observers[0];
+    expect(observers).toHaveLength(1);
+    expect(first?.observed).toEqual([region, host.querySelector("table")]);
+    expect(within(host).queryByRole("region")).toBeNull();
+
+    overflowing = true;
+    await act(async () => first?.measure());
+    expect(within(host).getByRole("region", { name: CAPTION })).toBe(region);
+
+    await act(async () => {
+      fireEvent.click(within(host).getByRole("button", { name: "Fewer" }));
+    });
+    expect(first?.disconnected).toBe(true);
+    expect(observers).toHaveLength(2);
+    expect(observers[1]?.disconnected).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(within(host).getByRole("button", { name: "Hide" }));
+    });
+    expect(observers[1]?.disconnected).toBe(true);
+  });
+
   it("captionHidden hides the caption visually and still names the table", async () => {
     const host = await mount(base({ captionHidden: true }));
     expect(within(host).getByText(CAPTION)).toHaveClass("cv-visually-hidden");
@@ -307,6 +383,185 @@ describe("Table (CMP-049) live region", () => {
     fireEvent.click(within(host).getByRole("button", { name: "Settle" }));
     await act(async () => undefined);
     expect(status).toHaveTextContent("Sorted by PnL, descending");
+  });
+
+  /** Records every text the status region takes, so an identical result said again shows as a change. */
+  const record = (status: HTMLElement): string[] => {
+    const seen: string[] = [];
+    new MutationObserver(() => seen.push(status.textContent ?? "")).observe(status, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    return seen;
+  };
+  const flush = async (): Promise<void> => {
+    await act(async () => undefined);
+  };
+
+  it("clears as a reload starts, so the same row count is said again", async () => {
+    const Reloader = (): JSX.Element => {
+      const [loading, setLoading] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setLoading((l) => !l)}>
+            Toggle
+          </button>
+          {base({ loading })}
+        </>
+      );
+    };
+    const host = await mount(<Reloader />);
+    const status = within(host).getByRole("status");
+    const toggle = within(host).getByRole("button", { name: "Toggle" });
+    for (let i = 0; i < 2; i += 1) {
+      fireEvent.click(toggle);
+      await flush();
+      expect(status).toHaveTextContent("");
+      fireEvent.click(toggle);
+      await flush();
+      expect(status).toHaveTextContent("3 rows");
+    }
+    const seen = record(status);
+    fireEvent.click(toggle);
+    await flush();
+    fireEvent.click(toggle);
+    await flush();
+    expect(seen).toEqual(["", "3 rows"]);
+  });
+
+  it("a Retry that fails with the same message says it again (Retry with a load)", async () => {
+    const message = "Couldn't load users — store unavailable.";
+    const Failing = (): JSX.Element => {
+      const [loading, setLoading] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setLoading(false)}>
+            Fail
+          </button>
+          {base({ rows: [], loading, error: { message, onRetry: () => setLoading(true) } })}
+        </>
+      );
+    };
+    const host = await mount(<Failing />);
+    const status = within(host).getByRole("status");
+    expect(status).toHaveTextContent(message);
+    const seen = record(status);
+    fireEvent.click(within(host).getByRole("button", { name: "Retry" }));
+    await flush();
+    expect(status).toHaveTextContent("");
+    fireEvent.click(within(host).getByRole("button", { name: "Fail" }));
+    await flush();
+    expect(status).toHaveTextContent(message);
+    expect(seen).toEqual(["", message]);
+  });
+
+  it("a Retry that fails with the same message says it again (no load between)", async () => {
+    const message = "Couldn't load users — store unavailable.";
+    const Failing = (): JSX.Element => {
+      const [attempt, setAttempt] = useState(0);
+      return (
+        <>
+          <span data-testid="attempt">{attempt}</span>
+          {base({ rows: [], error: { message, onRetry: () => setAttempt((n) => n + 1) } })}
+        </>
+      );
+    };
+    const host = await mount(<Failing />);
+    const status = within(host).getByRole("status");
+    expect(status).toHaveTextContent(message);
+    const seen = record(status);
+    fireEvent.click(within(host).getByRole("button", { name: "Retry" }));
+    await flush();
+    expect(within(host).getByTestId("attempt")).toHaveTextContent("1");
+    expect(status).toHaveTextContent(message);
+    expect(seen).toContain("");
+    expect(seen.at(-1)).toBe(message);
+  });
+
+  it("an error kept across unrelated re-renders is said once", async () => {
+    const message = "Couldn't load users — store unavailable.";
+    const Rerender = (): JSX.Element => {
+      const [n, setN] = useState(0);
+      return (
+        <>
+          <button type="button" onClick={() => setN(n + 1)}>
+            Rerender {n}
+          </button>
+          {base({ rows: [], error: { message, onRetry: () => undefined } })}
+        </>
+      );
+    };
+    const host = await mount(<Rerender />);
+    const status = within(host).getByRole("status");
+    const seen = record(status);
+    fireEvent.click(within(host).getByRole("button", { name: /Rerender/ }));
+    await flush();
+    expect(status).toHaveTextContent(message);
+    expect(seen).toEqual([]);
+  });
+
+  it("does not re-say a sort when inline columns and sort objects are re-created", async () => {
+    const Inline = (): JSX.Element => {
+      const [n, setN] = useState(0);
+      return (
+        <>
+          <button type="button" onClick={() => setN(n + 1)}>
+            Rerender {n}
+          </button>
+          <Table<User>
+            caption={CAPTION}
+            columns={COLUMNS.map((c) => ({ ...c }))}
+            rows={USERS}
+            rowKey={(u) => u.id}
+            sort={{ columnId: "pnl", direction: n === 0 ? "ascending" : "descending" }}
+            onSortChange={() => undefined}
+          />
+        </>
+      );
+    };
+    const host = await mount(<Inline />);
+    const status = within(host).getByRole("status");
+    const button = within(host).getByRole("button", { name: /Rerender/ });
+    fireEvent.click(button);
+    await flush();
+    expect(status).toHaveTextContent("Sorted by PnL, descending");
+    const seen = record(status);
+    fireEvent.click(button);
+    await flush();
+    fireEvent.click(button);
+    await flush();
+    expect(seen).toEqual([]);
+  });
+
+  it("clears while a sort is pending", async () => {
+    const Pending = (): JSX.Element => {
+      const [pending, setPending] = useState<string | undefined>(undefined);
+      const [loading, setLoading] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setLoading(false)}>
+            Done
+          </button>
+          <button type="button" onClick={() => setPending("pnl")}>
+            Ask
+          </button>
+          {base({
+            loading,
+            sort: { columnId: "pnl", direction: "ascending" },
+            sortPending: pending,
+          })}
+        </>
+      );
+    };
+    const host = await mount(<Pending />);
+    const status = within(host).getByRole("status");
+    fireEvent.click(within(host).getByRole("button", { name: "Done" }));
+    await flush();
+    expect(status).toHaveTextContent("3 rows");
+    fireEvent.click(within(host).getByRole("button", { name: "Ask" }));
+    await flush();
+    expect(status).toHaveTextContent("");
   });
 
   it("says the row count when a load ends", async () => {

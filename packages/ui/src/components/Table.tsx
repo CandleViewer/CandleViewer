@@ -156,10 +156,19 @@ interface ResultInputs<T> {
   readonly error: TableError | undefined;
 }
 
+interface ResultLine {
+  /** The polite line. */
+  readonly line: string;
+  /** Call as a Retry starts: clears the line so the next result, even an identical one, is said again. */
+  readonly retryStarted: () => void;
+}
+
 /**
  * The one polite line for sort and load results (D02F CMP-049): a settled sort, the end of a load (the row
  * count) and an error (its message, G17). Never the first render's state, except an error, which is spoken
- * once after mount. Each result is spoken once.
+ * once after mount. Each result is spoken once. The line clears as a load, a pending sort or a Retry starts,
+ * so a result identical to the last one (the same row count after a reload, the same failure after a Retry)
+ * changes the region and is said again.
  */
 function useResultLine<T>({
   columns,
@@ -168,37 +177,50 @@ function useResultLine<T>({
   sortPending,
   loading,
   error,
-}: ResultInputs<T>): string {
-  const sortKey =
-    sort === undefined || sortPending !== undefined
+}: ResultInputs<T>): ResultLine {
+  const settled = sort !== undefined && sortPending === undefined ? sort : undefined;
+  const sortKey = settled === undefined ? undefined : `${settled.columnId}:${settled.direction}`;
+  // The derived line (its header label), not the columns or sort objects: an inline `columns` or `sort`
+  // must not re-run the effect.
+  const sortLine =
+    settled === undefined
       ? undefined
-      : `${sort.columnId}:${sort.direction}`;
-  const prev = useRef<{ sortKey: string | undefined; loading: boolean; error: string | undefined }>(
-    {
-      sortKey,
-      loading,
-      error: undefined,
-    },
-  );
+      : `Sorted by ${columns.find((c) => c.id === settled.columnId)?.header ?? settled.columnId}, ${settled.direction}`;
+  const busy = loading || sortPending !== undefined;
+  const prev = useRef<{
+    sortKey: string | undefined;
+    loading: boolean;
+    busy: boolean;
+    error: TableError | undefined;
+  }>({ sortKey, loading, busy, error: undefined });
+  // The error a Retry was pressed on; the next error that is not this object is a fresh result.
+  const retriedFrom = useRef<TableError | undefined>(undefined);
   const [line, setLine] = useState("");
   useEffect(() => {
     const before = prev.current;
-    prev.current = { sortKey, loading, error: error?.message };
+    prev.current = { sortKey, loading, busy, error };
+    if (busy && !before.busy) setLine("");
     if (loading) return;
     if (error !== undefined) {
-      if (error.message !== before.error || before.loading) setLine(error.message);
+      const retried = retriedFrom.current !== undefined && error !== retriedFrom.current;
+      if (error.message !== before.error?.message || before.loading || retried) {
+        retriedFrom.current = undefined;
+        setLine(error.message);
+      }
       return;
     }
+    retriedFrom.current = undefined;
     if (before.loading) {
       setLine(rowsWord(rowCount));
       return;
     }
-    if (sortKey !== undefined && sortKey !== before.sortKey && sort !== undefined) {
-      const header = columns.find((c) => c.id === sort.columnId)?.header ?? sort.columnId;
-      setLine(`Sorted by ${header}, ${sort.direction}`);
-    }
-  }, [sortKey, loading, error, rowCount, sort, columns]);
-  return line;
+    if (sortLine !== undefined && sortKey !== before.sortKey) setLine(sortLine);
+  }, [sortKey, sortLine, busy, loading, error, rowCount]);
+  const retryStarted = (): void => {
+    retriedFrom.current = error;
+    setLine("");
+  };
+  return { line, retryStarted };
 }
 
 /**
@@ -233,7 +255,7 @@ export function Table<T>({
         ? "empty"
         : "populated";
   const scrolls = useScrolls(region, `${state}:${rows.length}:${columns.length}`);
-  const line = useResultLine({
+  const { line, retryStarted } = useResultLine({
     columns,
     rowCount: rows.length,
     sort,
@@ -281,7 +303,13 @@ export function Table<T>({
         form="panel"
         live="off"
         message={error.message}
-        retry={{ label: "Retry", onClick: () => error.onRetry() }}
+        retry={{
+          label: "Retry",
+          onClick: () => {
+            retryStarted();
+            error.onRetry();
+          },
+        }}
       />,
     );
   } else if (state === "empty") {
