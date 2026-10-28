@@ -131,6 +131,8 @@ from candleviewer.storage.repositories.orders import OrderRow, OrderStoreError
 __all__ = ["MAX_ORDER_BODY_BYTES", "OrderPrincipals", "OrderRuntime", "make_orders_router"]
 
 _OPERATION: Final = "placeOrder"
+#: `placeOrder`'s path, as the router mounts it and as its `http.request` span names it.
+_ROUTE: Final = "/orders"
 _PERMISSION: Final = ORDERS_PERMISSION
 #: `rbac.denied`'s reason for an account outside the grants, as `enforce` writes it (step 4).
 _NOT_GRANTED: Final = (
@@ -427,8 +429,8 @@ def make_orders_router(
         kept.put(*held, stored)
         return out
 
-    @router.post("/orders", status_code=202)
-    @_traced("/orders")
+    @router.post(_ROUTE, status_code=202)
+    @_traced(_ROUTE)
     async def place_order(request: Request) -> Response:
         if principals is None:
             return problem(501, "not_implemented", "No principal source is composed.")
