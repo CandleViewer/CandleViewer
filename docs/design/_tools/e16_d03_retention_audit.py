@@ -22,10 +22,17 @@ re-derives the spec's `audit:` markers. The mutation modes change the spec in me
 when exactly the FAIL they target results: `--mutate-consequence` removes the consequence sentence
 from one reduction frame, `--mutate-kinds` the undo line from one reduction-kind row,
 `--mutate-typed` the quoted typed-field label from the first destructive confirm, `--mutate-plain`
-turns the `drop` -> `archive_parquet` kind into a plain confirm. Exit 1 on a gated FAIL.
+turns the `drop` -> `archive_parquet` kind into a plain confirm, `--mutate-title` gives K7 K6's title,
+`--mutate-nothing` adds "Nothing is deleted." to K6's body, `--mutate-producer` writes the plain mark
+into the kinds frame's Producer cell, `--mutate-applynow` removes the Apply-now qualifier from the
+lengthening confirm's copy row, `--mutate-bodynow` removes the lengthening confirm from the
+run-now body's row, `--mutate-trigger` removes "Apply now unticked" from the lengthening frame's
+Trigger. Exit 1 on a gated FAIL.
 
 Usage: python3 -I docs/design/_tools/e16_d03_retention_audit.py [--json] [--check]
-  [--mutate-consequence | --mutate-kinds | --mutate-typed | --mutate-plain] [--extra F]
+  [--mutate-consequence | --mutate-kinds | --mutate-typed | --mutate-plain | --mutate-title
+   | --mutate-nothing | --mutate-producer | --mutate-applynow
+   | --mutate-bodynow | --mutate-trigger] [--extra F]
 """
 
 from __future__ import annotations
@@ -67,9 +74,9 @@ BANNED_COPY = (
     r"\b422\b",
     r"\b409\b",
 )
-# `14` :2753, byte-for-byte (the derived-stream rule in product terms).
+# `14` :2769, byte-for-byte (the derived-stream rule in product terms).
 SENTENCE_14 = "Bars can't be deleted before the ticks they came from are kept — adjust the tiers."
-# `24` :3764, the daily job; `22` :5083, the exemption; both quoted in the spec.
+# `24` :3866, the daily job; `22` :5239, the exemption; both quoted in the spec.
 SENTENCE_24 = "Daily retention job (03:00 UTC)"
 SENTENCE_22_EXEMPT = "pinned symbols are exempt"
 VIEW_AS = "Read-only while viewing as {user}."
@@ -83,7 +90,8 @@ TYPED_LABEL = '"Type trades to confirm"'
 # A confirm that names the plain variant is never a reduction's confirm.
 PLAIN_MARKS = ("CMP-044 standard", "plain confirm")
 # The worked example's typed constants beside the contract-derived ones (spec header): the lowered drop
-# window of kind K2, the per-symbol override days of F3 / K3 / K4, the running job's progress.
+# window of kind K2, the per-symbol override days of F3 / K3 / K4, the running job's progress, the
+# long-window days of K6 / K7 and the hot window above the section 7 total that `{total}` must print.
 EXAMPLE = {
     "reduce_to": 7,
     "lengthen_to": 90,
@@ -91,8 +99,9 @@ EXAMPLE = {
     "override_days": 14,
     "progress_pct": 42,
     "long_days": 1000,
+    "long_hot_days": 800,
 }
-# The absences (deferred capabilities drawn as absent, never as a lock): `22` :5086–5087.
+# The absences (deferred capabilities drawn as absent, never as a lock): `22` :5242–5243.
 ABSENCES = ("downsample", "pin", "applies_to_pinned")
 ABSENT_FIELDS = ("downsample_to", "max_disk_gb", "archive_path", "enabled")
 # element | fg | bg | role — every pair SCR-141 draws (spec section 15, rows in order).
@@ -181,67 +190,67 @@ BINDINGS = (
 # doc | line at the base | text the line must hold. A `14` line may sit lower by the pointer line.
 CITED_TABLE = """
 14 | 85 | **RBAC denies server-side; the UI presents.**
-14 | 2750 | ### SCR-141 — Admin: retention policy editor
-14 | 2752 | cold-tier migration age (QuestDB → Parquet), pin overrides
-14 | 2753 | retention ≥1 day; raw-tick retention ≤ bar retention
-14 | 2754 | CMP-008 NumericStepperInput, CMP-040 FormField, CMP-044 ConfirmDialog, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
-14 | 2756 | every duration field states its unit
-14 | 2757 | the screen shows the job's queued/running/complete state
-14 | 2758 | `retention.default_changed` `{before, after}`
-14 | 2759 | the 'this will delete N GB covering dates X-Y' warning before applying a reduction
-22 | 691 | - code: retention_invalid_policy
-22 | 1046 | - recording:write
-22 | 4788 | operationId: updateRecordedSymbol
-22 | 4863 | operationId: pinRecordedSymbol
-22 | 4975 | operationId: getStorageUsage
-22 | 5033 | operationId: listRetentionPolicies
-22 | 5079 | operationId: setRetentionPolicies
-22 | 5083 | (per-symbol beats global); pinned symbols are exempt.
-22 | 5086 | `downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy` until
-22 | 5087 | the store holds their fields, as is a set where a stream derived from `trades` outlives it;
-22 | 5090 | starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
-22 | 5091 | `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
-22 | 5093 | Audited as `retention.change` (the set before and after), written before the new set is
-22 | 5100 | - name: apply_now
+14 | 2766 | ### SCR-141 — Admin: retention policy editor
+14 | 2768 | cold-tier migration age (QuestDB → Parquet), pin overrides
+14 | 2769 | retention ≥1 day; raw-tick retention ≤ bar retention
+14 | 2770 | CMP-008 NumericStepperInput, CMP-040 FormField, CMP-044 ConfirmDialog, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
+14 | 2772 | every duration field states its unit
+14 | 2773 | the screen shows the job's queued/running/complete state
+14 | 2774 | `retention.default_changed` `{before, after}`
+14 | 2775 | the 'this will delete N GB covering dates X-Y' warning before applying a reduction
+22 | 710 | - code: retention_invalid_policy
+22 | 1069 | - recording:write
+22 | 4944 | operationId: updateRecordedSymbol
+22 | 5019 | operationId: pinRecordedSymbol
+22 | 5131 | operationId: getStorageUsage
+22 | 5189 | operationId: listRetentionPolicies
+22 | 5235 | operationId: setRetentionPolicies
+22 | 5239 | (per-symbol beats global); pinned symbols are exempt.
+22 | 5242 | `downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy` until
+22 | 5243 | the store holds their fields, as is a set where a stream derived from `trades` outlives it;
+22 | 5246 | starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
+22 | 5247 | `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
+22 | 5249 | Audited as `retention.change` (the set before and after), written before the new set is
+22 | 5256 | - name: apply_now
 22 | 282 | answers `403 view_as_read_only` and changes nothing.
-22 | 11379 | (ADR-0004), so a restart loses every
-22 | 13934 | operationId: purgeRecordedData
-22 | 16052 | StreamKind:
-22 | 16068 | RetentionAction:
-22 | 17846 | RetentionPolicyInput:
-22 | 17851 | retain_days: { type: integer, minimum: 1, maximum: 3650 }
-22 | 17859 | RetentionPolicy:
-22 | 20567 | status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
-21 | 2897 | market data is mainnet even for demo trading
-21 | 2903 | retention_days    integer,                              -- NULL → use retention_policies default
-21 | 2972 | #### 3.6.3 `retention_policies`
-21 | 3001 | Resolution order for a (symbol, stream): pinned symbol → infinite retention
-21 | 3003 | `retain_days` reads by `action`, through one mapping (`read_policy_row`)
-21 | 3003 | the total horizon stays the stream's §7 total, never shorter than the hot window
-21 | 4482 | a `retention_purge` audit entry records symbol, stream, range and row count
-21 | 4496 | | `trades`                              | 30 d
-21 | 4497 | | `orderbook_deltas`                    | 7 d
-21 | 4501 | Irreplaceable (no REST history)
-21 | 4505 | Rebuildable from `trades` while trades exist
-21 | 4511 | | **Pinned symbol (any stream)**
-24 | 3752 | class RetentionRule(BaseModel):
-24 | 3764 | Daily retention job (03:00 UTC): move hot→cold past `hot_days`
-04 | 366 | A Manager (not the Owner) changes global retention policy
-04 | 924 | | SR-099 | Retention jobs MUST honour pins, run dry-run-first with a report
-04 | 1137 | | `recording:write`                                  |  ✔(step-up for purge/retention)
-04 | 1183 | Pin a recording / change retention (add, update: with `pinned` or `retention_days`)
+22 | 11767 | (ADR-0004), so a restart loses every
+22 | 14333 | operationId: purgeRecordedData
+22 | 16587 | StreamKind:
+22 | 16603 | RetentionAction:
+22 | 18382 | RetentionPolicyInput:
+22 | 18387 | retain_days: { type: integer, minimum: 1, maximum: 3650 }
+22 | 18395 | RetentionPolicy:
+22 | 21105 | status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+21 | 2899 | market data is mainnet even for demo trading
+21 | 2905 | retention_days    integer,                              -- NULL → use retention_policies default
+21 | 2974 | #### 3.6.3 `retention_policies`
+21 | 3003 | Resolution order for a (symbol, stream): pinned symbol → infinite retention
+21 | 3005 | `retain_days` reads by `action`, through one mapping (`read_policy_row`)
+21 | 3005 | the total horizon stays the stream's §7 total, never shorter than the hot window
+21 | 4506 | a `retention_purge` audit entry records symbol, stream, range and row count
+21 | 4520 | | `trades`                              | 30 d
+21 | 4521 | | `orderbook_deltas`                    | 7 d
+21 | 4525 | Irreplaceable (no REST history)
+21 | 4529 | Rebuildable from `trades` while trades exist
+21 | 4535 | | **Pinned symbol (any stream)**
+24 | 3854 | class RetentionRule(BaseModel):
+24 | 3866 | Daily retention job (03:00 UTC): move hot→cold past `hot_days`
+04 | 368 | A Manager (not the Owner) changes global retention policy
+04 | 926 | | SR-099 | Retention jobs MUST honour pins, run dry-run-first with a report
+04 | 1139 | | `recording:write`                                  |  ✔(step-up for purge/retention)
+04 | 1185 | Pin a recording / change retention (add, update: with `pinned` or `retention_days`)
 11 | 4146 | Then it reports exactly what would be deleted, by symbol, range and size, before anything is removed
 11 | 4895 | Then a preview of the impact is shown and typed confirmation is required
 12 | 111 | | R-340 | `/admin/recorder` | Recorder & retention config
 13 | 440 | **Screens:** SCR-140, SCR-141, SCR-142, SCR-100, SCR-103, SCR-047
-20 | 884 | | `CV_RECORDER_RETENTION_DAYS`     | int    | `30`
+20 | 896 | | `CV_RECORDER_RETENTION_DAYS`     | int    | `30`
 15 | 119 | ### CMP-008 NumericStepperInput
-15 | 426 | ### CMP-040 FormField
-15 | 464 | ### CMP-044 ConfirmDialog
-15 | 659 | ### CMP-065 FormSection
-15 | 799 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
-15 | 872 | ### CMP-087 AdminLayout (RBAC-gated shell)
-15 | 927 | ### CMP-093 AuditActionTrigger
+15 | 433 | ### CMP-040 FormField
+15 | 473 | ### CMP-044 ConfirmDialog
+15 | 671 | ### CMP-065 FormSection
+15 | 811 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
+15 | 884 | ### CMP-087 AdminLayout (RBAC-gated shell)
+15 | 940 | ### CMP-093 AuditActionTrigger
 05 | 90 | ### 3.4 Focus management in dense layouts
 05 | 144 | ### 6.2 Layer 2 — ARIA live regions for streaming updates
 E09 | 39 | Has the **server** just refused this control's action or route
@@ -317,7 +326,7 @@ STREAM_TABLE = (
 # frame or kind | stage | before | after — each side "stream days action", pairs joined by ";". The
 # numbers are fixture keys ({seed_*} the `21` section 7 seed, {example_days} `22`'s override row, the
 # rest EXAMPLE). A side's total horizon is its days for `drop` and max(its days, the section 7 total)
-# for `archive_parquet` (`21` :3003); a change is a reduction when any pair's total shrinks.
+# for `archive_parquet` (`21` :3005); a change is a reduction when any pair's total shrinks.
 # `SCR-141/confirm-kinds` stands for every K row.
 DIFF_TABLE = """
 SCR-141/editing-dirty-lengthen | edit | trades {seed_trades} archive_parquet | trades {lengthen_to} archive_parquet
@@ -333,7 +342,7 @@ K1 | confirm | trades {seed_trades} archive_parquet | trades {reduce_to} drop
 K2 | confirm | trades {reduce_to} drop | trades {drop_lower_to} drop
 K3 | confirm | trades {seed_trades} archive_parquet | trades {override_days} drop
 K4 | confirm | trades {override_days} archive_parquet | trades {reduce_to} drop
-K5 | confirm | trades {seed_trades} archive_parquet; orderbook_snapshot {seed_orderbook_snapshot} archive_parquet | trades {reduce_to} drop; orderbook_snapshot {reduce_to} drop
+K5 | confirm | trades {seed_trades} archive_parquet; orderbook_delta {seed_orderbook_delta} archive_parquet | trades {reduce_to} drop; orderbook_delta {reduce_to} drop
 K6 | confirm | trades {long_days} drop | trades {seed_trades} archive_parquet
 K7 | confirm | trades {long_days} archive_parquet | trades {seed_trades} archive_parquet
 """
@@ -346,6 +355,22 @@ MUTATIONS = {
     "kinds": "lacks the undo line",
     "typed": "lacks the typed field",
     "plain": "takes no typed confirm",
+    "title": "share a title",
+    "nothing": "says Nothing is deleted",
+    "producer": "names the plain confirm",
+    "applynow": "lacks the Apply-now qualifier",
+    "bodynow": "does not cover the lengthening confirm",
+    "trigger": "does not leave Apply now unticked",
+}
+# "Nothing is deleted." on the lengthening confirm holds only while Apply now is unticked (`22`
+# :5246: a run started now still deletes what the current rules make eligible).
+APPLY_NOW_QUALIFIER = "true only while Apply now is unticked — with it ticked the body is"
+# frame | the derived strings its Shows cell must carry (the drawn sizes, gated where they are drawn)
+FRAME_SENTENCES = {
+    "SCR-141/preview": ("preview_row", "preview_total"),
+    "SCR-141/estimate": ("estimate",),
+    "SCR-141/confirm-lengthen": ("lengthen_body",),
+    "SCR-141/pinned-list": ("pinned_row",),
 }
 # section | pattern — the counted frame rows per spec section (start, end, regex).
 COUNTS = (
@@ -578,12 +603,13 @@ def fixture(facts: dict[str, Any]) -> dict[str, Any]:
     """The spec's worked examples, derived from the `22` storage example and the `21` section 7 seed.
 
     The reduction is the ticket's trades 30 -> 7 days WITH the action set to `drop`: under `22`
-    :5083-5085 a lowered `retain_days` on an `archive_parquet` row whose total stays the section 7
-    total only moves days to Parquet sooner (a tiering change). The fallback size is `used_bytes` per
+    :5239-5241 a lowered `retain_days` on an `archive_parquet` row only moves days to Parquet sooner
+    (a tiering change) while its hot window stays at or under the section 7 total. The fallback size is `used_bytes` per
     symbol across all its streams; its range is clamped to the recorded history (start =
     generated_at - used_bytes / daily_growth_bytes), and when nothing predates the cut-off the
     sentence says so. The long-window example (EXAMPLE long_days) is the total that falls to the
-    section 7 total when its row becomes Move to Parquet after the seed days.
+    section 7 total when its row becomes Move to Parquet after the seed days; with a hot window above
+    the section 7 total (EXAMPLE long_hot_days) the total is that hot window.
     """
     ex = facts["storage_example"]
     seed = facts["seed"]
@@ -683,6 +709,11 @@ def sentences(fx: dict[str, Any]) -> dict[str, str]:
     lead = f"Trades for {sym} older than {n} days"
     every = "and at every run after it, Parquet included."
     title_total = f"Shorten trades retention to {m} months?"
+    move = "Move trades to Parquet and shorten retention to"
+    hot = int(fx["long_hot_days"])
+    # `{total}` = max(the hot window, the section 7 total): days when the hot window is the larger
+    long_words = f"{hot} days" if hot > m * 365 / 12 else f"{m} months"
+    cap = f"{int(fx['cap_gb']):,}"
     return {
         "consequence": f"{lead} become eligible for deletion {TIMING[0]} {every} {size}",
         "consequence_now": (
@@ -698,7 +729,7 @@ def sentences(fx: dict[str, Any]) -> dict[str, str]:
         "pinned_note": f"{fx['pinned_symbol']} is pinned and is not affected.",
         "tiering": (
             f"Moves trades older than {n} days to Parquet sooner; it is still kept for {m} months. "
-            "Nothing is deleted."
+            "This change deletes nothing."
         ),
         "help_archive": (
             "Days in the fast store before the nightly move to Parquet. "
@@ -706,6 +737,17 @@ def sentences(fx: dict[str, Any]) -> dict[str, str]:
         ),
         "title": f"Delete trades after {n} days?",
         "title_total": title_total,
+        "title_total_move": f"{move} {m} months?",
+        "title_total_long": f"{move} {long_words}?",
+        "estimate": (
+            f"Under this policy the fast store settles at most about {fx['steady_gb']} GB "
+            f"({fx['steady_pct']} % of {cap} GB), plus pinned data."
+        ),
+        "lengthen_body": (
+            f"Nothing is deleted. The fast store settles at most about {fx['steady_gb']} GB, "
+            "plus pinned data."
+        ),
+        "pinned_row": f"⚲ {fx['pinned_symbol']} · {fx['pinned_gb']} GB · Exempt (pinned)",
         "preview_row": row,
         "preview_total": total,
         "kind_titles": " · ".join(
@@ -715,7 +757,7 @@ def sentences(fx: dict[str, Any]) -> dict[str, str]:
                 f"Delete {sym} trades after {fx['override_days']} days?",
                 f"Remove the {sym} trades rule?",
                 "Shorten retention for 2 streams?",
-                title_total,
+                f"{move} {m} months?",
                 title_total,
             ]
         ),
@@ -733,7 +775,7 @@ def horizon(text: str) -> float:
 
 
 def side_totals(side: str, totals: dict[str, str]) -> dict[str, float]:
-    """`21` :3003: the total is the days for `drop`, never shorter than the hot window otherwise."""
+    """`21` :3005: the total is the days for `drop`, never shorter than the hot window otherwise."""
     out: dict[str, float] = {}
     for pair in side.split(";"):
         stream, days, action = pair.split()
@@ -792,7 +834,7 @@ def gates(
     deck = section(spec, 14, 15)
     if SENTENCE_14 not in deck:
         bad.append(
-            "spec section 14: the `14` :2753 validation sentence is not in the copy deck byte-for-byte"
+            "spec section 14: the `14` :2769 validation sentence is not in the copy deck byte-for-byte"
         )
     if not facts["sentence_14_present"]:
         bad.append("`14`: the validation sentence is gone from the catalogue")
@@ -807,6 +849,10 @@ def gates(
         "help_archive",
         "title",
         "title_total",
+        "title_total_move",
+        "title_total_long",
+        "estimate",
+        "lengthen_body",
         "preview_row",
         "preview_total",
     ):
@@ -814,6 +860,27 @@ def gates(
             bad.append(
                 f"spec section 14: the {k} sentence is not in the copy deck: {sent[k][:48]!r}"
             )
+    # the Apply-now truth: the lengthening body's row carries the qualifier, the run-now body
+    # names it, and the lengthening frame's Trigger leaves Apply now unticked
+    lengthen = first(r"^(\| `retention\.confirm\.lengthen\.body` +\|.*)$", deck, MULTI)
+    if mode == "applynow":
+        lengthen = lengthen.replace(APPLY_NOW_QUALIFIER, "", 1)
+    if APPLY_NOW_QUALIFIER not in lengthen:
+        bad.append("spec section 14: retention.confirm.lengthen.body lacks the Apply-now qualifier")
+    now = first(r"^(\| `retention\.confirm\.plain\.body_now` +\|.*)$", deck, MULTI)
+    if mode == "bodynow":
+        now = now.replace("`retention.confirm.lengthen.body`", "", 1)
+    if "`retention.confirm.lengthen.body`" not in now:
+        bad.append(
+            "spec section 14: retention.confirm.plain.body_now does not cover the lengthening confirm"
+        )
+    trig = first(r"^\| `SCR-141/confirm-lengthen` +\| ([^|]*)\|", spec, MULTI)
+    if mode == "trigger":
+        trig = trig.replace("Apply now unticked", "", 1)
+    if "Apply now unticked" not in trig:
+        bad.append(
+            "spec section 5: SCR-141/confirm-lengthen's Trigger does not leave Apply now unticked"
+        )
     for title in sent["kind_titles"].split(" · "):
         if title not in deck:
             bad.append(f"spec section 14: the kind title is not in the copy deck: {title!r}")
@@ -834,7 +901,11 @@ def gates(
     tables = [(a, b) for _, a, b, p in COUNTS if p.startswith(r"^\| `SCR-141/")]
     seen: dict[str, int] = {}
     reductions = t2 = validity = 0
-    mutated = {"consequence": False, "typed": False}
+    mutated = {"consequence": False, "typed": False, "producer": False}
+    kinds = re.findall(r"^\| (K\d) +\|(.*)$", section(spec, 5, 6), MULTI)
+    # the typed instruction each kind's inset draws, in the kinds table's order (its typed value)
+    want_typed = [first(r"`([^`]+)`", cells("|" + rest)[-1]) for _, rest in kinds]
+    kinds_shows = ""
     for a, b in sorted(set(tables)):
         for name, c in frame_rows(spec, a, b):
             seen[name] = seen.get(name, 0) + 1
@@ -842,6 +913,9 @@ def gates(
                 bad.append(f"spec section {a}: {name} has fewer than five columns")
                 continue
             shows, cls = c[2], c[3]
+            for k in FRAME_SENTENCES.get(name, ()):
+                if sent[k] not in shows:
+                    bad.append(f"spec section {a}: frame {name} lacks the derived {k}: {sent[k]!r}")
             d = diff.get(name, {"stage": "", "kinds": False, "reduction": False})
             said = "destructive" in cls or "reduction" in cls
             if said != d["reduction"]:
@@ -860,6 +934,15 @@ def gates(
                 if mode == "typed" and confirm and not d["kinds"] and not mutated["typed"]:
                     mutated["typed"] = True
                     row_text = row_text.replace(TYPED_LABEL, "")
+                producer = c[1]
+                if mode == "producer" and d["kinds"] and not mutated["producer"]:
+                    mutated["producer"] = True
+                    producer = PLAIN_MARKS[0] + ": " + producer
+                # the plain marks, read from the Producer, Shows and Class cells alike
+                if any(pm in cell for pm in PLAIN_MARKS for cell in (producer, row_text, cls)):
+                    bad.append(f"spec section {a}: reduction frame {name} names the plain confirm")
+                if d["kinds"]:
+                    kinds_shows = row_text
                 titles = sent["kind_titles"].split(" · ")
                 if d[
                     "kinds"
@@ -883,9 +966,9 @@ def gates(
                             f"spec section {a}: destructive frame {name} lacks the typed field "
                             f"(its quoted label {TYPED_LABEL})"
                         )
-                    if any(pm in row_text for pm in PLAIN_MARKS):
+                    if "typed" not in cls:
                         bad.append(
-                            f"spec section {a}: destructive frame {name} is drawn as a plain confirm"
+                            f"spec section {a}: destructive frame {name}'s Class cell lacks typed"
                         )
                     if UNDO not in row_text:
                         bad.append(
@@ -917,13 +1000,22 @@ def gates(
     for name in diff:
         if name.startswith("SCR-141/") and name not in seen:
             bad.append(f"DIFF_TABLE: frame {name} is not in the spec's state tables")
-    for k in ("consequence", "typed"):
+    for name in FRAME_SENTENCES:
+        if name not in seen:
+            bad.append(f"spec: frame {name} is not in the spec's state tables")
+    for k in ("consequence", "typed", "producer"):
         if mode == k and not mutated[k]:
             bad.append(f"mutation: no frame to mutate for {k}")
+    got_typed = re.findall(r'"Type ([^"]+) to confirm"', kinds_shows)
+    if kinds_shows and got_typed != want_typed:
+        bad.append(
+            f"spec section 5: the kinds frame's typed instructions {got_typed} differ from the "
+            f"kinds table's typed values {want_typed}"
+        )
     # the reduction-kinds table (section 5): every kind is a reduction by its horizons and takes the
-    # typed confirm: a title ending "?", a body with the undo line (or the `retention.confirm.body`
-    # reference, whose deck row carries it) and a typed value in code style, never the plain confirm
-    kinds = re.findall(r"^\| (K\d) +\|(.*)$", section(spec, 5, 6), MULTI)
+    # typed confirm: a title ending "?" no other kind shares, a body with the undo line (or the
+    # `retention.confirm.body` reference, whose deck row carries it) and never "Nothing is deleted.",
+    # and a typed value in code style, never the plain confirm
     plain_target = next(
         (
             k
@@ -934,13 +1026,28 @@ def gates(
         ),
         "",
     )
-    mutated_k = mutated_p = False
+    mutated_k = mutated_p = mutated_t = mutated_n = False
+    title_of: dict[str, str] = {}
+    k6_title = next((cells("|" + r)[2] for k, r in kinds if k == plain_target), "")
     for kid, rest in kinds:
         c = cells("|" + rest)
         if len(c) < 5:
             bad.append(f"spec section 5: kind {kid} has fewer than five columns")
             continue
         body, typed = c[3], c[4]
+        if mode == "title" and kid == "K7" and k6_title:
+            mutated_t = True
+            c[2] = k6_title
+        if mode == "nothing" and kid == plain_target:
+            mutated_n = True
+            body += " Nothing is deleted."
+        fixture_title = (re.findall(r'"([^"]+\?)"', c[2]) or [""])[-1]
+        twin = next((k for k, tt in title_of.items() if tt == fixture_title), "")
+        if twin:
+            bad.append(f"spec section 5: kinds {twin} and {kid} share a title {fixture_title!r}")
+        title_of[kid] = fixture_title
+        if any("Nothing is deleted." in cell for cell in (*c[:3], body)):
+            bad.append(f"spec section 5: kind {kid} says Nothing is deleted.")
         if mode == "kinds" and not mutated_k:
             mutated_k = True
             body = body.replace("It cannot be undone.", "").replace("`retention.confirm.body`", "")
@@ -974,6 +1081,10 @@ def gates(
     if mode == "kinds" and kinds and not mutated_k:
         bad.append("mutation: no reduction kind to mutate")
     if mode == "plain" and not mutated_p:
+        bad.append("mutation: no drop -> archive_parquet kind to mutate")
+    if mode == "title" and not mutated_t:
+        bad.append("mutation: no K7 / K6 pair to mutate")
+    if mode == "nothing" and not mutated_n:
         bad.append("mutation: no drop -> archive_parquet kind to mutate")
     # the classification table: the view-as row first among the gated rows; the absences row present
     s1 = section(spec, 1, 2)
@@ -1149,7 +1260,7 @@ def main(argv: list[str]) -> int:
     numbers["validity_frames"] = sum("validity" in c[3] for c in all_rows if len(c) > 3)
     numbers["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
     numbers["kinds"] = count(r"^\| K\d +\|", section(spec, 5, 6))
-    numbers["checklist_items"] = count(r"^\| 14:2759 ", spec)
+    numbers["checklist_items"] = count(r"^\| 14:2775 ", spec)
     numbers["checklist_boxes_14"] = facts["checklist_boxes_14"]
     numbers["typed_kinds"] = sum(
         bool(v["reduction"]) for k, v in diff.items() if re.fullmatch(r"K\d+", k)
