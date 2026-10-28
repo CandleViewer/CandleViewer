@@ -1016,11 +1016,12 @@ def test_20_23_24_and_e29_carry_each_private_stream_across_the_lane_bridge() -> 
         row,
         "its credential store inside M2 (OM-D14), L1d-2b's stream bridge, its bounds in "
         "`candleviewer/oms/config.py`, a constants-only leaf, and L4's",
-        "the adapter's `ExchangeBybitService.trading_port`, which signs on the serving loop and "
-        "has had no product caller since L1d-1 (`test_serving_trading_port_callers.py` counts "
-        "them), stays until L1d-2c, which deletes it.",
+        "L1d-2c removed the adapter's `ExchangeBybitService.trading_port`, which signed on the "
+        "serving loop and had had no product caller since L1d-1; "
+        "`test_serving_trading_port_callers.py` pins its absence and `exposure_port`'s one "
+        "product caller, the exposure read.",
     )
-    assert "L1d-2 decides" not in row
+    assert "L1d-2 decides" not in row and "stays until L1d-2c" not in row
     assert "Revision 23 records #913 L1d-2b's bridge" in _words(text)
     assert [line for line in lines if "| Revision 23, #913 L1d-2b" in line]
 
@@ -1264,4 +1265,20 @@ def test_24_and_the_route_name_the_stall_fences_step_10_answer_counted_never_aud
         _words(ast.get_docstring(not_ready) or ""),
         "Step 3's answer, and step 10's when the serving loop's stall fence refuses the switches "
         "(24 Sec.8.4 `TradingSwitches`): counted, never audited (24 Sec.8.4)",
+    )
+
+
+def test_e29_records_l1d2c_removing_the_serving_loops_trading_port() -> None:
+    """#913 L1d-2c: E29 records the adapter's serving-loop `trading_port` as removed, in its
+    revision 25 and its change log, and §11's order-lane row says so (the row's text is pinned
+    above, beside L1d-2b's)."""
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    text = threat.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    assert "Revision 25 records #913 L1d-2c's removal of the adapter's serving-loop" in _words(text)
+    [log] = [_words(line) for line in lines if "| Revision 25, #913 L1d-2c" in line]
+    assert not _missing(
+        log,
+        "`exposure_port`, for the exposure read, is the serving loop's one remaining port builder",
+        "No STRIDE row, rating or count changes |",
     )

@@ -9,7 +9,8 @@ account's stream from the adapter's one registry (`open_private_stream`). A port
 serving loop for trading would sign there and send outside the OMS's anchors and write-ahead
 audit (C-2.9). An attribute `trading_port` anywhere in `candleviewer/` or `cvdev/`, called or
 passed on, a call that reaches it by its name, or the method added back fails here, and a
-security review decides it (C-2.2).
+security review decides it (C-2.2). The file also pins `exposure_port`, the serving loop's one
+remaining port builder, to its one product caller, the exposure read (`exposure_wiring.py`).
 
 Limits: these are AST checks, as in `test_account_rest_transport_callers.py`: an alias of the
 method or a name built at run time is not caught.
