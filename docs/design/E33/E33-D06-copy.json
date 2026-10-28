@@ -100,7 +100,8 @@
       "owner": "E33-D02",
       "status": "binding-pending-owner",
       "announce": "none",
-      "source": "D02:358"
+      "source": "D02:358",
+      "frozen": "FZ-12"
     },
     "stop.at_bybit.1": {
       "string": "Stop at Bybit ✓ 63,900.0",
@@ -504,7 +505,8 @@
       "owner": "E33-D02",
       "status": "PROPOSED",
       "announce": "none",
-      "source": "D02:373"
+      "source": "D02:373",
+      "frozen": "FZ-13"
     },
     "case1.row.1": {
       "string": "Not visible for 3 min 12 s",
@@ -512,7 +514,8 @@
       "owner": "E33-D02",
       "status": "binding-pending-owner",
       "announce": "none",
-      "source": "D02:374"
+      "source": "D02:374",
+      "frozen": "FZ-11"
     },
     "case1.row.2": {
       "string": "Can't send — reconnecting",
@@ -520,7 +523,8 @@
       "owner": "E33-D02",
       "status": "binding-pending-owner",
       "announce": "none",
-      "source": "D02:374"
+      "source": "D02:374",
+      "frozen": "FZ-11"
     },
     "case3.resume": {
       "string": "Back online after 3 min 51 s. While you were away: TWAP a_12 sent 1 slice (0.20 BTC)…",
@@ -529,7 +533,8 @@
       "status": "binding-pending-owner",
       "announce": "assertive",
       "source": "D02:375",
-      "rt": "RT-09"
+      "rt": "RT-09",
+      "frozen": "FZ-14"
     },
     "halt.restart": {
       "string": "Restart with remaining 0.80 BTC…",
@@ -537,7 +542,8 @@
       "owner": "E33-D02",
       "status": "binding-pending-owner",
       "announce": "none",
-      "source": "D02:376"
+      "source": "D02:376",
+      "frozen": "FZ-16"
     },
     "v.slice_min": {
       "string": "Slices of {0.0004} BTC are below the minimum — reduce slice count.",
@@ -942,7 +948,8 @@
       "status": "binding-pending-owner",
       "announce": "assertive",
       "source": "D03:379",
-      "rt": "RT-04"
+      "rt": "RT-04",
+      "frozen": "FZ-15"
     },
     "residual.entry.2": {
       "string": "… it did not fill: [Close 0.500 BTC]",
@@ -950,7 +957,8 @@
       "owner": "E33-D03",
       "status": "binding-pending-owner",
       "announce": "none",
-      "source": "D03:379"
+      "source": "D03:379",
+      "frozen": "FZ-15"
     },
     "residual.exit": {
       "string": "The take-profit of OCO a_16 filled at 14:03:10 UTC while CandleViewer could not manage it; the other exit was cancelled at 14:05:44, 2 min 34 s later.",
@@ -959,7 +967,8 @@
       "status": "binding-pending-owner",
       "announce": "assertive",
       "source": "D03:380",
-      "rt": "RT-04"
+      "rt": "RT-04",
+      "frozen": "FZ-15"
     },
     "residual.todo.1": {
       "string": "Nothing to do — the extra was closed.",
@@ -992,7 +1001,8 @@
       "status": "binding-pending-owner",
       "announce": "none",
       "source": "D03:382",
-      "rt": "RT-26"
+      "rt": "RT-26",
+      "frozen": "FZ-11"
     },
     "banner.case2.1": {
       "string": "No new algo orders: CandleViewer's live link to Bybit is down. On Main since 14:02:11 UTC. Orders already at Bybit stay there and can still fill, and your stop-losses at Bybit keep working. You can still cancel the algos: [Cancel algos on Main]. Algos stay paused when the connection is back: press Resume.",
@@ -1009,7 +1019,8 @@
       "owner": "E33-D03",
       "status": "binding-pending-owner",
       "announce": "none",
-      "source": "D03:383"
+      "source": "D03:383",
+      "frozen": "FZ-12"
     },
     "banner.resume.1": {
       "string": "Back online after 3 min 51 s. While you were away: TWAP a_12 sent 1 slice (0.20 BTC); chase a_13 filled at 64,004.0; iceberg a_14 waited 0:21 for Bybit and is running again.",
@@ -1018,7 +1029,8 @@
       "status": "binding-pending-owner",
       "announce": "assertive",
       "source": "D03:384",
-      "rt": "RT-09"
+      "rt": "RT-09",
+      "frozen": "FZ-14"
     },
     "banner.resume.2": {
       "string": "Running again at 14:02:32 UTC after 0:21 without Bybit — checked first.",
@@ -1027,7 +1039,8 @@
       "status": "binding-pending-owner",
       "announce": "polite",
       "source": "D03:384",
-      "rt": "RT-12"
+      "rt": "RT-12",
+      "frozen": "FZ-14"
     },
     "header.checked.1": {
       "string": "Checked with Bybit 12 s ago",
@@ -1524,7 +1537,8 @@
       "status": "binding-pending-owner",
       "announce": "assertive",
       "source": "D03:236",
-      "rt": "RT-06"
+      "rt": "RT-06",
+      "frozen": "FZ-16"
     },
     "banner.account_down.2": {
       "string": "… its safety rule cancelled 4 orders at Bybit. Resume places new orders: TWAP a_12 has 0.80 BTC left over 12 min.",
@@ -1533,7 +1547,8 @@
       "status": "binding-pending-owner",
       "announce": "assertive",
       "source": "D03:236",
-      "rt": "RT-06"
+      "rt": "RT-06",
+      "frozen": "FZ-16"
     },
     "banner.account_down.3": {
       "string": "… nothing at Bybit was changed. Press Resume to continue.",
@@ -1542,7 +1557,8 @@
       "status": "binding-pending-owner",
       "announce": "assertive",
       "source": "D03:236",
-      "rt": "RT-06"
+      "rt": "RT-06",
+      "frozen": "FZ-16"
     },
     "state.halted_authority": {
       "string": "Halted — {user} can no longer trade on {account} — {when}",
@@ -1760,6 +1776,16 @@
       "id": "preview.slippage",
       "owner": "E30-D02",
       "source": "E30-D02:429"
+    },
+    {
+      "id": "refusal.account_locked",
+      "owner": "E30-D02",
+      "source": "E30-D02:442"
+    },
+    {
+      "id": "refusal.kill_switch_engaged",
+      "owner": "E30-D02",
+      "source": "E30-D02:443"
     },
     {
       "id": "ratelimit.scope.exchange",

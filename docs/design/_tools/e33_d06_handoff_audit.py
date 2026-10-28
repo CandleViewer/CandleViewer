@@ -6,9 +6,9 @@ AS TEXT at the pinned base `c888406d2` (`git show`): the plan texts the spec cit
 design texts D01..D05 with the D03 and D04 hand-offs, the E33 threat model, the backlog JSON, the
 calendar, the token JSON and the board tree; D04 and D05 at their merges for the lifted sections;
 and, from the working tree, the spec `docs/design/E33/E33-D06.md`, the deck
-`docs/design/E33/E33-D06-copy.json`, `14` and the files the pack must not edit. It is adapted from
-the E35-D05 (#940) tool: the same modes, the same value, pin and mutation machinery, and gates
-re-cut for this pack's tables.
+`docs/design/E33/E33-D06-copy.json`, `14` and the files the pack must not edit. Provenance: it
+was adapted from the E35-D05 (#940) tool, its model (the same modes, the same value, pin and
+mutation machinery); its gates are re-cut for this pack's tables.
 
 1. **Values.** Every `{{KIND:key}}` is a placeholder that `--fill` writes as
    `VALUE<!--=KIND:key-->`: COUNT (boards in the base tree, the spec's own table rows, the deck's
@@ -22,7 +22,7 @@ re-cut for this pack's tables.
    must be a non-blank line (G-CITE); quoted copy and every backticked `algo.*` name in the spec
    must occur verbatim in a doc its line cites or in the ticket JSON (G-QUOTE); every deck string
    must equal a whole quote, or one item of a colon-led list, of its source line, never a substring
-   (G-DECK), and every quoted string of the parents' deck spans must be in the deck, carried by
+   (G-DECK; for a frozen string, G-FROZEN's `frozen:FZ-nn` byte check owns it), and every quoted string of the parents' deck spans must be in the deck, carried by
    cite or recorded as superseded (the union, G-DECK).
 3. **Gates.** One FAIL line per gate. Measured gates read the spec's tables cell by cell
    (G-FRAMES, G-STATES, G-REDLINE, G-API, G-VERBS, G-CMP, G-STORY, G-FROZEN, G-LIFT, G-LAYER,
@@ -85,7 +85,7 @@ TOOL_REL = "docs/design/_tools/e33_d06_handoff_audit.py"
 PIN_REL = "docs/design/_tools/e33_d06_ruled_pins.txt"
 PLAN14 = "docs/plan/14-screens-catalogue.md"
 OWN = (SPEC_REL, DECK_REL, TOOL_REL, PIN_REL, PLAN14)
-LINE_BUDGET = 300  # BQ-2's default: within the E35-D05 line budget
+LINE_BUDGET = 300  # BQ-2 RULED (comment 6476926665): the 300-line budget holds
 
 CITE_FILES = {
     "D01": "docs/design/research/e33-emulated-algo-trust.md",
@@ -183,6 +183,17 @@ FROZEN = {
     "FZ-08": ("v.slice_min", "v.visible"),
     "FZ-09": ("v.over_budget.1", "not_started"),
     "FZ-10": ("cancel.flatten.2", "control.2"),
+    "FZ-11": ("banner.case1", "case1.row.1", "case1.row.2"),
+    "FZ-12": ("stop.disconnect", "banner.case2.2"),
+    "FZ-13": ("case2.resumes",),
+    "FZ-14": ("banner.resume.1", "banner.resume.2", "case3.resume"),
+    "FZ-15": ("residual.entry.1", "residual.entry.2", "residual.exit"),
+    "FZ-16": (
+        "banner.account_down.1",
+        "banner.account_down.2",
+        "banner.account_down.3",
+        "halt.restart",
+    ),
 }
 # The parents' deck spans whose quoted strings the deck must hold (doc, first, last, cell index),
 # and the colon-led label list of D03:390.
@@ -698,6 +709,7 @@ def compute(t: Texts) -> Values:
     v["COUNT:deck.events"] = str(len(ev) if isinstance(ev, list) else 0)
     v["COUNT:deck.carried"] = str(len(carried(t)))
     v["COUNT:fz"] = str(len(fz_rows(t.spec)))
+    v["COUNT:budget"] = str(LINE_BUDGET)
     reg = d04_register()
     ids_all = dark_all = light_all = 0
     for lid, (n, prefix) in LAYER.items():
@@ -1164,7 +1176,7 @@ def deck_findings(t: Texts) -> list[Finding]:
         doc, n, _b = src[0]
         if e.get("owner") != f"E33-{doc}" or e.get("owner") not in OWNERS:
             D(f"{k}: owner {e.get('owner')!r} is not its source's spec")
-        if s not in wholes(doc, n):
+        if k not in fz_of and s not in wholes(doc, n):  # a frozen string: G-FROZEN's byte check
             D(f"{k}: not a whole quote at {doc}:{n} (no substring)")
         if e.get("status") not in STATUSES or e.get("status") not in status_of(doc, n):
             D(f"{k}: status {e.get('status')!r}, its source row allows {status_of(doc, n)}")
@@ -1560,6 +1572,9 @@ def g_story(t: Texts) -> list[Finding]:
 
 
 def g_frozen(t: Texts) -> list[Finding]:
+    """§5's FZ rows: the keys in order, the deck's status, a pinning hook, and the Source cell
+    naming exactly its keys' source lines (the first key's first). `frozen:FZ-nn`: every frozen
+    deck string is byte-identical to a whole quote of its parent line at the base."""
     bad = []
     rows = fz_rows(t.spec)
     if [r[0] for r in rows] != list(FROZEN):
@@ -1571,14 +1586,24 @@ def g_frozen(t: Texts) -> list[Finding]:
         ks = tuple(re.findall(r"`([^`]+)`", r[1]))
         if ks != FROZEN[r[0]]:
             bad.append(F("G-FROZEN", f"{r[0]}: keys {list(ks)}", sec="§5"))
-        e = es.get(ks[0]) if ks else None
-        if e is not None:
-            if cites_in(r[4]) != cites_in(str(e.get("source"))):
-                bad.append(F("G-FROZEN", f"{r[0]}: source is not the deck's", sec="§5"))
-            if str(e.get("status")) != r[3]:
-                bad.append(F("G-FROZEN", f"{r[0]}: status is not the deck's", sec="§5"))
+        srcs = [cites_in(str(es[k].get("source"))) for k in ks if k in es]
+        lines = list(dict.fromkeys((c[0], c[1]) for s in srcs for c in s))
+        cited = [(d, x) for d, a, b in cites_in(r[4]) for x in range(a, b + 1)]
+        if lines and (cited[:1] != lines[:1] or sorted(set(cited)) != sorted(lines)):
+            bad.append(F("G-FROZEN", f"{r[0]}: source is not the deck's", sec="§5"))
+        if any(str(es[k].get("status")) != r[3] for k in ks if k in es):
+            bad.append(F("G-FROZEN", f"{r[0]}: status is not the deck's", sec="§5"))
         if f"frozen:{r[0]}" not in r[5]:
             bad.append(F("G-FROZEN", f"{r[0]}: no pinning test hook", sec="§5"))
+    for z, ks in FROZEN.items():
+        for k in ks:
+            e = es.get(k)
+            src = cites_in(str(e.get("source", ""))) if e is not None else []
+            if e is None or len(src) != 1:
+                continue  # G-DECK reports a missing entry or a malformed source
+            if str(e.get("string", "")) not in wholes(src[0][0], src[0][1]):
+                bad.append(F("G-FROZEN", f"frozen:{z}: {k} is not byte-identical to"
+                             f" {src[0][0]}:{src[0][1]}", "deck", "strings"))  # fmt: skip
     return bad
 
 
@@ -1659,7 +1684,7 @@ LOG_UNION = (
     + ["D04-Q2"]
     + [f"D05 Q-{n:02d}" for n in range(1, 5)]
     + ["TM D6", "TM D7", "TM D8"]
-    + [f"P-{n:02d}" for n in range(1, 5)]
+    + [f"P-{n:02d}" for n in range(1, 4)]
     + [f"D02-G{n}" for n in range(1, 14)]
     + [f"D03-G{n}" for n in range(1, 12)]
     + ["D03-CG1"]
@@ -1669,7 +1694,7 @@ LOG_UNION = (
     + [f"D03-C{n}" for n in range(1, 18)]
     + [f"D04-C{n}" for n in range(1, 16)]
     + [f"D05 C-{n:02d}" for n in range(1, 31)]
-    + [f"G-P{n}" for n in range(1, 4)]
+    + [f"G-P{n}" for n in range(1, 5)]
 )
 
 
@@ -1852,10 +1877,19 @@ def g_session(t: Texts) -> list[Finding]:
 # The standing sentences, required verbatim in their sections, and the opposite readings refused
 # in any clause (a negation covers its own term).
 REQUIRED = (
-    ("BQ", "defaults built; ruling pending (comment 6476797633)"),
-    ("BQ", "**BQ-1** (arm and lock gating) **default built:**"),
-    ("BQ", "**BQ-2** (the line budget) **default built:**"),
-    ("BQ", "Both defaults are built and **ruling pending**"),
+    # the ruling of record (comment 6476926665), its sentences verbatim (anchors stripped)
+    ("BQ", "RULED (orchestrator, comment 6476926665)"),
+    ("BQ", "BQ-0: the standing rules confirmed in bulk as listed."),
+    ("BQ", ("BQ-1 (security path): two compatible rules, not a conflict. D02's ruled SC-9 governs"
+            " the DRAWN behaviour (LOCKED never blocks a builder: configuring is always possible).")),
+    ("BQ", ("E33-S05's \"a disarmed user cannot submit from a builder\" is the SUBMIT gate, enforced"
+            " server-side by the kill switch, frozen, lockout and the Viewer's 403 (C-2.21, C-12.4),"
+            " and the pack SHOWS it as the ruled refused state at the submit confirm.")),
+    ("BQ", ("Quote both verbatim; record S05's wording as the C-row; the pack's AC3 line says"
+            " exactly this.")),
+    ("BQ", ("BQ-2: one state-matrix row per frame family (frame ids + anchored counts) in the spec,"
+            " per-frame rows in the deck; the 300-line budget holds; nothing from the four parents"
+            " is re-decided.")),
     ("§0", "**One spec plus the deck; no `-handoff.md`, no redraw, no new board:**"),
     ("§0", "**Nothing unmerged is pinned or quoted:**"),
     ("§2", "**Missing treatments are G-rows, never invented**"),
@@ -1916,10 +1950,7 @@ REFUSED = (
     ),
     r"\b(?:it is |it s )?(?:not|never|hardly) (?:true|the case|so|correct|accurate) that\b",
     r"\b(?:adds?|draws?|ships?|creates?) (?:\S+ ){0,2}?(?:new )?(?:penpot )?(?:boards?|pages?)\b",
-    (
-        r"\bbq (?:0|1|2)\b(?:\s+\S+){0,4}?\s+(?:is |are |was |were )?(?:ruled|approved|confirmed"
-        r"|accepted|final)\b"
-    ),
+    r"\bruling (?:is |was )?(?:still )?(?:pending|open|owed)\b|\bdefaults? (?:are |is )?built\b",
     r"\blocked (?:blocks|gates|stops)\b|\bdisarmed (?:users? )?(?:cannot|can t) (?:submit|start)\b",
     r"\bclient (?:is|writes|emits|sends) (?:the |an )?audit\b",
     r"\blive (?:is |are )?(?:enabled|allowed|available|drawn)\b",
@@ -1930,7 +1961,7 @@ REFUSED = (
 def g_ruled(t: Texts) -> list[Finding]:
     bad = []
     for key, sent in REQUIRED:
-        if sent not in h2(t.spec, key):
+        if sent not in strip_comments(h2(t.spec, key)):
             bad.append(F("G-RULED", f"{key}: the sentence {sent[:55]!r} is missing", sec=key))
     for rx in REFUSED:
         for sk, block in sections(t.spec):
@@ -2615,7 +2646,12 @@ def bust_budget(t: Texts) -> Texts:
 
 
 PROBE = "Zq8r4LmT" + "1vXc0p9W"  # built at run time, so no scanner reads it here
-BQP = "a ruling either way is a versioned delta (§13)."
+BQP = "the deck's per-frame rows and §4 by reference."
+BQ1 = (
+    ' E33-S05\'s "a disarmed user cannot submit from a builder" is the SUBMIT gate, enforced'
+    " server-side by the kill switch, frozen, lockout and the Viewer's 403 (C-2.21, C-12.4), and the"
+    " pack SHOWS it as the ruled refused state at the submit confirm."
+)
 S0 = "E33-T02's OpenAPI delta is named only."
 S5 = "routed to E33-X03 (#1109)."
 S7 = "owner approval pending (#2701)** (D05:340)."
@@ -2627,10 +2663,9 @@ S13 = "which reads as met with room once the owner approves."
 
 M = Mutation
 MUTATIONS: tuple[Mutation, ...] = (
-    M("M-01", "G-RULED", "delete the BQ paragraph's ruling-pending sentence",
-      sub(" Both defaults are built and **ruling pending**; " + BQP, "")),
-    M("M-02", "G-RULED", "write that BQ-1 was approved in the BQ paragraph",
-      say(BQP, " BQ-1 was approved.")),
+    M("M-01", "G-RULED", "delete the BQ paragraph's ruled submit-gate sentence", sub(BQ1, "")),
+    M("M-02", "G-RULED", "write that BQ-1's ruling is pending in the BQ paragraph",
+      say(BQP, " BQ-1's ruling is pending.")),
     M("M-03", "G-RULED", "write that the routing table is approved in §7",
       say(S7, " The routing table is approved.")),
     M("M-04", "G-RULED", "write that the frozen set is final in §5",
@@ -2657,7 +2692,7 @@ MUTATIONS: tuple[Mutation, ...] = (
       say(S12, " The walkthrough session was held.")),
     M("M-15", "G-SESSION", "write that engineers met and walked through the pack in §12",
       say(S12, " Two engineers met and walked through the pack.")),
-    M("M-16", "G-DECK", "change one character of the TWAP caveat in the deck",
+    M("M-16", "G-FROZEN", "change one character of the TWAP caveat in the deck",
       deck_raw("CandleViewer runs this TWAP, not Bybit.", "CandleViewer runs this TWAP, not Bybit!")),
     M("M-17", "G-DECK", "write TBD as the loading string",
       set_field("loading", "string", "TBD")),
@@ -2696,6 +2731,16 @@ MUTATIONS: tuple[Mutation, ...] = (
       cell("| CMP-103 ", 0, "CMP-115 OrderTypeSelector")),
     M("M-37", "G-STORY", "give SB-1 to E33-S06", cell("| SB-1 ", 1, "E33-S06")),
     M("M-38", "G-FROZEN", "drop FZ-03's pinning hook", cell("| FZ-03 ", 5, "the caveat")),
+    M("M-65", "G-FROZEN", "drop FZ-11's pinning hook",
+      cell("| FZ-11 ", 5, "SCR-070's banner, the row")),
+    M("M-66", "G-FROZEN", "cite the wrong parent line for FZ-12",
+      cell("| FZ-12 ", 4, "D02:358; D03:384")),
+    M("M-67", "G-FROZEN", "drop the key from FZ-13", cell("| FZ-13 ", 1, "the resume line")),
+    M("M-68", "G-FROZEN", "mark FZ-14 PROPOSED", cell("| FZ-14 ", 3, "PROPOSED")),
+    M("M-69", "G-FROZEN", "start FZ-15's source at the exit note", cell("| FZ-15 ", 4, "D03:380")),
+    M("M-70", "G-FROZEN", "list FZ-16's keys out of order",
+      cell("| FZ-16 ", 1, ("`halt.restart`, `banner.account_down.1`, `banner.account_down.2`,"
+                           " `banner.account_down.3`"))),
     M("M-39", "G-LIFT", "shorten §6's lifted span", sub("§6 (D05:241–265)", "§6 (D05:243–265)")),
     M("M-40", "G-LAYER", "cite the wrong D05 row for L-34",
       sub("the host caption carries the tag's name (D05:501)",
@@ -2740,7 +2785,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("M-62", "G-TOKEN", "name an unshipped token in §3",
       sub("`color.surface.app` with a", "`color.surface.nope` with a")),
     M("M-63", "G-MUTLIST", "rename a mutation in §15",
-      sub("M-01 delete the BQ paragraph's ruling-pending sentence",
+      sub("M-01 delete the BQ paragraph's ruled submit-gate sentence",
           "M-01 delete the BQ paragraph's sentence")),
     # pin probes (no measured or lexicon gate reads these units)
     M("P-1", "G-RULED-PIN", "reword a §1 sentence",
