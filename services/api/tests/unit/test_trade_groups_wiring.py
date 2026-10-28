@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
 from candleviewer import app as appmod
-from candleviewer import trade_groups_wiring
+from candleviewer import oms_wiring, trade_groups_wiring
 from candleviewer.accounts.trade_group_readiness import ReadinessMember, ReadinessReason, readiness
 from candleviewer.domain.order_entry import REFUSAL_REASONS, OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
@@ -26,6 +26,7 @@ from candleviewer.settings import Settings
 from candleviewer.trade_groups_wiring import GATE_REASONS, GateReadiness, NoLockouts
 from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 from tests.unit.accounts._fakes import ACC
+from tests.unit.api import test_trade_group_routes as groups
 from tests.unit.api.test_trade_group_definition_create import PATH, caller, payload
 from tests.unit.api.test_trade_group_definition_reads import CORE3, World
 
@@ -207,3 +208,22 @@ def test_the_root_gates_each_definition_write_with_the_risk_caps_step_up() -> No
         classes[key] = inspect.getclosurevars(elevation).nonlocals["action_class"]
     one = f"{PATH}/{{definitionId}}"
     assert classes == dict.fromkeys([f"POST {PATH}", f"PUT {one}", f"DELETE {one}"], "risk_caps")
+
+
+def test_the_root_mounts_the_group_reads_over_a_pool_of_their_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E28-T05 S2f: the scoped group read on a pool of its own at the OMS stores' cap, none on the
+    fake backend (503); the root mounts both routes over a reader of it, with no flag."""
+    assert oms_wiring.group_reads(Settings(storage_backend="fake")) is None
+    real = Settings(storage_backend="real", oms_statement_timeout_ms=3000)  # not the 2000 default
+    store = oms_wiring.group_reads(real)
+    assert store is not None and cast(Any, store)._timeout == "3000"
+    world = groups.World()  # the routes' store, and an owner who may read
+    monkeypatch.setattr(appmod, "group_reads", lambda _settings: world.store)
+    client = TestClient(appmod.create_app(principal_resolver=world), client=("127.0.0.1", 50000))
+    got = client.get(f"/trade-groups/{groups.PAIR.group.id}")
+    assert got.status_code == 200 and got.json()["id"] == str(groups.PAIR.group.id)
+    assert [i["id"] for i in client.get("/trade-groups").json()["items"]] == groups.ids_of(
+        *groups.NEWEST_FIRST
+    )

@@ -40,6 +40,7 @@ from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.accounts.service import AccountsService
 from candleviewer.accounts.status import AccountStatusReader
+from candleviewer.accounts.trade_group_repository import TradeGroupReader
 from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.flags import default_registry
@@ -195,6 +196,7 @@ from candleviewer.api.trade_group_definition_writes import (
     make_trade_group_definition_writes_router,
 )
 from candleviewer.api.trade_group_definitions import make_trade_group_definitions_router
+from candleviewer.api.trade_groups import make_trade_groups_router
 from candleviewer.api.trade_groups_gate import TradeGroupsGate
 from candleviewer.api.users import (
     AccountAccessStore,
@@ -335,7 +337,13 @@ from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySi
 from candleviewer.oms.service import OmsService
 from candleviewer.oms.ws_topics import FAMILIES as OMS_FAMILIES
 from candleviewer.oms_reads_wiring import oms_reads, order_versions
-from candleviewer.oms_wiring import InterimKillSwitch, OmsAudit, OmsRuntime, build_oms_runtime
+from candleviewer.oms_wiring import (
+    InterimKillSwitch,
+    OmsAudit,
+    OmsRuntime,
+    build_oms_runtime,
+    group_reads,
+)
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.heatmap_metrics import export_heatmap_metrics
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
@@ -2537,6 +2545,16 @@ def create_app(
         app.state.trade_groups_gate, _LazyAuditEmitter(ctx.audit), profiles_resolver,
         auth=ctx.auth, elevation=request_elevation(ctx.auth, "risk_caps"),
     ))  # fmt: skip
+    # E28-T05 S2f (#909): `listTradeGroups` and `getTradeGroup`, in the caller's grants, over the
+    # scoped read alone (never the system port) on a pool of its own (real backend only; else 503).
+    # No rollout flag gates a read (22).
+    group_store = group_reads(resolved)
+    app.include_router(
+        make_trade_groups_router(
+            None if group_store is None else TradeGroupReader(group_store),
+            _LazyAuditEmitter(ctx.audit), profiles_resolver, auth=ctx.auth,
+        )
+    )  # fmt: skip
     # #913 slice 3E (20 Sec.6.2): the OMS runtime over that gate, the shared profile cache above
     # and the persistence bundle's latch when there is one; its audit writer and sink are its order
     # lane's own (#913 L2). The lifespan starts it after the account health runtime and stops it

@@ -1552,6 +1552,17 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
     )
 
 
+def group_reads(settings: Settings) -> TradeGroupReads | None:
+    """The principal-scoped group reads of the REST routes (E28-T05 S2f), on a pool of their own on
+    the serving loop, not the order lane's, at the OMS stores' statement cap; `None` on the fake
+    backend (503). The adapter is built here, where the architecture test lets it be named, and
+    typed as the scoped read alone: a route that holds it cannot reach the system port (C-12.4)."""
+    if settings.storage_backend != "real":
+        return None
+    pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "group-reads")
+    return SqlAlchemyTradeGroupStore(pool, statement_timeout_ms=settings.oms_statement_timeout_ms)
+
+
 class StandaloneSink(Interim):
     """No persistence bundle is composed, so no HMAC'd journal stands beside B1's `machine_events`
     (20 Sec.6.2, CV-C53): the startup announces it as it does an interim port,

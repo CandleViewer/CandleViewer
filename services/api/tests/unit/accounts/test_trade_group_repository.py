@@ -744,7 +744,13 @@ async def test_a_scoped_list_never_serves_a_grant_a_group_without_legs_but_an_ow
         assert store.calls == [("list_groups", (scope,), _PAGE)]
 
 
-@pytest.mark.parametrize("bad", [{"limit": 0}, {"after": (datetime(2026, 10, 20), _GROUP)}])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"limit": 0}, {"after": (datetime(2026, 10, 20), _GROUP)},
+        {"created_from": datetime(2026, 10, 20)}, {"created_to": datetime(2026, 10, 20)},
+    ],
+)  # fmt: skip
 async def test_a_bad_page_argument_is_a_value_error_before_the_store_never_a_row_fault(
     bad: dict[str, Any],
 ) -> None:
