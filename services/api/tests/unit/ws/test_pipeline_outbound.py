@@ -1365,4 +1365,5 @@ async def test_the_writer_gives_the_loop_a_turn_while_it_drains_a_backlog(
         handler.cancel()
         await asyncio.wait({handler, ticker})
     runs = [len(list(sends)) for _, sends in groupby(sock.at_send[before:])]
+    assert sum(runs) >= n and len(runs) > 1  # the whole backlog was read, in more than one turn
     assert max(runs) <= gateway.WRITER_SLICE_FRAMES, runs
