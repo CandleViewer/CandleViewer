@@ -1141,9 +1141,15 @@ def test_a_merged_machines_window_discloses_nothing() -> None:
     assert not {"coalesced", "coalesced_count"} & set(merged["p"])
 
 
+#: §14.2 declares `coalesced` on `trades` from #654's contract slice (BQ9), ahead of its publisher.
+#: #654's implementation PR makes the emitter disclose it and deletes this carve-out.
+_DECLARED_AHEAD_OF_THE_EMITTER = frozenset({"trades"})
+
+
 def test_the_families_that_disclose_are_those_whose_schema_declares_coalesced() -> None:
     """§8.2 (#3268): the emitter discloses a merge on exactly the families whose payload schema
-    declares `coalesced` (§14, §15), never on another (`machines`, §15.10)."""
+    declares `coalesced` (§14, §15), never on another (`machines`, §15.10), but for the families
+    the contract declares it on ahead of their publisher."""
     from candleviewer.ws.sequencing import COALESCE_FIELDS, MERGE_DISCLOSED  # local: added by #3268
 
     declared = {
@@ -1151,7 +1157,9 @@ def test_the_families_that_disclose_are_those_whose_schema_declares_coalesced() 
         for sid, schema in SCHEMAS.items()
         if "coalesced" in schema.get("properties", {})
     }
-    assert COALESCE_FIELDS | MERGE_DISCLOSED == declared
+    assert _DECLARED_AHEAD_OF_THE_EMITTER <= declared
+    assert not _DECLARED_AHEAD_OF_THE_EMITTER & (COALESCE_FIELDS | MERGE_DISCLOSED)
+    assert COALESCE_FIELDS | MERGE_DISCLOSED == declared - _DECLARED_AHEAD_OF_THE_EMITTER
 
 
 def test_a_count_above_1_is_disclosed_with_the_flag_off_too() -> None:

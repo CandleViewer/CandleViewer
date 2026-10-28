@@ -1438,6 +1438,9 @@ export interface Options {
    * Arbitrary-precision decimal as a string; never a JSON number.
    */
   min_size?: string;
+  /**
+   * The union's widest range, the batched `liquidations` one. `trades` takes 0–2000 (SR-E22-04, §6.1), and a value above it is `invalid_options`.
+   */
   cluster_window_ms?: number;
   cluster_tolerance_ticks?: number;
   include_delta?: boolean;
@@ -2000,12 +2003,25 @@ export interface TradesSymbol {
     is_block_trade?: boolean;
     is_liquidation?: boolean;
     cluster_size?: number;
+    /**
+     * The big-trade engine's flag against the effective threshold (24 §2.10); never recomputed by a client. On a cluster, true when any member is flagged (§6.1).
+     */
+    is_big_trade?: boolean;
     tick_direction?: "PlusTick" | "ZeroPlusTick" | "MinusTick" | "ZeroMinusTick";
   }[];
   /**
    * Prints filtered out by `min_size` since the previous frame; never silent.
    */
   dropped?: number;
+  /**
+   * Arbitrary-precision decimal as a string; never a JSON number.
+   */
+  big_trade_threshold?: string;
+  coalesced?: boolean;
+  /**
+   * Source batches this frame appended (§8.6).
+   */
+  coalesced_count?: number;
 }
 
 // Source: cv://ws/v1/unsub.schema.json
