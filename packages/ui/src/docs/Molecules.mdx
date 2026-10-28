@@ -379,20 +379,25 @@ column, or a column marked `interactive`; `grid` forces it on a static table.
 | Esc                     | In an `interactive` cell's control, back to the cell; in the row menu, closes it, focus back where it opened from. |
 | Shift+F10, the Menu key | On a focused body cell, opens the row's menu at the row; T2 items stay arrow-reachable and are never activated.    |
 
-| Element      | Role                                  | Name                              | ARIA                                                                              |
-| ------------ | ------------------------------------- | --------------------------------- | --------------------------------------------------------------------------------- |
-| table        | grid                                  | the caption                       | `aria-rowcount`, `aria-colcount`; `aria-multiselectable` with a select column     |
-| cell         | gridcell (header cells: columnheader) | its content                       | the roving `tabindex` (0 on the remembered cell); a control takes it in its place |
-| row          | row                                   | —                                 | `aria-rowindex`; `aria-selected` with a select column                             |
-| select boxes | checkbox (CMP-005)                    | "Select all rows"; "Select {row}" | select-all mixed when some rows are selected                                      |
-| actions      | button (CMP-002, `more-horizontal`)   | "Actions for {row}"               | `aria-haspopup="menu"`; opens CMP-041                                             |
-| live region  | status, the table's one               | —                                 | adds the selection count ("2 selected"), once per change                          |
+| Element      | Role                                  | Name                              | ARIA                                                                                                            |
+| ------------ | ------------------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| table        | grid                                  | the caption                       | `aria-rowcount`, `aria-colcount`; `aria-multiselectable` with a select column                                   |
+| cell         | gridcell (header cells: columnheader) | its content                       | the roving `tabindex` (0 on the remembered cell); a control takes it in its place                               |
+| row          | row                                   | —                                 | `aria-rowindex`; `aria-selected` with a select column                                                           |
+| select boxes | checkbox (CMP-005)                    | "Select all rows"; "Select {row}" | select-all mixed when some rows are selected                                                                    |
+| actions      | button (CMP-002, `more-horizontal`)   | "Actions for {row}"               | `aria-haspopup="menu"`; opens CMP-041                                                                           |
+| live region  | status, the table's one               | —                                 | adds the selection count ("2 selected", rows only), once per change, and a row menu's T2 reason, once per press |
 
 `{row}` is `rowLabel(row)`, by default the first column's value when it is text or a number, else
 the row's key. A focused cell scrolls into view below the sticky header (`scroll-margin-top` is the
 header's height), so focus is never hidden under it; in grid mode a scrolling region stays a named
 landmark but takes no Tab stop of its own. Selected rows take `color.action.selected` (Highlight in
 forced colours).
+
+A press on a cell makes it the remembered cell, so a right-click opens the pressed row's menu; a
+press beside a built-in control (the select or actions cell's padding) focuses that control. Row
+menus pass CMP-041's `announceReason`, so they render no live region of their own: the table keeps
+one. A row's items (`rowActions`) are asked for only while its menu is open.
 
 Stacked (the reflow above), a grid degrades to a table: arrow navigation needs rows and columns
 laid out, so the explicit table roles return and every control (the select boxes, the actions
@@ -559,3 +564,8 @@ reads the values without their headers. Not yet confirmed with NVDA or VoiceOver
 The polite line clears as a load, a pending sort or a Retry starts, so a result identical to the
 last one (the same row count after a reload, the same failure after a Retry) is said again. The
 default empty title "No rows to show" is PROPOSED copy, pending E05-D05 review.
+
+A re-shown T2 reason is said by the menu's own polite `role="status"`, rendered only while some item
+has a reason. A host that owns its surface's one live region (CMP-049's line) passes
+`announceReason` instead: the menu then renders no region and hands each re-shown reason to the
+host.

@@ -6,6 +6,7 @@ import {
   type FocusEvent,
   type JSX,
   type KeyboardEvent,
+  type MouseEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -232,7 +233,10 @@ interface ResultInputs<T> {
   readonly sortPending: string | undefined;
   readonly loading: boolean;
   readonly error: TableError | undefined;
-  /** The selected row count, or `undefined` without a select column. */
+  /**
+   * The count of selected keys among the rows, or `undefined` without a select column or rows (loading, empty,
+   * error): an undefined count says nothing and keeps the last one, so a reload with the same selection is silent.
+   */
   readonly selectedCount: number | undefined;
 }
 
@@ -241,6 +245,10 @@ interface ResultLine {
   readonly line: string;
   /** Call as a Retry starts: clears the line so the next result, even an identical one, is said again. */
   readonly retryStarted: () => void;
+  /** Re-keys the line on each call, so the same text (a T2 reason pressed twice) is said again. */
+  readonly nonce: number;
+  /** Says a row menu's re-shown T2 reason (CMP-041 `announceReason`), once per press. */
+  readonly say: (text: string) => void;
 }
 
 /**
@@ -300,15 +308,21 @@ function useResultLine<T>({
   // A selection change is said once per new count (never the first render's count).
   const lastCount = useRef(selectedCount);
   useEffect(() => {
-    if (selectedCount === lastCount.current) return;
+    if (selectedCount === undefined || selectedCount === lastCount.current) return;
+    const first = lastCount.current === undefined;
     lastCount.current = selectedCount;
-    if (selectedCount !== undefined) setLine(`${selectedCount} selected`);
+    if (!first) setLine(`${selectedCount} selected`);
   }, [selectedCount]);
+  const [nonce, setNonce] = useState(0);
   const retryStarted = (): void => {
     retriedFrom.current = error;
     setLine("");
   };
-  return { line, retryStarted };
+  const say = (text: string): void => {
+    setLine(text);
+    setNonce((n) => n + 1);
+  };
+  return { line, retryStarted, nonce, say };
 }
 
 /** One column of the grid: the select column, a data column, or the actions column. */
@@ -385,6 +399,40 @@ function useTamedControls(table: RefObject<HTMLTableElement | null>, roving: boo
       }
     }
   });
+}
+
+interface RowMenuProps {
+  /** The row's items, asked for only while its menu is open (a closed menu renders an empty, hidden surface). */
+  readonly items: () => readonly MenuItem[];
+  readonly label: string;
+  readonly tabIndex: 0 | -1 | undefined;
+  readonly announceReason: (reason: string) => void;
+  readonly onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+}
+
+/** A row's actions: the CMP-002 "Actions for {row}" button opening the CMP-041 row menu. */
+function RowMenu({ items, label, tabIndex, announceReason, onKeyDown }: RowMenuProps): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <Menu
+      open={open}
+      onOpenChange={setOpen}
+      items={open ? items() : []}
+      announceReason={announceReason}
+      trigger={
+        <IconButton
+          icon="more-horizontal"
+          variant="ghost"
+          label={`Actions for ${label}`}
+          tabIndex={tabIndex}
+          // ↑ / ↓ move between rows here, before the menu button takes them as "open" (APG Menu Button).
+          onKeyDown={(event) => {
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") onKeyDown(event);
+          }}
+        />
+      }
+    />
+  );
 }
 
 /**
@@ -468,14 +516,19 @@ export function Table<T>({
           ? { role: name }
           : {};
   const selection = selected ?? new Set<string>();
-  const { line, retryStarted } = useResultLine({
+  const keys = state === "populated" ? rows.map(rowKey) : [];
+  const { line, retryStarted, nonce, say } = useResultLine({
     columns,
     rowCount: rows.length,
     sort,
     sortPending,
     loading,
     error,
-    selectedCount: selectable ? selection.size : undefined,
+    // Only the keys among the rows: a stale key (a row gone since) is not counted.
+    selectedCount:
+      selectable && state === "populated"
+        ? keys.filter((key) => selection.has(key)).length
+        : undefined,
   });
   useTamedControls(tableRef, roving);
 
@@ -490,6 +543,8 @@ export function Table<T>({
   };
   // The context menu's row: the remembered body row (the header row keeps the last; the keys open it from the body).
   const activeRow = state === "populated" ? rows[Math.max(stop.r, 1) - 1] : undefined;
+  // The context menu is controlled so its items are asked for only while it is open.
+  const [contextOpen, setContextOpen] = useState(false);
 
   useEffect(() => {
     if (!import.meta.env?.DEV || rows.length <= MAX_ROWS) return;
@@ -512,7 +567,6 @@ export function Table<T>({
     else next.delete(key);
     onRowSelect?.(next);
   };
-  const keys = state === "populated" ? rows.map(rowKey) : [];
   const allOn = keys.length > 0 && keys.every((key) => selection.has(key));
   const someOn = !allOn && keys.some((key) => selection.has(key));
   const selectAll = (): void => {
@@ -548,6 +602,22 @@ export function Table<T>({
     // `nearest` honours the cell's `scroll-margin-top`, so it is never left under the sticky header.
     if (roving && event.target === focusTargetOf(cell))
       cell.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  };
+
+  /**
+   * A press on a cell makes it the remembered cell before any `contextmenu`: a right-click opens the pressed row's
+   * menu, not the last focused one's. While roving, a press beside a cell's built-in control (the select or actions
+   * cell's padding, the box's plate) focuses that control instead of losing focus to the page.
+   */
+  const onGridMouseDown = (event: MouseEvent<HTMLTableElement>): void => {
+    const cell = cellOf(tableRef.current, event.target);
+    if (cell === null) return;
+    const place = placeOf(cell);
+    if (active?.r !== place.r || active.c !== place.c) setActive(place);
+    const target = focusTargetOf(cell);
+    if (!roving || !(event.target instanceof Node) || target.contains(event.target)) return;
+    event.preventDefault();
+    target.focus({ preventScroll: true });
   };
 
   const onGridKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
@@ -644,20 +714,12 @@ export function Table<T>({
           {...role("cell")}
           {...at(r, c, "widget")}
         >
-          <Menu
-            items={rowActions?.(row) ?? []}
-            trigger={
-              <IconButton
-                icon="more-horizontal"
-                variant="ghost"
-                label={`Actions for ${labelOf(row)}`}
-                tabIndex={tabFor(r, c)}
-                // ↑ / ↓ move between rows here, before the menu button takes them as "open" (APG Menu Button).
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowUp" || event.key === "ArrowDown") onGridKeyDown(event);
-                }}
-              />
-            }
+          <RowMenu
+            items={() => rowActions?.(row) ?? []}
+            label={labelOf(row)}
+            tabIndex={tabFor(r, c)}
+            announceReason={say}
+            onKeyDown={onGridKeyDown}
           />
         </td>
       );
@@ -833,7 +895,7 @@ export function Table<T>({
           // Grid mode only: the grid's keys while it roves (role="grid"), and the remembered cell (which the
           // stacked layout's context menu reads too). A table-mode table listens to nothing.
           {...(roving ? { onKeyDown: onGridKeyDown } : {})}
-          {...(gridMode ? { onFocus: onGridFocus } : {})}
+          {...(gridMode ? { onFocus: onGridFocus, onMouseDown: onGridMouseDown } : {})}
         >
           <caption className="cv-table__caption">
             <span id={captionId} className={captionHidden ? "cv-visually-hidden" : undefined}>
@@ -855,7 +917,10 @@ export function Table<T>({
         <Menu
           contextTarget={tbody}
           aria-label={`Actions for ${labelOf(activeRow)}`}
-          items={rowActions(activeRow)}
+          open={contextOpen}
+          onOpenChange={setContextOpen}
+          items={contextOpen ? rowActions(activeRow) : []}
+          announceReason={say}
         />
       ) : null}
       <div
@@ -864,7 +929,8 @@ export function Table<T>({
         aria-live="polite"
         aria-atomic="true"
       >
-        {line}
+        {/* Re-keyed per `say`, so the same reason pressed twice is said twice. */}
+        <span key={nonce}>{line}</span>
       </div>
     </div>
   );

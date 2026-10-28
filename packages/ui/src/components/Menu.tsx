@@ -109,6 +109,12 @@ interface MenuOwnProps {
   onOpenChange?: (open: boolean) => void;
   /** The type-ahead clock, ms (`performance.now` by default); injectable for tests. */
   now?: () => number;
+  /**
+   * The host's live region says a re-shown T2 reason (once per press): the menu then renders no `role="status"` of
+   * its own. For a host that already owns the one polite region of its surface (CMP-049's line, G12), so a menu per
+   * row adds no region. Absent, the menu renders its own region while any item has a reason.
+   */
+  announceReason?: (reason: string) => void;
   className?: string;
 }
 
@@ -318,6 +324,7 @@ export function Menu(props: MenuProps): JSX.Element {
     defaultOpen = false,
     onOpenChange,
     now = () => performance.now(),
+    announceReason,
     className,
   } = props;
   const ariaLabel = props["aria-label"];
@@ -442,7 +449,10 @@ export function Menu(props: MenuProps): JSX.Element {
             : tabStopAfter(from, surface.current);
       root.closeAll(next ?? from);
     },
-    refuse: (key, text) => setRecall((prev) => ({ key, text, count: prev.count + 1 })),
+    refuse: (key, text) => {
+      if (announceReason !== undefined) announceReason(text);
+      else setRecall((prev) => ({ key, text, count: prev.count + 1 }));
+    },
     focused: (key) => {
       if (recall.key !== key && recall.text !== undefined)
         setRecall((prev) => ({ key: "", count: prev.count }));
@@ -479,7 +489,7 @@ export function Menu(props: MenuProps): JSX.Element {
   return (
     <>
       {isContext ? null : cloneElement(triggerElement, triggerProps)}
-      {anyReason(items) ? (
+      {announceReason === undefined && anyReason(items) ? (
         <span className="cv-visually-hidden" role="status">
           {recall.text === undefined ? null : <span key={recall.count}>{recall.text}</span>}
         </span>

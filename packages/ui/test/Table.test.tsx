@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, useState, type JSX } from "react";
-import { expect, fireEvent, userEvent, within } from "storybook/test";
+import { expect, fireEvent, userEvent, waitFor, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
   EmptyState,
@@ -1052,10 +1052,10 @@ describe("Table (CMP-049) grid mode, selection and row actions", () => {
     const sam = page.getAllByRole("row")[2] as HTMLElement;
     expect(sam).toHaveAttribute("aria-selected", "true");
     expect(page.getByRole("checkbox", { name: "Select sam" })).toBeChecked();
-    expect(status()).toHaveTextContent("1 selected");
+    await waitFor(() => expect(status()).toHaveTextContent("1 selected"));
     await press(" ");
     expect(sam).toHaveAttribute("aria-selected", "false");
-    expect(status()).toHaveTextContent("0 selected");
+    await waitFor(() => expect(status()).toHaveTextContent("0 selected"));
   });
 
   it("Space on a row's box toggles it once (natively), not twice", async () => {
@@ -1063,7 +1063,7 @@ describe("Table (CMP-049) grid mode, selection and row actions", () => {
     act(() => target(1, 0).focus());
     await press(" ");
     expect(page.getByRole("checkbox", { name: "Select alex" })).toBeChecked();
-    expect(status()).toHaveTextContent("1 selected");
+    await waitFor(() => expect(status()).toHaveTextContent("1 selected"));
   });
 
   it("select-all: unchecked, mixed when some rows are selected, checked when all; a press from mixed selects all", async () => {
@@ -1079,11 +1079,11 @@ describe("Table (CMP-049) grid mode, selection and row actions", () => {
         .slice(1)
         .map((r) => r.getAttribute("aria-selected")),
     ).toEqual(["true", "true", "true"]);
-    expect(status()).toHaveTextContent("3 selected");
+    await waitFor(() => expect(status()).toHaveTextContent("3 selected"));
     await userEvent.click(all);
     expect(all).not.toBeChecked();
     expect(all).not.toBePartiallyChecked();
-    expect(status()).toHaveTextContent("0 selected");
+    await waitFor(() => expect(status()).toHaveTextContent("0 selected"));
   });
 
   it("says a selection change once: the first render and unrelated re-renders say nothing", async () => {
@@ -1196,6 +1196,123 @@ describe("Table (CMP-049) grid mode, selection and row actions", () => {
     expect(target(1, 3)).toHaveFocus();
     await press("{F2}");
     expect(input).toHaveFocus();
+  });
+
+  const named = (u: User): readonly MenuItem[] => [
+    { id: "open", label: `Open ${u.name}`, onSelect: () => opened(u.id) },
+    {
+      id: "caps",
+      label: "Edit risk caps",
+      disabledReason: "Only the owner can change account settings.",
+      onSelect: gated,
+    },
+  ];
+
+  it("a right-click opens the pressed row's menu, not the remembered row's", async () => {
+    await mount(<GridHost rowActions={named} />);
+    act(() => target(1, 1).focus());
+    await userEvent.pointer({ keys: "[MouseRight]", target: target(3, 2) });
+    const menu = page.getByRole("menu", { name: "Actions for kim" });
+    expect(within(menu).getByRole("menuitem", { name: "Open kim" })).toHaveFocus();
+    expect(within(menu).queryByRole("menuitem", { name: "Open alex" })).toBeNull();
+    await press("{Escape}");
+    expect(target(3, 2)).toHaveFocus();
+  });
+
+  it("a right-click on the actions or select cell's padding opens that row's menu, focus on its control", async () => {
+    await mount(<GridHost rowActions={named} />);
+    act(() => target(1, 1).focus());
+    const actionsCell = grid().querySelector<HTMLElement>('[data-cv-r="3"][data-cv-c="4"]');
+    await userEvent.pointer({ keys: "[MouseRight]", target: actionsCell as HTMLElement });
+    expect(page.getByRole("menu", { name: "Actions for kim" })).toBeVisible();
+    await press("{Escape}");
+    expect(page.getByRole("button", { name: "Actions for kim" })).toHaveFocus();
+    const selectCell = grid().querySelector<HTMLElement>('[data-cv-r="2"][data-cv-c="0"]');
+    await userEvent.pointer({ keys: "[MouseRight]", target: selectCell as HTMLElement });
+    expect(page.getByRole("menu", { name: "Actions for sam" })).toBeVisible();
+    await press("{Escape}");
+    expect(page.getByRole("checkbox", { name: "Select sam" })).toHaveFocus();
+  });
+
+  it("a press on a widget cell's padding focuses its control; a press on the control is left alone", async () => {
+    await mount(<GridHost />);
+    const downOn = (node: Element): MouseEvent => {
+      const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      act(() => {
+        node.dispatchEvent(event);
+      });
+      return event;
+    };
+    const selectCell = grid().querySelector('[data-cv-r="2"][data-cv-c="0"]') as Element;
+    // The page's own focus change is prevented; the box takes focus.
+    expect(downOn(selectCell).defaultPrevented).toBe(true);
+    expect(page.getByRole("checkbox", { name: "Select sam" })).toHaveFocus();
+    expect(downOn(page.getByRole("button", { name: "Actions for kim" })).defaultPrevented).toBe(
+      false,
+    );
+  });
+
+  it("one live region: row menus with T2 items add none, closed or open; the table's line says a reason per press", async () => {
+    await mount(<GridHost rowActions={named} />);
+    expect(document.querySelectorAll('[role="status"]')).toHaveLength(1);
+    act(() => page.getByRole("button", { name: "Actions for sam" }).focus());
+    await press("{Enter}");
+    expect(page.getByRole("menu", { name: "Actions for sam" })).toBeVisible();
+    expect(document.querySelectorAll('[role="status"]')).toHaveLength(1);
+    await press("{ArrowDown}{Enter}");
+    expect(gated).not.toHaveBeenCalled();
+    const said = status().firstElementChild;
+    expect(status()).toHaveTextContent("Only the owner can change account settings.");
+    await press("{Enter}");
+    // The same reason again: a new node, so it is said again.
+    expect(status().firstElementChild).not.toBe(said);
+    expect(status()).toHaveTextContent("Only the owner can change account settings.");
+    await press("{Escape}");
+    await press("{Shift>}{F10}{/Shift}");
+    expect(page.getByRole("menu", { name: "Actions for sam" })).toBeVisible();
+    expect(document.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  it("asks for a row's actions only while its menu is open", async () => {
+    const spy = vi.fn(named);
+    await mount(<GridHost rowActions={spy} />);
+    expect(spy).not.toHaveBeenCalled();
+    act(() => page.getByRole("button", { name: "Actions for sam" }).focus());
+    await press("{Enter}");
+    expect(spy).toHaveBeenCalled();
+    expect(new Set(spy.mock.calls.map(([u]) => u.id))).toEqual(new Set(["u2"]));
+    await press("{Escape}");
+    spy.mockClear();
+    act(() => target(3, 1).focus());
+    await press("{ArrowUp}");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("counts only selected keys among the rows: a stale key is not counted", async () => {
+    await mount(<GridHost initial={["u1", "gone"]} />);
+    await userEvent.click(page.getByRole("checkbox", { name: "Select sam" }));
+    await waitFor(() => expect(status()).toHaveTextContent("2 selected"));
+    expect(page.getByRole("checkbox", { name: "Select all rows" })).toBePartiallyChecked();
+  });
+
+  it("a load says no count; the same selection after it stays silent", async () => {
+    const Reload = (): JSX.Element => {
+      const [loading, setLoading] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setLoading((l) => !l)}>
+            Reload
+          </button>
+          <GridHost initial={["u1"]} loading={loading} />
+        </>
+      );
+    };
+    await mount(<Reload />);
+    const reload = page.getByRole("button", { name: "Reload" });
+    await userEvent.click(reload);
+    await userEvent.click(reload);
+    await waitFor(() => expect(status()).toHaveTextContent("3 rows"));
+    expect(status()).not.toHaveTextContent("selected");
   });
 
   it("table mode is unchanged: no grid, no data-cv cells, the region keeps its Tab stop", async () => {
