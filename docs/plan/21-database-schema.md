@@ -3486,8 +3486,9 @@ E08-T07 (#4706): the lists `/watchlists` persists for SCR-100 and SCR-101 (`docs
 §12 C-4, C-5). Specified by the contract slice; its migration ships with the router slice. A list
 belongs to one user and is read and written only by its owner: the API answers another user's list
 id as an id that does not exist (`404`). `symbols` is the list in order, at most 200 and none twice;
-each is a trading USDT linear perpetual of the instrument catalogue when it is written (the API
-checks it, so a symbol delisted later stays in the list until the owner edits it). `version` starts
+each is a trading USDT linear perpetual of the instrument catalogue when it joins the list (the
+API checks it then, so a symbol delisted later stays in the list until the owner removes it).
+`columns` holds at most 32 column ids, none twice. `version` starts
 at 1 and goes up by one on each replace, in one statement guarded by the version the client sent
 (`UPDATE … WHERE id = :id AND user_id = :owner AND version = :expected`), so of two writers holding
 the same version exactly one wins and the other is `412 version_conflict`. `ux_wl_name` makes a name
@@ -3502,12 +3503,13 @@ CREATE TABLE watchlists (
   user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name        text NOT NULL,
   symbols     text[] NOT NULL DEFAULT '{}',   -- in order; at most 200, none twice (the API checks both)
-  columns     text[] NOT NULL DEFAULT '{}',   -- column ids, in order
+  columns     text[] NOT NULL DEFAULT '{}',   -- column ids, in order; at most 32, none twice (the API checks both)
   version     integer NOT NULL DEFAULT 1,
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT wl_name_len    CHECK (char_length(name) BETWEEN 1 AND 80),
   CONSTRAINT wl_symbols_max CHECK (cardinality(symbols) <= 200),
+  CONSTRAINT wl_columns_max CHECK (cardinality(columns) <= 32),
   CONSTRAINT wl_version     CHECK (version >= 1)
 );
 CREATE UNIQUE INDEX ux_wl_name ON watchlists (user_id, lower(name));

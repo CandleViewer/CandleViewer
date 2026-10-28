@@ -5648,6 +5648,29 @@ class Notification(BaseModel):
     ] = None
 
 
+class Column(RootModel[str]):
+    root: Annotated[str, Field(max_length=32, pattern="^[a-z][a-z0-9_]*$")]
+
+
+class Watchlist(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: UUID
+    name: Annotated[str, Field(max_length=80, min_length=1)]
+    symbols: Annotated[list[Symbol], Field(max_length=200)]
+    columns: Annotated[list[Column], Field(max_length=32)]
+    version: Annotated[
+        JsonInt,
+        Field(
+            description="Server-assigned: 1 on create, one more on each replace. `updateWatchlist` takes it back through `If-Match` (`WatchlistETag`), never in the body.\n",
+            ge=1,
+        ),
+    ]
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
 class WatchlistInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -5655,7 +5678,7 @@ class WatchlistInput(BaseModel):
     name: Annotated[
         str,
         Field(
-            description="Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`).",
+            description="Trimmed of leading and trailing white space before it is checked and stored: E08-D07 §4.3 and DJ compare names trimmed and case-insensitively; the 1–80 characters count the trimmed name, so a name blank once trimmed is `422 validation_failed`. Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`).\n",
             max_length=80,
             min_length=1,
         ),
@@ -5668,9 +5691,12 @@ class WatchlistInput(BaseModel):
         ),
     ]
     columns: Annotated[
-        list[str] | None, Field(description="Column ids shown for this watchlist, in order.")
+        list[Column] | None,
+        Field(
+            description="Column ids shown for this watchlist, in order: the ids of E08-D07 §4.1 (`last`, `chg_24h_pct`, `open_interest_value`, ...). Ids are stored strings and a reader skips one it does not know (E08-D07 D8), so the set is open: at most 32, each a lowercase snake_case id of at most 32 characters, none twice (`422 validation_failed` on `columns`, rule `duplicate_column`). Left out or `null`, on a create and on a replace alike, the list takes E08-D07 §4.1's default columns (`symbol`, `last`, `chg_24h_pct`, `turnover_24h`, `funding_rate`, `next_funding`, `oi_chg_24h_pct`, `spread_bps`, `rec`): a replace without `columns` resets them, as a full replace does.\n",
+            max_length=32,
+        ),
     ] = None
-    __null_refused = field_validator("columns", mode="before")(_refuse_null)
 
 
 class ScannerSortKeyStatus(BaseModel):
@@ -7400,20 +7426,6 @@ class Job(BaseModel):
             description="Why a `failed` job failed, as a stable code, never a message. Open-ended for readers. A failed `audit_export` job has produced no downloadable file; it fails with `export_too_large` (its span is over `audit_export_max_rows`, or its file over `audit_export_max_bytes`; nothing is left on disk), `signing_key_rotated` (its header names a key that was no longer the active one when it came to sign), `signing_unavailable` (no KEK held, no usable key or a key that cannot be opened, or a signer failure), `audit_unavailable` (the signer refused because its write-ahead record could not be written, or the export's completion record could not be written, and its file is removed: an audit outage is answered as one) or `internal_error` (ADR-0039)."
         ),
     ] = None
-
-
-class Watchlist(WatchlistInput):
-    id: UUID
-    version: Annotated[
-        JsonInt,
-        Field(
-            description="Server-assigned: 1 on create, one more on each replace. `updateWatchlist` takes it back through `If-Match` (`WatchlistETag`), never in the body.\n",
-            ge=1,
-        ),
-    ]
-    created_at: AwareDatetime
-    updated_at: AwareDatetime
-    _WatchlistInput__null_refused = field_validator("columns", mode="before")(_take_null)
 
 
 class ScannerRow(BaseModel):

@@ -6379,7 +6379,7 @@ export interface paths {
     put?: never;
     /**
      * Create a watchlist
-     * @description Creates one of the caller's lists at `version` 1 (E08-T07). A `name` that another of the caller's lists already uses, case-insensitively (as Postgres `lower()` folds it), is `409 conflict` with `errors[0].rule = name_taken` and `field` `name`. A list that breaks a rule of `WatchlistInput` is `422 validation_failed` naming the field and the rule: `too_many_symbols` (over 200), `unknown_symbol` (not a trading USDT linear perpetual of the instrument catalogue) or `duplicate_symbol` (a symbol twice in one list), each on `symbols`. Either way nothing is written. Audited write-ahead as `watchlist.created`.
+     * @description Creates one of the caller's lists at `version` 1 (E08-T07). A `name` that another of the caller's lists already uses, case-insensitively (as Postgres `lower()` folds it), is `409 conflict` with `errors[0].rule = name_taken` and `field` `name`. A list that breaks a rule of `WatchlistInput` is `422 validation_failed` naming the field and the rule: `too_many_symbols` (over 200), `unknown_symbol` (not a trading USDT linear perpetual of the instrument catalogue) or `duplicate_symbol` (a symbol twice in one list), each on `symbols`. Either way nothing is written. A body over 64 KiB is `413 payload_too_large`, and while the instrument catalogue is not loaded a list that holds a symbol is `503 instrument_cache_unavailable` (`WatchlistSaveUnavailable`). A list with no symbols needs no catalogue, so it is never `503 instrument_cache_unavailable`. When several refusals apply, the first in this order answers: `413`, then `422` for the rules that need no catalogue (`name`, `columns`, `too_many_symbols`, `duplicate_symbol`), then `503 instrument_cache_unavailable`, then `422` for `unknown_symbol`, then `409`. Audited write-ahead as `watchlist.created`.
      */
     post: operations["createWatchlist"];
     delete?: never;
@@ -6400,7 +6400,7 @@ export interface paths {
     get?: never;
     /**
      * Replace a watchlist
-     * @description Replaces the whole list and stores it as its next `version` (E08-T07). `If-Match` is required: a stale write is never applied silently. Without it the answer is `428 precondition_required`; with a tag that does not name the list's current version the answer is `412 version_conflict`, whose `ETag` header names the current version. Either way nothing changes: reload, then edit again. The name and list rules are those of `createWatchlist` (`409 conflict` / `name_taken`, `422 validation_failed`). Another user's list id is `404`, as an id that does not exist, never `403`. When several refusals apply, the first in this order answers: `404` (so a missing or stale tag never tells another user's list apart from no list), then `428` or `412`, then `422`, then `409`. Audited write-ahead as `watchlist.updated`.
+     * @description Replaces the whole list and stores it as its next `version` (E08-T07). `If-Match` is required: a stale write is never applied silently. Without it the answer is `428 precondition_required`; with a tag that does not name the list's current version the answer is `412 version_conflict`, whose `ETag` header names the current version. Either way nothing changes: reload, then edit again. The name and list rules are those of `createWatchlist` (`409 conflict` / `name_taken`, `422 validation_failed`, `503 instrument_cache_unavailable`), and a body over 64 KiB is `413 payload_too_large`. A replace whose symbols are all already on the stored list (a rename, a reorder, a removal, a change of columns) needs no catalogue, so it is never `503 instrument_cache_unavailable`: only a symbol the list does not hold yet is judged. Another user's list id is `404`, as an id that does not exist, never `403`. When several refusals apply, the first in this order answers: `413`, then `404` (so a missing or stale tag never tells another user's list apart from no list), then `428` or `412`, then `422` for the rules that need no catalogue (`name`, `columns`, `too_many_symbols`, `duplicate_symbol`), then `503 instrument_cache_unavailable`, then `422` for `unknown_symbol`, then `409`. Audited write-ahead as `watchlist.updated`.
      */
     put: operations["updateWatchlist"];
     post?: never;
@@ -11703,20 +11703,24 @@ export interface components {
       updated_at?: string;
       wallet_balance?: components["schemas"]["Decimal"];
     };
-    Watchlist: components["schemas"]["WatchlistInput"] & {
+    /** @description One of the caller's lists as stored: the members of `WatchlistInput`, under the same rules, and the server's own. Every member is always answered (`columns` empty when none is chosen). Closed on purpose: a list's members are exactly these. */
+    Watchlist: {
+      columns: string[];
       /** Format: date-time */
       created_at: string;
       /** Format: uuid */
       id: string;
+      name: string;
+      symbols: components["schemas"]["Symbol"][];
       /** Format: date-time */
       updated_at: string;
       /** @description Server-assigned: 1 on create, one more on each replace. `updateWatchlist` takes it back through `If-Match` (`WatchlistETag`), never in the body. */
       readonly version: number;
     };
     WatchlistInput: {
-      /** @description Column ids shown for this watchlist, in order. */
-      columns?: string[];
-      /** @description Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`). */
+      /** @description Column ids shown for this watchlist, in order: the ids of E08-D07 §4.1 (`last`, `chg_24h_pct`, `open_interest_value`, ...). Ids are stored strings and a reader skips one it does not know (E08-D07 D8), so the set is open: at most 32, each a lowercase snake_case id of at most 32 characters, none twice (`422 validation_failed` on `columns`, rule `duplicate_column`). Left out or `null`, on a create and on a replace alike, the list takes E08-D07 §4.1's default columns (`symbol`, `last`, `chg_24h_pct`, `turnover_24h`, `funding_rate`, `next_funding`, `oi_chg_24h_pct`, `spread_bps`, `rec`): a replace without `columns` resets them, as a full replace does. */
+      columns?: string[] | null;
+      /** @description Trimmed of leading and trailing white space before it is checked and stored: E08-D07 §4.3 and DJ compare names trimmed and case-insensitively; the 1–80 characters count the trimmed name, so a name blank once trimmed is `422 validation_failed`. Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`). */
       name: string;
       /** @description The list, in order: each a trading USDT linear perpetual of the instrument catalogue, none twice (`422 validation_failed`: `too_many_symbols`, `unknown_symbol`, `duplicate_symbol`). */
       symbols: components["schemas"]["Symbol"][];
@@ -12159,6 +12163,16 @@ export interface components {
     /** @description Semantically invalid request. The `nativeStop` and `riskCap` examples predate the registry statuses (#2088): the order routes answer `validation_failed` with `400` and `risk_limit_breached` with `403`. */
     UnprocessableEntity: {
       headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["Problem"];
+      };
+    };
+    /** @description A watchlist write, a create, a replace or a delete (`createWatchlist`, `updateWatchlist`, `deleteWatchlist`), that could not be checked or recorded, so nothing changed (E08-T07): `instrument_cache_unavailable` while the instrument catalogue is not loaded and a symbol the list does not hold yet must be judged (a create or a replace); `audit_unavailable` when the write-ahead audit record could not be written (C-2.9); `store_unavailable` as on every route. Each is retryable after `Retry-After`. */
+    WatchlistSaveUnavailable: {
+      headers: {
+        "Retry-After": components["headers"]["RetryAfter"];
         [name: string]: unknown;
       };
       content: {
@@ -22111,8 +22125,9 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
-      503: components["responses"]["ServiceUnavailable"];
+      503: components["responses"]["WatchlistSaveUnavailable"];
     };
   };
   updateWatchlist: {
@@ -22165,6 +22180,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
       /** @description The replace carried no `If-Match` (`precondition_required`). Nothing changed; read the list, then send its `ETag` back. */
       428: {
@@ -22175,7 +22191,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
-      503: components["responses"]["ServiceUnavailable"];
+      503: components["responses"]["WatchlistSaveUnavailable"];
     };
   };
   deleteWatchlist: {
@@ -22208,7 +22224,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
-      503: components["responses"]["ServiceUnavailable"];
+      503: components["responses"]["WatchlistSaveUnavailable"];
     };
   };
   listWorkspaces: {
