@@ -41,6 +41,8 @@ export interface DialogProps {
   role?: DialogRole;
   /** The host's name, over the title (SCR-076's "Confirm order - BTCUSDT - LIVE - Main"). */
   "aria-label"?: string;
+  /** More description ids, after the description's: a CMP-044 restatement in the body. */
+  "aria-describedby"?: string;
   /**
    * Takes focus on open; without it the first field, else the heading (conventions 32). An
    * `alertdialog` passes its Cancel or least-destructive choice here (H32). A ref on an element that
@@ -118,6 +120,7 @@ export function Dialog({
   size = "md",
   role = "dialog",
   "aria-label": label,
+  "aria-describedby": describedBy,
   initialFocusRef,
   fallbackFocusRef,
   busy = false,
@@ -300,7 +303,7 @@ export function Dialog({
         aria-modal="true"
         aria-label={label}
         aria-labelledby={labelled ? titleId : undefined}
-        aria-describedby={hasDescription ? descriptionId : undefined}
+        aria-describedby={cx(hasDescription && descriptionId, describedBy) || undefined}
         aria-busy={busy ? true : undefined}
         tabIndex={-1}
         className={cx("cv-dialog", className)}

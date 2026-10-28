@@ -139,13 +139,13 @@ a tab.
 | A press on the scrim | Cancel for a `dialog`; nothing for an `alertdialog`.                                                                                          |
 | Enter / Space        | The focused control's own; the dialog adds none.                                                                                              |
 
-| Element | Role                   | Name                                           | ARIA                                                                                            |
-| ------- | ---------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| card    | dialog or alertdialog  | the title (`aria-labelledby`), or `aria-label` | `aria-modal="true"`; `aria-describedby` → the description; `aria-busy` while busy               |
-| title   | heading, `h2`          | its text                                       | `tabindex="-1"`: the fallback focus target                                                      |
-| close   | button (`dialog` only) | "Close {title}"                                | CMP-002 `ghost`                                                                                 |
-| body    | none, or group         | the title, when it is a Tab stop               | a body that scrolls with no control in it takes `tabindex="0"` so the keyboard can scroll it    |
-| scrim   | none                   | —                                              | `aria-hidden="true"`; the page under it `inert` (`aria-hidden` where the engine has no `inert`) |
+| Element | Role                   | Name                                           | ARIA                                                                                                   |
+| ------- | ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| card    | dialog or alertdialog  | the title (`aria-labelledby`), or `aria-label` | `aria-modal="true"`; `aria-describedby` → the description, then the host's ids; `aria-busy` while busy |
+| title   | heading, `h2`          | its text                                       | `tabindex="-1"`: the fallback focus target                                                             |
+| close   | button (`dialog` only) | "Close {title}"                                | CMP-002 `ghost`                                                                                        |
+| body    | none, or group         | the title, when it is a Tab stop               | a body that scrolls with no control in it takes `tabindex="0"` so the keyboard can scroll it           |
+| scrim   | none                   | —                                              | `aria-hidden="true"`; the page under it `inert` (`aria-hidden` where the engine has no `inert`)        |
 
 `onOpenChange(false, reason)` reports `escape`, `scrim` or `close`; the host decides. A lock ignores
 `Esc` by keeping `open`; a form with unsaved changes opens its own stacked CMP-044 alertdialog
@@ -158,3 +158,30 @@ Popover, Tooltip or nested Dialog rendered inside portals into the dialog's laye
 NoEscClose: `Esc` always cancels before a send, and closes the view after one (H22). `busy` sets only
 `aria-busy` on the card; the dialog does not drive its footer, so the host sets its primary
 action's `loading` itself.
+
+### ConfirmDialog (CMP-044, APG Alert Dialog; APG Dialog (Modal) for an order confirm)
+
+| Keys                               | Action                                                                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| On open                            | Focus on Cancel (H32); nothing is sent until Confirm.                                                                  |
+| Tab / Shift+Tab                    | The trap in DOM order from Cancel: Confirm, the close button (an order confirm), the body's controls, back to Cancel.  |
+| Enter / Space / a press on Confirm | Confirms, unless the press began in the first `confirmDelayMs` (400 ms) after opening; key repeats are always ignored. |
+| Typing in the typed field          | Confirm enables when the text matches the token exactly (paste allowed); Enter in the field never confirms.            |
+| Esc                                | Cancels (`onCancel("escape")`); focus returns to the opener, else `fallbackFocusRef`.                                  |
+| Enter / Space on a T2 Confirm      | Nothing; the reason is re-shown with one polite announcement.                                                          |
+| A press on the scrim               | Nothing for an `alertdialog`; Cancel (`"scrim"`) for an order `dialog`.                                                |
+
+| Element     | Role                                             | Name                                                   | ARIA                                                                                                                                               |
+| ----------- | ------------------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| card        | alertdialog, or dialog for an order confirm      | the title, or the host's `aria-label`                  | `aria-modal="true"`; `aria-describedby` → the message, then the restatement; `aria-busy` while busy                                                |
+| restatement | group (or plain text with `restatementLabel=""`) | "What this does"                                       | —                                                                                                                                                  |
+| typed field | textbox                                          | the instruction ("Type FLATTEN to confirm"), its label | —                                                                                                                                                  |
+| Confirm     | button                                           | the effect, never "Confirm"                            | native `disabled` until the summary loads and the token matches (validity); `aria-describedby` → the instruction; T2: `aria-disabled` + the reason |
+| status      | status, alert                                    | —                                                      | visually hidden: a T2 re-show (polite); a Confirm gated while it held focus (assertive, once)                                                      |
+
+`onConfirm(meta)` reports `{ variant, gate: "click" | "typed", elapsedMs }` for the host's audit event;
+`onCancel(reason)` reports `cancel`, `escape`, `close` or `scrim`. Events are not filtered on
+`isTrusted`. The guard runs from the moment the dialog opens and applies to pointer, Enter and Space
+alike. A typed mismatch, a loading summary and a sent confirm (`busy`) are not T2; only a reason
+given while open (H30) is, and focus stays on Confirm. A partial failure is CMP-027's inline error
+with its Retry, above the footer.

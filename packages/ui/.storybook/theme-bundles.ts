@@ -26,6 +26,7 @@ import "../src/components/checkbox.css";
 import "../src/components/choice.css";
 import "../src/components/colorswatch.css";
 import "../src/components/confidencedots.css";
+import "../src/components/confirmdialog.css";
 import "../src/components/copybutton.css";
 import "../src/components/countdown.css";
 import "../src/components/crash.css";

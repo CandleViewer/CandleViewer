@@ -1,0 +1,465 @@
+// @vitest-environment jsdom
+import { act, useState, type JSX } from "react";
+import { expect, fireEvent, userEvent, within } from "storybook/test";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
+import {
+  Button,
+  ConfirmDialog,
+  type ConfirmDialogProps,
+  type ConfirmMeta,
+} from "../src/components/index.js";
+import { visibleTabbables } from "../src/components/internal/focusTrap.js";
+import { mount } from "./theme/mount.js";
+
+/** The injected clock: the dialog opens at t = 1000; a test moves `t` to time a press. */
+let t = 1000;
+const now = (): number => t;
+beforeEach(() => {
+  t = 1000;
+});
+afterEach(() => vi.restoreAllMocks());
+
+const screen = (): ReturnType<typeof within> => within(document.body);
+const alert = (name: string): HTMLElement =>
+  screen().getByRole("alertdialog", { name }) as HTMLElement;
+const button = (name: string | RegExp): HTMLElement =>
+  screen().getByRole("button", { name }) as HTMLElement;
+
+type Extra = Partial<Omit<ConfirmDialogProps, "open">>;
+
+/** A host: the opener and a confirm it owns; Cancel and Confirm close it as a host would. */
+function Host({ onConfirm, onCancel, ...props }: Extra): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>Open</Button>
+      <ConfirmDialog
+        open={open}
+        title="Freeze sub_001?"
+        message="Cancels its working orders; positions stay open."
+        restatement={<p>Cancels 3 working orders on sub_001.</p>}
+        confirmLabel="Freeze sub_001 — cancel 3 working orders"
+        now={now}
+        onConfirm={(meta) => {
+          onConfirm?.(meta);
+        }}
+        onCancel={(reason) => {
+          onCancel?.(reason);
+          setOpen(false);
+        }}
+        {...props}
+      />
+    </>
+  );
+}
+
+const openHost = async (props: Extra = {}): Promise<HTMLElement> => {
+  const host = await mount(<Host {...props} />);
+  const opener = within(host).getByRole("button", { name: "Open" });
+  await act(async () => opener.focus());
+  await act(async () => {
+    fireEvent.click(opener);
+  });
+  return host;
+};
+
+/** Esc on the focused element, flushed: the layer stack closes the topmost layer. */
+const escape = async (): Promise<void> => {
+  await act(async () => {
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  });
+};
+
+const confirmButton = (): HTMLElement => button(/^Freeze sub_001 — cancel/);
+
+describe("ConfirmDialog (CMP-044)", () => {
+  it("standard: an alertdialog named by its title, described by the restatement, focus on Cancel", async () => {
+    await openHost();
+    const node = alert("Freeze sub_001?");
+    expect(node).toHaveAttribute("aria-modal", "true");
+    expect(node).toHaveAccessibleDescription(
+      "Cancels its working orders; positions stay open. What this does Cancels 3 working orders on sub_001.",
+    );
+    expect(within(node).getByRole("group", { name: "What this does" })).toBeVisible();
+    expect(within(node).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(within(node).queryByRole("button", { name: /^Close/ })).toBeNull();
+    expect(confirmButton()).toHaveAttribute("data-variant", "danger");
+    expect(confirmButton()).toBeEnabled();
+    expect(node.querySelectorAll('[data-cmp="CMP-044"]')).toHaveLength(1);
+  });
+
+  it("Cancel and Esc cancel with their reason; focus returns to the opener", async () => {
+    const onCancel = vi.fn();
+    const host = await openHost({ onCancel });
+    await act(async () => {
+      fireEvent.click(button("Cancel"));
+    });
+    expect(onCancel).toHaveBeenLastCalledWith("cancel");
+    expect(screen().queryByRole("alertdialog")).toBeNull();
+    expect(within(host).getByRole("button", { name: "Open" })).toHaveFocus();
+    await act(async () => {
+      fireEvent.click(within(host).getByRole("button", { name: "Open" }));
+    });
+    await escape();
+    expect(onCancel).toHaveBeenLastCalledWith("escape");
+  });
+
+  it("the 400 ms guard: a stray click or a single Enter inside it does nothing", async () => {
+    const onConfirm = vi.fn();
+    await openHost({ onConfirm });
+    t = 1100;
+    await userEvent.click(confirmButton());
+    t = 1399;
+    await act(async () => confirmButton().focus());
+    await userEvent.keyboard("{Enter}");
+    expect(onConfirm).not.toHaveBeenCalled();
+    t = 1400;
+    await userEvent.keyboard("{Enter}");
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm).toHaveBeenLastCalledWith<[ConfirmMeta]>({
+      variant: "standard",
+      gate: "click",
+      elapsedMs: 400,
+    });
+  });
+
+  it("a press that begins inside the guard does nothing when it ends after it (pointer and Space)", async () => {
+    const onConfirm = vi.fn();
+    await openHost({ onConfirm });
+    const target = confirmButton();
+    t = 1300;
+    await userEvent.pointer({ keys: "[MouseLeft>]", target });
+    t = 1600;
+    await userEvent.pointer({ keys: "[/MouseLeft]", target });
+    expect(onConfirm).not.toHaveBeenCalled();
+    await act(async () => target.focus());
+    t = 1350;
+    await userEvent.keyboard("[Space>]");
+    t = 1700;
+    await userEvent.keyboard("[/Space]");
+    expect(onConfirm).not.toHaveBeenCalled();
+    t = 1800;
+    await userEvent.click(target);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("held-Enter repeats are ignored: one press, one confirm; Cancel ignores repeats too", async () => {
+    const onConfirm = vi.fn();
+    await openHost({ onConfirm });
+    t = 2000;
+    const confirm = confirmButton();
+    await act(async () => confirm.focus());
+    await userEvent.keyboard("{Enter>}");
+    // The repeats a held key sends: each is cancelled, so the browser activates nothing.
+    for (let i = 0; i < 3; i += 1)
+      expect(fireEvent.keyDown(confirm, { key: "Enter", repeat: true })).toBe(false);
+    await userEvent.keyboard("{/Enter}");
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(fireEvent.keyDown(confirm, { key: " ", repeat: true })).toBe(false);
+    expect(fireEvent.keyDown(confirm, { key: "a", repeat: true })).toBe(true);
+    expect(fireEvent.keyDown(button("Cancel"), { key: "Enter", repeat: true })).toBe(false);
+    expect(fireEvent.keyDown(button("Cancel"), { key: "Enter" })).toBe(true);
+  });
+
+  it("Gherkin 'Typed confirm': with FLATTEN required, other text keeps Confirm disabled with the instruction", async () => {
+    const onConfirm = vi.fn();
+    await openHost({ onConfirm, variant: "typed", typedConfirmValue: "FLATTEN" });
+    const field = screen().getByRole("textbox", { name: "Type FLATTEN to confirm" });
+    const confirm = confirmButton();
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription("Type FLATTEN to confirm");
+    expect(confirm).not.toHaveAttribute("aria-disabled");
+    expect(button("Cancel")).toHaveFocus();
+    t = 3000;
+    for (const text of ["flatten", "FLATTEN ", " FLATTEN", "FLATTE"]) {
+      await userEvent.clear(field);
+      await userEvent.type(field, text);
+      expect(confirm).toBeDisabled();
+    }
+    await userEvent.clear(field);
+    await userEvent.type(field, "FLATTEN");
+    expect(confirm).toBeEnabled();
+    // Enter in the field never confirms.
+    expect(fireEvent.keyDown(field, { key: "Enter" })).toBe(false);
+    await userEvent.type(field, "{Enter}");
+    expect(onConfirm).not.toHaveBeenCalled();
+    await userEvent.click(confirm);
+    expect(onConfirm).toHaveBeenLastCalledWith<[ConfirmMeta]>({
+      variant: "typed",
+      gate: "typed",
+      elapsedMs: 2000,
+    });
+  });
+
+  it("typed: paste is allowed; the field is cleared on every open", async () => {
+    await openHost({ variant: "typed", typedConfirmValue: "BTCUSDT" });
+    const field = screen().getByRole("textbox", { name: "Type BTCUSDT to confirm" });
+    await act(async () => field.focus());
+    await userEvent.paste("BTCUSDT");
+    expect(field).toHaveValue("BTCUSDT");
+    expect(confirmButton()).toBeEnabled();
+    await escape();
+    await act(async () => {
+      fireEvent.click(button("Open"));
+    });
+    expect(screen().getByRole("textbox", { name: "Type BTCUSDT to confirm" })).toHaveValue("");
+    expect(confirmButton()).toBeDisabled();
+  });
+
+  it("typed: a host instruction labels the field and describes Confirm", async () => {
+    await openHost({
+      variant: "typed",
+      typedConfirmValue: "alex",
+      typedInstruction: "Type the username alex to delete it",
+    });
+    const field = screen().getByRole("textbox", { name: "Type the username alex to delete it" });
+    expect(confirmButton()).toHaveAccessibleDescription("Type the username alex to delete it");
+    await userEvent.type(field, "alex");
+    expect(confirmButton()).toBeEnabled();
+  });
+
+  it("the summary still loading keeps Confirm natively disabled (availability, not T2)", async () => {
+    const onConfirm = vi.fn();
+    await mount(
+      <ConfirmDialog
+        open
+        title="Flatten all?"
+        confirmLabel="Flatten 4 positions"
+        variant="typed"
+        typedConfirmValue="FLATTEN"
+        summaryLoading
+        now={now}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+    await userEvent.type(
+      screen().getByRole("textbox", { name: "Type FLATTEN to confirm" }),
+      "FLATTEN",
+    );
+    const confirm = button("Flatten 4 positions");
+    expect(confirm).toBeDisabled();
+    expect(confirm).not.toHaveAttribute("aria-disabled");
+    t = 5000;
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("order confirm: a dialog with its close button; Tab runs Cancel, Confirm, close, the body", async () => {
+    const onCancel = vi.fn();
+    await openHost({
+      onCancel,
+      role: "dialog",
+      "aria-label": "Confirm order - BTCUSDT - LIVE - Main",
+      title: "Confirm order",
+      confirmVariant: "buy",
+      confirmLabel: "BUY 0.250 BTCUSDT limit 64,010.0",
+      variant: "typed",
+      typedConfirmValue: "LIVE",
+    });
+    const node = screen().getByRole("dialog", { name: "Confirm order - BTCUSDT - LIVE - Main" });
+    const cancel = within(node).getByRole("button", { name: "Cancel" });
+    const confirm = within(node).getByRole("button", { name: /^BUY 0.250/ });
+    const close = within(node).getByRole("button", { name: "Close Confirm order" });
+    const field = within(node).getByRole("textbox", { name: "Type LIVE to confirm" });
+    expect(cancel).toHaveFocus();
+    expect(confirm).toHaveAttribute("data-variant", "buy");
+    await userEvent.type(field, "LIVE");
+    // DOM order from Cancel: Confirm, then the trap wraps to the close button, then the field.
+    const order = visibleTabbables(node);
+    expect(order.slice(order.indexOf(cancel))).toEqual([cancel, confirm]);
+    expect(order.slice(0, order.indexOf(cancel))).toEqual([close, field]);
+    await act(async () => confirm.focus());
+    await userEvent.keyboard("{Tab}");
+    expect(close).toHaveFocus();
+    await userEvent.click(close);
+    expect(onCancel).toHaveBeenLastCalledWith("close");
+  });
+
+  it("a scrim press: nothing for an alertdialog, Cancel for an order dialog", async () => {
+    const onCancel = vi.fn();
+    const scrim = (): Element => {
+      const node = document.querySelector(".cv-dialog__scrim");
+      if (node === null) throw new Error("no scrim");
+      return node;
+    };
+    await openHost({ onCancel });
+    await userEvent.click(scrim());
+    expect(onCancel).not.toHaveBeenCalled();
+    await escape();
+    await act(async () => {
+      fireEvent.click(button("Open"));
+    });
+    await escape();
+    onCancel.mockClear();
+    document.body.replaceChildren();
+    await openHost({ onCancel, role: "dialog" });
+    await userEvent.click(scrim());
+    expect(onCancel).toHaveBeenLastCalledWith("scrim");
+  });
+
+  it("busy: aria-busy on the card, Confirm loading and inert to presses, the field read-only", async () => {
+    const onConfirm = vi.fn();
+    await mount(
+      <ConfirmDialog
+        open
+        busy
+        title="Flatten all?"
+        confirmLabel="Flatten 4 positions"
+        variant="typed"
+        typedConfirmValue="FLATTEN"
+        now={now}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(alert("Flatten all?")).toHaveAttribute("aria-busy", "true");
+    expect(screen().getByRole("textbox", { name: "Type FLATTEN to confirm" })).toHaveAttribute(
+      "readonly",
+    );
+    const confirm = button(/^Flatten 4 positions/);
+    expect(confirm).toHaveAttribute("aria-busy", "true");
+    t = 5000;
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("partial failure: CMP-027's inline error with Retry above the footer", async () => {
+    const retry = vi.fn();
+    await mount(
+      <ConfirmDialog
+        open
+        title="Freeze sub_001?"
+        confirmLabel="Freeze sub_001"
+        failure={{
+          message: "2 of 3 orders were not cancelled.",
+          retry: { label: "Retry", onClick: retry },
+        }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const node = alert("Freeze sub_001?");
+    const error = within(node).getByText("2 of 3 orders were not cancelled.");
+    expect(error.closest('[role="alert"]')).not.toBeNull();
+    await userEvent.click(within(node).getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("H30: a Confirm gated mid-dialog keeps focus, speaks once assertively, then re-shows its reason politely", async () => {
+    const onConfirm = vi.fn();
+    let gate: (reason: string | undefined) => void = () => undefined;
+    function Gated(): JSX.Element {
+      const [reason, setReason] = useState<string | undefined>(undefined);
+      gate = setReason;
+      return (
+        <ConfirmDialog
+          open
+          title="Freeze sub_001?"
+          confirmLabel="Freeze sub_001"
+          confirmDisabledReason={reason}
+          now={now}
+          onConfirm={onConfirm}
+          onCancel={vi.fn()}
+        />
+      );
+    }
+    await mount(<Gated />);
+    const node = alert("Freeze sub_001?");
+    const confirm = button("Freeze sub_001");
+    await act(async () => confirm.focus());
+    expect(within(node).getByRole("alert")).toBeEmptyDOMElement();
+    const reason = "Your role can't use the kill switch.";
+    await act(async () => gate(reason));
+    expect(confirm).toHaveFocus();
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    expect(confirm).toBeEnabled();
+    expect(confirm).toHaveAccessibleDescription(reason);
+    expect(within(node).getByRole("alert")).toHaveTextContent(reason);
+    expect(node.querySelector(".cv-confirm__reason")).toHaveTextContent(reason);
+    expect(within(node).getByRole("status")).toBeEmptyDOMElement();
+    t = 5000;
+    await userEvent.keyboard("{Enter}");
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(within(node).getByRole("status")).toHaveTextContent(reason);
+    // The same reason again: still one assertive announcement.
+    await act(async () => gate(` ${reason} `));
+    expect(within(node).getAllByText(reason, { selector: "[role=alert] span" })).toHaveLength(1);
+  });
+
+  it("gated while focus is elsewhere: no assertive announcement; a reason that clears restores Confirm", async () => {
+    const onConfirm = vi.fn();
+    let gate: (reason: string | undefined) => void = () => undefined;
+    function Gated(): JSX.Element {
+      const [reason, setReason] = useState<string | undefined>(undefined);
+      gate = setReason;
+      return (
+        <ConfirmDialog
+          open
+          title="Freeze sub_001?"
+          confirmLabel="Freeze sub_001"
+          confirmDisabledReason={reason}
+          now={now}
+          onConfirm={onConfirm}
+          onCancel={vi.fn()}
+        />
+      );
+    }
+    await mount(<Gated />);
+    const node = alert("Freeze sub_001?");
+    await act(async () => gate("Not allowed."));
+    expect(within(node).getByRole("alert")).toBeEmptyDOMElement();
+    await act(async () => gate("   "));
+    const confirm = button("Freeze sub_001");
+    expect(confirm).not.toHaveAttribute("aria-disabled");
+    t = 5000;
+    await userEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("dev warnings: a bare 'Confirm' label, and typed without a token (which never enables)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await mount(
+      <ConfirmDialog
+        open
+        title="Delete key?"
+        confirmLabel="Confirm"
+        variant="typed"
+        now={now}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('never "Confirm"'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("typedConfirmValue"));
+    expect(button("Confirm")).toBeDisabled();
+  });
+
+  it("an order restatement with no group label renders as plain text, still the description", async () => {
+    await mount(
+      <ConfirmDialog
+        open
+        role="dialog"
+        title="Confirm order"
+        restatementLabel=""
+        restatement="LIVE on Main: BUY 0.250 BTCUSDT."
+        confirmLabel="BUY 0.250 BTCUSDT"
+        confirmVariant="buy"
+        legs={<table aria-label="Legs" />}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      >
+        <p>Step-up verified.</p>
+      </ConfirmDialog>,
+    );
+    const node = screen().getByRole("dialog", { name: "Confirm order" });
+    expect(node).toHaveAccessibleDescription("LIVE on Main: BUY 0.250 BTCUSDT.");
+    expect(within(node).queryByRole("group", { name: "What this does" })).toBeNull();
+    expect(within(node).getByRole("table", { name: "Legs" })).toBeInTheDocument();
+    expect(within(node).getByText("Step-up verified.")).toBeVisible();
+  });
+});

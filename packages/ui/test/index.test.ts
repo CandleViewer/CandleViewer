@@ -5,6 +5,7 @@ import type {
   ButtonProps,
   CardProps,
   CheckboxProps,
+  ConfirmDialogProps,
   DialogProps,
   FormFieldProps,
   FormSectionProps,
@@ -69,6 +70,7 @@ describe("@candleviewer/ui control atoms (E05-S01)", () => {
 describe("@candleviewer/ui molecules (E05-S03)", () => {
   it.each([
     ["Card", Atoms.Card],
+    ["ConfirmDialog", Atoms.ConfirmDialog],
     ["Dialog", Atoms.Dialog],
     ["FormField", Atoms.FormField],
     ["FormSection", Atoms.FormSection],
@@ -82,6 +84,7 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
     const props:
       | [
           CardProps,
+          ConfirmDialogProps,
           DialogProps,
           FormFieldProps,
           FormSectionProps,

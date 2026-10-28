@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Checkbox,
+  ConfirmDialog,
   Dialog,
   FormField,
   FormSection,
@@ -105,5 +106,18 @@ describe("molecules carry their catalogue id", () => {
   it("CMP-043 marks exactly one root with data-cmp (in its portalled layer)", async () => {
     await mount(<Dialog open title="Go to date" onOpenChange={noop} />);
     expect(document.querySelectorAll('[data-cmp="CMP-043"]')).toHaveLength(1);
+  });
+
+  it("CMP-044 marks exactly one root with data-cmp (inside its CMP-043 layer)", async () => {
+    await mount(
+      <ConfirmDialog
+        open
+        title="Freeze sub_001?"
+        confirmLabel="Freeze sub_001"
+        onConfirm={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(document.querySelectorAll('[data-cmp="CMP-044"]')).toHaveLength(1);
   });
 });

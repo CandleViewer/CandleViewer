@@ -26,6 +26,17 @@ export type {
 export { ConfidenceDots } from "./ConfidenceDots.js";
 export type { ConfidenceDotsProps, ConfidenceLevel } from "./ConfidenceDots.js";
 
+export { ConfirmDialog } from "./ConfirmDialog.js";
+export type {
+  ConfirmButtonVariant,
+  ConfirmCancelReason,
+  ConfirmDialogProps,
+  ConfirmDialogVariant,
+  ConfirmFailure,
+  ConfirmGate,
+  ConfirmMeta,
+} from "./ConfirmDialog.js";
+
 export { CopyButton, useCopy } from "./CopyButton.js";
 export type { CopyButtonProps, CopyStatus, UseCopyOptions, UseCopyResult } from "./CopyButton.js";
 
