@@ -6,7 +6,7 @@ lane port (`lane_trading_port`), signed on the order lane, so nothing in `candle
 `cvdev/` calls `trading_port`: a port built from it would sign on the serving loop and send
 outside the OMS's anchors and write-ahead audit (C-2.9). An attribute `trading_port` anywhere
 there, called or passed on, or a call that reaches it by its name, fails here, and a security
-review decides it (C-2.2). Whether the method stays is L1d-2's call (E29's ticket map,
+review decides it (C-2.2). The method stays until L1d-2c, which deletes it (E29's ticket map,
 `E29-oms.md` §11): the private streams stay on the serving loop (ruling Q2 (b)), and its own
 tests still call it.
 
@@ -95,7 +95,7 @@ def test_a_non_use_is_allowed(source: str) -> None:
 
 
 def test_no_product_module_builds_the_adapters_serving_loop_port() -> None:
-    """Counted, none: the OMS's port is the lane's (#913 L1d-1). The method is still there, so
-    the count guards something until L1d-2 decides whether it stays."""
+    """Counted, none: the OMS's port is the lane's (#913 L1d-1). The method stays until L1d-2c,
+    which deletes it, so until then the count guards something."""
     assert callable(getattr(ExchangeBybitService, NAME, None))
     assert _found() == []
