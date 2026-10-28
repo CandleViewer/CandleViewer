@@ -78,7 +78,7 @@ def _flaky_decorator_lines(source: str) -> list[int]:
             t for t in tokenize.generate_tokens(io.StringIO(source).readline) if t.type not in skip
         ]
     except (tokenize.TokenError, SyntaxError):
-        return [i + 1 for i, line in enumerate(source.splitlines()) if PYTEST_FLAKY_RE.search(line)]
+        return [i + 1 for i, line in enumerate(source.split("\n")) if PYTEST_FLAKY_RE.search(line)]
     return [
         t.start[0]
         for i, t in enumerate(tokens)
@@ -90,7 +90,9 @@ def _flaky_decorator_lines(source: str) -> list[int]:
 
 def scan_pytest_file(path: Path, repo_root: Path) -> list[QuarantineEntry]:
     source = path.read_text(encoding="utf-8", errors="ignore")
-    lines = source.splitlines()
+    # Lines split as the tokenizer splits them: `splitlines()` also breaks at a form feed or a
+    # U+2028, which would shift the ticket probe off the decorator's line.
+    lines = source.split("\n")
     return [
         QuarantineEntry(
             path=str(path.relative_to(repo_root)).replace("\\", "/"),

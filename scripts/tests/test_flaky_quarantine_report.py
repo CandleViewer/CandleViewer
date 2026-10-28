@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.ci.flaky_quarantine_report import build_report, scan_pytest_file, scan_vitest_file
@@ -132,3 +134,54 @@ def test_this_files_fixture_strings_are_no_markers_of_its_own() -> None:
     as unticketed markers; read as tokens, the file has none."""
     here = Path(__file__).resolve()
     assert scan_pytest_file(here, here.parents[2]) == []
+
+
+@pytest.mark.parametrize("separator", ["\x0c", "\u2028"], ids=["form-feed", "line-separator"])
+def test_scan_pytest_file_finds_the_ticket_below_a_character_splitlines_breaks_at(
+    tmp_path: Path, separator: str
+) -> None:
+    """The ticket probe reads the decorator's own line: lines are split as the tokenizer splits
+    them, never by `splitlines()`, which also breaks at a form feed or a U+2028."""
+    f = tmp_path / "test_x.py"
+    f.write_text(
+        f'S = "a{separator}b"\n@pytest.mark.flaky  # ticket: OF-9\ndef test_thing(): pass\n',
+        encoding="utf-8",
+    )
+    (entry,) = scan_pytest_file(f, tmp_path)
+    assert (entry.line, entry.ticket) == (2, "OF-9")
+
+
+def test_scan_pytest_file_reads_every_decorator_form(tmp_path: Path) -> None:
+    f = tmp_path / "test_x.py"
+    f.write_text(
+        "import pytest\n"
+        "@pytest.mark.flaky  # ticket: OF-1\n"
+        "class TestThing:\n"
+        "    @pytest.mark.flaky  # ticket: OF-2\n"
+        "    def test_method(self): pass\n"
+        "@pytest.mark.perf\n"
+        "@ pytest .mark . flaky  # ticket: OF-3\n"
+        "@pytest.mark.slow\n"
+        "def test_stacked(): pass\n",
+        encoding="utf-8",
+    )
+    assert [(e.line, e.ticket) for e in scan_pytest_file(f, tmp_path)] == [
+        (2, "OF-1"),
+        (4, "OF-2"),
+        (7, "OF-3"),
+    ]
+
+
+def test_scan_pytest_file_counts_no_mark_without_its_at(tmp_path: Path) -> None:
+    f = tmp_path / "test_x.py"
+    f.write_text("import pytest\nMARK = pytest.mark.flaky\n", encoding="utf-8")
+    assert scan_pytest_file(f, tmp_path) == []
+
+
+def test_scan_pytest_file_falls_back_on_an_inconsistent_dedent(tmp_path: Path) -> None:
+    f = tmp_path / "test_x.py"
+    f.write_text(
+        "def outer():\n        x = 1\n    y = 2\n@pytest.mark.flaky\ndef test_thing(): pass\n",
+        encoding="utf-8",
+    )
+    assert [e.line for e in scan_pytest_file(f, tmp_path)] == [4]
