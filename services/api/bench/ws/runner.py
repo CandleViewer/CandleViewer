@@ -11,6 +11,8 @@
     uv run python -m bench.ws.runner gate DIR DIR DIR     # C-13.9: 5 % on the median of 3 runs
     uv run python -m bench.ws.runner repro DIR_A DIR_B    # AC 5: within 15 %, or a named source
     uv run python -m bench.ws.runner record DIR           # a PASS run's baseline (refused under CI)
+    uv run python -m bench.ws.runner run A --instrumentation off   # #571: the uninstrumented half
+    uv run python -m bench.ws.runner overhead ON_DIR OFF_DIR      # #571: E17-T06's cost, one pair
 
 A run: the backend (`fixture_app`) boots on 127.0.0.1 with its tokens; the runner fixes an absolute
 timeline (warm-up ends and the run ends at the same instant on every k6 VU), scrapes `/metrics` at
@@ -36,6 +38,14 @@ the backend CPU is the gateway's alone; the child runs on `--feeder-cpus`, by de
 scope's CPU quota. Its CPU is reported apart (`feeder_cpu_cores`) and taken out of the co-tenant
 figure. `feeder` is in `run.json` and in a baseline, and runs or baselines of another mode are
 never compared (an artefact that records none is `inproc`, the only mode there was).
+
+`run --instrumentation off` (#571) serves the same build with E17-T06's hot-path series stood in
+by no-ops (`bench.ws.instrumentation`): such a run is judged in overhead mode (budget #6 is not
+measured, so it is never INVALID for its missing samples), is never a baseline nor gated against
+one, and `instrumentation` is in `run.json`, the baseline name and every comparability check (an
+artefact that records none is `on`, as every run was). `overhead ON_DIR OFF_DIR` compares one run
+of each that differ in nothing else: backend CPU, k6 tick-to-decode and the loop lag, each as an
+on/off delta, and the CPU's against the 2 % line (`overhead.json`, `overhead.md`).
 """
 
 from __future__ import annotations
@@ -64,6 +74,7 @@ from bench.ingestion.budgets import Verdict
 from bench.ingestion.config import machine_profile
 from bench.ingestion.report import redact
 from bench.ws import HARNESS_VERSION, LOOP, READY, budgets, profiles, w5
+from bench.ws import instrumentation as instr
 from bench.ws.budgets import Facts, Result, Scrape, ScrapeTally
 
 K6_VERSION = "v2.3.0"
@@ -108,6 +119,14 @@ OVERRIDES = (
 #: The feeder modes (`fixture_app.FEEDERS`), and the one an artefact without `feeder` ran.
 FEEDERS, LEGACY_FEEDER = ("inproc", "proc"), "inproc"
 FEEDER_CPU = "cv_bench_feeder_cpu_seconds_total"
+#: #571's DoD line: E17-T06's instrumentation costs under this share of the backend CPU.
+OVERHEAD_LINE_PCT = 2.0
+#: Must match between the two runs of an overhead pair, beyond what `comparable` checks: the same
+#: cpusets and scope, so the CPU and the latency are of one placement.
+PAIR_KEYS = ("cpus", "cgroup", "staging", "feeder_cpus")
+NOT_INSTRUMENTED = (
+    "instrumentation off (overhead mode): only an instrumented run becomes a baseline"
+)
 
 
 def get(port: int, path: str) -> str:
@@ -225,6 +244,7 @@ class Plan:
     nominal_warmup_s: float = 0.0
     feeder: str = "inproc"
     feeder_cpus: str | None = None  # the child's cpuset under `--feeder proc`
+    instrumentation: str = "on"  # `instr.MODES`; off: E17-T06's series stood in (#571)
 
     @property
     def duration_s(self) -> float:
@@ -256,9 +276,15 @@ def plan(
             "inherit them: give it its own with --feeder-cpus (or --k6-cpus, or --staging)"
         )
         raise SystemExit(2)
+    mode = getattr(a, "instrumentation", None) or instr.LEGACY  # selfcheck and w5: always on
+    if mode not in instr.MODES:
+        raise ValueError(f"instrumentation {mode!r}: one of {', '.join(instr.MODES)}")
+    if mode == "off" and a.trace_sp:
+        print("::error::--trace-sp with --instrumentation off: no frame carries an sp to trace")
+        raise SystemExit(2)
     return Plan(
         profile, prof, a.flag == "on", out, a.staging, a.seed, backend, k6, a.trace_sp,
-        float(nominal["duration_s"]), float(nominal["warmup_s"]), feeder, feeder_cpus,
+        float(nominal["duration_s"]), float(nominal["warmup_s"]), feeder, feeder_cpus, mode,
     )  # fmt: skip
 
 
@@ -318,6 +344,8 @@ def start_backend(p: Plan) -> tuple[subprocess.Popen[str], int, int]:
         str(int(p.prof.get("send_delay_ms", 0))),
         "--ws-path",
         str(p.prof["ws_path"]),
+        "--instrumentation",
+        p.instrumentation,
         "--feeder",
         p.feeder,
     ]
@@ -516,6 +544,7 @@ def execute(p: Plan, k6: str) -> Path:
         "feeder": p.feeder,
         "feeder_cpus": p.feeder_cpus,
         "feeder_cpu_cores": feeder_cores,
+        "instrumentation": p.instrumentation,
         # true by construction: the runner starts both, and ws_load.js refuses non-loopback
         "same_host": True,
         "scrapes": asdict(scrapes),
@@ -568,7 +597,8 @@ def judge(out: Path) -> tuple[Result, dict[str, Any]]:
         scrapes,
         facts.get("steady_actual_s"),
     )
-    res = budgets.evaluate(facts["resolved"] | {"flag": facts["flag"]}, summ, t0, t1, run)
+    judged = {"flag": facts["flag"], "instrumentation": instrumentation_of(facts)}
+    res = budgets.evaluate(facts["resolved"] | judged, summ, t0, t1, run)
     if not summ:
         res.invalid.append("no_k6_summary: k6 wrote none")
     if facts["k6_exit"] not in (
@@ -582,7 +612,8 @@ def judge(out: Path) -> tuple[Result, dict[str, Any]]:
 
 def baseline_name(facts: Mapping[str, Any]) -> str:
     mode = "-proc" if feeder_of(facts) == "proc" else ""  # inproc keeps the names it always had
-    return str(facts["profile"]) + ("" if facts["flag"] == "on" else "-flag-off") + mode
+    off = "-instr-off" if instrumentation_of(facts) == "off" else ""  # never recorded: a guard
+    return str(facts["profile"]) + ("" if facts["flag"] == "on" else "-flag-off") + mode + off
 
 
 def run_profile(facts: Mapping[str, Any]) -> str:
@@ -600,7 +631,10 @@ def run_profile(facts: Mapping[str, Any]) -> str:
 def not_recordable(res: Result, facts: Mapping[str, Any]) -> str | None:
     """Why a run cannot become a baseline: it did not pass, it records no event loop (a baseline
     without one is never compared), or it was shortened (a baseline taken from a short window would
-    be gated against full-length runs); `None` when it can."""
+    be gated against full-length runs), or it ran without instrumentation (#571: the uninstrumented
+    half of an overhead pair, never a baseline); `None` when it can."""
+    if instrumentation_of(facts) == "off":
+        return NOT_INSTRUMENTED
     if res.status != "PASS":
         return f"the run is {res.status}; only a PASS run becomes a baseline"
     if not facts.get("loop"):
@@ -622,6 +656,12 @@ def compare(
     """The baseline gate. C-13.9 compares the median of at least `MIN_GATE_RUNS` runs, never a
     single noisy sample, so fewer runs can only warn."""
     tol = {m: tolerance for m in res.verdict.metrics}
+    if instrumentation_of(facts) == "off":
+        return gate.GateResult(
+            gated=False,
+            reason="instrumentation off (overhead mode): never gated against a baseline, nor "
+            "recorded as one; `runner overhead` compares it with its instrumented twin",
+        )
     base = gate.load_baseline(baseline_name(facts), BASELINES)
     if base is not None and (not facts.get("loop") or base.get("loop") != facts.get("loop")):
         return gate.GateResult(  # refused when either side records none: never taken as this loop
@@ -635,6 +675,13 @@ def compare(
             gated=False,
             reason=f"baseline feeder {feeder_of(base)}, this run's {feeder_of(facts)}: a feeder on "
             "the backend's loop and one in its own process are not comparable",
+        )
+    if base is not None and instrumentation_of(base) != instrumentation_of(facts):
+        return gate.GateResult(  # a misfiled baseline: E17-T06's cost is in one side's only
+            gated=False,
+            reason=f"baseline instrumentation {instrumentation_of(base)}, this run's "
+            f"{instrumentation_of(facts)}: an instrumented build and an uninstrumented one are "
+            "not comparable",
         )
     g = gate.compare(
         res.verdict,
@@ -681,8 +728,10 @@ def _missed(res: Result) -> str:
 def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
     p = facts["resolved"]
     shape = f"{p['users']} user(s) x {p['connections']} connection(s), {p['symbols']} symbols"
+    off = instrumentation_of(facts) == "off"
+    mode = ", instrumentation off (overhead mode)" if off else ""
     lines = [
-        f"# E17-Q03 WS load report: {facts['profile']}, flag {facts['flag']}: {res.status}",
+        f"# E17-Q03 WS load report: {facts['profile']}, flag {facts['flag']}{mode}: {res.status}",
         "",
         f"- Harness `{facts['harness']}`, k6 `{facts['k6_version']}`, commit "
         f"`{facts['commit'][:12]}`, machine profile `{facts['machine_profile']}` "
@@ -702,6 +751,12 @@ def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
             f"{facts.get('feeder_cpus') or 'any (inherited, not pinned)'}: {used}, "
             "outside the backend CPU"
             + (" (inside the backend's systemd scope and its quota)" if facts["staging"] else "")
+        )
+    if off:  # an instrumented report reads as it always has
+        lines.append(
+            "- Instrumentation off (`--instrumentation off`, #571): E17-T06's hot-path series are "
+            "stood in by no-ops, so budget #6 is not measured; the uninstrumented half of an "
+            "overhead pair (`runner overhead`), never gated and never a baseline"
         )
     if not facts["staging"]:
         lines.append("- Not staged: no systemd scope, so no CPU quota and no memory cap")
@@ -749,8 +804,10 @@ def finish(out: Path, tolerance: float, *, record: bool = False) -> int:
     (out / "report.md").write_text(render(res, facts, g), encoding="utf-8")
     body = {"facts": facts, "result": res.as_dict(), "gate": {"status": g.status, "diff": g.diff}}
     (out / "result.json").write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+    overhead = res.mode == budgets.OVERHEAD_MODE
     print(
         f"{facts['profile']} flag {facts['flag']}: {res.status}"
+        + (" (overhead mode: instrumentation off, budget #6 not measured)" if overhead else "")
         + (f", failed: {', '.join(res.failed())}" if res.failed() else "")
     )
     lead = "INVALID" if res.status == "INVALID" else "also invalid:"
@@ -771,10 +828,14 @@ def finish(out: Path, tolerance: float, *, record: bool = False) -> int:
 def record_baseline(res: Result, facts: Mapping[str, Any]) -> Path:
     """A baseline from a passing, full-length run: `warn-only` until a reviewed PR sets its `gate`
     key to `gated` once a second same-profile run confirms it (06 7.4; `gate.compare` never fails
-    against a `warn-only` one). `gate.record` refuses under CI, so a run never rewrites it."""
+    against a `warn-only` one). `gate.record` refuses under CI, so a run never rewrites it. A run
+    with instrumentation off is refused here too, whoever calls it."""
+    if instrumentation_of(facts) == "off":
+        raise ValueError(NOT_INSTRUMENTED)
     extra = {k: facts[k] for k in ("commit", "k6_version", "cpu_model", "cgroup", "loop")}
     extra["flag"] = facts["flag"]
     extra["feeder"] = feeder_of(facts)
+    extra["instrumentation"] = instrumentation_of(facts)
     named = Verdict(baseline_name(facts), list(res.verdict.checks), dict(res.verdict.metrics))
     scaling = f"steady {facts['steady_s']:.0f} s"
     return gate.record(
@@ -799,10 +860,22 @@ def feeder_of(facts: Mapping[str, Any]) -> str:
     return str(facts.get("feeder") or LEGACY_FEEDER)
 
 
-def comparable(runs: Sequence[tuple[Result, dict[str, Any]]], names: Sequence[str]) -> list[str]:
+def instrumentation_of(facts: Mapping[str, Any]) -> str:
+    """The instrumentation a run or a baseline records: one from before it was recorded ran the
+    build as it ships, `on`."""
+    return str(facts.get("instrumentation") or instr.LEGACY)
+
+
+def comparable(
+    runs: Sequence[tuple[Result, dict[str, Any]]],
+    names: Sequence[str],
+    *,
+    across_instrumentation: bool = False,
+) -> list[str]:
     """Why these runs cannot be compared with each other: an INVALID run proves nothing, nor does a
     run that records no event loop, and runs of another profile, flag, machine, length, event
-    loop or feeder mode are not samples of one thing. Empty when they can."""
+    loop, feeder mode or instrumentation are not samples of one thing (`across_instrumentation`:
+    the overhead pair, whose one difference is that). Empty when they can."""
     why = [
         f"{name} is {res.status} ({'; '.join(res.invalid)}{_missed(res)})"
         for name, (res, _) in zip(names, runs, strict=True)
@@ -820,6 +893,9 @@ def comparable(runs: Sequence[tuple[Result, dict[str, Any]]], names: Sequence[st
     modes = sorted({feeder_of(facts) for _, facts in runs})
     if len(modes) > 1:  # the feeder's CPU is in the backend's numbers in one mode only
         why.append(f"the runs differ in feeder: {', '.join(modes)}")
+    built = sorted({instrumentation_of(facts) for _, facts in runs})
+    if len(built) > 1 and not across_instrumentation:  # E17-T06's cost is in one side's only
+        why.append(f"the runs differ in instrumentation: {', '.join(built)}")
     return why
 
 
@@ -1003,6 +1079,137 @@ def cmd_repro(a: argparse.Namespace) -> int:
     return 0
 
 
+def _lag_ms(out: Path, q: float) -> float | None:
+    """The loop-lag quantile `q` of a saved run's steady window, in ms (`None`: no sample)."""
+    _, _, t0, t1 = load_run(out)
+    lag = budgets.quantile(budgets.delta(t0, t1), "event_loop_lag_seconds", q)
+    return None if lag is None else lag * 1000
+
+
+def _row(name: str, unit: str, on: float | None, off: float | None) -> dict[str, Any]:
+    pct = (on - off) / off * 100 if on is not None and off else None
+    return {"name": name, "unit": unit, "on": on, "off": off, "delta_pct": pct}
+
+
+def overhead_pair(on_dir: Path, off_dir: Path) -> tuple[list[str], dict[str, Any]]:
+    """#571: why the two runs are not an overhead pair (empty when they are), and the comparison.
+    A pair is one instrumented run and then one uninstrumented run that differ in nothing else
+    `comparable` or `PAIR_KEYS` names; each row is the on run's value, the off run's and the delta
+    in % of the off run's. The CPU's is E17-T06's overhead, held to `OVERHEAD_LINE_PCT`."""
+    (ron, fon), (roff, foff) = runs = [judge(on_dir), judge(off_dir)]
+    why = comparable(runs, [str(on_dir), str(off_dir)], across_instrumentation=True)
+    built = [instrumentation_of(fon), instrumentation_of(foff)]
+    if built != ["on", "off"]:
+        why.append(
+            f"overhead takes one instrumentation-on run, then one off: got {' and '.join(built)}"
+        )
+    for key in PAIR_KEYS:
+        if fon.get(key) != foff.get(key):
+            why.append(f"the runs differ in {key}: {fon.get(key)}, {foff.get(key)}")
+    cpu = [r.verdict.metrics.get("backend_cpu_s_per_s") for r in (ron, roff)]
+    why += [
+        f"{d} has no backend CPU reading (a boundary scrape was lost)"
+        for d, m in zip((on_dir, off_dir), cpu, strict=True)
+        if m is None
+    ]
+    if why:
+        return why, {}
+    ttd = [r.verdict.metrics["tick_to_decode_trades_ms"] for r in (ron, roff)]
+    on_cpu, off_cpu = (None if m is None else m["p95"] for m in cpu)  # both read: refused above
+    rows = [_row("backend_cpu_s_per_s", "core-s/s", on_cpu, off_cpu)]
+    rows += [
+        _row(f"tick_to_decode_trades_ms.{q}", "ms", ttd[0][q], ttd[1][q])
+        for q in ("p50", "p95", "p99")
+    ]
+    rows += [
+        _row(f"event_loop_lag_ms.p{int(q * 100)}", "ms", _lag_ms(on_dir, q), _lag_ms(off_dir, q))
+        for q in (0.95, 0.99)
+    ]
+    cpu_pct = rows[0]["delta_pct"]
+    notes = [
+        "one pair: one sample of each build; the harness's own run-to-run spread (the "
+        f"reproducibility check allows {budgets.REPRO_TOLERANCE:.0%}) can be wider than the "
+        f"{OVERHEAD_LINE_PCT:g} % line, so repeat the pair for an interval before closing it",
+        f"k6 times whole milliseconds: a latency that moved by {budgets.K6_CLOCK_MS:g} ms or less "
+        "has not changed",
+    ]
+    if feeder_of(fon) == "inproc":
+        notes.append(
+            "the feeder ran on the backend's loop (`--feeder inproc`): its CPU is in both runs' "
+            "backend CPU, so the share is of the backend, below the fan-out path's own; "
+            "`--feeder proc` takes it out"
+        )
+    body = {
+        "pair": {"on": str(on_dir), "off": str(off_dir)},
+        "status": {"on": ron.status, "off": roff.status},
+        **{k: fon.get(k) for k in ("profile", "flag", "machine_profile", "loop", "steady_s")},
+        "feeder": feeder_of(fon),
+        "cpus": fon.get("cpus"),
+        "rows": rows,
+        "cpu_overhead_pct": cpu_pct,
+        "line_pct": OVERHEAD_LINE_PCT,
+        "under_line": cpu_pct is not None and cpu_pct < OVERHEAD_LINE_PCT,
+        "notes": notes,
+    }
+    return [], body
+
+
+def _cell(v: float | None, fmt: str) -> str:
+    return "not read" if v is None else format(v, fmt)
+
+
+def render_overhead(body: Mapping[str, Any]) -> str:
+    pct, line = body["cpu_overhead_pct"], body["line_pct"]
+    verdict = "under" if body["under_line"] else "at or over"
+    lines = [
+        f"# E17-T06 instrumentation overhead (#571): {body['profile']}, flag {body['flag']}, "
+        f"feeder {body['feeder']}",
+        "",
+        f"- On: `{body['pair']['on']}` ({body['status']['on']}); off: `{body['pair']['off']}` "
+        f"({body['status']['off']}); machine profile `{body['machine_profile']}`, loop "
+        f"{body['loop']}, steady window {body['steady_s']:.0f} s",
+        f"- Backend CPU overhead **{_cell(pct, '+.2f')} %**: {verdict} the {line:g} % line",
+        "",
+        "| metric | unit | on | off | on vs off |",
+        "|---|---|---:|---:|---:|",
+    ]
+    for r in body["rows"]:
+        delta = _cell(r["delta_pct"], "+.1f") + (" %" if r["delta_pct"] is not None else "")
+        lines.append(
+            f"| {r['name']} | {r['unit']} | {_cell(r['on'], '.4g')} | {_cell(r['off'], '.4g')} "
+            f"| {delta} |"
+        )
+    lines += ["", "Notes:", *(f"- {n}" for n in body["notes"])]
+    return "\n".join(lines) + "\n"
+
+
+def cmd_overhead(a: argparse.Namespace) -> int:
+    """#571: E17-T06's overhead from one instrumented run and one uninstrumented run of the same
+    profile, flag, feeder, machine, loop and placement. Exit 2 when they are not such a pair
+    (named; nothing written), 1 when the CPU overhead is at or over the 2 % line, 0 under it."""
+    on_dir, off_dir = Path(a.on_dir), Path(a.off_dir)
+    why, body = overhead_pair(on_dir, off_dir)
+    if why:
+        for text in why:
+            print(f"::error::overhead refused: {text}")
+        return 2
+    out = Path(a.out_dir) if a.out_dir else off_dir
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "overhead.json").write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+    (out / "overhead.md").write_text(render_overhead(body), encoding="utf-8")
+    pct = body["cpu_overhead_pct"]
+    print(
+        f"E17-T06 overhead, {body['profile']} flag {body['flag']} feeder {body['feeder']}: "
+        f"backend CPU {_cell(pct, '+.1f')} % against the {body['line_pct']:g} % line "
+        f"({'under' if body['under_line'] else 'at or over'}); {out / 'overhead.md'}"
+    )
+    for r in body["rows"][1:]:
+        print(f"  {r['name']}: {_cell(r['on'], '.4g')} vs {_cell(r['off'], '.4g')} {r['unit']}")
+    for note in body["notes"]:
+        print(f"  note: {note}")
+    return 0 if body["under_line"] else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1036,6 +1243,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     sub.choices["run"].add_argument(
         "--record-baseline", action="store_true", help="deliberate, local only"
     )
+    sub.choices["run"].add_argument(
+        "--instrumentation", choices=instr.MODES, default="on",
+        help="off: E17-T06's hot-path series stood in by no-ops, for `overhead` (#571)",
+    )  # fmt: skip
     add("selfcheck", cmd_selfcheck, runs=True)
     add("w5", cmd_w5, runs=True)
     add("w5-judge", cmd_w5_judge).add_argument("dir")
@@ -1046,6 +1257,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     rp.add_argument("dir_a")
     rp.add_argument("dir_b")
     rp.add_argument("--variance-source", action="append")
+    op = add("overhead", cmd_overhead)
+    op.add_argument("on_dir", help="the run with --instrumentation on")
+    op.add_argument("off_dir", help="the run with --instrumentation off")
+    op.add_argument("--out-dir", help="where overhead.json and overhead.md go (default: OFF_DIR)")
     a = ap.parse_args(argv)
     code: int = a.fn(a)
     return code
