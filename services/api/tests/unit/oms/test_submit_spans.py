@@ -13,9 +13,11 @@ an in-memory exporter; nothing is exported anywhere."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+import contextlib
+from collections.abc import Callable, Iterator, Sequence
 from decimal import Decimal
 from itertools import pairwise
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -26,8 +28,11 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
+from candleviewer.exchange.base.errors import OmsErrorCode, RateBudgetExceededError
+from candleviewer.exchange.base.fakes import FakeReject, FakeTradingPort
 from candleviewer.observability.tracing import span
-from candleviewer.oms.errors import TickSizeViolation
+from candleviewer.oms.errors import OmsError, TickSizeViolation
+from candleviewer.oms.submit import OrderRequest
 from candleviewer.oms_lane import OrderLane
 from candleviewer.oms_wiring import OmsRuntime
 from tests.unit.api.test_place_order_perf import RAW, serving
@@ -45,6 +50,25 @@ BOUND_S = 10.0
 def _traced(monkeypatch: pytest.MonkeyPatch) -> None:
     _EXPORTER.clear()
     monkeypatch.setattr(trace, "get_tracer", _PROVIDER.get_tracer)
+
+
+@pytest.fixture(autouse=True)
+def _native_stops(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """C-2.6 on every path here, as `test_order_exits_pg.py` asserts it: once a test ends, every
+    create that a fake venue built during the test took carries its stop unless it is reduce-only,
+    read off each venue double's own call records."""
+    venues: list[FakeTradingPort] = []
+    built = FakeTradingPort.__init__
+
+    def kept(self: FakeTradingPort, *args: Any, **kwargs: Any) -> None:
+        built(self, *args, **kwargs)
+        venues.append(self)
+
+    monkeypatch.setattr(FakeTradingPort, "__init__", kept)
+    yield
+    creates = [c.request for v in venues for c in v.calls if c.method == "place_order"]
+    bare = [c.order_link_id for c in creates if not c.reduce_only and c.stop_loss is None]
+    assert bare == [], "an entry reached the venue without its native stop (C-2.6)"
 
 
 def _spans() -> dict[str, list[ReadableSpan]]:
@@ -142,6 +166,45 @@ async def test_a_refusal_at_steps_1_to_8_ends_after_oms_validate_with_its_class_
         status = (ended.status.status_code, ended.status.description)
         assert status == (StatusCode.ERROR, "TickSizeViolation")
         assert list(ended.events) == []
+
+
+def _rejected(rig: sr.SubmitRig) -> OrderRequest:
+    rig.port.demo.script("place_order", FakeReject(OmsErrorCode.INSUFFICIENT_MARGIN, 110007))
+    return sr.entry()
+
+
+def _rate_refused(rig: sr.SubmitRig) -> OrderRequest:
+    rig.port.demo.script("place_order", RateBudgetExceededError("no token", retry_after_s=1.5))
+    return sr.entry()
+
+
+def _unrecorded(rig: sr.SubmitRig) -> OrderRequest:
+    rig.read_only.is_read_only = True  # refused at step 1, its record refused too (C-2.9)
+    rig.port.audits.refuse = OSError("the audit lane is down")
+    return sr.entry()
+
+
+@pytest.mark.parametrize(
+    ("arrange", "result"),
+    [
+        (_rejected, "exchange_error"),
+        (_rate_refused, "exchange_rate_limited"),
+        (_unrecorded, "audit_unavailable"),
+    ],
+    ids=["502", "429", "refusal_unrecorded"],
+)
+async def test_oms_submit_ends_with_the_code_its_request_is_answered(
+    arrange: Callable[[sr.SubmitRig], OrderRequest], result: str
+) -> None:
+    """`oms.submit`'s `result` (20 Sec.12.3) is the answer's own code: a venue's rejection's 502
+    `exchange_error`, a refused rate token's 429 `exchange_rate_limited`, and a refusal whose
+    record does not land, `audit_unavailable` in its own code's place (C-2.9)."""
+    async with sr.rigged() as rig:
+        with contextlib.suppress(OmsError):  # the 503 that stands in for the refusal
+            await rig.submit(arrange(rig))
+        await rig.quiet()
+    [submitted] = _spans()["oms.submit"]
+    assert (submitted.attributes or {})["result"] == result
 
 
 async def test_a_refusals_message_reaches_no_span() -> None:

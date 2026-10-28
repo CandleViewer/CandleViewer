@@ -19,12 +19,14 @@ import asyncio
 import gc
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from typing import Any
 from uuid import uuid4
 
 import httpx
 import pytest
 
+from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.oms_wiring import OmsRuntime
 from tests.unit.api.test_place_order_perf import RAW, serving
 from tests.unit.oms.test_submit_perf import BUDGET_NS, REQUESTS, ROUNDS, _p95
@@ -35,6 +37,25 @@ pytestmark = pytest.mark.perf
 MOVE = json.dumps({"price": "60000.5"}).encode()
 
 type Exit = Callable[[httpx.AsyncClient, str], Awaitable[httpx.Response]]
+
+
+@pytest.fixture(autouse=True)
+def _native_stops(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """C-2.6 here too, as `test_order_exits_pg.py` asserts it: once a test ends, every create that
+    a fake venue built during the test took carries its stop unless it is reduce-only, read off
+    each venue double's own call records. Untimed: it reads nothing until the rounds are over."""
+    venues: list[FakeTradingPort] = []
+    built = FakeTradingPort.__init__
+
+    def kept(self: FakeTradingPort, *args: Any, **kwargs: Any) -> None:
+        built(self, *args, **kwargs)
+        venues.append(self)
+
+    monkeypatch.setattr(FakeTradingPort, "__init__", kept)
+    yield
+    creates = [c.request for v in venues for c in v.calls if c.method == "place_order"]
+    bare = [c.order_link_id for c in creates if not c.reduce_only and c.stop_loss is None]
+    assert bare == [], "an entry reached the venue without its native stop (C-2.6)"
 
 
 def _headers() -> dict[str, str]:

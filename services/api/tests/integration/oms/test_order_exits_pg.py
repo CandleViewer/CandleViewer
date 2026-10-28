@@ -16,7 +16,6 @@ group.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import threading
 from collections.abc import Coroutine, Iterator
 from dataclasses import dataclass, field
@@ -206,8 +205,9 @@ async def test_an_accepted_amend_answers_its_new_etag_and_records_both_stop_side
     """An entry with a take-profit, its stop tightened from 58000 to 59000 under `If-Match` (the
     placement's tag): 202 with the order, its new `ETag` the version B1's `amend_ack` gave, which
     the placement's is not; the venue's amend carries both sides, the new stop and the unchanged
-    take-profit (24 Sec.8.9's re-pairing); and each side is recorded again as an `entry_attach`
-    row named for the order, `sl.modified` changed and `tp.modified` not, reason `amend`."""
+    take-profit (24 Sec.8.9's re-pairing), as the `amend_request` step's row in `order_events`
+    holds them; and each side is recorded again as an `entry_attach` row named for the order,
+    `sl.modified` changed and `tp.modified` not, reason `amend`."""
     tighter = {"stop_loss": {"unit": "price", "value": "59000"}}
     async with _serving(world) as client:
         order_id, placed = await _placed(client, world, take_profit=_priced(62000))
@@ -221,6 +221,13 @@ async def test_an_accepted_amend_answers_its_new_etag_and_records_both_stop_side
     [amend] = _calls(world, calls, "amend_order")
     assert isinstance(amend.request, AmendOrderRequest)
     assert (amend.request.stop_loss, amend.request.take_profit) == (Decimal(59000), Decimal(62000))
+    [(staged,)] = c6._sql(
+        world.dsn,
+        "SELECT payload FROM order_events WHERE order_id = %s AND kind = 'amend_request'",
+        order_id,
+    )
+    paired = (Decimal(staged["stop_loss"]), Decimal(staged["take_profit"]))
+    assert paired == (Decimal(59000), Decimal(62000))
     rows = c6._sql(
         world.dsn,
         "SELECT kind::text, trigger_price FROM recorded_stops WHERE order_id = %s "
@@ -379,9 +386,9 @@ async def test_a_restart_resumes_an_exit_left_pending_once_under_its_attempt(
         sending = asyncio.create_task(exit_call)
         await _reached(door)
         assert _steps(world.dsn, order_id)[-1] == (f"{kind}_request", ORDER_STATE_OF[pending])
-    sending.cancel()
-    with contextlib.suppress(BaseException):
-        await sending
+    sending.cancel()  # its answer went down with the first process
+    await asyncio.wait({sending})
+    assert sending.cancelled()
     assert _terms(world.dsn, order_id)[2] == pending
     door.holding = False
     with capture_logs() as logs:
