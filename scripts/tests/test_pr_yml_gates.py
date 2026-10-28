@@ -31,7 +31,7 @@ GATES: dict[str, int | str] = {
     **dict.fromkeys(["statechart-lint", "event-coverage", "machine-hash-lock"], VAR),
     "xstate-pin-attestation": 10,
     "xstate-contract": VAR,  # #3104: _job-xstate-contract.yml:35 at 59bec409
-    "gen": 5,  # #3104: _job-gen.yml:27 at 59bec409
+    "gen": 10,  # #3104: _job-gen.yml:27 at 59bec409; 10 since #4873 (5 timed out under runner load)
     "secret-scan": 10,  # #3385: the budget of the security lane's gitleaks job
     "backlog-twin-eol": 5,  # #3495: one `git ls-files --eol` over the twins
 }
