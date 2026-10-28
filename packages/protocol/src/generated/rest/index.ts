@@ -3721,7 +3721,8 @@ export interface paths {
      *       `big_trade_threshold` with its `big_trade_mode` (`TradesPageMeta`).
      *
      *     **Bounds promised, enforced from #654's implementation PR** (not yet in force): `to - from`
-     *     is at most 6 h, and an over-window request is 400 `invalid_time_range` (SR-E22-01); `limit`
+     *     is at most 6 h, or 15 min when `cluster_window_ms` is over 2000 (SR-E22-04), and an
+     *     over-window request is 400 `invalid_time_range` (SR-E22-01); `limit`
      *     is at most 500 (SR-E22-02, as `Limit` already declares); `min_size` meets the floor above
      *     (SR-E22-03), with 400 `invalid_min_size`.
      *
