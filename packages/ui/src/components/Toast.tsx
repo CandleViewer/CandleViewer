@@ -85,7 +85,12 @@ const reasonOf = (action: ToastAction): string | undefined => {
   return trimmed === undefined || trimmed === "" ? undefined : trimmed;
 };
 
-/** A gated action (conventions 36): CMP-001's T2 look, described by the shared notice instead of its own line. */
+/**
+ * A gated action (conventions 36): CMP-001's T2 look, described by the shared notice instead of its own line.
+ * CMP-001 renders one reason line per button, so this mirrors its gated markup (`cv-control`, `cv-button`,
+ * `data-gated`, `cv-button__glyph`); a unit test pins the two to the same classes and data attributes, so a change
+ * to CMP-001's markup fails here rather than diverging silently.
+ */
 function GatedAction({
   action,
   noticeId,
@@ -147,7 +152,10 @@ export function Toast({
   const escape = useRef<(() => void) | null>(null);
   escape.current = dismissible && onDismiss !== undefined ? () => onDismiss("escape") : null;
   // `Esc` on a focused toast, before the layer stack's document listener: a native listener on the group, as the
-  // group is not a widget. A tooltip echo over the focused control takes it first (conventions 32).
+  // group is not a widget. A tooltip echo over the focused control takes it first (conventions 32). It stops the
+  // event, so React-delegated `Esc` handlers on descendants (a nested menu, an action's own handler) never see it:
+  // a toast holds only buttons today, so `Esc` has one meaning here. A descendant that needs its own `Esc` must
+  // handle it natively and call `preventDefault()`, which this listener honours.
   useEffect(() => {
     const group = root.current;
     if (group === null) return undefined;
@@ -243,7 +251,10 @@ export interface ToastItem extends Omit<ToastProps, "onDismiss" | "onRefuse" | "
   id: string;
   /** Overrides the region's duration for this toast; `null` is "until dismissed". */
   durationMs?: number | null;
-  /** Overrides the timing rule (H26): `true` never times out, `false` follows the duration even with an action. */
+  /**
+   * Overrides the timing rule (H26): `true` never times out, `false` follows the duration even with an action. An
+   * Undo toast ignores `false`: it never times out, only its Undo window closes (H27).
+   */
   persistent?: boolean;
   /** An error that is not `danger` in tone: persistent and assertive by default, like `danger`. */
   error?: boolean;
@@ -281,23 +292,27 @@ const sentenceOf = (toast: ToastItem): string =>
 
 /**
  * A timeout that pauses: while `paused` the remaining time is kept, and it runs on from there. `ms === null` runs
- * no timer; a change of `ms` starts the count again.
+ * no timer; a change of `ms` starts the count again. It fires at most once per count: a host that keeps the toast
+ * after `onFire` (an async removal) gets no second call when a later hover or focus change toggles `paused`.
  */
 function usePausableTimeout(ms: number | null, paused: boolean, onFire: () => void): void {
   const fire = useRef(onFire);
   fire.current = onFire;
   const remaining = useRef<number | null>(ms);
   const forMs = useRef<number | null>(ms);
+  const fired = useRef(false);
   useEffect(() => {
     if (forMs.current !== ms) {
       forMs.current = ms;
       remaining.current = ms;
+      fired.current = false;
     }
     const left = remaining.current;
-    if (ms === null || left === null || paused) return undefined;
+    if (fired.current || ms === null || left === null || paused) return undefined;
     const started = Date.now();
     const handle = setTimeout(
       () => {
+        fired.current = true;
         remaining.current = 0;
         fire.current();
       },
@@ -305,7 +320,7 @@ function usePausableTimeout(ms: number | null, paused: boolean, onFire: () => vo
     );
     return () => {
       clearTimeout(handle);
-      remaining.current = Math.max(0, left - (Date.now() - started));
+      if (!fired.current) remaining.current = Math.max(0, left - (Date.now() - started));
     };
   }, [ms, paused]);
 }
@@ -365,8 +380,12 @@ const noModal = (): boolean => false;
  * stack, named "Notifications". Each toast is announced once on arrival through `announce`, politely, or
  * assertively for `danger` or an error; nothing here takes focus. The timing rule (H26): a toast with an action,
  * an error or `danger` persists, any other closes after the duration; no countdown bar. Every timer pauses while
- * the pointer is over the stack, while focus is in it, and while a modal layer is open (the stack is inert under
- * it). `Esc` on a focused toast dismisses it and moves focus to the next toast, else back where it came from.
+ * the pointer is over the stack, while focus is in it, and while a modal layer is open. Under a modal layer the
+ * stack stays visible but inert: the region is a child of `body`, so the layer's inert-outside pass (conventions 31)
+ * covers it and this component sets no `inert` of its own. `Esc` on a focused toast dismisses it and moves focus to
+ * the next toast, else back where it came from; a focused toast the host removes by itself also gives focus back.
+ * The region is a named landmark on purpose: it exists only while a toast shows, and it is what CMP-212's
+ * "Focus toasts" will move to; it is never a live region (H28), since `announce` speaks for it.
  */
 export function ToastRegion({
   toasts,
@@ -381,6 +400,8 @@ export function ToastRegion({
   const modal = useSyncExternalStore(subscribeLayers, modalLayerOpen, noModal);
   /** Where focus was before it entered the stack: `Esc` on the last toast gives it back. */
   const cameFrom = useRef<HTMLElement | null>(null);
+  /** Focus is in the stack, mirrored for the layout effect below without making it a dependency. */
+  const focusIn = useRef(false);
   const spoken = useRef(new Set<string>());
   const latestAnnounce = useRef(announce);
   latestAnnounce.current = announce;
@@ -397,10 +418,18 @@ export function ToastRegion({
   }, [toasts]);
 
   // A focused toast removed by its host fires no blur, and an emptied stack no pointer leave: re-read after a change.
+  // Focus that fell to the page body with the removed toast goes back where it came from.
   useLayoutEffect(() => {
     const root = list.current;
     if (root === null) setHovered(false);
-    if (root === null || !root.contains(document.activeElement)) setFocused(false);
+    if (root !== null && root.contains(document.activeElement)) return;
+    if (focusIn.current) {
+      focusIn.current = false;
+      const active = document.activeElement;
+      const back = cameFrom.current;
+      if ((active === null || active === document.body) && back?.isConnected === true) back.focus();
+    }
+    setFocused(false);
   }, [toasts]);
 
   const dismiss = useCallback(
@@ -437,10 +466,13 @@ export function ToastRegion({
             cameFrom.current =
               event.relatedTarget instanceof HTMLElement ? event.relatedTarget : null;
           }
+          focusIn.current = true;
           setFocused(true);
         }}
         onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+          if (event.currentTarget.contains(event.relatedTarget)) return;
+          focusIn.current = false;
+          setFocused(false);
         }}
       >
         {toasts.map((toast) => (

@@ -3,6 +3,7 @@ import { act, useState, type JSX } from "react";
 import { expect, fireEvent, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
+  Button,
   Dialog,
   Toast,
   ToastRegion,
@@ -99,6 +100,30 @@ describe("Toast (CMP-045)", () => {
     await expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it("a gated action keeps CMP-001's gated markup (classes, data attributes, the lock glyph)", async () => {
+    const reason = "Your role can't change alerts.";
+    const host = await mount(
+      <>
+        <Button size="sm" disabledReason={reason}>
+          Snooze
+        </Button>
+        <Toast
+          title="BTC above 65k"
+          actions={[{ label: "Disable", onClick: vi.fn(), disabledReason: reason }]}
+        />
+      </>,
+    );
+    const button = within(host).getByRole("button", { name: "Snooze" });
+    const gated = within(host).getByRole("button", { name: "Disable" });
+    await expect(gated.className).toBe(button.className);
+    for (const attr of ["data-variant", "data-size", "data-gated", "aria-disabled", "type"]) {
+      await expect(gated.getAttribute(attr)).toBe(button.getAttribute(attr));
+    }
+    await expect(gated.querySelector(".cv-button__glyph svg")).not.toBeNull();
+    await expect(button.querySelector(".cv-button__glyph svg")).not.toBeNull();
+    await expect(gated.querySelector(".cv-button__label")).toHaveTextContent("Disable");
+  });
+
   it("Undo calls back; once its window closes the outcome line replaces it", async () => {
     const onUndo = vi.fn();
     const undo = { onUndo, outcome: "EMA 21 removed." };
@@ -135,8 +160,9 @@ describe("Toast Esc on the dismiss button", () => {
   });
 });
 
-/** A host that owns the queue: `add` pushes a toast, `onDismiss` removes it. */
+/** A host that owns the queue: `add` pushes a toast, `remove` drops one unasked, `onDismiss` removes it. */
 let add: (toast: ToastItem) => void = () => undefined;
+let remove: (id: string) => void = () => undefined;
 function Host({
   initial = [],
   announce,
@@ -148,6 +174,7 @@ function Host({
 }): JSX.Element {
   const [toasts, setToasts] = useState<readonly ToastItem[]>(initial);
   add = (toast) => setToasts((list) => [...list, toast]);
+  remove = (id) => setToasts((list) => list.filter((toast) => toast.id !== id));
   return (
     <>
       <label>
@@ -301,6 +328,10 @@ describe("ToastRegion", () => {
     );
     await advance(1000);
     await act(async () => setOpen(true));
+    // Visible but inert: the dialog's inert-outside pass covers the region, a child of `body` (jsdom has no
+    // `inert`, so the pass falls back to `aria-hidden`; the RegionUnderModal story asserts `inert` itself).
+    const region = document.querySelector(".cv-toast-region");
+    await expect(region?.closest('[inert], [aria-hidden="true"]')).not.toBeNull();
     await advance(60000);
     await expect(onDismiss).not.toHaveBeenCalled();
     await act(async () => setOpen(false));
@@ -334,6 +365,56 @@ describe("ToastRegion", () => {
     await expect(onDismiss).toHaveBeenCalledWith("b", "escape");
     await expect(field).toHaveFocus();
     await expect(screen().queryByRole("region", { name: "Notifications" })).toBeNull();
+  });
+
+  it("a timer fires once even if the host keeps the toast after the timeout", async () => {
+    const onDismiss = vi.fn();
+    await mount(<ToastRegion toasts={[info]} announce={vi.fn()} onDismiss={onDismiss} />);
+    await advance(5000);
+    await expect(onDismiss).toHaveBeenCalledTimes(1);
+    const list = screen().getByRole("list");
+    await act(async () => {
+      fireEvent.mouseOver(list);
+    });
+    await act(async () => {
+      fireEvent.mouseOut(list, { relatedTarget: document.body });
+    });
+    await focus(screen().getByRole("button", { name: "Dismiss Session extended" }));
+    await focus(document.body);
+    await advance(60000);
+    await expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("after unmount no timer fires and the group's Esc listener is gone", async () => {
+    const onDismiss = vi.fn();
+    let setShown: (shown: boolean) => void = () => undefined;
+    function Toggle(): JSX.Element | null {
+      const [shown, set] = useState(true);
+      setShown = set;
+      return shown ? (
+        <ToastRegion toasts={[info]} announce={vi.fn()} onDismiss={onDismiss} />
+      ) : null;
+    }
+    await mount(<Toggle />);
+    const group = screen().getByRole("group", { name: "Session extended" });
+    await act(async () => setShown(false));
+    await advance(60000);
+    group.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await expect(onDismiss).not.toHaveBeenCalled();
+    await expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a focused toast the host removes by itself gives focus back where it came from", async () => {
+    const action = { label: "Details", onClick: vi.fn() };
+    await mount(
+      <Host announce={vi.fn()} initial={[{ id: "a", title: "First", actions: [action] }]} />,
+    );
+    const field = screen().getByRole("textbox", { name: "Price" });
+    await focus(field);
+    await focus(screen().getByRole("button", { name: "Details" }));
+    await act(async () => remove("a"));
+    await expect(screen().queryByRole("group", { name: "First" })).toBeNull();
+    await expect(field).toHaveFocus();
   });
 
   it("the dismiss button hands focus on too", async () => {
