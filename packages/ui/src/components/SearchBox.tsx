@@ -62,7 +62,8 @@ export function SearchBox({
     onKeyDown?.(event);
     if (event.key !== "Escape" || !filled || event.defaultPrevented) return;
     if (event.nativeEvent.isComposing) return;
-    // Handled here: the native field must not clear on its own, and a dialog around it must not close.
+    // Handled here: the native field must not clear on its own, and a dialog around it must not close. Stopping the
+    // React event stops bubble listeners (Popover's document listener); capture-phase listeners still see this Esc.
     event.preventDefault();
     event.stopPropagation();
     onClear();

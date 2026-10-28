@@ -100,9 +100,11 @@ export function FormSection({
 
   const reportInvalid = useCallback((key: string, invalid: boolean): void => {
     const map = invalidKeys.current;
+    const before = map.size;
     if (invalid) map.set(key, true);
     else map.delete(key);
-    setInvalidCount(map.size);
+    // Only a change in the count costs a render; a field that stays invalid reports nothing new.
+    if (map.size !== before) setInvalidCount(map.size);
   }, []);
 
   const context = useMemo<SectionContextValue>(
@@ -122,18 +124,20 @@ export function FormSection({
     return () => form.removeEventListener("submit", onSubmit, true);
   }, [collapsible]);
 
-  // Children's layout effects have reported into the map by now, so the count is this commit's.
+  // Children's layout effects have reported into the map by now, so the count is this commit's. The arm lasts this
+  // one commit (the submit's render, which carries the host's validation): a clean submit disarms, so a later blur or
+  // server error never reopens the section or moves focus.
   useLayoutEffect(() => {
     if (!submitted.current) return;
-    const count = errorCount ?? invalidKeys.current.size;
-    if (count === 0) return;
     submitted.current = false;
-    if (expanded) return;
+    const count = errorCount ?? invalidKeys.current.size;
+    if (count === 0 || expanded) return;
     focusPending.current = true;
     setOpen(true);
   });
 
-  // Once the body shows, focus reaches the first invalid control unless the host already put it on one.
+  // Once the body shows, focus reaches the first invalid control unless the host already put it on one. A controlled
+  // host that declines the submit's onOpenChange(true) leaves this pending until the user's own toggle clears it.
   useLayoutEffect(() => {
     if (!expanded || !focusPending.current) return;
     focusPending.current = false;
@@ -179,8 +183,10 @@ export function FormSection({
               aria-controls={bodyId}
               aria-describedby={showErrors ? errorsId : undefined}
               onClick={() => {
-                // The user's own toggle settles a pending submit: a later error never reopens the section.
+                // The user's own toggle settles a pending submit: a later error never reopens the section, and a
+                // manual open never moves focus.
                 submitted.current = false;
+                focusPending.current = false;
                 setOpen(!expanded);
               }}
             >

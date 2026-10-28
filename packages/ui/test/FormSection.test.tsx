@@ -256,6 +256,64 @@ describe("FormSection opens on submit (CMP-065, G14)", () => {
     expect(toggle).toHaveAccessibleDescription("1 problem");
   });
 
+  it("a clean submit disarms: a later error leaves the section collapsed and focus where it was", async () => {
+    const Host = (): JSX.Element => {
+      const [error, setError] = useState<string | undefined>(undefined);
+      return (
+        <form noValidate onSubmit={(event) => event.preventDefault()}>
+          <FormSection title="Advanced" collapsible defaultOpen={false}>
+            <FormField label="Trailing offset" error={error}>
+              <TextInput />
+            </FormField>
+          </FormSection>
+          <Button type="submit">Save</Button>
+          <Button onClick={() => setError(ERROR)}>Fail</Button>
+        </form>
+      );
+    };
+    const host = await mount(<Host />);
+    const toggle = within(host).getByRole("button", { name: "Advanced" });
+    await userEvent.click(within(host).getByRole("button", { name: "Save" }));
+    const fail = within(host).getByRole("button", { name: "Fail" });
+    await userEvent.click(fail);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveAccessibleDescription("1 problem");
+    expect(fail).toHaveFocus();
+  });
+
+  it("controlled: a declined open after a submit never moves focus on a later manual open", async () => {
+    const Host = (): JSX.Element => {
+      const [open, setOpen] = useState(false);
+      const [manual, setManual] = useState(false);
+      return (
+        <form noValidate onSubmit={(event) => event.preventDefault()}>
+          <FormSection
+            title="Advanced"
+            collapsible
+            open={open}
+            onOpenChange={(next) => {
+              if (manual) setOpen(next);
+            }}
+          >
+            <FormField label="Trailing offset" error={ERROR}>
+              <TextInput />
+            </FormField>
+          </FormSection>
+          <Button type="submit">Save</Button>
+          <Button onClick={() => setManual(true)}>Allow</Button>
+        </form>
+      );
+    };
+    const host = await mount(<Host />);
+    const toggle = within(host).getByRole("button", { name: "Advanced" });
+    await userEvent.click(within(host).getByRole("button", { name: "Save" }));
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(within(host).getByRole("button", { name: "Allow" }));
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveFocus();
+  });
+
   it("opens at once on a native constraint failure inside it", async () => {
     const host = await mount(
       <form onSubmit={(event) => event.preventDefault()}>

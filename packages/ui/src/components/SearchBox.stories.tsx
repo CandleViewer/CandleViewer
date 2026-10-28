@@ -90,6 +90,13 @@ export const Focused: Story = {
   },
 };
 
+/** Hover: the well's hover border, as on CMP-007. */
+export const Hover: Story = {
+  render: () => <Host initial="alex" />,
+  play: async ({ canvasElement }) =>
+    userEvent.hover(within(canvasElement).getByRole("searchbox", { name: LABEL })),
+};
+
 /** Plain disabled: native, out of the Tab order, the whole well dims. */
 export const Disabled: Story = {
   render: () => <Host disabled />,
