@@ -94,6 +94,9 @@ RevokedReason = Literal[
     "resync_rate_limited",
     "topic_removed",
 ]
+#: 23 §9.5 (E27-S04, #898): the two reasons an account's subscriptions end or narrow with.
+AccountRevokedReason = Literal["key_revoked", "account_disabled"]
+ACCOUNT_REVOKED_REASONS: Final = frozenset({"key_revoked", "account_disabled"})
 CLOSE_USER_DISABLED: Final = 4403
 
 ws_revoked_total = Counter(

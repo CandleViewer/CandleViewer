@@ -84,8 +84,10 @@ from candleviewer.ws.metrics import (
 from candleviewer.ws.rebuild_budget import RebuildBudget, UserRebuilds, topic_key
 from candleviewer.ws.rebuild_budget import Scope as BudgetScope
 from candleviewer.ws.revocation import (
+    ACCOUNT_REVOKED_REASONS,
     CLOSE_FAILURE_LOG_EVERY_S,
     EVICTION_LOG_EVERY_S,
+    AccountRevokedReason,
     Closer,
     RevokedReason,
     revoked_frame,
@@ -1179,11 +1181,54 @@ class ConnectionAuthz:
                     if sub.topic.family.family == _RECORDER and sub.sub_id not in known:
                         affected.append(sub)
                         viewed.add(sub.sub_id)
-        # #415: a grant or a permission withdrawn alike, one rule at the sending boundary (C-12.4)
+        self._withdraw(affected, viewed)
+        return frames
+
+    def revoke_account(
+        self, account_id: uuid.UUID, reason: AccountRevokedReason, now_ms: int
+    ) -> list[dict[str, Any]]:
+        """23 §9.5 (E27-S04, #898): the account's last signable key revoked, or the account
+        disabled. Each subscription naming it on an account-scoped topic (`orders`, `positions`,
+        `executions`, `wallet`, `trade_groups`, `rules`) narrows (`removed_accounts`,
+        `resubscribe_allowed: true`) when it names other accounts too, and ends
+        (`resubscribe_allowed: false`) when it named only this one; the `machines.*` rows wait
+        for B4. Returns `permission_change` then one `revoked` per subscription, in `ch` order,
+        or nothing when no subscription names the account. The queued frames are withdrawn as a
+        grant change withdraws them, before any of these is queued."""
+        if reason not in ACCOUNT_REVOKED_REASONS:
+            raise ValueError("not an account revocation reason")
+        removed = frozenset({account_id})
+        affected: list[Subscription] = []
+        revoked: list[dict[str, Any]] = []
+        for sub in sorted(self.by_id.values(), key=lambda s: (s.ch, s.sub_id)):
+            if sub.topic.entity_kind is not None or account_id not in sub.accounts:
+                continue
+            kept = sub.accounts - removed
+            if kept:
+                sub.accounts = kept
+                sub.effective["exchange_account_ids"] = sorted(str(a) for a in kept)
+            else:
+                self._drop(sub)
+            revoked.append(self._revoked(sub, reason, now_ms, removed, resubscribe=bool(kept)))
+            affected.append(sub)
+        if not affected:
+            return []
+        change = {
+            "t": "permission_change",
+            "ts": now_ms,
+            "p": auth_ok_payload(self.principal, user_id=str(self.actor_user_id)),
+        }
+        self._withdraw(affected, set())
+        return [change, *revoked]
+
+    def _withdraw(self, affected: list[Subscription], viewed: set[str]) -> None:
+        """#415: a grant or a permission withdrawn alike, one rule at the sending boundary
+        (C-12.4): the affected subscriptions' queued frames are discarded first (§9.5), then a
+        narrowed one is re-pended unless paused (its resume re-snapshots it, §5.4, §8.4 step 1):
+        flag on always, flag off once its frames went."""
         purged = self.on_purge(affected) if self.on_purge is not None and affected else set()
-        self._dropped(affected)  # the discard comes first (§9.5)
-        for sub in affected:  # then a narrowed one is re-pended unless paused (its resume
-            # re-snapshots it, §5.4, §8.4 step 1): flag on always, flag off once its frames went
+        self._dropped(affected)
+        for sub in affected:
             gone = (sub.ch, sub.replay_session_id) in purged
             if self.on_drop is None and not gone and sub.sub_id not in viewed:
                 continue
@@ -1191,7 +1236,6 @@ class ConnectionAuthz:
             if sub.sub_id in self.by_id and not (sub.snapshot_pending or paused):
                 sub.snapshot_pending, sub.pending_reason = True, "reconfigure"
                 self.settling.append(sub)
-        return frames
 
     def _reevaluate(self, sub: Subscription, now_ms: int) -> dict[str, Any] | None:
         if sub.topic.entity_kind is not None:
@@ -1664,6 +1708,54 @@ class ConnectionRegistry:
                 await self._fan_out(user_id, rows)
         finally:
             await self._write_rows(rows)
+
+    async def account_revoked(self, account_id: uuid.UUID, reason: AccountRevokedReason) -> int:
+        """23 §9.5 (E27-S04, #898): every live socket whose subscriptions name the account gets
+        `permission_change`, then a `revoked` (`key_revoked` or `account_disabled`) per
+        subscription (`ConnectionAuthz.revoke_account`), sent as a grant change's are: each
+        socket's subscriptions change synchronously before any send, a socket that stalls or
+        breaks is evicted, and the `ws.subscription.revoked` rows are written after the sends,
+        on any exit. Returns how many sockets got frames. Another reason is refused
+        (`ValueError`) before anything changes."""
+        if reason not in ACCOUNT_REVOKED_REASONS:
+            raise ValueError("not an account revocation reason")
+        rows: list[_AuditRow] = []
+        try:
+            now_ms = self._clock_ms()
+            entries = [e for group in list(self._conns.values()) for e in group]
+            changed: list[tuple[ConnectionAuthz, Any, Any, list[dict[str, Any]]]] = []
+            evicted: list[Any] = []
+            for authz, send, close in entries:  # every socket changes before any I/O
+                try:
+                    frames = authz.revoke_account(account_id, reason, now_ms)
+                except Exception:  # half changed: evicted as a failed swap is (`_swap_or_evict`)
+                    with contextlib.suppress(Exception):
+                        _log().error(
+                            "ws account revocation failed; socket evicted",
+                            connection_id=authz.connection_id,
+                            exc_info=True,
+                        )
+                    self.unregister(authz)
+                    evicted.append(close)
+                    continue
+                if frames:
+                    rows.extend(_revocation_rows(authz, frames))
+                    changed.append((authz, send, close, frames))
+            for close in evicted:  # closed before any send
+                await self._close_evicted(close)
+            for authz, send, close, frames in changed:
+                try:
+                    async with asyncio.timeout(self.send_timeout_s):
+                        for frame in frames:
+                            await send(frame)
+                except (TimeoutError, OSError, RuntimeError):
+                    self.unregister(authz)  # C-2.18: a stalled client never holds the others
+                    await self._close_evicted(close)
+                else:
+                    await self.settle(authz, close)
+        finally:
+            await self._write_rows(rows)
+        return len(changed)
 
     async def user_disabled(self, user_id: uuid.UUID) -> int:
         """§9.5: a disabled user gets `bye user_disabled` + close 4403 on every socket, including

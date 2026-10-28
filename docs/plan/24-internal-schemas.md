@@ -1741,8 +1741,11 @@ the residual accepted under Option A. A restart forgets it, and the boot self-ch
 afresh. The routes that switch an account off, delete it or revoke a key (#898, E27-S04) must tell
 the standing synchronously, before they return, as `credential_rejected` does, so the next order
 is refused without waiting for the next read; a tracking read already in flight then must not
-undo it. `create_app` builds the one gate, `OrderEntryGate(maintenance, account_check)`, so every
-caller of it reads the account check.
+undo it. The lifecycle hold (`account_disabled`, or the delete's `account_deleted`) is released
+only by the re-enable, never by a tracking read, whenever that read began; `credential_rejected`
+is unchanged for key passes; and a revoke's hold excludes the revoked key's passes (#898 B3
+ruling 9). `create_app` builds the one gate, `OrderEntryGate(maintenance, account_check)`, so
+every caller of it reads the account check.
 
 Each reason has one fixed `detail` sentence. It never names an id, a secret, exchange-supplied
 text or the key-policy rule that failed: the 403 also reaches callers without `keys:read`, so that
@@ -2281,14 +2284,14 @@ A push the facade answers `OrderStepUnknown` is delivered once more, as §8.2 "A
 
 **Statuses (§14.2 rule 13).**
 
-| Status                                   | Effect                                                                                                                                                                                                                                                                   |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `heartbeat`                              | `AccountHealthFeed.ws_heartbeat`; every row is evidence too, fed on its dequeue before the row's work                                                                                                                                                                    |
-| `resyncing`                              | `ReconciliationRequests.request_reconciliation` with its reason: private topics send no snapshot (C-2.5); until E29-T06 it is refused (below)                                                                                                                            |
-| `down`                                   | `AccountHealthFeed.ws_dropped`, and the account notice `oms.account_resyncing` (`AccountNotices`, `23-ws-protocol.md` §15.9), which reconciliation's `oms.account_synced` clears (E29-T06)                                                                               |
-| `closed`, `auth_refused`, `key_unusable` | `CredentialRejections.refused(account_id, error_code="AUTH_ERROR", exchange_ret_code=None)`: a status carries no venue code, and E29-T04's wiring reads the absent code as the key standing's `unknown_key` (§8.6), which leaves the account no active key (fail closed) |
-| `closed`, `key_rotated`                  | the account is resolved again through `TradingAccounts.trading_account`, for its new active key, and subscribed again; a refused resolve waits for the next read (above)                                                                                                 |
-| `closed`, `key_revoked`, `shutdown`      | the stream has ended, and nothing is reported: the route that revoked the key told the standing itself (§8.4.1)                                                                                                                                                          |
+| Status                                                  | Effect                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `heartbeat`                                             | `AccountHealthFeed.ws_heartbeat`; every row is evidence too, fed on its dequeue before the row's work                                                                                                                                                                    |
+| `resyncing`                                             | `ReconciliationRequests.request_reconciliation` with its reason: private topics send no snapshot (C-2.5); until E29-T06 it is refused (below)                                                                                                                            |
+| `down`                                                  | `AccountHealthFeed.ws_dropped`, and the account notice `oms.account_resyncing` (`AccountNotices`, `23-ws-protocol.md` §15.9), which reconciliation's `oms.account_synced` clears (E29-T06)                                                                               |
+| `closed`, `auth_refused`, `key_unusable`                | `CredentialRejections.refused(account_id, error_code="AUTH_ERROR", exchange_ret_code=None)`: a status carries no venue code, and E29-T04's wiring reads the absent code as the key standing's `unknown_key` (§8.6), which leaves the account no active key (fail closed) |
+| `closed`, `key_rotated`                                 | the account is resolved again through `TradingAccounts.trading_account`, for its new active key, and subscribed again; a refused resolve waits for the next read (above)                                                                                                 |
+| `closed`, `key_revoked`, `account_disabled`, `shutdown` | the stream has ended, and nothing is reported: the route that revoked the key or disabled the account told the standing itself (§8.4.1)                                                                                                                                  |
 
 A closed stream is down (rule 13), so each `closed` status also calls `AccountHealthFeed.ws_dropped`.
 
@@ -4383,9 +4386,9 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
       read, at most one pending; and `down` (`socket_closed`, `pong_timeout`, `subscribe_refused`
       or `slow_consumer`) after the epoch's last row, only for an epoch that authenticated, with
       nothing of that epoch after it (`AccountHealth.ws_dropped`). `closed` comes last and ends the
-      stream: `shutdown` (the adapter stops), `key_revoked`, `key_rotated`, `key_unusable` or
-      `auth_refused`; `consumer_closed` names the consumer's own close and is never yielded. A
-      closed stream is down.
+      stream: `shutdown` (the adapter stops), `key_revoked`, `key_rotated`, `key_unusable`,
+      `auth_refused` or `account_disabled`; `consumer_closed` names the consumer's own close and
+      is never yielded. A closed stream is down.
     - **Heartbeat and backoff.** A dedicated task pings (`{"op":"ping"}`) every 5 s; any frame
       received re-arms an absolute 10 s deadline held outside the chart (INV-B13-e), and past it B13
       takes `PONG_DEADLINE` (`down`, `pong_timeout`). Backoff is 0.5 s doubling to 30 s with full
@@ -4464,7 +4467,13 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
       consumer's resubscribe after that close signs with the new key; a resubscribe on the retired
       key would be refused with `AuthError`. (The retired key stays signable for in-flight requests
       through the overlap, `rotating`; the switch is about which key a new stream picks.) M2 is the
-      backstop: a destroyed key's next `auth` borrow is refused (`key_unusable`).
+      backstop: a destroyed key's next `auth` borrow is refused (`key_unusable`). An account's
+      disable closes each of its signable keys' streams with the temporary reason
+      `account_disabled`, which only its re-enable lifts (`reopen_private_streams` with
+      `reason="account_disabled"`), never a `key_revoked` or `key_rotated` tombstone, which a
+      later `account_disabled` never weakens; the lift comes before, or in the same step as, the
+      account counting as enabled again, so the consumer subscribes on its next refresh (15 s)
+      with no explicit resubscribe.
     - **Connection budget (C-12.7, OM-D07; G-8b ruling 5).** The adapter holds one
       `ConnectionBudget` (`exchange.base`): 480 opens in any 300 s, of which public opens take at
       most 420, so 60 stay for private ones; `testApiKey`'s key probe counts in it, at most 10 per
@@ -4743,7 +4752,7 @@ PrivateStreamReason = Literal[             # each within its state, below
     "evidence",                                                           # heartbeat
     "socket_closed","pong_timeout","subscribe_refused","slow_consumer",   # down
     "shutdown","key_revoked","key_rotated","key_unusable","auth_refused",
-    "consumer_closed"]                                                    # closed
+    "account_disabled","consumer_closed"]                                 # closed
 
 class PrivateStreamStatus(BaseModel):      # §14.2 rule 13: in arrival order with the events
     account_id: AccountId

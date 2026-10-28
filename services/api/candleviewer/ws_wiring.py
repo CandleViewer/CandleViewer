@@ -19,7 +19,7 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   account grants from the store at every `auth` and every re-evaluation. It fails closed to the
   deny-all snapshot and never raises.
 * **Events** (E09 / kill switch): `WsEvents` is the one entry point producers call:
-  `grants_changed`, `user_disabled`, `kill_switch_changed`.
+  `grants_changed`, `user_disabled`, `account_revoked` (E27-S04), `kill_switch_changed`.
 * **Rule readers** (#3488): `rule_frame_visible` reads a WS principal as `/rules` reads a session;
   it is the `viewer` a `rules` publish must name (23 §15.6).
 * **Shutdown** (§9.4): `candleviewer.server.PlannedShutdownServer` runs `WsRuntime.stop()` before
@@ -66,6 +66,7 @@ from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
 from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import PRINCIPAL_LOAD_FAILURES, count_audit_failure
 from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, Subscription
+from candleviewer.ws.revocation import AccountRevokedReason
 from candleviewer.ws.sequencing import (
     SequencingHub,
     SnapshotBody,
@@ -486,6 +487,12 @@ class WsEvents:
 
     async def user_disabled(self, user_id: uuid.UUID) -> int:
         return await self.registry.user_disabled(user_id)
+
+    async def account_revoked(self, account_id: uuid.UUID, reason: AccountRevokedReason) -> int:
+        """23 §9.5 (E27-S04, #898): the account's last signable key revoked (`key_revoked`) or
+        the account disabled (`account_disabled`): its subscriptions narrow or end on every
+        socket (`ConnectionRegistry.account_revoked`)."""
+        return await self.registry.account_revoked(account_id, reason)
 
     async def kill_switch_changed(
         self, *, engaged: bool, scope: str = "global", **detail: Any

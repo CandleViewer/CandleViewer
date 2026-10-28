@@ -610,6 +610,7 @@ def _repository_source(
 
     async def monitored() -> frozenset[UUID]:
         nonlocal foreign_said, age_failed_said
+        began = standings.read_begins()  # before the await: a revoke told meanwhile outlives it
         rows = await store.targets()
         foreign = sum(row.account.env != env for row in rows)
         if foreign and foreign != foreign_said:
@@ -618,7 +619,7 @@ def _repository_source(
             logger().error("account_health.env_mismatch", rows=foreign)
         foreign_said = foreign
         own = [row for row in rows if row.account.env == env]
-        standings.observe(own)
+        standings.observe(own, began=began)
         enabled = frozenset(row.account.id for row in own if row.account.is_enabled)
         try:  # last: neither the standing nor the tracked set waits on a job that only reports
             key_ages.observe(
