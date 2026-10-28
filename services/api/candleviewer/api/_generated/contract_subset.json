@@ -5506,6 +5506,16 @@
         }
       }
     },
+    "/market/tickers": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/market/trades": {
       "get": {
         "x-rbac": {
