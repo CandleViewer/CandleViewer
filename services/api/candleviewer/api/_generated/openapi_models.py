@@ -5598,7 +5598,7 @@ class WatchlistInput(BaseModel):
     name: Annotated[
         str,
         Field(
-            description="Unique among the owner's lists, in any letter case (`409 conflict` / `name_taken`).",
+            description="Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`).",
             max_length=80,
             min_length=1,
         ),

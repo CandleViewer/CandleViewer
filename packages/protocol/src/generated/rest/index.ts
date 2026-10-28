@@ -6140,7 +6140,7 @@ export interface paths {
     put?: never;
     /**
      * Create a watchlist
-     * @description Creates one of the caller's lists at `version` 1 (E08-T07). A `name` that another of the caller's lists already uses, in any letter case, is `409 conflict` with `errors[0].rule = name_taken` and `field` `name`. A list that breaks a rule of `WatchlistInput` is `422 validation_failed` naming the field and the rule: `too_many_symbols` (over 200), `unknown_symbol` (not a trading USDT linear perpetual of the instrument catalogue) or `duplicate_symbol` (a symbol twice in one list), each on `symbols`. Either way nothing is written. Audited write-ahead as `watchlist.created`.
+     * @description Creates one of the caller's lists at `version` 1 (E08-T07). A `name` that another of the caller's lists already uses, case-insensitively (as Postgres `lower()` folds it), is `409 conflict` with `errors[0].rule = name_taken` and `field` `name`. A list that breaks a rule of `WatchlistInput` is `422 validation_failed` naming the field and the rule: `too_many_symbols` (over 200), `unknown_symbol` (not a trading USDT linear perpetual of the instrument catalogue) or `duplicate_symbol` (a symbol twice in one list), each on `symbols`. Either way nothing is written. Audited write-ahead as `watchlist.created`.
      */
     post: operations["createWatchlist"];
     delete?: never;
@@ -6161,7 +6161,7 @@ export interface paths {
     get?: never;
     /**
      * Replace a watchlist
-     * @description Replaces the whole list and stores it as its next `version` (E08-T07). `If-Match` is required: a stale write is never applied silently. Without it the answer is `428 precondition_required`; with a tag that does not name the list's current version the answer is `412 version_conflict`, whose `ETag` header names the current version. Either way nothing changes: reload, then edit again. The name and list rules are those of `createWatchlist` (`409 conflict` / `name_taken`, `422 validation_failed`). Another user's list id is `404`, as an id that does not exist, never `403`. Audited write-ahead as `watchlist.updated`.
+     * @description Replaces the whole list and stores it as its next `version` (E08-T07). `If-Match` is required: a stale write is never applied silently. Without it the answer is `428 precondition_required`; with a tag that does not name the list's current version the answer is `412 version_conflict`, whose `ETag` header names the current version. Either way nothing changes: reload, then edit again. The name and list rules are those of `createWatchlist` (`409 conflict` / `name_taken`, `422 validation_failed`). Another user's list id is `404`, as an id that does not exist, never `403`. When several refusals apply, the first in this order answers: `404` (so a missing or stale tag never tells another user's list apart from no list), then `428` or `412`, then `422`, then `409`. Audited write-ahead as `watchlist.updated`.
      */
     put: operations["updateWatchlist"];
     post?: never;
@@ -11281,7 +11281,7 @@ export interface components {
     WatchlistInput: {
       /** @description Column ids shown for this watchlist, in order. */
       columns?: string[];
-      /** @description Unique among the owner's lists, in any letter case (`409 conflict` / `name_taken`). */
+      /** @description Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`). */
       name: string;
       /** @description The list, in order: each a trading USDT linear perpetual of the instrument catalogue, none twice (`422 validation_failed`: `too_many_symbols`, `unknown_symbol`, `duplicate_symbol`). */
       symbols: components["schemas"]["Symbol"][];
@@ -11983,7 +11983,7 @@ export interface components {
     RateLimitReset: number;
     /** @description Seconds the client should wait before retrying. */
     RetryAfter: number;
-    /** @description `W/"<id>:<version>"` of the watchlist answered (E08-T07). Send it as `If-Match` on `updateWatchlist`: the server compares the id and the version it names, so the weak tag matches. */
+    /** @description `W/"<id>:<version>"` of the watchlist answered (E08-T07). Send it as `If-Match` on `updateWatchlist`: the server compares the id and the version it names, so the weak tag matches. `listWatchlists` carries no `ETag`: a client builds the tag of a list item from its `id` and `version`. */
     WatchlistETag: string;
   };
   pathItems: never;

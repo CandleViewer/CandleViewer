@@ -3485,7 +3485,7 @@ checks it, so a symbol delisted later stays in the list until the owner edits it
 at 1 and goes up by one on each replace, in one statement guarded by the version the client sent
 (`UPDATE … WHERE id = :id AND user_id = :owner AND version = :expected`), so of two writers holding
 the same version exactly one wins and the other is `412 version_conflict`. `ux_wl_name` makes a name
-unique per user in any letter case (`409 conflict` / `name_taken`). A delete removes the row; its
+unique per user case-insensitively, as `lower()` folds it (`409 conflict` / `name_taken`). A delete removes the row; its
 history is the audit trail (`watchlist.created`, `watchlist.updated`, `watchlist.deleted`,
 `24-internal-schemas.md` §15.5), which records the name, the symbol count and the version, never the
 list. Rows also go with their owner's `users` row (`ON DELETE CASCADE`).

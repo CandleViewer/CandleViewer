@@ -12968,7 +12968,7 @@ paths:
       summary: Create a watchlist
       description: >
         Creates one of the caller's lists at `version` 1 (E08-T07). A `name` that another of the
-        caller's lists already uses, in any letter case, is `409 conflict` with
+        caller's lists already uses, case-insensitively (as Postgres `lower()` folds it), is `409 conflict` with
         `errors[0].rule = name_taken` and `field` `name`. A list that breaks a rule of
         `WatchlistInput` is `422 validation_failed` naming the field and the rule:
         `too_many_symbols` (over 200), `unknown_symbol` (not a trading USDT linear perpetual of
@@ -13012,8 +13012,10 @@ paths:
         the answer is `412 version_conflict`, whose `ETag` header names the current version.
         Either way nothing changes: reload, then edit again. The name and list rules are those of
         `createWatchlist` (`409 conflict` / `name_taken`, `422 validation_failed`). Another
-        user's list id is `404`, as an id that does not exist, never `403`. Audited write-ahead as
-        `watchlist.updated`.
+        user's list id is `404`, as an id that does not exist, never `403`. When several refusals
+        apply, the first in this order answers: `404` (so a missing or stale tag never tells
+        another user's list apart from no list), then `428` or `412`, then `422`, then `409`.
+        Audited write-ahead as `watchlist.updated`.
       x-rbac: { permissions: [workspaces:write], scope: self }
       parameters:
         - name: If-Match
@@ -15422,7 +15424,8 @@ components:
       description: >
         `W/"<id>:<version>"` of the watchlist answered (E08-T07). Send it as `If-Match` on
         `updateWatchlist`: the server compares the id and the version it names, so the weak tag
-        matches.
+        matches. `listWatchlists` carries no `ETag`: a client builds the tag of a list item from
+        its `id` and `version`.
       schema: { type: string, pattern: '^W/"[0-9a-f-]{36}:[1-9][0-9]*"$' }
     DefaultBindingETag:
       description: >
@@ -21880,7 +21883,7 @@ components:
           type: string
           minLength: 1
           maxLength: 80
-          description: Unique among the owner's lists, in any letter case (`409 conflict` / `name_taken`).
+          description: Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`).
         symbols:
           type: array
           maxItems: 200
