@@ -1322,7 +1322,12 @@ def gates(
             CITE_WARN.append(f"`{doc}` :{line} now at :{found[0]} ({want[:40]!r})")
     for f in files:
         txt = f.read_text(encoding="utf-8")
-        bad += [f"{f.name}: forbidden text {p}" for p in FORBIDDEN if re.search(p, txt)]
+        # The Penpot page and board ids in their sanctioned form (README :47; spec section 0: the word
+        # "id" + the id in backticks) are not forbidden text; a bare id (team, file, workspace) still is.
+        scan = re.sub(
+            r"\bid `[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`", "id `…`", txt
+        )
+        bad += [f"{f.name}: forbidden text {p}" for p in FORBIDDEN if re.search(p, scan)]
         for r in sorted(set(re.findall(r"\bC-\d+\.\d+\b", txt))):
             if f"**{r}" not in constitution:
                 bad.append(f"{f.name}: dangling rule id {r}")
