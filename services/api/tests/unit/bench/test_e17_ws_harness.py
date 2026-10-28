@@ -30,6 +30,7 @@ import orjson
 import pytest
 import structlog
 import websockets
+from structlog.testing import capture_logs
 
 from bench.ws import budgets, feed_proc, fixture_app, profiles, runner, w5
 from bench.ws import feeder as feed
@@ -2404,3 +2405,27 @@ def test_the_backend_runs_on_the_stdlib_loop_and_logs_through_the_redacting_hand
     assert out == ""  # stdout is the ready line's alone
     assert "kept" in err and "kept2" in err and "[redacted:jwt-shape]" in err
     assert shape not in err  # redacted, as every project logger is (C-12.6)
+
+
+async def test_a_feeder_task_that_ends_with_an_error_is_logged_as_it_ends() -> None:
+    """#4852 (a Fable carry): a feed that dies mid-run, such as a receiver whose child closed its
+    pipe, is named in the log when it dies, not only by the `feeder_behind` guard at the end. A
+    cancelled feeder (the shutdown) logs nothing."""
+
+    async def gone() -> None:
+        raise RuntimeError("the feeder process closed its pipe")
+
+    async def idle() -> None:
+        await asyncio.Event().wait()
+
+    failed = asyncio.create_task(gone(), name="bench-ws-feeder")
+    await asyncio.wait({failed})
+    cancelled = asyncio.create_task(idle(), name="bench-ws-feeder")
+    cancelled.cancel()
+    await asyncio.wait({cancelled})
+    with capture_logs() as logs:
+        fixture_app.feeder_ended(failed)
+        fixture_app.feeder_ended(cancelled)
+    assert [(e["event"], e["log_level"], e["error"]) for e in logs] == [
+        ("bench_feeder_ended", "error", "RuntimeError")
+    ]

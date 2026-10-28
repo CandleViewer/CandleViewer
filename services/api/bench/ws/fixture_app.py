@@ -53,6 +53,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import structlog
 import uvicorn
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Histogram, generate_latest
@@ -404,6 +405,7 @@ class Backend:
             spawn(self.feeder.run(), name="bench-ws-feeder"),
             spawn(self._sample_lag(), name="bench-ws-lag"),
         ]
+        self._tasks[1].add_done_callback(feeder_ended)  # a feed that dies is logged as it dies
         while not self.server.started:
             if self._tasks[0].done():
                 self._tasks[0].result()
@@ -423,6 +425,16 @@ class Backend:
             await self.feeder.close()
         await self.bars.stop()
         self.sock.close()
+
+
+def feeder_ended(task: asyncio.Task[Any]) -> None:
+    """Log a feeder task that ends with an error (a receiver whose child closed its pipe, a
+    publish that raised), as it ends: the run's `feeder_behind` guard trips later, but the cause
+    is named in `backend.err` at once. A cancellation is the shutdown's doing, not a failure."""
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        structlog.get_logger(__name__).error(
+            "bench_feeder_ended", task=task.get_name(), error=type(exc).__name__, detail=str(exc)
+        )
 
 
 async def serve(args: argparse.Namespace) -> None:

@@ -74,6 +74,7 @@ from bench.ws.feeder import (
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import Topic
 from candleviewer.exchange.base.trade_print import TradePrint
+from candleviewer.observability.context import spawn
 from candleviewer.ws.binary import BOOK_DELTA, TRADES, Frame
 from candleviewer.ws.sequencing import SequencingHub
 
@@ -213,7 +214,7 @@ async def child(plan: dict[str, Any], steps: int | None = None) -> None:
     os.set_blocking(0, False)
     loop.add_reader(0, on_stdin)
     # the backend starts its bars and server first: nothing is scheduled until its `go`
-    waiting = [asyncio.ensure_future(go.wait()), asyncio.ensure_future(eof.wait())]
+    waiting = [spawn(go.wait(), name="feed-proc-go"), spawn(eof.wait(), name="feed-proc-eof")]
     try:
         await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
     finally:
@@ -225,9 +226,9 @@ async def child(plan: dict[str, Any], steps: int | None = None) -> None:
     t0 = time.monotonic()
     _write_all(_line(["0", t0]))
     tasks = [
-        asyncio.ensure_future(f.run(t0)),
-        asyncio.ensure_future(_report_missed(f, _write_all)),
-        asyncio.ensure_future(eof.wait()),
+        spawn(f.run(t0), name="feed-proc-schedule"),
+        spawn(_report_missed(f, _write_all), name="feed-proc-missed"),
+        spawn(eof.wait(), name="feed-proc-eof"),
     ]
     try:
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
