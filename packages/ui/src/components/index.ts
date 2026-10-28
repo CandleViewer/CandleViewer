@@ -1,6 +1,9 @@
 export { SwatchLegendItem } from "./SwatchLegendItem.js";
 export type { DirectionalSwatchColor, SwatchLegendItemProps } from "./SwatchLegendItem.js";
 
+export { Tabs } from "./Tabs.js";
+export type { TabItem, TabsBaseProps, TabsProps } from "./Tabs.js";
+
 export { Tag } from "./Tag.js";
 export type { TagProps } from "./Tag.js";
 
@@ -86,6 +89,9 @@ export type { ButtonProps } from "./Button.js";
 
 export { Callout } from "./Callout.js";
 export type { CalloutAction, CalloutLive, CalloutProps, CalloutTone } from "./Callout.js";
+
+export { Card } from "./Card.js";
+export type { CardProps } from "./Card.js";
 
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";

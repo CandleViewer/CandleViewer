@@ -89,3 +89,42 @@ stays usable. The T2 gate reaches FormFields only: a bare control inside the sec
 
 The host announces its result count, politely, once per settled query. A search is a read and is
 never gated, so SearchBox has no `disabledReason`.
+
+Each component's keyboard table lives here (the WAI-ARIA pattern it follows, then keys and actions), then its
+roles and names.
+
+### Card (CMP-050, no pattern of its own)
+
+| Keys | Action                                                                                                                                               |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable and never clickable as a whole. Its actions and content own their keys, in DOM order: the header (title, then actions), then the body. |
+
+| Element | Role                                   | Name                            | Notes                                                                                       |
+| ------- | -------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------- |
+| card    | none, or `region` when `region` is set | its heading (`aria-labelledby`) | A region only for a landmark-worthy tile (J11); `region` requires a `title`.                |
+| title   | heading at `headingLevel` (2–4)        | its text                        | Default level 3. `headingLevel={0}` renders plain text, for a card inside a listbox option. |
+| actions | their own                              | their own                       | An icon-only action's `aria-label` includes the card's title (CMP-002's rule).              |
+
+### Tabs (CMP-042, APG Tabs)
+
+| Keys                                    | Action                                                                                                           |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Tab                                     | Into the tablist onto the selected tab (roving `tabindex`); the next Tab goes into the panel.                    |
+| → / ← / ↓ / ↑                           | Next / previous tab, wrapping. Automatic: selects it. Manual (`activation="manual"`): moves focus only.          |
+| Home / End                              | First / last tab, as the arrows.                                                                                 |
+| Enter / Space                           | Manual: selects the focused tab. Automatic: nothing more.                                                        |
+| An arrow, Home or End onto a gated tab  | Focus lands on it and nothing is selected, silently: the name, "unavailable" and the reason are its description. |
+| Enter / Space or a press on a gated tab | Nothing is selected; the reason is announced once, politely, per press.                                          |
+| Alt / Ctrl / Meta chords                | Not handled: the browser's and the host's.                                                                       |
+
+| Element | Role     | Name                                                    | Notes                                                                                                             |
+| ------- | -------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| tablist | tablist  | the host's `aria-label` or `aria-labelledby` (required) | `aria-orientation="vertical"` when vertical.                                                                      |
+| tab     | tab      | its visible label                                       | `aria-selected`, `aria-controls` its panel; gated: `aria-disabled="true"` and `aria-describedby` the reason line. |
+| panel   | tabpanel | its tab (`aria-labelledby`)                             | Only the selected panel is mounted; `tabindex="0"` while it holds nothing focusable (J10).                        |
+| reason  | none     | —                                                       | One caption line under the strip per distinct reason; tabs gated for the same sentence point at one line.         |
+| status  | status   | —                                                       | Visually hidden; filled only when a gated tab is pressed, cleared when focus moves on.                            |
+
+A switch never moves focus off the tab, and a panel that takes focus as it mounts (an `autoFocus` or an effect)
+gives it back to the tab. Selection and the panel swap are cuts. The strip scrolls in one row; it never wraps or hides
+a tab.

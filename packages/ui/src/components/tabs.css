@@ -1,0 +1,176 @@
+/*
+ * CMP-042 Tabs (E05-D02 slice 5; J9, J10). State lives in data-* attributes set by Tabs.tsx; tokens only. The
+ * selected tab is a 2px `border.selected` rule flush with the strip's bottom edge (the trailing edge when vertical)
+ * with its label in text.primary, no fill; the strip's 1px `border.default` line is decorative. Selection and the
+ * panel swap are cuts: no motion. The strip scrolls and never wraps or hides a tab (conventions 49).
+ */
+.cv-tabs {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cv-tabs[data-orientation="vertical"] {
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.cv-tabs__bar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cv-tabs__list {
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: nowrap;
+  min-height: var(--size-control-height);
+  overflow-x: auto;
+  border-block-end: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  scrollbar-width: thin;
+}
+
+.cv-tabs[data-orientation="vertical"] .cv-tabs__list {
+  flex-direction: column;
+  overflow-x: visible;
+  border-block-end: 0;
+  border-inline-end: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+.cv-tabs__tab {
+  position: relative;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-width: var(--size-control-height);
+  min-height: var(--size-control-height);
+  padding-inline: var(--space-inset-sm);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+}
+
+/* Comfortable density (here or on any ancestor) widens the inline padding; the tab's own compact wins. */
+[data-density="comfortable"] .cv-tabs__tab {
+  padding-inline: var(--space-inset-md);
+}
+
+.cv-tabs[data-density="compact"] .cv-tabs__tab {
+  padding-inline: var(--space-inset-sm);
+}
+
+/* Vertical tabs wrap their labels (conventions 49). */
+.cv-tabs[data-orientation="vertical"] .cv-tabs__tab {
+  white-space: normal;
+  text-align: start;
+}
+
+/* The selected rule: drawn on ::after so it sits flush over the strip's line and never moves the label. */
+.cv-tabs__tab::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  border-block-end: calc(var(--border-thick) * 1px) solid transparent;
+  pointer-events: none;
+}
+
+.cv-tabs[data-orientation="vertical"] .cv-tabs__tab::after {
+  inset-block: 0;
+  inset-inline: auto 0;
+  border-block-end: 0;
+  border-inline-end: calc(var(--border-thick) * 1px) solid transparent;
+}
+
+.cv-tabs__tab[data-selected] {
+  color: var(--color-text-primary);
+}
+
+.cv-tabs__tab[data-selected]::after {
+  border-color: var(--color-border-selected);
+}
+
+/* Hover swaps tokens instantly; a gated tab never reacts. */
+.cv-tabs__tab:hover:not([data-selected], [data-gated]) {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Keyboard focus: the CMP-039 ring, inset so the scrolling strip never clips it. */
+.cv-tabs__tab:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * -1 * 1px);
+}
+
+/* Gated (T2): the lock leads the full label, both text.tertiary; never dimmed by opacity. */
+.cv-tabs__tab[data-gated] {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.cv-tabs__icon {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+.cv-tabs__reason {
+  margin: 0;
+  padding-block-start: var(--space-inset-xs);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-tabs__panel {
+  min-width: 0;
+  outline: none;
+}
+
+.cv-tabs[data-orientation="vertical"] .cv-tabs__panel {
+  flex: 1 1 auto;
+}
+
+.cv-tabs__panel:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * -1 * 1px);
+}
+
+@media (forced-colors: active) {
+  .cv-tabs__list {
+    border-color: CanvasText;
+  }
+
+  .cv-tabs__tab {
+    color: ButtonText;
+  }
+
+  .cv-tabs__tab[data-selected]::after {
+    border-color: Highlight;
+  }
+
+  .cv-tabs__tab:hover:not([data-selected], [data-gated]) {
+    background: Canvas;
+    color: ButtonText;
+  }
+
+  .cv-tabs__tab[data-gated] {
+    color: GrayText;
+  }
+
+  .cv-tabs__tab:focus-visible,
+  .cv-tabs__panel:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .cv-tabs__reason {
+    color: CanvasText;
+  }
+}

@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { describe, expect, it } from "vitest";
 import {
   Button,
+  Card,
   Checkbox,
   FormField,
   FormSection,
@@ -13,6 +14,7 @@ import {
   SegmentedControl,
   Select,
   Slider,
+  Tabs,
   TextInput,
   Toggle,
 } from "../src/index.js";
@@ -72,6 +74,29 @@ const atoms: [string, () => JSX.Element][] = [
 
 describe("control atoms carry their catalogue id", () => {
   it.each(atoms)("%s marks exactly one root with data-cmp", async (id, render) => {
+    const host = await mount(render());
+    expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
+  });
+});
+
+const molecules: [string, () => JSX.Element][] = [
+  [
+    "CMP-042",
+    () => (
+      <Tabs
+        aria-label="Sections"
+        tabs={[{ id: "a", label: "Alpha" }]}
+        value="a"
+        onChange={noop}
+        renderPanel={() => null}
+      />
+    ),
+  ],
+  ["CMP-050", () => <Card title="Accounts">Body</Card>],
+];
+
+describe("molecules carry their catalogue id", () => {
+  it.each(molecules)("%s marks exactly one root with data-cmp", async (id, render) => {
     const host = await mount(render());
     expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
   });

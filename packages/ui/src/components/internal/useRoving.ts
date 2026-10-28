@@ -16,6 +16,13 @@ export interface UseRovingOptions {
   readonly onSelect: (value: string) => void;
   /** The whole group is refused (T2): keys move nothing and select nothing; the tab stop stays put. */
   readonly gated?: boolean;
+  /**
+   * `false` = manual activation (APG Tabs): the arrows, Home and End move focus only, and Enter or Space selects
+   * the focused item. Default `true`: the item an arrow lands on is selected (the radio pattern).
+   */
+  readonly selectOnFocus?: boolean;
+  /** The role of the element that holds the items; focus leaving it gives the tab stop back to the checked item. */
+  readonly groupRole?: "radiogroup" | "tablist";
 }
 
 export interface RovingItemProps {
@@ -41,11 +48,19 @@ const KEY_STEP: Readonly<Record<string, 1 | -1>> = {
 };
 
 /**
- * Roving tabindex for the APG radio pattern (CMP-006 RadioGroup, CMP-003 SegmentedControl).
- * Arrows move focus and select, wrapping; Home/End jump; Space selects; Tab leaves the group.
+ * Roving tabindex for the APG radio pattern (CMP-006 RadioGroup, CMP-003 SegmentedControl) and CMP-042 Tabs.
+ * Arrows move focus and select (focus only with `selectOnFocus: false`), wrapping; Home/End jump; Space selects;
+ * Tab leaves the group.
  * Alt/Ctrl/Meta chords are ignored; Shift+arrow acts as the plain arrow. Orientation does not matter: Up/Left go back and Down/Right go forward in both.
  */
-export function useRoving({ items, checked, onSelect, gated = false }: UseRovingOptions): Roving {
+export function useRoving({
+  items,
+  checked,
+  onSelect,
+  gated = false,
+  selectOnFocus = true,
+  groupRole = "radiogroup",
+}: UseRovingOptions): Roving {
   const nodes = useRef(new Map<string, HTMLElement>());
   // The item holding focus: while focus is inside, the tab stop follows it, so Tab from a locked item
   // (focused, never checked) leaves the group instead of landing on the checked one further on.
@@ -64,10 +79,11 @@ export function useRoving({ items, checked, onSelect, gated = false }: UseRoving
   const land = useCallback(
     (value: string): void => {
       nodes.current.get(value)?.focus();
+      if (!selectOnFocus) return;
       const item = items.find((candidate) => candidate.value === value);
       if (item?.locked !== true) onSelect(value);
     },
-    [items, onSelect],
+    [items, onSelect, selectOnFocus],
   );
 
   const onKeyDown = useCallback(
@@ -86,8 +102,9 @@ export function useRoving({ items, checked, onSelect, gated = false }: UseRoving
           target = reachable[0];
         } else if (event.key === "End") {
           target = reachable[reachable.length - 1];
-        } else if (event.key === " ") {
-          // Space checks the focused radio; the page does not scroll and nothing else activates.
+        } else if (event.key === " " || (event.key === "Enter" && !selectOnFocus)) {
+          // Space checks the focused radio (with manual activation Enter too); the page does not scroll and
+          // nothing else activates.
           event.preventDefault();
           if (!gated && items.find((item) => item.value === value)?.locked !== true) {
             onSelect(value);
@@ -100,7 +117,7 @@ export function useRoving({ items, checked, onSelect, gated = false }: UseRoving
         event.preventDefault();
         if (!gated && target !== undefined) land(target.value);
       },
-    [reachable, items, gated, land, onSelect],
+    [reachable, items, gated, land, onSelect, selectOnFocus],
   );
 
   const itemProps = useCallback(
@@ -114,11 +131,11 @@ export function useRoving({ items, checked, onSelect, gated = false }: UseRoving
       onFocus: () => setFocused(value),
       onBlur: (event) => {
         // Focus moving to a sibling re-sets `focused` in its own onFocus; only leaving the group clears it.
-        const group = event.currentTarget.closest('[role="radiogroup"]');
+        const group = event.currentTarget.closest(`[role="${groupRole}"]`);
         if (!group?.contains(event.relatedTarget)) setFocused(undefined);
       },
     }),
-    [tabStop, onKeyDown, disabledValues],
+    [tabStop, onKeyDown, disabledValues, groupRole],
   );
 
   return { tabStop, itemProps };

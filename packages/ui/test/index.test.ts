@@ -3,6 +3,7 @@ import * as Atoms from "../src/index.js";
 import { TOKEN_SCHEMA_VERSION, Placeholder } from "../src/index.js";
 import type {
   ButtonProps,
+  CardProps,
   CheckboxProps,
   FormFieldProps,
   FormSectionProps,
@@ -13,6 +14,8 @@ import type {
   SegmentedControlProps,
   SelectProps,
   SliderProps,
+  TabItem,
+  TabsProps,
   TextInputProps,
   ToggleProps,
 } from "../src/index.js";
@@ -64,15 +67,19 @@ describe("@candleviewer/ui control atoms (E05-S01)", () => {
 
 describe("@candleviewer/ui molecules (E05-S03)", () => {
   it.each([
+    ["Card", Atoms.Card],
     ["FormField", Atoms.FormField],
     ["FormSection", Atoms.FormSection],
     ["SearchBox", Atoms.SearchBox],
+    ["Tabs", Atoms.Tabs],
   ])("exports %s from the package entry as a component function", (_name, component) => {
     expect(typeof component).toBe("function");
   });
 
   it("exports each molecule's props type (checked by the typechecker)", () => {
-    const props: [FormFieldProps, FormSectionProps, SearchBoxProps] | null = null;
+    const props:
+      [CardProps, FormFieldProps, FormSectionProps, SearchBoxProps, TabsProps, TabItem] | null =
+      null;
     expect(props).toBeNull();
   });
 });

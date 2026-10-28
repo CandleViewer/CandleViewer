@@ -1,0 +1,81 @@
+/*
+ * CMP-050 Card (E05-D02 slice 5; J11, conventions 44). Tokens only. `color.surface.raised` on `radius.card`;
+ * elevated lifts by `elevation.card`, flat draws a 1px `border.default` hairline. The fill step and the edge are
+ * decorative: the title names the group. Every card keeps a 1px border box (transparent when elevated) so forced
+ * colours can paint it CanvasText without a size shift. Not interactive: no hover, focus or motion of its own.
+ */
+.cv-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: calc(var(--border-hairline) * 1px) solid transparent;
+  border-radius: var(--radius-card);
+  background: var(--color-surface-raised);
+  box-shadow: var(--elevation-card);
+  color: var(--color-text-primary);
+}
+
+.cv-card[data-surface="flat"] {
+  border-color: var(--color-border-default);
+  box-shadow: none;
+}
+
+/* The title wraps before the actions move under it (conventions 49). */
+.cv-card__header {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-height: var(--size-control-height);
+  padding-block-start: var(--space-panel-padding);
+  padding-inline: var(--space-panel-padding);
+}
+
+.cv-card__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font: var(--type-ui-heading-sm-font-weight) var(--type-ui-heading-sm-font-size) /
+    var(--type-ui-heading-sm-line-height) var(--type-ui-heading-sm-font-family);
+}
+
+.cv-card__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  margin-inline-start: auto;
+}
+
+.cv-card__body {
+  min-width: 0;
+  padding: var(--space-panel-padding);
+}
+
+/* Header to body: space.stack.sm. */
+.cv-card__header + .cv-card__body {
+  padding-block-start: var(--space-stack-sm);
+}
+
+/* Padding=none: the body's child runs edge to edge; the header keeps its inset. */
+.cv-card[data-padding="none"] > .cv-card__body {
+  padding: 0;
+}
+
+.cv-card[data-padding="none"] > .cv-card__header + .cv-card__body {
+  padding-block-start: var(--space-stack-sm);
+}
+
+@media (forced-colors: active) {
+  .cv-card,
+  .cv-card[data-surface="flat"] {
+    border-color: CanvasText;
+  }
+
+  .cv-card__title {
+    color: CanvasText;
+  }
+}
