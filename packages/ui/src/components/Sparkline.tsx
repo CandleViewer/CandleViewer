@@ -124,6 +124,7 @@ export function Sparkline({
   const { name, trend } = sparklineSummary(series);
   const points = sparklinePoints(series, width, height, floorRatio);
   return (
+    // eslint-disable-next-line candleviewer/no-raw-svg -- an inline data chart (the trend line), not a registry glyph
     <svg
       className="cv-sparkline"
       data-cmp="CMP-024"
