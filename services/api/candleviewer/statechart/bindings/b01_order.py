@@ -1440,13 +1440,27 @@ async def audit_terms_refused(i: Any, context: dict[str, Any], event: Any, _a: A
 async def audit_operator_command_refused(
     i: Any, context: dict[str, Any], event: Any, _a: Any
 ) -> None:
-    """INV-B1-m: `OPERATOR_RESOLVED` outside `held`, or `ADOPT` outside `untracked`, is refused and
-    audited, never kept for a later state."""
+    """INV-B1-m, INV-B1-r: `OPERATOR_RESOLVED` outside `held`, `ADOPT` outside `untracked`, and an
+    exit (`CANCEL`, `AMEND`) in a non-final state that does not take it are refused and audited,
+    never kept for a later state; `untracked` records its own refusal of an exit (INV-B1-l). The
+    record names the command (`trigger`) and the state, and the OMS writes an exit's refusal as
+    that exit's own order action, denied (C-2.9)."""
     refused = {"trigger": _name(event), "state": _leaf(i)}
     logger().warning(
         "b01_operator_command_refused", order_link_id=context.get("order_link_id"), **refused
     )
     await _hook("operator_command_refused", {**context, "refused": refused})
+
+
+async def audit_command_refused_unowned(
+    i: Any, context: dict[str, Any], event: Any, _a: Any
+) -> None:
+    """INV-B1-l: `untracked` refuses the order-path commands (`CANCEL`, `AMEND`, `SEND`,
+    `VALIDATE`) and audits each, never kept for after an adoption. The record names the command
+    (`trigger`) and the state, as `audit_operator_command_refused`'s does, so the OMS writes an
+    exit's refusal as that exit's own order action, denied (C-2.9)."""
+    refused = {"trigger": _name(event), "state": _leaf(i)}
+    await _hook("command_refused_unowned", {**context, "refused": refused})
 
 
 def _audited(name: str) -> Callable[..., Awaitable[None]]:
@@ -1467,6 +1481,7 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "apply_fill": apply_fill,
     "arm_recon_deadline": arm_recon_deadline,
     "arm_sl_deadline": arm_sl_deadline,
+    "audit_command_refused_unowned": audit_command_refused_unowned,
     "audit_guard_denied": audit_guard_denied,
     "audit_kill": audit_kill,
     "audit_kill_cancel_in_flight": audit_kill_cancel_in_flight,
@@ -1505,7 +1520,7 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "stage_amend": stage_amend,
     "stamp_validated": stamp_validated,
 }
-_AUDITED = "adoption_denied command_refused_unowned kill_ignored_unowned operator_resolved"
+_AUDITED = "adoption_denied kill_ignored_unowned operator_resolved"
 _AUDITED += " kill_spared_recorded_stop"
 ACTIONS.update({f"audit_{name}": _audited(name) for name in _AUDITED.split()})
 

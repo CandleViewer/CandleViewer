@@ -8,7 +8,9 @@ Statecharts record; this synchronous code enforces (C-2.21), before any send:
   edge of the chart is refused before its row is written (24-internal-schemas.md Sec.8.2 S8). A
   receipt is never the gate on a `defer` chart (CV-C06). An exit (`AMEND`, `CANCEL`) is judged on
   the state and version B1 settled in, never on the plain view, so B1 takes it at once or it is
-  refused, and none is held for later (#4711).
+  refused, and none is held for later (#4711). B1's chart refuses an exit its state does not take
+  as well (INV-B1-r, and `untracked`'s INV-B1-l): one it refuses is written as a denied order
+  action, counted and paged, and refused as the static table refuses one (`IllegalTransition`).
 * **S5.** Fills are always applied (S4 dedupes them). An `orders`-topic push older than the last
   one the order took, or one its state has no arm for while no request is in flight, is ignored.
   A push that outruns the order waits in a bounded reorder buffer, released in `(ts_exec, seq)`
@@ -111,6 +113,7 @@ from .repository import OrderEventRepository, OrderRepository
 
 __all__ = [
     "B1_AUDITS",
+    "B1_EXIT_REFUSALS",
     "COMMAND_EVENTS",
     "FOLLOWS",
     "MAX_HELD",
@@ -228,6 +231,10 @@ _PROTECTION: Final = frozenset({"SL_OBSERVED", "SL_LOST", "SL_DEADLINE"})
 _ENDS: Final = frozenset({"REMOTE_CANCELLED", "EXPIRE"})
 #: B1's refusal arms: an event that reaches only one of them is not a transition of the state.
 _REFUSALS: Final = frozenset({"audit_command_refused_unowned", "audit_operator_command_refused"})
+#: B1's records of a command its state refuses, one per refusal arm: the `lifecycle` region's
+#: (`operator_command_refused`, INV-B1-m, INV-B1-r) and `untracked`'s (`command_refused_unowned`,
+#: INV-B1-l), each naming the command (`trigger`) and the state.
+_COMMAND_REFUSALS: Final = frozenset(arm.removeprefix("audit_") for arm in _REFUSALS)
 #: The context keys the facade reads after each committed step: its plain view (C-2.20).
 _VIEW: Final = (
     "order_link_id", "symbol", "exchange_order_id", "filled_qty", "halted_by_kill", "recon_misses",
@@ -240,9 +247,11 @@ ANOMALY: Final = "oms.reconcile_anomaly"
 #: B1's audit records (`b01_order`'s hook names, catalogue B1.6) and the registered M19 action,
 #: outcome and severity each is written under (C-2.9; SR-E29-17: never an unregistered action). A
 #: KILL's records are its cancel of this order (`orders.cancel`, OM-R01), and a push the order did
-#: not take is an anomaly (S6, OM-T04). The operator's resolution and an adoption are their routes'
-#: records (E45-T03, E45-S01), and the legality check refuses the commands B1 would refuse, so
-#: B1's own copies of those are logged only.
+#: not take is an anomaly (S6, OM-T04). B1's refusal of a command its state does not take
+#: (`_COMMAND_REFUSALS`) is keyed on the command: an exit's is that exit's action
+#: (`B1_EXIT_REFUSALS`), while the operator's resolution and an adoption are their routes' records
+#: (E45-T03, E45-S01), and the legality check refuses the commands B1 would refuse, so B1's own
+#: copies of those, and of `untracked`'s other refusals, are logged only.
 B1_AUDITS: Final[Mapping[str, tuple[str, Outcome, Severity]]] = MappingProxyType({
     "halted_by_kill": ("orders.cancel", "success", "warning"),
     "kill_cancel_in_flight": ("orders.cancel", "success", "warning"),
@@ -261,6 +270,14 @@ B1_AUDITS: Final[Mapping[str, tuple[str, Outcome, Severity]]] = MappingProxyType
     "guard_denied": (ANOMALY, "denied", "error"),
     "reconcile_anomaly": (ANOMALY, "denied", "error"),
     "terms_refused": (ANOMALY, "denied", "error"),
+})  # fmt: skip
+#: B1's refusal of an exit its state does not take (INV-B1-r, and `untracked`'s, INV-B1-l), keyed
+#: on the exit it names: written under that exit's own registered M19 action, denied (C-2.9;
+#: SR-E29-17). The legality check refuses each such exit before any send, so one B1 refuses is a
+#: defect, counted and paged too, and refused as the legality check refuses one (`_send_order`).
+B1_EXIT_REFUSALS: Final[Mapping[str, tuple[str, Outcome, Severity]]] = MappingProxyType({
+    "CANCEL": ("orders.cancel", "denied", "warning"),
+    "AMEND": ("orders.amend", "denied", "warning"),
 })  # fmt: skip
 
 
@@ -464,6 +481,15 @@ def _exec_id(push: Mapping[str, Any]) -> str | None:
     return b01.text_id(push.get("exec_id"))
 
 
+def _refused_exit(name: str, context: Mapping[str, Any]) -> str | None:
+    """The exit B1's chart refused (INV-B1-r, INV-B1-l), as its record names it
+    (`refused.trigger`), else None: the record is one of `_COMMAND_REFUSALS`, and the command one
+    of `EXITS`."""
+    refused = context.get("refused") if name in _COMMAND_REFUSALS else None
+    trigger = refused.get("trigger") if isinstance(refused, Mapping) else None
+    return trigger if isinstance(trigger, str) and trigger in EXITS else None
+
+
 def _data_refusal(error: BaseException) -> bool:
     """A rolled-back step's failure refused the step's own data, so every delivery meets it: one
     of `_DATA_REFUSALS`, or a statement the database refused with a data-class SQLSTATE
@@ -529,6 +555,10 @@ class _Order:
     #: `exec_id` -> why B1 refused that EXEC, or the store its held release (`_release`), for the
     #: facade's answer (`_answer`).
     denied: OrderedDict[str, str] = field(default_factory=OrderedDict)
+    #: The exit B1's chart refused in the step `_send_order` awaits (INV-B1-r, INV-B1-l), with the
+    #: state it refused it in, as B1's record names them (`_audited`): `_send_order` clears it
+    #: before each send and takes it once the step ended, so no mark outlives its send.
+    chart_refused: tuple[str, str] | None = None
     #: The step count a lost KILL was last sent again at.
     kill_sent_at: int = -1
     #: A KILL's result has counted this order's cancel: no other result counts it again.
@@ -629,6 +659,7 @@ class OrderMachines:
         self._illegal = counter("oms_illegal_transitions_total").child()
         self._unsettled = counter("oms_exit_unsettled_total").child()
         self._exits_deferred = counter("oms_exit_deferred_total").child()
+        self._exits_denied = counter("oms_exit_chart_denied_total").child()
         self._anomalies = counter("oms_reconcile_anomaly_total").child()
         self._backstops = counter("oms_native_stop_backstop_total").child()
         unknown = specs["oms_unknown_orders"]
@@ -798,19 +829,23 @@ class OrderMachines:
         for later (S10), and a receipt that says it does is logged at ERROR, counted and paged
         (`_exit_deferred`), the command answered as before. One B1 has not settled for in time is
         refused (`IllegalTransition`), nothing sent; a machine that is not running is not waited
-        on, as the runtime refuses the send (`OrderStepRefused`).
+        on, as the runtime refuses the send (`OrderStepRefused`). An exit B1's chart refuses all
+        the same, as its state does not take it (INV-B1-r, INV-B1-l), which only a bypass of the
+        gates above lets through, is refused as they refuse one (`IllegalTransition`, raised once
+        B1's step ended), nothing sent to the venue, its record written as a denied order action,
+        counted and paged (`_audited`).
 
         `on_taken`, when given, is called once the facade's own gates admitted the command, the
         version included, and before the send: under the order's lock, so whatever it marks is
         in place before any call B1 makes for the step (an exit's registration,
         `OmsCommandPort.take_exit`, #4662). It is never called for a command those gates refuse
         or whose order no machine here holds, and once for one that waited out a resync, by the
-        attempt that sends. A send the gateway then refuses, or a step B1 rolls back, raises
-        after it was called, and an exit forgets its registration on every raise (`oms.exits`);
-        B1 may also leave the step's outcome unknown. It is called synchronously under the
-        lock, so it must be quick and never await or re-enter the facade. One that raises
-        propagates before the send: nothing is sent, and the order's lock and `busy` are
-        released."""
+        attempt that sends. A send the gateway then refuses, a step B1 rolls back, or an exit
+        B1's chart refuses raises after it was called, and an exit forgets its registration on
+        every raise (`oms.exits`); B1 may also leave the step's outcome unknown. It is called
+        synchronously under the lock, so it must be quick and never await or re-enter the
+        facade. One that raises propagates before the send: nothing is sent, and the order's
+        lock and `busy` are released."""
         payload = payload or {}
         self._vet(COMMAND_EVENTS, event, payload)
         o = self._live(account_id, order_id)
@@ -1424,8 +1459,15 @@ class OrderMachines:
         refused its own data (`_data_refusal`), or `OrderStepUnknown` when its row may be ahead
         of the machine (`_BEHIND_ROW`, which also set `resync`); a deferred one is no error (S10),
         and no receipt is a gate (CV-C06). B1 never holds an exit for later (#4711): a receipt
-        that says it does fails loudly (`_exit_deferred`) and raises nothing."""
-        receipt = await self._gateway.send(o.key, {**payload, "type": event}, wait=_AWAIT_STEP)
+        that says it does fails loudly (`_exit_deferred`) and raises nothing. An exit B1's chart
+        refused in this step (INV-B1-r, INV-B1-l) is known by B1's record of it (`chart_refused`),
+        never by the receipt: once the step that recorded it ended (`_audited`), it raises
+        `IllegalTransition` in the state B1 refused it in, as the legality check refuses one."""
+        o.chart_refused = None
+        try:
+            receipt = await self._gateway.send(o.key, {**payload, "type": event}, wait=_AWAIT_STEP)
+        finally:  # B1's records of this step alone: no mark outlives its send
+            refused, o.chart_refused = o.chart_refused, None
         if event in EXITS and getattr(receipt, "deferred", False) is True:
             self._exit_deferred(o, event)
         if receipt_is_conclusive(receipt) and (error := receipt.error) is not None:
@@ -1434,6 +1476,8 @@ class OrderMachines:
             data = _data_refusal(error)
             typed = error if isinstance(error, OmsError) else None  # names no value (C-12.6)
             raise OrderStepRefused(event, type(error).__name__, deterministic=data) from typed
+        if refused is not None and refused[0] == event:
+            raise IllegalTransition(refused[1], event)
 
     def _exit_deferred(self, o: _Order, event: str) -> None:
         """B1 never holds an exit for later (#4711, 24 Sec.8.2 S10): a receipt that says it does
@@ -1442,6 +1486,15 @@ class OrderMachines:
         self._exits_deferred.inc()
         logger().error("oms_exit_deferred", order_id=str(o.order_id), kind=event)
         self._raise_alert("page", "oms_exit_deferred")
+
+    def _exit_denied(self, o: _Order, event: str) -> None:
+        """B1's chart refused an exit (INV-B1-r, INV-B1-l) that the legality check refuses first,
+        before any send (`_admit`), so it is a defect: once its record is written it is counted in
+        `oms_exit_chart_denied_total`, logged at ERROR with the order's id and the exit's kind,
+        and paged. The command is refused as the legality check refuses one (`_send_order`)."""
+        self._exits_denied.inc()
+        logger().error("oms_exit_chart_denied", order_id=str(o.order_id), kind=event)
+        self._raise_alert("page", "oms_exit_chart_denied")
 
     async def _take(self, o: _Order, event: str, push: dict[str, Any]) -> bool:
         """S5 and S6 for one push to a live machine; True when the push is an S6 anomaly."""
@@ -1872,9 +1925,12 @@ class OrderMachines:
         raise o.replay_fault
 
     async def _audited(self, name: str, context: dict[str, Any]) -> None:
-        """B1's audit hook: one of its records, written ahead under `B1_AUDITS` (C-2.9). A refused
-        EXEC's reason is kept for `_answer`; a repeat (S4) and an early fill are not anomalies.
-        It never raises (a rollback would undo a KILL): a lost record pages."""
+        """B1's audit hook: one of its records, written ahead under `B1_AUDITS`, or B1's refusal of
+        an exit under `B1_EXIT_REFUSALS`, keyed on the exit (C-2.9). A refused EXEC's reason is
+        kept for `_answer`; a repeat (S4) and an early fill are not anomalies. A refused exit is
+        marked for the send that awaits its step (`chart_refused`), which refuses it, and is a
+        defect once its record is written (`_exit_denied`). It never raises (a rollback would
+        undo a KILL): a lost record pages."""
         order_id = _uuid(context.get("order_id"))
         o = None if order_id is None else self._orders.get(order_id)
         if o is not None and o.replaying is not None:  # audited when the step happened
@@ -1886,17 +1942,23 @@ class OrderMachines:
             self._deny(o, str(denied.get("exec_id") or ""), reason)
         if name == "guard_denied" and reason in (b01.REPEAT, b01.UNBOUND):
             return
-        if o is None or name not in B1_AUDITS:
+        refused_exit = _refused_exit(name, context)
+        under = B1_AUDITS.get(name) if refused_exit is None else B1_EXIT_REFUSALS[refused_exit]
+        if o is None or under is None:
             logger().info("oms_b1_record", record=name)
             return
         detail: dict[str, str | None] = {"state": o.lifecycle, "exec_id": None, "trigger": None}
-        for key in ("anomaly", "denied"):
+        for key in ("anomaly", "denied", "refused"):
             extra = context.get(key)
             if isinstance(extra, Mapping):
                 detail |= {k: str(v) for k, v in extra.items() if k in detail and v is not None}
         if reason:
             detail["refusal"] = reason
-        await self._record(o, name, detail)
+        if refused_exit is not None:  # refused by `_send_order` once B1's step ended
+            o.chart_refused = (refused_exit, detail["state"] or o.lifecycle)
+        await self._record(o, name, detail, under=under)
+        if refused_exit is not None:
+            self._exit_denied(o, refused_exit)
 
     def _deny(self, o: _Order, exec_id: str, reason: str) -> None:
         """Keep why an EXEC was refused, for `_answer`: at most `MAX_HELD`, the oldest dropped."""
@@ -1904,9 +1966,17 @@ class OrderMachines:
         while len(o.denied) > MAX_HELD:
             o.denied.popitem(last=False)
 
-    async def _record(self, o: _Order, name: str, detail: Mapping[str, str | None]) -> None:
-        """B1's record, written ahead (C-2.9); an S6 anomaly is alerted once it is written."""
-        action, outcome, severity = B1_AUDITS[name]
+    async def _record(
+        self,
+        o: _Order,
+        name: str,
+        detail: Mapping[str, str | None],
+        *,
+        under: tuple[str, Outcome, Severity] | None = None,
+    ) -> None:
+        """B1's record, written ahead (C-2.9) under the action, outcome and severity `under`
+        names, else its `B1_AUDITS` row; an S6 anomaly is alerted once it is written."""
+        action, outcome, severity = under or B1_AUDITS[name]
         fields = {"order_link_id": o.view.get("order_link_id"), **detail}
         record = OrderAuditRecord(action, o.order_id, o.account_id, outcome, severity, name, fields)
         try:
