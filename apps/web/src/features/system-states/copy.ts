@@ -76,7 +76,22 @@ export const OFFLINE_COPY = {
     heading: "Not connected to the tailnet",
     sentence: "Can't reach the backend — check that Tailscale is connected.",
   },
+  /** §9.2 R-902: the heading (E17-D02 §10 D's family); the sentence is D02 f27's. */
+  backend_unreachable: {
+    heading: "Can't reach the server",
+    sentence: "The app started, but the backend does not answer.",
+  },
 } as const;
+
+/** D02 f27: R-902's checklist, the lines the client can observe (not "Tailnet connected"). */
+export const BOOT_CHECKS = {
+  network: "Network connected",
+  backend: "Backend answers — no reply within 5 s",
+  version: "Backend version — unknown until it answers",
+} as const;
+
+/** PROPOSED: the checklist glyphs' names (D02 f27: a glyph and a word, never colour alone). */
+export const CHECK_GLYPHS = { passed: "Passed", failed: "Failed", unknown: "Unknown" } as const;
 
 /** D02 f26: the three checks §9.2 cites for tailnet-unreachable. */
 export const TAILNET_CHECKS = [
@@ -97,6 +112,9 @@ export const SCR159_COPY = {
   copyCommand: "Copy the server console command",
   /** D02 f25 / f26 A11y (`14` SCR-159 checklist 5): the recovery, said once, politely. */
   recovered: "Connected again — data is live.",
+  /** §9.2 R-902: the wordmark, and board 10's footer line (CMP-207's pre-auth state is G10). */
+  wordmark: "CandleViewer",
+  buildLine: (version: string): string => `CandleViewer v${version} · environment not known yet`,
 } as const;
 
 /**

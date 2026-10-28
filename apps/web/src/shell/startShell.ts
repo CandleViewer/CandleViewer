@@ -13,6 +13,7 @@ import { createWsClient } from "../lib/ws/client/createWsClient.js";
 import { openWorkerPort } from "../lib/ws/client/workerPort.js";
 import type { PortLike } from "../lib/ws/port/endpoint.js";
 import type { WsState } from "../lib/ws/state/types.js";
+import { bootOwnsOutage } from "../features/system-states/bootOffline.js";
 import { runBootstrap, type BootstrapDeps } from "./bootstrap/bootstrap.js";
 import { startLiveness } from "./bootstrap/liveness.js";
 import { createBrowserShellAdapter } from "./BrowserShellAdapter.js";
@@ -65,8 +66,12 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     port: createBrowserShellAdapter(),
     version: CLIENT_VERSION,
   });
-  // SCR-159 (#306 slice 9): the liveness probe's verdict, for the in-canvas offline states
-  const liveness = startLiveness({ onChange: (reachability) => setShellState({ reachability }) });
+  // SCR-159 (#306 slice 9): the liveness probe's verdict, for the in-canvas offline states; the boot,
+  // then R-902, owns a boot-time outage
+  const liveness = startLiveness({
+    onChange: (reachability) => setShellState({ reachability }),
+    quiet: bootOwnsOutage,
+  });
   const teardown = (): void => {
     liveness.stop();
     uninstallCrash();

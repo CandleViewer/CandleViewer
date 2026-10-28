@@ -36,6 +36,8 @@ type Outcome = "answered" | "refused" | "timeout";
 export interface LivenessOptions {
   /** Each verdict while unreachable, a try starting behind one, and the return to reachable. */
   readonly onChange: (next: Reachability) => void;
+  /** While true another surface owns the outage (R-902 at boot): no verdict, no analytics. */
+  readonly quiet?: (() => boolean) | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
   readonly random?: (() => number) | undefined;
 }
@@ -68,7 +70,7 @@ export function reportOffline(cause: ReachabilityCause): void {
 }
 
 export function startLiveness(options: LivenessOptions): Liveness {
-  const { onChange, random = Math.random } = options;
+  const { onChange, quiet = () => false, random = Math.random } = options;
   const fetchImpl: typeof fetch = options.fetchImpl ?? ((url, init) => fetch(url, init));
   const tracker = new ReachabilityTracker();
   let published: Reachability = REACHABLE; // what the store holds
@@ -104,6 +106,7 @@ export function startLiveness(options: LivenessOptions): Liveness {
     const { reachable, cause } = tracker.current;
     const delayMs = backoffDelayWithJitter(failures, random);
     schedule(delayMs);
+    if (quiet()) return;
     if (cause !== null && cause !== was) reportOffline(cause);
     publish({ reachable, cause, retryAtMs: Date.now() + delayMs, probing: false });
   }

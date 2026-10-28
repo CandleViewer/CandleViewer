@@ -11,6 +11,7 @@ import "@candleviewer/ui/components.css";
 import { startShell } from "./shell/startShell";
 import { runBootstrap } from "./shell/bootstrap/bootstrap";
 import { getShellState } from "./shell/bootstrap/store";
+import { divertUnreachableBoot } from "./features/system-states/bootOffline";
 
 const container = document.getElementById("root");
 if (!container) {
@@ -39,6 +40,8 @@ void shell.ready.then(async () => {
     await unlockBeforeBoot(root);
     await runBootstrap();
   }
+  // SCR-159 (#306): a boot that found no server opens R-902 `/offline`, before the router reads the URL
+  divertUnreachableBoot();
   const { App } = await import("./App");
   root.render(
     <StrictMode>

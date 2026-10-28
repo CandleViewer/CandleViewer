@@ -15,6 +15,7 @@ import {
   lastWrittenAt,
   REGION_BUDGET_MS,
 } from "../app-shell/announcer";
+import { takeHandedBack } from "./bootOffline";
 import { OFFLINE_COPY, SCR159_COPY, TAILNET_CHECKS } from "./copy";
 import { OfflinePage } from "./OfflinePage";
 
@@ -62,6 +63,7 @@ export function OfflineOverlay(): JSX.Element | null {
   const spoken = useRef(false); // this episode's page was said
   const ownWrite = useRef(Number.NaN); // when this overlay last wrote the assertive region
   const returnTo = useRef<HTMLElement | null>(null); // what had focus before the page
+  const handedBack = useRef<boolean | null>(null); // R-902's hand-back, taken once per mount
   const [, tick] = useReducer((n: number) => n + 1, 0);
 
   useLayoutEffect(() => {
@@ -139,6 +141,11 @@ export function OfflineOverlay(): JSX.Element | null {
       clearAnnouncements(ENTERED); // recovery or unmount: no stale alert, and the next one is said
     };
   }, [shown]);
+
+  useEffect(() => {
+    handedBack.current ??= takeHandedBack(); // kept, so StrictMode's rehearsal does not lose it
+    if (handedBack.current) spoken.current = true; // R-902's resume: said as a recovery, once live
+  }, []);
 
   useEffect(() => {
     if (shown || !spoken.current || !live) return;
