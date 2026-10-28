@@ -3995,6 +3995,13 @@ frame whose group status, before or after the change, is one it lists; a value o
 `partially_open`, `open`, `closing`) with every leg. A delta holds `id`, `status`,
 `updated_at_ms`, `totals` and the changed legs only. A terminal status is the group's last frame.
 One delta per committed change, released through the 100 ms window, never merged (§8.2, #412).
+A subscription gets at most one frame per change: a group that enters its view is sent whole
+instead, as a snapshot item, on its creation and when the `status` option lists the status after
+the change and not the one before. A group that enters by a final status (`closed`, `failed`,
+`cancelled`) is sent whole as its first and last frame, so a `status` option that lists only final
+statuses has an empty snapshot. A changed leg is sent whole, and a delta about the group alone
+carries no `legs`. A leg's `error` is `null` when the leg stores neither a code nor a message, else
+both, `""` standing for the one not stored.
 
 ### 15.6 `RuleUpdate`
 
