@@ -26,6 +26,17 @@ export type {
 export { ConfidenceDots } from "./ConfidenceDots.js";
 export type { ConfidenceDotsProps, ConfidenceLevel } from "./ConfidenceDots.js";
 
+export { ConfirmDialog } from "./ConfirmDialog.js";
+export type {
+  ConfirmButtonVariant,
+  ConfirmCancelReason,
+  ConfirmDialogProps,
+  ConfirmDialogVariant,
+  ConfirmFailure,
+  ConfirmGate,
+  ConfirmMeta,
+} from "./ConfirmDialog.js";
+
 export { CopyButton, useCopy } from "./CopyButton.js";
 export type { CopyButtonProps, CopyStatus, UseCopyOptions, UseCopyResult } from "./CopyButton.js";
 
@@ -37,6 +48,9 @@ export type { DialogCloseReason, DialogProps, DialogRole, DialogSize } from "./D
 
 export { Divider, DividerLabel } from "./Divider.js";
 export type { DividerLabelProps, DividerProps } from "./Divider.js";
+
+export { Drawer } from "./Drawer.js";
+export type { DrawerCloseReason, DrawerProps, DrawerSide } from "./Drawer.js";
 
 export { EmptyState } from "./EmptyState.js";
 export type {
@@ -100,6 +114,9 @@ export type { CardProps } from "./Card.js";
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";
 
+export { InfoPanel } from "./InfoPanel.js";
+export type { InfoPanelProps, InfoPanelTriggerProps, InfoPanelVariant } from "./InfoPanel.js";
+
 export { InlineSpinnerText } from "./InlineSpinnerText.js";
 export type { CancellableWait, InlineSpinnerTextProps } from "./InlineSpinnerText.js";
 
@@ -114,6 +131,19 @@ export type { LinkProps, LinkRoute, LinkRouteProps } from "./Link.js";
 
 export { MaskedValue, maskAllValues } from "./MaskedValue.js";
 export type { MaskedValueProps, MaskedValueState } from "./MaskedValue.js";
+
+export { Menu } from "./Menu.js";
+export type {
+  ContextMenuProps,
+  MenuActionItem,
+  MenuButtonProps,
+  MenuGroup,
+  MenuItem,
+  MenuItemKind,
+  MenuProps,
+  MenuSubmenuItem,
+  MenuTriggerProps,
+} from "./Menu.js";
 
 export { NumericStepperInput } from "./NumericStepperInput.js";
 export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
@@ -192,6 +222,19 @@ export type { SpinnerProps } from "./Spinner.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
+
+export { Toast, ToastRegion } from "./Toast.js";
+export type {
+  ToastAction,
+  ToastAnnounce,
+  ToastDismissReason,
+  ToastItem,
+  ToastPoliteness,
+  ToastProps,
+  ToastRegionProps,
+  ToastTone,
+  ToastUndo,
+} from "./Toast.js";
 
 export { Checkbox } from "./Checkbox.js";
 export type { CheckboxProps } from "./Checkbox.js";

@@ -5,10 +5,14 @@ import type {
   ButtonProps,
   CardProps,
   CheckboxProps,
+  ConfirmDialogProps,
   DialogProps,
+  DrawerProps,
   FormFieldProps,
   FormSectionProps,
   IconButtonProps,
+  InfoPanelProps,
+  MenuProps,
   NumericStepperInputProps,
   RadioGroupProps,
   SearchBoxProps,
@@ -18,6 +22,8 @@ import type {
   TabItem,
   TabsProps,
   TextInputProps,
+  ToastProps,
+  ToastRegionProps,
   ToggleProps,
 } from "../src/index.js";
 
@@ -69,11 +75,17 @@ describe("@candleviewer/ui control atoms (E05-S01)", () => {
 describe("@candleviewer/ui molecules (E05-S03)", () => {
   it.each([
     ["Card", Atoms.Card],
+    ["ConfirmDialog", Atoms.ConfirmDialog],
     ["Dialog", Atoms.Dialog],
+    ["Drawer", Atoms.Drawer],
     ["FormField", Atoms.FormField],
     ["FormSection", Atoms.FormSection],
+    ["InfoPanel", Atoms.InfoPanel],
+    ["Menu", Atoms.Menu],
     ["SearchBox", Atoms.SearchBox],
     ["Tabs", Atoms.Tabs],
+    ["Toast", Atoms.Toast],
+    ["ToastRegion", Atoms.ToastRegion],
   ])("exports %s from the package entry as a component function", (_name, component) => {
     expect(typeof component).toBe("function");
   });
@@ -82,12 +94,18 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
     const props:
       | [
           CardProps,
+          ConfirmDialogProps,
           DialogProps,
+          DrawerProps,
           FormFieldProps,
           FormSectionProps,
+          InfoPanelProps,
+          MenuProps,
           SearchBoxProps,
           TabsProps,
           TabItem,
+          ToastProps,
+          ToastRegionProps,
         ]
       | null = null;
     expect(props).toBeNull();

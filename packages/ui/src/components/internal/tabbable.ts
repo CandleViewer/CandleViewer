@@ -33,3 +33,14 @@ export const tabStopAfter = (from: HTMLElement, skip: Node | null): HTMLElement 
       !from.contains(element) &&
       !(skip?.contains(element) ?? false),
   );
+
+/** The last tab stop before `from` in document order, outside its ancestors and outside `skip`. */
+export const tabStopBefore = (from: HTMLElement, skip: Node | null): HTMLElement | undefined =>
+  tabbables(from.ownerDocument.body)
+    .filter(
+      (element) =>
+        (from.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_PRECEDING) !== 0 &&
+        !element.contains(from) &&
+        !(skip?.contains(element) ?? false),
+    )
+    .pop();

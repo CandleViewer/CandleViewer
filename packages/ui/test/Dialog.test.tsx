@@ -306,6 +306,26 @@ describe("Dialog (CMP-043)", () => {
     expect(node).toHaveClass("cv-dialog", "extra");
   });
 
+  it("a host's aria-describedby follows the description; alone it is the whole description", async () => {
+    await openHost(
+      <Host aria-describedby="host-note">
+        <p id="host-note">Shared with 2 accounts.</p>
+      </Host>,
+    );
+    const node = dialogNode("Rename layout");
+    expect(node).toHaveAccessibleDescription(
+      "Names are unique per workspace. Shared with 2 accounts.",
+    );
+    await key("Escape");
+    document.body.replaceChildren();
+    await mount(
+      <Dialog open title="Note" aria-describedby="only-note" onOpenChange={() => undefined}>
+        <p id="only-note">Only the host's line.</p>
+      </Dialog>,
+    );
+    expect(dialogNode("Note")).toHaveAccessibleDescription("Only the host's line.");
+  });
+
   it("busy: Esc still closes the view (H22)", async () => {
     const onOpenChange = vi.fn();
     await openHost(<Host busy onOpenChange={onOpenChange} />);
@@ -540,7 +560,10 @@ describe("Dialog exit fade", () => {
     const real = window.getComputedStyle.bind(window);
     vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
       element.classList.contains("cv-dialog__scrim")
-        ? ({ transitionDuration: "0.1s, 200ms" } as unknown as CSSStyleDeclaration)
+        ? ({
+            transitionDuration: "0.1s, 200ms",
+            getPropertyValue: () => "",
+          } as unknown as CSSStyleDeclaration)
         : real(element, pseudo),
     );
   };

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { tabStopAfter, tabbables } from "../src/components/internal/tabbable.js";
+import { tabStopAfter, tabStopBefore, tabbables } from "../src/components/internal/tabbable.js";
 
 afterEach(() => document.body.replaceChildren());
 
@@ -90,5 +90,27 @@ describe("tabStopAfter", () => {
     const only = root.querySelector<HTMLElement>("button");
     if (only === null) throw new Error("no button");
     expect(tabStopAfter(only, null)).toBeUndefined();
+  });
+});
+
+describe("tabStopBefore", () => {
+  it("finds the previous stop before an element, skipping its ancestors and a given node", () => {
+    const root = fixture(
+      el("button", { "data-n": "previous" }, "p"),
+      el("div", { "data-n": "skip" }, [el("button", { "data-n": "skipped" }, "s")]),
+      el("div", { tabindex: "0", "data-n": "wrapper" }, [el("button", { "data-n": "from" }, "f")]),
+    );
+    const from = root.querySelector<HTMLElement>("[data-n=from]");
+    const skip = root.querySelector("[data-n=skip]");
+    if (from === null) throw new Error("no from");
+    expect(tabStopBefore(from, skip)?.dataset["n"]).toBe("previous");
+    expect(tabStopBefore(from, null)?.dataset["n"]).toBe("skipped");
+  });
+
+  it("is undefined when nothing precedes", () => {
+    const root = fixture(el("button", { "data-n": "only" }, "o"));
+    const only = root.querySelector<HTMLElement>("button");
+    if (only === null) throw new Error("no button");
+    expect(tabStopBefore(only, null)).toBeUndefined();
   });
 });

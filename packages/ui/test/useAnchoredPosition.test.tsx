@@ -4,7 +4,9 @@ import { act, useRef, type JSX } from "react";
 import { expect } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
+  pointAnchor,
   useAnchoredPosition,
+  type AnchoredAlign,
   type AnchoredSide,
 } from "../src/components/internal/useAnchoredPosition.js";
 import { mount } from "./theme/mount.js";
@@ -195,5 +197,65 @@ describe("useAnchoredPosition", () => {
     const host = await mount(<NoAnchor />);
     expect(surface(host)).toHaveAttribute("data-positioned");
     expect(floating.autoUpdate).not.toHaveBeenCalled();
+  });
+
+  it("align start places the surface on the anchor's start edge (a submenu, a context menu)", async () => {
+    function Aligned({ align }: { align: AnchoredAlign }): JSX.Element {
+      const anchor = useRef<HTMLButtonElement>(null);
+      const node = useRef<HTMLDivElement>(null);
+      useAnchoredPosition({ open: true, reference: anchor, floating: node, side: "right", align });
+      return (
+        <>
+          <button ref={anchor} type="button">
+            Anchor
+          </button>
+          <div ref={node} />
+        </>
+      );
+    }
+    floating.computePosition.mockResolvedValue({ x: 0, y: 0, placement: "left-start" });
+    const host = await mount(<Aligned align="start" />);
+    const placement = (i: number): string =>
+      (floating.computePosition.mock.calls[i] as [unknown, unknown, { placement: string }])[2]
+        .placement;
+    expect(placement(0)).toBe("right-start");
+    await act(async () => undefined);
+    expect(host.querySelector("div")?.dataset["side"]).toBe("left");
+    await mount(<Aligned align="center" />);
+    expect(placement(1)).toBe("right");
+  });
+
+  it("a point anchor is a zero-size virtual reference at the pointer", async () => {
+    const point = pointAnchor(40, 60);
+    expect(point.getBoundingClientRect()).toEqual({
+      x: 40,
+      y: 60,
+      width: 0,
+      height: 0,
+      top: 60,
+      left: 40,
+      right: 40,
+      bottom: 60,
+    });
+    function AtPoint(): JSX.Element {
+      const anchor = useRef(point);
+      const node = useRef<HTMLDivElement>(null);
+      useAnchoredPosition({
+        open: true,
+        reference: anchor,
+        floating: node,
+        side: "bottom",
+        align: "start",
+      });
+      return <div ref={node} />;
+    }
+    await mount(<AtPoint />);
+    const [reference, , options] = floating.computePosition.mock.calls[0] as [
+      unknown,
+      unknown,
+      { placement: string },
+    ];
+    expect(reference).toBe(point);
+    expect(options.placement).toBe("bottom-start");
   });
 });

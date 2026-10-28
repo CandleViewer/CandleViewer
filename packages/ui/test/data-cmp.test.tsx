@@ -5,10 +5,14 @@ import {
   Button,
   Card,
   Checkbox,
+  ConfirmDialog,
   Dialog,
+  Drawer,
   FormField,
   FormSection,
   IconButton,
+  InfoPanel,
+  Menu,
   NumericStepperInput,
   RadioGroup,
   SearchBox,
@@ -17,6 +21,7 @@ import {
   Slider,
   Tabs,
   TextInput,
+  Toast,
   Toggle,
 } from "../src/index.js";
 import type { SegmentedOptions } from "../src/index.js";
@@ -93,6 +98,7 @@ const molecules: [string, () => JSX.Element][] = [
       />
     ),
   ],
+  ["CMP-045", () => <Toast title="Session extended" />],
   ["CMP-050", () => <Card title="Accounts">Body</Card>],
 ];
 
@@ -105,5 +111,48 @@ describe("molecules carry their catalogue id", () => {
   it("CMP-043 marks exactly one root with data-cmp (in its portalled layer)", async () => {
     await mount(<Dialog open title="Go to date" onOpenChange={noop} />);
     expect(document.querySelectorAll('[data-cmp="CMP-043"]')).toHaveLength(1);
+  });
+
+  it("CMP-044 marks exactly one root with data-cmp (inside its CMP-043 layer)", async () => {
+    await mount(
+      <ConfirmDialog
+        open
+        title="Freeze sub_001?"
+        confirmLabel="Freeze sub_001"
+        onConfirm={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(document.querySelectorAll('[data-cmp="CMP-044"]')).toHaveLength(1);
+  });
+
+  it("CMP-046 marks exactly one root with data-cmp (in its portalled layer)", async () => {
+    await mount(<Drawer open title="Instrument rules" onOpenChange={noop} />);
+    expect(document.querySelectorAll('[data-cmp="CMP-046"]')).toHaveLength(1);
+  });
+
+  it("CMP-069 marks exactly one root with data-cmp, in either form", async () => {
+    const trigger = (props: object): JSX.Element => (
+      <button type="button" {...props}>
+        About
+      </button>
+    );
+    await mount(<InfoPanel defaultOpen title="Iceberg" content="Text" trigger={trigger} />);
+    expect(document.querySelectorAll('[data-cmp="CMP-069"]')).toHaveLength(1);
+    document.body.replaceChildren();
+    const host = await mount(
+      <InfoPanel defaultOpen variant="inline" title="Iceberg" content="Text" trigger={trigger} />,
+    );
+    expect(host.querySelectorAll('[data-cmp="CMP-069"]')).toHaveLength(1);
+  });
+
+  it("CMP-041 marks exactly one root with data-cmp (its portalled menu, closed)", async () => {
+    await mount(
+      <Menu
+        trigger={<Button>Actions</Button>}
+        items={[{ id: "a", label: "Alpha", onSelect: noop }]}
+      />,
+    );
+    expect(document.querySelectorAll('[data-cmp="CMP-041"]')).toHaveLength(1);
   });
 });

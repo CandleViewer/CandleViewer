@@ -139,13 +139,13 @@ a tab.
 | A press on the scrim | Cancel for a `dialog`; nothing for an `alertdialog`.                                                                                          |
 | Enter / Space        | The focused control's own; the dialog adds none.                                                                                              |
 
-| Element | Role                   | Name                                           | ARIA                                                                                            |
-| ------- | ---------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| card    | dialog or alertdialog  | the title (`aria-labelledby`), or `aria-label` | `aria-modal="true"`; `aria-describedby` → the description; `aria-busy` while busy               |
-| title   | heading, `h2`          | its text                                       | `tabindex="-1"`: the fallback focus target                                                      |
-| close   | button (`dialog` only) | "Close {title}"                                | CMP-002 `ghost`                                                                                 |
-| body    | none, or group         | the title, when it is a Tab stop               | a body that scrolls with no control in it takes `tabindex="0"` so the keyboard can scroll it    |
-| scrim   | none                   | —                                              | `aria-hidden="true"`; the page under it `inert` (`aria-hidden` where the engine has no `inert`) |
+| Element | Role                   | Name                                           | ARIA                                                                                                   |
+| ------- | ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| card    | dialog or alertdialog  | the title (`aria-labelledby`), or `aria-label` | `aria-modal="true"`; `aria-describedby` → the description, then the host's ids; `aria-busy` while busy |
+| title   | heading, `h2`          | its text                                       | `tabindex="-1"`: the fallback focus target                                                             |
+| close   | button (`dialog` only) | "Close {title}"                                | CMP-002 `ghost`                                                                                        |
+| body    | none, or group         | the title, when it is a Tab stop               | a body that scrolls with no control in it takes `tabindex="0"` so the keyboard can scroll it           |
+| scrim   | none                   | —                                              | `aria-hidden="true"`; the page under it `inert` (`aria-hidden` where the engine has no `inert`)        |
 
 `onOpenChange(false, reason)` reports `escape`, `scrim` or `close`; the host decides. A lock ignores
 `Esc` by keeping `open`; a form with unsaved changes opens its own stacked CMP-044 alertdialog
@@ -158,3 +158,200 @@ Popover, Tooltip or nested Dialog rendered inside portals into the dialog's laye
 NoEscClose: `Esc` always cancels before a send, and closes the view after one (H22). `busy` sets only
 `aria-busy` on the card; the dialog does not drive its footer, so the host sets its primary
 action's `loading` itself.
+
+### ConfirmDialog (CMP-044, APG Alert Dialog; APG Dialog (Modal) for an order confirm)
+
+| Keys                               | Action                                                                                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| On open                            | Focus on Cancel (H32); nothing is sent until Confirm.                                                                                 |
+| Tab / Shift+Tab                    | The trap in DOM order from Cancel: Confirm, the close button (an order confirm), the body's controls, back to Cancel.                 |
+| Enter / Space / a press on Confirm | Confirms once, unless the press began in the first `confirmDelayMs` (at least 400 ms) of the guard; repeats never count.              |
+| Typing in the typed field          | Confirm enables when the text matches the token exactly (paste allowed); Enter in the field never confirms.                           |
+| Hold, pointer                      | Press and hold Confirm for `holdDurationMs` (800 ms, 300–2,000); an early release resets the ring and fires nothing.                  |
+| Hold, keyboard                     | Hold Enter as long, or two non-repeat Enter / Space presses 250 ms – 5 s apart, a keyup between; the first arms ("Press again to …"). |
+| Second press under 250 ms          | A bounce: ignored, and the window keeps the first press's start; so is a press whose keydown follows a keyup within 50 ms.            |
+| Armed window runs out (5 s)        | Disarms; Confirm takes its own name back and "Disarmed — {effect}" is spoken politely once.                                           |
+| Space on a hold Confirm            | One press on its keyup, never a hold; a click or a pointer press never arms.                                                          |
+| Esc or blur on a hold Confirm      | Disarms and drops the hold, silently; Esc then cancels the dialog (`onCancel("escape")`, once).                                       |
+| Title or effect changes while open | Drops a hold under way and an armed press; the guard restarts, so the next press only arms (or starts a new hold).                    |
+| Any key or pointer input           | Restarts an `autoCancelMs` count (key repeats do not); at 0:00 the dialog cancels (`"timeout"`), never confirms.                      |
+| Esc                                | Cancels (`onCancel("escape")`); focus returns to the opener, else `fallbackFocusRef`.                                                 |
+| Enter / Space on a T2 Confirm      | Nothing; the reason is re-shown with one polite announcement.                                                                         |
+| A press on the scrim               | Nothing for an `alertdialog`; Cancel (`"scrim"`) for an order `dialog`.                                                               |
+
+| Element     | Role                                             | Name                                                   | ARIA                                                                                                                                               |
+| ----------- | ------------------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| card        | alertdialog, or dialog for an order confirm      | the title, or the host's `aria-label`                  | `aria-modal="true"`; `aria-describedby` → the message, then the restatement; `aria-busy` while busy                                                |
+| restatement | group (or plain text with `restatementLabel=""`) | "What this does"                                       | —                                                                                                                                                  |
+| typed field | textbox                                          | the instruction ("Type FLATTEN to confirm"), its label | —                                                                                                                                                  |
+| Confirm     | button                                           | the effect, never "Confirm"                            | native `disabled` until the summary loads and the token matches (validity); `aria-describedby` → the instruction; T2: `aria-disabled` + the reason |
+| status      | status, alert                                    | —                                                      | visually hidden: a T2 re-show (polite); a Confirm gated while it held focus (assertive, once)                                                      |
+| hold ring   | progressbar                                      | "Hold to {effect}", stable while armed (E39-D03 §5)    | `aria-valuenow` 0–100 and its text twin at up to 2 updates a second; the arc at up to 10, hidden under reduced motion                              |
+| armed count | text (CMP-035)                                   | the 5 s window, beside the ring while armed            | `aria-live="off"`, no thresholds: silent (a visible reading of the catalogue's "visible countdown"); the lapse is spoken once by the status        |
+| countdown   | text (CMP-035)                                   | "Cancels in 20 seconds unless you act"                 | `aria-live="off"`; polite at 0:10 and 0:00 only                                                                                                    |
+
+`onConfirm(meta)` reports `{ variant, gate, elapsedMs }` for the host's audit event, the gate being
+`click`, `typed`, `pointer-hold`, `key-hold` or `double-press`; `onCancel(reason)` reports `cancel`,
+`escape`, `close`, `scrim` or `timeout`. A hold that also asked for a `typedConfirmValue` reports its
+hold gate only: the meta does not say the token was matched too, which the host knows from its own
+props. Events are not filtered on `isTrusted`: the gate guards against accidental and browser-made
+activations, not in-page script, which could call the host directly. The accepted boundary is that a
+lone untrusted `pointerdown` that never gets its `up` satisfies a hold after `holdDurationMs`; that is
+a hold, not a single click. The guard runs from the moment the dialog opens and applies to pointer, Enter and Space
+alike. A typed mismatch, a loading summary and a sent confirm (`busy`) are not T2; only a reason
+given while open (H30) is, and focus stays on Confirm. A partial failure is CMP-027's inline error
+with its Retry, above the footer.
+
+The guard is a safety control. `confirmDelayMs` below 400 (or not a finite number) is raised to 400
+with a dev warning. The window restarts when Confirm becomes available (a typed match, the summary
+loaded, a T2 reason cleared) and when the title or Confirm's label changes while open. A press that
+began inside the window is rejected even when it ends after it, across a blur or a pointercancel;
+the click that ends it clears the mark. `onConfirm` fires at most once per opening: a new `failure`
+message or `busy` going false allows one more. The clock is `performance.now` (monotonic). A `Space`
+released on Cancel or Confirm activates only when its own press began there.
+
+A hold Confirm never reads a click, so a synthetic `click()` confirms nothing. The guard applies to the moment
+each hold or press begins. Completion is read from the clock: it fires at the duration, never
+before. A `typedConfirmValue` on a hold gates it too: no press starts until the field matches. The
+`autoCancelMs` count stops once Confirm has fired and stays off for the rest of the opening, a
+failed send's retry included, so a sent confirm is never cancelled by it. A `busy` that ends without a
+send shows the count again from the full time. The count listens on the document, not the dialog
+surface: the dialog is modal, so a press on a toast action outside it also restarts the count.
+
+With `summaryLoading` set while
+Confirm holds focus, Confirm becomes natively disabled and focus is lost; that inherited spec gap is
+open for the host or the spec to decide.
+
+### Toast and the toast region (CMP-045, no widget pattern; messages follow the APG Alert pattern through the shell's announcer)
+
+| Keys                                          | Action                                                                                                                                         |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| On arrival                                    | Nothing: a toast never takes focus. Its sentence is written once through `announce`.                                                           |
+| Tab / Shift+Tab                               | Through each toast's actions and dismiss button, in stack order; while a modal is open the stack is inert.                                     |
+| Enter / Space                                 | The focused action's own.                                                                                                                      |
+| Enter / Space on a gated action               | Nothing changes; the reason is spoken once, politely.                                                                                          |
+| Esc on a focused toast                        | Dismisses it; focus moves to the next toast, else back where it was before the stack. A name echo on the dismiss button takes the first `Esc`. |
+| Hover or focus in the stack, or an open modal | Pauses every timer in the stack; leaving it, or the modal closing, resumes them with the time left.                                            |
+
+| Element      | Role                     | Name                          | ARIA                                                                                                     |
+| ------------ | ------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------- |
+| region       | region (`<section>`)     | `label` ("Notifications")     | portalled to `body`; rendered only while it holds a toast; its list is an `<ol>`                         |
+| toast        | group                    | its title (`aria-labelledby`) | never a live region itself (H28)                                                                         |
+| announcement | —                        | —                             | `announce(politeness, sentence, id)`: polite, assertive for `danger` or an error; `politeness` overrides |
+| glyph        | none                     | —                             | `aria-hidden="true"`                                                                                     |
+| dismiss      | button                   | "Dismiss {title}"             | CMP-002 `ghost`; never gated                                                                             |
+| gated action | button                   | its full label                | `aria-disabled="true"`, `aria-describedby` → the one reason line every gated action shares               |
+| Undo         | button, then the outcome | "Undo"                        | once the window closes, the outcome line replaces it and is spoken once, politely                        |
+
+Timing (H26): a toast with an action, an error or `danger` persists; any other closes after the region's
+`durationMs` (5 s by default; `null` is "until dismissed"), or its own. There is no countdown bar. An
+Undo window follows the same duration, then the outcome line stays (H27); an order cancel offers no Undo.
+The shell passes its one announcer as `announce`, so the region renders no live region of its own; the
+stories use a local pair. The count, the storm summary and "Focus toasts" are CMP-212's.
+
+### Drawer (CMP-046; modal: APG Dialog (Modal); non-modal: a non-modal dialog)
+
+| Keys                 | Action                                                                                                                                          |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| On open              | Focus to `initialFocusRef` (or the first tab stop inside it), else the heading: the body is content to read.                                    |
+| Tab / Shift+Tab      | Modal: cycle inside, the page inert. Non-modal: Tab past the last control goes on to the page after the opener; it stays open.                  |
+| Shift+Tab (first)    | Non-modal: before the first control (or from the heading), back to the opener.                                                                  |
+| Tab on the opener    | Non-modal: into the drawer, which follows its opener in the Tab order; Shift+Tab on the page's next stop comes back in at its last control.     |
+| Esc                  | Closes the topmost layer only; a non-modal drawer takes it only while focus is inside it. Focus returns to the opener, else `fallbackFocusRef`. |
+| A press on the scrim | Modal only: Cancel.                                                                                                                             |
+
+| Element | Role           | Name                                           | ARIA                                                                                        |
+| ------- | -------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| panel   | dialog         | the title (`aria-labelledby`), or `aria-label` | `aria-modal="true"` when modal, none when not (H31); `id` for the opener's `aria-controls`  |
+| title   | heading, `h2`  | its text                                       | `tabindex="-1"`: the initial focus target                                                   |
+| close   | button         | "Close {title}"                                | CMP-002 `ghost`                                                                             |
+| body    | none, or group | the title, when it is a Tab stop               | `aria-busy` while `busy`; a body that scrolls with no control in it takes `tabindex="0"`    |
+| scrim   | none           | —                                              | modal only: `aria-hidden="true"`; the page under it `inert` (`aria-hidden` without `inert`) |
+| opener  | button         | its label                                      | the host's: `aria-expanded`, and `aria-controls` → the panel's `id`                         |
+
+The width is host data (`width`, in px; 480 by default); at a viewport of 720 CSS px or less the
+drawer takes the full width. A modal drawer is CMP-043's contract: the page inert (the
+`data-cv-inert-exempt` regions spared), no page scroll, the shell's scrim insets. A non-modal one
+sits at `elevation.popover` with no scrim and the page live, and does not close when focus leaves
+it. With neither the opener nor `fallbackFocusRef` reachable, its Tab path has no anchor and keeps the
+browser's order: the drawer is last in `body`, so Tab past its last control leaves the page. It
+slides in opaque from the first frame and out over `fast`; reduced motion is a cut. `busy`
+sets only `aria-busy` on the body: the host renders its CMP-015 rows. A docked inspector that
+reflows its host is the host's layout, not this overlay.
+
+### InfoPanel (CMP-069; drawer: a non-modal dialog; inline: APG Disclosure)
+
+| Keys                         | Action                                                                                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enter / Space on the trigger | Opens it (J18): the drawer form with focus on its heading; the inline form under the trigger, likewise.                                        |
+| Esc (drawer)                 | Closes it; focus back to the trigger.                                                                                                          |
+| Tab (drawer)                 | Through its links and close; past the last it moves on to the page and the drawer stays open.                                                  |
+| Enter / Space, or Esc inside | Inline: toggles it; on close focus returns to the trigger. Inside a Dialog or Drawer, Esc collapses it first; the next Esc closes the overlay. |
+
+| Element      | Role    | Name                 | ARIA                                                                                                                                                                                    |
+| ------------ | ------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| trigger      | button  | its label (the chip) | `aria-expanded`; `aria-controls` → the panel; drawer form `aria-haspopup="dialog"`                                                                                                      |
+| drawer       | dialog  | the title            | a non-modal CMP-046 (no `aria-modal`)                                                                                                                                                   |
+| inline panel | region  | its heading          | `section` with `aria-labelledby` → the heading                                                                                                                                          |
+| heading      | heading | the detector's name  | `tabindex="-1"`: focus on open                                                                                                                                                          |
+| body         | —       | —                    | `aria-busy="true"` while the values load (the drawer's body; inline, the values part only, so the heading and the static text stay readable); a load failure is CMP-027's polite region |
+
+The trigger is the host's (the CMP-227 chip): `trigger` renders it from the props to spread on a
+button. The static methodology (`content`) shows at once; the current values (`values`) load under
+it as CMP-015 rows, or fail as a CMP-027 inline error with Retry (`error`, `onRetry`).
+
+### Menu (CMP-041, APG Menu Button and Menu)
+
+| Keys                                         | Action                                                                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Enter / Space / ↓ on the trigger             | Opens on the first item; a menu whose items all pick one value (radio) opens on its checked item.             |
+| ↑ on the trigger                             | Opens on the last item.                                                                                       |
+| ↓ / ↑, Home / End                            | Next / previous item, wrapping; first / last. Separators and group captions are skipped.                      |
+| A printable character                        | Type-ahead: the next item whose label starts with the typed text (a 500 ms window; one letter cycles).        |
+| Enter                                        | Activates the item and closes; focus returns to the trigger before the item runs (or a dialog takes it).      |
+| Space                                        | Activates an action item and closes; toggles a checkbox or radio item and keeps the menu open.                |
+| Enter / Space on a disabled, busy or T2 item | Nothing runs; a T2 item's reason is announced once, politely, per press.                                      |
+| → / Enter / Space on a submenu item          | Opens its submenu beside the row, on its first item.                                                          |
+| ← in a submenu                               | Closes that submenu alone; focus back on its item.                                                            |
+| Esc                                          | Closes the topmost level only (a submenu, then the menu); focus returns to its item, then the trigger.        |
+| Tab / Shift+Tab                              | Closes every level and moves on from the trigger (it stays on the trigger with no earlier stop).              |
+| A pointer click on an item                   | Like Enter: activates and closes, a checkbox or radio item too (only Space keeps the menu open).              |
+| Pointer hover on an item                     | Moves focus to it, a disabled, busy or T2 item too; nothing runs.                                             |
+| A press outside                              | Closes the menu; focus goes where the press lands.                                                            |
+| Pointer on another item of the parent        | Closes the open submenu; the pointer crossing the submenu's own row leaves focus inside it.                   |
+| Shift+F10, the Menu key (context menu)       | Opens it below the focused element in its target, on its first item; focus returns there.                     |
+| A right-click (context menu)                 | Opens it at the pointer instead of the browser's menu; focus returns to the pressed control, else the target. |
+
+| Element       | Role                                        | Name                                             | ARIA                                                                                                        |
+| ------------- | ------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| trigger       | button (the host's CMP-001 or CMP-002)      | its label                                        | `aria-haspopup="menu"`, `aria-expanded`, `aria-controls` → the menu                                         |
+| menu          | menu                                        | the trigger (`aria-labelledby`), or `aria-label` | `hidden` while closed, so `aria-controls` stays valid; a context menu requires `aria-label`                 |
+| group         | group, a `separator` between groups         | its caption, when it has one                     | danger items always form the last group (H16)                                                               |
+| item          | menuitem, menuitemcheckbox or menuitemradio | its visible label                                | `aria-checked` on checkable items; `aria-keyshortcuts` for a shortcut; glyphs and key caps `aria-hidden`    |
+| submenu item  | menuitem                                    | its visible label                                | `aria-haspopup="menu"`, `aria-expanded`, `aria-controls` → the open submenu; the chevron `aria-hidden`      |
+| submenu       | menu                                        | its item (`aria-labelledby`)                     | rendered only while open                                                                                    |
+| T2 item       | its kind                                    | its full label                                   | `aria-disabled="true"`, `aria-describedby` → its reason line, in the DOM at mount; the lock leads the label |
+| disabled item | its kind                                    | its label                                        | `aria-disabled="true"`: reached, never activated                                                            |
+| busy item     | its kind                                    | its label                                        | `aria-busy="true"`, `aria-describedby` → its description line; CMP-014 leads the label, `aria-hidden`       |
+| danger item   | its kind                                    | its label, with "…" when it opens CMP-044        | `aria-describedby` → a visually hidden "Destructive action"                                                 |
+
+Each item is a row (`role="none"`, the hit target and the look) around the `menuitem`, which holds the label
+alone, so the name is the visible label; the second line and the shortcut are its description and
+`aria-keyshortcuts`. The host owns `checked`: an item's `onSelect` toggles it. The menu is anchored below its
+trigger (above when there is no room), at least as wide as the trigger, its height capped to the room and
+scrolling. It opens at once and fades out over `fast` (a cut under reduced motion). Focus leaving the menu closes it, unless it moves into a layer opened above it (a dialog a checkable item opens). Inside a CMP-043 Dialog it
+portals into the dialog's layer. An item with `items` opens a submenu: the same surface beside its row
+(`right-start`, flipped to the left at the edge), each submenu its own layer, so Esc closes it alone. With
+`contextTarget` (a ref) instead of `trigger`, the menu is a context menu: no trigger renders, a right-click opens it at
+the pointer through a zero-size virtual reference (positioning only) and `Shift+F10` or the Menu key below the focused
+element; the target should be focusable, as a grid row is. The target should mount with the menu: one swapped or
+mounted later is bound on the menu's next render.
+
+Submenu decisions (E05-S03):
+
+- Hover does not open a submenu; only `→`, Enter, Space or a click does.
+- There is no safe triangle: the pointer on another item of the parent closes the open submenu.
+- A gated (T2) submenu item never opens; a press (Enter, Space or a click) re-shows its reason, `→` does not.
+- A submenu always opens on its first item; a checked radio item in it does not choose where it starts.
+- No RTL mirroring yet: `→` opens and `←` closes in every direction, and a submenu opens `right-start`
+  (a known deferral, to be tracked in its own issue).

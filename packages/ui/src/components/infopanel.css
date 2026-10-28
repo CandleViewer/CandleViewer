@@ -1,0 +1,53 @@
+/*
+ * CMP-069 InfoPanel (D02 slice 5, J17; conventions 42, 44). Tokens only, no motion of its own: the drawer form
+ * is CMP-046's (drawer.css); the inline form is a cut. The inline form sits on its host's surface under a 1 px
+ * `color.border.default` hairline (decorative: its heading names it), padded `space.inset.sm`. The title is
+ * `type.ui.heading-sm` (the drawer's own `h2`, or the inline heading), the body `type.ui.body` in
+ * `color.text.primary`.
+ */
+.cv-info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-md);
+  min-width: 0;
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  overflow-wrap: break-word;
+}
+
+.cv-info-panel[data-variant="inline"] {
+  padding: var(--space-inset-sm);
+  border-top: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+.cv-info-panel__title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font: var(--type-ui-heading-sm-font-weight) var(--type-ui-heading-sm-font-size) /
+    var(--type-ui-heading-sm-line-height) var(--type-ui-heading-sm-font-family);
+}
+
+/* The heading takes focus only as the open's target (conventions 32); it is not a control. */
+.cv-info-panel__title:focus {
+  outline: none;
+}
+
+.cv-info-panel__content,
+.cv-info-panel__values {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-sm);
+}
+
+/* Forced colours (conventions 38): the inline hairline CanvasText. */
+@media (forced-colors: active) {
+  .cv-info-panel[data-variant="inline"] {
+    border-top-color: CanvasText;
+  }
+
+  .cv-info-panel,
+  .cv-info-panel__title {
+    color: CanvasText;
+  }
+}
