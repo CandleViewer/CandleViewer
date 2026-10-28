@@ -146,4 +146,4 @@ Residual items: the K01 absolute overhead numbers still need a re-run on the ref
 
 ## Addendum (2026-10-28) — E29-T04 order-path spans
 
-§5's order-path span names are maintained in `20-architecture.md` §12.3. #913 (E29-T04) adds `oms.submit`, with `oms.validate`, `oms.persist` and `oms.send` as its children, and a span records an exception's class, never its message (C-12.6). No decision is overturned.
+**Status: reconciled; no decision overturned.** §5's order-path span names are maintained in `20-architecture.md` §12.3.
