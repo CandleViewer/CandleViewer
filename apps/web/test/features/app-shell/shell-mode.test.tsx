@@ -3,8 +3,7 @@ import type { JSX } from "react";
 import { act, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { afterEach, beforeEach, describe, expect } from "vitest";
-import { it } from "@candleviewer/config/vitest-flaky";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RAIL } from "../../../e2e/support/rail";
 import { clearAnnouncements } from "../../../src/features/app-shell/announcer";
 import {
@@ -239,9 +238,23 @@ const overlay = (): HTMLElement => {
 const assertiveSeq = (): string | null =>
   document.querySelector('[aria-live="assertive"] p')?.getAttribute("data-seq") ?? null;
 
-async function renderShell(role: Role): Promise<void> {
+/**
+ * The store as the app's boot leaves it for the router, which `main.tsx` renders only after the
+ * bootstrap: the claims, `/me`, an environment and the live link. The app's `runBootstrap` writes
+ * `/me` and the environment its session names in one update; this fixture's `/me` names none, so
+ * the environment is seeded here, before the first render, as the boot would leave it.
+ */
+function bootShell(role: Role): void {
   setMeClaims({ authenticated: true, role, permissions: [] });
-  set({ connection: LIVE, me: me(role) });
+  set({ connection: LIVE, me: me(role), environment: "live" });
+}
+
+/**
+ * The router at R-180, beside the probe. The router renders the shell later, in a transition
+ * outside act; the shell's store subscriptions are that commit's passive effects, which the
+ * scheduler runs in a task of their own.
+ */
+function mountShell(): void {
   const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/journal"] });
   render(
     <>
@@ -249,6 +262,11 @@ async function renderShell(role: Role): Promise<void> {
       <ModeProbe />
     </>,
   );
+}
+
+async function renderShell(role: Role): Promise<void> {
+  bootShell(role);
+  mountShell();
   await screen.findByRole("heading", { name: /R-180/ });
 }
 
@@ -316,16 +334,18 @@ const MATRIX = STATES.flatMap(([mode, patch]) =>
 );
 const MATRIX_TITLE =
   "%s × %s: the badge shows, Admin only for the owner, the read-only overlay for a viewer, axe-clean";
-/** Quarantined (C-9.3): under load the environment badge is not found or reads "unknown". */
-const QUARANTINED = new Set(["normal × manager", "normal × viewer"]);
 
-async function shellMatrixCase(
+/**
+ * A matrix case once the shell has rendered: its mode's write, then every check that takes no wait.
+ * The environment is the boot's (`bootShell`), so the badge never waits for the shell's store
+ * subscriptions; a mode's write moves the probe, whose render runs any pending effect first.
+ */
+function checkShellMatrix(
   mode: ShellMode,
   role: (typeof MATRIX_ROLES)[number],
   patch: Parameters<typeof setShellState>[0],
-): Promise<void> {
-  await renderShell(role);
-  set({ environment: "live", ...patch });
+): void {
+  set(patch);
   // A viewer's normal shell is read-only; under any other mode the overlay rides along.
   const expected = role === "viewer" && mode === "normal" ? "read-only" : mode;
   expect(probe()).toBe(`${expected}:${role === "viewer" ? "role" : "-"}`);
@@ -339,6 +359,15 @@ async function shellMatrixCase(
   ).toEqual([...RAIL[role]]);
   expect(within(nav).queryByRole("link", { name: "Admin" }) !== null).toBe(role === "owner");
   expect(screen.getAllByRole("main")).toHaveLength(1);
+}
+
+async function shellMatrixCase(
+  mode: ShellMode,
+  role: (typeof MATRIX_ROLES)[number],
+  patch: Parameters<typeof setShellState>[0],
+): Promise<void> {
+  await renderShell(role);
+  checkShellMatrix(mode, role, patch);
   const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
   expect(res.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual(
     [],
@@ -348,17 +377,39 @@ async function shellMatrixCase(
 describe("the shell matrix: every reachable state × role (S9)", () => {
   beforeEach(() => resetMeClaims());
 
-  it.each(MATRIX.filter(([mode, role]) => !QUARANTINED.has(`${mode} × ${role}`)))(
-    MATRIX_TITLE,
-    shellMatrixCase,
-  );
+  it.each(MATRIX)(MATRIX_TITLE, shellMatrixCase);
 
-  // The environment badge is not found under load (C-9.3). ticket: GH-4875 quarantined: 2026-10-28
-  it.flaky(MATRIX_TITLE.replace("%s", "normal").replace("%s", "manager"), () =>
-    shellMatrixCase("normal", "manager", {}),
-  );
-  // The environment badge is not found under load (C-9.3). ticket: GH-4875 quarantined: 2026-10-28
-  it.flaky(MATRIX_TITLE.replace("%s", "normal").replace("%s", "viewer"), () =>
-    shellMatrixCase("normal", "viewer", {}),
+  // #4875: `renderShell` can return after the router's commit of the shell and before that
+  // commit's effects subscribe the shell to the store, as on a loaded run. The checks must hold
+  // there. The scheduler's clock jumps 6 ms on every read, so it yields after every task: the
+  // effects wait for a later task, and a mutation callback, a microtask, runs the checks first.
+  it.each(MATRIX_ROLES)(
+    "normal × %s: the checks hold before the shell's first commit has run its effects",
+    async (role) => {
+      bootShell(role);
+      let now = performance.now();
+      const clock = vi.spyOn(performance, "now").mockImplementation(() => (now += 6));
+      let seen: MutationObserver | undefined;
+      try {
+        const checked = new Promise<void>((resolve, reject) => {
+          seen = new MutationObserver(() => {
+            if (screen.queryByRole("heading", { name: /R-180/ }) === null) return;
+            seen?.disconnect();
+            try {
+              checkShellMatrix("normal", role, {});
+              resolve();
+            } catch (error) {
+              reject(error instanceof Error ? error : new Error(String(error)));
+            }
+          });
+          seen.observe(document.body, { childList: true, subtree: true });
+        });
+        mountShell();
+        await checked;
+      } finally {
+        seen?.disconnect();
+        clock.mockRestore();
+      }
+    },
   );
 });
