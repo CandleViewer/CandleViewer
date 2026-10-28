@@ -87,3 +87,6 @@ docs/design/_tools/sheets/lib/
 # docs/design/_tools/sheets/e05-d02/v4: the packed (compact) E05-D02 sheets the boards were rendered from, kept
 # byte-identical apart from compactOf.file; E05-D02-boards.md §6 pins their sha256
 docs/design/_tools/sheets/e05-d02/v4/
+# docs/design/_tools/sheets/e27-d03/v4: the packed (compact) E27-D03 sheets the boards were rendered from, kept
+# byte-identical apart from compactOf.file
+docs/design/_tools/sheets/e27-d03/v4/
