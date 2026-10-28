@@ -922,7 +922,7 @@ def test_20_23_24_and_e29_carry_each_private_stream_across_the_lane_bridge() -> 
         "a fill in an 8-fill frame at the median, saturates that loop, so with its other work a "
         "1 ms timer a fill takes",
         "at p99 from the registry's queue to a consumer there with no hop and",
-        "to the lane, and with 1,000 slices of 1 ms CPU besides",
+        "to the lane, and with 1,000 slices of 1 ms CPU instead",
         "each batch the hop pulls waiting its turn of that loop; under one fill a stream the hop's "
         "own wake is",
         "at p99; the parse moved onto the lane would move the saturation, not remove it;",
@@ -991,7 +991,7 @@ def test_20_23_24_and_e29_carry_each_private_stream_across_the_lane_bridge() -> 
         "The bridge's hop, measured (`test_order_lane_stream_hop.py`, on the 5 ms switch "
         "interval): under a burst of 3,048 fills over 64 streams, the serving loop's other work a "
         "1 ms timer, its p99 is",
-        "with no hop, and with 1,000 slices of 1 ms CPU besides,",
+        "with no hop, and with 1,000 slices of 1 ms CPU instead,",
         "each batch it pulls waiting its turn of a serving loop the parse saturates, a residual of "
         "its own (§12.2), as a CPU-bound serving stall is; under one fill a stream its own wake is",
         "ruling Q2's (a) against (c) goes to the owner on #2701 with these numbers, the bridge "
@@ -1092,8 +1092,8 @@ def test_e29_leaves_ruling_q7s_hop_and_the_clock_resync_after_l1d3_in_its_map_an
         "with the serving tick held fresh, all under ruling Q11's 120 ms",
         "with the runtime's own tick, two of them over it",
         "Six runs cannot separate the tick's effect from the fsync queue's run-to-run variance; "
-        "L4's fence refused no re-send in any of them, which bounds the exposure to the kill "
-        "path's latency.",
+        "L4's fence refused no re-send in any of them, which bounds the exposure to the "
+        "protective calls' latency: a KILL's cancel as above, and a resumed create's answer",
         "The remedy, the write-ahead rule (C-2.9) its floor: group-commit per lane turn (one fsync "
         "per batch) awaited before any external send or answer, or the sink's fsync on a worker "
         "thread that the lane still awaits before the external effect; never a write-behind that "
