@@ -156,6 +156,7 @@ export { RbacGate } from "./RbacGate.js";
 export type { RbacGateChild, RbacGateProps } from "./RbacGate.js";
 export { RBAC_REASONS, formatRbacReason } from "./rbacReasons.js";
 export type { RbacReasonArgs, RbacReasonFills, RbacReasonKey } from "./rbacReasons.js";
+
 export { SearchBox } from "./SearchBox.js";
 export type { SearchBoxProps } from "./SearchBox.js";
 
