@@ -394,7 +394,7 @@ def _ws_gateway(b: Board) -> None:
         b,
         "Open client connections per 23-ws-protocol.md 8.3 class (`state`), from the first "
         "auth_ok to the teardown, summed over processes. Set only with "
-        "CV_WS_BACKPRESSURE_ENABLED on (off by default): with it off every class reads zero, so a "
+        "CV_WS_BACKPRESSURE_ENABLED on (on by default; off stays selectable): with it off every class reads zero, so a "
         "flat zero is not health. A connection's class is read when its writer runs; a writer "
         "held in a send keeps its last class, and a stuck socket shows in the overflow and "
         "closes panels.",

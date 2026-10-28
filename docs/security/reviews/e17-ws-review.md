@@ -223,6 +223,9 @@ staging" line, or #415 waits for staging. The other drills and measurements that
    2026-10-19). With it off, the control in force is the 1 024-frame
    push bound, which counts frames, not bytes; there is no coalescing, send interval or byte budget. WS-D01
    and WS-D08 stay contingent on the flag and on the staged load run.
+
+   _Addendum 2026-10-28:_ the default flip of `CV_WS_BACKPRESSURE_ENABLED` is proposed in #4883 (draft), pending the owner's ruling on E17-Q03 profile B (#568); this item and the WS-D01 row of §1 describe the review's base.
+
 3. **E17-R-05 is open** (triaged privately). It needs an owner decision
    before the E17 gate.
 4. **Frames already handed to the transport when a grant is withdrawn are still delivered**, ahead of
