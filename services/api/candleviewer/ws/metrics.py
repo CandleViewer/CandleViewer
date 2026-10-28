@@ -170,9 +170,10 @@ for _audit_reason in AUDIT_FAILURE_REASONS:  # bound now, so increase() sees the
     cv_ws_audit_failures_total.labels(reason=_audit_reason)
 # -- #571 (E17-T06, #2525 review): the store-backed WS principal load (`ws_wiring.py`) ----------
 #: How a principal load (`StorePrincipalLoader`, at a first `auth` and at each re-evaluation)
-#: failed. `timeout`: its `PRINCIPAL_LOAD_TIMEOUT_S` bound expired. `error`: anything else raised
-#: (the store, an unknown user or role). Either way the load answers the deny-all snapshot, as it
-#: did before the count. A non-active user's deny-all is the store's answer and is not counted.
+#: failed. `timeout`: a `TimeoutError`, its `PRINCIPAL_LOAD_TIMEOUT_S` bound or the store's own.
+#: `error`: anything else raised (the store, an unknown user or role). Either way the load answers
+#: the deny-all snapshot, as it did before the count. A non-active user's deny-all is the store's
+#: answer and is not counted.
 PrincipalLoadFailureReason = Literal["timeout", "error"]  # the closed set
 PRINCIPAL_LOAD_FAILURE_REASONS: Final[tuple[str, ...]] = get_args(PrincipalLoadFailureReason)
 cv_ws_principal_load_failures_total = Counter(
