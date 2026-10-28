@@ -697,7 +697,7 @@ they count.
 
 **E21 DOM ladder and heatmap** (`docs/security/threat-models/e21-dom-heatmap.md`, ticket E21-X01, Draft, sign-off pending) models the
 order-book ladder, the `heatmap` topic and its producer, the backfill route, the own-order column and the settings
-surface, as they stand on `main` and as E21-T01..T06 and E21-S01..S09 design them. 32 rows (HM-S01..HM-E05), 8 inherent
+surface, as they stand on `main` and as E21-T01..T06 and E21-S01..S09 design them. 33 rows (HM-S01..HM-E05), 8 inherent
 High and none Critical. The epic's named threat is unbounded subscription depth as a DoS vector (HM-D01): the model
 quantifies it from `23-ws-protocol.md` §6.1.1 (§4), at the caps in force (about 98 MiB/s of demand per user, a depth-500
 snapshot 3.8 times the outbound budget, producer state per distinct grid spec that can reach the host's RAM). The
@@ -708,7 +708,7 @@ every residual High and Medium row; the other rows are in the model only. See RS
 | T   | STRIDE            | Threat                                                                                                                                           | L   | I   | Risk     | Mitigations                                                                                                                                                  | Residual                 |
 | --- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | --- | --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
 | HM1 | Denial of service | Unbounded or deep heatmap subscriptions: depth 500 x 100 ms x 50 ms throttle x 900 s x many symbols and sockets, each with its own spec (HM-D01) | M\* | H   | **High** | SR-073; caps in force (model §4.3); G-01 cost-weighted quota, G-02 caps on distinct producer specs (E21-X02, E21-T02); G-16 option-bound tests; E21-Q03 load | High until G-01 and G-02 |
-| HM2 | Denial of service | Oversized `from`/`to` backfill: 30 days at 100 ms is about 104 GB at the reference cell size (HM-D03)                                            | M\* | H   | **High** | G-05: a maximum window, a coarsening clamp with the resolution disclosed, a concurrent-backfill limit, validation before any query (E21-T03, E21-X02)        | High until G-05          |
+| HM2 | Denial of service | Oversized `from`/`to` backfill: 30 days at 100 ms is about 104 GB at the §6.1.1 reference cell size scaled to depth 500 (HM-D03)                 | M\* | H   | **High** | G-05: a maximum window, a coarsening clamp with the resolution disclosed, a concurrent-backfill limit, validation before any query (E21-T03, E21-X02)        | High until G-05          |
 | HM3 | Denial of service | A snapshot larger than the outbound budget is built, dropped and rebuilt until the redrop close (HM-D02)                                         | M   | M   | Medium   | Redrop close and rebuild budget in force; G-03 byte-derived snapshot bound (E21-T02, E21-X02)                                                                | Medium                   |
 | HM4 | Denial of service | One user runs many backfills at once (HM-D07)                                                                                                    | M   | M   | Medium   | G-05 per-user concurrent-backfill limit (E21-T03); cancellation on symbol switch (E21-S08)                                                                   | Medium                   |
 | HM5 | Tampering         | Settings persisted as arbitrary JSON: unknown keys, oversized values, a non-colour string bound for the shader (HM-T03)                          | M   | M   | Medium   | G-11 closed settings schema, size bound and colour pattern (E21-X02, E21-S09); the arm flag refused on this route                                            | Medium                   |
@@ -778,7 +778,7 @@ controls are still requirements are release blockers for R3: RR-28 in §16.1, re
 RSK-084 and RSK-086, owner sign-off pending (queued on #2701 at approval (2026-10-26, #2701 comment 6418459861)). AL12's backend-outage residual (AS-D05, Medium,
 RSK-090) and AL15's demo-session residual (AS-S02, Low) await Owner acceptance (RR-29), as do the decisions D6 to D8.
 Every `algo.*` flag stays off until E34-T02, E39-S01 and E39-S03 merge (model CX-20).
-The E21 rows (E21-X01, Area 17 HM1 to HM6, model HM-S01..HM-E05, 32 rows) are Draft until the Security engineer and the Architect sign the
+The E21 rows (E21-X01, Area 17 HM1 to HM6, model HM-S01..HM-E05, 33 rows) are Draft until the Security engineer and the Architect sign the
 model, and outside the counts above, as the E28 rows are not. HM1 and HM2 are open Highs, not accepted: release blockers
 for R2 under the rule at the head of this paragraph (RR-30 in §16.1, RSK-092, refining RSK-063; owner sign-off pending),
 and unreachable on `main` until E21-T02 (the producer) and E21-T03 (the route) land. HM3 to HM6 (HM-D02, HM-D07, HM-T03,

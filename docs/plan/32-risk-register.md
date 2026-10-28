@@ -1001,7 +1001,7 @@ the 30-minute canary meanwhile.
 
 `Risk: R2` · Category **Security** · L 3 · I 4 · **Score 12 — High** · Owner **Security engineer** · Epics E21, E17, E26 · Status **Open**
 
-- **Description** — Introduced by E21-X01 (`docs/security/threat-models/e21-dom-heatmap.md` HM-D01, HM-D03; the named epic threat). The gateway caps bound sockets, subscriptions and rebuilds, but nothing weights a `heatmap` or deep-book subscription by its depth, bucket and throttle, and nothing caps the distinct grid specs a user can name, so producer state per spec can reach the host's RAM (the model's §4: about 98 MiB/s of demand per user at the caps, a depth-500 snapshot 3.8 times the outbound budget). The `from`/`to` backfill has no maximum window (30 days at 100 ms is about 104 GB at the reference cell size). Neither is reachable on `main` today: the `heatmap` topic has no producer and `GET /market/heatmap` is not mounted, so L is 3 (not 4) on the condition that the producer and route land only with their controls. The model's residual Mediums (HM-T03, HM-R01, HM-D02, HM-D07) are in 04 §5.18.
+- **Description** — Introduced by E21-X01 (`docs/security/threat-models/e21-dom-heatmap.md` HM-D01, HM-D03; the named epic threat). The gateway caps bound sockets, subscriptions and rebuilds, but nothing weights a `heatmap` or deep-book subscription by its depth, bucket and throttle, and nothing caps the distinct grid specs a user can name, so producer state per spec can reach the host's RAM (the model's §4: about 98 MiB/s of demand per user at the caps, a depth-500 snapshot 3.8 times the outbound budget). The `from`/`to` backfill has no maximum window (30 days at 100 ms is about 104 GB at the §6.1.1 reference cell size scaled to depth 500). Neither is reachable on `main` today: the `heatmap` topic has no producer and `GET /market/heatmap` is not mounted, so L is 3 (not 4) on the condition that the producer and route land only with their controls. The model's residual Mediums (HM-T03, HM-R01, HM-D02, HM-D07) are in 04 §5.18.
 - **Mitigation** — A cost-weighted heatmap and deep-book quota and caps on distinct producer specs (G-01, G-02), a snapshot bound derived from the outbound budget's bytes (G-03), the heatmap served only with the byte budget on (G-04), a maximum backfill window with a disclosed coarsening clamp and a concurrent-backfill limit (G-05), boundary tests for the option bounds (G-16): E21-X02, E21-T02 and E21-T03; load proof E21-Q03; abuse cases AC-HM-01..AC-HM-19.
 - **Trigger** — E21-T02 or E21-T03 reaching review without its gap closed; E21-Q03 or E21-K01 showing a depth-500 subscription above budget; sustained `cv_ws_overflow_total`, `slow_consumer` closes or rebuild-budget refusals while a heatmap is served; resident memory per symbol approaching budget #8.
 - **Contingency** — Serve `heatmap` and depth 500 only to the Owner behind a flag (default off, C-4.13) or cap the depth tier at 200 by config; lower the per-user caps; refuse `GET /market/heatmap` windows beyond a config maximum; Owner sign-off in 04 §16 (RR-30) is the only way to ship R2 without G-01, G-02 and G-05.
@@ -1075,7 +1075,7 @@ This subsection exists so an auditor does not have to re-derive the arithmetic. 
 | -------------------------- | ------------------------ | ---------------------------------------- | ------------------------------- | ------------------- |
 | Score band (§10)           | 3 (Critical/High/Medium) | 13 + 39 + 35 = **87**                    | none                            | none                |
 | Category (§10.1)           | 7                        | 17 + 48 + 6 + 5 + 4 + 4 + 3 = **87**     | none                            | none                |
-| `Risk` field value (§10.2) | 15 (R1–R15)              | 5+6+7+16+6+12+8+3+4+2+2+3+4+4+5 = **87** | none                            | none                |
+| `Risk` field value (§10.2) | 15 (R1–R15)              | 5+7+6+16+6+12+8+3+4+2+2+3+4+4+5 = **87** | none                            | none                |
 
 Two specific double-count traps, explicitly cleared:
 
@@ -1090,7 +1090,7 @@ Candidate risks that scored ≤4 (L×I) during drafting were resolved one of thr
 
 ### 10.2 Risks by `Risk` field value
 
-This is the second of the three partitions reconciled in §10.1.1. Each of the 87 entries carries **exactly one** `Risk` field value, and the counts below sum to 86. Note that `Risk` value ≠ Category: e.g. RSK-026 is Category _Technical_ but `Risk` value _R7_.
+This is the second of the three partitions reconciled in §10.1.1. Each of the 87 entries carries **exactly one** `Risk` field value, and the counts below sum to 87. Note that `Risk` value ≠ Category: e.g. RSK-026 is Category _Technical_ but `Risk` value _R7_.
 
 | Value                           | Count  | IDs                                                                                |
 | ------------------------------- | ------ | ---------------------------------------------------------------------------------- |
