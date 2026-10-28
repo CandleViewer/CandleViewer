@@ -196,6 +196,7 @@ class _Rig:
         system_notices: Callable[[], list[dict[str, Any]]] | None = None,
         tick_s: float = 0.005,
         view_as: Any = None,
+        loop_stall: Callable[[], float] | None = None,
     ) -> None:
         self.clock = _Clock()
         self.paced = backpressure is not None  # flag on, the hub's deltas are paced (S3)
@@ -238,6 +239,7 @@ class _Rig:
             system_notices=system_notices,
             backpressure=backpressure,
             view_as=view_as,
+            loop_stall=loop_stall,
         )
         (route,) = router.routes
         assert isinstance(route, APIWebSocketRoute)

@@ -12,11 +12,19 @@ of one `ch` together.
 
 `Backpressure` runs the §8.4 ladder against that budget plus the pacer's pending state:
 
-1. drop the queued frames and pending state of every throttled topic that holds any, and mark it
-   `resnapshot_required` (its deltas are held until then); queued frames of a topic already
-   awaiting its snapshot, or no longer subscribed, are dropped as well, and so is the pacer
-   window of a topic awaiting another sender's snapshot (it predates that snapshot); a paused
-   topic is shed the same way, without the mark: its resume re-snapshots it (D16);
+1. drop the queued frames and pending state of the offending throttled topics, and mark each
+   `resnapshot_required` (its deltas are held until then). The candidates are the throttled
+   topics that are subscribed, live (not awaiting a snapshot), unpaused and hold a queued frame or
+   a pending window. Over the budget the offending ones are the shortest prefix of the candidates,
+   ranked by queued plus pending bytes, largest first, ties by topic name (as the `bye.hint`),
+   whose drop takes the queue below `DRAIN_PCT` (`pct`, so the larger of the byte and the frame
+   fraction, the pacer's pending bytes counted), once what goes anyway is counted out; every
+   candidate when no prefix does. The others keep their queued frames and windows, unmarked
+   (#4833). Over the `bars` share alone every `bars` candidate offends (SR-E12-07, below). Queued
+   frames of a topic already awaiting its snapshot, or no longer subscribed, are dropped anyway,
+   and so is the pacer window of a topic awaiting another sender's snapshot (it predates that
+   snapshot); a paused topic is shed the same way, without the mark: its resume re-snapshots it
+   (D16);
 2. once the queue has drained below 50 %, send one `snap` with reason `backpressure` per marked
    topic, one at a time while the queue stays below 50 %;
 3. if the queue is still over budget after the drop, what remains cannot be dropped (`orders` /
@@ -270,8 +278,12 @@ class OutboundQueue:
 
     def pct(self, pending_bytes: int = 0) -> float:
         """Depth as a share of the budget: the larger of the byte and frame fractions (§8.3)."""
-        by_bytes = (self.bytes + pending_bytes) / self.max_bytes
-        return 100 * max(by_bytes, len(self) / self.max_frames)
+        return self.depth_pct(self.bytes + pending_bytes, len(self))
+
+    def depth_pct(self, size: int, frames: int) -> float:
+        """`pct` of a queue that would hold `size` bytes (pending ones included) in `frames`
+        frames: what step 1 weighs before it drops (#4833)."""
+        return 100 * max(size / self.max_bytes, frames / self.max_frames)
 
     def over_budget(self, pending_bytes: int = 0) -> bool:
         return self.bytes + pending_bytes > self.max_bytes or len(self) > self.max_frames
@@ -292,6 +304,16 @@ class OutboundQueue:
     def key_bytes(self) -> dict[Key, int]:
         """Queued bytes of every key with droppable frames."""
         return dict(self._key_bytes)
+
+    def key_frames(self) -> dict[Key, int]:
+        """Queued frames of every key with droppable frames: a scan of the normal lane, where
+        every keyed frame is droppable, run by step 1 at an overflow only (#4833), never per
+        push or pop."""
+        counts: dict[Key, int] = {}
+        for frame in self._normal:
+            if (key := frame.key) is not None:
+                counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def priority_key_bytes(self) -> dict[Key, int]:
         """Queued bytes of every key on the priority lane (`orders`, `executions`, `system`): a
@@ -422,7 +444,7 @@ class Backpressure:
         if hint is None:  # this limit's first check of the episode: when its overflow began
             hint = self._most_expensive(shed, shared=shared) or self._hints.get(True, ())
             self._hints[shared] = hint  # empty over the budget: the share's ranking, if any
-        queued = self.queue.key_bytes().keys()
+        queued = self.queue.key_bytes()
         offending = [
             sub
             for sub in shed
@@ -431,16 +453,18 @@ class Backpressure:
             and not _paused(sub)
             and (_key(sub) in queued or self._pending(sub))
         ]
-        for sub in offending:
-            self.pacer.drop(sub)
         live = {_key(sub) for sub in subs if not sub.snapshot_pending and not _paused(sub)}
         # Frames of a topic awaiting another snapshot, paused (D16: no mark, its resume
         # re-snapshots it), or no longer subscribed, go too. That drop is not a redrop:
         # `_settle` forgets its record and the count starts afresh.
         stale = {key for key in queued if key not in live and (over or _shared(key))}
+        for sub in shed:  # first, so the choice below counts these windows out; a held window
+            self.pacer.shed(sub)  # only (a pending `snap`, or paused): never a candidate's
+        if over:  # over the share, every `bars` candidate goes (SR-E12-07)
+            offending = self._offending(offending, queued, stale)
+        for sub in offending:
+            self.pacer.drop(sub)
         self.queue.drop(stale | {_key(s) for s in offending})  # over the share: `bars` only
-        for sub in shed:
-            self.pacer.shed(sub)  # a window that predates a pending `snap`, or a paused one
         events = []
         if offending:
             topics = tuple(sorted(sub.ch for sub in offending))
@@ -451,6 +475,42 @@ class Backpressure:
             events.append(LadderEvent("close", hint, "redrop"))
         self._closed = any(event.action == "close" for event in events)
         return _record(events)
+
+    def _offending(
+        self, candidates: list[Subscription], costs: Mapping[Key, int], stale: Collection[Key]
+    ) -> list[Subscription]:
+        """Step 1 over the budget (module docstring, #4833): the candidates by queued plus pending
+        bytes, largest first, ties by topic name, cut at the shortest prefix whose drop takes the
+        queue below `DRAIN_PCT` with the `stale` frames gone; all of them when none does. One scan
+        of the normal lane counts each key's frames, then the cut is arithmetic. The order is by
+        bytes, the cut by the larger of the byte and frame depths, so when frames bind it may shed
+        more than the fewest topics would; never too few. A live and a replay subscription of one
+        topic rank apart. A cut below `DRAIN_PCT` also clears the `bars` share whenever
+        `BARS_SHARE_PCT` is at least `DRAIN_PCT` (pinned by a test): the `bars` frames are part of
+        what it takes under the line, so the share rule needs no second pass here."""
+        frames = self.queue.key_frames()
+        size = self.queue.bytes + self.pacer.pending_bytes - sum(costs[key] for key in stale)
+        count = len(self.queue) - sum(frames.get(key, 0) for key in stale)
+        ranked = sorted(
+            candidates,
+            key=lambda sub: (
+                -(costs.get(_key(sub), 0) + self._window(sub)),
+                sub.ch,
+                sub.replay_session_id or "",
+            ),
+        )
+        for n, sub in enumerate(ranked):
+            if self.queue.depth_pct(size, count) < DRAIN_PCT:
+                return ranked[:n]
+            size -= costs.get(_key(sub), 0) + self._window(sub)
+            count -= frames.get(_key(sub), 0)
+        return ranked
+
+    def _window(self, sub: Subscription) -> int:
+        """The bytes of `sub`'s pacer window as `Pacer.pending_bytes` counts them: what
+        `Pacer.drop` takes off it."""
+        lane = self.pacer.lanes.get(sub.sub_id)
+        return 0 if lane is None else lane.bytes
 
     def _pending(self, sub: Subscription) -> bool:
         lane = self.pacer.lanes.get(sub.sub_id)

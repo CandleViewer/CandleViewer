@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from structlog.testing import capture_logs
@@ -12,9 +14,11 @@ from candleviewer.ws.metrics import cv_ws_malformed_updates_total, cv_ws_overflo
 from candleviewer.ws.pacing import (
     CLASSIFY_INTERVAL_S,
     DEGRADED_THROTTLE_MS,
+    LOOP_STALL_IDLE_S,
     PONG_TIMEOUT_S,
     Classifier,
     ConnectionClass,
+    LoopStall,
     Pacer,
     RttProbe,
     classify,
@@ -107,6 +111,153 @@ def test_rtt_probe_one_outstanding_and_its_age_counts() -> None:
     second = probe.ping_id(12.0)
     assert second is not None
     assert probe.rtt_ms(12.01) == pytest.approx(40)  # the last sample until the age exceeds it
+
+
+# -- #4833: the server's own loop stall is not the client's RTT ----------------------------------
+
+
+class _Stall:
+    """A loop-stall reference (`LoopStall`'s shape): the seconds the server's loop has stalled."""
+
+    def __init__(self) -> None:
+        self.total = 0.0
+
+    def __call__(self) -> float:
+        return self.total
+
+
+def test_rtt_probe_leaves_a_server_loop_stall_out_of_the_sample() -> None:
+    """#4833: the server's loop stalls 600 ms while a probe is out (its send, or the handling of
+    its `pong`, waits for the loop); the client answers in 20 ms. The outstanding age and the
+    sample are the client's 10 and 20 ms, not the stall."""
+    stall = _Stall()
+    probe = RttProbe(stalled=stall)
+    first = probe.ping_id(10.0)
+    assert first is not None
+    stall.total = 0.6  # the loop stalls 600 ms before the `pong` is handled
+    assert probe.rtt_ms(10.61) == pytest.approx(10)  # outstanding: only what was not the stall
+    assert probe.pong(first, 10.62) and probe.sample_ms == pytest.approx(20)
+    assert probe.rtt_ms(11.0) == pytest.approx(20)
+
+
+def test_a_client_that_keeps_up_stays_healthy_through_server_loop_stalls() -> None:
+    """#4833 AC: every probe meets a 600 ms stall of the server's loop and is answered at once;
+    no classification, read during the stall or after the `pong`, leaves `healthy`."""
+    stall = _Stall()
+    conn, _ = _conn()
+    pacer = Pacer(conn.emitter, stalled=stall)
+    sub = _sub(conn, "book.BTCUSDT.50")
+    for t in (101.0, 102.0, 103.0, 104.0):
+        probe = pacer.probe.ping_id(t)
+        assert probe is not None
+        stall.total += 0.6
+        assert pacer.classify(0.0, [sub], now=t + 0.6) is None  # outstanding, mid-stall
+        assert pacer.probe.pong(probe, t + 0.62)
+        assert pacer.classify(0.0, [sub], now=t + 0.7) is None
+    assert pacer.cls is HEALTHY and pacer.probe.sample_ms == pytest.approx(20)
+
+
+@pytest.mark.parametrize("stalled_s", [0.0, 0.6], ids=["no_stall", "beside_a_600_ms_stall"])
+def test_a_slow_client_still_reads_slow_and_promptly(stalled_s: float) -> None:
+    """§8.3, §9.1 kept: a client 600 ms slow reads `saturated` at the first classification past
+    500 ms of age, outstanding, with or without a server stall beside it, and its sample is 600."""
+    stall = _Stall()
+    conn, _ = _conn()
+    pacer = Pacer(conn.emitter, stalled=stall)
+    sub = _sub(conn, "book.BTCUSDT.50")
+    probe = pacer.probe.ping_id(101.0)
+    assert probe is not None
+    stall.total = stalled_s
+    notice = pacer.classify(0.0, [sub], now=101.6 + stalled_s)
+    assert notice is not None and notice["class"] == "saturated" and notice["rtt_ms"] == 600
+    assert pacer.probe.pong(probe, 101.6 + stalled_s)
+    assert pacer.probe.sample_ms == pytest.approx(600)
+
+
+def test_a_probe_retires_on_its_age_and_samples_what_was_not_the_stall() -> None:
+    """§9.1 kept: a probe unanswered for `PONG_TIMEOUT_S` is retired on its age, stall or not, and
+    a fresh one follows; its one sample leaves the stall out (9.5 s of the 10 here)."""
+    stall = _Stall()
+    probe = RttProbe(stalled=stall)
+    assert probe.ping_id(0.0) is not None
+    stall.total = 9.5
+    assert probe.rtt_ms(PONG_TIMEOUT_S - 0.01) == pytest.approx(490)  # still outstanding
+    assert probe.rtt_ms(PONG_TIMEOUT_S) == pytest.approx(500)  # retired: one 500 ms sample
+    assert probe.sample_ms == pytest.approx(500) and probe.ping_id(PONG_TIMEOUT_S) is not None
+
+
+class _Handle:
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+class _Loop:
+    """The slice of an event loop `LoopStall` uses, on a clock the test moves: `call_at` timers
+    fire only when the loop gets back (`run_to`), however late."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.timers: list[tuple[float, Callable[[], None], _Handle]] = []
+
+    def time(self) -> float:
+        return self.now
+
+    def call_at(self, when: float, callback: Callable[..., None], *args: Any) -> _Handle:
+        handle = _Handle()
+        self.timers.append((when, lambda: callback(*args), handle))
+        return handle
+
+    def armed(self) -> list[float]:
+        return [when for when, _, handle in self.timers if not handle.cancelled]
+
+    def run_to(self, now: float) -> None:
+        """The loop runs again at `now`: every timer due by then fires, earliest first."""
+        self.now = now
+        while due := [t for t in self.timers if t[0] <= now and not t[2].cancelled]:
+            timer = min(due, key=lambda t: t[0])
+            self.timers.remove(timer)
+            timer[1]()
+
+
+def _stall_on(*loops: _Loop) -> tuple[LoopStall, list[_Loop]]:
+    """A `LoopStall` on a 20 ms tick, on the first of `loops`, then on each next (`current`)."""
+    current = list(loops)
+    return LoopStall(0.02, loop=lambda: cast(asyncio.AbstractEventLoop, current[0])), current
+
+
+def test_loop_stall_sums_the_overshoot_of_its_tick() -> None:
+    """A tick on time adds nothing; one the loop runs 600 ms late adds its overshoot, read in full
+    even before the late tick has run (the `pong` may be handled first)."""
+    loop = _Loop()
+    stall, _ = _stall_on(loop)
+    assert stall() == 0.0 and loop.armed() == [0.02]  # the first read arms the tick
+    loop.run_to(0.02)
+    loop.run_to(0.04)
+    assert stall() == 0.0 and loop.armed() == [pytest.approx(0.06)]
+    loop.now = 0.66  # the loop is back 600 ms after the tick due at 0.06
+    assert stall() == pytest.approx(0.6)
+    loop.run_to(0.66)
+    assert stall() == pytest.approx(0.6) and loop.armed() == [pytest.approx(0.68)]
+    loop.run_to(0.68)
+    assert stall() == pytest.approx(0.6)  # on time again: nothing added
+
+
+def test_loop_stall_ticks_only_while_read_and_restarts_on_a_new_loop() -> None:
+    """Unread for `LOOP_STALL_IDLE_S` the tick stops (no timer is left armed); the next read arms
+    it again, and the time it was off counts as no stall. A read on another loop moves it there."""
+    loop, other = _Loop(), _Loop()
+    stall, current = _stall_on(loop, other)
+    stall()
+    loop.run_to(LOOP_STALL_IDLE_S + 0.01)  # one tick, late by the idle bound: counted, then off
+    assert loop.armed() == [] and stall() == pytest.approx(LOOP_STALL_IDLE_S - 0.01)
+    assert loop.armed() == [pytest.approx(LOOP_STALL_IDLE_S + 0.03)]
+    current.pop(0)
+    other.now = 5.0
+    assert stall() == pytest.approx(LOOP_STALL_IDLE_S - 0.01)  # its sum is kept
+    assert loop.armed() == [] and other.armed() == [pytest.approx(5.02)]
 
 
 # -- throttling and coalescing through the real emitter -------------------------------------

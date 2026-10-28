@@ -30,6 +30,8 @@ the classification and sends the probe (`ws/pipeline.py`, #412). E17-T06: a merg
 leaves as one frame of n updates (its `window_count`; a producer's own `coalesced_count` is not
 counted, #3268) adds n - 1 to `cv_ws_conflated_total{topic}` and observes n in
 `cv_ws_coalesced_updates`; each probe sample, answered or retired, is one `cv_ws_rtt_seconds`.
+#4833: a stall of the server's own loop is left out of the RTT (`LoopStall`), so it never by itself
+reclassifies a client that keeps up.
 
 Plain synchronous code on the hot path (C-2.20). One clock domain, the emitter's monotonic
 `TopicEmitter.clock`: `offer` reads it; `tick`, `classify` and `apply` default `now` to it.
@@ -37,6 +39,7 @@ Plain synchronous code on the hot path (C-2.20). One clock domain, the emitter's
 
 from __future__ import annotations
 
+import asyncio
 import heapq
 import math
 import secrets
@@ -80,6 +83,13 @@ PONG_TIMEOUT_S: Final = 10.0
 #: tick that runs early against the last probe (that tick ran late) still sends one, and a caller
 #: that ticks faster sends at most two per interval.
 PROBE_DUE_SHARE: Final = 0.5
+#: #4833: `LoopStall`'s tick. A stall of the server's loop leaves at most one tick of itself in a
+#: sample for each tick the loop ran late (a 600 ms stall: 20 ms at most), far under the 150 ms
+#: `lagging` line; 50 wake-ups a second, per process, cost the loop nothing it would notice.
+LOOP_STALL_TICK_S: Final = 0.02
+#: #4833: `LoopStall` stops ticking once nothing has read it for this long; the next read restarts
+#: it. A probe reads it every classification, and none stays outstanding longer than this.
+LOOP_STALL_IDLE_S: Final = PONG_TIMEOUT_S
 
 
 class ConnectionClass(StrEnum):
@@ -151,6 +161,59 @@ def _probe_token() -> str:
     return secrets.token_hex(PROBE_TOKEN_BYTES)
 
 
+def never_stalled() -> float:
+    """A loop-stall reference that never reports a stall: an `RttProbe`'s default (#4833)."""
+    return 0.0
+
+
+class LoopStall:
+    """The server's own event-loop stall to date, in seconds (#4833): what an `RttProbe` leaves
+    out of its samples. A timer due every `tick_s` adds how late the loop ran it (its overshoot),
+    and a read adds the overshoot of the tick still waiting for the loop, so a `pong` handled
+    after a stall, before that tick has run, still sees the whole stall. On the loop's own clock
+    (`loop.time()`), whatever clock the gateway injects: only a stall of the real loop counts.
+    One per process (`create_app`), shared by every connection; it ticks only while read
+    (`LOOP_STALL_IDLE_S`), so an idle gateway arms no timer, and the time it was off counts as no
+    stall. A read on another loop moves the timer there. `loop` is a seam for tests."""
+
+    def __init__(
+        self,
+        tick_s: float = LOOP_STALL_TICK_S,
+        *,
+        loop: Callable[[], asyncio.AbstractEventLoop] = asyncio.get_running_loop,
+    ) -> None:
+        self.tick_s = tick_s
+        self._loop_of = loop
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._handle: asyncio.TimerHandle | None = None
+        self._total = 0.0
+        self._due = math.inf
+        self._read = -math.inf
+
+    def __call__(self) -> float:
+        loop = self._loop_of()
+        now = self._read = loop.time()
+        if self._handle is None or loop is not self._loop:
+            if self._handle is not None:
+                self._handle.cancel()
+            self._loop = loop
+            self._arm(loop, now)
+            return self._total
+        return self._total + max(0.0, now - self._due)
+
+    def _arm(self, loop: asyncio.AbstractEventLoop, now: float) -> None:
+        self._due = now + self.tick_s
+        self._handle = loop.call_at(self._due, self._tick, loop)
+
+    def _tick(self, loop: asyncio.AbstractEventLoop) -> None:
+        now = loop.time()
+        self._total += max(0.0, now - self._due)
+        if now - self._read >= LOOP_STALL_IDLE_S:
+            self._handle = None  # unread: the next read arms it again
+            return
+        self._arm(loop, now)
+
+
 class RttProbe:
     """§9.1 RTT sampling: one server `ping` outstanding at a time, one per classification tick
     (`interval_s` apart; a tick that runs early against the last probe still sends one,
@@ -160,17 +223,32 @@ class RttProbe:
     so a socket that stopped draining reads as slow at once rather than when (if ever) the `pong`
     arrives. After `PONG_TIMEOUT_S` the probe is retired: its age becomes one sample and a fresh
     probe follows, so one lost `pong` cannot hold the connection `saturated`. A sample is never
-    negative (§15.9 `rtt_ms`), whatever clock stamps the `pong`."""
+    negative (§15.9 `rtt_ms`), whatever clock stamps the `pong`.
+
+    #4833: an age, outstanding, answered or retired, leaves out what `stalled` (`LoopStall`) says
+    the server's own loop stalled since the probe was stamped. The probe's send and its `pong`'s
+    handling both wait for that loop, so without this a stall read as the client's RTT and turned
+    a client that keeps up `saturated`. A client's own delay outside a stall counts in full; one
+    that overlaps a stall is not counted for the overlap (a client that falls behind still shows
+    in its queue depth, which classifies it too). The retirement goes by the age as stamped.
+    Never stalled by default."""
 
     def __init__(
-        self, interval_s: float = CLASSIFY_INTERVAL_S, *, token: Callable[[], str] = _probe_token
+        self,
+        interval_s: float = CLASSIFY_INTERVAL_S,
+        *,
+        token: Callable[[], str] = _probe_token,
+        stalled: Callable[[], float] = never_stalled,
     ) -> None:
         self.interval_s = interval_s
         #: Each probe id's token: a CSPRNG's (`secrets`) by default; tests inject a fixed source.
         self._token = token
+        #: The server loop's stall to date, in seconds (#4833).
+        self._stalled = stalled
         self.sample_ms: float | None = None
         self._sent = 0
-        self._outstanding: tuple[str, float] | None = None
+        #: The outstanding probe: its id, when it was stamped, and the loop's stall then.
+        self._outstanding: tuple[str, float, float] | None = None
         self._last_sent = -math.inf
 
     def ping_id(self, now: float) -> str | None:
@@ -181,7 +259,7 @@ class RttProbe:
             return None
         self._sent += 1
         probe = f"{RTT_PROBE_PREFIX}{self._sent}-{self._token()}"
-        self._outstanding, self._last_sent = (probe, now), now
+        self._outstanding, self._last_sent = (probe, now, self._stalled()), now
         return probe
 
     def pong(self, probe: str, now: float) -> bool:
@@ -190,7 +268,7 @@ class RttProbe:
         self._retire(now)
         if self._outstanding is None or self._outstanding[0] != probe:
             return False
-        self.sample_ms = max(0.0, (now - self._outstanding[1]) * 1000)
+        self.sample_ms = self._age_ms(self._outstanding, now)
         cv_ws_rtt_seconds.observe(self.sample_ms / 1000)  # E17-T06: each sample, once
         self._outstanding = None
         return True
@@ -199,12 +277,17 @@ class RttProbe:
         self._retire(now)
         if self._outstanding is None:
             return self.sample_ms
-        age = max(0.0, (now - self._outstanding[1]) * 1000)
+        age = self._age_ms(self._outstanding, now)
         return age if self.sample_ms is None else max(self.sample_ms, age)
+
+    def _age_ms(self, outstanding: tuple[str, float, float], now: float) -> float:
+        """`outstanding`'s age at `now`, less the server loop's stall since it was stamped."""
+        _, stamped, stalled = outstanding
+        return max(0.0, (now - stamped - (self._stalled() - stalled)) * 1000)
 
     def _retire(self, now: float) -> None:
         if self._outstanding is not None and now - self._outstanding[1] >= PONG_TIMEOUT_S:
-            self.sample_ms = max(0.0, (now - self._outstanding[1]) * 1000)
+            self.sample_ms = self._age_ms(self._outstanding, now)
             cv_ws_rtt_seconds.observe(self.sample_ms / 1000)
             self._outstanding = None
 
@@ -244,7 +327,13 @@ class _Lane:
 class Pacer:
     """Throttling and coalescing of one connection's subscriptions (§8.1, §8.3)."""
 
-    def __init__(self, emitter: TopicEmitter, interval_s: float = CLASSIFY_INTERVAL_S) -> None:
+    def __init__(
+        self,
+        emitter: TopicEmitter,
+        interval_s: float = CLASSIFY_INTERVAL_S,
+        *,
+        stalled: Callable[[], float] = never_stalled,
+    ) -> None:
         self.emitter = emitter
         #: Told of a window whose emit raised, after its topic is dropped; without it the error
         #: propagates out of `offer` / `tick`.
@@ -254,8 +343,9 @@ class Pacer:
         self.on_arm: Callable[[float], None] | None = None
         self.classifier = Classifier()
         #: Probed once per classification tick: `interval_s` is the connection's classification
-        #: interval (`BackpressureConfig.classify_interval_ms`).
-        self.probe = RttProbe(interval_s)
+        #: interval (`BackpressureConfig.classify_interval_ms`); `stalled` is the server loop's
+        #: stall it leaves out (#4833).
+        self.probe = RttProbe(interval_s, stalled=stalled)
         self.lanes: dict[str, _Lane] = {}
         #: §8.4 step 1: dropped topics awaiting their `backpressure` snapshot, by `sub_id`; the
         #: outbound ladder (`Backpressure.drain`) sends them and removes them.

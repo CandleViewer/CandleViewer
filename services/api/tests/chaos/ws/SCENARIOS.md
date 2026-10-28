@@ -130,20 +130,21 @@ windows (x4) hold pending bytes from then on, on every run. Pass-through spies o
 check of the sleeper (ruling D8). On return, queued plus pending window bytes are within 8 MiB and
 the frames within 2 000, unless the check closed. At most one frame is pushed between two checks
 (the bounded overshoot), the counters equal the lanes and windows recounted, and the windows'
-pending bytes are in it. Step 1 fires once while asleep, the class `saturated`: both topics' frames
-and windows go, both marked `backpressure`. No snapshot is queued while asleep (the writer, parked
-in its send, runs no drain); after `HEAL`, one per drain, and the streams resume with no gap. The
-test awaits both snapshots before it feeds the 4 s awake, since a feed paced by the healthy clients
-alone can end before the lane recovers in wall time, and nothing publishes after it (#4264); that
-wait is bounded by the wall time the lane was paused plus 1 s (5 s at least), and the wall time
-from `HEAL` to both snapshots is printed. So the healthy clients' awake ticks never overlap the
+pending bytes are in it. Step 1 fires once while asleep, the class `saturated`: the tape, by far
+the largest, goes, marked `backpressure`; that takes the queue below the drain line, so the book
+keeps its frames and window, unmarked (#4833). No snapshot is queued while asleep (the writer,
+parked in its send, runs no drain); after `HEAL` the book's kept frames, then the tape's snapshot,
+and the streams resume with no gap. The test awaits that snapshot before it feeds the 4 s awake,
+since a feed paced by the healthy clients alone can end before the lane recovers in wall time, and
+nothing publishes after it (#4264); that wait is bounded by the wall time the lane was paused plus
+1 s (5 s at least), and the wall time from `HEAL` to the snapshot is printed. So the healthy clients' awake ticks never overlap the
 sleeper's backlog, by design: no assert needs the overlap, and a tick during the wait would move
 the stream past it. A publish landing during the writer's resumption is covered by the unit layer
 instead: `test_outbound.py::test_backpressure_slow_consumer_stays_within_the_budget` and
 `::test_backpressure_busy_topic_whose_snapshot_was_sent_never_closes`,
 `test_pipeline_ladder.py::test_ladder_order_drop_then_backpressure_snap_below_half_then_no_close`
 and `test_pacing.py::test_pacer_next_update_after_a_snapshot_drops_the_stale_window`. No
-step 3: what is left can always be dropped (`cv_ws_overflow_total` `drop` +2, `resnapshot` +2; no
+step 3: what is left can always be dropped (`cv_ws_overflow_total` `drop` +1, `resnapshot` +1; no
 close). Two healthy clients on the same topics get every update in the tick that published it: no
 class the sleeper degraded and no frame held, 0 ms added on the virtual clock, where the Gherkin
 allows 10 % on the p95. They see no gap, every print, and the same frames, byte for byte, as a run

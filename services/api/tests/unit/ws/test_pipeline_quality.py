@@ -20,9 +20,9 @@ from candleviewer.ws.pacing import PONG_TIMEOUT_S, Pacer
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.pipeline import ConnectionPipeline
 from candleviewer.ws.sequencing import SnapshotBody
-from tests.unit.ws._seq_support import Conn, Source, validate
+from tests.unit.ws._seq_support import USER, Conn, Source, validate
 from tests.unit.ws.test_lifecycle_socket import BASE_MS
-from tests.unit.ws.test_pacing import _bid
+from tests.unit.ws.test_pacing import _bid, _Stall
 from tests.unit.ws.test_pacing import _conn as _paced
 from tests.unit.ws.test_pipeline_invalidation import _connected
 from tests.unit.ws.test_pipeline_ladder import _attached, _structured
@@ -230,6 +230,42 @@ def test_a_predicted_probe_id_is_not_a_sample() -> None:
     assert vars(probe) == state  # nothing kept: the second is still outstanding
     pipe.pong(second, 2.25)
     assert probe.sample_ms == pytest.approx(250)
+
+
+def test_a_server_loop_stall_around_each_probe_keeps_a_prompt_client_healthy() -> None:
+    """#4833 AC through the pipeline: each probe meets a 600 ms stall of the server's loop and the
+    client answers in 20 ms; the writer's turns announce nothing and the sample is 20 ms."""
+    stall = _Stall()
+    pipe, _, conn = _attached(stalled=stall)
+    _degradable(conn)
+    _structured(conn, _HEATMAP)
+    _queued(pipe)
+    for now in (1.0, 2.0, 3.0, 4.0):
+        notices, (probe,) = _turn(pipe, now)
+        assert notices == []
+        stall.total += 0.6
+        pipe.pong(probe, now + 0.62)
+    assert _turn(pipe, 5.0)[0] == [] and _pacer(pipe).cls.value == "healthy"
+    assert _pacer(pipe).probe.sample_ms == pytest.approx(20)
+
+
+@_ENCODINGS
+async def test_the_router_hands_its_loop_stall_reference_to_the_probe(encoding: str) -> None:
+    """#4833 through `/ws`: `make_ws_router(loop_stall=...)` reaches the connection's probe, so a
+    `pong` handled 620 ms after its probe, 600 of them a stall of the server's loop, is a 20 ms
+    sample and the next classification announces nothing."""
+    stall = _Stall()
+    rig, sock = _Rig(BackpressureConfig(), loop_stall=stall), _Wire(encoding)
+    async with _connected(rig, sock):
+        await rig.sub(sock, _BOOK)
+        sock.answer = False
+        assert await _at(rig, sock, 1.0) == [] and len(sock.pings) == 1
+        stall.total = 0.6
+        assert await _at(rig, sock, 1.62, {"t": "pong", "id": sock.pings[0]["id"]}) == []
+        assert await _at(rig, sock, 2.0) == []
+        conn = next(iter(rig.hub.of_user(USER)))
+        assert conn.pipeline is not None
+        assert _pacer(conn.pipeline).probe.sample_ms == pytest.approx(20)
 
 
 class _Compared(str):

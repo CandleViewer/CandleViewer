@@ -196,6 +196,7 @@ from candleviewer.ws.metrics import (
 )
 from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.outbound import Key, Spanned, data_key
+from candleviewer.ws.pacing import never_stalled
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
@@ -613,6 +614,7 @@ class _Connection:
         flag_visible: FlagVisible | None = None,
         tick_s: float = WATCHDOG_TICK_S,
         close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
+        loop_stall: Callable[[], float] | None = None,
     ) -> None:
         self.ws = ws
         self.encoding = encoding
@@ -686,6 +688,7 @@ class _Connection:
                 close=self.close_with,
                 wall_ms=wall_ms,
                 connection_id=self.connection_id,
+                stalled=loop_stall or never_stalled,
             )
 
     def due(self) -> str | None:
@@ -1252,6 +1255,9 @@ def make_ws_router(
     # §9.6: the record of a viewing session's refused action frame. Without it the frame is still
     # refused (`err`), with no record.
     view_as_refusals: ViewAsFrameRefusals | None = None,
+    # #4833: the server loop's stall to date (`LoopStall`), which the flag-on RTT probe leaves
+    # out. Without it a stall of the loop counts as the client's RTT, as before #4833.
+    loop_stall: Callable[[], float] | None = None,
 ) -> APIRouter:
     """The gateway endpoint, served at `/ws` and `/api/v1/ws` (`include_ws_router`).
 
@@ -2047,6 +2053,7 @@ def make_ws_router(
             flag_visible=flag_visible,
             tick_s=tick_s,
             close_flush_s=close_flush_s,
+            loop_stall=loop_stall,
         )
         if gateway_hub.unauthenticated >= gateway_hub.max_unauthenticated:  # #2155 (§4.3)
             await shed(conn)

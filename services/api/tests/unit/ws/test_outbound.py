@@ -287,6 +287,94 @@ def test_backpressure_drops_the_offending_topics_and_marks_them_for_a_snapshot()
     assert len(queue) == 0
 
 
+def _pad(queue: OutboundQueue, ch: str, n: int, pad: int) -> int:
+    """`n` data frames of `ch` pushed straight onto the queue, `pad` bytes of filler each: their
+    bytes."""
+    frames = [encode(_frame("d", ch, n=i, pad="x" * pad)) for i in range(n)]
+    for frame in frames:
+        queue.push(frame)
+    return sum(frame.size for frame in frames)
+
+
+def test_backpressure_sheds_the_largest_topics_first_down_to_the_drain_line() -> None:
+    """#4833 §8.4 step 1: over the budget the candidates go largest first (queued plus pending
+    bytes), and no further than it takes to bring the queue below `DRAIN_PCT`. `trades` holds
+    more than ETH, so it goes before ETH, whose name sorts first; ETH, not needed, keeps its
+    queued frame and its window, unmarked, and gets no `backpressure` snap."""
+    conn, pacer, queue, _ = _setup(max_bytes=1_600, max_frames=100)
+    btc, eth = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0])
+    trades = _sub(conn, queue, TRADES[0])
+    big = _pad(queue, BTC[0], 3, 500)
+    mid = _pad(queue, TRADES[0], 2, 300)
+    conn.clock.now += 1.0
+    pacer.offer(eth, _bid("ETHUSDT", "100"))  # the leading edge leaves at once...
+    pacer.offer(eth, _bid("ETHUSDT", "101"))  # ...and the next one waits in the window
+    window, eth_bytes = pacer.lanes[eth.sub_id].bytes, queue.key_bytes()[ETH]
+    assert window > 0 and big > mid > eth_bytes + window
+    ladder = Backpressure(queue, pacer)
+    assert ladder.over_budget()
+    assert 100 * (queue.bytes + window - big) / queue.max_bytes >= DRAIN_PCT  # BTC alone
+    assert ladder.check([btc, eth, trades]) == [LadderEvent("drop", (BTC[0], TRADES[0]))]
+    assert pacer.resnapshot_required == {btc.sub_id: btc, trades.sub_id: trades}
+    assert queue.key_bytes() == {ETH: eth_bytes} and pacer.lanes[eth.sub_id].bytes == window
+    assert not eth.snapshot_pending and queue.pct(pacer.pending_bytes) < DRAIN_PCT
+    sent = [ladder.drain(), ladder.drain(), ladder.drain()]
+    assert sent == [[LadderEvent("resnapshot", (ch,))] for ch in (BTC[0], TRADES[0])] + [[]]
+    assert pacer.lanes[eth.sub_id].bytes == window  # still its window: never shed nor snapped
+
+
+def test_backpressure_frame_count_decides_how_many_topics_are_shed() -> None:
+    """#4833: the drain line is `pct`, the larger of the byte and frame fractions. Eleven frames
+    against ten, bytes far below half: BTC is the largest in bytes but one frame, so ETH's six
+    frames must go too; `trades` keeps its two, and `orders`, never dropped, counts but stays."""
+    conn, pacer, queue, _ = _setup(max_bytes=10_000, max_frames=10)
+    btc, eth = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0])
+    trades, orders = _sub(conn, queue, TRADES[0]), _orders(conn)
+    _pad(queue, BTC[0], 1, 3_000)
+    _pad(queue, ETH[0], 6, 10)
+    kept = _pad(queue, TRADES[0], 2, 10)
+    for _ in range(2):
+        pacer.offer(orders, {"orders": []})
+    ladder = Backpressure(queue, pacer)
+    assert ladder.over_budget() and 100 * queue.bytes / queue.max_bytes < DRAIN_PCT
+    assert ladder.check([btc, eth, trades, orders]) == [LadderEvent("drop", (BTC[0], ETH[0]))]
+    assert queue.key_bytes() == {TRADES: kept} and len(queue) == 4
+    assert not trades.snapshot_pending and not orders.snapshot_pending
+
+
+def test_backpressure_frames_dropped_anyway_count_toward_the_drain_line() -> None:
+    """#4833: the frames of a topic no longer subscribed go whatever step 1 chooses, so they are
+    counted out first: five frames against four, three of them stale, leave two (50 %, not
+    below), and BTC, the larger, goes; ETH keeps its frame."""
+    conn, pacer, queue, _ = _setup(max_frames=4)
+    btc, eth = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0])
+    _pad(queue, "trades.ETHUSDT", 3, 10)  # no subscription left for it
+    _pad(queue, BTC[0], 1, 50)
+    kept = _pad(queue, ETH[0], 1, 10)
+    assert Backpressure(queue, pacer).check([btc, eth]) == [LadderEvent("drop", (BTC[0],))]
+    assert queue.key_bytes() == {ETH: kept} and not eth.snapshot_pending
+
+
+@pytest.mark.parametrize(("n_orders", "closes"), [(3, False), (5, True)])
+def test_backpressure_sheds_every_candidate_when_no_prefix_reaches_the_drain_line(
+    n_orders: int, closes: bool
+) -> None:
+    """#4833: when even every candidate does not take the queue below `DRAIN_PCT`, all of them
+    go, as before; what remains is `orders`, never dropped, and over the budget still the step-3
+    close fires, naming the ranking taken before the drop."""
+    conn, pacer, queue, _ = _setup(max_frames=4)
+    btc, eth, orders = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0]), _orders(conn)
+    _pad(queue, BTC[0], 1, 50)
+    _pad(queue, ETH[0], 1, 10)
+    for _ in range(n_orders):
+        queue.push(encode(_frame("d", "orders", pad="x" * 100)))
+    drop = LadderEvent("drop", (BTC[0], ETH[0]))
+    close = LadderEvent("close", ("orders", BTC[0], ETH[0]), "budget")
+    assert Backpressure(queue, pacer).check([btc, eth, orders]) == [drop, close][: 1 + closes]
+    assert queue.key_bytes() == {} and len(queue) == n_orders and not orders.snapshot_pending
+    assert set(pacer.resnapshot_required) == {btc.sub_id, eth.sub_id}
+
+
 def test_backpressure_counts_pending_state_against_the_budget() -> None:
     conn, pacer, queue, _ = _setup(max_bytes=400)
     book = _sub(conn, queue, "book.BTCUSDT.50")
@@ -614,8 +702,9 @@ def test_backpressure_close_hint_is_ranked_when_the_overflow_began() -> None:
     conn, pacer, queue, _ = _setup(max_frames=12)
     btc, eth, orders = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0]), _orders(conn)
     ladder, subs = Backpressure(queue, pacer), [btc, eth, orders]
-    _deltas(conn, pacer, btc, 8)
-    _deltas(conn, pacer, eth, 5)  # 13 frames against 12, BTC holding more
+    _deltas(conn, pacer, btc, 7)
+    _deltas(conn, pacer, eth, 6)  # 13 frames against 12, BTC holding more: without BTC, 6 of
+    # 12 is not below the drain line, so ETH goes too (#4833)
     assert ladder.check(subs) == [LadderEvent("drop", (BTC[0], ETH[0]))]
     assert len(queue) == 0 and set(pacer.resnapshot_required) == {btc.sub_id, eth.sub_id}
     *under, last = _orders_checked(pacer, ladder, subs, orders, 13)

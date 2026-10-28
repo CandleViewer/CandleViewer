@@ -491,6 +491,7 @@ from candleviewer.ws.indicators_source import IndicatorsSnapshotSource
 from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
 from candleviewer.ws.origin_audit import OriginRefusalAudit
+from candleviewer.ws.pacing import LoopStall
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub, SnapshotSource, new_span_id
@@ -1818,6 +1819,8 @@ def create_app(
                 app.state.feature_flags.service, user, roles
             ),
             backpressure=ws_backpressure,
+            # #4833: one per process; it ticks only while a flag-on RTT probe reads it.
+            loop_stall=LoopStall(),
             # §9.6 (#3085): an `auth` reads its session's view-as binding through the service
             # built below, read per call as S7's guard reads it, so a missing one fails the
             # `auth`; none on the fake backend, which binds no session.
