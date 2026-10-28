@@ -1,6 +1,7 @@
 """E28-T05 (#909, slice S4b): the `trade_groups` topic on a real `SequencingHub`, as
 `ws_wiring.trade_groups_topic` wires it (23 §6.2, §9.5, §15.5; SR-E28-21, AC 9): scope, narrowing,
-the hub's viewer guard, the viewer, the frame counts and the resync after a failed publish."""
+the hub's viewer guard, the viewer, the frame counts, the seed's wake and the resync after a failed
+publish."""
 
 from __future__ import annotations
 
@@ -25,19 +26,20 @@ from candleviewer.ws_wiring import (
     trade_group_frame_visible,
     trade_groups_topic,
 )
-from tests.unit.accounts.test_trade_group_topic import _A, _B, _C, _G1, _group, _leg, _stored
+from tests.unit.accounts.test_trade_group_topic import _A, _B, _C, _G1, _G2, _group, _leg, _stored
 from tests.unit.ws._seq_support import Conn, Source, principal
 
 type Topic = TradeGroupTopic[SnapshotBody, PrincipalSnapshot]
-_G2 = str(UUID(int=2))
 
 
-def _wired(*seed: Any) -> tuple[SequencingHub, Topic, Metrics, SnapshotRouter]:
-    """The hub, the topic seeded with `seed`, its counts' registry and the snapshot router."""
+def _wired(*seed: Any, seeded: bool = True) -> tuple[SequencingHub, Topic, Metrics, SnapshotRouter]:
+    """The hub, the topic seeded with `seed` (unless not `seeded`), its counts' registry and the
+    snapshot router."""
     hub, metrics, counts = SequencingHub(), Metrics("demo"), TradeGroupFrameCounts()
     counts.bind(metrics)
     topic = trade_groups_topic(hub, counts)
-    topic.seed(seed)
+    if seeded:
+        topic.seed(seed)
     orders = Source()
     orders.bodies["orders"] = SnapshotBody({"orders": []})
     return hub, topic, metrics, SnapshotRouter({"trade_groups": topic, "orders": orders})
@@ -108,6 +110,38 @@ def test_a_narrowed_subscriptions_reconfigure_snapshot_leaves_out_the_group_it_l
     assert conn.take() == []
 
 
+def test_the_wired_viewer_stops_what_select_lets_through_and_the_owner_is_sent_it() -> None:
+    """S4b's R1S-01: the principal swapped in place (§9.5 swaps it first), `sub.accounts` still A
+    and B. B's grant gone or frozen, the viewer alone stops the A and B group's frame; the Owner,
+    who lists no grant, is sent it."""
+    hub, topic, _, router = _wired(_stored(1, _A, _B))
+    conn = _conn(hub, router, _A, _B)
+    _, sub = conn.sub(_entry(_A, _B))
+    conn.take()
+    on_a = AccountGrant(_A, True, False, False)
+    for grants in ((on_a,), (on_a, AccountGrant(_B, True, False, True))):
+        conn.authz.principal = _manager(*grants)
+        topic.leg_changed(_leg(1, 1, _B, filled_qty=Decimal("0.004")))
+        assert sub.accounts == {_A, _B} and conn.take() == []
+    conn.authz.principal = replace(_manager(), roles=frozenset({"owner"}))
+    topic.leg_changed(_leg(1, 1, _B, filled_qty=Decimal("0.005")))
+    assert [_ids(frame) for frame in conn.take()] == [[_G1]]
+
+
+def test_a_sub_made_before_the_seed_is_sent_its_initial_snapshot_when_the_seed_lands() -> None:
+    """S4b's R1C-01: the gateway serves before the OMS seeds the topic, so a `sub` may wait first,
+    `snapshot_pending` (§7.7); the seed wakes it with one `initial` snapshot, then deltas flow."""
+    hub, topic, _, router = _wired(seeded=False)
+    conn = _conn(hub, router, _A)
+    _, sub = conn.sub(_entry(_A))
+    assert conn.take() == [] and sub.snapshot_pending
+    topic.seed([_stored(1, _A)])
+    [snap] = conn.take()
+    assert (snap["t"], snap["meta"]["reason"], _ids(snap)) == ("snap", "initial", [_G1])
+    topic.leg_changed(_leg(1, 0, _A, filled_qty=Decimal("0.004")))
+    assert [(frame["t"], _ids(frame)) for frame in conn.take()] == [("d", [_G1])]
+
+
 def test_the_hub_refuses_a_trade_groups_publish_without_a_viewer_before_any_frame() -> None:
     """S4a's R1S-02: never the account scope alone; an account event is refused whole."""
     hub, _, _, router = _wired(_stored(1, _A))
@@ -140,18 +174,23 @@ def test_the_viewer_needs_every_leg_and_fails_closed_on_none() -> None:
 
 
 def test_frames_are_counted_by_kind_alone() -> None:
-    """One snapshot and one delta, each a series of `kind`; no account in any label (C-12.6)."""
-    hub, topic, metrics, router = _wired(_stored(1, _A))
-    conn = _conn(hub, router, _A)
-    conn.sub(_entry(_A))
-    topic.leg_changed(_leg(1, 0, _A, filled_qty=Decimal("0.004")))
-    text = generate_latest(metrics.registry).decode()
-    rows = {line for line in text.splitlines() if line.startswith("cv_tradegroup_ws_frames_total{")}
-    assert rows == {
-        'cv_tradegroup_ws_frames_total{env="demo",kind="snapshot"} 1.0',
-        'cv_tradegroup_ws_frames_total{env="demo",kind="delta"} 1.0',
-    }
-    assert str(_A) not in text
+    """A snapshot per subscription built and a delta per subscription a publish reached (none,
+    then two), each a series of `kind`; no account in any label (C-12.6)."""
+    hub, topic, metrics, router = _wired(_stored(1, _A), _stored(2, _A, _B))
+    for grant in (_A, _A, _B):
+        _conn(hub, router, grant).sub(_entry(grant))
+
+    def counted() -> dict[str, str]:
+        text = generate_latest(metrics.registry).decode()
+        assert str(_A) not in text and str(_B) not in text
+        prefix = 'cv_tradegroup_ws_frames_total{env="demo",kind="'
+        rows = (line.removeprefix(prefix) for line in text.splitlines() if line.startswith(prefix))
+        return dict(row.split('"} ') for row in rows)
+
+    topic.leg_changed(_leg(2, 0, _A, filled_qty=Decimal("0.004")))  # no one holds A and B
+    assert counted() == {"snapshot": "3.0", "delta": "0.0"}
+    topic.leg_changed(_leg(1, 0, _A, filled_qty=Decimal("0.004")))  # the two on A
+    assert counted() == {"snapshot": "3.0", "delta": "2.0"}
 
 
 def test_a_frame_lost_to_a_failed_publish_is_made_up_by_a_resync_from_the_model() -> None:
@@ -160,11 +199,12 @@ def test_a_frame_lost_to_a_failed_publish_is_made_up_by_a_resync_from_the_model(
     hub, topic, _, router = _wired(_stored(1, _A))
     broken, healthy = _conn(hub, router, _A), _conn(hub, router, _A)
     _, bad = broken.sub(_entry(_A))
-    healthy.sub(_entry(_A))
+    for ch in ("trade_groups", "orders"):  # `orders` is not re-snapshotted
+        healthy.sub(_entry(_A, ch=ch))
     broken.take()
     healthy.take()
     bad.effective["status"] = 7  # a corrupt option: its `select` raises
     with capture_logs():
         topic.group_changed(_group(1, "closed"))
-    [snap] = healthy.take()
+    [snap] = healthy.take()  # the `trade_groups` one alone
     assert (snap["t"], snap["meta"]["reason"], _ids(snap)) == ("snap", "upstream_desync", [])

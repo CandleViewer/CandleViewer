@@ -1,6 +1,7 @@
 """E28-T05 (#909, slice S4b): the order lane's handoff to the `trade_groups` topic
 (`oms_wiring.ObservedGroups`, `ObservedSubmissions`, `OmsRuntime._seeded`; 23 §15.5): each
-committed write, as stored, on the serving loop, never awaited; the seed before `ready`."""
+committed write, as stored, on the serving loop, never awaited; the seed before `ready`, retried,
+and counted when every read fails."""
 
 from __future__ import annotations
 
@@ -20,7 +21,15 @@ from candleviewer.domain.primitives import GroupId
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.repository import WriteTimer
 from candleviewer.oms_lane import Serving
-from candleviewer.oms_wiring import GroupStores, ObservedGroups, ObservedSubmissions, OmsStores
+from candleviewer.oms_wiring import (
+    SEED_ATTEMPTS,
+    SEED_FAILURES,
+    SWEEP_RETRY_S,
+    GroupStores,
+    ObservedGroups,
+    ObservedSubmissions,
+    OmsStores,
+)
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories import trade_groups as tgs
 from candleviewer.storage.repositories.submissions import FirstPersisted
@@ -146,23 +155,40 @@ async def test_a_group_that_leaves_draft_is_handed_over_whole_or_not_at_all(case
     assert logs == ([why | failed] if case == "gone" else [])
 
 
-class _SeededWorld(World):
-    """The runtime's world, its group store answering the open groups with `answer`."""
+class _Flaky(_Store):
+    """`_Store`, whose open groups' first `failures` reads fail."""
 
-    answer: object = (_RECORD, _LIVE)
+    failures = reads = 0
+
+    async def list_open_groups(self) -> Any:
+        self.reads += 1
+        if self.reads <= self.failures:
+            raise StorageTierUnavailable("down")
+        return await super().list_open_groups()
+
+
+class _SeededWorld(World):
+    """The runtime's world, its group store answering the open groups after `failures` reads."""
+
+    failures = 0
+    groups: _Flaky
 
     def stores(self) -> OmsStores:
-        return replace(super().stores(), groups=cast(GroupStores, _Store(self.answer)))
+        self.groups = _Flaky((_RECORD, _LIVE))
+        self.groups.failures = self.failures
+        return replace(super().stores(), groups=cast(GroupStores, self.groups))
 
 
-@pytest.mark.parametrize("fails", [False, True])
+@pytest.mark.parametrize("failures", [0, 1, SEED_ATTEMPTS])
 async def test_the_runtime_seeds_the_topic_before_it_is_ready_and_a_failed_seed_never_blocks_it(
-    fails: bool,
+    failures: int,
 ) -> None:
     """Only a submit, admitted once ready, writes a group: the seed is handed over before `ready`,
-    so before any write. A failed seed is logged; the OMS gets ready all the same."""
+    so before any write, and its count logged. A failed read is tried again after the sweep's
+    first backoff; a seed whose every read fails is counted and logged at critical, and the OMS
+    gets ready all the same (R1S-04, R1C-05)."""
     world, ready_at_seed, topic = _SeededWorld(), list[bool](), Mock()
-    world.answer = StorageTierUnavailable("down") if fails else world.answer
+    world.failures = failures
     runtime = world.runtime(trade_groups=topic)
     topic.seed.side_effect = lambda _groups: ready_at_seed.append(runtime._ready.is_set())
     with capture_logs() as logs:
@@ -175,8 +201,24 @@ async def test_the_runtime_seeds_the_topic_before_it_is_ready_and_a_failed_seed_
             assert parts.submission._deps.groups is parts.groups
             persists = parts.machines._ports.steps._submissions
             assert isinstance(persists, ObservedSubmissions) and persists._groups is parts.groups
-    unseeded = [e["error"] for e in logs if e["event"] == "oms_trade_groups_unseeded"]
-    if fails:
-        assert topic.mock_calls == [] and unseeded == ["StorageTierUnavailable"]
-    else:
+    seeds = [e for e in logs if e["event"].startswith("oms_trade_groups_")]
+    text = generate_latest(world.metrics.registry).decode()
+    counted = f'{SEED_FAILURES}{{env="demo"}} 1.0' in text
+    assert world.groups.reads == min(failures + 1, SEED_ATTEMPTS) and SEED_ATTEMPTS == 3  # 20 §6.2
+    assert world.clock.slept.count(SWEEP_RETRY_S[0]) == min(failures, SEED_ATTEMPTS - 1)
+    if failures == SEED_ATTEMPTS:
+        failed = {"event": "oms_trade_groups_unseeded", "error": "StorageTierUnavailable"}
+        assert topic.mock_calls == [] and seeds == [failed | {"log_level": "critical"}] and counted
+    else:  # `_LIVE` is another environment's
         assert topic.mock_calls == [call.seed((_WHOLE,))] and ready_at_seed == [False]
+        assert seeds == [{"event": "oms_trade_groups_seeded", "count": 1, "log_level": "info"}]
+        assert not counted
+
+
+async def test_a_cancelled_seed_is_never_held_back() -> None:
+    """A cancellation (the stop's) leaves the seed at once: never retried, counted or logged."""
+    lane = Mock(spec=["call"], call=AsyncMock(side_effect=asyncio.CancelledError))
+    parts = SimpleNamespace(groups=Mock(spec=["seed"]), lane=lane)
+    with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
+        await World().runtime(trade_groups=Mock())._seeded(cast(Any, parts))
+    assert lane.call.await_count == 1 and logs == []

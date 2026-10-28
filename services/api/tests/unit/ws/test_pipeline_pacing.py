@@ -394,9 +394,9 @@ def test_trade_groups_wait_for_positions() -> None:
     """§16.1 S5 / D18 through the pacer (E28-T05 S4b): the topic's frame for a leg, published
     while the account's `positions` window is open, leaves after that window, at its close."""
     hub = SequencingHub()
-    pipe, conn = _private_rig(hub)
     topic = trade_groups_topic(hub, TradeGroupFrameCounts())
-    topic.seed([_stored(1, ACC_A)])
+    topic.seed([_stored(1, ACC_A)])  # before the rig, which marks its subscriptions snapped
+    pipe, conn = _private_rig(hub)
     hub.publish_private(ACC_A, _event(1, "positions"))  # leaves at once
     conn.clock.now = 0.05
     hub.publish_private(ACC_A, _event(2, "positions"))  # a window closing at 0.1

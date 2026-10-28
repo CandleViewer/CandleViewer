@@ -4003,6 +4003,13 @@ statuses has an empty snapshot. A changed leg is sent whole, and a delta about t
 carries no `legs`. A leg's `error` is `null` when the leg stores neither a code nor a message, else
 both, `""` standing for the one not stored.
 
+**Start, resync and order (E28-T05).** A subscription made before the topic's model is loaded at
+start awaits its `initial` `snap` (§7.7) and is sent it once the load lands. A frame the server
+could not publish re-snapshots every `trade_groups` subscription with reason `upstream_desync`
+(§7.4), from the model the change already moved. `trade_groups` is published apart from an account
+event, so with the backpressure flag off its place after `positions` (§16.1 S5) is its publisher's;
+with the flag on, D18 holds it there.
+
 ### 15.6 `RuleUpdate`
 
 ```json

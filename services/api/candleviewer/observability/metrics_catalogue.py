@@ -736,6 +736,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E28",
         max_series=2,
     ),
+    _s(
+        "cv_tradegroup_ws_seed_failures_total",
+        "counter",
+        "seeds",
+        (),
+        "OMS startups whose trade_groups seed failed every read before ready: the topic stays "
+        "unseeded, its subscriptions snapshot_pending, until restart (oms_trade_groups_unseeded).",
+        "dashboard only",
+        _L,
+        "E28",
+        max_series=1,
+    ),
     # --- Trade-group overrides (#2635, F-01; live since E28-T05 #909, then E34-S01 #999) ------
     _s(
         "cv_override_refused_total",

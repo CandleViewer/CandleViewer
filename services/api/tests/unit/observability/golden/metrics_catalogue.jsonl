@@ -217,6 +217,7 @@
 ["cv_tradegroup_preview_seconds", "histogram", [], "live", "E28"]
 ["cv_tradegroup_preview_total", "counter", ["outcome"], "live", "E28"]
 ["cv_tradegroup_ws_frames_total", "counter", ["kind"], "live", "E28"]
+["cv_tradegroup_ws_seed_failures_total", "counter", [], "live", "E28"]
 ["cv_user_lifecycle_steps_total", "counter", ["step", "outcome"], "live", "E42"]
 ["cv_user_lifecycle_total", "counter", ["action", "result"], "live", "E42"]
 ["cv_wallet_reconcile_total", "counter", ["result"], "live", "E27"]

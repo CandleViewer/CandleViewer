@@ -9,8 +9,9 @@ injected by the composition root.
 
 - **Model.** The active groups (`OPEN_GROUP_STATUSES`: `submitting`, `partially_open`, `open`,
   `closing`), each with every leg. `seed` loads them once, as stored at start; before it, `build`
-  gives `None` and a subscription stays `snapshot_pending` (§7.7). An event may come first: its
-  group is held, and the seed neither replaces a held group nor holds one that recently ended.
+  gives `None` and a subscription stays `snapshot_pending` (§7.7) until the seed wakes it. An
+  event may come first: its group is held, and the seed neither replaces a held group nor holds
+  one that recently ended.
 - **Frames.** `created`, `leg_changed` and `group_changed`, each a committed write as stored,
   update the model and publish, never merged (§8.2). A subscription gets at most one frame per
   change, from two publishes on disjoint `select`s. The group's whole item, as a snapshot item,
@@ -204,12 +205,16 @@ class TradeGroupTopic[B, P]:
         self._suppressed = 0  # and how many it held back since its last line
 
     def seed(self, groups: Iterable[TradeGroupWithLegs]) -> None:
-        """Hold the active groups as stored at start, once."""
+        """Hold the active groups as stored at start, once, then wake (`resync`) the subscriptions
+        made before it: each still awaits its `initial` snapshot, a reason a resync keeps (§7.7).
+        A resync that fails is the hub's to log, as in `_contained`."""
         if self._seeded:
             raise ValueError("the trade_groups topic is already seeded")
         for record in groups:
             self._hold(record)
         self._seeded = True
+        with contextlib.suppress(Exception):
+            self._resync()
 
     # -- SnapshotSource
 

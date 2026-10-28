@@ -24,7 +24,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -38,7 +38,6 @@ import structlog
 from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.accounts.trade_group_repository import TradeGroupReader, TradeGroupRepository
-from candleviewer.accounts.trade_group_topic import TradeGroupTopic
 from candleviewer.accounts.trade_groups import (
     GroupReplay,
     GroupUpdate,
@@ -1225,17 +1224,25 @@ class ServedTierRequests:
             _log().error("oms_tier_request_failed", error=type(exc).__name__)
 
 
+class GroupTopic(Protocol):
+    """The `trade_groups` topic (`accounts.trade_group_topic`) as the lane's writes reach it, each
+    call on the serving loop (E28-T05)."""
+
+    def seed(self, groups: Iterable[TradeGroupWithLegs]) -> None: ...
+    def created(self, record: TradeGroupWithLegs) -> None: ...
+    def leg_changed(self, leg: TradeGroupLeg) -> None: ...
+    def group_changed(self, group: TradeGroup) -> None: ...
+
+
 class ObservedGroups(TradeGroupRepository):
     """The pipeline's trade-group facade, observed (E28-T05 #909 S4b): each write it commits goes,
-    as stored, to the `trade_groups` topic on the serving loop by `Serving.notify`, never awaited
-    (C-2.18, C-2.20), bounded as every notice is and counted there when lost or failed
+    as stored, to the `trade_groups` topic on the serving loop by a `Serving.notify` notice, never
+    awaited (C-2.18, C-2.20), bounded as every notice is and counted there when lost or failed
     (`oms_lane_notices_failed_total`). A replay, a key reuse or a write that raises hands over
     nothing. A group leaving `draft` (`expected_status="draft"`) is read and handed over whole,
     as the topic holds no draft; a writer that leaves `draft` otherwise is E34's to hand over."""
 
-    def __init__(
-        self, store: TradeGroupStore, topic: TradeGroupTopic[Any, Any], serving: Serving
-    ) -> None:
+    def __init__(self, store: TradeGroupStore, topic: GroupTopic, serving: Serving) -> None:
         super().__init__(store)
         self._topic, self._serving = topic, serving
 
@@ -1290,14 +1297,16 @@ class ObservedGroups(TradeGroupRepository):
         """A first persist's group, as its rows: adapted on the serving loop (`_created`)."""
         self._serving.notify(_created, self._topic, record)
 
-    async def seed(self, environment: str) -> None:
-        """The topic's seed: this environment's active groups (C-2.11), read on the lane."""
+    async def seed(self, environment: str) -> int:
+        """The topic's seed: this environment's active groups (C-2.11), read on the lane; answers
+        how many it handed over."""
         held = await self.open_groups()
         own = tuple(record for record in held if record.group.environment == environment)
         self._serving.notify(self._topic.seed, own)
+        return len(own)
 
 
-def _created(topic: TradeGroupTopic[Any, Any], record: TradeGroupRecord) -> None:
+def _created(topic: GroupTopic, record: TradeGroupRecord) -> None:
     """On the serving loop; a row the adapter refuses is a notice `Serving` counts as failed."""
     topic.created(record_from_rows(record))
 
@@ -1347,6 +1356,11 @@ _RETRIED: Final = (StorageError, OrderStoreError, AuditNotDurable, StoreUnavaila
 #: in silence for ever; and no order is skipped on an error no refusal names, which a defect
 #: could raise for every one of them (C-2.21).
 SWEEP_MAX_FAILURES: Final = 5
+#: E28-T05: the `trade_groups` seed's reads before `ready`, a failed one tried again after the
+#: sweep's first backoff, all of them within one sweep call's bound (`_seeded`).
+SEED_ATTEMPTS: Final = 3
+#: The startups whose seed failed every read (`_seeded`).
+SEED_FAILURES: Final = "cv_tradegroup_ws_seed_failures_total"
 #: Step 4's KILL reason (24 Sec.8.4): an order recorded, never sent, and left with no owner.
 STARTUP_UNSENT: Final = "startup_unsent"
 #: What the sweep counts and skips, its order left as its last step left it (20 Sec.6.2 step 3,
@@ -2186,7 +2200,7 @@ class OmsRuntime:
         fencing: Callable[[float], Awaitable[None]] = asyncio.sleep,
         watch: Callable[[float], Awaitable[None]] = asyncio.sleep,
         serving_tick: Callable[[], ServingTick] = ServingTick,
-        trade_groups: TradeGroupTopic[Any, Any] | None = None,
+        trade_groups: GroupTopic | None = None,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
         self._trade_groups = trade_groups  # E28-T05: seeded, and handed each group write
@@ -2706,15 +2720,35 @@ class OmsRuntime:
 
     async def _seeded(self, parts: _Parts) -> None:
         """E28-T05 S4b: the topic's seed, read before `ready`. Only a submit writes a group, and
-        one is admitted once ready, so the read and its notice precede every write's. A seed that
-        fails is logged; the topic stays unseeded (its subscriptions pending), and the OMS gets
-        ready all the same: the view never gates trading."""
+        one is admitted once ready, so the read and its notice precede every write's. Its reads
+        (`SEED_ATTEMPTS`) share one sweep call's bound, so the seed delays `ready` by at most 17 s
+        (15 s plus 2 s). Its count is logged. A seed that fails every read is counted
+        (`SEED_FAILURES`) and logged at critical by its error's type, and the topic stays unseeded
+        (its subscriptions pending) until restart; the OMS gets ready all the same."""
         if parts.groups is None:
             return
         try:
-            await self._bounded(parts.lane.call(parts.groups.seed(self._env)))
+            count = await self._bounded(self._seed_reads(parts.lane, parts.groups))
         except Exception as exc:
-            _log().error("oms_trade_groups_unseeded", error=type(exc).__name__)
+            spec = next(spec for spec in CATALOGUE if spec.name == SEED_FAILURES)
+            failures = self._metrics.counter(spec.name, spec.help, max_series=spec.max_series)
+            failures.child().inc()
+            _log().critical("oms_trade_groups_unseeded", error=type(exc).__name__)
+            return
+        _log().info("oms_trade_groups_seeded", count=count)
+
+    async def _seed_reads(self, lane: Lane, groups: ObservedGroups) -> int:
+        """The seed, read again after the sweep's first backoff when a read fails, until the
+        `SEED_ATTEMPTS`th failure, which is raised; a cancellation never waits for a retry."""
+        attempt = 1
+        while True:
+            try:
+                return await lane.call(groups.seed(self._env))
+            except Exception:
+                if attempt == SEED_ATTEMPTS:
+                    raise
+            attempt += 1
+            await self._sleep(SWEEP_RETRY_S[0])
 
     async def _bounded[T](self, call: Awaitable[T]) -> T:
         """A sweep read or write within its statement cap and `SWEEP_CALL_SLACK_S`, else
@@ -3124,7 +3158,7 @@ def build_oms_runtime(
     hub: SystemBroadcast,
     lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
     topics: AttachedTopics | None = None,
-    trade_groups: TradeGroupTopic[Any, Any] | None = None,
+    trade_groups: GroupTopic | None = None,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
     `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order

@@ -1,5 +1,6 @@
 """E28-T05 S2a (#909): `GateReadiness`, trade-group readiness over the order-entry gate, the kill
-switch, the live gate and the account row, the first reason winning. The ports are faked."""
+switch, the live gate and the account row, the first reason winning. The ports are faked. S4b: the
+composition root's `trade_groups` topic, served, fed and counted."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from uuid import UUID
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from prometheus_client import generate_latest
 from structlog.testing import capture_logs
 
 from candleviewer import app as appmod
@@ -30,9 +32,11 @@ from candleviewer.settings import Settings
 from candleviewer.trade_groups_wiring import GATE_REASONS, GateReadiness, NoLockouts
 from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 from tests.unit.accounts._fakes import ACC
+from tests.unit.accounts.test_trade_group_topic import _stored
 from tests.unit.api import test_trade_group_routes as groups
 from tests.unit.api.test_trade_group_definition_create import PATH, caller, payload
 from tests.unit.api.test_trade_group_definition_reads import CORE3, World
+from tests.unit.ws._seq_support import Conn, Source
 
 NOT_A_BOOL = cast(bool, 1)  # truthy, and not the bool the type promises
 
@@ -264,3 +268,25 @@ def test_the_root_mounts_the_preview_behind_the_flag_now_that_its_gate_is_ready(
     asyncio.run(app.state.feature_flags.trade_groups.refresh())  # the demo seed: on
     on = client.post(PREVIEW_PATH, json={}, headers={"Authorization": "Bearer owner"})
     assert (on.status_code, recorded) == (422, ["trade_group.previewed"] * 2)
+
+
+def test_the_root_hands_the_oms_runtime_the_topic_it_serves_and_counts_its_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S4b's R1C-02: the `trade_groups` topic the snapshot router serves is the one the OMS runtime
+    is handed to seed and feed; it publishes on the app's hub and counts on the app's facade."""
+    build = Mock(return_value=None)  # the fake backend's runtime: none
+    monkeypatch.setattr(appmod, "build_oms_runtime", build)
+    app = appmod.create_app(Settings())
+    services, facade = app.state.ws_registry.services, app.state.metrics_facade
+    topic = services.snapshots._sources["trade_groups"]
+    assert build.call_args.kwargs["trade_groups"] is topic
+    conn = Conn(cast(Source, services.snapshots), ACC)  # a Manager granted ACC, on the app's hub
+    services.sequencing.register(conn.authz, conn.emitter)
+    conn.sub({"ch": "trade_groups", "opts": {"exchange_account_ids": [str(ACC)]}})
+    topic.seed([])
+    topic.created(_stored(1, ACC))
+    assert [frame["t"] for frame in conn.take()] == ["snap", "d"]
+    text = generate_latest(facade.registry).decode()
+    for kind in ("snapshot", "delta"):
+        assert f'cv_tradegroup_ws_frames_total{{env="{facade.env}",kind="{kind}"}} 1.0' in text
