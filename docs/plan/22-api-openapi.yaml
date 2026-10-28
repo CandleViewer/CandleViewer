@@ -13276,7 +13276,8 @@ paths:
           evaluated for it. A criterion with `needs_recording: true` is skipped for a
           `live_only` row, never evaluated as zero: the row is kept, the criterion is listed in
           its `skipped_criteria` and its field is `null`. A live criterion with no current value
-          for a symbol does not match it.
+          for a symbol does not match it. `spread_bps` is quantised to 4 decimal places and
+          `range_pct_24h` to 8 (half-even), and a row is compared on the value it shows.
         - **Ranking.** `sort` ranks the matches highest first; there is no order parameter.
           Rows whose `sort` value is `null` (a skipped or missing value) come after every row
           that has one, never as if it were zero; ties, and the `null` rows among themselves, go
@@ -13307,7 +13308,9 @@ paths:
           `criterion_unavailable` (a criterion `listScannerCriteria` lists with
           `available: false`, field `filters.<criterion id>`; or a `sort` key its `sort_keys`
           lists with `available: false`, field `sort`), an unknown
-          `sort` value or a `limit` outside 1..200. Nothing is evaluated on any refusal.
+          `sort` value or a `limit` outside 1..200, and `multiple_values` (`filters`, `sort` or
+          `limit` given more than once, field that parameter: never "the last value wins").
+          Nothing is evaluated on any refusal.
       x-rbac: { permissions: [marketdata:read], scope: none }
       parameters:
         - name: filters

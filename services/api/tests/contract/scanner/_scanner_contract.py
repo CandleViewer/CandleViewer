@@ -1,4 +1,4 @@
-"""E08-T09 (#4708) contract harness for `/scanner/criteria` and `/scanner/presets*`;
+"""E08-T09 (#4708) contract harness for `/scanner`, `/scanner/criteria` and `/scanner/presets*`;
 `22-api-openapi.yaml` is normative.
 Each request body is validated against its operation's `requestBody` schema before it is sent
 (`invalid=True` asserts the opposite); each response must be one its operation documents for that
@@ -25,10 +25,11 @@ from tests.scanner_presets._scanner_env import FakeScannerRepo
 SPEC: dict[str, Any] = load_openapi_spec()
 CODES = {e["code"]: e["status"] for e in SPEC["x-error-codes"]}
 _PREFIXES = ("/scanner/presets", "/scanner/criteria")
-#: operationId -> (METHOD, path) for `/scanner/criteria` and every `/scanner/presets*` operation.
+#: operationId -> (METHOD, path) for `/scanner` (an exact path: a prefix would take in every
+#: `/scanner*` one), `/scanner/criteria` and every `/scanner/presets*` operation.
 OPS = {
     op["operationId"]: (method.upper(), path)
-    for path, item in SPEC["paths"].items() if path.startswith(_PREFIXES)
+    for path, item in SPEC["paths"].items() if path.startswith(_PREFIXES) or path == "/scanner"
     for method, op in item.items() if method in ("get", "put", "post", "delete", "patch")
 }  # fmt: skip
 #: The contract's own create example (`momentum`), the base of every request fixture.

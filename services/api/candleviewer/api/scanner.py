@@ -1,7 +1,14 @@
-"""`/scanner/criteria` and `/scanner/presets*` routes (E08-T09 PR 2a, #4708): contract
-`22-api-openapi.yaml` (`listScannerCriteria`, `listScannerPresets`, `createScannerPreset`,
-`updateScannerPreset`, `deleteScannerPreset`). There is no preset GET by id: that path answers
-any other method 405, the same for every id. `runScanner` (`GET /scanner`) is PR 2b's.
+"""`/scanner`, `/scanner/criteria` and `/scanner/presets*` routes (E08-T09, #4708): contract
+`22-api-openapi.yaml` (`runScanner`, `listScannerCriteria`, `listScannerPresets`,
+`createScannerPreset`, `updateScannerPreset`, `deleteScannerPreset`). There is no preset GET by
+id: that path answers any other method 405, the same for every id.
+
+`runScanner` (PR 2b): `marketdata:read`, then the query (only `filters`, `sort` and `limit`, each
+once), then one 422 that collects every defect (`multiple_values` for a repeated key, the
+parameter types, `invalid_json`, `check_filter`'s rules and an unavailable `sort`), never echoing
+a value, and only then the scan (`scanner_service`): 429 `rate_limited` past the bound on
+cache-cold evaluations, 503 `store_unavailable` while an input cannot be read. Nothing is
+evaluated on any refusal.
 
 Callers come from the session (`SessionAuditPrincipalResolver`, as `/indicator-presets`); RBAC
 (C-12.4) runs per request through `auth.scopes.enforce()`, each denial audited `rbac.denied`:
@@ -20,6 +27,7 @@ never SQL, a file path or the submitted JSON.
 """
 
 import inspect
+import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Coroutine
@@ -31,20 +39,36 @@ import structlog
 from fastapi import APIRouter, Path, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from candleviewer.api.drawings_models import MAX_JSON_DEPTH, format_errors
 from candleviewer.api.query_allowlist import undeclared_query_refusal
-from candleviewer.api.scanner_criteria import CRITERIA, describe, sort_keys, split_stored
+from candleviewer.api.scanner_criteria import (
+    CRITERIA,
+    CRITERIA_BY_ID,
+    FilterInvalidError,
+    check_filter,
+    describe,
+    sort_defect,
+    sort_keys,
+    split_stored,
+)
+from candleviewer.api.scanner_eval import ScanQuery, scan_query
 from candleviewer.api.scanner_presets_models import (
     SCANNER_PRESET_BODY_MAX_BYTES,
     ScannerPresetInput,
     ScannerPresetInvalidError,
+    ScannerSortKey,
 )
 from candleviewer.api.scanner_presets_service import (
     AuditEmitter,
     ScannerPresetService,
     ScannerPresetStoreUnavailableError,
+)
+from candleviewer.api.scanner_service import (
+    ScannerBusyError,
+    ScannerService,
+    ScannerUnavailableError,
 )
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.audit.access import AuditPrincipal
@@ -72,11 +96,12 @@ _STATUS: Final[dict[str, int]] = {
     "conflict": 409,
     "payload_too_large": 413,
     "validation_failed": 422,
+    "rate_limited": 429,
     "store_unavailable": 503,
     "audit_unavailable": 503,
 }
-#: 503s carry the contract's `Retry-After` (`ServiceUnavailable`).
-_RETRY_AFTER_S: Final = 5
+#: 503s and 429s carry the contract's `Retry-After` (`ServiceUnavailable`, `RateLimited`).
+_RETRY_AFTER_S: Final = {503: 5, 429: 1}
 #: No `/scanner/criteria` or `/scanner/presets*` operation declares a query parameter (SR-026).
 _NO_QUERY: Final[frozenset[str]] = frozenset()
 _PERMISSIONS: Final = {p.value: p for p in Permission}
@@ -124,7 +149,8 @@ class _Problem(Exception):
     def response(self) -> JSONResponse:
         body = {"type": f"https://candleviewer.local/errors/{self.code}", "title": self.title,
                 "status": self.status, "code": self.code, "detail": self.detail}  # fmt: skip
-        headers = {"Retry-After": str(_RETRY_AFTER_S)} if self.status == 503 else {}
+        after = _RETRY_AFTER_S.get(self.status)
+        headers = {} if after is None else {"Retry-After": str(after)}
         return JSONResponse(body | self.extra, self.status, headers, "application/problem+json")
 
 
@@ -246,6 +272,84 @@ def _preset_id(raw: str) -> str:
         raise _invalid([_rule("presetId", "uuid_parsing", "presetId must be a UUID.")]) from None
 
 
+#: `runScanner`'s query parameters, each taken once.
+_SCAN_QUERY: Final = frozenset({"filters", "sort", "limit"})
+#: 22 `runScanner`: `filters` is at most this many characters.
+FILTERS_MAX_CHARS: Final = 4000
+_UNAVAILABLE_SCAN: Final = "The scanner's inputs are unavailable; try again shortly."
+
+
+class _ScanParams(BaseModel):
+    """The `runScanner` parameters as sent (each once): `filters` stays text until it is decoded."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    filters: str | None = Field(None, max_length=FILTERS_MAX_CHARS)
+    sort: ScannerSortKey = "volume_24h"
+    limit: int = Field(100, ge=1, le=200)
+
+
+class _Refuse(ValueError):
+    """A constant the JSON decoder refuses (`NaN`, `Infinity`) or a duplicated key."""
+
+
+def _no_constant(_name: str) -> object:
+    raise _Refuse
+
+
+def _no_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    out = dict(pairs)
+    if len(out) != len(pairs):
+        raise _Refuse
+    return out
+
+
+def _filter_object(text: str) -> dict[str, object] | None:
+    """`filters` as a JSON object, or `None`: deeper than `MAX_JSON_DEPTH` (checked before it is
+    decoded), not JSON, a duplicated key, `NaN`/`Infinity`, or not an object."""
+    if json_depth_exceeds(text, MAX_JSON_DEPTH):
+        return None
+    try:
+        raw = json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_no_constant)
+    except (ValueError, RecursionError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def scan_request(request: Request) -> ScanQuery:
+    """`runScanner`'s query as a canonical `ScanQuery`, else one 422 with every defect (at most
+    20): a repeated key, the parameter types, `invalid_json`, the filter's rules and an
+    unavailable `sort`. No message names a submitted value."""
+    errors: list[dict[str, str]] = []
+    single: dict[str, str] = {}
+    for name in sorted(_SCAN_QUERY):  # filters, limit, sort
+        sent = request.query_params.getlist(name)
+        if len(sent) > 1:
+            errors.append(_rule(name, "multiple_values", f"{name} may be given once."))
+        elif sent:
+            single[name] = sent[0]
+    params: _ScanParams | None = None
+    try:
+        params = _ScanParams.model_validate(single)
+    except ValidationError as exc:
+        errors += format_errors(exc)
+    flt: dict[str, Any] = {}
+    text = single.get("filters") if "filters" not in {e["field"] for e in errors} else None
+    if text is not None:
+        raw = _filter_object(text)
+        if raw is None:
+            errors.append(_rule("filters", "invalid_json", "filters must be a JSON object."))
+        else:
+            try:
+                flt = check_filter(raw, root="filters")
+            except FilterInvalidError as exc:
+                errors += exc.errors
+    if "sort" in single and (defect := sort_defect(single["sort"])) is not None:
+        errors.append(defect)
+    if errors or params is None:
+        raise _checked(errors)
+    return scan_query(flt, params.sort, params.limit, CRITERIA_BY_ID)
+
+
 def _stamp(value: datetime) -> str:
     """UTC, six fractional digits and a `Z`, as the presets and workspaces tokens are."""
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -274,9 +378,11 @@ def make_scanner_router(
     audit: AuditEmitter,
     *,
     new_id: Callable[[], UUID] = _new_id,
+    scanner: ScannerService | None = None,
 ) -> APIRouter:
     """`audit` is mandatory (every write and every denial leaves its record). No resolver (no
-    identity store: nothing can verify a session) fails closed with 401; no store with 503."""
+    identity store: nothing can verify a session) fails closed with 401; no store with 503, and
+    no `scanner` answers every valid scan 503."""
     if audit is None:
         raise TypeError("make_scanner_router: an audit emitter is required")
     service = ScannerPresetService(repo_provider, audit, new_id=new_id)
@@ -302,6 +408,24 @@ def make_scanner_router(
             raise _Problem("forbidden", f"Requires {permission.value}.",
                            required_permissions=[permission.value]) from None  # fmt: skip
         return got
+
+    @router.get("/scanner", tags=["market-data"])
+    async def run_scanner(request: Request) -> Response:
+        principal = await caller(request, Permission.MARKETDATA_READ, Scope.NONE)
+        refused = undeclared_query_refusal(request, _SCAN_QUERY, self_service=False)
+        if refused is not None:
+            return refused
+        q = scan_request(request)
+        if scanner is None:
+            raise _Problem("store_unavailable", _UNAVAILABLE_SCAN)
+        try:
+            body = await scanner.scan(q, restricted=not principal.is_owner)
+        except ScannerBusyError:
+            detail = "Too many scans are being computed; try again in a second."
+            raise _Problem("rate_limited", detail) from None
+        except ScannerUnavailableError:
+            raise _Problem("store_unavailable", _UNAVAILABLE_SCAN) from None
+        return Response(body, media_type="application/json")
 
     @router.get("/scanner/criteria", tags=["market-data"])
     async def list_scanner_criteria(request: Request) -> Response:
@@ -348,4 +472,4 @@ def make_scanner_router(
     return router
 
 
-__all__ = ["dump", "make_scanner_router"]
+__all__ = ["FILTERS_MAX_CHARS", "dump", "make_scanner_router", "scan_request"]
