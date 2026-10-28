@@ -112,12 +112,15 @@ _CHALLENGE_REFUSED = {
     "format": "challenge_id must be a UUID.",
 }
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-#: Writes that must keep working in the downgrade (ending the session). `DELETE
-#: /auth/session/view-as` too (#3085, Q5): leaving view-as is one call that nothing refuses.
-_WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up", "/auth/session/view-as"})
-#: Exempt by method and path: extend (#2300 D1) acts on no data and is the only activity a live
-#: session has. `POST` only, so a later handler on the same path inherits no exemption.
-_WRITE_EXEMPT_ROUTES = frozenset({("POST", "/auth/session/extend")})
+#: Writes that must keep working in the downgrade (ending the session).
+_WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up"})
+#: Exempt by method and path, so a later handler on the same path inherits no exemption. Extend
+#: (#2300 D1) acts on no data and is the only activity a live session has; `DELETE
+#: /auth/session/view-as` (#3085, Q5): leaving view-as is one call that nothing refuses, and
+#: a read-only session can end view-as but never start it (#4810).
+_WRITE_EXEMPT_ROUTES = frozenset(
+    {("POST", "/auth/session/extend"), ("DELETE", "/auth/session/view-as")}
+)
 
 
 def write_exempt(method: str, path: str) -> bool:
