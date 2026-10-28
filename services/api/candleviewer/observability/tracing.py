@@ -4,7 +4,9 @@ Only these span names may be started — tracing market-data hot loops is
 rejected by ADR-0014 §5 / E04-K01, so `span()` refuses any other name.
 E29 (order path) and E26 (replay start) attach the real spans against this
 scaffolding. With `CV_OTEL_ENABLED=false` (the default) the OpenTelemetry
-API's no-op tracer is used: no exporter, no network.
+API's no-op tracer is used: no exporter, no network. The order path's names
+are `20-architecture.md` §12.3's, and so is the rule that a span ending in an
+exception keeps the exception's class alone, never its message (C-12.6).
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from typing import Final
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.propagate import extract, inject
-from opentelemetry.trace import Span
+from opentelemetry.trace import Span, Status, StatusCode
 
 from candleviewer.observability.redaction import redact_text
 from candleviewer.observability.secret_type import Secret
@@ -63,12 +65,32 @@ class UnsanctionedSpanError(ValueError):
 
 @contextmanager
 def span(name: str, attributes: Mapping[str, object] | None = None) -> Iterator[Span]:
-    """Start a sanctioned span as the current span."""
+    """Start a sanctioned span as the current span. One that ends in an exception is `ERROR` with
+    the exception's class alone (`_class_only`): OpenTelemetry's own defaults would record its
+    message, as an event and in the status, and neither passes the attribute filter (C-12.6)."""
     if name not in SANCTIONED_SPANS:
         raise UnsanctionedSpanError(f"span {name!r} is not on an ADR-0014 §5 path")
     tracer = trace.get_tracer(TRACER_NAME)
-    with tracer.start_as_current_span(name, attributes=_safe_attrs(attributes or {})) as s:
+    started = tracer.start_as_current_span(
+        name,
+        attributes=_safe_attrs(attributes or {}),
+        record_exception=False,
+        set_status_on_exception=False,
+    )
+    with started as s, _class_only(s):
         yield _GuardedSpan(s)  # type: ignore[misc]  # wraps set_attribute with the same filter
+
+
+@contextmanager
+def _class_only(s: Span) -> Iterator[None]:
+    """`s` set `ERROR` with the class of an exception that ends it, never its message or traceback
+    (20 §12.3); like OpenTelemetry's own rule, a `BaseException` that is no `Exception` (a
+    cancellation, a generator's exit) sets nothing."""
+    try:
+        yield
+    except Exception as exc:
+        s.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+        raise
 
 
 def _safe_attrs(attributes: Mapping[str, object]) -> dict[str, str | int | bool]:

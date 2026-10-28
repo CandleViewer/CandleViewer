@@ -7,6 +7,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 
 from candleviewer.observability.tracing import (
     ORDER_PATH_SPANS,
@@ -61,3 +62,29 @@ def test_context_propagates_across_boundary() -> None:
         pass
     by = {s.name: s for s in _EXPORTER.get_finished_spans()}
     assert by["exchange.place_order"].context.trace_id == by["oms.fanout"].context.trace_id
+
+
+def test_a_raised_error_leaves_only_its_class_on_the_span() -> None:
+    """20 Sec.12.3 (C-12.6): a span that ends in an exception is `ERROR` with the exception's class
+    alone, the span it raises through too. Its message, which may name an account, a price or a
+    key, reaches no span: no exception event, no status text beyond the class."""
+    message = "account 9b2f7c1e refused at 60000.5"
+    with pytest.raises(ValueError, match="refused"):
+        with span("http.request"), span("oms.validate"):
+            raise ValueError(message)
+    finished = _EXPORTER.get_finished_spans()
+    assert [s.name for s in finished] == ["oms.validate", "http.request"]
+    for ended in finished:
+        assert (ended.status.status_code, ended.status.description) == (
+            StatusCode.ERROR,
+            "ValueError",
+        )
+        assert list(ended.events) == []
+        assert "refused" not in ended.to_json()
+
+
+def test_a_span_that_ends_cleanly_keeps_its_status_unset() -> None:
+    with span("oms.validate"):
+        pass
+    [ended] = _EXPORTER.get_finished_spans()
+    assert ended.status.status_code is StatusCode.UNSET
