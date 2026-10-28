@@ -79,7 +79,7 @@ rules:
       #   protection_readings, foreign_order_lockout} (`oms/ports.INTERIM_PORT_LABELS`), each set
       #   once at startup; max_series=11.
       # stage, outcome, also (E29-T05, #848, oms_stream_outcomes_total): `stage` {consumer, push,
-      #   position} and `outcome` that stage's closed `Outcome` Literal (10, 28 and 20 values,
+      #   position} and `outcome` that stage's closed `Outcome` Literal (11, 28 and 20 values,
       #   bound at build in `oms_stream_wiring.StageCounts`); no account; max_series=64.
       # topic, also (E29-T05, #848, oms_stream_event_lag_seconds): a private row's kind, the five
       #   `exchange.base.models.PrivateKind` values; no account; max_series=8.
