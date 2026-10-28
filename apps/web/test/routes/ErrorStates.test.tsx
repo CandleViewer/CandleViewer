@@ -32,20 +32,43 @@ afterEach(() => vi.restoreAllMocks());
 const guardLines = (spy: { mock: { calls: unknown[][] } }): unknown[][] =>
   spy.mock.calls.filter(([line]) => String(line).startsWith("[route-guard]"));
 
-/** A viewer navigates from the journal to `path`: the whole document, the focus and the console. */
+/** A viewer navigates from the journal to `path`: the whole document, what it announced, the focus and the console. */
 async function viewerLandsOn(path: string) {
   const info = vi.spyOn(console, "info");
   const { router } = renderAt("/journal", "viewer");
   await screen.findByRole("heading", { name: /R-180/ });
+  // Every message the live regions show on the way, in order: one more on one route would differ.
+  const announced: string[] = [];
+  const record = (records: MutationRecord[]): void => {
+    for (const node of records.flatMap((r) => [...r.addedNodes])) {
+      if (node instanceof HTMLElement && node.hasAttribute("data-seq")) {
+        announced.push(node.textContent ?? "");
+      }
+    }
+  };
+  const regions = new MutationObserver(record);
+  regions.observe(document.body, { childList: true, subtree: true });
   await act(() => router.navigate(path));
   const h1 = await screen.findByRole("heading", { name: "Page not found", level: 1 });
+  record(regions.takeRecords());
+  regions.disconnect();
   const landmarks = [...document.querySelectorAll("header, nav, main, aside, footer, [role]")].map(
     (el) => `${el.tagName} ${el.getAttribute("role") ?? ""} ${el.getAttribute("aria-label") ?? ""}`,
   );
   const result = {
-    // The echoed route is the one difference the page may show; React's client `useId` counter is
-    // process-global, so it differs between mounts in one test run, never between the two routes.
-    html: document.body.innerHTML.replaceAll(path, "{path}").replace(/:r[0-9a-z]+:/g, ":id:"),
+    // The echoed route is the one difference the page may show. React's client `useId` counter and
+    // the announcer's message counter are process-global, and the status bar's clock is the time, so
+    // they differ between mounts in one test run, never between the two routes. What was announced
+    // is compared as `announced`.
+    html: document.body.innerHTML
+      .replaceAll(path, "{path}")
+      .replace(/:r[0-9a-z]+:/g, ":id:")
+      .replace(/ data-seq="\d+"/g, ' data-seq="{seq}"')
+      .replace(
+        /(<span data-clock="">)(?:\d{2}:\d{2}:\d{2}|--:--:--) UTC(<\/span>)/g,
+        "$1{clock}$2",
+      ),
+    announced,
     landmarks,
     focusOnH1: document.activeElement === h1,
     guardLines: guardLines(info),
@@ -131,6 +154,10 @@ describe("ErrorStates: CMP-089 and CMP-090 mounted on the routes", () => {
     expect(unknown.landmarks.some((l) => l.startsWith("NAV ") && l.endsWith("Primary"))).toBe(true);
     expect(admin.html).toBe(unknown.html);
     expect(adminUnknown.html).toBe(unknown.html);
+    // The shell announces the environment on each route change (E10-S01), so the lists are not empty.
+    expect(unknown.announced).not.toEqual([]);
+    expect(admin.announced).toEqual(unknown.announced);
+    expect(adminUnknown.announced).toEqual(unknown.announced);
     expect(admin.landmarks).toEqual(unknown.landmarks);
     expect([unknown.focusOnH1, admin.focusOnH1, adminUnknown.focusOnH1]).toEqual([
       true,
