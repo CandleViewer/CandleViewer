@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
-from candleviewer.ws.topics import FAMILIES
+from candleviewer.ws.topics import FAMILIES, UNIVERSAL
 from tests.contract.ws._harness import OFFERS, current_wire
 from tests.security.ws import test_topic_injection as inj
 from tests.security.ws._raw import RawClient, RawWorld, authenticated, delta, raw_connect
@@ -42,7 +42,9 @@ PRIVATE = {name for name, family in FAMILIES.items() if family.private} - {"syst
 def bad(ch: str, **opts: Any) -> Row:
     """`ch` with `opts`, which break the range or type of the one option they name."""
     (field,) = opts
-    return {"ch": ch, "opts": opts}, field, f"Option '{field}' is out of range."
+    opt = {**UNIVERSAL, **FAMILIES[ch.split(".", 1)[0]].options}.get(field)
+    message = opt.out_of_range(field) if opt is not None else f"Option '{field}' is out of range."
+    return {"ch": ch, "opts": opts}, field, message
 
 
 def unknown(ch: str, opts: Any, field: str = "opts") -> Row:

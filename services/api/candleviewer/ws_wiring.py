@@ -73,6 +73,7 @@ from candleviewer.ws.sequencing import (
     SnapshotSource,
     cv_ws_snapshot_overdue_total,
 )
+from candleviewer.ws.trades_publish import Floor, Scales, TradesTopic
 from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs
 
 if TYPE_CHECKING:
@@ -302,6 +303,23 @@ def ticker_topic(ctx: AppContext, hub: SequencingHub) -> TickerTopic[SnapshotBod
         bus=ctx.bus.bus,
         env=ctx.settings.environment.value,
         overdue=cv_ws_snapshot_overdue_total.labels(topic="ticker"),  # served at 0 from now
+    )
+
+
+def trades_topic(
+    ctx: AppContext, hub: SequencingHub, *, scales: Scales, floor: Floor
+) -> TradesTopic:
+    """E22-T02 (#654): the `trades` family's leases, snapshot source and publisher over the
+    ingestion trade stream (resolved per call: attached only with the public WS) and its bus
+    topic, with the instrument scales (kind 3) and `MIN_SIZE_FLOOR` (SR-E22-03) from the
+    catalogue. `WsRuntime` starts and stops it."""
+    return TradesTopic(
+        hub,
+        reader=lambda: ctx.ingestion.trades,
+        bus=ctx.bus.bus,
+        env=ctx.settings.environment.value,
+        scales=scales,
+        floor=floor,
     )
 
 

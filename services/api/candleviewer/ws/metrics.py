@@ -145,6 +145,35 @@ cv_ws_malformed_updates_total = Counter(
     labelnames=("topic",),
 )
 
+# -- E22-T02 (#654) `trades.{symbol}` (trades_publish.py); bounded labels only --------------------
+cv_ws_frames_emitted_total = Counter(
+    "cv_ws_frames_emitted_total",
+    "Frames a topic publisher emitted, per topic family (E22-T02: `trades`).",
+    labelnames=("topic",),
+)
+cv_ws_tape_prints_dropped_total = Counter(
+    "cv_ws_tape_prints_dropped_total",
+    "Prints a `trades` option set dropped before clustering, by reason (`min_size`).",
+    labelnames=("reason",),
+)
+cv_ws_tape_frames_coalesced_total = Counter(
+    "cv_ws_tape_frames_coalesced_total",
+    "`trades` frames that appended more than one source batch (`coalesced`).",
+)
+#: Bounded `cv_ws_trades_subscribe_rejected_total{reason}` values (E22 threat model section 10).
+TRADES_REJECT_REASONS: Final = frozenset(
+    {"min_size_floor", "cluster_range", "sub_cap_user", "option_sets", "symbols"}
+)
+cv_ws_trades_subscribe_rejected_total = Counter(
+    "cv_ws_trades_subscribe_rejected_total",
+    "`trades` subscriptions and retunes refused by an E22 bound, by reason.",
+    labelnames=("reason",),
+)
+cv_ws_frames_emitted_total.labels(topic="trades")
+cv_ws_tape_prints_dropped_total.labels(reason="min_size")
+for _trades_reason in TRADES_REJECT_REASONS:
+    cv_ws_trades_subscribe_rejected_total.labels(reason=_trades_reason)
+
 #: Bounded `cv_ws_auth_failures_total{reason}` values. `token_expired` counts
 #: tokens the session service accepted but the gateway clock had already passed
 #: (a sub-ms race in production); tokens the service refuses count as `rejected`.
@@ -320,6 +349,10 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_rtt_seconds",
         "cv_ws_queue_bytes",
         "cv_ws_queue_frames",
+        "cv_ws_frames_emitted_total",
+        "cv_ws_tape_prints_dropped_total",
+        "cv_ws_tape_frames_coalesced_total",
+        "cv_ws_trades_subscribe_rejected_total",
         "cv_machine_ws_publish_total",
         "cv_machine_ws_scope_missing_total",
         "cv_machine_ws_registry_full_total",

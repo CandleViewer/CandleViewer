@@ -2645,6 +2645,56 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_frames_emitted_total",
+        "counter",
+        "frames",
+        ("topic",),
+        "Frames a topic publisher emitted (one per subscriber reached); the topic label holds the "
+        "topic family (E22-T02: `trades`).",
+        "dashboard only",
+        _L,
+        "E22",
+        max_series=1,  # `trades`
+        exported=True,
+    ),
+    _s(
+        "cv_ws_tape_prints_dropped_total",
+        "counter",
+        "prints",
+        ("reason",),
+        "Prints a `trades` option set dropped before clustering, also carried in the frames' "
+        "`dropped` (23 section 14.2); reason `min_size`.",
+        "dashboard only",
+        _L,
+        "E22",
+        max_series=1,  # `min_size`
+        exported=True,
+    ),
+    _s(
+        "cv_ws_tape_frames_coalesced_total",
+        "counter",
+        "frames",
+        (),
+        "`trades` publishes that appended more than one source batch (23 section 8.6).",
+        "dashboard only",
+        _L,
+        "E22",
+        exported=True,
+    ),
+    _s(
+        "cv_ws_trades_subscribe_rejected_total",
+        "counter",
+        "requests",
+        ("reason",),
+        "`trades` subscriptions and retunes refused by an E22 bound (SR-E22-03/04/06/07), by "
+        "reason: min_size_floor, cluster_range, sub_cap_user, option_sets, symbols.",
+        "sustained growth: abuse (E22 threat model section 10)",
+        _L,
+        "E22",
+        max_series=5,
+        exported=True,
+    ),
+    _s(
         "cv_ws_fanout_seconds",
         "histogram",
         "seconds",

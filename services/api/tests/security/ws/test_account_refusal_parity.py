@@ -338,6 +338,7 @@ def test_x02_ac_05_every_collaborator_of_the_subscription_services_is_known_to_t
     known |= {"snapshot_cache", "sequencing", "bars_off", "machines", "span_ids", "user_rebuilds"}
     known |= {"qty_step"}  # SR-E12-03 (#3885): read only for a `bar_type` topic, to bound a param
     known |= {"indicators"}  # E13-T02 (#426): read only to hold an `indicators.*` topic's instances
+    known |= {"trades"}  # E22-T02 (#654): read only to lease a live `trades.*` topic, authorised
     assert {f.name for f in fields(permissions.SubscriptionServices)} == known, (
         "a new collaborator of the subscription services: wire it into `spies` and the arms, so "
         "that a `sub` that reads it is seen, then add it here"

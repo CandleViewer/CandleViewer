@@ -121,6 +121,11 @@ from candleviewer.ws.topics import (
     parse_topic,
     validate_options,
 )
+from candleviewer.ws.trades_publish import (
+    TradesLease,
+    note_option_refusal,
+    options_of,
+)
 from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs
 
 #: §13.5 `sub.p` keys; any other key breaks the frame's shape (#2399).
@@ -249,6 +254,21 @@ class EntityScopes(Protocol):
         """The entry's scope; `None` when `ch` has no entry."""
 
 
+class TradesLeases(Protocol):
+    """`TradesTopic` (E22-T02, #654): a live `trades.*` subscription holds a lease on its symbol's
+    tape and its option set's (`trades_publish.py`); each refusal is a `TopicError`."""
+
+    def hold(self, consumer: str, user: str, symbol: str, options: Any) -> TradesLease: ...
+
+    def check_retune(self, lease: TradesLease, options: Any) -> None: ...
+
+    def retune(self, lease: TradesLease, options: Any) -> TradesLease: ...
+
+    def release(self, lease: TradesLease) -> None: ...
+
+    def echo(self, symbol: str) -> dict[str, Any]: ...
+
+
 @dataclass
 class SubscriptionServices:
     """Process-wide collaborators shared by every connection (injected; never a global)."""
@@ -259,6 +279,8 @@ class SubscriptionServices:
     #: E13-T02: the indicator engine an `indicators.*` subscription holds instances of (with
     #: `bars_enabled`); None: its instances are validated and echoed, and nothing is held.
     indicators: IndicatorInstances | None = None
+    #: E22-T02: the `trades` tapes a live `trades.*` subscription leases; None: it holds none.
+    trades: TradesLeases | None = None
     audit: AuditSink | None = None
     clock: Callable[[], float] = time.monotonic
     instrument_known: Callable[[str], bool] | None = None
@@ -351,6 +373,8 @@ class Subscription:
     series_hold: Hold | None = None  # a live `bars.*` one's series in the snapshot store
     #: A live `indicators.*` one's instance keys in the indicator engine (E13-T02).
     indicator_keys: tuple[str, ...] = ()
+    #: A live `trades.*` one's lease on its tape and option set (E22-T02).
+    trades_lease: TradesLease | None = None
     #: §7.4 reason the pending `snap` will carry (E17-S03).
     pending_reason: SnapReason = "initial"
     #: §6.4 `machines`: the entity's scope, read from its entry at `sub`, so every RBAC change
@@ -649,6 +673,7 @@ class ConnectionAuthz:
             return self._admit(entry, ch, snapshot, replay_session_id)
         except TopicError as exc:
             self.refusal_reason = exc.reason
+            note_option_refusal(ch, exc.code, exc.field)  # SR-E22-04 on `trades` (E22-T02)
             return _fail(ch, exc.code, exc.message, exc.field), None
 
     def _admit(
@@ -891,6 +916,13 @@ class ConnectionAuthz:
             if engine is not None and spec is not None:  # all or nothing: `admit` undoes a raise
                 engine.admit(symbol or "", spec, requested, consumer, user, history=history)
                 sub.indicator_keys = tuple(r.key for r in requested)
+            trades = self.services.trades
+            if family == "trades" and trades is not None:  # E22-T02: refused with nothing held
+                sub.trades_lease = trades.hold(consumer, user, symbol or "", options_of(sub.opts))
+                sub.effective.update(trades.echo(symbol or ""))
+        except TopicError as exc:  # E22-T02: a `trades` bound (SR-E22-03/06/07)
+            self._drop(sub)
+            return _fail(sub.ch, exc.code, exc.message, exc.field)
         except SpecCapExceeded:
             self._drop(sub)
             return _fail(sub.ch, "subscription_limit", "Too many distinct bar series.")
@@ -986,6 +1018,9 @@ class ConnectionAuthz:
         if hold is not None:  # first: a lease release below can raise (#2735)
             # A lease never taken (refused, or the connection ended mid-subscribe): no grace.
             hold.release(grace=sub.bar_lease is not None)
+        lease, sub.trades_lease = sub.trades_lease, None
+        if lease is not None and self.services.trades is not None:  # before a raise below
+            self.services.trades.release(lease)
         keys, sub.indicator_keys = sub.indicator_keys, ()
         if keys and self.services.indicators is not None:
             self.services.indicators.release(sub.topic.symbol or "", keys, consumer)
@@ -1048,6 +1083,7 @@ class ConnectionAuthz:
             changes[key] = spec.check(key, body[key])
         retune = self._retune(sub, changes["instances"]) if "instances" in changes else None
         opts = {**sub.opts, **{k: v for k, v in changes.items() if k != "paused"}}
+        moved = self._retune_trades(sub, opts) if "min_size" in changes else None
         effective = effective_options(sub.topic, opts)
         if sub.topic.family.family == "indicators":  # the canonical echo, never the raw entries
             effective["instances"] = sub.effective.get("instances") if retune is None else retune[2]
@@ -1070,6 +1106,12 @@ class ConnectionAuthz:
                 raise TopicError("resync_rate_limited", f"{spent}; nothing was changed.")
         if retune is not None and effective["instances"] != sub.effective.get("instances"):
             self._hold_instances(sub, retune[0], retune[1])
+        if sub.topic.family.family == "trades":  # E22-T02: the threshold echo stays (§6.1)
+            if moved is not None and self.services.trades is not None:
+                sub.trades_lease = self.services.trades.retune(moved[0], moved[1])
+            for key in ("big_trade_threshold", "big_trade_mode"):
+                if key in sub.effective:
+                    effective[key] = sub.effective[key]
         if paused or "paused" in changes:
             effective["paused"] = paused
         if sub.accounts:
@@ -1086,6 +1128,20 @@ class ConnectionAuthz:
             k: v for k, v in effective.items() if k in changes or k in ("throttle_ms", "paused")
         }
         return echoed, resnapshot, sub
+
+    def _retune_trades(
+        self, sub: Subscription, opts: Mapping[str, Any]
+    ) -> tuple[TradesLease, Any] | None:
+        """A `ctl` of `min_size` on a held `trades.*` one (§6.1): its new option set, checked
+        against the floor and the option-set cap before anything changes (`check_retune`; the
+        commit's `retune` moves the lease), or `TopicError`. None when it holds no lease (a
+        replay one, or no tape wired)."""
+        lease, trades = sub.trades_lease, self.services.trades
+        if lease is None or trades is None:
+            return None
+        options = options_of(opts)
+        trades.check_retune(lease, options)
+        return lease, options
 
     def _retune(
         self, sub: Subscription, raw: list[dict[str, Any]]
