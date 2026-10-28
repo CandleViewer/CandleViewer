@@ -64,6 +64,42 @@ export const DEGRADED_COPY = {
 export type DegradedIssueId = keyof typeof DEGRADED_COPY;
 
 /**
+ * SCR-159 (`docs/design/E10/E10-D03.md` §9.2 and board 10). Where §9.2 cites an E10-D02 string
+ * without restating it ("the three checks", the sentence of a variant), E10-D02's frame is the
+ * source, as D03 changes none of D02's strings. PROPOSED marks a string composed here.
+ */
+export const OFFLINE_COPY = {
+  /** §9.2: "You're offline" (E17-D02 §10 D) and "Reconnects automatically.". */
+  offline: { heading: "You're offline", sentence: "Reconnects automatically." },
+  /** §9.2: the heading (`14` SCR-159 A11y); the sentence is `14` SCR-159 Type's (D02 f26). */
+  tailnet_unreachable: {
+    heading: "Not connected to the tailnet",
+    sentence: "Can't reach the backend — check that Tailscale is connected.",
+  },
+} as const;
+
+/** D02 f26: the three checks §9.2 cites for tailnet-unreachable. */
+export const TAILNET_CHECKS = [
+  "Open Tailscale and check this computer shows Connected.",
+  "Check the backend machine is online in Tailscale.",
+  "Try again.",
+] as const;
+
+export const SCR159_COPY = {
+  /** §9.2 and board 10 (E17-D02 §10 A's approximate "~4 s"). */
+  retryIn: (s: number): string => `Retrying in ~${s} s`,
+  /** Board 10. */
+  retryNow: "Retry now",
+  /** §9.2: SCR-157's fallback block (CMP-068, SR-086). */
+  fallback: "Fallback: the server console command",
+  command: "candleviewer kill",
+  /** PROPOSED: the CMP-033 name on the block (D03 gives the block, not its button's name). */
+  copyCommand: "Copy the server console command",
+  /** D02 f25 / f26 A11y (`14` SCR-159 checklist 5): the recovery, said once, politely. */
+  recovered: "Connected again — data is live.",
+} as const;
+
+/**
  * SCR-156 / CMP-091: the copy lives with the component (`@candleviewer/ui`
  * `GLOBAL_ERROR_FALLBACK_COPY`, E05-S04), each string with its source there.
  */

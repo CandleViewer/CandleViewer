@@ -14,6 +14,7 @@ import { openWorkerPort } from "../lib/ws/client/workerPort.js";
 import type { PortLike } from "../lib/ws/port/endpoint.js";
 import type { WsState } from "../lib/ws/state/types.js";
 import { runBootstrap, type BootstrapDeps } from "./bootstrap/bootstrap.js";
+import { startLiveness } from "./bootstrap/liveness.js";
 import { createBrowserShellAdapter } from "./BrowserShellAdapter.js";
 import { installCrashReporter } from "./crash/reportCrash.js";
 import {
@@ -64,6 +65,12 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     port: createBrowserShellAdapter(),
     version: CLIENT_VERSION,
   });
+  // SCR-159 (#306 slice 9): the liveness probe's verdict, for the in-canvas offline states
+  const liveness = startLiveness({ onChange: (reachability) => setShellState({ reachability }) });
+  const teardown = (): void => {
+    liveness.stop();
+    uninstallCrash();
+  };
   // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call.
   // `refresh` stops waiting after REFRESH_WAIT_MS (another tab may hold the lock), so the first paint does too.
   // #1640: a refresh answered `session_idle_locked` is a reload into a locked session. It mints no token, so the
@@ -84,8 +91,8 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     // half still runs, so the app loads without a live feed instead of with a shell that never started.
     console.error("startShell: the worker's port could not be opened", error);
     setShellState({ connection: { kind: "offline", cause: "backend_unreachable" } });
-    stopActive = uninstallCrash;
-    return { ready, stop: uninstallCrash };
+    stopActive = teardown;
+    return { ready, stop: teardown };
   }
   const opened = options.port === undefined;
   const client = createWsClient({
@@ -99,14 +106,22 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     telemetry: { recordDecode }, // `fe_ws_decode_ms` (D8), into the app's aggregator
     onLatency: (latency) => setShellState({ latency }), // budget #3: the client throttles it to once a second
   });
-  const forward = (): void => setShellState({ connection: toConnectionState(client.getState()) });
+  let wasLive = false;
+  const forward = (): void => {
+    const connection = toConnectionState(client.getState());
+    const live = connection.kind === "live";
+    if (wasLive && !live) liveness.probeNow(); // an observed loss: check now
+    if (live && !wasLive) liveness.markReachable(); // an observed success: the server answered
+    wasLive = live;
+    setShellState({ connection });
+  };
   client.subscribe(forward); // `client.stop()` drops it
   forward();
   setActiveClient(client);
 
   const stop = (): void => {
     client.stop();
-    uninstallCrash();
+    teardown();
     if (opened) port.close?.(); // what the shell opened it lets go of: a replaced shell leaves one worker, not two
     if (stopActive === stop) {
       stopActive = null;

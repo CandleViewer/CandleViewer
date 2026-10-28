@@ -15,7 +15,8 @@
  *  - the WS connection state and reconnect countdown;
  *  - the WS latency indicator (budget #3), at most once a second;
  *  - the SCR-153 degraded facts (E10-S04 #306), folded from every `system` frame,
- *    with row 9's 10 s hand-over to R5 timed here (E17-D02 §6).
+ *    with row 9's 10 s hand-over to R5 timed here (E17-D02 §6);
+ *  - SCR-159's reachability, the liveness probe's verdict (`liveness.ts`).
  */
 import type { generated } from "@candleviewer/protocol";
 import {
@@ -26,6 +27,7 @@ import {
   type DegradedFacts,
 } from "../../features/system-states/degradedIssues.js";
 import { toLatencyIndicator, type LatencyIndicator } from "../../lib/telemetry/latencyIndicator.js";
+import { REACHABLE, type Reachability } from "./reachability.js";
 
 export type Me = generated.rest.components["schemas"]["Me"];
 export type Settings = generated.rest.components["schemas"]["Settings"];
@@ -74,6 +76,8 @@ export interface ShellState {
   readonly degraded: DegradedFacts;
   /** `connection` has been `live` this session; a later `connecting` is a loss, not the boot. */
   readonly everLive: boolean;
+  /** SCR-159: reachable until a liveness probe goes unanswered (never `navigator.onLine` alone). */
+  readonly reachability: Reachability;
 }
 
 const INITIAL_BOOTSTRAP: BootstrapPhase = { kind: "loading" };
@@ -92,6 +96,7 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
   latency: toLatencyIndicator(null),
   degraded: INITIAL_DEGRADED_FACTS,
   everLive: false,
+  reachability: REACHABLE,
 });
 
 let state: ShellState = INITIAL_SHELL_STATE;

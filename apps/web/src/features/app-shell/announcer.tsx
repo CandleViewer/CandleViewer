@@ -20,12 +20,15 @@ export const CONNECTION_KEYS = {
 } as const;
 /** Every connection key starts with this: `CONNECTION_KEYS` and the region's row 2 keys. */
 export const CONNECTION_PREFIX = "connection:";
+/** E17-D02 §11: at most one message per 5 s per region, so a later writer never cuts the last one. */
+export const REGION_BUDGET_MS = 5_000;
 
 type Message = { readonly text: string; readonly seq: number; readonly key: string };
 type Regions = Readonly<Record<Politeness, Message | null>>;
 const EMPTY: Regions = { polite: null, assertive: null };
 
 let regions: Regions = EMPTY;
+let writtenAt: Readonly<Record<Politeness, number>> = { polite: -Infinity, assertive: -Infinity };
 let seq = 0;
 const said = new Set<string>();
 const listeners = new Set<() => void>();
@@ -37,8 +40,14 @@ export function announce(politeness: Politeness, text: string, key: string): boo
   said.add(key);
   seq += 1; // a new node per message, so the same words in a later episode are read again
   regions = { ...regions, [politeness]: { text, seq, key } };
+  writtenAt = { ...writtenAt, [politeness]: Date.now() };
   emit();
   return true;
+}
+
+/** When a region was last written (epoch ms): a writer waits out REGION_BUDGET_MS from here. */
+export function lastWrittenAt(politeness: Politeness): number {
+  return writtenAt[politeness];
 }
 
 /** Lets `key` be said again (e.g. row 14 once per entry). */
@@ -48,9 +57,11 @@ export function forget(key: string): void {
 
 /**
  * Ends an episode: forgets the keys and empties the regions. With `prefix`, only the keys that start
- * with it, and a region only while its message is one of them; without, every key and both regions.
+ * with it, and a region only while its message is one of them; without, every key and both regions,
+ * and the write times too.
  */
 export function clearAnnouncements(prefix?: string): void {
+  if (prefix === undefined) writtenAt = { polite: -Infinity, assertive: -Infinity };
   const ours = (key: string): boolean => prefix === undefined || key.startsWith(prefix);
   for (const key of [...said]) if (ours(key)) said.delete(key);
   const keep = (m: Message | null): Message | null => (m !== null && ours(m.key) ? null : m);
