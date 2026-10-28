@@ -2095,8 +2095,8 @@ class RateBudget(BaseModel):
                             "account.read","market.read"]
     capacity: int                  # tokens
     refill_per_s: float
-    reserved_for_protective: int = 2   # tokens never spendable by non-protective orders
-    reserve_fraction: float = 0.10     # >=10% of capacity held for protective/unwind traffic
+    reserved_for_protective: int       # tokens never spendable by non-protective orders
+    reserve_fraction: float            # the stop / cancel reserve: CONSTITUTION.md C-12.7 sets it
 ```
 
 **Request priority classes.** Every outbound request carries `priority ∈ {critical, normal, background}`:
