@@ -1,9 +1,9 @@
-"""#492 S7 and S8: `POST /recording/symbols`, `PUT …/{id}/pin`, `PATCH` and `DELETE …/{id}`
-over a bare app, the fake control behind them. RBAC first (403 with `rbac.denied`, AC5), a user
-actor, the per-user write limit (429), the key and body (422), the store (503), the `recorder`
-step-up where a write changes retention, a replay, the entry in the settings' env (404), then
-the write, which the policy records ahead of the store. A non-Owner reads every answer through
-the restricted view, and a refused stop by restricted refusal parity."""
+"""#492 S7 and S8: `POST /recording/symbols`, `PUT …/{id}/pin`, `PATCH` and `DELETE …/{id}` over a
+bare app, the fake control behind them. RBAC first (403 with `rbac.denied`, AC5), a user actor, the
+body's size (413), the key and body (422), a malformed id (404), the per-user write limit (429), the
+store (503), the `recorder` step-up where a write changes retention, a replay, the entry in the
+settings' env (404), then the write, which the policy records ahead of the store. A non-Owner reads
+every answer through the restricted view, and a refused stop by restricted refusal parity."""
 
 from __future__ import annotations
 
@@ -197,6 +197,55 @@ async def test_past_the_per_user_write_limit_a_write_is_429_with_retry_after() -
     assert (await env.add(symbol="BTCUSDT")).status_code == 200
     env.now, env.caller = 60.0, first
     assert (await env.add(symbol="BTCUSDT")).status_code == 200
+
+
+async def test_past_the_limit_a_malformed_request_is_422_and_spends_no_budget() -> None:
+    # #4868: the limit is admitted after the key, the body, the query and the path id parse, so
+    # a request that is no write answers its 422 (or 404) and the 429 countdown stays for writes
+    fake = FakeRecorder()
+    entry = fake.put("ETHUSDT")
+    env = _Env(fake, *W)
+    for _ in range(30):
+        assert (await env.add(symbol="BTCUSDT")).status_code in {200, 201}
+    one = f"{_ADD}/{entry.id}"
+    malformed = [
+        await env.http.post(_ADD, json={"symbol": "BTCUSDT", "streams": ["trades AND 1=1 -- "]}),
+        await env.http.post(_ADD, json={"symbol": "BTCUSDT"}, headers={"Idempotency-Key": "x"}),
+        await env.http.put(_PIN.format(entry.id), json={"pinned": "false' OR '1'='1"}),
+        await env.http.patch(one, json={"depth": "202-2"}),
+        await env.http.delete(one, params={"force": "false ASC -- "}),
+    ]
+    assert [m.status_code for m in malformed] == [422] * 5
+    assert {m.json()["code"] for m in malformed} == {"validation_failed"}
+    bad_ids = ["{recordedSymbolId} AND 1=1 -- ", "00000000-0000-4000-8000-0000000000ff OR 1=1"]
+    for bad in bad_ids:
+        assert (await env.http.delete(f"{_ADD}/{bad}")).status_code == 404
+        assert (await env.http.patch(f"{_ADD}/{bad}", json={"depth": 200})).status_code == 404
+    limited = await env.add(symbol="BTCUSDT")  # the 31st well-formed write: still limited
+    assert (limited.status_code, limited.json()["retry_after_seconds"]) == (429, 60)
+    assert fake.entries.keys() == {"ETHUSDT", "BTCUSDT"}
+
+
+async def test_a_body_over_the_cap_is_413_before_any_parse_or_the_limit() -> None:
+    env = _Env(None, *W)
+    big = b'{"symbol": "BTCUSDT", "pad": "' + b"x" * writes.MAX_WRITE_BODY_BYTES + b'"}'
+    for _ in range(31):  # past the limit too: the cap answers first, and spends nothing
+        refused = await env.http.post(_ADD, content=big)
+        assert (refused.status_code, refused.json()["code"]) == (413, "payload_too_large")
+    assert env.fake.entries == {} and env.actions() == []
+    assert (await env.add(symbol="BTCUSDT")).status_code == 201
+
+
+async def test_the_429_detail_is_one_sentence_and_the_countdown_rides_its_own_fields() -> None:
+    # #4868: differential scanners compare bodies; the number is in Retry-After and the extension
+    env = _Env(None, *W)
+    for _ in range(30):
+        await env.add(symbol="BTCUSDT")
+    early = await env.add(symbol="BTCUSDT")
+    env.now = 30.0
+    later = await env.add(symbol="BTCUSDT")
+    assert early.json()["detail"] == later.json()["detail"]
+    assert (early.headers["Retry-After"], later.headers["Retry-After"]) == ("60", "30")
 
 
 def test_the_write_limiter_keeps_at_most_its_tracked_users() -> None:

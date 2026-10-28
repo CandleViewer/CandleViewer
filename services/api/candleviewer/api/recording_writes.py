@@ -1,16 +1,16 @@
 """The recorded-set writes (E16-T08, #492): `recording:write`, scope none. Checked in order: session
-(401), permission (403, audited), a user actor (403), the per-user write limit (429), the
-`Idempotency-Key` and the body (422), the store (503), the `recorder` step-up where the write
-changes retention (403), a replay (409 on another body), the entry in the settings' env and the
-caller's view (404), then the write. The pin, always under the step-up, demands it after the
-entry's lookup instead, its challenge restating the entry and the pin (#2304 slice 3c), and looks
-its key up only behind it (a kept answer, or the 409 for another request). The policy records
-each write ahead of the store (503 when it cannot); a pin, an unpin and a retention change
-included (#2188 S3c), so the routes record only what they refuse. The caller's view goes to the
-port from the principal only (C-12.4): an unpin or a lower retention that a cause outside it
-holds is 403, recorded once; on an add the manual reason may already have landed (recorded by the
-policy) when a hidden cause took the row between the port's checks. No control writes until the
-recorder runtime is bound (#2188 S4b): until then every write is 503."""
+(401), permission (403, audited), a user actor (403), the body's size (413), the `Idempotency-Key`
+and the body (422), a malformed id (404), the per-user write limit (429, #4868), the store (503),
+the `recorder` step-up where the write changes retention (403), a replay (409 on another body), the
+entry in the settings' env and the caller's view (404), then the write. The pin, always under the
+step-up, demands it after the entry's lookup instead, its challenge restating the entry and the pin
+(#2304 slice 3c), and looks its key up only behind it (a kept answer, or the 409 for another
+request). The policy records each write ahead of the store (503 when it cannot); a pin, an unpin and
+a retention change included (#2188 S3c), so the routes record only what they refuse. The caller's
+view goes to the port from the principal only (C-12.4): an unpin or a lower retention that a cause
+outside it holds is 403, recorded once; on an add the manual reason may already have landed
+(recorded by the policy) when a hidden cause took the row between the port's checks. No control
+writes until the recorder runtime is bound (#2188 S4b): until then every write is 503."""
 
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ from candleviewer.api.idempotency import (
     replay,
     request_fingerprint,
 )
+from candleviewer.api.profile_body import BodyTooLarge, read_capped
 from candleviewer.api.recording_symbols import _dump
 from candleviewer.api.step_up_challenge import ChallengeText, pin_symbol_text
 from candleviewer.audit.access import AuditPrincipal
@@ -57,6 +58,9 @@ _RETAINS: Final = frozenset({"pinned", "retention_days"})  # a retention change 
 _BASIS: Final = "~0.5-0.75 GB/day/symbol compressed at depth 200"
 _DEEP: Final = "Depth 500 records more than the depth-200 planning rate."
 _WINDOW_S: Final = 60.0
+#: An add is a symbol, at most eight stream names, a depth, `pinned` and `retention_days`: under
+#: 1 KiB. Past the cap the body is refused before it is buffered whole or parsed (#4868).
+MAX_WRITE_BODY_BYTES: Final = 4_096
 _NO_AUDIT: Final = "The audit record could not be written; nothing changed."
 _RELAX: Final = "Only the owner can unpin this row or lower its retention."
 
@@ -91,8 +95,10 @@ class WriteLimiter:
 
 class Limited(common.Problem):
     def __init__(self, wait: int) -> None:
-        super().__init__(429, ErrorCode.RATE_LIMITED, f"Too many recording writes; retry in "
-                         f"{wait} s.", retry_after_seconds=wait)  # fmt: skip
+        # one sentence: the countdown rides `Retry-After` and the extension, never the detail,
+        # so two refusals a second apart answer one body (#4868)
+        super().__init__(429, ErrorCode.RATE_LIMITED, "Too many recording writes; retry after "
+                         "Retry-After.", retry_after_seconds=wait)  # fmt: skip
 
     def response(self) -> JSONResponse:
         out = super().response()
@@ -214,23 +220,35 @@ def make_recording_writes_router(
     replays = IdempotencyCache() if cache is None else cache
 
     async def begin[M](request: Request, operation: str, parse: Callable[[Request, bytes], M],
-                       retains: Callable[[M], bool], *,
+                       retains: Callable[[M], bool], *, entry_id: str | None = None,
                        looked_up: bool = True) -> tuple[M, _Call]:  # fmt: skip
         """The admission; `looked_up=False` leaves the key's lookup to `kept`, for a route that
-        demands its step-up after this (the pin, #2304)."""
+        demands its step-up after this (the pin, #2304). The write limit is admitted once the
+        key, the body or query and the path id parse, before any store or audit effect: a
+        request that is no write answers its 422 or 404, touches nothing and spends no budget
+        (#4868); every well-formed write is counted."""
         p = await common.caller(principal_resolver, audit, request, Permission.RECORDING_WRITE)
         try:  # `added_by` and the audit name a user, so the actor must be one
             actor = Actor(kind="user", id=str(uuid.UUID(str(p.actor_id))))
         except ValueError:
             raise common.Problem(403, ErrorCode.FORBIDDEN, "Only a user may write.") from None
-        if (wait := limits.admit(actor.id)) is not None:
-            raise Limited(wait)
-        raw = await request.body()
+        try:
+            raw = await read_capped(request, MAX_WRITE_BODY_BYTES)
+        except BodyTooLarge:
+            msg = f"The body exceeds {MAX_WRITE_BODY_BYTES} bytes."
+            raise common.Problem(413, ErrorCode.PAYLOAD_TOO_LARGE, msg) from None
         try:
             key = idempotency_key(request, operation)
         except ValueError:
             raise common.Problem(422, BAD, "Idempotency-Key must be a UUID.") from None
         body = parse(request, raw)
+        if entry_id is not None:
+            try:  # the id's own parse; `visible` looks it up, after the admission
+                uuid.UUID(entry_id)
+            except ValueError:
+                raise _missing() from None
+        if (wait := limits.admit(actor.id)) is not None:
+            raise Limited(wait)
         if (found := control()) is None:
             raise common.unavailable()
         if retains(body):
@@ -362,7 +380,7 @@ def make_recording_writes_router(
         the entry is found (#2304 slice 3c), so a refused or missing one is never challenged;
         a kept answer is read back only behind it."""
         body, call = await begin(request, "pinRecordedSymbol", _json(_Pin), lambda _b: False,
-                                 looked_up=False)  # fmt: skip
+                                 entry_id=entry_id, looked_up=False)  # fmt: skip
         entry = await visible(call, entry_id)
         days = None if body.pinned else body.retention_days
         await gate(call.p, pin_symbol_text(entry.symbol, entry.id, pinned=body.pinned,
@@ -390,7 +408,8 @@ def make_recording_writes_router(
         row that stays pinned is ignored: a pin keeps forever (22 nulls the days). The answer
         reports the stored values; it promises no change to a running session."""
         body, call = await begin(request, "updateRecordedSymbol", _update,
-                                 lambda b: bool(b.model_fields_set & _RETAINS))  # fmt: skip
+                                 lambda b: bool(b.model_fields_set & _RETAINS),
+                                 entry_id=entry_id)  # fmt: skip
         if call.replayed is not None:
             return call.replayed
         entry, spec = await visible(call, entry_id), _spec(body)
@@ -416,7 +435,8 @@ def make_recording_writes_router(
         """Ends the manual reason: `204`, the row then lingers until the grace window ends (Q1);
         a pin stays (Q4). Refused while a trigger holds, unless `force`. No step-up: it changes
         no retention and deletes nothing."""
-        force, call = await begin(request, "removeRecordedSymbol", _stop, lambda _f: False)
+        force, call = await begin(request, "removeRecordedSymbol", _stop, lambda _f: False,
+                                  entry_id=entry_id)  # fmt: skip
         if call.replayed is not None:
             return call.replayed
         entry = await visible(call, entry_id)
