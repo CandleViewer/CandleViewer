@@ -141,6 +141,7 @@ def test_a_left_out_optional_member_stays_absent(mode: str) -> None:
         ("SetFeatureFlagRequest", {}, "value", None),  # `{}` in the contract: any value
         ("PaneConfig", {}, "settings", {"depth": None}),  # a value that is null, not the member
         ("UpdateRecordedSymbolRequest", {}, "retention_days", None),
+        ("WatchlistInput", {"name": "n", "symbols": []}, "columns", None),  # null: the defaults
     ],
 )
 def test_a_member_the_contract_lets_be_null_still_takes_it(
@@ -151,9 +152,11 @@ def test_a_member_the_contract_lets_be_null_still_takes_it(
 
 def test_a_model_no_request_body_reaches_still_takes_null() -> None:
     """Ruling 1: a response model keeps taking `null`, also where it extends a request model that
-    refuses it (`Alert` extends `AlertInput`, `Watchlist` extends `WatchlistInput`)."""
+    refuses it (`Alert` extends `AlertInput`). `Watchlist` extends none (#4706) and answers every
+    member, `columns` included."""
     requested = {model.__name__ for model in REQUEST_MODELS}
     models = [c for n, c in _models().items() if n not in requested]
     probed = [(c, m) for c in models for m, f in c.model_fields.items() if f.default is None]
-    assert {(api.Alert, "message_template"), (api.Watchlist, "columns")} <= set(probed)
+    assert (api.Alert, "message_template") in set(probed)
+    assert api.Watchlist.model_fields["columns"].is_required()
     assert [(c.__name__, m) for c, m in probed if not model_accepts(c, m, None)] == []
