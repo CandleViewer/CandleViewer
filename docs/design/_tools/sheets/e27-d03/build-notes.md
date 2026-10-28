@@ -327,3 +327,19 @@ are the ones rendered; regenerate with these fixes before any redraw:
 - 04 / 05 every CMP-041 Menu: height = the last item's bottom + 4 px; focus ring 280 (item 276 at +2).
 - 04 / 05 "health degraded and down" CMP-011 chip: fixed 232 px, the word wraps.
 - generator: the CMP-019 glyph text box is 2 px taller than its 16 px icon box (lint noise only).
+- all boards (boards review round 2): the critical state's BLOCKED label and the LIVE pill's word bind the
+  `font.weight.bold` token on `fontWeight` (700) over `type.ui.label`; cvsheet has no weight field, so this is a live
+  bind after rendering, committed as `live/bold-bind.js` (`BOLD` in the kit's fallbacks stays true of the sheets,
+  not of the boards).
+- export (boards review round 2, B-2): Penpot re-resolves token-bound fills in the open tab at once, but saves them
+  only while the tab stays active after a theme switch; the server-side export renders the saved copy, so a tab that
+  shows the right colours can still export the other theme's. Before exporting, switch the theme away and back (on
+  this file a switch outlasts the bridge's 120 s timeout: poll the active theme), keep the tab awake with a read-only
+  probe every 30 s through a 5 min save wait, and gate every PNG on its theme's text-colour pixels with
+  `live/themegate.py` (own ≥ 10 × the other). The first export carried the other theme's saved fills on boards 03–10.
+
+## For cvsheet's next version
+
+- A text node has no font-weight field, so a ruled bold word over a typography token (here BQ-6 (3)'s BLOCKED label
+  and §3.1's LIVE pill) needs a post-render bind (`live/bold-bind.js`). A `weight` key binding `font.weight.*` on
+  `fontWeight` after the typography token would let the sheet carry it.
