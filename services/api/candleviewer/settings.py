@@ -100,6 +100,12 @@ OMS_INFLIGHT_STUCK_MAX_S: Final = 120.0
 #: own sink and audit writer, and its pool) and then the order lane's join, of the supervised OMS
 #: module's grace (`TEARDOWN_BUDGET_S`).
 OMS_STOP_RESERVE_S: Final = 5.0
+#: E29-T05 S8b (20 Sec.6.2, the orchestrator's Q2 (a)): how long the OMS runtime's stop waits for
+#: its private-stream consumer's stop, which runs beside its drain, so the stop takes the longer
+#: of the two, then `OMS_STOP_RESERVE_S`. The consumer's own bound,
+#: `stream_consumer.STOP_TIMEOUT_S`, spelled out as M1 may not import `oms`; a test pins the two
+#: equal.
+OMS_CONSUMER_STOP_S: Final = 2.0
 #: The price band's default and bounds (22 `placeOrder`, #913 S4-S ruling Q3), the pipeline's own.
 OMS_PRICE_BAND_DEFAULT: Final = Decimal("0.05")
 OMS_PRICE_BAND_MIN: Final = Decimal("0.005")
@@ -814,9 +820,10 @@ class Settings(BaseSettings):
     oms_startup_wait_s: float = Field(
         default=OMS_STARTUP_WAIT_DEFAULT_S, ge=5.0, le=45.0, allow_inf_nan=False
     )
-    # On stop, submits in flight get this long, then are cancelled. With `OMS_STOP_RESERVE_S` the
-    # runtime's stop keeps within the supervised OMS module's grace (20 Sec.6.2); it is the
-    # lifespan's first stop after the gateway's, which `_refuse_unfittable_stop_budget` counts.
+    # On stop, submits in flight get this long, then are cancelled; the private-stream consumer's
+    # stop (`OMS_CONSUMER_STOP_S`) runs beside it. With `OMS_STOP_RESERVE_S` the runtime's stop
+    # keeps within the supervised OMS module's grace (20 Sec.6.2); it is the lifespan's first stop
+    # after the gateway's, which `_refuse_unfittable_stop_budget` counts.
     oms_drain_s: float = Field(
         default=10.0, ge=1.0, le=TEARDOWN_BUDGET_S - OMS_STOP_RESERVE_S, allow_inf_nan=False
     )
@@ -1182,10 +1189,13 @@ class Settings(BaseSettings):
         runtime's stop is bounded, at 25 s in three steps: `STOP_TIMEOUT_S` (11 s) for the loops
         and for the drain, `RELEASE_TIMEOUT_S` (3 s) for its pool. The OMS runtime's stop (#913
         slice 3E, SEC-S3B1-02) runs first after the gateway's, so only this sum's terms before
-        the teardown come before it, and it is the one stop the sum lets run to its bound:
-        `CV_OMS_DRAIN_S` plus `OMS_STOP_RESERVE_S`, at most `TEARDOWN_BUDGET_S`, inside
-        `TEARDOWN_STOP_CAP_S`. Every config this accepts therefore leaves it its whole bound, its
-        journal included: at the defaults it ends by 27.2 of the 30 s. An OMS stop that uses its
+        the teardown come before it, and it is the one stop the sum lets run to its bound: the
+        longer of `CV_OMS_DRAIN_S` and its private-stream consumer's stop, which runs beside the
+        drain (`OMS_CONSUMER_STOP_S`, 2 s; E29-T05 S8b), plus `OMS_STOP_RESERVE_S`, at most
+        `TEARDOWN_BUDGET_S` (the drain's ceiling is `TEARDOWN_BUDGET_S` less the reserve, and the
+        consumer's stop is below it), inside `TEARDOWN_STOP_CAP_S`. Every config this accepts
+        therefore leaves it its whole bound, its journal included: at the defaults it ends by 27.2
+        of the 30 s. An OMS stop that uses its
         whole bound leaves `stop_all`, the KEK zeroing included, about 2.8 s at the defaults: it
         is the one hung module the sum covers, so a second one would outrun the budget. A sum
         exactly at the budget passes and leaves the other modules' normal stop time nothing, so

@@ -101,7 +101,8 @@ def _position(row: Mapping[Any, Any]) -> PositionRow:
 class SqlAlchemyPositionStore(CappedStore):
     """`PositionStore` and `PositionSnapshotStore` over one relational repository (asyncpg). Its
     `clock` must be exchange-synchronised (24 Sec.2.8): a lagging one refuses newer pushes and lets
-    older writes win, so E29-T04 passes the wall clock plus the monitor's offset."""
+    older writes win, so E29-T05's wiring passes `oms_stream_wiring.ExchangeWallClock`, the host's
+    time plus the exchange clock's measured offset, which the position projection reads too."""
 
     def __init__(
         self,

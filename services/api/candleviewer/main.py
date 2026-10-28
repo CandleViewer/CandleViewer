@@ -274,7 +274,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             if ws_runtime is not None:
                 await teardown.run("ws_runtime", ws_runtime.stop)
             # #913 slice 3E: the OMS runtime next, so no other step delays its drain past the stop
-            # budget (SEC-S3B1-02); E29-T05's private-stream consumer will stop just before it.
+            # budget (SEC-S3B1-02); its stop stops E29-T05's private-stream consumer first, beside
+            # its drain (S8b, 20 Sec.6.2).
             if oms_runtime is not None:
                 await teardown.run("oms_runtime", oms_runtime.stop)
             user_disable = getattr(app.state, "user_disable", None)

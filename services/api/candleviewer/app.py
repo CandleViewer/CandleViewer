@@ -601,9 +601,10 @@ def oms_runtime_of(state: State) -> OmsRuntime | None:
 
 
 def _oms_state(runtime: OmsRuntime | None) -> str | None:
-    """`/readyz`'s `oms` check: the runtime's readiness while it runs (its state, `degraded` too
-    once its environment's lock is lost, #913 L2), else no check."""
-    return runtime.readiness if runtime is not None and runtime.started else None
+    """`/readyz`'s `oms` check: the runtime's while it runs (its readiness, `degraded` too once its
+    environment's lock is lost, #913 L2, and once ready while its private-stream consumer is not
+    doing its job, E29-T05 S8b), else no check."""
+    return runtime.readyz if runtime is not None and runtime.started else None
 
 
 def bind_recording_runtime(
@@ -2480,7 +2481,8 @@ def create_app(
     # #913 slice 3E (20 Sec.6.2): the OMS runtime over that gate, the shared profile cache above
     # and the persistence bundle's latch when there is one; its audit writer and sink are its order
     # lane's own (#913 L2). The lifespan starts it after the account health runtime and stops it
-    # right after the gateway. None on the fake backend.
+    # right after the gateway. None on the fake backend. Its private-stream consumer (E29-T05 S8b)
+    # takes account health (its feed, its tracked accounts and its boot window) and the hub.
     app.state.oms_runtime = build_oms_runtime(
         ctx,
         resolved,
@@ -2496,6 +2498,8 @@ def create_app(
         # audit writer, and in dev with the account fixture its own transport, each on its loop
         lane_signing=bundle.lane_signing,
         lane_transport=None if account_fixture is None else account_fixture.lane_rest_transport,
+        health=account_health,
+        hub=ws_hub,
     )
     # #913 slice 3F (24 Sec.8.4): `placeOrder` over that runtime, mounted whatever
     # `trading.oms_enabled` says (it gates admission). The principal is the session's with its

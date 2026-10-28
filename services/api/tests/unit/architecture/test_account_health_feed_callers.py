@@ -17,6 +17,12 @@ feed in). Any other reader of the feed is a reviewed edit to `ALLOWED`.
 
 A module names one when an attribute of that name appears, call or not: a reference kept in a
 variable feeds as well as a call.
+
+`stream_started` (E29-T05 S8b, 20 Sec.6.2) opens the boot dead-man's-switch window: an account
+tracked at boot is owed its boot episode from then. Only the OMS runtime, which owns the
+private-stream consumer, calls it, where it starts the consumer (`oms_wiring.py`), and the runtime
+it calls hands it to the monitor (`account_health_wiring.py`): a call from anywhere else could open
+the window when no consumer has started, or before one does.
 """
 
 from __future__ import annotations
@@ -52,8 +58,26 @@ def _users() -> dict[str, frozenset[str]]:
     return found
 
 
+STARTED = "stream_started"
+STARTED_BY = frozenset({"account_health_wiring.py", "oms_wiring.py"})
+
+
+def _starters() -> set[str]:
+    found: set[str] = set()
+    for path in PKG.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        nodes = ast.walk(ast.parse(text)) if STARTED in text else ()
+        if any(isinstance(n, ast.Attribute) and n.attr == STARTED for n in nodes):
+            found.add(path.relative_to(PKG).as_posix())
+    return found
+
+
 def test_the_account_health_feed_is_named_only_where_it_is_reviewed() -> None:
     assert _users() == ALLOWED
+
+
+def test_the_boot_window_is_opened_only_where_the_consumer_starts() -> None:
+    assert _starters() == STARTED_BY
 
 
 def test_the_scan_still_sees_an_evidence_call_and_a_read_of_the_feed() -> None:
