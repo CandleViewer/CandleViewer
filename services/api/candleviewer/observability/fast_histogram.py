@@ -148,7 +148,7 @@ class _Exposition(Histogram):
         cls, fast: FastHistogram, documentation: str, registry: CollectorRegistry | None
     ) -> _Exposition:
         names, buckets = fast.labelnames, fast.buckets
-        if registry is None:  # the library default: no handle to it is importable here
+        if registry is None:  # the library default; the facade (`metrics.py`) names it
             out = cls(fast.name, documentation, names, buckets=buckets)
         else:
             out = cls(fast.name, documentation, names, buckets=buckets, registry=registry)
