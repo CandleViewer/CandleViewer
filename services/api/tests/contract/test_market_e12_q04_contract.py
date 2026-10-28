@@ -16,6 +16,7 @@ the server serves it or a row here says how it is refused.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -713,3 +714,24 @@ def test_contract_market_seeded_mutation_fails(
     served = _observe(case for case in _CASES if case.status == 200)
     with pytest.raises(AssertionError, match=named):
         check(_all(served))
+
+
+# -- the conformance report's baseline (Q8) --------------------------------------------------------
+
+_CASE_LIST: Final = Path(__file__).with_name("e12_q04_cases.txt")
+_API: Final = Path(__file__).resolve().parents[2]
+
+
+def test_contract_e12_q04_expected_cases_are_the_tests() -> None:
+    """The committed case list (`e12_q04_cases.txt`, which `conftest.py`'s conformance report
+    diffs each run against) names exactly the test functions its modules define: a listed case
+    with no test fails here, and so does a test the list lacks."""
+    lines = (line.partition("#")[0].strip() for line in _CASE_LIST.read_text("utf-8").splitlines())
+    listed = {line for line in lines if line}
+    defined = {
+        f"{module}::{node.name}"
+        for module in {case.partition("::")[0] for case in listed}
+        for node in ast.parse((_API / module).read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+    }
+    assert sorted(listed ^ defined) == []
