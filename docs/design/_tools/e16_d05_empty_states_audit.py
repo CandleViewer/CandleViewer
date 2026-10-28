@@ -196,10 +196,22 @@ GAP_NO_CAUSE = {
 VISIBLE_CARRIERS = ("`gap.band.label`", "`gap.axis.tag`", "`gap.seam.label`")
 # The band label never covers data (the lens's M-6): it sits under the band, E11-D02 :140's maintenance-label position.
 UNDER_BAND = "under the band"
-OVER_DATA = re.compile(r"\bplate\b|over the bars|\bruns? past\b|\bin-band\b", re.IGNORECASE)
+# Widened by the fold delta's c-3 (X12): "overlaps the first bars", "on top of", "obscures" read as covering data too.
+OVER_DATA = re.compile(
+    r"\bplate\b|\bruns? past\b|\bin-band\b|\boverlap\w*|\bon top of\b|\bobscur\w*"
+    r"|\bover (?:the )?(?:first |next |recorded |following )?(?:bars?|candles?|data)\b",
+    re.IGNORECASE,
+)
+# D05-A4 carries the PROPOSED rule that CMP-189's tick labels give way to the band label (the fold delta's c-3).
+GIVE_WAY = re.compile(r"\btick labels?\b[^|]*\bgive way\b", re.IGNORECASE)
 NINETY_DAY = "unknown — never shown as a gap and never as covered"
 # The 90-day boundary drawn as a gap or as covered (BQ-14 RULED; the lens's M-3), read clause by clause on every table.
-WINDOW = re.compile(r"\b90[- ]day|\b90 days\b|route's window|beyond the report", re.IGNORECASE)
+# Widened by the fold delta's c-2 (X7): the window named without "90-day" ("the coverage window's start").
+WINDOW = re.compile(
+    r"\b90[- ]day|\b90 days\b|route's window|beyond the report|\bcoverage window\b"
+    r"|\breport(?:ed|'s) window\b|\bwindow's start\b",
+    re.IGNORECASE,
+)
 DRAWN_AS = re.compile(
     r"\b(?:drawn|shown|hatched|counted|treated|rendered|filled|marked|painted)\s+as\s+(?:a\s+)?"
     r"(?:recording\s+)?(gap|covered|recorded)\b",
@@ -208,7 +220,12 @@ DRAWN_AS = re.compile(
 # Locks, controls and gates (A1, A3 RULED; the lens's M-4 / M-5); negated phrases are stripped before the search.
 LOCKISH = r"\b(?:pad)?lock(?:ed|s)?\b|aria-disabled|(?<![\w.-])disabled\b|\bdimm(?:ed|ing)\b|\bgr[ae]yed\b"
 CONTROL = r"\bbuttons?\b|CMP-001|`Record this symbol`"
-OWNER_GATE = r"\b[Oo]wner[- ]only\b|\bonly (?:for )?the [Oo]wner\b"
+# Widened by the fold delta's c-2 (X4, X5): "the Owner alone", "absent for a Viewer" gate an exit as surely as a lock.
+OWNER_GATE = (
+    r"\b[Oo]wner[- ]only\b|\bonly (?:for )?the [Oo]wner\b|\b(?:the )?[Oo]wners? alone\b"
+    r"|\b(?:absent|hidden|removed|unavailable|withheld|missing|omitted)\s+(?:for|to)\s+(?:an? |the )?"
+    r"(?:Viewer|Manager|non-owner|other role)s?\b"
+)
 LOCK_RE = re.compile(LOCKISH, re.IGNORECASE)
 LEG_RE = re.compile(f"{LOCKISH}|{CONTROL}", re.IGNORECASE)
 GATE_RE = re.compile(f"{LOCKISH}|{OWNER_GATE}", re.IGNORECASE)
@@ -228,7 +245,15 @@ VIEW_AS_PAIRS = (
 # The PENDING siblings (A4 RULED; the lens's m-5): by name only — never a pinned sha, a line or quoted text.
 PENDING = r"#4463|E16-D06|E16-D07"
 KEY_CHORD = re.compile(r"\b(?:Ctrl|Alt|Cmd)\+[A-Za-z0-9]+")
-DIMMING = ("opacity.disabled", "color.text.disabled")
+# The dimmed look by token or in words (the fold delta's c-2, X6: a CTA "at 45 % opacity").
+DIMMING = re.compile(
+    r"opacity\.disabled|color\.text\.disabled|\b\d{1,3}\s?%\s+opacity\b"
+    r"|\bopacity\s+(?:of\s+)?(?:\d{1,3}\s?%|0?\.\d+)",
+    re.IGNORECASE,
+)
+# The shared cause and "Not recording" in any case (the fold delta's c-2, X1 and X3).
+SHARED_CAUSE_RE = re.compile(r"\bnothing is missing\b", re.IGNORECASE)
+NOT_RECORDING = re.compile(r"\bnot recording\b", re.IGNORECASE)
 # The three-zoom thresholds and scales (spec section 3; D05-D6). px per minute; the AC 2 gap in minutes.
 ZOOM = {
     "wide_px_per_min": 0.5,
@@ -1022,7 +1047,7 @@ def gates(
     for n, c, sec in frames:
         joined = " ".join(c)
         fam = FAMILY.get(n, "")
-        if any(d in joined for d in DIMMING):
+        if DIMMING.search(joined):
             bad.append(
                 f"dimming on a sentence form [{n}]"
                 if "sentence form" in c[-1]
@@ -1031,7 +1056,7 @@ def gates(
         if KEY_CHORD.search(joined) and "PROPOSED" not in joined:
             bad.append(f"key binding drawn as shipped without PROPOSED [{n}]")
         # BQ-16: the shared cause and the stems only where the family allows them
-        if fam and fam != "start" and "Nothing is missing" in joined:
+        if fam and fam != "start" and SHARED_CAUSE_RE.search(joined):
             bad.append(f"stem family cause on a non-start frame [{n}]")
         if fam and (
             (fam != "start" and STEM_1B_TAIL in joined)
@@ -1068,16 +1093,21 @@ def gates(
         # BQ-8: a role-restricted frame never reads "Not recording", in any cell
         if fam == "restricted":
             for i, cell in enumerate(c[1:], 1):
-                if "Not recording" in NEVER.sub(" ", cell):
+                if NOT_RECORDING.search(NEVER.sub(" ", cell)):
                     bad.append(f"role-restricted frame reads 'Not recording' [{n}: cell {i}]")
         # BQ-10: every gap-family frame carries its own reason's cause, in its own cell
         if fam == "gap" and n not in GAP_CAUSE and n not in GAP_NO_CAUSE:
             bad.append(f"gap frame with no cause rule [{n}]")
-        if n in GAP_CAUSE and not (fam == "restricted" and "Not recording" in joined):
+        if n in GAP_CAUSE and not (fam == "restricted" and NOT_RECORDING.search(joined)):
             col, kind, key = GAP_CAUSE[n]
             cell = c[col] if col < len(c) else ""
-            if not cell or RECORDED_ONLY in cell:
-                pass  # an empty cell or the shared cause is reported by its own gate
+            if not cell.strip(" —–-"):
+                # the fold delta's c-1 (X8, X8b, X8c): an emptied cause cell is the M-2 class; an SCR-047 row has R-1's
+                # "cause missing" and a section 7 band frame R-12's "without a text label" for it
+                if not n.startswith("SCR-047/") and sec != 7:
+                    bad.append(f"cause cell emptied on a cause-carrying frame [{n}]")
+            elif RECORDED_ONLY.lower() in cell.lower():
+                pass  # the shared cause is reported by its own gate
             elif kind == "deck" and key in strings:
                 if not any(w in cell for w in re.findall(r'"([^"]+)"', strings[key])):
                     bad.append(f"gap frame cause is not the deck's sentence [{n}: {key}]")
@@ -1139,6 +1169,24 @@ def gates(
             bad.append("D05-D6 lets the band label cover data")
     if UNDER_BAND not in s7:
         bad.append("section 7 does not put the band label under the band")
+    # the fold delta's c-3 (X14): section 7's prose, sentence by sentence, and the AC trace's rows, cell by cell
+    for ln in s7.splitlines():
+        if ln.startswith(("|", "#")):
+            continue
+        for sent in re.split(r"(?<=[.;:])\s+", ln):
+            m = OVER_DATA.search(NEG.sub(" ", sent)) if "label" in sent else None
+            if m:
+                bad.append(f"section 7 prose lets the band label cover data [{m.group(0)}]")
+    for tsec, where, tc, _ in table_rows(spec):
+        if tsec != "AC trace":
+            continue
+        for cell in tc:
+            m = OVER_DATA.search(NEG.sub(" ", cell)) if "label" in cell else None
+            if m:
+                bad.append(f"AC trace lets the band label cover data [{where}: {m.group(0)}]")
+    a4 = [ln for ln in section(spec, 13, 14).splitlines() if ln.startswith("| D05-A4 ")]
+    if not a4 or not GIVE_WAY.search(a4[0]) or UNDER_BAND not in a4[0]:
+        bad.append("D05-A4 omits the rule that the tick labels give way to the band label")
     gapt = {n: c for n, c, s in frames if n.startswith("GAP/") and s == 8}
     if "GAP/tooltip" in gapt:
         content = gapt["GAP/tooltip"][2].lower()
@@ -1204,7 +1252,7 @@ def gates(
         if (
             tsec in ("1.3", "1.4", "1.5")
             and "role_restricted" in tc[0]
-            and "Not recording" in NEVER.sub(" ", joined)
+            and NOT_RECORDING.search(NEVER.sub(" ", joined))
         ):
             bad.append(f"role-restricted row reads 'Not recording' [{where}]")
         bad += boundary_gate(where, joined)
@@ -1274,7 +1322,12 @@ def gates(
             CITE_WARN.append(f"`{doc}` :{line} now at :{found[0]} ({want[:40]!r})")
     for f in files:
         txt = f.read_text(encoding="utf-8")
-        bad += [f"{f.name}: forbidden text {p}" for p in FORBIDDEN if re.search(p, txt)]
+        # The Penpot page and board ids in their sanctioned form (README :47; spec section 0: the word
+        # "id" + the id in backticks) are not forbidden text; a bare id (team, file, workspace) still is.
+        scan = re.sub(
+            r"\bid `[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`", "id `…`", txt
+        )
+        bad += [f"{f.name}: forbidden text {p}" for p in FORBIDDEN if re.search(p, scan)]
         for r in sorted(set(re.findall(r"\bC-\d+\.\d+\b", txt))):
             if f"**{r}" not in constitution:
                 bad.append(f"{f.name}: dangling rule id {r}")
@@ -1426,6 +1479,11 @@ def _clause(n: str, col: int, text: str) -> Callable[[str], str]:
 def _cause(n: str, text: str) -> Callable[[str], str]:
     """Replace a frame row's cause cell."""
     return lambda s: _row_edit(s, n, 3, lambda c: text)
+
+
+def _empty(n: str, col: int) -> Callable[[str], str]:
+    """Empty one cell of a frame row."""
+    return lambda s: _row_edit(s, n, col, lambda c: "")
 
 
 def _drop(n: str, marks: dict[str, tuple[int, int]]) -> Callable[[str], str]:
@@ -2252,6 +2310,111 @@ MUTATIONS: list[Mutation] = [
         "D05-D6 lets the band label cover data",
         (),
     ),
+    # 108-120: the text lens fold delta's carries c-1 to c-3 (its probes X8, X8b, X8c, X1, X3-X7, X12, X14)
+    # c-1: an emptied cause cell is the M-2 class
+    *[
+        (
+            f"c-1 {x}: {n}: the cause cell emptied",
+            _empty(n, col),
+            f"cause cell emptied on a cause-carrying frame [{n}]",
+            (),
+        )
+        for x, n, col in (
+            ("X8", "SURF/scr-103-coverage", 3),
+            ("X8b", "GAP/table-row", 2),
+            ("X8c", "SCR-151/role-restricted", 3),
+        )
+    ],
+    # c-2: the wording variants
+    (
+        "c-2 X1: GAP/tooltip: the shared cause added in lower case",
+        _clause(
+            "GAP/tooltip",
+            2,
+            '"nothing is missing or broken: candleviewer keeps only what it records."',
+        ),
+        "stem family cause on a non-start frame [GAP/tooltip]",
+        (),
+    ),
+    (
+        "c-2 X3: SCR-047/role-restricted: 'not recording' in lower case in the action cell",
+        _clause("SCR-047/role-restricted", 4, "the status reads not recording"),
+        "role-restricted frame reads 'Not recording' [SCR-047/role-restricted: cell 4]",
+        (),
+    ),
+    (
+        "c-2 X4: SCR-047/no-trades-in-window: Go to latest absent for a Viewer",
+        lambda s: _row_edit(
+            s,
+            "SCR-047/no-trades-in-window",
+            5,
+            lambda c: c.replace("`Go to latest`", "`Go to latest`, absent for a Viewer"),
+        ),
+        "exit gated [SCR-047/no-trades-in-window: absent for a Viewer]",
+        (),
+    ),
+    (
+        "c-2 X5: GAP/tooltip: Esc for the Owner alone",
+        lambda s: _row_edit(
+            s,
+            "GAP/tooltip",
+            4,
+            lambda c: c.replace("`Esc` closes", "`Esc` closes for the Owner alone"),
+        ),
+        "exit gated [GAP/tooltip: the Owner alone]",
+        (),
+    ),
+    (
+        "c-2 X6: SCR-047/never-recorded-sentence: a CTA at 45 % opacity",
+        _clause("SCR-047/never-recorded-sentence", 4, "the CTA at 45 % opacity"),
+        "dimming on a sentence form [SCR-047/never-recorded-sentence]",
+        (),
+    ),
+    (
+        "c-2 X7: CHIP/200-zoom: the days past the coverage window's start drawn as a recording gap",
+        _clause(
+            "CHIP/200-zoom", 4, "the days past the coverage window's start drawn as a recording gap"
+        ),
+        "coverage beyond the route's 90-day window drawn as a gap [CHIP/200-zoom]",
+        (),
+    ),
+    # c-3: the label gate on every place that states it
+    (
+        "c-3 X12: GAP/band-tight: the label overlaps the first bars",
+        _clause("GAP/band-tight", 3, "it overlaps the first bars"),
+        "band label covers data [GAP/band-tight: overlaps]",
+        (),
+    ),
+    (
+        "c-3 X14: section 7 prose: the label put back on a plate over the bars",
+        lambda s: _first(
+            s,
+            "with no backing, so no recorded bar after the gap is hidden by it",
+            "on a `color.surface.canvas` plate laid over the bars after the gap",
+        ),
+        "section 7 prose lets the band label cover data [plate]",
+        (),
+    ),
+    (
+        "c-3: the AC trace says 'the in-band label' again",
+        lambda s: _first(
+            s,
+            "a visible text carrier (the label under the band,",
+            "a visible text carrier (the in-band label,",
+        ),
+        "AC trace lets the band label cover data",
+        (),
+    ),
+    (
+        "c-3: D05-A4 drops the tick labels giving way",
+        lambda s: _first(
+            s,
+            " the tick labels the band label meets give way (CMP-189 decimation, E11-D02 D8 :115; PROPOSED),",
+            "",
+        ),
+        "D05-A4 omits the rule that the tick labels give way to the band label",
+        (),
+    ),
 ]
 
 
@@ -2534,7 +2697,8 @@ def main(argv: list[str]) -> int:
         "no exit or link gated on any frame or in 1.3 / 1.4 / 10; no role-restricted cell reads 'Not recording'; "
         "the view-as leg first in every table and on every line; the rbac reasons within 60 chars naming no data; "
         "the 90-day boundary never drawn as a gap or as covered; every band frame bound to the registry with dashed edges and a visible label; "
-        "the band label under the band, never over the bars; the backfilled band stays; a frame per zoom level at the tool's width; "
+        "the band label under the band, never over the bars (the rows, section 7's prose, the AC trace, D05-D6); "
+        "D05-A4's tick labels giving way; every emptied cause cell caught; the backfilled band stays; a frame per zoom level at the tool's width; "
         "the tooltip's four fields; the eight causes on the strip; every chip row Partial:; every repeated fixture number and section 15 the tool's; "
         "every marker's printed number its own; the in-situ chip; no shipped chord; the loading row a status; the PENDING siblings by name only; "
         "no closing keyword; no private path; every cited text exists"
