@@ -37,6 +37,7 @@ from candleviewer.oms.errors import (
 )
 from candleviewer.oms.order_machine import (
     B1_AUDITS,
+    B1_EXIT_REFUSALS,
     COMMAND_EVENTS,
     MAX_HELD,
     MAX_PUSH_LEAD_MS,
@@ -962,9 +963,12 @@ async def test_a_push_for_an_order_with_no_machine_and_no_final_row_is_not_loade
 
 
 def test_every_b1_record_is_written_under_a_registered_action() -> None:
-    """C-2.9, SR-E29-17: the writer never refuses one of the facade's records."""
-    assert {action for action, _o, _s in B1_AUDITS.values()} <= AUDIT_ACTIONS
+    """C-2.9, SR-E29-17: the writer never refuses one of the facade's records, B1's refusal of an
+    exit included, keyed on each exit."""
+    rows = [*B1_AUDITS.values(), *B1_EXIT_REFUSALS.values()]
+    assert {action for action, _o, _s in rows} <= AUDIT_ACTIONS
     assert "oms.reconcile_anomaly" in AUDIT_ACTIONS
+    assert set(B1_EXIT_REFUSALS) == {"AMEND", "CANCEL"}
 
 
 async def test_stop_unwires_the_binding(rig: Rig) -> None:

@@ -2950,6 +2950,21 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E29",
     ),
     _s(
+        "oms_exit_chart_denied_total",
+        "counter",
+        "exits",
+        (),
+        "Exit commands (AMEND, CANCEL) that B1's chart refused (INV-B1-r, INV-B1-l, #4808), "
+        "against the guarantee that the order facade's static table refuses each such exit "
+        "first: each is audited as the exit's own action (orders.cancel, orders.amend) with "
+        "outcome denied, logged oms_exit_chart_denied at ERROR with the order's id and the "
+        "exit's kind and paged by the order facade, the command refused as the table refuses one "
+        "(ILLEGAL_TRANSITION), which the exit routes answer as they answer the table's.",
+        "> 0 (page; the facade pages each)",
+        _P,
+        "E29",
+    ),
+    _s(
         "oms_reconcile_anomaly_total",
         "counter",
         "anomalies",
