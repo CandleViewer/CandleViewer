@@ -12,14 +12,20 @@ interface Layer {
   readonly modal: boolean;
   readonly element: () => HTMLElement | null;
   readonly escape: () => void;
+  readonly claimsEscape?: () => boolean;
 }
 
 const stack: Layer[] = [];
 const watchers = new Set<() => void>();
 
+/**
+ * `Esc` goes to the topmost layer that claims it. A layer that stays open while focus works on the page
+ * (a non-modal drawer) claims it only while focus is inside it; otherwise `Esc` passes to the layer under
+ * it, or to the page untouched.
+ */
 const onKeyDown = (event: KeyboardEvent): void => {
   if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
-  const top = stack[stack.length - 1];
+  const top = [...stack].reverse().find((layer) => layer.claimsEscape?.() ?? true);
   if (top === undefined) return;
   event.preventDefault();
   event.stopPropagation();
@@ -82,15 +88,22 @@ export interface UseLayerOptions {
   modal: boolean;
   /** Called when `Esc` reaches the stack with this layer on top. */
   onEscape: () => void;
+  /**
+   * Whether this layer takes `Esc` now (default: always). A non-modal drawer answers "focus is inside
+   * me", so `Esc` on the live chart beside it stays the chart's.
+   */
+  claimsEscape?: (() => boolean) | undefined;
 }
 
 /** Registers an open overlay in the stack; the handle answers "am I on top?" and "is this node above me?". */
 export function useLayer(
   open: boolean,
-  { element, modal, onEscape }: UseLayerOptions,
+  { element, modal, onEscape, claimsEscape }: UseLayerOptions,
 ): LayerHandle {
   const escape = useRef(onEscape);
   escape.current = onEscape;
+  const claims = useRef(claimsEscape);
+  claims.current = claimsEscape;
   const current = useRef<Layer | null>(null);
   const handle = useRef<LayerHandle | null>(null);
   handle.current ??= {
@@ -105,7 +118,12 @@ export function useLayer(
 
   useLayoutEffect(() => {
     if (!open) return undefined;
-    const layer: Layer = { modal, element: () => element.current, escape: () => escape.current() };
+    const layer: Layer = {
+      modal,
+      element: () => element.current,
+      escape: () => escape.current(),
+      claimsEscape: () => claims.current?.() ?? true,
+    };
     current.current = layer;
     push(layer);
     return () => {

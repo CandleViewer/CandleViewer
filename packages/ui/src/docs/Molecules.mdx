@@ -248,3 +248,52 @@ Timing (H26): a toast with an action, an error or `danger` persists; any other c
 Undo window follows the same duration, then the outcome line stays (H27); an order cancel offers no Undo.
 The shell passes its one announcer as `announce`, so the region renders no live region of its own; the
 stories use a local pair. The count, the storm summary and "Focus toasts" are CMP-212's.
+
+### Drawer (CMP-046; modal: APG Dialog (Modal); non-modal: a non-modal dialog)
+
+| Keys                 | Action                                                                                                                                          |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| On open              | Focus to `initialFocusRef` (or the first tab stop inside it), else the heading: the body is content to read.                                    |
+| Tab / Shift+Tab      | Modal: cycle inside, the page inert. Non-modal: Tab past the last control goes on to the page after the opener; it stays open.                  |
+| Shift+Tab (first)    | Non-modal: before the first control (or from the heading), back to the opener.                                                                  |
+| Tab on the opener    | Non-modal: into the drawer, which follows its opener in the Tab order; Shift+Tab on the page's next stop comes back in at its last control.     |
+| Esc                  | Closes the topmost layer only; a non-modal drawer takes it only while focus is inside it. Focus returns to the opener, else `fallbackFocusRef`. |
+| A press on the scrim | Modal only: Cancel.                                                                                                                             |
+
+| Element | Role           | Name                                           | ARIA                                                                                        |
+| ------- | -------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| panel   | dialog         | the title (`aria-labelledby`), or `aria-label` | `aria-modal="true"` when modal, none when not (H31); `id` for the opener's `aria-controls`  |
+| title   | heading, `h2`  | its text                                       | `tabindex="-1"`: the initial focus target                                                   |
+| close   | button         | "Close {title}"                                | CMP-002 `ghost`                                                                             |
+| body    | none, or group | the title, when it is a Tab stop               | `aria-busy` while `busy`; a body that scrolls with no control in it takes `tabindex="0"`    |
+| scrim   | none           | —                                              | modal only: `aria-hidden="true"`; the page under it `inert` (`aria-hidden` without `inert`) |
+| opener  | button         | its label                                      | the host's: `aria-expanded`, and `aria-controls` → the panel's `id`                         |
+
+The width is host data (`width`, in px; 480 by default); at a viewport of 720 CSS px or less the
+drawer takes the full width. A modal drawer is CMP-043's contract: the page inert (the
+`data-cv-inert-exempt` regions spared), no page scroll, the shell's scrim insets. A non-modal one
+sits at `elevation.popover` with no scrim and the page live, and does not close when focus leaves
+it. It slides in opaque from the first frame and out over `fast`; reduced motion is a cut. `busy`
+sets only `aria-busy` on the body: the host renders its CMP-015 rows. A docked inspector that
+reflows its host is the host's layout, not this overlay.
+
+### InfoPanel (CMP-069; drawer: a non-modal dialog; inline: APG Disclosure)
+
+| Keys                         | Action                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Enter / Space on the trigger | Opens it (J18): the drawer form with focus on its heading; the inline form under the trigger, likewise. |
+| Esc (drawer)                 | Closes it; focus back to the trigger.                                                                   |
+| Tab (drawer)                 | Through its links and close; past the last it moves on to the page and the drawer stays open.           |
+| Enter / Space, or Esc inside | Inline: toggles it; on close focus returns to the trigger.                                              |
+
+| Element      | Role    | Name                 | ARIA                                                                                |
+| ------------ | ------- | -------------------- | ----------------------------------------------------------------------------------- |
+| trigger      | button  | its label (the chip) | `aria-expanded`; `aria-controls` → the panel; drawer form `aria-haspopup="dialog"`  |
+| drawer       | dialog  | the title            | a non-modal CMP-046 (no `aria-modal`)                                               |
+| inline panel | region  | its heading          | `section` with `aria-labelledby` → the heading                                      |
+| heading      | heading | the detector's name  | `tabindex="-1"`: focus on open                                                      |
+| body         | —       | —                    | `aria-busy="true"` while the values load; a load failure is CMP-027's polite region |
+
+The trigger is the host's (the CMP-227 chip): `trigger` renders it from the props to spread on a
+button. The static methodology (`content`) shows at once; the current values (`values`) load under
+it as CMP-015 rows, or fail as a CMP-027 inline error with Retry (`error`, `onRetry`).

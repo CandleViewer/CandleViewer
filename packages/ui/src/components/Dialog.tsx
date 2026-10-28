@@ -14,6 +14,8 @@ import { cx } from "./internal/cx.js";
 import { trapTab, useFocusTrap, useReturnFocus, visibleTabbables } from "./internal/focusTrap.js";
 import { useInertOutside } from "./internal/inertOutside.js";
 import { LayerPortalProvider, useLayer, useLayerPortal } from "./internal/layers.js";
+import { useExitTransition } from "./internal/motion.js";
+import { useReadableScroll } from "./internal/readableScroll.js";
 import { useScrollLock } from "./internal/scrollLock.js";
 
 /** Maximum widths 420 / 560 / 960 px (H17). */
@@ -79,23 +81,6 @@ const FIELD = [
   '[role="textbox"]',
 ].join(",");
 
-/** The in-app override wins; without one, the OS preference (as the theme runtime reads it). */
-const reducedMotion = (): boolean => {
-  const mode = document.documentElement.getAttribute("data-motion");
-  if (mode !== null) return mode === "reduce";
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-};
-
-/** The longest transition on `element`, in seconds (0 where the engine computes none). */
-const transitionSeconds = (element: Element): number =>
-  Math.max(
-    0,
-    ...getComputedStyle(element)
-      .transitionDuration.split(",")
-      .map((part) => Number.parseFloat(part) * (part.trim().endsWith("ms") ? 0.001 : 1))
-      .filter(Number.isFinite),
-  );
-
 const warnAlertFocus = (): void => {
   if (import.meta.env?.DEV)
     console.warn(
@@ -142,10 +127,10 @@ export function Dialog({
   const lastInside = useRef<HTMLElement | null>(null);
   /** Whether the dialog was the topmost layer when the current scrim press began. */
   const scrimPress = useRef(false);
-  const [exiting, setExiting] = useState(false);
+  // Open: render. Closed: keep the layer through the scrim's exit fade, then clear (at once when none runs).
+  const rendered = useExitTransition(open, () => host?.querySelector(".cv-dialog__scrim"));
   /** A body that scrolls with nothing focusable in it is a Tab stop itself, so the keyboard can scroll it. */
-  const [readable, setReadable] = useState(false);
-  const rendered = open || exiting;
+  const readable = useReadableScroll(open, body);
   const initialFocus = useRef(initialFocusRef);
   initialFocus.current = initialFocusRef;
   /** Read at open only: a role change while open does not move focus. */
@@ -201,37 +186,6 @@ export function Dialog({
     lastInside.current = first;
   }, [open]);
 
-  // Overflow=scrolls with no control inside: the body takes a Tab stop (WCAG 2.1.1; axe
-  // scrollable-region-focusable). Re-measured as the card or its content resizes, and as content is
-  // added or removed (a child added later is observed too: the capped body itself does not resize).
-  useEffect(() => {
-    const node = body.current;
-    if (!open || node === null) return undefined;
-    const measure = (): void => {
-      setReadable(node.scrollHeight > node.clientHeight && visibleTabbables(node).length === 0);
-    };
-    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    const observeChildren = (): void => {
-      if (resize === null) return;
-      resize.observe(node);
-      for (const child of node.children) resize.observe(child);
-    };
-    const mutation =
-      typeof MutationObserver === "undefined"
-        ? null
-        : new MutationObserver(() => {
-            observeChildren();
-            measure();
-          });
-    observeChildren();
-    mutation?.observe(node, { childList: true, subtree: true });
-    measure();
-    return () => {
-      resize?.disconnect();
-      mutation?.disconnect();
-    };
-  }, [open]);
-
   // The card's own listeners: the Tab trap, and the last focused element for the guard.
   useEffect(() => {
     const surface = card.current;
@@ -247,36 +201,6 @@ export function Dialog({
       surface.removeEventListener("focusin", onFocusIn);
     };
   }, [open]);
-
-  // Open: render. Closed: keep the layer through the exit fade, then clear (at once when none runs).
-  useEffect(() => {
-    if (open) {
-      setExiting(true);
-      return undefined;
-    }
-    const scrim = host?.querySelector(".cv-dialog__scrim");
-    const done = (): void => setExiting(false);
-    if (scrim === null || scrim === undefined) {
-      done();
-      return undefined;
-    }
-    const seconds = transitionSeconds(scrim);
-    if (seconds <= 0.001 || reducedMotion()) {
-      done();
-      return undefined;
-    }
-    const onEnd = (event: Event): void => {
-      if (event.target === scrim) done();
-    };
-    const timer = setTimeout(done, seconds * 1000 + 100);
-    scrim.addEventListener("transitionend", onEnd);
-    scrim.addEventListener("transitioncancel", onEnd);
-    return () => {
-      clearTimeout(timer);
-      scrim.removeEventListener("transitionend", onEnd);
-      scrim.removeEventListener("transitioncancel", onEnd);
-    };
-  }, [open, host]);
 
   if (host === null || !rendered) return null;
 

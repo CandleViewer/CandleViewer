@@ -49,6 +49,9 @@ export type { DialogCloseReason, DialogProps, DialogRole, DialogSize } from "./D
 export { Divider, DividerLabel } from "./Divider.js";
 export type { DividerLabelProps, DividerProps } from "./Divider.js";
 
+export { Drawer } from "./Drawer.js";
+export type { DrawerCloseReason, DrawerProps, DrawerSide } from "./Drawer.js";
+
 export { EmptyState } from "./EmptyState.js";
 export type {
   EmptyStateCta,
@@ -110,6 +113,9 @@ export type { CardProps } from "./Card.js";
 
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";
+
+export { InfoPanel } from "./InfoPanel.js";
+export type { InfoPanelProps, InfoPanelTriggerProps, InfoPanelVariant } from "./InfoPanel.js";
 
 export { InlineSpinnerText } from "./InlineSpinnerText.js";
 export type { CancellableWait, InlineSpinnerTextProps } from "./InlineSpinnerText.js";

@@ -7,9 +7,11 @@ import {
   Checkbox,
   ConfirmDialog,
   Dialog,
+  Drawer,
   FormField,
   FormSection,
   IconButton,
+  InfoPanel,
   NumericStepperInput,
   RadioGroup,
   SearchBox,
@@ -121,5 +123,25 @@ describe("molecules carry their catalogue id", () => {
       />,
     );
     expect(document.querySelectorAll('[data-cmp="CMP-044"]')).toHaveLength(1);
+  });
+
+  it("CMP-046 marks exactly one root with data-cmp (in its portalled layer)", async () => {
+    await mount(<Drawer open title="Instrument rules" onOpenChange={noop} />);
+    expect(document.querySelectorAll('[data-cmp="CMP-046"]')).toHaveLength(1);
+  });
+
+  it("CMP-069 marks exactly one root with data-cmp, in either form", async () => {
+    const trigger = (props: object): JSX.Element => (
+      <button type="button" {...props}>
+        About
+      </button>
+    );
+    await mount(<InfoPanel defaultOpen title="Iceberg" content="Text" trigger={trigger} />);
+    expect(document.querySelectorAll('[data-cmp="CMP-069"]')).toHaveLength(1);
+    document.body.replaceChildren();
+    const host = await mount(
+      <InfoPanel defaultOpen variant="inline" title="Iceberg" content="Text" trigger={trigger} />,
+    );
+    expect(host.querySelectorAll('[data-cmp="CMP-069"]')).toHaveLength(1);
   });
 });

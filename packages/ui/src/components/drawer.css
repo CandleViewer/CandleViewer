@@ -1,0 +1,237 @@
+/*
+ * CMP-046 Drawer (D02 slice 4; conventions 30, 31, 35, 38, 39; H21, H23, H31). Tokens only.
+ * The layer is fixed over the viewport and passes the pointer through; the shell may inset it from the top and
+ * bottom (its TopBar and StatusBar stay unscrimmed, H23) through `--cv-scrim-inset-top` and
+ * `--cv-scrim-inset-bottom`. Modal: the scrim (`palette.black` at `opacity.scrim`, H1) catches presses, and the
+ * panel sits at `elevation.dialog`; non-modal: no scrim, the page live, the panel at `elevation.popover` (H31).
+ * The panel: `color.surface.overlay`, square (it meets the viewport edges), a 1 px `color.border.default` inner
+ * edge and header rule, `space.panel.padding`; its width is host data through `--cv-drawer-width` (480 px by
+ * default, written in rem at the 16 px root, no size token, H7) and the full width at a viewport of 720 CSS px
+ * or less (conventions 39). Motion (H21): it slides `translateX` in over `normal` / `decelerate`, opaque from
+ * frame 0, and out over `fast` / `accelerate`; a modal drawer's scrim fades with it; reduced motion is a cut.
+ * Stacking: portalled last into `body` (or its parent layer), no z-index.
+ */
+.cv-drawer-layer {
+  position: fixed;
+  inset: var(--cv-scrim-inset-top, 0) 0 var(--cv-scrim-inset-bottom, 0);
+  pointer-events: none;
+}
+
+.cv-drawer__scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--palette-black);
+  opacity: var(--opacity-scrim);
+  pointer-events: auto;
+}
+
+.cv-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: min(var(--cv-drawer-width, 30rem), 100%);
+  border-left: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  background: var(--color-surface-overlay);
+  box-shadow: var(--elevation-dialog);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  overflow-wrap: break-word;
+  pointer-events: auto;
+}
+
+.cv-drawer[data-side="left"] {
+  right: auto;
+  left: 0;
+  border-left: none;
+  border-right: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+/* Non-modal (H31): a floating layer beside the live page, not a modal one. */
+.cv-drawer:not([data-modal]) {
+  box-shadow: var(--elevation-popover);
+}
+
+/* The panel and the heading take focus only as targets (conventions 32); they are not controls. */
+.cv-drawer:focus,
+.cv-drawer__title:focus {
+  outline: none;
+}
+
+/* The header stays one row above the scrolling body, ruled off from it. */
+.cv-drawer__header {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: var(--space-inset-sm);
+  padding: var(--space-panel-padding);
+  border-bottom: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+.cv-drawer__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--color-text-primary);
+  font: var(--type-ui-heading-sm-font-weight) var(--type-ui-heading-sm-font-size) /
+    var(--type-ui-heading-sm-line-height) var(--type-ui-heading-sm-font-family);
+}
+
+.cv-drawer__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-stack-md);
+  min-height: 0;
+  padding: var(--space-panel-padding);
+  overflow: auto;
+}
+
+/* A scrolling body with no control is a Tab stop: the CMP-039 ring, inset so the panel never clips it. */
+.cv-drawer__body:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * -1 * 1px);
+}
+
+/* A CMP-001 row, end-aligned; it wraps rather than truncating a full-intent label. */
+.cv-drawer__footer {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-inset-sm);
+  padding: var(--space-panel-padding);
+}
+
+/* Narrow (conventions 39): at a viewport of 720 CSS px or less a drawer over the page takes the full width. */
+@media (max-width: 45rem) {
+  .cv-drawer {
+    width: 100%;
+  }
+}
+
+/* The slide in: opaque and interactive from frame 0; the scrim fades in with it. */
+@media (prefers-reduced-motion: no-preference) {
+  .cv-drawer {
+    animation: cv-drawer-in-right var(--motion-duration-normal)
+      cubic-bezier(var(--motion-easing-decelerate));
+  }
+
+  .cv-drawer[data-side="left"] {
+    animation-name: cv-drawer-in-left;
+  }
+
+  .cv-drawer__scrim {
+    animation: cv-drawer-scrim-in var(--motion-duration-normal)
+      cubic-bezier(var(--motion-easing-standard));
+  }
+}
+
+@keyframes cv-drawer-in-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes cv-drawer-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes cv-drawer-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The exit: it slides out over `fast` / `accelerate` and the scrim fades, with no pointer events. */
+.cv-drawer-layer[data-state="closing"] > .cv-drawer,
+.cv-drawer-layer[data-state="closing"] > .cv-drawer__scrim {
+  pointer-events: none;
+}
+
+.cv-drawer-layer[data-state="closing"] > .cv-drawer {
+  transform: translateX(100%);
+  transition: transform var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate));
+}
+
+.cv-drawer-layer[data-state="closing"] > .cv-drawer[data-side="left"] {
+  transform: translateX(-100%);
+}
+
+.cv-drawer-layer[data-state="closing"] > .cv-drawer__scrim {
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate));
+}
+
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): a cut both ways. */
+:root[data-motion="reduce"] .cv-drawer,
+:root[data-motion="reduce"] .cv-drawer__scrim {
+  animation: none;
+}
+
+:root[data-motion="reduce"] .cv-drawer-layer[data-state="closing"] > .cv-drawer,
+:root[data-motion="reduce"] .cv-drawer-layer[data-state="closing"] > .cv-drawer__scrim {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) .cv-drawer-layer[data-state="closing"] > .cv-drawer,
+  :root:not([data-motion]) .cv-drawer-layer[data-state="closing"] > .cv-drawer__scrim {
+    transition: none;
+  }
+}
+
+/* The universal reduce pair (as theme.css applies it), kept here so the file is self-contained. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* Forced colours (conventions 38): a CanvasText inner edge and header rule on Canvas; the scrim keeps its black. */
+@media (forced-colors: active) {
+  .cv-drawer,
+  .cv-drawer[data-side="left"],
+  .cv-drawer__header {
+    border-color: CanvasText;
+  }
+
+  .cv-drawer {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .cv-drawer__title {
+    color: CanvasText;
+  }
+
+  .cv-drawer__scrim {
+    forced-color-adjust: none;
+  }
+
+  .cv-drawer__body:focus-visible {
+    outline-color: Highlight;
+  }
+}
