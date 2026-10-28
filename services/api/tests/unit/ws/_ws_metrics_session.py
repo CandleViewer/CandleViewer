@@ -23,6 +23,7 @@ import msgpack
 from prometheus_client.parser import text_string_to_metric_families
 
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import CollectorRegistry, generate_latest
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.metrics import SAMPLE_EVERY, export_cvwb_metrics, export_ws_metrics
@@ -187,7 +188,7 @@ async def _failed_auth_connection() -> None:
     """Connection 4: an `auth` frame with no token."""
     rig, sock = _Rig(BackpressureConfig()), _Wire(_JSON)
     async with asyncio.timeout(_DEADLINE_S):
-        handler = asyncio.create_task(rig.endpoint(sock))
+        handler = spawn(rig.endpoint(sock), name="ws-metrics-failed-auth")
         sock.feed({"t": "hello", "id": "h", "p": {"clock_ms": BASE_MS}})
         assert [f["t"] for f in await sock.next()] == ["welcome"]
         sock.feed({"t": "auth", "id": "a", "p": {"access_token": ""}})
