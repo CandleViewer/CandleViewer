@@ -13997,7 +13997,7 @@ paths:
                         machine_kind: order
                         environment: demo
                         state: submitted
-                        machine_hash: "627c93f770bcff5d39dce0bed60d2a666c730860998327c6449b4e9e961ee019"
+                        machine_hash: "e75583007285bcb73dfa511d71ec92bdee74054827864668a41f5f8e638fc15e"
                         lock_matches: true
                         chain_trips: 1
                         degraded: true

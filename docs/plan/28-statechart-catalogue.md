@@ -716,6 +716,16 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "actions": [
                 "skip_kill_cancel"
               ]
+            },
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
             }
           }
         },
@@ -732,6 +742,16 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "target": "#order.lifecycle.killed",
               "actions": [
                 "skip_kill_cancel"
+              ]
+            },
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
               ]
             }
           }
@@ -787,7 +807,18 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               ]
             }
           },
-          "on": {}
+          "on": {
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
+          }
         },
         "submitted": {
           "entry": [
@@ -939,7 +970,12 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               {
                 "target": "#order.lifecycle.killed"
               }
-            ]
+            ],
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "partially_filled": {
@@ -1096,7 +1132,17 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
                   "audit_kill_cancel_in_flight"
                 ]
               }
-            ]
+            ],
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "amend_pending": {
@@ -1178,7 +1224,17 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               {
                 "target": "#order.lifecycle.killed"
               }
-            ]
+            ],
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "unknown": {
@@ -1244,7 +1300,17 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               {
                 "target": "#order.lifecycle.killed"
               }
-            ]
+            ],
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "quarantined": {
@@ -1297,7 +1363,17 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               {
                 "target": "#order.lifecycle.killed"
               }
-            ]
+            ],
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "untracked": {
@@ -1410,6 +1486,16 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
             "KILL": {
               "actions": [
                 "audit_kill_ignored_unowned"
+              ]
+            },
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
               ]
             }
           }
@@ -1755,6 +1841,8 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 | `lifecycle.held` | `*` | — | _(internal)_ | `defer` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.held`, `lifecycle.filled`, `lifecycle.cancelled`, `lifecycle.rejected`, `lifecycle.expired`, `lifecycle.killed` | `EXEC` | — | _(internal)_ | `audit_reconcile_anomaly`, `notify_protection_region` *(Corrected 2026-10-19, #847 slice 5)* | — |
 | `lifecycle` | `OPERATOR_RESOLVED`, `ADOPT` | — | _(internal)_ | `audit_operator_command_refused` *(Corrected 2026-10-19, #847 slice 5)* | — |
+| `lifecycle.draft`, `lifecycle.validated`, `lifecycle.submitting`, `lifecycle.cancel_pending`, `lifecycle.amend_pending`, `lifecycle.unknown`, `lifecycle.quarantined`, `lifecycle.held` | `CANCEL`, `AMEND` | — | _(internal)_ | `audit_operator_command_refused` *(Corrected 2026-10-27, #4808)* | — |
+| `lifecycle.triggered` | `AMEND` | — | _(internal)_ | `audit_operator_command_refused` *(Corrected 2026-10-27, #4808)* | — |
 | `lifecycle` | `KILL` | — | `lifecycle.killed` | — (entry of `killed`) | — |
 | `lifecycle.submitted`, `lifecycle.triggered`, `lifecycle.partially_filled`, `lifecycle.cancel_pending`, `lifecycle.amend_pending`, `lifecycle.unknown`, `lifecycle.quarantined` | `KILL` | `is_recorded_stop` | _(internal)_ | `audit_kill_spared_recorded_stop` *(Corrected 2026-10-21, #913)* | — |
 | `lifecycle.submitted`, `lifecycle.triggered`, `lifecycle.partially_filled`, `lifecycle.amend_pending`, `lifecycle.unknown`, `lifecycle.quarantined` | `KILL` | — | `lifecycle.killed` | — (entry of `killed`; the state's own copy of the `lifecycle` arm, after `is_recorded_stop`) *(Corrected 2026-10-21, #913)* | — |
@@ -1891,6 +1979,7 @@ Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-
 | **INV-B1-o** | *(Added 2026-10-19, #847 slice 5)* The first fill always starts the `protection` region (24 §8.8 rule 2, C-2.6): `partially_filled`, `filled`, `cancelled` and `expired` run `notify_protection_region` on entry, which notifies always on entry to `partially_filled` and `filled` (an order enters them only on a reported fill, a `RECON_FOUND_PARTIAL` with no execution to apply yet included), and on entry to `cancelled` and `expired` when the order holds a fill (`filled_qty` above zero), so every arm that leaves an order with fills starts the region, a `RECON_FOUND_CANCELLED` after unwatched fills included; the region consumes a repeat. A reduce-only order opens no position, and C-2.6 covers position-opening orders, so its fills start nothing: an exit carries no stop and pages nothing (`starts_protection`, which the OMS facade also asks after a hydration). *(Amended 2026-10-19, #847 slice 5 review.)* An `EXEC` that reaches `held` or a final state is consumed by an internal arm that writes the S6 `ReconcileAnomaly` audit (`audit_reconcile_anomaly`) and runs the notice, with the lifecycle state and context unchanged but for the notice in the outbox (S6); it is never deferred. *(Amended 2026-10-20, #847.)* Such an `EXEC` starts the region only when it pairs with the order (a trade of the exchange order it is bound to, every field SR-E29-03 pairs on its own) or the order holds a fill: another order's fill, or a hostile one, never starts an attach of this order's stop (SR-E29-06), and the notice hands the position to B8 instead (`request_fallback_sl`), which reads it and attaches its fallback stop if none is there. |
 | **INV-B1-p** | *(Added 2026-10-21, #913)* A recorded stop's row (24 §8.3 rule 7, §8.8 rule 6) is the OMS's live order and is never killed (C-2.6). It enters only from `draft` on `MATERIALISED`, into `submitted`, bound at entry to its order's `exchange_order_id`, through an arm that invokes no service, so its entry sends nothing; it takes that live state whatever the exchange status of its order when first seen, so every fill, a fired stop's included, applies through the `EXEC` arms (`apply_fill`, written by `commit_fill` with its `executions` row), never as an S6 anomaly; and it is reduce-only, so its fills start no `protection` region (INV-B1-o). In every live state it can reach (`submitted`, `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`, `unknown`, `quarantined`) a `KILL` meets the guarded `is_recorded_stop` arm before the cancelling one, which consumes and audits it (`audit_kill_spared_recorded_stop`), sends nothing and leaves `halted_by_kill` unset; `held` only audits a `KILL` (INV-B1-n). A `CANCEL` or `AMEND` reaches it only as 24 §8.8 rule 6 allows, enforced by synchronous code, not by a guard here (C-2.21; B1.8, version 4). Recovery replays it from its first `order_events` row (24 §8.2 Recovery). *(Amended 2026-10-23, #848:)* its trigger price and quantity follow its order's only through `TERMS_CHANGED` (INV-B1-q). |
 | **INV-B1-q** | *(Added 2026-10-23, #848)* A recorded stop's row takes its order's trigger price and quantity (24 §8.3 rule 7, the sixth item) only by a written step: a `TERMS_CHANGED` in `submitted`, `triggered` or `partially_filled` that passes `recorded_terms_changed` (the row is a recorded stop's, the push is of its bound exchange order, it names a trigger price or quantity, each above zero, the quantity is above `filled_qty`, and a term it names differs from the row's), whose arm re-enters the state, so `persist_event` writes the step's `order_events` row and the row's terms before the step is seen (INV-B1-g); a refused write rolls it back (S7). Any other `TERMS_CHANGED` there changes nothing: the ordered unguarded `audit_terms_refused` arm consumes it, never deferred where a guarded arm stands, and records it unless it repeats the row's terms. No other state has an arm: `cancel_pending` and `amend_pending` defer it until the request ends in a live state (S10). Recovery replays the step (24 §8.2 Recovery). *(Amended 2026-10-25, #848:)* a `TERMS_CHANGED` to a quantity equal to `filled_qty` is refused too, so a step never leaves the row with nothing to fill: the row keeps its last terms, the refusal is recorded as any other, and E29-T06's reconciliation ends the row from the venue's read (`partially_filled` has no arm that ends it, and this amendment adds none). The chart, its version and `machine_hash` are unchanged. |
+| **INV-B1-r** | *(Added 2026-10-27, #4808)* An exit the order cannot take is denied and recorded. The exits, `CANCEL` and `AMEND` (24 §8.2 S10, §8.4), move the order only from a state whose arm takes them: `submitted`, `triggered` and `partially_filled` take `CANCEL`, and `submitted` and `partially_filled` take `AMEND`. Every other non-final state denies them on one ordered, unguarded internal arm: `draft`, `validated`, `submitting`, `cancel_pending`, `amend_pending`, `unknown`, `quarantined` and `held` both exits, and `triggered` an `AMEND`, through `audit_operator_command_refused`, which records the exit and the state; `untracked` both, through its own `audit_command_refused_unowned` (INV-B1-l). The arm changes no configuration and no context, writes no `order_events` row, sends nothing and is never deferred, and a request in flight runs on. The OMS facade refuses such an exit before any send (24 §8.4 step 11): synchronous code enforces, and the chart denies and records the exit all the same (C-2.21, §1.3c). |
 
 ### B1.8 Implementation notes
 
@@ -1908,6 +1997,8 @@ Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-
 - **Corrected 2026-10-21 (#913, E29-T04's contract PR; the orchestrator's ruling CR-G6-R3-01 on #3972), chart `version: 4`.** The B1 entry of a recorded stop's row, the OMS-owned row of a TP/SL order that enters outside the placement path (24 §8.3 rule 7), which E29-T05 materialises once per (account, `orderId`) (`ux_orders_exch_id` refuses a second). (a) `MATERIALISED`, accepted only in `draft` as `VALIDATE` and `DISCOVERED` are, moves to `submitted` with `record_materialised`, which stamps the order as the matched exchange order shows it (identity, terms, `reduce_only` set, `exchange_order_id` bound) and sets `recorded_stop`; an order that is not reduce-only, or names no exchange order id B1 can keep (`text_id`), is refused with its first row. No service is invoked, so nothing is sent; `persist_event` writes the row's first `order_events` row in `submitted`'s entry, `exchange_push` from `ws_private`, or from `reconcile` as its payload names (24 §8.2), from the order the OMS registered before it sent the event (`OrderMachines.materialise`). (b) Why `submitted`: it is the bound live state of an order the exchange holds. Its `EXEC` arms apply each fill through `apply_fill` and the step writer's `commit_fill` (an `executions` row and an order event) to `partially_filled` or `filled`, so a stop that fired before it was first seen still has its fills applied as steps, never as S6 anomalies, as they would be in `filled` or `cancelled`; its `TRIGGERED` arm takes a trigger push that comes later, which `triggered` as the entry state would claim before the exchange reports it; its `REMOTE_CANCELLED` and `EXPIRE` arms end it only once the push's cumulative quantity equals `filled_qty` (INV-B1-k); and it needs no `RECON_FOUND_*` arm: the row is bound at entry, so reconciliation reaches it by that id (INV-B1-m), its fills in steps 2 and 3d, as it reaches a row its own ack bound (24 §8.3 rule 7). (c) `KILL`: in each live state the row can reach, a guarded `is_recorded_stop` arm before the cancelling one consumes and audits it (`audit_kill_spared_recorded_stop`) and sends nothing; in `cancel_pending` it also comes before the arm that reuses the in-flight cancel and sets `halted_by_kill`, so the OMS facade never sends such a row a lost KILL again; `held` audits a `KILL` as for any order (INV-B1-n, INV-B1-p). (d) `CANCEL` and `AMEND` carry no guard: synchronous code enforces 24 §8.8 rule 6 (C-2.21). Every `CANCEL` and `AMEND` reaches B1 through the OMS's cancel and amend services (SR-E29-06; the facade's `command` is B1's only path for them, and the row joins no group, algo or rule), which refuse before they send: the cancel service a cancel of the row while its position is open (`cancelOrder` and `cancel-all` alike), the amend service every amend (`order_not_amendable`). The facade's `command` refuses an `AMEND` of the row too, before any send (`IllegalTransition`), as rule 6 refuses every one whatever the position; a `CANCEL` it leaves to the cancel service, which reads the position (E29-T04's third slice). A guard here would only repeat those refusals, a cancel's without the position, which B1 does not hold. A cancel the rule allows (the position is flat) runs as any order's, through `cancel_pending`, the command port's cancel and the same service. (e) The context gains `recorded_stop`, and the OMS facade's plain view reads it, so a KILL the guarded arm audited counts as recorded. **Snapshot migration:** a snapshot sealed at version 3 (`6cdf8750e255…`) is refused on restore (quarantine row and P1 page). None exists: nothing outside the tests builds an `order` machine and no `Persister` or `Restorer` is wired for it yet (E50-T63), so no snapshot of it is written and no upcaster is registered; B1 recovers from `order_events`, and recovery replays a recorded stop's row from its first row.
 
 - **Corrected 2026-10-23 (#848, E29-T05's contract-first PR; 24 §8.3 rule 7, the sixth item), chart `version: 5`.** A recorded stop's row follows its order's trigger price and quantity on the exchange (INV-B1-q). (a) `TERMS_CHANGED` is the exchange fact that the row's TP/SL order shows another trigger price or quantity, changed in place (a `trading-stop` call, or an amend that keeps its `orderId`, `[O-4]`). `submitted`, `triggered` and `partially_filled` each take it in a group before `KILL`: the guarded `recorded_terms_changed` arm targets the state it is in with `reenter: true` and runs `adopt_terms`, which sets the named terms as canonical text and `leaves_qty` to `qty` less `filled_qty`. The re-entry is load-bearing: it runs the state's entry, so `persist_event` writes the step's `order_events` row and the row's `qty` and `trigger_price` in one transaction, compare-and-set on the state, before the step is seen (INV-B1-g); without it the arm would be internal and nothing would be written. A refused write rolls the step back (S7, S11), and one that does not answer in time raises `StepOutcomeUnknown`, so the OMS facade rebuilds the order from its events. `partially_filled`'s `notify_protection_region` posts nothing, as the row is reduce-only (INV-B1-o). (b) The guard is pure and total and denies by default (B1.5); it records the exchange's terms and decides nothing else (C-2.21). The ordered unguarded `audit_terms_refused` arm consumes every `TERMS_CHANGED` the guard denies (C-07b): one naming the row's terms again (a redelivery, S4, S5) is logged at `INFO` and recorded nowhere; any other is logged at `ERROR` and recorded through the audit hook as `terms_refused`, which the OMS facade writes as `oms.reconcile_anomaly`, denied (S6, OM-T04). It is never a `guard_denied`, which the facade answers with `FAULT`: a push the order did not take never quarantines it. (c) `cancel_pending` and `amend_pending` take no arm: the root's `onUnhandled: "defer"` holds the push until the request ends in a live state, which then takes it (S10). `unknown` and `quarantined` take none, as a re-entry would raise their alerts and requests again, and reconciliation re-reads the terms (24 §8.5 step 5); `held` takes no exchange state (INV-B1-m); `untracked`, `draft`, `validated`, `submitting` and the final states take none. The facade ignores a push its state lists no arm for while nothing is in flight, and answers a final row's as S6's anomaly. (d) The step writer records the step as `exchange_push`, from `ws_private`, or from `reconcile` as its payload names, with the terms it names (`OrderTransition.terms`); it is the one `exchange_push` step that keeps its state, so recovery folds its terms and refuses a history with one B1 never writes (24 §8.2 Recovery), and hydration replays it off B1's table, the facade taking it as a push (`PushEvent`). (e) No new state, context key, service, flag, migration or `order_event_kind`. `TERMS_CHANGED`'s payload schema is closed (`exchange_order_id`, `order_link_id`, `qty`, `trigger_price`, `updated_time`, by which the facade orders it, S5, `source` and `pass_id`). Nothing sends it yet: the private-stream consumer's slice does (24 §8.12). **Snapshot migration:** a snapshot sealed at version 4 (`18d4f519f032…`) is refused on restore (quarantine row and P1 page). None exists: nothing outside the tests builds an `order` machine and no `Persister` or `Restorer` is wired for it yet (E50-T63), so no snapshot of it is written and no upcaster is registered; B1 recovers from `order_events`, and recovery replays the terms step. The contract suite restores a golden version-4 snapshot on version 5 and proves it refused, and the order rebuilt from its events (`golden/order.v4_to_v5.*`).
+
+- **Corrected 2026-10-27 (#4808), chart `version: 6`.** An exit the order cannot take is denied and recorded (INV-B1-r; §1.3c's ordered unguarded audit arm, C-2.22). (a) Each non-final state that takes no `CANCEL` or `AMEND` gains one unguarded internal arm for it, which runs `audit_operator_command_refused`: `draft`, `validated`, `submitting`, `cancel_pending`, `amend_pending`, `unknown`, `quarantined` and `held` for both exits, and `triggered` for `AMEND`. The action logs the refusal at `WARNING` and passes it to the audit hook as `operator_command_refused`, naming the exit (`trigger`) and the state, and `CvAuditPlugin` records the step write-ahead, as for every internal arm (INV-B1-g). The exit changes no configuration and no context, writes no row, sends nothing and is never deferred; the arm is internal, so a request in flight in `submitting`, `cancel_pending` or `amend_pending` runs on. (b) The arm reuses the `lifecycle` region's refusal action (INV-B1-m), so the chart builds under `strictConfig` with the bindings as they are; it is never `audit_guard_denied`, the `EXEC` deny arm, which the facade answers with `FAULT`. An arm that only refuses takes nothing in the OMS facade's static table (`Legality`), so that table still lists no exit in these states and `OrderMachines.command` refuses one there before any send (`IllegalTransition`, 24 §8.4 step 11): synchronous code enforces, and the chart denies and records (C-2.21). (c) `submitted`, `triggered` (`CANCEL`) and `partially_filled` take their exits as before; `untracked` keeps its own refusal (`audit_command_refused_unowned`, INV-B1-l); the final states take none (INV-2); `KILL`'s arms are unchanged. (d) No new state, event, guard, action, service, context key or schema. **Snapshot migration:** a snapshot sealed at version 5 (`627c93f770bc…`) is refused on restore (quarantine row and P1 page). None exists: the OMS facade never snapshots an `order` machine (no `Persister` or `Restorer` is used for one), so no upcaster is registered; B1 recovers from `order_events`, whose steps this version leaves as they were, as an internal arm writes no row. The contract suite proves version 6 is version 5 with these arms alone, and refuses a snapshot under version 5's hash.
 
 ---
 
@@ -8147,7 +8238,7 @@ There is no runtime switch. Every family runs on the pinned library from its fir
 | `leg` | 12 | `a7d8fb5d8c3e…` |
 | `live_gate` | 3 | `780accfd0086…` |
 | `oco` | 11 | `e09f72c6a367…` |
-| `order` | 2 | `627c93f770bc…` |
+| `order` | 2 | `e75583007285…` |
 | `paper_account` | 4 | `401363766fb6…` |
 | `position_protection` | 3 | `d95cda091fac…` |
 | `reconciliation` | 8 | `95c8954fe5e7…` |

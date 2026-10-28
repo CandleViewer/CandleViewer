@@ -154,7 +154,7 @@ def test_the_entry_is_taken_only_in_draft_and_invokes_no_service() -> None:
     assert arm == {"target": "#order.lifecycle.submitted", "actions": ["record_materialised"]}
     submitted = node_at(CHART, "lifecycle.submitted")
     assert "invoke" not in submitted and submitted["entry"] == ["persist_event"]
-    assert (CHART["version"], CHART["context"]["recorded_stop"]) == (5, False)
+    assert (CHART["version"], CHART["context"]["recorded_stop"]) == (6, False)
 
 
 @pytest.mark.parametrize(
@@ -558,7 +558,7 @@ def test_terms_changed_arms_three_live_states_reenter_with_audited_fall_through(
         guarded |= {"guard": "recorded_terms_changed", "reenter": True, "actions": ["adopt_terms"]}
         assert taking[f"lifecycle.{state}"] == [guarded, {"actions": ["audit_terms_refused"]}]
         assert taking[f"lifecycle.{state}"][0]["reenter"] is True
-    assert (_arms(CHART, "TERMS_CHANGED"), CHART["version"]) == ([], 5)
+    assert (_arms(CHART, "TERMS_CHANGED"), CHART["version"]) == ([], 6)
 
 
 @pytest.mark.parametrize(

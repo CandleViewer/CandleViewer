@@ -1,6 +1,6 @@
 {
   "id": "order",
-  "version": 5,
+  "version": 6,
   "strictConfig": true,
   "maxIterations": 500,
   "actionErrorPolicy": "rollback",
@@ -88,6 +88,16 @@
               "actions": [
                 "skip_kill_cancel"
               ]
+            },
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
             }
           }
         },
@@ -104,6 +114,16 @@
               "target": "#order.lifecycle.killed",
               "actions": [
                 "skip_kill_cancel"
+              ]
+            },
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
               ]
             }
           }
@@ -159,7 +179,18 @@
               ]
             }
           },
-          "on": {}
+          "on": {
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
+          }
         },
         "submitted": {
           "entry": [
@@ -311,7 +342,12 @@
               {
                 "target": "#order.lifecycle.killed"
               }
-            ]
+            ],
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "partially_filled": {
@@ -468,7 +504,17 @@
                   "audit_kill_cancel_in_flight"
                 ]
               }
-            ]
+            ],
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "amend_pending": {
@@ -550,7 +596,17 @@
               {
                 "target": "#order.lifecycle.killed"
               }
-            ]
+            ],
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "unknown": {
@@ -616,7 +672,17 @@
               {
                 "target": "#order.lifecycle.killed"
               }
-            ]
+            ],
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "quarantined": {
@@ -669,7 +735,17 @@
               {
                 "target": "#order.lifecycle.killed"
               }
-            ]
+            ],
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            }
           }
         },
         "untracked": {
@@ -782,6 +858,16 @@
             "KILL": {
               "actions": [
                 "audit_kill_ignored_unowned"
+              ]
+            },
+            "CANCEL": {
+              "actions": [
+                "audit_operator_command_refused"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_operator_command_refused"
               ]
             }
           }
