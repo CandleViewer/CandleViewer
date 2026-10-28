@@ -48,3 +48,19 @@ def test_prints_buffer_effective_max_floor_and_scaling() -> None:
 def test_min_size_floor_is_max_of_lot_and_tick_notional() -> None:
     assert L.min_size_floor(Decimal("0.001"), Decimal("6.3")) == Decimal("6.3")
     assert L.min_size_floor(Decimal("10"), Decimal("6.3")) == Decimal("10")
+
+
+def test_notional_size_is_min_notional_at_the_price_ceiled_to_the_step() -> None:
+    # 5 USDT at 82 745.8 is 0.0000604… BTC: ceiled to one 0.001 step.
+    assert L.notional_size(Decimal("5"), Decimal("82745.8"), Decimal("0.001")) == Decimal("0.001")
+    # 5 USDT at 0.1 is exactly 50 lots of 1; 5.01 USDT needs a 51st.
+    assert L.notional_size(Decimal("5"), Decimal("0.1"), Decimal("1")) == Decimal("50")
+    assert L.notional_size(Decimal("5.01"), Decimal("0.1"), Decimal("1")) == Decimal("51")
+
+
+def test_notional_size_collapses_to_zero_with_no_price_or_no_minimum_notional() -> None:
+    assert L.notional_size(Decimal("5"), None, Decimal("0.001")) == 0
+    assert L.notional_size(Decimal("0"), Decimal("0.1"), Decimal("1")) == 0
+    assert L.min_size_floor(Decimal("0.001"), L.notional_size(Decimal("5"), None, Decimal(1))) == (
+        Decimal("0.001")
+    )

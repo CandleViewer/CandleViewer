@@ -272,3 +272,23 @@ def test_get_trades_unknown_tick_size_is_503() -> None:
             return None
 
     assert _client(reader=NoTick()).get("/market/trades?symbol=BTCUSDT").status_code == 503
+
+
+def test_get_trades_reads_the_floor_per_request_and_names_it_in_the_detail() -> None:
+    """SR-E22-03 as ruled (2026-10-28): the floor follows the reference price, so it is read on
+    every request, and a refusal's detail names the floor in force."""
+    floor = {"BTCUSDT": Decimal("0.001")}
+    app = FastAPI()
+    app.include_router(
+        make_trades_router(
+            lambda: _READER, principal_resolver=Resolver(_OK), min_size_floor=floor.get
+        )
+    )
+    c = TestClient(app)
+    params = {"symbol": "BTCUSDT", "min_size": "0.002"}
+    assert c.get("/market/trades", params=params).status_code == 200
+    floor["BTCUSDT"] = Decimal("0.003")
+    r = c.get("/market/trades", params=params)
+    assert r.status_code == 400 and r.json()["code"] == "invalid_min_size"
+    assert "(0.003)" in r.json()["detail"]
+

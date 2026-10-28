@@ -331,7 +331,7 @@ from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
 from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
-from candleviewer.orderflow.limits import min_size_floor
+from candleviewer.orderflow.limits import min_size_floor, notional_size
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.profile_notices_wiring import ProfileNotices
@@ -3450,14 +3450,28 @@ def _catalogue_qty_step(ctx: AppContext, symbol: str) -> Decimal | None:
 
 
 def _catalogue_min_size_floor(ctx: AppContext, symbol: str) -> Decimal | None:
-    """`MIN_SIZE_FLOOR` (SR-E22-03): max(lot step, one tick-notional), the tick-notional read as
-    one lot moved one tick (`tick_size * qty_step`); None while the catalogue does not list it."""
+    """`MIN_SIZE_FLOOR` (SR-E22-03, ruled 2026-10-28): max(`min_order_qty`, `min_notional` at the
+    reference price ceiled to `qty_step`), read per call; with no price yet or a zero minimum
+    notional it is `min_order_qty`. None while the catalogue does not list the symbol."""
     scheduler = ctx.ingestion.instruments
     snap = scheduler.snapshot() if scheduler is not None else None
     inst = snap.get(symbol) if snap is not None else None
     if inst is None:
         return None
-    return min_size_floor(inst.qty_step, inst.tick_size * inst.qty_step)
+    size = notional_size(inst.min_notional, _reference_price(ctx, symbol), inst.qty_step)
+    return min_size_floor(inst.min_order_qty, size)
+
+
+def _reference_price(ctx: AppContext, symbol: str) -> Decimal | None:
+    """SR-E22-03's reference price: the latest print on the symbol's hot tape, else the latest
+    mark price in the ticker stream; None while neither has one (the pending state)."""
+    trades = ctx.ingestion.trades
+    recent = trades.recent(symbol) if trades is not None else []
+    if recent:
+        return recent[-1].price
+    tickers = ctx.ingestion.tickers
+    latest = tickers.latest(symbol) if tickers is not None else None
+    return None if latest is None else latest.mark_price
 
 
 def _catalogue_scales(ctx: AppContext, symbol: str) -> tuple[int, int] | None:
