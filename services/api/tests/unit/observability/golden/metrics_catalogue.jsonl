@@ -338,6 +338,8 @@
 ["support_bundle_duration_seconds", "histogram", [], "live", "E04"]
 ["support_bundle_generations_total", "counter", ["result"], "live", "E04"]
 ["telemetry_rejected_total", "counter", ["reason"], "live", "E04"]
+["ticker_bulk_cache_age_seconds", "gauge", [], "live", "E08"]
+["ticker_bulk_cache_refresh_total", "counter", ["outcome"], "live", "E08"]
 ["topic_staleness_seconds", "gauge", ["topic"], "live", "E04"]
 ["users_invites_rejected_total", "counter", ["reason"], "live", "E09"]
 ["ws_clients", "gauge", [], "planned", "E17"]

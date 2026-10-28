@@ -237,6 +237,7 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_gc_pause_seconds"].labels("2").observe(0.06)
     r["cv_sizer_outcomes_total"].labels("ok", "none").inc()
     r["cv_sizer_clamped_total"].labels("max_order_qty").inc()
+    r["ticker_bulk_cache_refresh_total"].labels("ok").inc()
     text = generate_latest(m.registry).decode()
     families = {f.name: f for f in text_string_to_metric_families(text)}
     for spec in registered_specs():
