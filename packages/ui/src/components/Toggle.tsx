@@ -3,6 +3,7 @@ import { Icon } from "../icons/Icon.js";
 import { ChoiceRow } from "./internal/ChoiceRow.js";
 import { cx } from "./internal/cx.js";
 import { useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { useControllable } from "./internal/useControllable.js";
 
 export interface ToggleProps extends Omit<
@@ -57,27 +58,29 @@ export function Toggle({
   const [checked, setChecked] = useControllable(controlled, defaultChecked);
   const hidden = labelPosition === "hidden";
   const track = (
-    <button
-      {...rest}
-      id={controlId}
-      type="button"
-      role="switch"
-      className="cv-switch"
-      data-checked={checked ? "" : undefined}
-      aria-checked={checked}
-      aria-label={hidden ? label : undefined}
-      aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
-      aria-disabled={reason.ariaDisabled}
-      disabled={reason.disabled}
-      onClick={() => {
-        // Enter and Space arrive as clicks: a gated switch stays focusable but changes nothing.
-        if (reason.gated) return;
-        setChecked(!checked);
-        onChange?.(!checked);
-      }}
-    >
-      <span className="cv-switch__knob" />
-    </button>
+    <ReasonEcho text={reason.reason}>
+      <button
+        {...rest}
+        id={controlId}
+        type="button"
+        role="switch"
+        className="cv-switch"
+        data-checked={checked ? "" : undefined}
+        aria-checked={checked}
+        aria-label={hidden ? label : undefined}
+        aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
+        aria-disabled={reason.ariaDisabled}
+        disabled={reason.disabled}
+        onClick={() => {
+          // Enter and Space arrive as clicks: a gated switch stays focusable but changes nothing.
+          if (reason.gated) return;
+          setChecked(!checked);
+          onChange?.(!checked);
+        }}
+      >
+        <span className="cv-switch__knob" />
+      </button>
+    </ReasonEcho>
   );
   return (
     <ChoiceRow

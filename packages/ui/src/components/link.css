@@ -1,0 +1,43 @@
+/* CMP-021 Link. Tokens only; the type is the surrounding text's (code inherits it). Always underlined: the
+   link colour alone is 2.16:1 against body text (WCAG 1.4.1). The ring is CMP-039's at the link's own square
+   corners (E8), so no radius here. No motion: every state change is instant. */
+.cv-link {
+  color: var(--color-text-link);
+  font: inherit;
+  text-decoration-line: underline;
+  text-decoration-color: currentcolor;
+  cursor: pointer;
+}
+
+/* The external mark stays a plain inline box: its leading word joiner (in the markup) then sits on the last
+   word's line and forbids a break, so the glyph never wraps alone. */
+.cv-link__external {
+  white-space: nowrap;
+}
+
+/* The glyph: size.icon, in the link colour, space.inset.xs after the last word. */
+.cv-link__glyph {
+  display: inline-block;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  margin-inline-start: var(--space-inset-xs);
+  vertical-align: middle;
+}
+
+/* Plain disabled: no href, not focusable; dimmed and inert to the pointer. */
+.cv-link[aria-disabled="true"] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+  /* Forced colours own link colours; the underline stays. */
+  .cv-link {
+    color: LinkText;
+  }
+
+  .cv-link[aria-disabled="true"] {
+    color: GrayText;
+    opacity: 1;
+  }
+}

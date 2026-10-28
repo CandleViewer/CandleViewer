@@ -1,0 +1,17 @@
+/* CMP-035 Countdown. Static: the digits swap once a second with no fade and no colour step (conventions 41). */
+.cv-countdown {
+  display: inline-flex;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+/* The digits take the host sentence's colour; tabular type.num.* keeps the width as they tick. */
+.cv-countdown .cv-countdown__digits {
+  color: inherit;
+}
+
+@media (forced-colors: active) {
+  .cv-countdown .cv-countdown__digits {
+    color: CanvasText;
+  }
+}

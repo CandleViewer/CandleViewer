@@ -1,0 +1,61 @@
+/*
+ * CMP-026 EmptyState, and CMP-027's panel form, which lays out as this block (E05-D02 H13). Tokens only: a
+ * centred column on the host surface, padding inset.xl, gaps stack.sm then stack.md before the actions. The
+ * 480 px column cap has no layout token yet, so it is written as 30rem (the 16 px root). Static: no motion,
+ * the block swaps in at once.
+ */
+.cv-empty-state,
+.cv-error-state[data-form="panel"] {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-stack-sm);
+  max-inline-size: 30rem;
+  margin-inline: auto;
+  padding: var(--space-inset-xl);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.cv-empty-state__glyph {
+  display: inline-flex;
+  width: var(--size-icon-lg);
+  height: var(--size-icon-lg);
+  color: var(--color-text-tertiary);
+}
+
+.cv-empty-state__title {
+  color: var(--color-text-primary);
+}
+
+.cv-empty-state__description {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-empty-state__progress {
+  align-self: stretch;
+}
+
+/* The CTA and the link, inset.sm apart, stack.md under the words (stack.sm from the gap plus the rest). */
+.cv-empty-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-inset-sm);
+  margin-block-start: calc(var(--space-stack-md) - var(--space-stack-sm));
+}
+
+@media (forced-colors: active) {
+  /* The words CanvasText; the glyph follows them through currentColor. */
+  .cv-empty-state,
+  .cv-empty-state__glyph,
+  .cv-empty-state__title,
+  .cv-empty-state__description {
+    color: CanvasText;
+  }
+}

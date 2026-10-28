@@ -1,0 +1,121 @@
+/*
+ * CMP-017 Popover (D02 slice 4, conventions 30): the anchored floating surface, a `role="dialog"` (H11).
+ * Positioned by `useAnchoredPosition` with `fit` (fixed, `space.inset.xs` from the anchor, flipped at the viewport
+ * edge), which writes `--cv-anchor-width` (at least as wide as its trigger) and `--cv-available-height` (the room on
+ * its side: past it the body scrolls under the heading and the footer, conventions 39).
+ * Motion (conventions 35): it takes focus, so it appears at once (no enter fade); the exit fades over `fast` /
+ * `accelerate` with no pointer events; reduced motion is a cut. Stacking: portalled to `body`, no z-index, as CMP-016
+ * (no layer token yet).
+ */
+.cv-popover {
+  position: fixed;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-sm);
+  width: max-content;
+  min-width: var(--cv-anchor-width, auto);
+  max-width: calc(100vw - 2 * var(--space-inset-xs));
+  max-height: var(--cv-available-height, calc(100vh - 2 * var(--space-inset-xs)));
+  padding: var(--space-inset-sm);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-overlay);
+  box-shadow: var(--elevation-popover);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  overflow-wrap: break-word;
+  opacity: 1;
+}
+
+/* The panel and the heading take focus only as the fallback target (conventions 32); they are not controls. */
+.cv-popover:focus,
+.cv-popover__heading:focus {
+  outline: none;
+}
+
+.cv-popover__heading {
+  flex: none;
+  margin: 0;
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+/* The host's content; it scrolls when the surface is capped (Overflow=scrolls). */
+.cv-popover__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-stack-sm);
+  min-height: 0;
+  overflow: auto;
+}
+
+/* A CMP-001 row, end-aligned, `space.inset.sm` apart; it wraps rather than truncating a label. */
+.cv-popover__footer {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-inset-sm);
+}
+
+/* Out over `fast` / `accelerate`; no pointer events from the first frame of the exit (conventions 35). */
+.cv-popover[hidden] {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-easing-accelerate),
+    display var(--motion-duration-fast) allow-discrete;
+}
+
+/* Never seen at the origin: transparent (still focusable, unlike `visibility`) until the first placement lands. */
+.cv-popover:not([data-positioned]) {
+  opacity: 0;
+}
+
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): the exit is a cut. */
+:root[data-motion="reduce"] .cv-popover[hidden] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) .cv-popover[hidden] {
+    transition: none;
+  }
+}
+
+/* The universal reduce pair (as theme.css applies it), kept here so the file is self-contained. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* Forced colours (conventions 38): a CanvasText 1 px border on Canvas, CanvasText text. */
+@media (forced-colors: active) {
+  .cv-popover {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .cv-popover__heading {
+    color: CanvasText;
+  }
+}

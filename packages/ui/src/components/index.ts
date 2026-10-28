@@ -1,5 +1,5 @@
 export { SwatchLegendItem } from "./SwatchLegendItem.js";
-export type { SwatchLegendItemProps } from "./SwatchLegendItem.js";
+export type { DirectionalSwatchColor, SwatchLegendItemProps } from "./SwatchLegendItem.js";
 
 export { Tag } from "./Tag.js";
 export type { TagProps } from "./Tag.js";
@@ -10,6 +10,48 @@ export type {
   LegendConvention,
   LegendPalette,
 } from "./ColorConventionLegend.js";
+
+export { ColorSwatch, ColorSwatchPicker } from "./ColorSwatch.js";
+export type {
+  ColorSwatchOption,
+  ColorSwatchPickerBaseProps,
+  ColorSwatchPickerProps,
+  ColorSwatchProps,
+  SwatchGlyphTone,
+} from "./ColorSwatch.js";
+
+export { ConfidenceDots } from "./ConfidenceDots.js";
+export type { ConfidenceDotsProps, ConfidenceLevel } from "./ConfidenceDots.js";
+
+export { CopyButton, useCopy } from "./CopyButton.js";
+export type { CopyButtonProps, CopyStatus, UseCopyOptions, UseCopyResult } from "./CopyButton.js";
+
+export { Countdown } from "./Countdown.js";
+export type { CountdownFormat, CountdownPhase, CountdownProps } from "./Countdown.js";
+
+export { Divider, DividerLabel } from "./Divider.js";
+export type { DividerLabelProps, DividerProps } from "./Divider.js";
+
+export { EmptyState } from "./EmptyState.js";
+export type {
+  EmptyStateCta,
+  EmptyStateEmptyProps,
+  EmptyStateErrorProps,
+  EmptyStateLink,
+  EmptyStateProps,
+  EmptyStateVariant,
+} from "./EmptyState.js";
+
+export { ErrorState, InlineError } from "./ErrorState.js";
+export type {
+  ErrorSeverity,
+  ErrorStateAction,
+  ErrorStateForm,
+  ErrorStateItem,
+  ErrorStateLive,
+  ErrorStateProps,
+  InlineErrorProps,
+} from "./ErrorState.js";
 
 export { useFocusRing } from "./FocusRing.js";
 export type { FocusRingOptions, FocusRingProps } from "./FocusRing.js";
@@ -26,17 +68,47 @@ export type { BadgeProps, BadgeTone } from "./Badge.js";
 export { Button } from "./Button.js";
 export type { ButtonProps } from "./Button.js";
 
+export { Callout } from "./Callout.js";
+export type { CalloutAction, CalloutLive, CalloutProps, CalloutTone } from "./Callout.js";
+
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";
 
+export { InlineSpinnerText } from "./InlineSpinnerText.js";
+export type { CancellableWait, InlineSpinnerTextProps } from "./InlineSpinnerText.js";
+
+export { Kbd } from "./Kbd.js";
+export type { KbdProps } from "./Kbd.js";
+
+export { KeyValueRow } from "./KeyValueRow.js";
+export type { KeyValueRowProps } from "./KeyValueRow.js";
+
+export { Link } from "./Link.js";
+export type { LinkProps, LinkRoute, LinkRouteProps } from "./Link.js";
+
+export { MaskedValue, maskAllValues } from "./MaskedValue.js";
+export type { MaskedValueProps, MaskedValueState } from "./MaskedValue.js";
+
 export { NumericStepperInput } from "./NumericStepperInput.js";
 export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
+
+export { Popover } from "./Popover.js";
+export type {
+  PopoverAnchorProps,
+  PopoverBaseProps,
+  PopoverName,
+  PopoverPlacement,
+  PopoverProps,
+} from "./Popover.js";
 
 export { ProgressBar } from "./ProgressBar.js";
 export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";
 
 export { Toggle } from "./Toggle.js";
 export type { ToggleProps } from "./Toggle.js";
+
+export { Tooltip } from "./Tooltip.js";
+export type { TooltipMode, TooltipProps, TooltipSide, TooltipTriggerProps } from "./Tooltip.js";
 
 export { Text, Heading, MonoText, NumericText } from "./Typography.js";
 export type {
@@ -77,6 +149,9 @@ export type { SelectOption, SelectProps } from "./Select.js";
 
 export { Slider } from "./Slider.js";
 export type { SliderProps } from "./Slider.js";
+
+export { Sparkline } from "./Sparkline.js";
+export type { SparklineProps, SparklineTrend } from "./Sparkline.js";
 
 export { Spinner } from "./Spinner.js";
 export type { SpinnerProps } from "./Spinner.js";

@@ -1,6 +1,7 @@
 import { useId, useRef, type ComponentPropsWithoutRef, type JSX, type ReactNode } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { cx } from "./internal/cx.js";
 import { FieldMessage, focusFieldInput, useRefusalAnnounce } from "./internal/fieldParts.js";
 
@@ -90,18 +91,20 @@ export function TextInput({
           </span>
         ) : null}
         {hasPrefix ? <span className="cv-field__lead cv-field__affix">{prefix}</span> : null}
-        <input
-          {...rest}
-          ref={inputRef}
-          type={type}
-          className="cv-field__input"
-          disabled={reason.disabled}
-          readOnly={readOnly || reason.gated}
-          aria-disabled={reason.ariaDisabled}
-          aria-invalid={invalid ? true : undefined}
-          aria-describedby={description}
-          {...refusal.handlers}
-        />
+        <ReasonEcho text={reason.reason}>
+          <input
+            {...rest}
+            ref={inputRef}
+            type={type}
+            className="cv-field__input"
+            disabled={reason.disabled}
+            readOnly={readOnly || reason.gated}
+            aria-disabled={reason.ariaDisabled}
+            aria-invalid={invalid ? true : undefined}
+            aria-describedby={description}
+            {...refusal.handlers}
+          />
+        </ReasonEcho>
         {hasSuffix ? (
           <span id={suffixId} className="cv-field__trail cv-field__affix">
             {suffix}

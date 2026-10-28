@@ -30,7 +30,10 @@ export function useDisabledReason(
   };
 }
 
-/** The reason as a plain text node, in the DOM at mount and visually hidden; nothing renders without one. */
+/**
+ * The reason as a plain text node, in the DOM at mount and visually hidden; nothing renders without one. It is the
+ * accessible description; `ReasonEcho` shows a sighted user the same text on hover and focus.
+ */
 export function ReasonText({
   id,
   children,

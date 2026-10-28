@@ -14,21 +14,28 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 
 ### Button (CMP-001, APG Button)
 
-| Keys                         | Action                                                                              |
-| ---------------------------- | ----------------------------------------------------------------------------------- |
-| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.               |
-| Enter, Space                 | Activates (`onClick`).                                                              |
-| Enter, Space (loading)       | No action while `aria-busy`; focus stays.                                           |
-| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description. |
+| Keys                         | Action                                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                                               |
+| Enter, Space                 | Activates (`onClick`).                                                                                              |
+| Enter, Space (loading)       | No action while `aria-busy`; focus stays.                                                                           |
+| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.                                 |
+| Esc (reason echo)            | Hides the reason echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host. |
+
+With a reason, hover and keyboard focus show it in a CMP-016 echo; the reason node stays the description.
 
 ### IconButton (CMP-002, APG Button; toggle button when `pressed` is set)
 
-| Keys                         | Action                                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------------------------ |
-| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                            |
-| Enter, Space                 | Activates (`onClick`). Toggle mode: the consumer flips `pressed`; the name never changes.        |
-| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.              |
-| Esc (reason echo)            | Dismisses the reason tooltip once CMP-016 lands; until then the description is always available. |
+| Keys                         | Action                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                                        |
+| Enter, Space                 | Activates (`onClick`). Toggle mode: the consumer flips `pressed`; the name never changes.                    |
+| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.                          |
+| Esc (name or reason echo)    | Hides the echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host. |
+
+Hover and keyboard focus show the name in a CMP-016 echo (D10); with a reason, one echo shows the name, then the
+reason. The name stays the `aria-label` and the reason the description. Plain disabled has no echo. The echo joins
+the name and the reason with " · ", e.g. "Panel settings · Owner only: your role can't use this action."
 
 ### NumericStepperInput (CMP-008, APG Spin Button)
 
@@ -72,6 +79,7 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Space                         | Checks the focused radio; nothing on a radio with a reason.                                                                |
 | Arrows (radio with a reason)  | Focus lands on it and its reason is the description; it is never checked. A plain-disabled radio is skipped.               |
 | Any key (group with a reason) | No action: focus stays on the checked radio, the value never changes, no form is submitted; the reason is its description. |
+| Esc (reason echo)             | Hides the reason echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host.        |
 
 ### SegmentedControl (CMP-003, APG Radio Group)
 
@@ -116,19 +124,20 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 | Page Up, Page Down               | Increases or decreases by 10 x step.                                                                                                                 |
 | Home, End                        | Sets the value to min or max.                                                                                                                        |
 | Any of these (with a reason)     | No change; focus stays and the reason is the accessible description.                                                                                 |
+| Esc (reason echo)                | Hides the reason echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host.                                  |
 | Alt, Ctrl or Meta with any key   | Not handled; the browser and assistive technology keep their chords.                                                                                 |
 | Pointer down or drag on the rail | Jumps to the pointer, then follows it, snapped to the step. While gated a press focuses the thumb, which announces the reason; nothing else changes. |
 
 ### TextInput (CMP-007, native text input)
 
-| Keys                                                         | Action                                                                                        |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab                                              | Moves focus; the ring wraps the well. Plain disabled is skipped; read-only and a reason stay. |
-| Typing, Backspace, Delete, arrows, Home                      | Native editing; read-only allows selection and copy only.                                     |
-| Enter                                                        | The enclosing form's implicit submission (not with a reason: nothing is submitted).           |
-| Esc                                                          | Not handled: it bubbles to the host.                                                          |
-| Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                    |
-| Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                            |
+| Keys                                                         | Action                                                                                                      |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                              | Moves focus; the ring wraps the well. Plain disabled is skipped; read-only and a reason stay.               |
+| Typing, Backspace, Delete, arrows, Home                      | Native editing; read-only allows selection and copy only.                                                   |
+| Enter                                                        | The enclosing form's implicit submission (not with a reason: nothing is submitted).                         |
+| Esc                                                          | Not handled: it bubbles to the host. With a reason, the first Esc hides the echo (CMP-016) and focus stays. |
+| Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                                  |
+| Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab is never touched; Esc only hides a shown echo, and is untouched when none shows.    |
 
 ### Tag (CMP-011; the remove control follows APG Button through CMP-002)
 
@@ -137,6 +146,7 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 | Tab / Shift+Tab              | Moves focus to the remove button of a removable chip; the nested CMP-002 draws the only ring. Static chips are not in the Tab order.                             |
 | Enter, Space (remove)        | Fires `onRemove`. The chip never moves focus: the owning group moves it to the next chip's remove button, else the previous one, else its input; never `<body>`. |
 | Enter, Space (with a reason) | No removal; the remove button stays focusable and its reason is the accessible description.                                                                      |
+| Esc (name or reason echo)    | Hides the remove button's CMP-016 echo ("Remove {label}", then the reason); focus stays. A second Esc reaches the host.                                          |
 
 | Element                | Role        | Name                                     | Notes                                                       |
 | ---------------------- | ----------- | ---------------------------------------- | ----------------------------------------------------------- |
@@ -181,6 +191,19 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | ---- | --------------------------------------------------------------------------------------------- |
 | none | Not focusable. With `label`: a polite `role="status"`. Without: `aria-hidden` in a busy host. |
 
+### InlineSpinnerText (CMP-038, one polite status region; Cancel follows APG Button through CMP-001)
+
+| Keys                  | Action                                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab       | Reaches Cancel, after the text, when a load, an export or a replay offers it from the 5 s slow path on; never a submit. |
+| Enter, Space (Cancel) | Fires `onCancel`. Focus never moves on its own: Cancel appears without taking focus.                                    |
+
+| Element   | Role   | Name                     | Notes                                                                                        |
+| --------- | ------ | ------------------------ | -------------------------------------------------------------------------------------------- |
+| Container | status | none                     | Polite and atomic; mounted empty, the label inserted after mount, the slow text once at 5 s. |
+| Spinner   | none   | none                     | CMP-014 `sm`, `aria-hidden` inside the status.                                               |
+| Cancel    | button | `cancelLabel` ("Cancel") | A ghost `sm` CMP-001 outside the status, so its name is not read with the words.             |
+
 ### Typography: Text, Heading, MonoText, NumericText (CMP-020, static text)
 
 | Keys            | Action                                                                                                         |
@@ -194,6 +217,55 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | MonoText                | none (span, or `code`)       | Its text.                                                                                     |
 | NumericText             | none (span)                  | The value as shown: "+420.00", "-420.00", or an unsigned "0.00". No `aria-label` on the span. |
 | NumericText abbreviated | none (span)                  | The visible "1.2M" is `aria-hidden`; a visually hidden "1,200,000" is read instead.           |
+
+### Divider (CMP-018) and Divider-Label (CMP-030), static separators
+
+| Keys                        | Action                                                                                        |
+| --------------------------- | --------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab, Arrow keys | Never focusable. In a Menu, Menubar or Toolbar, arrow-key focus movement skips the separator. |
+
+| Element               | Role      | Name                                                                          |
+| --------------------- | --------- | ----------------------------------------------------------------------------- |
+| Divider               | separator | Unnamed; `aria-orientation="vertical"` when vertical. Never inside a listbox. |
+| Divider, `decorative` | none      | Not exposed: layout only.                                                     |
+| Divider-Label rule    | separator | Its visible caption, a sibling, through `aria-labelledby` (never a child).    |
+
+### Link (CMP-021, APG Link; native `<a>`)
+
+| Keys            | Action                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab | Moves focus; focus-visible shows the ring at the link's square corners (E8). A disabled link has no href and is skipped. |
+| Enter           | Follows the link: `to` navigates in-app through the router slot (`as`); `external` opens a new browsing context.         |
+| Space           | Not handled (native link behaviour).                                                                                     |
+
+| Element       | Role                                  | Name                                                                   |
+| ------------- | ------------------------------------- | ---------------------------------------------------------------------- |
+| Link          | link (native `<a href>`)              | Its visible text; external adds the hidden " (opens externally)".      |
+| Disabled link | link (`role="link"`, `aria-disabled`) | Its visible text; no href and no tabindex, so it is not focusable.     |
+| External icon | none                                  | `aria-hidden`; external links carry `rel="noopener noreferrer"` (E25). |
+
+`to` needs `as`, the app's router link component (`packages/ui` imports no router). The slot renders its
+own `<a>` and gets no `rel` or `target` (a route is never external); a router whose link does not take `to`
+plus anchor props needs a small wrapper. `href` is developer-supplied: never pass user input, and never a
+`javascript:` URL. Gated links are held (E27).
+
+### Kbd (CMP-022, static shortcut hint)
+
+| Keys | Action                                                                                                                                                    |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable. The caps are `aria-hidden`; the outer `kbd` reads "Control plus Shift plus K" once. Unbound: nothing renders. In a menu item it is hidden. |
+
+### KeyValueRow (CMP-036, a `dt` / `dd` pair inside the host's `dl`)
+
+| Keys | Action                                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable; a nested link or button owns its keys. A missing "—" is read as "no value" or the host's word. |
+
+### SwatchLegendItem (CMP-037, a list item of its legend's named group)
+
+| Keys | Action                                                                                                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable. Read by its label and value (an abbreviation in full); the swatch and the glyph are `aria-hidden`. |
 
 ### Skeleton (CMP-015) and Skeleton-Chart (CMP-029)
 
@@ -214,3 +286,189 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Tab (first) | The first Tab on a page focuses the first skip link and shows it.                                                     |
 | Tab         | To the next skip link, then into the TopBar; each link hides again when it loses focus.                               |
 | Enter       | Moves focus to the target, which takes `tabindex="-1"` until blur and shows the ring; the next Tab continues from it. |
+
+### Tooltip (CMP-016, APG Tooltip)
+
+| Keys                          | Action                                                                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab to trigger    | Keyboard focus (`:focus-visible`) shows it at once; a pointer focus waits for the 300 ms hover delay. |
+| Tab / Shift+Tab away, blur    | Hides it, unless the pointer is still on the trigger.                                                 |
+| Esc                           | Hides it; focus stays on the trigger and the key stops there. A second Esc reaches the host.          |
+| Pointer on trigger or tooltip | Shows after the delay and stays (WCAG 1.4.13); leaving hides it after a 100 ms grace, never a timer.  |
+
+| Element              | Role    | Name    | Description                                                                                  |
+| -------------------- | ------- | ------- | -------------------------------------------------------------------------------------------- |
+| tooltip, `describes` | tooltip | —       | In the DOM at mount and `hidden`; the trigger's `aria-describedby` points at it.             |
+| tooltip, `echo`      | tooltip | —       | `aria-hidden`: a visual copy of the trigger's `aria-label` or of its always-rendered reason. |
+| trigger              | its own | its own | Must take focus; a static atom never hosts a tooltip. Never the `title` attribute.           |
+
+### Popover (CMP-017, a non-modal dialog; APG Dialog (Modal) when `modal`)
+
+| Keys                         | Action                                                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Enter / Space on the trigger | Opens it; focus moves to `initialFocusRef`, else its first control, else its heading (`tabindex="-1"`), else the panel.         |
+| Tab / Shift+Tab, modal       | Cycles inside, in DOM order.                                                                                                    |
+| Tab / Shift+Tab, non-modal   | Through its controls; Tab past the last closes it and moves on from the trigger; Shift+Tab before the first returns and closes. |
+| Esc                          | Closes it (the topmost layer: a tooltip inside takes Esc first); focus returns to the trigger.                                  |
+| A press outside              | Closes it only when the press starts and ends outside; focus goes to the pressed control, else to the trigger.                  |
+| Focus leaving it, non-modal  | Closes it; focus stays where it went. A modal popover takes escaped focus back.                                                 |
+
+| Element | Role               | Name                                                                 | ARIA                                                       |
+| ------- | ------------------ | -------------------------------------------------------------------- | ---------------------------------------------------------- |
+| trigger | button (its own)   | its own                                                              | `aria-haspopup="dialog"`, `aria-expanded`, `aria-controls` |
+| popover | dialog (portalled) | `aria-label`, `aria-labelledby` or its `heading`; one required (H11) | `aria-modal="true"` only when `modal`                      |
+
+### Sparkline (CMP-024, static `img`)
+
+| Keys | Action                                                                                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable; the parent row owns focus and its DOM-mirror table holds the data. Read as its trend summary, e.g. "up 3.2% over 20 bars"; the line is hidden. |
+
+### Confidence Dots (CMP-032, static text plus decorative dots)
+
+| Keys | Action                                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable. The dots are `aria-hidden`; the visible label ("Low confidence") is plain text and always names the level. |
+
+### CopyButton (CMP-033, APG Button through CMP-002; polite status)
+
+| Keys                | Action                                                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab     | Moves focus; the nested CMP-002 draws the ring. Disabled is skipped.                                                  |
+| Enter, Space        | Copies the value; the glyph turns to `check` and "Copied" is spoken; focus stays. A held Enter's repeats are ignored. |
+| (none; after 2 s)   | Reverts silently: the glyph returns and the status empties.                                                           |
+| Enter, Space (fail) | The clipboard refused: the `error` glyph and "Copy failed" (E20), reverting after 2 s.                                |
+
+A repeat press empties the status and re-announces "Copied"; the check glyph stays. The value is never in
+the DOM, an attribute, the status or the name. `useCopy()` gives hosts the same write
+and status.
+
+### MaskedValue (CMP-034, a named group; the toggle and Copy follow APG Button through CMP-002 and CMP-033)
+
+| Keys                        | Action                                                                                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab             | The toggle, then Copy (when `copyable`); the box is not focusable. Copy is disabled, and skipped, while masked.                                    |
+| Enter, Space on the toggle  | Reveals (the name becomes "Hide {label}"; focus stays) or masks at once. Only a press reveals: never hover, focus or a prop.                       |
+| Enter, Space on Copy        | Copies the revealed value; CMP-033's `check` and "Copied" for 2 s.                                                                                 |
+| (none; at `autoHideMs`)     | Re-masks; focus on the toggle stays, on Copy moves to the toggle; spoken once 2 s before ("{label} will hide in 2 seconds"), silent at the moment. |
+| (none; blur, hidden, print) | The window losing focus, a hidden tab, print, history navigation or another value's reveal re-masks at once.                                       |
+
+| Element     | Role   | Name                            | Notes                                                                                                            |
+| ----------- | ------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Container   | group  | `label` ("API secret")          | `data-state` is `masked`, `revealed` or `expiring`.                                                              |
+| Mask        | none   | none                            | 8 × "•" `aria-hidden`, whatever the value's length, beside a visually hidden "{label}, hidden".                  |
+| Value       | text   | none                            | Rendered only while revealed; read in browse mode, never in a live region.                                       |
+| Toggle      | button | "Show {label}" / "Hide {label}" | A ghost CMP-002 `show` / `hide`; `aria-controls` the box. The swapped name carries the state: no `aria-pressed`. |
+| Copy        | button | "Copy {label}"                  | CMP-033, enabled only while revealed.                                                                            |
+| Live region | status | none                            | CMP-035's one threshold sentence; never the value.                                                               |
+
+While masked the value is in no text node, attribute, `title`, `data-*`, accessible name or description; it reaches
+no log and no callback (`onToggleReveal` gets the new state only). While revealed it is in exactly one text node.
+`revealed={false}` masks at once, and while it stands a press does nothing and emits nothing; `true` never reveals by
+itself. Revealing a second value masks the first in the same commit. The window losing focus, a hidden tab,
+`pagehide`, `beforeprint` and the auto-hide commit the mask synchronously, before the event returns; print never lays
+the value out. `autoHideMs` defaults to 10 s and is clamped to 3–30 s (the G19 cap). The app calls `maskAllValues()`
+on a route change, the idle lock and sign-out (`packages/ui` imports no router); that mask lands after the call
+returns, in a microtask. Unmounting drops its references to the value. Server rendering is safe: the initial render
+is always masked, so the value never reaches server HTML.
+
+Known residuals (G19's defaults, ruling 12; E05-X02 signs off):
+
+- Clipboard: `copyable` copies only while revealed, and there is no clipboard-clearing promise, so a copied secret
+  can stay in the OS clipboard, its history and any cloud sync.
+- Screen capture or screen share while revealed records the value.
+- The accessibility tree exposes the revealed text to assistive technology and to any process that reads it.
+- DOM-reading browser extensions can read the revealed text; `translate="no"` stops the browser's own page
+  translation, not an extension's translator.
+- Manual selection, copy or drag of the revealed text bypasses `copyable`.
+- Memory: JavaScript strings cannot be zeroed, so "leaves component state" does not mean "leaves memory"; the value
+  stays in the heap until the host drops every reference and the collector runs.
+- Any script on the page can reach `value` through React's fiber props (`__reactProps$*` on the DOM nodes and
+  the component tree), masked or not; browser developer tools (React DevTools) are one such reader. The mitigation
+  is the strict CSP (C-12.10), which keeps foreign script off the page.
+
+### Countdown (CMP-035, text with a threshold announcer)
+
+| Keys | Action                                                                                                                                                                                   |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable; never moves focus. The digits are hidden and a twin reads the words on demand (`aria-live="off"`); a polite status speaks each threshold once. In a grid column, nothing. |
+
+### ColorSwatch / ThemeChip (CMP-031, APG Radio Group in the picker; a static `img` otherwise)
+
+| Keys                           | Action                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab                | Enters on the selected swatch (the first enabled one when none is selected) and leaves the picker; one tab stop.               |
+| Right / Down Arrow             | Moves focus to the next swatch and selects it; wraps from the last to the first.                                               |
+| Left / Up Arrow                | Moves focus to the previous swatch and selects it; wraps from the first to the last.                                           |
+| Home / End                     | Moves focus to the first / last swatch and selects it.                                                                         |
+| Space                          | Selects the focused swatch; nothing on a swatch with a reason.                                                                 |
+| Arrows (swatch with a reason)  | Focus lands on it and its reason is the description; it is never selected. A plain-disabled swatch is skipped.                 |
+| Any key (picker with a reason) | No action: focus stays on the selected swatch and the value never changes; every swatch carries the reason as its description. |
+| None (static `ColorSwatch`)    | Not focusable; read as the colour's name (`img`), or hidden when `decorative` beside text that names the colour.               |
+
+Each swatch is named by the colour's human name, never its hex value. Selection is the `check` glyph, never colour alone.
+
+Known token dependency (E05-D02 A5): there is no user-pickable palette yet, and in light
+`color.drawing.selected` (Amber) is 2.76:1 on `color.surface.overlay` and 3.00:1 on `color.surface.raised`,
+below WCAG 1.4.11 on a picker's own surface. Until the palette token pass lands, a light picker that offers
+it sits on `color.surface.app` (3.45:1), as the ThemeLight story does.
+
+---
+
+### Callout / Banner (CMP-028, a status or alert region; its buttons follow APG Button)
+
+| Keys                   | Action                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab        | Moves through `retry`, then each of `actions`, then the dismiss button. A callout with none of them is not in the Tab order. |
+| Enter, Space           | Activates the focused button.                                                                                                |
+| Enter, Space (dismiss) | Fires `onDismiss`. The callout never moves focus: the host removes it and moves focus to its own next stop, never `<body>`.  |
+| Esc                    | Not handled: Esc never dismisses a lockout, freeze, disconnect or protection banner.                                         |
+
+| Element | Role                                                                          | Name              | Notes                                                                                        |
+| ------- | ----------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------- |
+| Message | status (info, success, reconnecting) or alert (warning, danger, disconnected) | none              | `live` overrides the tone's default; `off` renders no live role. Atomic, filled after mount. |
+| Glyph   | none                                                                          | none              | The tone's registry glyph, `aria-hidden`; the title's words carry the tone too.              |
+| Dismiss | button                                                                        | "Dismiss {title}" | A ghost CMP-002 `close`, after the actions.                                                  |
+
+The hatched `unprotected` edge is deferred until its PROPOSED pattern token lands; every callout draws the solid edge.
+The body is part of the announced message, so it holds no focusable content: links and buttons go in `retry` and
+`actions`. A change of live role (a tone crossing the polite / assertive line, or `live` turning on) remounts the
+message, body included, so it is announced again.
+Flap-collapse (reconnect attempts within 5 s read as one "Connection unstable") is the host's (CMP-077), which
+owns the connection state; the callout announces each state entry it is given once.
+
+
+### EmptyState (CMP-026, a static block; its CTA and link follow APG Button and APG Link)
+
+| Keys            | Action                                                                                              |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab | Moves to the CTA, then the link. The sentence form (no `cta`) has no button; with neither, no stop. |
+| Enter, Space    | Activates the CTA. Enter follows the link.                                                          |
+
+| Element | Role                              | Name      | Notes                                                                              |
+| ------- | --------------------------------- | --------- | ---------------------------------------------------------------------------------- |
+| Heading | heading, level `headingLevel` (3) | the fact  | No live region: the host's own region says a filter emptied a table, once.         |
+| CTA     | button (CMP-001 `primary`)        | its label | A gated CTA is never drawn: the sentence form puts the host's reason in its place. |
+| Link    | link (CMP-021)                    | its label | One secondary link, after the CTA.                                                 |
+| Glyph   | none                              | none      | The variant's registry glyph (`filtered-empty`: `search`), `aria-hidden`.          |
+
+`variant="error"` renders CMP-027's panel with `live="polite"` (E05-D02 H13): `title` its heading, `description`
+its message, `cta` its Retry.
+
+### ErrorState / InlineError (CMP-027, an alert or status region; Disclosure for the details)
+
+| Keys            | Action                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab | Moves through the summary links, `retry`, `action`, then "Technical details"; with none of them, the region is not in the Tab order. |
+| Enter, Space    | Activates the focused button; on "Technical details" toggles the box (`aria-expanded`).                                              |
+| Enter (link)    | An error summary's `#id` link moves focus to its field. The host moves focus to the summary heading after a failed submit.           |
+
+| Element           | Role                                                             | Name                | Notes                                                                                            |
+| ----------------- | ---------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
+| Message           | alert (error) or status (warning); `live` overrides; none on off | none                | Atomic, filled after mount so a transient failure is read once; buttons and details sit outside. |
+| Summary heading   | heading, level `headingLevel` (3)                                | its `title`         | `tabindex="-1"` and `headingId`, so the host can focus it; inside the region with its links.     |
+| Technical details | button                                                           | "Technical details" | `aria-expanded`, `aria-controls`; the box is selectable, with a CMP-033 copy, never announced.   |
+| Glyph             | none                                                             | none                | `error` or `warning`, `aria-hidden`; the words carry the severity too.                           |
+
+Forms: `panel` (CMP-026's block), `inline` (one row, `InlineError`) and `banner` (CMP-028's box in the error or
+warning tone). The message is CandleViewer's own text, never the exchange's `ret_msg`.

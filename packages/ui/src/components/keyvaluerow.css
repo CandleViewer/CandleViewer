@@ -1,0 +1,75 @@
+/* CMP-036 KeyValueRow (conventions 42). Static: no hover, focus or motion of its own. */
+.cv-kv {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-inset-sm);
+  min-height: var(--size-row-height);
+}
+
+.cv-kv + .cv-kv {
+  margin-block-start: var(--space-stack-xs);
+}
+
+.cv-kv__label {
+  flex: 0 1 auto;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+/* The value is end-aligned; text wraps, a number (NumericText) never does. */
+.cv-kv__value {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+  margin: 0;
+  color: var(--color-text-primary);
+  text-align: end;
+  overflow-wrap: anywhere;
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+/* One flex item for the whole value, so mixed inline content (text, a link, a number) keeps its flow. */
+.cv-kv__content {
+  min-width: 0;
+}
+
+.cv-kv[data-layout="stacked"] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.cv-kv[data-layout="stacked"] .cv-kv__value {
+  justify-content: flex-start;
+  text-align: start;
+}
+
+.cv-kv[data-emphasis] .cv-kv__value {
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+.cv-kv[data-emphasis] .cv-kv__value .cv-num[data-size="base"] {
+  --cv-num-family: var(--type-num-md-font-family);
+  --cv-num-size: var(--type-num-md-font-size);
+  --cv-num-weight: var(--type-num-md-font-weight);
+  --cv-num-leading: var(--type-num-md-line-height);
+}
+
+.cv-kv__value[data-missing] {
+  color: var(--color-text-secondary);
+}
+
+@media (forced-colors: active) {
+  .cv-kv__label,
+  .cv-kv__value,
+  .cv-kv__value[data-missing] {
+    color: CanvasText;
+  }
+}

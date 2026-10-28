@@ -1,0 +1,81 @@
+/* CMP-034 MaskedValue. Tokens only and static: masking and revealing swap the content at once, with no fade,
+   so reduced motion holds by construction. The buttons' box, ring, hover and dimming are the nested CMP-002's
+   and CMP-033's (conv. 20); this file draws the display box, the value, the mask and the countdown line. */
+.cv-masked-value {
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cv-masked-value__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+}
+
+/* The display box shares the field well's geometry (D02 conventions 21): a decorative hairline. */
+.cv-masked-value__box {
+  --cv-masked-value-bw: calc(var(--border-hairline) * 1px);
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--size-control-height);
+  padding-inline: calc(var(--space-inset-sm) - var(--cv-masked-value-bw));
+  border: var(--cv-masked-value-bw) solid var(--color-border-default);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+}
+
+/* The value: an identifier, start-aligned; wraps at any character and is never truncated. */
+.cv-masked-value__value {
+  min-width: 0;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* The mask never wraps. */
+.cv-masked-value__mask {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* The buttons never grow. */
+.cv-masked-value__actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-inset-xs);
+}
+
+/* "Hides in 10 s": type.ui.caption in text.tertiary; the CMP-035 digits take this colour. */
+.cv-masked-value__countdown {
+  color: var(--color-text-tertiary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* Print renders the mask (S4): `beforeprint` re-masks, and a revealed value is not even laid out on paper. */
+@media print {
+  .cv-masked-value__value {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  /* The box edge and the text in CanvasText; the buttons follow CMP-002. */
+  .cv-masked-value__box {
+    border-color: CanvasText;
+  }
+
+  .cv-masked-value__value,
+  .cv-masked-value__mask,
+  .cv-masked-value__countdown {
+    color: CanvasText;
+  }
+}
