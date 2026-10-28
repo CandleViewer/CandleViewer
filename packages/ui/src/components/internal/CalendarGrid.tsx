@@ -124,8 +124,12 @@ export function CalendarGrid({
     (rangeEnd != null && selected !== null && clampIso(iso, selected, rangeEnd) === iso);
 
   const choose = (iso: string): void => {
-    // A pressed day becomes the roving stop (a press focuses it), so a pending range's band follows it.
-    setFocused(iso);
+    // In a range a pressed day becomes the roving stop (a press focuses it), so a pending band follows it; the
+    // pointer's day is dropped until the next mouseenter. The single form keeps its slice-13 roving stop.
+    if (rangeEnd !== undefined) {
+      setFocused(iso);
+      setHovered(null);
+    }
     if (isWithin(iso, min, max)) onPick(iso);
     else setRefusals((n) => n + 1);
   };

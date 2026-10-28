@@ -434,7 +434,7 @@ last day are empty `gridcell`s, as in the APG example.
 | --------------- | ------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
 | range           | group                     | CMP-040's label (or `aria-label`)  | `data-mode="range"`; one error line, one hint, one reason for every field                      |
 | Start / End     | textbox                   | the visible labels "Start" / "End" | as the date field; `startLabel` / `endLabel` rename them                                       |
-| time fields     | textbox                   | "Start time" / "End time"          | placeholder `HH:MM`; the "UTC" suffix in the description                                       |
+| time fields     | textbox                   | "Start time" / "End time"          | the date label + " time" (`startLabel` / `endLabel` rename them); `HH:MM`; "UTC" described     |
 | calendar button | button                    | "Choose dates"                     | as the single form                                                                             |
 | day             | gridcell holding a button | as the single form                 | `aria-selected` on every day of the range (only the start while the end is pending)            |
 | start status    | status (in the dialog)    | —                                  | "Start 2026-10-01. Choose the end date." on the start pick, and on a pick that replaces it     |

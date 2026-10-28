@@ -98,7 +98,10 @@ export function EntryWell({
   const error = edit?.error ?? null;
 
   const report = useRef(onError);
-  report.current = onError;
+  // The latest callback, kept outside render; declared before the effect below so it runs first.
+  useLayoutEffect(() => {
+    report.current = onError;
+  });
   useLayoutEffect(() => {
     report.current(error);
   }, [error]);
@@ -134,6 +137,8 @@ export function EntryWell({
           event.preventDefault();
           onOpen();
         } else if (event.key === "Enter" && edit !== null) {
+          // A host form's implicit submit would read the value before this commit renders.
+          event.preventDefault();
           commit(edit.text);
         }
       },

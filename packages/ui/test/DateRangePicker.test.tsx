@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, useState, type JSX } from "react";
-import { expect, fireEvent, fn, within } from "storybook/test";
+import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { afterEach, describe, it, vi } from "vitest";
 import {
   DateRangePicker,
@@ -187,16 +187,9 @@ describe("DateRangePicker (CMP-047 range): the calendar", () => {
     expect(cell("6 October 2026")).toHaveAttribute("data-in-range");
     expect(cell("7 October 2026")).toHaveAttribute("data-in-range");
     expect(cell("7 October 2026")).not.toHaveAttribute("aria-selected");
-    await act(async () => {
-      // React derives mouseenter from mouseover.
-      fireEvent.mouseOver(day("9 October 2026"));
-    });
+    await act(async () => userEvent.hover(day("9 October 2026")));
     expect(cell("8 October 2026")).toHaveAttribute("data-in-range");
-    await act(async () => {
-      fireEvent.mouseOut(within(openDialog()).getByRole("grid"), {
-        relatedTarget: document.body,
-      });
-    });
+    await act(async () => userEvent.unhover(within(openDialog()).getByRole("grid")));
     expect(cell("8 October 2026")).not.toHaveAttribute("data-in-range");
   });
 

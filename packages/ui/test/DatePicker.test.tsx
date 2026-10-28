@@ -95,6 +95,38 @@ describe("DatePicker (CMP-047): the field", () => {
     expect(onChange).toHaveBeenLastCalledWith(null);
   });
 
+  it("keeps Enter that commits or refuses typed text from submitting a host form", async () => {
+    const onSubmit = fn((event: { preventDefault: () => void }) => event.preventDefault());
+    const host = await mount(
+      <form onSubmit={onSubmit}>
+        <Host value="2026-10-23" />
+      </form>,
+    );
+    const input = field(host);
+    await act(async () => input.focus());
+    const enter = async (): Promise<boolean> => {
+      let kept = true;
+      await act(async () => {
+        kept = await fireEvent.keyDown(input, { key: "Enter" });
+      });
+      return kept;
+    };
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "2026-10-01" } });
+    });
+    expect(await enter()).toBe(false);
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "not a date" } });
+    });
+    expect(await enter()).toBe(false);
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "2026-10-01" } });
+    });
+    await enter();
+    // No typed text under way: Enter is left to the host form.
+    expect(await enter()).toBe(true);
+  });
+
   it("words unparsable text, keeps it, and clears silently once it is valid", async () => {
     const onChange = fn();
     const host = await mount(<Host onChange={onChange} />);
@@ -338,6 +370,21 @@ describe("DatePicker (CMP-047): the calendar dialog", () => {
     // In range, no aria-disabled.
     await key("ArrowRight");
     expect(document.activeElement).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("keeps the roving stop where it was on a refused press (the single form)", async () => {
+    const host = await mount(<Host value="2026-10-01" min="2026-09-01" max="2026-10-20" />);
+    await click(button(host));
+    const calendar = openDialog();
+    await click(within(calendar).getByRole("button", { name: "25 October 2026" }));
+    expect(within(calendar).getByRole("button", { name: "1 October 2026" })).toHaveAttribute(
+      "tabindex",
+      "0",
+    );
+    expect(within(calendar).getByRole("button", { name: "25 October 2026" })).toHaveAttribute(
+      "tabindex",
+      "-1",
+    );
   });
 
   it("speaks the caption again on each later press, in this month or another", async () => {

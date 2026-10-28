@@ -69,7 +69,10 @@ const PARTS: readonly Part[] = ["start", "startTime", "end", "endTime"];
 type Errors = Readonly<Record<Part, string | null>>;
 const NO_ERRORS: Errors = { start: null, startTime: null, end: null, endTime: null };
 
-/** The two polite range sentences (D02F CMP-047's live region, proposed strings). */
+/**
+ * The two polite range sentences (D02F CMP-047's live region, proposed strings). Exported for the tests only: not in
+ * the barrel, not public API.
+ */
 export const startSentence = (start: string): string => `Start ${start}. Choose the end date.`;
 export function rangeSentence(start: string, end: string): string {
   const days = daySpan(start, end);
@@ -145,6 +148,8 @@ export function DateRangePicker({
   );
   const { reason } = control;
   const frozen = reason.gated || reason.disabled || readOnly;
+  // Derived state set during render: a field that freezes closes the dialog. `pending` and `startSaid` stay, as
+  // openCalendar resets both before the next opening.
   if (frozen && open) setOpen(false);
 
   useEffect(() => {
