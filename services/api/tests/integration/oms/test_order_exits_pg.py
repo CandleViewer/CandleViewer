@@ -9,6 +9,8 @@ cancel race with a closing and with a partial fill, a recorded stop's cancel whi
 open, cancel-all's partial failure, and a restart resuming an exit left pending. Each answer is
 validated against 22, and every create carries its native stop (C-2.6, `_native_stops`). A venue
 call is held at its door on the order lane's loop (`_Door`), released from there, never by a sleep.
+Run once locally before review (8 passed, Postgres 16); CI's `integration` job runs it in the merge
+group.
 """
 
 from __future__ import annotations
