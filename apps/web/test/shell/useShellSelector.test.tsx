@@ -6,13 +6,14 @@ import {
   setShellState,
   type ShellState,
 } from "../../src/shell/bootstrap/store.js";
+import type * as ShellStoreModule from "../../src/shell/bootstrap/store.js";
 import { useShellSelector } from "../../src/shell/useShellSelector.js";
 import { toLatencyIndicator } from "../../src/lib/telemetry/latencyIndicator.js";
 
 // Counts the hook's live store subscriptions, for the teardown test.
 const active = vi.hoisted(() => ({ n: 0 }));
 vi.mock("../../src/shell/bootstrap/store.js", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../../src/shell/bootstrap/store.js")>();
+  const real = await importOriginal<typeof ShellStoreModule>();
   return {
     ...real,
     subscribeShellState: (listener: () => void) => {

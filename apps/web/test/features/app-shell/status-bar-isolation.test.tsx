@@ -3,6 +3,8 @@ import { act, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as AppShellModule from "../../../src/features/app-shell/AppShell";
+import type * as StatusBarModule from "../../../src/features/app-shell/StatusBar";
 import { clearAnnouncements } from "../../../src/features/app-shell/announcer";
 import { ShellLayout } from "../../../src/features/app-shell/ShellLayout";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
@@ -13,7 +15,7 @@ const renders = { shell: 0, statusBar: 0, statusSubtree: 0, outlet: 0 };
 
 // Count the top-level shell's and the status bar's own renders (ESM exports cannot be spied).
 vi.mock("../../../src/features/app-shell/AppShell", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../../../src/features/app-shell/AppShell")>();
+  const real = await importOriginal<typeof AppShellModule>();
   return {
     ...real,
     AppShell: (props: Parameters<typeof real.AppShell>[0]) => {
@@ -23,7 +25,7 @@ vi.mock("../../../src/features/app-shell/AppShell", async (importOriginal) => {
   };
 });
 vi.mock("../../../src/features/app-shell/StatusBar", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../../../src/features/app-shell/StatusBar")>();
+  const real = await importOriginal<typeof StatusBarModule>();
   const onRender = (): void => {
     renders.statusSubtree += 1;
   };
