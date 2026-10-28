@@ -1879,17 +1879,20 @@ def g_session(t: Texts) -> list[Finding]:
 REQUIRED = (
     # the ruling of record (comment 6476926665), its sentences verbatim (anchors stripped)
     ("BQ", "RULED (orchestrator, comment 6476926665)"),
-    ("BQ", "BQ-0: the standing rules confirmed in bulk as listed."),
-    ("BQ", ("BQ-1 (security path): two compatible rules, not a conflict. D02's ruled SC-9 governs"
-            " the DRAWN behaviour (LOCKED never blocks a builder: configuring is always possible).")),
-    ("BQ", ("E33-S05's \"a disarmed user cannot submit from a builder\" is the SUBMIT gate, enforced"
-            " server-side by the kill switch, frozen, lockout and the Viewer's 403 (C-2.21, C-12.4),"
-            " and the pack SHOWS it as the ruled refused state at the submit confirm.")),
-    ("BQ", ("Quote both verbatim; record S05's wording as the C-row; the pack's AC3 line says"
-            " exactly this.")),
-    ("BQ", ("BQ-2: one state-matrix row per frame family (frame ids + anchored counts) in the spec,"
-            " per-frame rows in the deck; the 300-line budget holds; nothing from the four parents"
-            " is re-decided.")),
+    ("BQ", ('BQ-0: the standing rules confirmed in bulk as listed (location per D03 BQ-1, Viewer per '
+            'D03 BQ-8, the owner stand-in, Storybook "agreed" per D04 BQ-19, `link_down` routed to E3'
+            "0-D02's owner, D05's PENDING ids reconciled, TM D6 as a C-row).")),
+    ("BQ", ('BQ-1 (security path): the default stands, read as two compatible rules, not a conflict —'
+            " D02's ruled SC-9 governs the drawn behaviour (LOCKED never blocks a builder: configurin"
+            'g is always possible), while E33-S05\'s "a disarmed user cannot submit from a builder" is'
+            " the submit gate, which the kill switch, frozen, lockout and the Viewer's 403 enforce "
+            'server-side (C-2.21, C-12.4) and the pack shows as the ruled refused state at the submit'
+            ' confirm;')),
+    ("BQ", ("quote both verbatim, record S05's wording as the C-row, and make the pack's AC3 line say"
+            ' exactly that.')),
+    ("BQ", ('BQ-2: the state matrix with one row per frame family (frame ids + anchored counts) in th'
+            'e spec and the per-frame rows in the deck — accepted; the 300-line budget holds; nothing'
+            ' from the four parents is re-decided.')),
     ("§0", "**One spec plus the deck; no `-handoff.md`, no redraw, no new board:**"),
     ("§0", "**Nothing unmerged is pinned or quoted:**"),
     ("§2", "**Missing treatments are G-rows, never invented**"),
@@ -2658,9 +2661,9 @@ def bust_budget(t: Texts) -> Texts:
 PROBE = "Zq8r4LmT" + "1vXc0p9W"  # built at run time, so no scanner reads it here
 BQP = "the deck's per-frame rows and §4 by reference."
 BQ1 = (
-    ' E33-S05\'s "a disarmed user cannot submit from a builder" is the SUBMIT gate, enforced'
-    " server-side by the kill switch, frozen, lockout and the Viewer's 403 (C-2.21, C-12.4), and the"
-    " pack SHOWS it as the ruled refused state at the submit confirm."
+    ' while E33-S05\'s "a disarmed user cannot submit from a builder" is the submit gate, which'
+    " the kill switch, frozen, lockout and the Viewer's 403 enforce server-side (C-2.21, C-12.4)"
+    " and the pack shows as the ruled refused state at the submit confirm;"
 )
 S0 = "E33-T02's OpenAPI delta is named only."
 S5 = "routed to E33-X03 (#1109)."
