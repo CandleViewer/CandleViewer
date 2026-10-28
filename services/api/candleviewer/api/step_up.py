@@ -671,6 +671,11 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("PUT", "/exchange-accounts/{accountId}/profiles/{profileId}", "risk_caps"),
     ("DELETE", "/exchange-accounts/{accountId}/profiles/{profileId}", "risk_caps"),
     ("PUT", "/exchange-accounts/{accountId}/default-profile", "risk_caps"),
+    # E28-T05 (#909, SR-E28-02): the definition writes, after RBAC, the flag, the body and the
+    # members' lookups; S2d mounts the replace and the delete (`_PENDING_HANDLER_GATES` until then).
+    ("POST", "/trade-group-definitions", "risk_caps"),  # createTradeGroupDefinition
+    ("PUT", "/trade-group-definitions/{definitionId}", "risk_caps"),
+    ("DELETE", "/trade-group-definitions/{definitionId}", "risk_caps"),
     # createExchangeAccount: `keys`, the class of the key routes the account needs next (22
     # names none).
     ("POST", "/exchange-accounts", "keys"),
@@ -694,10 +699,11 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
 #: `exchange-accounts/{id}/default-profile` (#906 0d): the default binding's move, likewise.
 #: `exchange-accounts` exactly (#895, SR-E27-02): the account's create. `exchange-accounts/{id}`
 #: (E27-S04, #898): the account's patch and delete; fee-rate and consequences stay unswept.
+#: `trade-group-definitions` (#909, SR-E28-02): the definition writes, handler-gated likewise.
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
     r"|session/environment|risk/lockouts|recording[^/]*|recorder[^/]*|audit|backups"
-    r"|feature-flags|view-as|exchange-accounts/[^/]+/profiles"
+    r"|feature-flags|view-as|exchange-accounts/[^/]+/profiles|trade-group-definitions"
     r"|exchange-accounts/[^/]+/default-profile|exchange-accounts(/[^/]+)?$)(/|$)"
 )
 

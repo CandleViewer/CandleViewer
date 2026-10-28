@@ -13,7 +13,9 @@ import pytest
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.trade_group_definitions import DefinitionScopeDeniedError
 from tests.contract._admin_support import SPEC, validate_example
-from tests.unit.api.test_trade_group_definition_reads import CORE3, A, C, World, principal
+from tests.unit.api.test_trade_group_definition_create import L, caller, payload
+from tests.unit.api.test_trade_group_definition_create import World as Writes
+from tests.unit.api.test_trade_group_definition_reads import CORE3, MISSING, A, C, World, principal
 
 CALLERS = {"owner": principal("owner"), "manager": principal("manager", A, C), "anonymous": None}
 CALLERS["bare"] = principal("viewer", read=False)  # the forbidden-role case
@@ -44,3 +46,27 @@ def test_each_answer_is_one_22_declares(
         media = "application~1json" if status == 200 else "application~1problem+json"
         validate_example(f"{declared.get('$ref', own)[1:]}/content/{media}/schema", resp.json())
     assert world.store.reads == int(status in (200, 404) or isinstance(fault, Exception))
+
+
+@pytest.mark.parametrize(
+    ("role", "sent", "fault", "status"),
+    [
+        ("owner", None, None, 201), ("owner", (A, L), None, 400), (None, None, None, 401),
+        ("manager", None, None, 403), ("owner", (A, MISSING), None, 403),
+        ("owner", None, "flag", 403), ("owner", (A, C), None, 409), ("owner", (A, A), None, 422),
+        ("owner", None, "audit", 503), ("owner", None, "writes", 503),
+    ],
+)  # fmt: skip
+def test_each_create_answer_is_one_22_declares(
+    role: str | None, sent: tuple[UUID, ...] | None, fault: str | None, status: int
+) -> None:
+    """S2c: Pair's name is taken; unwired, 501 (undeclared, as above)."""
+    world = Writes("writes" if fault == "writes" else "")
+    world.principal, world.flag = None if role is None else caller(role), fault != "flag"
+    world.faults = {"audit": RuntimeError("not started")} if fault == "audit" else {}
+    resp = world.post(None if sent is None else payload(*sent, name="Pair" if C in sent else "N"))
+    declared = SPEC["paths"]["/trade-group-definitions"]["post"]["responses"][str(status)]
+    own, media = f"#/paths/~1trade-group-definitions/post/responses/{status}", "problem+json"
+    media = "application~1" + ("json" if status == 201 else media)
+    assert resp.status_code == status
+    validate_example(f"{declared.get('$ref', own)[1:]}/content/{media}/schema", resp.json())

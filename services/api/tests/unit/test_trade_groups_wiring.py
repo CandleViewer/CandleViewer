@@ -148,6 +148,8 @@ def test_the_root_wires_the_definition_reads_and_announces_the_interim_lockouts_
     assert source._live_enabled is False  # the setting's default
     assert source._live_flag is app.state.feature_flags.live_enabled  # the OMS's view of the flag
     assert isinstance(getattr(source._kill_switch, "__self__", None), InterimKillSwitch)
+    gate = app.state.trade_groups_gate  # S2c: over the flag's view; the preview's not ready (S3c)
+    assert (gate._enabled, gate._preview_ready) == (app.state.feature_flags.trade_groups, False)
     # a router given no store or no readiness answers 503, not this
     got = TestClient(app, client=("127.0.0.1", 50000)).get(f"/trade-group-definitions/{CORE3}")
     assert got.status_code == 200 and got.json()["readiness"]["total"] == 3

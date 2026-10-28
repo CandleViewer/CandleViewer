@@ -93,6 +93,7 @@ from candleviewer.api import (
     make_ticker_router,
     make_trades_router,
 )
+from candleviewer.api import trade_group_definition_writes as definition_writes
 from candleviewer.api.admin_backup_delete import make_admin_backup_delete_router
 from candleviewer.api.admin_backup_download import (
     NoStoreNoReferrer,
@@ -185,6 +186,7 @@ from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.ticker import make_tickers_router
 from candleviewer.api.trade_group_definitions import make_trade_group_definitions_router
+from candleviewer.api.trade_groups_gate import TradeGroupsGate
 from candleviewer.api.users import (
     AccountAccessStore,
     PermissionChangeNotifier,
@@ -284,6 +286,7 @@ from candleviewer.ingestion.ticker_bulk import AgeGauge, TickerBulkCache
 from candleviewer.ingestion.ticker_stream import TickerStream
 from candleviewer.ingestion.trade_stream import TradeStream
 from candleviewer.ingestion.watchdog import StalenessWatchdog
+from candleviewer.instrument_limits_wiring import CatalogueLimits
 from candleviewer.journal.service import JournalService
 from candleviewer.key_import_wiring import wire_key_import
 from candleviewer.key_selfcheck_wiring import wire_key_selfcheck
@@ -2426,6 +2429,17 @@ def create_app(
             definitions, readiness, _LazyAuditEmitter(ctx.audit), profiles_resolver, auth=ctx.auth
         )
     )
+    # E28-T05 S2c (#909): the definition create, behind `trading.trade_groups` (the preview stays
+    # refused until S3c builds the gate `preview_ready`), over this environment's catalogue.
+    app.state.trade_groups_gate = TradeGroupsGate(feature_flags.trade_groups)
+    writes = definition_writes.DefinitionWrites(
+        definitions, readiness, profiles.accounts, profiles.effective,
+        CatalogueLimits(resolved.environment.value, lambda: ctx.ingestion.instruments),
+    ) if definitions is not None and profiles is not None else None  # fmt: skip
+    app.include_router(definition_writes.make_trade_group_definition_writes_router(
+        writes, app.state.trade_groups_gate, _LazyAuditEmitter(ctx.audit), profiles_resolver,
+        auth=ctx.auth, elevation=request_elevation(ctx.auth, "risk_caps"),
+    ))  # fmt: skip
     # #913 slice 3E (20 Sec.6.2): the OMS runtime over that gate, the shared profile cache above
     # and the persistence bundle's latch when there is one; its audit writer and sink are its order
     # lane's own (#913 L2). The lifespan starts it after the account health runtime and stops it

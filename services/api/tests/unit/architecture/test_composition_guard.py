@@ -38,6 +38,7 @@ operations had left it 6 high). #898 B2b serves the contract-first `getAccountCo
 E08-T09's contract slice (#4708) adds five unserved `/scanner*` operations: 103.
 #4707 (E08-T08) serves `getTickers`: 102.
 #909 S2b serves the contract-first `listTradeGroupDefinitions` and `getTradeGroupDefinition`: 100.
+#909 S2c serves the contract-first `createTradeGroupDefinition`: 99.
 Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that

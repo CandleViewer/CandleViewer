@@ -284,6 +284,25 @@ def register_account_text(
     return ChallengeText(f"Register a {what} account, UID {exchange_uid}{under}")
 
 
+#: E28-T05 (#909, SR-E28-02): a definition by its id, never its name (free text); a create, with no
+#: id yet, by its contract environment and its member count.
+_DEFINITION_VERBS = {
+    "create": "Create a {environment} trade-group definition of {members}",
+    "replace": "Replace trade-group definition {definition} with {members} ({environment})",
+    "delete": "Delete trade-group definition {definition}",
+}
+
+
+def definition_write_text(
+    verb: str, environment: str, members: int, definition_id: object = None
+) -> ChallengeText:
+    """The definition writes (`verb`: create, replace, delete), after their checks."""
+    count = f"{int(members)} member{'' if members == 1 else 's'}"
+    env = _restated(environment, _ACCOUNT_ENVIRONMENTS, "environment")
+    text = _DEFINITION_VERBS[verb].format(environment=env, members=count, definition=definition_id)
+    return ChallengeText(text)
+
+
 #: ECMAScript Number.prototype.toString uses plain digits for exponents -6 < n <= 21.
 _ES_PLAIN_LOW, _ES_PLAIN_HIGH = -6, 21
 #: An IEEE-754 double holds every integer up to 2**53 exactly; beyond it a JSON integer is not

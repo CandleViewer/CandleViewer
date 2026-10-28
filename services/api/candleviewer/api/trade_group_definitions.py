@@ -62,7 +62,7 @@ def _forbidden(principal: PrincipalSnapshot, unwritten: Exception | None = None)
     return problem("forbidden", f"Requires {_READ.value}.", required_permissions=[_READ.value])
 
 
-def _readiness(stored: domain.StoredDefinition, source: Source) -> Readiness:
+def definition_readiness(stored: domain.StoredDefinition, source: Source) -> Readiness:
     """From each member's switch and its account row's, both read with the definition."""
     pairs = zip(stored.definition.members, stored.member_accounts, strict=True)
     members = (ReadinessMember(m.account_id, m.enabled, a.account_enabled) for m, a in pairs)
@@ -171,7 +171,7 @@ def make_trade_group_definitions_router(
             position, me = last.id.bytes + last.name.encode(), principal.user_id
             nxt = encode_cursor(_LIST, me, (), position, now)
         meta = {"next_cursor": nxt, "has_more": nxt is not None, "count": len(shown)}
-        items = [definition_document(s, _readiness(s, source)) for s in shown]
+        items = [definition_document(s, definition_readiness(s, source)) for s in shown]
         return JSONResponse({"items": items, "meta": meta})
 
     @router.get("/trade-group-definitions/{definitionId}")
@@ -189,7 +189,7 @@ def make_trade_group_definitions_router(
             return await refused(request, principal, named, exc)
         if stored is None:  # missing, deleted or with a member outside the grants: one 404
             return problem("not_found", "No such trade-group definition.")
-        doc = definition_document(stored, _readiness(stored, source))
+        doc = definition_document(stored, definition_readiness(stored, source))
         return JSONResponse(doc, headers={"ETag": domain.definition_etag(stored)})
 
     return router
