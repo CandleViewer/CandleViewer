@@ -1931,6 +1931,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `rule.simulation_started` `{ruleId, range, symbol, accountId}`, `rule.simulation_completed` `{fires, actions, errors, durationMs}`, `rule.simulation_cancelled` - **audited**, because a simulation result is the evidence used to justify arming a rule.
 - **Design sign-off acceptance checklist:** [ ] range, symbol and account selectors drawn [ ] the available-history statement ('13 of 14 days - recording started 09-01') drawn [ ] progress and cancel [ ] result summary (fires, actions by type, errors) [ ] a per-firing timeline with the context that triggered it [ ] 'simulation is not a backtest of PnL' caveat stated [ ] insufficient-history state
 - **Design (wireframe → hi-fi):** [E35-D02.md](../design/E35/E35-D02.md) §2–§3 · [E35-D02-handoff.md](../design/E35/E35-D02-handoff.md) (E35-D02; owner approval pending; the six states as frames with the untested windows named and the gate strip, a behaviour preview without a profit figure, the dense timeline with its text-list equivalent, CMP-154 / CMP-156 contracts PROPOSED for E35-D05; Penpot page by name in the spec, its id pinned after the first build).
+- **Hand-off pack:** [E35-D05.md](../design/E35/E35-D05.md) v1 (E35-D05; owner approval pending; a11y contract: E35-D04)
 
 ### SCR-085 — Rule arming dialog
 
@@ -1951,17 +1952,18 @@ Drag preview                Drop zones
 - **Data:** `PUT /api/v1/rules/{ruleId}/mode` (step-up token).
 - **Validation:** cannot arm a rule that fails validation; cannot arm live on an account the user cannot trade; cannot arm a rule with `flatten_all_positions` without an extra acknowledgement.
 - **Audit:** `rule.armed` (high severity, includes environment + scope). **Stories:** US-RULE-014.
-- **A11y:** `role="alertdialog"`; the rule's behaviour is restated in plain language; the environment choice is a radio group with DEMO preselected; the typed confirmation field for LIVE has a visible label and format hint.
+- **A11y:** `role="alertdialog"`; the rule's behaviour is restated in plain language; the environment is a read-only line until the arm request carries it (E35-D02 D02-G5), then a radio group with DEMO preselected; the typed confirmation field for LIVE has a visible label and format hint.
 - **Performance:** Arming takes effect server-side within 1 s and the armed state is confirmed over `rules` before the dialog closes - never optimistically.
 - **Components:** CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-093 AuditActionTrigger, CMP-158 SafetyInvariantNotice, CMP-159 RuleConflictWarning, CMP-233 RuleOptions.
 - **Stories:** US-RULE-008, US-RULE-013.
 - **Design sign-off acceptance checklist:** [ ] plain-language restatement of what the rule will do [ ] environment choice with DEMO default [ ] scope (accounts, symbols) restated [ ] typed confirmation for LIVE arming plus step-up [ ] estimated-detector dependency warning [ ] conflict warning if another armed rule targets the same scope (links to SCR-086) [ ] disarm path
 - **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) §5.4–§5.5 (E36-D01; heuristic, pending owner approval; the restatement is the same string as the editor header, with the standing limits read out; "Uses estimated detectors?" names each detector with E25-D01 R4's inline callout, its C16).
 - **Design (wireframe → hi-fi):** [E35-D02.md](../design/E35/E35-D02.md) §4–§5 (E35-D02; owner approval pending; the reading order environment → restatement → acts on → evidence → safety → what stops it → confirm, the environment read from the active version (demo by default; the in-dialog choice once the arm request carries it) and LIVE a destructive-class step through SCR-006's step-up, the blocked frame in its three causes, the pending, flatten-all, disarm and arm-again frames, every gated control disabled with its visible reason; the catalogue's "Type ARM" mock superseded, recorded as a contradiction for the catalogue owner).
+- **Hand-off pack:** [E35-D05.md](../design/E35/E35-D05.md) v1 (E35-D05; owner approval pending; a11y contract: E35-D04)
 
 ### SCR-086 — Rule conflict resolver
 
-- **Type:** Modal. When two or more armed rules target the same position/order, shows the overlap matrix and requires an explicit precedence ordering (drag list or numeric priority) before both can stay armed. Explains the resolution policy (highest priority wins; ties are rejected and logged).
+- **Type:** Modal. When two or more armed rules target the same position/order, shows the overlap matrix and requires an explicit precedence ordering (an ordered list with Move up / Move down; E35-D03 D03-C4) before both can stay armed. Explains the resolution policy (highest priority wins; ties are rejected and logged).
 - **Validation:** priorities must be unique within an overlap set.
 - **Components:** CMP-001 Button, CMP-006 RadioGroup, CMP-049 Table, CMP-155 RuleListRow, CMP-159 RuleConflictWarning.
 - **Stories:** US-RULE-011.
@@ -1970,6 +1972,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `rule.conflict_detected` `{ruleIds, scope, kind}`, `rule.conflict_resolved` `{choice}`, `rule.priority_changed` - **audited**.
 - **Design sign-off acceptance checklist:** [ ] conflict kinds drawn (opposing actions, duplicate stops, overlapping flatten, priority ambiguity) [ ] resolution choices (set priority, narrow scope, disarm one) with consequences [ ] 'arm anyway' is available but requires an explicit acknowledgement [ ] no-conflict state
 - **Design (hi-fi):** [E35-D03.md](../design/E35/E35-D03.md) §2–§3 · [E35-D03-handoff.md](../design/E35/E35-D03-handoff.md) (E35-D03; owner approval pending; the four conflict kinds with one consequence sentence per resolution, the ordered list with Move up / Move down in place of a numeric priority, the non-reorderable risk band, "Arm anyway" behind an acknowledgement that returns to SCR-085, the no-conflict outcome; the conflict shape, kind and precedence write are contract gaps, PROPOSED; CMP-159's resolver variant PROPOSED for E35-D05; the Penpot page named in the spec, its id pinned once the boards are drawn).
+- **Hand-off pack:** [E35-D05.md](../design/E35/E35-D05.md) v1 (E35-D05; owner approval pending; a11y contract: E35-D04)
 
 ### SCR-087 — Rule fire history / execution log
 
@@ -1983,6 +1986,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** Each firing is itself an audit record `rule.fired` `{ruleId, version, trigger, metricSnapshot, actions, results, environment}`; the screen emits `rule.history_viewed`, `rule.history_exported`, `rule.fire_detail_opened` (analytics).
 - **Design sign-off acceptance checklist:** [ ] columns (time, rule version, trigger, metric snapshot, actions attempted, results, environment) drawn [ ] failed-action rows with the exchange reason [ ] filter by outcome and environment [ ] link from a firing to the resulting order/audit record [ ] export [ ] empty state
 - **Design (hi-fi):** [E35-D03.md](../design/E35/E35-D03.md) §4–§6 (E35-D03; owner approval pending; the page at R-164 with the eight-column dense grid, the expanded row's nested condition table, the new-firings pill, failed rows with the exchange reason, the engine-restart marker, filters, export and the empty states; the plain-language mapping of every skipped and blocked reason in §6; the stop pair applies SC-10's clause (the tighter move); the runs / events routes are in the contract and not yet shipped, the missing fields recorded as gaps; CMP-156's live variant PROPOSED for E35-D05).
+- **Hand-off pack:** [E35-D05.md](../design/E35/E35-D05.md) v1 (E35-D05; owner approval pending; a11y contract: E35-D04)
 
 ### SCR-088 — Rule IR inspector (advanced)
 
@@ -1996,6 +2000,7 @@ Drag preview                Drop zones
 - **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §5–§6 (E36-D03; owner approval pending; the compiled IR as stored (not the canonical hash form `22` promises — a contract gap, PROPOSED) with copy / export and its described-by note, the tree alternative (CMP-240 PROPOSED per E13-D02), the round-trip diff as a path table, the version / compiler / IR / hash stamps, the compile-failure and quarantined states; the >100 KB pending treatment).
 - **Design (hi-fi, E35-D03 delta):** [E35-D03.md](../design/E35/E35-D03.md) §7 (E35-D03; owner approval pending; adds to E36-D03 §5–§6 the drawn CMP-240 tree, account ids masked for display with the copy and the hash left as stored, the downloadable round-trip diff and the graph-node compile-failure inset).
 - **Hand-off pack:** [E36-D05.md](../design/E36/E36-D05.md) v1 (E36-D05; owner approval pending)
+- **Hand-off pack (E35-D03 delta):** [E35-D05.md](../design/E35/E35-D05.md) v1 (E35-D05; owner approval pending; a11y contract: E35-D04)
 
 ### SCR-089 — Rule import / export
 
@@ -2010,6 +2015,7 @@ Drag preview                Drop zones
 - **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §7–§8 (E36-D03; owner approval pending; export as one `cv-rule-bundle/1` per rule with the privacy note in the UI and the verifying tests named, an import pre-check with the shipped accept / skip reasons keyed by code and an Import results list, "imported rules always land disarmed, on demo"; the export / import operations and a dry run are a contract gap, PROPOSED).
 - **Design (hi-fi, E35-D03 delta):** [E35-D03.md](../design/E35/E35-D03.md) §8 (E35-D03; owner approval pending; adds to E36-D03 §7–§8 the export verification strip computed from the returned bundle, the per-file import checkbox, version-mismatch rows, the results list's landing word per rule (DRAFT · not armed · on DEMO — the API's projection) and CMP-234 as the validation-failure list).
 - **Hand-off pack:** [E36-D05.md](../design/E36/E36-D05.md) v1 (E36-D05; owner approval pending)
+- **Hand-off pack (E35-D03 delta):** [E35-D05.md](../design/E35/E35-D05.md) v1 (E35-D05; owner approval pending; a11y contract: E35-D04)
 
 ---
 

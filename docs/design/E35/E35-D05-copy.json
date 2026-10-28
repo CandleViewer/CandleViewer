@@ -1,0 +1,2912 @@
+{
+  "pack": "E35-D05",
+  "version": "v1",
+  "base": "aba03ac309",
+  "header": "The copy deck contains the safety-critical strings; changing them later is a product decision requiring design and security review, not a copy tweak",
+  "strings": {
+    "rules.sim.ca1": {
+      "string": "Simulation replays recorded market data. Fills are modelled, not real; results are not a guarantee.",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:302",
+      "frozen": "FZ-01",
+      "order": 2
+    },
+    "rules.sim.ca2": {
+      "string": "What this rule would have done on recorded BTCUSDT data, 1–14 Sep: when it fired and what it did. This shows its behaviour, not its profit.",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:303",
+      "order": 1
+    },
+    "rules.sim.ca3": {
+      "string": "Tested on 13 of 14 days. Not tested: {7 Sep, 00:00–24:00 UTC} — no recorded data ({recording was interrupted}).",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:304",
+      "params": ["7 Sep, 00:00–24:00 UTC", "recording was interrupted"]
+    },
+    "rules.sim.ca4": {
+      "string": "09-03 11:20 stop 62,100 → 62,340 (now +0.4R from entry)",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:305"
+    },
+    "rules.sim.ca5.title": {
+      "string": "Simulate on recorded history",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:306"
+    },
+    "rules.sim.ca5.button": {
+      "string": "Run simulation",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:307"
+    },
+    "rules.sim.ca6.sentence": {
+      "string": "No recorded history for {ETHUSDT}, so this rule cannot be tested on it.",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:308",
+      "params": ["ETHUSDT"]
+    },
+    "rules.sim.ca6.others": {
+      "string": "Ask the owner to record {ETHUSDT}.",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:309",
+      "params": ["ETHUSDT"]
+    },
+    "rules.sim.ca7": {
+      "string": "Modelled P&L change (USDT) — fills modelled, not a forecast",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:310"
+    },
+    "rules.arm.ca8": {
+      "string": "If the backend stops, this rule stops. Native stops stay.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:311",
+      "frozen": "FZ-02",
+      "order": 1
+    },
+    "rules.arm.ca9": {
+      "string": "The backend is CandleViewer's server: this rule runs there, not in this window, so closing the app does not stop it.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:312"
+    },
+    "rules.arm.ca10": {
+      "string": "While the server is down or has lost Bybit, the rule moves no stops and closes nothing; your stop-loss at Bybit stays at its last price. If the server loses Bybit for over {30 s}, each account's dead man's switch also runs its policy ({Main: notify only}). The rule starts again by itself once positions are checked with Bybit, without replaying what it missed.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:313",
+      "params": ["30 s", "Main: notify only"],
+      "frozen": "FZ-04"
+    },
+    "rules.arm.ca11.note": {
+      "string": "Rule engine running on CandleViewer's server since {14:02}.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:314",
+      "params": ["14:02"]
+    },
+    "rules.arm.ca11.phase_1": {
+      "string": "If that computer sleeps or restarts, armed rules stop until it is back.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:315"
+    },
+    "rules.arm.ca12.no": {
+      "string": "Acts on an estimate? No",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:316"
+    },
+    "rules.arm.ca12.yes": {
+      "string": "Acts on an estimate? Yes — {iceberg at level} (estimated): CandleViewer infers it from trades and the order book; Bybit does not report it. It can be wrong either way. [How it is estimated]",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:317",
+      "params": ["iceberg at level"]
+    },
+    "rules.arm.ca13": {
+      "string": "Can it place orders? Yes — on {Main, sub_001}, DEMO",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:318",
+      "params": ["Main, sub_001"]
+    },
+    "rules.arm.ca14": {
+      "string": "Will act on: {Main, sub_001} · {BTCUSDT} · {open positions}",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:319",
+      "params": ["Main, sub_001", "BTCUSDT", "open positions"]
+    },
+    "rules.arm.ca15": {
+      "string": "Evidence for this version: simulated on recorded data {1–14 Sep} ({13 of 14 days}), {48} fires, {0} errors; simulating live since {08:00}, {6} fires.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:320",
+      "params": ["1–14 Sep", "13 of 14 days", "48", "0", "08:00", "6"]
+    },
+    "rules.arm.ca16": {
+      "string": "You can't arm this version yet. The server requires: a completed simulation on recorded data — done; 5 simulated fires or 24 hours — {3 of 5}, or at {09:12 tomorrow}; no open safety warnings — done.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:321",
+      "params": ["3 of 5", "09:12 tomorrow"]
+    },
+    "rules.arm.ca17": {
+      "string": "Next, confirm with your password, a 2FA code and the word LIVE. Nothing is armed until you do.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:322",
+      "frozen": "FZ-05"
+    },
+    "rules.arm.ca18.cancel": {
+      "string": "Cancel",
+      "screen": "SCR-085, SCR-084, SCR-086",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:323"
+    },
+    "rules.arm.ca18.demo": {
+      "string": "Arm on DEMO",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:324"
+    },
+    "rules.arm.ca18.live": {
+      "string": "Arm on LIVE…",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:325"
+    },
+    "rules.arm.ca18.pending": {
+      "string": "Arming… waiting for the server to confirm.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:326"
+    },
+    "rules.arm.ca21": {
+      "string": "2 rules can move the same stop: {BE after 1R}, {ATR trail 2x}. [Choose which goes first]",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:327",
+      "params": ["BE after 1R", "ATR trail 2x"]
+    },
+    "rules.arm.ca26": {
+      "string": "Every position keeps its own stop-loss at Bybit, whatever this rule does. A rule can move that stop but never remove it; everything else it does needs CandleViewer's server running.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D02:328",
+      "frozen": "FZ-03"
+    },
+    "rules.arm.ca31": {
+      "string": "Disarm {ATR trail 2x}? It stops acting now. Stops it already moved stay at Bybit.",
+      "screen": "SCR-085, SCR-086",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:329",
+      "params": ["ATR trail 2x"],
+      "frozen": "FZ-06"
+    },
+    "rules.arm.ca33": {
+      "string": "Arm rule 'Break-even' (live)",
+      "screen": "SCR-006",
+      "owner": "E35-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:330"
+    },
+    "rules.arm.ca35": {
+      "string": "Not armed — {why}. Nothing was sent.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "assertive",
+      "source": "D02:331",
+      "rt": "RT-02",
+      "params": ["why"]
+    },
+    "rules.arm.ca36.no": {
+      "string": "Asks before acting? No",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:332"
+    },
+    "rules.arm.ca36.yes": {
+      "string": "Asks before acting? Yes — you confirm each fire within 60 s; unconfirmed fires are skipped and logged",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:333"
+    },
+    "rules.arm.ca37": {
+      "string": "Dry run: {place_order} is recorded, never sent",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:334",
+      "params": ["place_order"]
+    },
+    "rules.arm.ca38": {
+      "string": "First check: {at the next 1m bar close, 13:05}. Positions already open: {checked from that first check}",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:335",
+      "params": ["at the next 1m bar close, 13:05", "checked from that first check"]
+    },
+    "rules.arm.restatement": {
+      "string": "When {trigger} on {symbol} ({accounts}), if {conditions}: {actions}. {limits}. {safety line}.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:336",
+      "params": ["trigger", "symbol", "accounts", "conditions", "actions", "limits", "safety line"]
+    },
+    "rules.arm.env_line.1": {
+      "string": "Runs on demo.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:337"
+    },
+    "rules.arm.env_line.2": {
+      "string": "Runs on LIVE.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:337"
+    },
+    "rules.arm.refusal.rule_invalid": {
+      "string": "This rule's active version has validation errors. Fix them and save before arming.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "assertive",
+      "source": "D02:342",
+      "rt": "RT-01"
+    },
+    "rules.arm.refusal.safety_warning_open": {
+      "string": "This rule has open safety warnings. Resolve them before arming.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "assertive",
+      "source": "D02:343",
+      "rt": "RT-01"
+    },
+    "rules.arm.refusal.simulation_required": {
+      "string": "This rule has not completed a simulation on its current version. Run a simulation before arming.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "assertive",
+      "source": "D02:344",
+      "rt": "RT-01"
+    },
+    "rules.arm.refusal.promotion_gate": {
+      "string": "Simulation needs 5 fires or 24 hours before arming. Only the Owner can override this, with a written reason.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "assertive",
+      "source": "D02:345",
+      "rt": "RT-01"
+    },
+    "rules.arm.refusal.forbidden": {
+      "string": "Only the Owner can arm a rule whose action budget is above the default.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "assertive",
+      "source": "D02:346",
+      "rt": "RT-01"
+    },
+    "rules.arm.refusal.orders_write_required.role": {
+      "string": "You need the orders:write permission to arm a rule that places orders.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "assertive",
+      "source": "D02:347",
+      "rt": "RT-01"
+    },
+    "rules.arm.refusal.orders_write_required.accounts": {
+      "string": "You need orders:write on every account this rule trades. Missing: {accounts}.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "assertive",
+      "source": "D02:348",
+      "rt": "RT-01",
+      "params": ["accounts"]
+    },
+    "rules.arm.refusal.permission_required": {
+      "string": "Arming a live rule needs the rules:arm_live permission.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "assertive",
+      "source": "D02:349",
+      "rt": "RT-01"
+    },
+    "rules.arm.refusal.step_up_required": {
+      "string": "Re-enter your authenticator code to arm a live rule.",
+      "screen": "SCR-006",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "none",
+      "source": "D02:350"
+    },
+    "rules.arm.refusal.acknowledgement_required": {
+      "string": "This rule can flatten all positions. Acknowledge that before arming.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "shipped",
+      "announce": "assertive",
+      "source": "D02:351",
+      "rt": "RT-01"
+    },
+    "rules.arm.new1": {
+      "string": "LIVE — real money",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:352"
+    },
+    "rules.sim.new2": {
+      "string": "Toward arming: simulated on this version — done · 5 fires or 24 h — the server's count is not yet shown · no open safety warnings — done",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:353"
+    },
+    "rules.sim.new3": {
+      "string": "Ready to arm — the Arm button is in the editor",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:354"
+    },
+    "rules.sim.new4": {
+      "string": "not yet simulated",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:355"
+    },
+    "rules.sim.new5": {
+      "string": "Running… {184,220} evaluations · through {09-07 13:42 UTC}",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:356",
+      "params": ["184,220", "09-07 13:42 UTC"]
+    },
+    "rules.arm.new6": {
+      "string": "Tick the acknowledgement to arm.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D02:357",
+      "rt": "RT-09"
+    },
+    "rules.arm.new7": {
+      "string": "Write the reason for overriding the gate.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D02:358",
+      "rt": "RT-09"
+    },
+    "rules.arm.new8": {
+      "string": "Reason for overriding (required)",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:359"
+    },
+    "rules.arm.new9": {
+      "string": "Arm on DEMO — override",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:360"
+    },
+    "rules.arm.new10": {
+      "string": "Editing creates a new version; activating it returns this rule to simulating until it passes the gate again.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:361"
+    },
+    "rules.sim.new11": {
+      "string": "This result is for v3; you are editing v4 — run again",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:362"
+    },
+    "rules.arm.new12": {
+      "string": "Arm again — {ATR trail 2x}",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:363",
+      "params": ["ATR trail 2x"]
+    },
+    "rules.arm.new13": {
+      "string": "Stopped — 5 errors in a row",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:364"
+    },
+    "rules.arm.new14": {
+      "string": "Stopped — kill switch, {14:02 UTC}",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:365",
+      "params": ["14:02 UTC"]
+    },
+    "rules.arm.new15": {
+      "string": "Arm again on DEMO…",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:366"
+    },
+    "rules.arm.new16": {
+      "string": "Arm again on LIVE…",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:367"
+    },
+    "rules.arm.new17": {
+      "string": "No simulation on this version yet.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:368"
+    },
+    "rules.arm.new18": {
+      "string": "Environment: DEMO",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:369"
+    },
+    "rules.arm.new19": {
+      "string": "Environment: LIVE — the summary updated",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D02:370",
+      "rt": "RT-06"
+    },
+    "rules.sim.new20": {
+      "string": "Simulation complete — 48 fires, 0 errors",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D02:371",
+      "rt": "RT-10"
+    },
+    "rules.sim.new21": {
+      "string": "{n} evaluations so far",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D02:372",
+      "rt": "RT-16",
+      "params": ["n"]
+    },
+    "rules.sim.new22": {
+      "string": "Tested on 14 of 14 days.",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:373"
+    },
+    "rules.sim.new23": {
+      "string": "on the tested 13 of 14 days",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:374"
+    },
+    "rules.sim.new24": {
+      "string": "48 fires · showing 1–20",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:375"
+    },
+    "rules.sim.new25": {
+      "string": "Simulation — {ATR trail 2x}",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:376",
+      "params": ["ATR trail 2x"]
+    },
+    "rules.sim.new26": {
+      "string": "Version 3 — the active version",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:377"
+    },
+    "rules.sim.new27.1": {
+      "string": "would have succeeded",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:378"
+    },
+    "rules.sim.new27.2": {
+      "string": "blocked by {cap}",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:378",
+      "params": ["cap"]
+    },
+    "rules.arm.new28.1": {
+      "string": "group Scalp — 3 accounts",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:379"
+    },
+    "rules.arm.new28.2": {
+      "string": "{n} accounts · show all",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:379",
+      "params": ["n"]
+    },
+    "rules.arm.new29.1": {
+      "string": "Armed · DEMO",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:380"
+    },
+    "rules.arm.new29.2": {
+      "string": "Armed · LIVE",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:380"
+    },
+    "rules.arm.new29.3": {
+      "string": "Done",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:380"
+    },
+    "rules.sim.new30.2": {
+      "string": "Export CSV",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:381"
+    },
+    "rules.sim.new30.3": {
+      "string": "Run again",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:381"
+    },
+    "rules.sim.new30.4": {
+      "string": "Close simulation",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:381"
+    },
+    "rules.sim.new30.5": {
+      "string": "so far",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:381"
+    },
+    "rules.sim.new30.6": {
+      "string": "— modelled",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:381"
+    },
+    "rules.sim.new31": {
+      "string": "Toward arming: simulated on this version — done · {3 of 5} fires or at {09:12 UTC tomorrow} · no open safety warnings — done",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:382",
+      "params": ["3 of 5", "09:12 UTC tomorrow"]
+    },
+    "rules.arm.new32": {
+      "string": "Environment: DEMO and LIVE",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:383"
+    },
+    "rules.arm.new33": {
+      "string": "Change in the editor — creates a new version",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:384"
+    },
+    "rules.arm.new34": {
+      "string": "not done — Run a simulation on this version",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:385"
+    },
+    "rules.arm.new35": {
+      "string": "not done — Resolve the open safety warnings",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:386"
+    },
+    "rules.sim.new36": {
+      "string": "… 46 more",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:387"
+    },
+    "rules.arm.new37": {
+      "string": "Arm on LIVE… — override",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:388"
+    },
+    "rules.arm.new38": {
+      "string": "Your reason is saved in the audit log with this arm.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:389"
+    },
+    "rules.sim.open_chart": {
+      "string": "open in chart at this moment",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:154"
+    },
+    "rules.arm.announce.armed": {
+      "string": "Armed on DEMO",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D02:225",
+      "rt": "RT-07"
+    },
+    "rules.arm.announce.disarmed": {
+      "string": "Disarmed",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D02:227",
+      "rt": "RT-07"
+    },
+    "rbac.env": {
+      "string": "Live trading isn't enabled for you.",
+      "screen": "SCR-085",
+      "owner": "E35-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:398"
+    },
+    "rules.history.ca24": {
+      "string": "CandleViewer's server restarted at {14:05:40}. {Dead man's switch: Main notified only.} Rules started again at {14:06:31} after positions were checked with Bybit; {3} missed triggers were not replayed.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "binding-pending-owner",
+      "announce": "none",
+      "source": "D03:371",
+      "params": ["14:05:40", "Dead man's switch: Main notified only.", "14:06:31", "3"]
+    },
+    "rules.conflict.ca27": {
+      "string": "When both act at the same moment, the rule higher in this list goes first and the other is skipped and logged. Risk controls always go first.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:372"
+    },
+    "rules.conflict.ca28": {
+      "string": "{BE after 1R} goes first: at the same moment, {ATR trail 2x} is skipped and logged. Later checks can still tighten the stop.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:373",
+      "params": ["BE after 1R", "ATR trail 2x"]
+    },
+    "rules.conflict.ca29": {
+      "string": "Arm anyway — I understand both rules can move this stop; {BE after 1R} goes first.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:374",
+      "params": ["BE after 1R"]
+    },
+    "rules.history.ca30": {
+      "string": "Skipped: {BE after 1R} went first",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:375",
+      "params": ["BE after 1R"]
+    },
+    "rules.history.ca34": {
+      "string": "Rule {Trail by 1.5 ATR} fired on {BTCUSDT}: stop-loss at Bybit moved to {61,200.0}.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:377",
+      "params": ["Trail by 1.5 ATR", "BTCUSDT", "61,200.0"]
+    },
+    "rules.conflict.new1": {
+      "string": "Two rules, one stop — choose which goes first",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:378"
+    },
+    "rules.conflict.new2.1": {
+      "string": "Risk controls go first",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:379"
+    },
+    "rules.conflict.new2.2": {
+      "string": "Risk controls always go first.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:379"
+    },
+    "rules.conflict.new3": {
+      "string": "enabled here",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:380"
+    },
+    "rules.conflict.new4": {
+      "string": "Conflicts — {n}",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:381",
+      "params": ["n"]
+    },
+    "rules.conflict.new5": {
+      "string": "Resolution for {A} and {B}",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:382",
+      "params": ["A", "B"]
+    },
+    "rules.conflict.new6.1": {
+      "string": "Set priority",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:383"
+    },
+    "rules.conflict.new6.2": {
+      "string": "Narrow scope",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:383"
+    },
+    "rules.conflict.new6.3": {
+      "string": "Disarm one",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:383"
+    },
+    "rules.conflict.new6.4": {
+      "string": "Arm anyway",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:383"
+    },
+    "rules.conflict.new7.1": {
+      "string": "1st {BE after 1R} · 2nd {ATR trail 2x}",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:384",
+      "params": ["BE after 1R", "ATR trail 2x"]
+    },
+    "rules.conflict.new7.2": {
+      "string": "Move up",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:384"
+    },
+    "rules.conflict.new7.3": {
+      "string": "Move down",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:384"
+    },
+    "rules.conflict.new8": {
+      "string": "Limit {ATR trail 2x} to {sub_001 (…9c1e)}; the two no longer share a position.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:385",
+      "params": ["ATR trail 2x", "sub_001 (…9c1e)"]
+    },
+    "rules.conflict.new9": {
+      "string": "Disarm {ATR trail 2x}. Native stops are unaffected.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:386",
+      "params": ["ATR trail 2x"]
+    },
+    "rules.conflict.new10": {
+      "string": "I understand both rules can move this stop.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:387"
+    },
+    "rules.conflict.new11": {
+      "string": "No option here loosens the stop-loss at Bybit. Each rule can only tighten it or leave it; whichever goes first, the tighter stop stands.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:388",
+      "frozen": "FZ-07"
+    },
+    "rules.conflict.new12": {
+      "string": "Applying this returns you to Arm rule, where LIVE needs your password, a code and the word LIVE.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:389"
+    },
+    "rules.conflict.new13.2": {
+      "string": "Apply",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "rules.conflict.new13.3": {
+      "string": "Applying…",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:390"
+    },
+    "rules.conflict.new13.4": {
+      "string": "Choose a resolution for each conflict.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:390",
+      "rt": "RT-09"
+    },
+    "rules.conflict.new14": {
+      "string": "Recorded: conflict resolved — {choice} (rule.conflict_resolved)",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:391",
+      "params": ["choice"]
+    },
+    "rules.conflict.new15": {
+      "string": "Order set — {BE after 1R} then {ATR trail 2x}.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:392",
+      "rt": "RT-14",
+      "params": ["BE after 1R", "ATR trail 2x"]
+    },
+    "rules.conflict.new16": {
+      "string": "Another change landed first. Reload and choose again.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "assertive",
+      "source": "D03:393",
+      "rt": "RT-04"
+    },
+    "rules.conflict.new17.1": {
+      "string": "No conflicts — {BE after 1R} is the only armed rule on {BTCUSDT · Main (…4f2a)}.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:394",
+      "params": ["BE after 1R", "BTCUSDT · Main (…4f2a)"]
+    },
+    "rules.conflict.new17.2": {
+      "string": "Back to arming",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:394"
+    },
+    "rules.conflict.new17.3": {
+      "string": "Close",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:394"
+    },
+    "rules.conflict.new18.1": {
+      "string": "a rule you can't see",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:395"
+    },
+    "rules.conflict.new18.2": {
+      "string": "Disarm a rule you can't see. Native stops are unaffected.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:395"
+    },
+    "rules.conflict.new18.3": {
+      "string": "The owner resolves this one.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:395"
+    },
+    "rules.conflict.new19.1": {
+      "string": "{Time stop} goes first: at the same moment, {Scale in} is skipped and logged. A flatten leaves nothing for the other to act on.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:396",
+      "params": ["Time stop", "Scale in"]
+    },
+    "rules.conflict.new19.2": {
+      "string": "Limit {Scale in} to {sub_001 (…9c1e)}; the two no longer meet on a position.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:396",
+      "params": ["Scale in", "sub_001 (…9c1e)"]
+    },
+    "rules.conflict.new19.3": {
+      "string": "Disarm {Scale in}. Open positions and native stops are unaffected.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:396",
+      "params": ["Scale in"]
+    },
+    "rules.conflict.new20.1": {
+      "string": "{Time stop} flattens; {Funding flip} has nothing left to close and is skipped and logged.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:397",
+      "params": ["Time stop", "Funding flip"]
+    },
+    "rules.conflict.new20.2": {
+      "string": "Limit {Funding flip} to {ETHUSDT}; the two no longer share a symbol.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:397",
+      "params": ["Funding flip", "ETHUSDT"]
+    },
+    "rules.conflict.new20.3": {
+      "string": "Disarm {Funding flip}. Native stops are unaffected.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:397",
+      "params": ["Funding flip"]
+    },
+    "rules.conflict.new21.1": {
+      "string": "{Risk 0.5 %} sizes first: at the same moment, {Fixed size 0.01} is skipped and logged.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:398",
+      "params": ["Risk 0.5 %", "Fixed size 0.01"]
+    },
+    "rules.conflict.new21.2": {
+      "string": "Limit {Fixed size 0.01} to {sub_001 (…9c1e)}; the two no longer size the same order.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:398",
+      "params": ["Fixed size 0.01", "sub_001 (…9c1e)"]
+    },
+    "rules.conflict.new21.3": {
+      "string": "Disarm {Fixed size 0.01}. Working orders are unaffected.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:398",
+      "params": ["Fixed size 0.01"]
+    },
+    "rules.history.new22.1": {
+      "string": "Fire history — {ATR trail 2x}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:399",
+      "params": ["ATR trail 2x"]
+    },
+    "rules.history.new22.2": {
+      "string": "v2 · armed on DEMO since 09-03 11:02 UTC",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:399"
+    },
+    "rules.history.new22.3": {
+      "string": "All times UTC · as of 14:02:11",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:399"
+    },
+    "rules.history.new23.1": {
+      "string": "Download CSV",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:400"
+    },
+    "rules.history.new23.2": {
+      "string": "Open rule",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:400"
+    },
+    "rules.history.new24.1": {
+      "string": "Outcome",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new24.2": {
+      "string": "Environment",
+      "screen": "SCR-087, SCR-085",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new24.3": {
+      "string": "Version",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new24.4": {
+      "string": "Range",
+      "screen": "SCR-087, SCR-084",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new24.5": {
+      "string": "Fired",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new24.6": {
+      "string": "Skipped",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new24.7": {
+      "string": "Failed",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new24.8": {
+      "string": "Error",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new24.9": {
+      "string": "DEMO",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new24.10": {
+      "string": "LIVE",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:401"
+    },
+    "rules.history.new25": {
+      "string": "Fire history, newest first. All times UTC. {10,000} firings · showing {1–40} · runs that did not fire are kept 7 days, firings 24 months",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:402",
+      "params": ["10,000", "1–40"]
+    },
+    "rules.history.new26.1": {
+      "string": "Time",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:403"
+    },
+    "rules.history.new26.3": {
+      "string": "Trigger",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:403"
+    },
+    "rules.history.new26.4": {
+      "string": "Conditions",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:403"
+    },
+    "rules.history.new26.5": {
+      "string": "Action",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:403"
+    },
+    "rules.history.new26.6": {
+      "string": "Result",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:403"
+    },
+    "rules.history.new26.8": {
+      "string": "Links",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:403"
+    },
+    "rules.history.new27.1": {
+      "string": "✓ Done · {314} ms",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:404",
+      "params": ["314"]
+    },
+    "rules.history.new27.2": {
+      "string": "✗ Failed — {why}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:404",
+      "params": ["why"]
+    },
+    "rules.history.new27.3": {
+      "string": "— Skipped",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:404"
+    },
+    "rules.history.new27.4": {
+      "string": "⚠ Error",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:404"
+    },
+    "rules.history.new28.1": {
+      "string": "stop {61,400.0} → {62,300.0}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:405",
+      "params": ["61,400.0", "62,300.0"]
+    },
+    "rules.history.new28.2": {
+      "string": "stop → {62,180.0}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:405",
+      "params": ["62,180.0"]
+    },
+    "rules.history.new28.3": {
+      "string": "place order {0.010}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:405",
+      "params": ["0.010"]
+    },
+    "rules.history.new28.4": {
+      "string": "1m bar close",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:405"
+    },
+    "rules.history.new29.1": {
+      "string": "Order",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:406"
+    },
+    "rules.history.new29.2": {
+      "string": "Audit",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:406"
+    },
+    "rules.history.new29.3": {
+      "string": "Replay",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:406"
+    },
+    "rules.history.new30.1": {
+      "string": "Why it fired — {ATR trail 2x}, {09-03 11:20:12 UTC}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:407",
+      "params": ["ATR trail 2x", "09-03 11:20:12 UTC"]
+    },
+    "rules.history.new30.2": {
+      "string": "Condition",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:407"
+    },
+    "rules.history.new30.3": {
+      "string": "Saw",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:407"
+    },
+    "rules.history.new30.4": {
+      "string": "Needed",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:407"
+    },
+    "rules.history.new30.6": {
+      "string": "not available (warmup)",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:407"
+    },
+    "rules.history.new30.7": {
+      "string": "stop-loss at Bybit {61,400.0} → {62,300.0} · sent {11:20:12.006} · done {11:20:12.320} · stop id {7f3a…c1}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:407",
+      "params": ["61,400.0", "62,300.0", "11:20:12.006", "11:20:12.320", "7f3a…c1"]
+    },
+    "rules.history.new30.8": {
+      "string": "Copy",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:407"
+    },
+    "rules.history.new30.9": {
+      "string": "Metric snapshot — shown for accounts you may see",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:407"
+    },
+    "rules.history.new30.10": {
+      "string": "Recorded as rule.fired at {11:20:12.320} · request {a1b2c3d4}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:407",
+      "params": ["11:20:12.320", "a1b2c3d4"]
+    },
+    "rules.history.new31": {
+      "string": "{3} new firings",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:408",
+      "rt": "RT-12",
+      "params": ["3"]
+    },
+    "rules.history.new32.1": {
+      "string": "Showing {6} of {40} firings, filtered by: {Failed · LIVE}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:409",
+      "rt": "RT-11",
+      "params": ["6", "40", "Failed · LIVE"]
+    },
+    "rules.history.new32.2": {
+      "string": "No failed firings on LIVE in this range.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:409"
+    },
+    "rules.history.new33.1": {
+      "string": "No firings yet — {BE after 1R} has been armed on DEMO since {09-03 11:02 UTC}.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:410",
+      "params": ["BE after 1R", "09-03 11:02 UTC"]
+    },
+    "rules.history.new33.2": {
+      "string": "No history — this rule has not run.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:410"
+    },
+    "rules.history.new34": {
+      "string": "Fire history could not be loaded — retry",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:411"
+    },
+    "rules.history.new35.1": {
+      "string": "Newer",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:412"
+    },
+    "rules.history.new35.2": {
+      "string": "Older",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:412"
+    },
+    "rules.history.new35.3": {
+      "string": "showing {41–80}",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:412",
+      "params": ["41–80"]
+    },
+    "rules.ir.e35.new36": {
+      "string": "Account ids are shown masked; the copy carries them.",
+      "screen": "SCR-088",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:413"
+    },
+    "rules.ir.e35.new37.2": {
+      "string": "account, masked",
+      "screen": "SCR-088",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:414"
+    },
+    "rules.ir.e35.new37.3": {
+      "string": "{unrealised R multiple} is at least {1}",
+      "screen": "SCR-088",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:414",
+      "params": ["unrealised R multiple", "1"]
+    },
+    "rules.ir.e35.new38.1": {
+      "string": "Download diff (JSON)",
+      "screen": "SCR-088",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:415"
+    },
+    "rules.ir.e35.new38.2": {
+      "string": "form {a1b2c3d4e5f6} · graph {f6e5d4c3b2a1}",
+      "screen": "SCR-088",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:415",
+      "params": ["a1b2c3d4e5f6", "f6e5d4c3b2a1"]
+    },
+    "rules.ir.e35.new39": {
+      "string": "Node '{c3}' — {Operator 'gte' needs 2 operand(s).}",
+      "screen": "SCR-088",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:416",
+      "params": ["c3", "Operator 'gte' needs 2 operand(s)."]
+    },
+    "rules.io.e35.new40.1": {
+      "string": "Checked this file",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:417"
+    },
+    "rules.io.e35.new40.2": {
+      "string": "Account ids: {0} found",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:417",
+      "params": ["0"]
+    },
+    "rules.io.e35.new40.3": {
+      "string": "Armed state: none",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:417"
+    },
+    "rules.io.e35.new40.4": {
+      "string": "Environments: demo only",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:417"
+    },
+    "rules.io.e35.new40.5": {
+      "string": "Keys or secrets: {0} found",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:417",
+      "params": ["0"]
+    },
+    "rules.io.e35.new40.6": {
+      "string": "Run history: not included",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:417"
+    },
+    "rules.io.e35.new41": {
+      "string": "Not exported — this file still contains {1} account id. Report this to the owner.",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "assertive",
+      "source": "D03:418",
+      "rt": "RT-05",
+      "params": ["1"]
+    },
+    "rules.io.e35.new42.1": {
+      "string": "Import {name}",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:419",
+      "params": ["name"]
+    },
+    "rules.io.e35.new42.2": {
+      "string": "Import {2}",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:419",
+      "rt": "RT-24",
+      "params": ["2"]
+    },
+    "rules.io.e35.new42.3": {
+      "string": "Choose at least one file to import.",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:419",
+      "rt": "RT-09"
+    },
+    "rules.io.e35.new43": {
+      "string": "Made by a newer CandleViewer (IR v{2}); this version reads IR v1.",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:420",
+      "params": ["2"]
+    },
+    "rules.io.e35.new44.1": {
+      "string": "Imported {2} rules — none is armed; all on demo. Arm each one from the rules list when you are ready.",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:421",
+      "rt": "RT-15",
+      "params": ["2"]
+    },
+    "rules.io.e35.new44.2": {
+      "string": "DRAFT · not armed · on DEMO",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:421"
+    },
+    "rules.io.e35.new44.3": {
+      "string": "{3} files cannot be imported",
+      "screen": "SCR-089",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:421",
+      "rt": "RT-15",
+      "params": ["3"]
+    },
+    "rules.conflict.new45": {
+      "string": "Whichever goes first, the tighter stop move applies at the same moment and the other is skipped and logged. Later checks can still tighten the stop.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:422",
+      "frozen": "FZ-08"
+    },
+    "rules.history.new46": {
+      "string": "Skipped: {ATR trail 2x} set the tighter stop",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:423",
+      "params": ["ATR trail 2x"]
+    },
+    "rules.history.new47": {
+      "string": "BE after 1R wanted 62,000.2 at this moment and was superseded — open its history",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:424"
+    },
+    "rules.conflict.new48": {
+      "string": "{Take profit 2R} goes first: at the same moment, {Take profit 3R} is skipped and logged.",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:425",
+      "params": ["Take profit 2R", "Take profit 3R"]
+    },
+    "rules.conflict.table.rule_a": {
+      "string": "rule A",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:143"
+    },
+    "rules.conflict.table.rule_b": {
+      "string": "rule B",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:143"
+    },
+    "rules.conflict.table.scope": {
+      "string": "overlapping scope",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:143"
+    },
+    "rules.conflict.table.actions": {
+      "string": "conflicting actions",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:143"
+    },
+    "rules.conflict.table.resolution": {
+      "string": "proposed resolution",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:143"
+    },
+    "rules.conflict.kind.opposing": {
+      "string": "opposing actions",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:51"
+    },
+    "rules.conflict.kind.duplicate": {
+      "string": "duplicate stops",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:51"
+    },
+    "rules.conflict.kind.flatten": {
+      "string": "overlapping flatten",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:51"
+    },
+    "rules.conflict.kind.ambiguity": {
+      "string": "priority ambiguity",
+      "screen": "SCR-086",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:51"
+    },
+    "rules.ir.e35.e36d03": {
+      "string": "Round‑trips ✓ — This rule is fully editable in both the form and the graph editor.",
+      "screen": "SCR-088",
+      "owner": "E35-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:426"
+    },
+    "rbac.permission.see_audit": {
+      "string": "Your role can't see the audit log.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:427"
+    },
+    "rule.inspector.quarantined": {
+      "string": "Stored in a format the engine cannot read.",
+      "screen": "SCR-088",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:431"
+    },
+    "rule.inspector.engine_unavailable": {
+      "string": "The rule engine is not running.",
+      "screen": "SCR-088",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:432"
+    },
+    "rules.reason.skip.warmup": {
+      "string": "Skipped: {metric} is still warming up — not enough bars yet.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:220",
+      "params": ["metric"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.stale_data": {
+      "string": "Skipped: market data was older than {5 s}; nothing acts on stale data.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:221",
+      "params": ["5 s"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.cooldown": {
+      "string": "Skipped: in cooldown until {11:21:12} after the last fire.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:222",
+      "params": ["11:21:12"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.once": {
+      "string": "Skipped: already fired once for this {position}.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:223",
+      "params": ["position"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.rate_limit": {
+      "string": "Skipped: fire limit reached ({60}/h) — resumes at {12:00}.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:224",
+      "params": ["60", "12:00"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.scope": {
+      "string": "Skipped: outside the rule's scope now — {Main (…4f2a)} is no longer in it.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:225",
+      "params": ["Main (…4f2a)"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.paused": {
+      "string": "Skipped: rules were paused — CandleViewer's link to Bybit was degraded.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:226",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.debounce": {
+      "string": "Skipped: the same trigger fired within the debounce window.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:227",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.disabled": {
+      "string": "Skipped: the rule was already turned off when this trigger arrived.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:228",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.kill_switch": {
+      "string": "Skipped: the kill switch was on.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:229",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.skip.evaluation_failed": {
+      "string": "Evaluation failed — see the audit record.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:231",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.scope_revoked": {
+      "string": "Not done — {Main (…4f2a)} is no longer granted to the rule's owner.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:234",
+      "params": ["Main (…4f2a)"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.max_notional_per_fire": {
+      "string": "Not done — over the rule's notional cap per fire ({value}).",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:235",
+      "params": ["value"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.max_daily_notional": {
+      "string": "Not done — over the rule's daily notional cap ({value}).",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:236",
+      "params": ["value"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.max_actions_per_fire": {
+      "string": "Not done — more actions than the rule may send in one fire.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:237",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.profile_risk_cap": {
+      "string": "Not done — your account's risk caps apply.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:238",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.live_gate": {
+      "string": "Not done — this rule may not act on LIVE.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:239",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.kill_switch": {
+      "string": "Not done — the kill switch is on.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:240",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.disconnect_guard": {
+      "string": "Not done — CandleViewer's link to Bybit is down.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:241",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.permission": {
+      "string": "Not done — your role can't place orders on {Main (…4f2a)}.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:242",
+      "params": ["Main (…4f2a)"],
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.confirmation_expired": {
+      "string": "Not done — nobody confirmed within 60 s.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:243",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.block.dry_run": {
+      "string": "Recorded only — dry run.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:244",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.insufficient_margin": {
+      "string": "Failed — Bybit refused: not enough margin.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:245",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.price_out_of_bounds": {
+      "string": "Failed — Bybit refused: the price is outside its limits.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:246",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.risk_limit_exceeded": {
+      "string": "Failed — Bybit refused: over the risk limit tier.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:247",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.reduce_only_violation": {
+      "string": "Failed — Bybit refused: a reduce-only order would open size.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:248",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.order_cap_exceeded": {
+      "string": "Failed — Bybit refused: too many open orders on this symbol.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:249",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.market_closed": {
+      "string": "Failed — the market was closed for trading.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:250",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.order_not_found": {
+      "string": "Failed — Bybit no longer has this order; being reconciled.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:251",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.position_mode_mismatch": {
+      "string": "Failed — Bybit refused: the position mode does not match.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:252",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.leverage_error": {
+      "string": "Failed — Bybit refused: the leverage change.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:253",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.instrument_filter": {
+      "string": "Failed — not sent: the order did not fit the instrument's filters.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:254",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.duplicate_client_id": {
+      "string": "Failed — Bybit already had this order; checked, not re-sent.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:255",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.rate_limited": {
+      "string": "Failed — Bybit rate-limited the request; retried later.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:256",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.rate_budget_exceeded": {
+      "string": "Failed — CandleViewer's request budget for Bybit was used up; not sent.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:257",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.service_unavailable": {
+      "string": "Failed — Bybit was unavailable; retried later.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:258",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.auth_error": {
+      "string": "Failed — Bybit refused the API key; the owner checks it.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:259",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.permission_denied": {
+      "string": "Failed — Bybit refused: the key lacks this permission.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:260",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.ip_not_allowed": {
+      "string": "Failed — Bybit refused: this address is not allowed.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:261",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.clock_drift": {
+      "string": "Failed — not sent: the server clock is out of step with Bybit.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:262",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.unknown_state": {
+      "string": "Failed — the result is unknown; being reconciled with Bybit.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:263",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.transport_error": {
+      "string": "Failed — the order may not have reached Bybit; being reconciled.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:264",
+      "frozen": "FZ-09"
+    },
+    "rules.reason.exchange.exchange_unknown": {
+      "string": "Failed — Bybit refused; see the audit record.",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:265",
+      "frozen": "FZ-09"
+    },
+    "rules.sim.name.n04": {
+      "string": "Symbol",
+      "screen": "SCR-084",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:260"
+    },
+    "rules.sim.name.n07": {
+      "string": "Simulation progress",
+      "screen": "SCR-084",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:263"
+    },
+    "rules.sim.name.n08": {
+      "string": "Simulated firings — {n}",
+      "screen": "SCR-084",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:264",
+      "params": ["n"]
+    },
+    "rules.sim.summary.fires": {
+      "string": "fires",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:152"
+    },
+    "rules.sim.summary.actions": {
+      "string": "actions by type",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:152"
+    },
+    "rules.sim.summary.errors": {
+      "string": "errors",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:152"
+    },
+    "rules.sim.summary.blocked": {
+      "string": "blocked by a guard",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:152"
+    },
+    "rules.sim.summary.evaluations": {
+      "string": "evaluations",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:152"
+    },
+    "rules.sim.summary.duration": {
+      "string": "duration",
+      "screen": "SCR-084",
+      "owner": "E35-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D02:152"
+    },
+    "rules.arm.name.n10": {
+      "string": "Arm rule — {name}",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:266",
+      "params": ["name"]
+    },
+    "rules.arm.name.n13": {
+      "string": "{label} …{last-4}, {environment}",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:269",
+      "params": ["label", "last-4", "environment"]
+    },
+    "rules.arm.name.n14": {
+      "string": "Open the simulation",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:270"
+    },
+    "rules.arm.name.n15": {
+      "string": "Choose which goes first",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:271"
+    },
+    "rules.arm.name.n21": {
+      "string": "Not available",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:277"
+    },
+    "rules.arm.name.n22": {
+      "string": "Disarm",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:278"
+    },
+    "rules.conflict.name.n26": {
+      "string": "Move up: {rule}",
+      "screen": "SCR-086",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:282",
+      "params": ["rule"]
+    },
+    "rules.conflict.name.n27": {
+      "string": "Move down: {rule}",
+      "screen": "SCR-086",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:283",
+      "params": ["rule"]
+    },
+    "rules.history.name.n30": {
+      "string": "Fire history, newest first — {n} firings",
+      "screen": "SCR-087",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:286",
+      "params": ["n"]
+    },
+    "rules.history.name.n33": {
+      "string": "Order, firing {time}",
+      "screen": "SCR-087",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:289",
+      "params": ["time"]
+    },
+    "rules.history.name.n34": {
+      "string": "Audit, firing {time}",
+      "screen": "SCR-087",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:290",
+      "params": ["time"]
+    },
+    "rules.history.name.n35": {
+      "string": "Replay, firing {time}",
+      "screen": "SCR-087",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:291",
+      "params": ["time"]
+    },
+    "rules.ir.e35.name.n38": {
+      "string": "scope.account_ids: Main (…4f2a), account, masked",
+      "screen": "SCR-088",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:294"
+    },
+    "rules.ir.e35.name.n39": {
+      "string": "Copy path, {path}",
+      "screen": "SCR-088",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:295",
+      "params": ["path"]
+    },
+    "rules.io.e35.name.n43": {
+      "string": "Import problems — {n}",
+      "screen": "SCR-089",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:299",
+      "params": ["n"]
+    },
+    "rules.io.e35.name.n44": {
+      "string": "{rule} — {reason} ({field})",
+      "screen": "SCR-089",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:300",
+      "params": ["rule", "reason", "field"]
+    },
+    "rules.arm.name.n46": {
+      "string": "show all",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:302"
+    },
+    "rules.arm.name.n47": {
+      "string": "Include {label} …{last-4}",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:303",
+      "params": ["label", "last-4"]
+    },
+    "rules.arm.name.n48": {
+      "string": "Estimated, {detector}",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:304",
+      "params": ["detector"]
+    },
+    "rules.arm.name.n49": {
+      "string": "How it is estimated",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:305"
+    },
+    "rules.arm.name.n54": {
+      "string": "Disarm {rule}?",
+      "screen": "SCR-085",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:310",
+      "params": ["rule"]
+    },
+    "rules.history.name.n64": {
+      "string": "Copy, {action}",
+      "screen": "SCR-087",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:320",
+      "params": ["action"]
+    },
+    "rules.conflict.rt.rt21": {
+      "string": "{rule}, 1st of 2",
+      "screen": "SCR-086",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D04:353",
+      "rt": "RT-21",
+      "params": ["rule"]
+    },
+    "rules.history.rt.rt22": {
+      "string": "Showing 43 firings",
+      "screen": "SCR-087",
+      "owner": "E35-D04",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D04:354",
+      "rt": "RT-22"
+    },
+    "rules.history.state.loading": {
+      "string": "Loading…",
+      "screen": "SCR-087",
+      "owner": "E35-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D03:203"
+    }
+  },
+  "events": [
+    {
+      "event": "rule.simulation_started",
+      "class": "audited",
+      "screen": "SCR-084",
+      "trigger": "Run simulation pressed (S-02)",
+      "source": "`14`:1931"
+    },
+    {
+      "event": "rule.simulation_completed",
+      "class": "audited",
+      "screen": "SCR-084",
+      "trigger": "the run ends (S-03)",
+      "source": "`14`:1931"
+    },
+    {
+      "event": "rule.simulation_cancelled",
+      "class": "audited",
+      "screen": "SCR-084",
+      "trigger": "Cancel during a run (S-02)",
+      "source": "`14`:1931"
+    },
+    {
+      "event": "rule.armed",
+      "class": "audited",
+      "screen": "SCR-085",
+      "trigger": "the armed outcome (S-13)",
+      "source": "`14`:1953"
+    },
+    {
+      "event": "rule.disarmed",
+      "class": "audited",
+      "screen": "SCR-085",
+      "trigger": "Disarm confirmed (S-14)",
+      "source": "D02:405"
+    },
+    {
+      "event": "rule.arm_dialog_opened",
+      "class": "analytics",
+      "screen": "SCR-085",
+      "trigger": "the dialog opens (S-08)",
+      "source": "D02:405"
+    },
+    {
+      "event": "rule.arm_abandoned",
+      "class": "analytics",
+      "screen": "SCR-085",
+      "trigger": "Cancel, Esc or a drop before the outcome (S-08)",
+      "source": "D02:405"
+    },
+    {
+      "event": "rule.arm_environment_changed",
+      "class": "analytics",
+      "screen": "SCR-085",
+      "trigger": "after D02-G5, a change (S-08)",
+      "source": "D02:405"
+    },
+    {
+      "event": "rule.arm_section_opened",
+      "class": "analytics",
+      "screen": "SCR-085",
+      "trigger": "a block disclosure opened (S-08)",
+      "source": "D02:405"
+    },
+    {
+      "event": "rule.simulation_gap_viewed",
+      "class": "analytics",
+      "screen": "SCR-084",
+      "trigger": "the untested window shown (S-04)",
+      "source": "D02:405"
+    },
+    {
+      "event": "rule.no_history_cta_followed",
+      "class": "analytics",
+      "screen": "SCR-084",
+      "trigger": "the no-history CTA (S-06)",
+      "source": "D02:405"
+    },
+    {
+      "event": "rule.conflict_detected",
+      "class": "audited",
+      "screen": "SCR-086",
+      "trigger": "the resolver opens on a conflict (S-16)",
+      "source": "`14`:1970"
+    },
+    {
+      "event": "rule.conflict_resolved",
+      "class": "audited",
+      "screen": "SCR-086",
+      "trigger": "Apply succeeds (S-19)",
+      "source": "`14`:1970"
+    },
+    {
+      "event": "rule.priority_changed",
+      "class": "audited",
+      "screen": "SCR-086",
+      "trigger": "Apply with Set priority (S-19)",
+      "source": "`14`:1970"
+    },
+    {
+      "event": "rule.conflict_arm_anyway",
+      "class": "analytics",
+      "screen": "SCR-086",
+      "trigger": "Apply with Arm anyway (S-18)",
+      "source": "D03:163"
+    },
+    {
+      "event": "rule.fired",
+      "class": "audited",
+      "screen": "SCR-087",
+      "trigger": "a firing the page lists (S-21)",
+      "source": "`14`:1983"
+    },
+    {
+      "event": "rule.history_viewed",
+      "class": "analytics",
+      "screen": "SCR-087",
+      "trigger": "the page opens (S-21)",
+      "source": "`14`:1983"
+    },
+    {
+      "event": "rule.history_exported",
+      "class": "analytics",
+      "screen": "SCR-087",
+      "trigger": "Download CSV (S-21)",
+      "source": "`14`:1983"
+    },
+    {
+      "event": "rule.fire_detail_opened",
+      "class": "analytics",
+      "screen": "SCR-087",
+      "trigger": "a row expanded (S-21)",
+      "source": "`14`:1983"
+    },
+    {
+      "event": "rule.ir_diff_downloaded",
+      "class": "analytics",
+      "screen": "SCR-088",
+      "trigger": "Download diff (JSON) (S-28)",
+      "source": "D03:287"
+    }
+  ],
+  "carried_by_cite": [
+    {
+      "id": "rules.editor.limit.no_cap",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:1448"
+    },
+    {
+      "id": "rules.editor.limit.kill_switch",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:1465"
+    },
+    {
+      "id": "rules.editor.stop.tightens",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2706"
+    },
+    {
+      "id": "rules.editor.flatten.ack",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2733"
+    },
+    {
+      "id": "rbac.view_as",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2591"
+    },
+    {
+      "id": "rbac.owner_only.arm_live",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2599"
+    },
+    {
+      "id": "rbac.owner_only.start_recording",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2607"
+    },
+    {
+      "id": "rbac.account",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2639"
+    },
+    {
+      "id": "rbac.account_read_only",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2647"
+    },
+    {
+      "id": "rule.arm.simulate_first",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2655"
+    },
+    {
+      "id": "rule.arm.unverified",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2663"
+    },
+    {
+      "id": "rule.save.mismatch",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2671"
+    },
+    {
+      "id": "rules.io.export.privacy",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2331"
+    },
+    {
+      "id": "rules.io.reason.format",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2499"
+    },
+    {
+      "id": "rules.list.menu.history",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:479"
+    },
+    {
+      "id": "rules.io.import.choose",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2339"
+    },
+    {
+      "id": "rules.io.import.preview",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2355"
+    },
+    {
+      "id": "rules.io.reason.metric",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2481"
+    },
+    {
+      "id": "rules.io.reason.name",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2509"
+    },
+    {
+      "id": "rbac.permission.change_rules",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2631"
+    },
+    {
+      "id": "rules.ir.name.pre",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2179"
+    },
+    {
+      "id": "rules.ir.segment.name",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2082"
+    },
+    {
+      "id": "rules.ir.copy.path",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2154"
+    },
+    {
+      "id": "rules.ir.copy.copied",
+      "owner": "E36-D05 (#947)",
+      "source": "E36DECK:2162"
+    }
+  ]
+}
