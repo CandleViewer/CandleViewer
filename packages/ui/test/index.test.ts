@@ -19,6 +19,8 @@ import type {
   TabItem,
   TabsProps,
   TextInputProps,
+  ToastProps,
+  ToastRegionProps,
   ToggleProps,
 } from "../src/index.js";
 
@@ -76,6 +78,8 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
     ["FormSection", Atoms.FormSection],
     ["SearchBox", Atoms.SearchBox],
     ["Tabs", Atoms.Tabs],
+    ["Toast", Atoms.Toast],
+    ["ToastRegion", Atoms.ToastRegion],
   ])("exports %s from the package entry as a component function", (_name, component) => {
     expect(typeof component).toBe("function");
   });
@@ -91,6 +95,8 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
           SearchBoxProps,
           TabsProps,
           TabItem,
+          ToastProps,
+          ToastRegionProps,
         ]
       | null = null;
     expect(props).toBeNull();

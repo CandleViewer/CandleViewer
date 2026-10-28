@@ -221,3 +221,30 @@ surface: the dialog is modal, so a press on a toast action outside it also resta
 With `summaryLoading` set while
 Confirm holds focus, Confirm becomes natively disabled and focus is lost; that inherited spec gap is
 open for the host or the spec to decide.
+
+### Toast and the toast region (CMP-045, no widget pattern; messages follow the APG Alert pattern through the shell's announcer)
+
+| Keys                                          | Action                                                                                                                                         |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| On arrival                                    | Nothing: a toast never takes focus. Its sentence is written once through `announce`.                                                           |
+| Tab / Shift+Tab                               | Through each toast's actions and dismiss button, in stack order; while a modal is open the stack is inert.                                     |
+| Enter / Space                                 | The focused action's own.                                                                                                                      |
+| Enter / Space on a gated action               | Nothing changes; the reason is spoken once, politely.                                                                                          |
+| Esc on a focused toast                        | Dismisses it; focus moves to the next toast, else back where it was before the stack. A name echo on the dismiss button takes the first `Esc`. |
+| Hover or focus in the stack, or an open modal | Pauses every timer in the stack; leaving it, or the modal closing, resumes them with the time left.                                            |
+
+| Element      | Role                     | Name                          | ARIA                                                                                                     |
+| ------------ | ------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------- |
+| region       | region (`<section>`)     | `label` ("Notifications")     | portalled to `body`; rendered only while it holds a toast; its list is an `<ol>`                         |
+| toast        | group                    | its title (`aria-labelledby`) | never a live region itself (H28)                                                                         |
+| announcement | —                        | —                             | `announce(politeness, sentence, id)`: polite, assertive for `danger` or an error; `politeness` overrides |
+| glyph        | none                     | —                             | `aria-hidden="true"`                                                                                     |
+| dismiss      | button                   | "Dismiss {title}"             | CMP-002 `ghost`; never gated                                                                             |
+| gated action | button                   | its full label                | `aria-disabled="true"`, `aria-describedby` → the one reason line every gated action shares               |
+| Undo         | button, then the outcome | "Undo"                        | once the window closes, the outcome line replaces it and is spoken once, politely                        |
+
+Timing (H26): a toast with an action, an error or `danger` persists; any other closes after the region's
+`durationMs` (5 s by default; `null` is "until dismissed"), or its own. There is no countdown bar. An
+Undo window follows the same duration, then the outcome line stays (H27); an order cancel offers no Undo.
+The shell passes its one announcer as `announce`, so the region renders no live region of its own; the
+stories use a local pair. The count, the storm summary and "Focus toasts" are CMP-212's.

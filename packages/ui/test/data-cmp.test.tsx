@@ -18,6 +18,7 @@ import {
   Slider,
   Tabs,
   TextInput,
+  Toast,
   Toggle,
 } from "../src/index.js";
 import type { SegmentedOptions } from "../src/index.js";
@@ -94,6 +95,7 @@ const molecules: [string, () => JSX.Element][] = [
       />
     ),
   ],
+  ["CMP-045", () => <Toast title="Session extended" />],
   ["CMP-050", () => <Card title="Accounts">Body</Card>],
 ];
 

@@ -204,5 +204,18 @@ export type { SpinnerProps } from "./Spinner.js";
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
 
+export { Toast, ToastRegion } from "./Toast.js";
+export type {
+  ToastAction,
+  ToastAnnounce,
+  ToastDismissReason,
+  ToastItem,
+  ToastPoliteness,
+  ToastProps,
+  ToastRegionProps,
+  ToastTone,
+  ToastUndo,
+} from "./Toast.js";
+
 export { Checkbox } from "./Checkbox.js";
 export type { CheckboxProps } from "./Checkbox.js";

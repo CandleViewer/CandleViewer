@@ -47,6 +47,7 @@ import "../src/components/sparkline.css";
 import "../src/components/swatchlegend.css";
 import "../src/components/tabs.css";
 import "../src/components/tag.css";
+import "../src/components/toast.css";
 import "../src/components/fields.css";
 import "../src/components/formfield.css";
 import "../src/components/formsection.css";
