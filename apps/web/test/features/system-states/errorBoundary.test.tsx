@@ -136,8 +136,12 @@ describe("PanelErrorBoundary", () => {
     const alert = screen.getByRole("alert");
     const before = alert.textContent;
     fireEvent.click(button(CRASH_COPY.copyDiagnostics));
-    expect(await screen.findByRole("status")).toHaveTextContent(CRASH_COPY.copied);
-    settle(); // too late: the check above has already read the region
+    // The region is there before the copy settles, pre-rendered empty; it reads "Copied" once
+    // the copy has settled and rendered.
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+    await act(async () => settle());
+    expect(status).toHaveTextContent(CRASH_COPY.copied);
     fireEvent.click(button(CRASH_COPY.technicalDetail));
     expect(screen.getByText(new RegExp(`crash panel ${ID}`))).toBeVisible();
     expect(alert.textContent).toBe(before);
