@@ -207,12 +207,17 @@ class CancelAllCoalescer:
         """At teardown (the runtime's stop): every fold task still running, a call whose members
         all left included, is cancelled and awaited. A call cut short once it left leaves the
         members still waiting an unknown outcome, never sent again; one still waiting for its
-        slot abandons its fold, nothing sent, and each member sends its own cancel."""
+        slot abandons its fold, nothing sent, and each member sends its own cancel. Then every
+        open fold whose call has not left is abandoned (`CancelAllJoin.close`): one still
+        gathering, whose watchdog the cancel cut short in its sleep, and one whose call task was
+        cut short before its first step, so no member is left waiting."""
         running = set(self._running)
         for task in running:
             task.cancel()
         if running:
             await asyncio.wait(running)
+        for join in dict.fromkeys(self._joins.values()):  # each open fold once
+            join.close()
 
     def _spawn(self, coro: Coroutine[Any, Any, None], *, name: str) -> asyncio.Task[None]:
         """A fold's own task, owned here until it ends: its failure, a defect, is logged."""
