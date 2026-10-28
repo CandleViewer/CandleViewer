@@ -267,6 +267,24 @@ def test_trades_per_user_cap_and_option_set_cap_refuse_with_nothing_held() -> No
     assert len(t._symbols["BTCUSDT"].options) == 2  # {} and 0.1
 
 
+def test_trades_pending_leases_count_toward_both_caps() -> None:
+    """A lease held while the trade stream (or the tick size) is unknown has no tape yet, but it
+    counts toward SR-E22-06 (60 per user) and SR-E22-07 (2 option sets per symbol per user)."""
+    w = World()
+    w.tape = None
+    t = w.topic
+    for n in range(L.TRADES_SUBS_PER_USER_MAX):
+        t.hold(f"c{n}", "u1", "BTCUSDT", options_of({}))
+    assert t._symbols["BTCUSDT"].tape is None  # every one of them pending
+    with pytest.raises(Exception, match="At most 60 trades subscriptions per user"):
+        t.hold("c60", "u1", "BTCUSDT", options_of({}))
+    t.hold("x1", "u2", "BTCUSDT", options_of({"min_size": "0.1"}))
+    t.hold("x2", "u2", "BTCUSDT", options_of({"min_size": "0.2"}))
+    with pytest.raises(Exception, match="option sets per symbol"):
+        t.hold("x3", "u2", "BTCUSDT", options_of({"min_size": "0.3"}))
+    assert all(o.tape is None for o in t._symbols["BTCUSDT"].options.values())
+
+
 def test_trades_ctl_min_size_moves_the_lease_and_never_resnapshots() -> None:
     w = World()
     conn = w.conn()
