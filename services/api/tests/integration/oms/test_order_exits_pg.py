@@ -166,7 +166,8 @@ async def test_amend_rejection_keeps_the_prior_order_live(world: World) -> None:
     answer is 502 `exchange_error` with the exchange's code and no `ETag`; the row keeps its price,
     its quantity and `submitted`; its steps end with the `amend_request` and the refused
     `amend_ack`; the venue's order rests as it was; the amend was written ahead, then denied, and
-    one amend call was sent (24 Sec.8.4, C-2.9)."""
+    one amend call was sent (24 Sec.8.4, C-2.9). B1 took its refusal arm (`keep_prior_order_live`,
+    logged `b01_amend_rejected` with the code), never the accept arm's guard."""
     with capture_logs() as logs:
         async with _serving(world) as client:
             order_id, _ = await _placed(client, world)
@@ -188,7 +189,10 @@ async def test_amend_rejection_keeps_the_prior_order_live(world: World) -> None:
     assert (resting.price, resting.qty) == (Decimal(60000), Decimal("0.010"))
     assert _written(world, "orders.amend")[-2][0] == "success"
     assert _written(world, "orders.amend")[-1] == ("denied", "exchange_error")
-    assert [e["event"] for e in logs].count("oms_amend_rejected") == 1
+    events = [e["event"] for e in logs]
+    assert events.count("oms_amend_rejected") == 1 and "b01_amend_not_adopted" not in events
+    [arm] = [e for e in logs if e["event"] == "b01_amend_rejected"]
+    assert arm["error_code"] == OmsErrorCode.PRICE_OUT_OF_BOUNDS
 
 
 # --- CG4: the exit routes' Postgres evidence --------------------------------------------------
