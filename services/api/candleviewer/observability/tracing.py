@@ -11,6 +11,7 @@ exception keeps the exception's class alone, never its message (C-12.6).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Final
@@ -62,6 +63,8 @@ SANCTIONED_SPANS: Final[frozenset[str]] = frozenset(
     ORDER_PATH_SPANS + REPLAY_SPANS + CREDENTIAL_SPANS
 )
 _ORDER_LINK_ID: Final = "order_link_id"
+#: A status description a span keeps: an exception's class name, never a message (`_GuardedSpan`).
+_CLASS_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 
 
 class UnsanctionedSpanError(ValueError):
@@ -108,17 +111,19 @@ def _safe_attrs(attributes: Mapping[str, object]) -> dict[str, str | int | bool]
             continue
         if isinstance(value, Secret) or isinstance(value, bytes | bytearray | memoryview):
             out[key] = "***"
-        elif isinstance(value, bool | int):
-            out[key] = value
         elif key == _ORDER_LINK_ID:
             out[key] = str(redact_structure({key: str(value)})[key])
+        elif isinstance(value, bool | int):
+            out[key] = value
         else:
             out[key] = redact_text(str(value))
     return out
 
 
 class _GuardedSpan:
-    """Proxy whose `set_attribute(s)` apply `_safe_attrs`; everything else passes through."""
+    """Proxy whose `set_attribute(s)` and `add_event` apply `_safe_attrs`, whose `record_exception`
+    keeps the exception's class alone and whose `set_status` keeps no description but a class name
+    (20 §12.3, C-12.6); everything else passes through."""
 
     __slots__ = ("_span",)
 
@@ -132,6 +137,25 @@ class _GuardedSpan:
     def set_attributes(self, attributes: Mapping[str, object]) -> None:
         for k, v in _safe_attrs(attributes).items():
             self._span.set_attribute(k, v)
+
+    def add_event(
+        self,
+        name: str,
+        attributes: Mapping[str, object] | None = None,
+        timestamp: int | None = None,
+    ) -> None:
+        self._span.add_event(name, _safe_attrs(attributes or {}), timestamp)
+
+    def record_exception(self, exception: BaseException, *_args: object, **_kwargs: object) -> None:
+        """The exception's class as the span's `ERROR` status: no event, message or traceback."""
+        self._span.set_status(Status(StatusCode.ERROR, type(exception).__name__))
+
+    def set_status(self, status: Status | StatusCode, description: str | None = None) -> None:
+        """The status's code, its description kept only as a class name on `ERROR`."""
+        code = status.status_code if isinstance(status, Status) else status
+        text = status.description if isinstance(status, Status) else description
+        named = code is StatusCode.ERROR and text is not None and _CLASS_NAME.fullmatch(text)
+        self._span.set_status(Status(code, text if named else None))
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._span, name)
