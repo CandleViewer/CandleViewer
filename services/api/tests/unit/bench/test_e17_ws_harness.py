@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Callable, MutableMapping
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,7 +33,7 @@ import structlog
 import websockets
 from structlog.testing import capture_logs
 
-from bench.ws import budgets, feed_proc, fixture_app, profiles, runner, w5
+from bench.ws import budgets, feed_proc, fixture_app, instrumentation, profiles, runner, w5
 from bench.ws import feeder as feed
 from bench.ws.feeder import Feeder, Tier, scale_int, tier_plan
 from candleviewer.bars.leases import CAP_PER_USER
@@ -2014,6 +2015,7 @@ def args(**over: Any) -> argparse.Namespace:
     base: dict[str, Any] = dict.fromkeys((*names, "send_delay_ms", "gate_on", "ws_path"))
     base |= {"flag": "on", "staging": False, "seed": 7, "trace_sp": False}
     base |= {"backend_cpus": None, "k6_cpus": None, "feeder": "inproc", "feeder_cpus": None}
+    base |= {"instrumentation": "on"}
     return argparse.Namespace(**(base | over))
 
 
@@ -2429,3 +2431,346 @@ async def test_a_feeder_task_that_ends_with_an_error_is_logged_as_it_ends() -> N
     assert [(e["event"], e["log_level"], e["error"]) for e in logs] == [
         ("bench_feeder_ended", "error", "RuntimeError")
     ]
+
+
+# -- #571: `--instrumentation off`, the uninstrumented build the 2 % overhead line is measured on --
+
+
+def held() -> dict[tuple[str, str], Any]:
+    """What every inventoried hot-path name holds now, by `(module, attr)`."""
+    return {(m.__name__, attr): v for m, attr, v in instrumentation.originals()}
+
+
+def test_every_stand_in_keeps_its_instruments_interface_and_records_nothing() -> None:
+    before = held()
+    stand_ins = {key: instrumentation.stand_in(v) for key, v in before.items()}
+    for (module, attr), new in stand_ins.items():
+        old = before[(module, attr)]
+        if attr == "SAMPLE_MASK":
+            assert all(seq & new for seq in range(1, 4097))  # no sequence number is ever sampled
+        elif isinstance(old, dict):
+            assert new.keys() == old.keys()  # a lookup fails where it failed before
+            for value in new.values():
+                for metric in value if isinstance(value, tuple) else (value,):
+                    assert metric is instrumentation.NOOP
+        elif attr == "frame_bytes":
+            assert new is not old and new(b"x" * 40, "sp", msgpack=False) == 0
+        elif attr == "_log_span":
+            assert new is not old and new("c", "sp", "book.BTCUSDT.50", 32, 0.001) is None
+        else:
+            assert new is instrumentation.NOOP
+    noop = instrumentation.NOOP
+    assert noop.labels("x") is noop and noop.labels(reason="drop") is noop
+    for call in (noop.observe, noop.inc, noop.dec, noop.set):
+        call(1.0)  # takes what the real one takes, records nothing, raises nothing
+    assert instrumentation.no_frame_bytes(b"xy", "sp", msgpack=True) == 0
+
+
+def test_the_patch_is_scoped_and_every_name_is_restored_however_the_body_ends() -> None:
+    before = held()
+    with pytest.raises(RuntimeError, match="body"), instrumentation.uninstrumented():
+        assert all(held()[k] is not v for k, v in before.items())  # every one is stood in
+        raise RuntimeError("body")
+    assert all(held()[k] is v for k, v in before.items())
+
+
+async def frames_until(ws: Any, book_deltas: int) -> list[dict[str, Any]]:
+    """Every frame a subscribed client gets until it has `book_deltas` book `d`s; pings answered."""
+    got: list[dict[str, Any]] = []
+    async with asyncio.timeout(30):  # a bound on a failure, never the pass condition
+        while sum(m["t"] == "d" and m["ch"].startswith("book.") for m in got) < book_deltas:
+            m = await recv(ws)
+            if m["t"] == "ping":
+                await ws.send(json.dumps({"t": "pong", "id": m["id"], "p": {"client_ms": 1}}))
+            got.append(m)
+    return got
+
+
+@pytest.mark.parametrize(("flag", "mode"), [(True, "off"), (False, "off"), (True, "on")])
+async def test_with_instrumentation_off_nothing_is_recorded_and_a_client_still_ends_consistent(
+    flag: bool, mode: str, tmp_path: Path
+) -> None:
+    """Off: every inventoried name holds its stand-in while the backend serves (both writers), no
+    frame carries an `sp` past the 32nd delta, the book a client rebuilds is the server's, the
+    fan-out histogram stays empty while E17-T02's counters still count, and every name is the
+    production object again once the backend exits. On: nothing is patched and `sp` appears."""
+    before = held()
+    cfg = fixture_app.BackendConfig(
+        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, flag=flag,
+        instrumentation=mode,
+    )  # fmt: skip
+    async with fixture_app.Backend(cfg, TABLE, tmp_path) as be:
+        now = held()
+        assert all((now[k] is v) is (mode == "on") for k, v in before.items())
+        async with session(be) as ws:
+            sub = {"topics": [{"ch": "book.BTCUSDT.50"}, {"ch": "trades.BTCUSDT"}]}
+            await ws.send(json.dumps({"t": "sub", "id": "c-3", "p": sub}))
+            got = await frames_until(ws, 40)
+            be._tasks[1].cancel()  # the feeder stops; what is in flight still arrives
+            await asyncio.gather(be._tasks[1], return_exceptions=True)
+            top = be.feeder.feeds["BTCUSDT"].book.top(50)
+            want = {
+                side: {scale_int(p, 1): scale_int(s, 3) for p, s in levels.items()}
+                for side, levels in zip(("bid", "ask"), top, strict=True)
+            }
+            state: dict[str, dict[int, int]] = {"bid": {}, "ask": {}}
+            with contextlib.suppress(TimeoutError):
+                while True:  # drain what is in flight: the book is final once the feeder stops
+                    got.append(await recv(ws, 1.0))
+            for m in got:
+                if m["t"] in ("snap", "d") and m["ch"].startswith("book."):
+                    apply(state, decode_b64(m["p"]), reset=m["t"] == "snap")
+            assert state == want  # consistent: the frames rebuild the server's top 50
+            data = [m for m in got if m["t"] in ("snap", "d")]
+            assert any("sp" in m for m in data) is (mode == "on")
+        scrape = budgets.parse_scrape(await asyncio.to_thread(runner.get, be.port, "/metrics"))
+        assert (budgets.total(scrape, "cv_ws_fanout_seconds_count") > 0) is (mode == "on")
+        assert budgets.total(scrape, "cvwb_frames_encoded_total") > 0  # E17-T02's: never stubbed
+        assert budgets.total(scrape, "process_cpu_seconds_total") > 0  # the harness's own
+    assert all(held()[k] is v for k, v in before.items())  # scoped: production names restored
+
+
+def test_the_instrumentation_mode_reaches_the_backend_run_json_and_never_a_selfcheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    on, off = (runner.plan(TABLE, args(instrumentation=m), "A", tmp_path) for m in ("on", "off"))
+    assert (on.instrumentation, off.instrumentation) == ("on", "off")
+    assert runner.plan(TABLE, args(), "A", tmp_path).instrumentation == "on"  # the default
+    del_ns = args()
+    del del_ns.instrumentation  # selfcheck and w5 have no such option: always instrumented
+    assert runner.plan(TABLE, del_ns, "selfcheck", tmp_path).instrumentation == "on"
+    with pytest.raises(ValueError, match="instrumentation 'x'"):
+        runner.plan(TABLE, args(instrumentation="x"), "A", tmp_path)
+    with pytest.raises(SystemExit) as refused:  # no frame carries an sp to trace
+        runner.plan(TABLE, args(instrumentation="off", trace_sp=True), "A", tmp_path)
+    assert refused.value.code == 2 and capsys.readouterr().out.startswith("::error::")
+    seen: list[list[str]] = []
+
+    def popen(argv: list[str], **_: Any) -> None:
+        seen.append(argv)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(runner, "subprocess", SimpleNamespace(Popen=popen, PIPE=-1))
+    for p in (on, off):
+        with pytest.raises(RuntimeError, match="stop here"):
+            runner.start_backend(p)
+    assert [a[a.index("--instrumentation") + 1] for a in seen] == ["on", "off"]
+    assert seen[0][-2:] == ["--feeder", "inproc"]  # the feeder's options stay last, as before
+    cfg = fixture_app.BackendConfig.for_profile(TABLE, "A", flag=True, seed=1)
+    assert cfg.instrumentation == "on"
+    off_cfg = fixture_app.BackendConfig.for_profile(
+        TABLE, "A", flag=True, seed=1, instrumentation="off"
+    )
+    assert off_cfg.instrumentation == "off"
+    with pytest.raises(ValueError, match="instrumentation 'x'"):
+        fixture_app.Backend(replace(cfg, instrumentation="x"), TABLE, tmp_path)
+    out = execute_virtually(
+        tmp_path / "x", monkeypatch, ["process_cpu_seconds_total 0\n"] * 2, 30.0,
+        instrumentation="off",
+    )  # fmt: skip
+    assert json.loads((out / "run.json").read_text(encoding="utf-8"))["instrumentation"] == "off"
+
+
+def uninstrumented_run(out: Path, **over: Any) -> Path:
+    """A healthy run with instrumentation off: its scrape has no fan-out sample at all."""
+    return make_run(out, fanout={0.01: 0, 0.02: 0}, instrumentation="off", **over)
+
+
+def test_an_off_run_is_judged_in_overhead_mode_without_budget_6_and_is_not_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
+    off = uninstrumented_run(tmp_path / "off")
+    res, _ = runner.judge(off)
+    assert (res.status, res.mode, res.invalid) == ("PASS", "overhead", [])
+    assert "budget6.cv_ws_fanout_seconds.p95" not in [c.name for c in res.verdict.checks]
+    assert "fanout_ms" not in res.verdict.metrics
+    assert "budget6.cv_ws_fanout_seconds.p95: not measured (instrumentation off" in "".join(
+        res.not_judged
+    )
+    assert {"tick_to_decode_trades_ms", "backend_cpu_s_per_s"} <= res.verdict.metrics.keys()
+    assert "e17_t06.sp_share" not in [c.name for c in res.informational]
+    assert runner.finish(off, runner.TOLERANCE) == 0
+    console = capsys.readouterr().out
+    assert "A flag on: PASS (overhead mode: instrumentation off" in console
+    report = (off / "report.md").read_text(encoding="utf-8")
+    assert report.splitlines()[0].endswith("instrumentation off (overhead mode): PASS")
+    assert "never gated" in report
+    result = json.loads((off / "result.json").read_text(encoding="utf-8"))["result"]
+    assert result["mode"] == "overhead"
+    same = make_run(tmp_path / "on", fanout={0.01: 0, 0.02: 0})  # instrumented, no samples
+    assert runner.judge(same)[0].status == "INVALID"  # the guard still holds when it is on
+    assert runner.judge(make_run(tmp_path / "ok"))[0].mode == "budgets"
+
+
+def test_an_off_run_is_never_a_baseline_and_never_gated_against_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runs = baseline_15_percent_better(tmp_path, monkeypatch)
+    monkeypatch.delenv("CI", raising=False)
+    assert runner.baseline_name({"profile": "A", "flag": "on", "instrumentation": "off"}) == (
+        "A-instr-off"
+    )
+    off = {"profile": "A", "flag": "off", "feeder": "proc", "instrumentation": "off"}
+    assert runner.baseline_name(off) == "A-flag-off-proc-instr-off"
+    assert runner.baseline_name({"profile": "A", "flag": "on", "instrumentation": "on"}) == "A"
+    res, facts = runner.judge(runs[0])
+    assert runner.compare(res, facts, 0.05, 3).failures  # instrumented, as every run before
+    g = runner.compare(res, facts | {"instrumentation": "off"}, 0.05, 3)
+    assert not g.gated and g.failures == [] and "instrumentation off" in g.reason
+    base = tmp_path / "base" / "A.json"  # a misfiled one: an off baseline under the on name
+    base.write_text(
+        json.dumps(json.loads(base.read_text(encoding="utf-8")) | {"instrumentation": "off"}),
+        encoding="utf-8",
+    )
+    g = runner.compare(res, facts, 0.05, 3)
+    assert not g.gated and "baseline instrumentation off, this run's on" in g.reason
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "rec")
+    unrun = uninstrumented_run(tmp_path / "off")
+    assert runner.cmd_record(argparse.Namespace(dir=str(unrun))) == 1
+    assert runner.finish(unrun, runner.TOLERANCE, record=True) == 0
+    assert capsys.readouterr().out.count("not recorded: instrumentation off") == 2
+    assert not (tmp_path / "rec").exists()
+    with pytest.raises(ValueError, match="instrumentation off"):
+        runner.record_baseline(*runner.judge(unrun))
+    written = runner.record_baseline(res, facts)
+    assert json.loads(written.read_text(encoding="utf-8"))["instrumentation"] == "on"
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        [{}, {}, {"instrumentation": "off"}],
+        [{"instrumentation": "on"}, {"instrumentation": "off"}, {"instrumentation": "off"}],
+    ],
+)
+def test_the_gate_and_repro_refuse_runs_of_mixed_instrumentation(
+    over: list[dict[str, Any]], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dirs = [
+        str(uninstrumented_run(tmp_path / f"run{i}") if o.get("instrumentation") == "off"
+            else make_run(tmp_path / f"run{i}", **o))
+        for i, o in enumerate(over)
+    ]  # fmt: skip
+    assert runner.cmd_gate(argparse.Namespace(dirs=dirs, tolerance=0.05)) == 2
+    assert "differ in instrumentation: off, on" in capsys.readouterr().out
+    ns = argparse.Namespace(dir_a=dirs[0], dir_b=dirs[2], variance_source=[])
+    assert runner.cmd_repro(ns) == 2
+    assert "differ in instrumentation" in capsys.readouterr().out
+
+
+LAG_ON = {0.001: 900, 0.0025: 990, 0.005: 1000}
+LAG_OFF = {0.001: 950, 0.0025: 995, 0.005: 1000}
+
+
+def overhead_run(
+    out: Path, *, cpu_s: float, ttd: float, lag: dict[float, int], **over: Any
+) -> Path:
+    """A healthy run with `cpu_s` backend CPU seconds over its hour, a tick-to-decode p95 of `ttd`
+    ms (p50 half of it, p99 1.5 times) and the loop-lag histogram `lag`."""
+    empty = {0.01: 0, 0.02: 0}  # off: the fan-out histogram is never observed
+    make_run(out, fanout=empty if over.get("instrumentation") == "off" else None, **over)
+    scrape = out / "scrape1.txt"
+    text = scrape.read_text(encoding="utf-8").replace(
+        "process_cpu_seconds_total 600", f"process_cpu_seconds_total {cpu_s}"
+    )
+    text += "".join(f'event_loop_lag_seconds_bucket{{le="{le:g}"}} {n}\n' for le, n in lag.items())
+    total = max(lag.values())
+    text += f'event_loop_lag_seconds_bucket{{le="+Inf"}} {total}\n'
+    text += f"event_loop_lag_seconds_count {total}\n"
+    scrape.write_text(text, encoding="utf-8")
+    summ = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    summ["trends"]["cv_release_decode_ms_trades"] = {  # the gated variant (`excluding`)
+        "count": 100, "p50": ttd / 2, "p95": ttd, "p99": ttd * 1.5, "max": ttd * 2,
+    }  # fmt: skip
+    (out / "summary.json").write_text(json.dumps(summ), encoding="utf-8")
+    return out
+
+
+def overhead_ns(on: Path, off: Path, out: Path | None = None) -> argparse.Namespace:
+    return argparse.Namespace(on_dir=str(on), off_dir=str(off), out_dir=out)
+
+
+@pytest.mark.parametrize(("cpu_on", "code", "under"), [(611.0, 0, True), (612.0, 1, False)])
+def test_overhead_reports_each_delta_and_the_cpu_overhead_against_the_2_percent_line(
+    cpu_on: float, code: int, under: bool, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    on = overhead_run(tmp_path / "on", cpu_s=cpu_on, ttd=4.0, lag=LAG_ON)
+    off = overhead_run(tmp_path / "off", cpu_s=600.0, ttd=3.0, lag=LAG_OFF, instrumentation="off")
+    assert runner.cmd_overhead(overhead_ns(on, off, tmp_path / "pair")) == code
+    body = json.loads((tmp_path / "pair" / "overhead.json").read_text(encoding="utf-8"))
+    rows = {r["name"]: r for r in body["rows"]}
+    cpu = rows["backend_cpu_s_per_s"]
+    assert (cpu["on"], cpu["off"]) == (pytest.approx(cpu_on / 3600), pytest.approx(600 / 3600))
+    assert cpu["delta_pct"] == pytest.approx((cpu_on - 600) / 600 * 100)
+    assert body["cpu_overhead_pct"] == pytest.approx(cpu["delta_pct"])
+    assert (body["line_pct"], body["under_line"]) == (2.0, under)
+    for q, on_ms, off_ms in (("p50", 2.0, 1.5), ("p95", 4.0, 3.0), ("p99", 6.0, 4.5)):
+        r = rows[f"tick_to_decode_trades_ms.{q}"]
+        assert (r["on"], r["off"]) == (on_ms, off_ms)
+        assert r["delta_pct"] == pytest.approx((on_ms - off_ms) / off_ms * 100)
+    for lag_q in (0.95, 0.99):
+        r = rows[f"event_loop_lag_ms.p{int(lag_q * 100)}"]
+        for side, hist in (("on", LAG_ON), ("off", LAG_OFF)):
+            text = (
+                "".join(
+                    f'event_loop_lag_seconds_bucket{{le="{le:g}"}} {n}\n' for le, n in hist.items()
+                )
+                + f'event_loop_lag_seconds_bucket{{le="+Inf"}} {max(hist.values())}\n'
+            )
+            want = budgets.quantile(budgets.parse_scrape(text), "event_loop_lag_seconds", lag_q)
+            assert r[side] == pytest.approx((want or 0.0) * 1000)
+    assert body["pair"] == {"on": str(on), "off": str(off)}
+    assert (body["profile"], body["flag"], body["feeder"]) == ("A", "on", "inproc")
+    assert any("--feeder proc" in n for n in body["notes"])  # inproc: the feeder is in the CPU
+    assert any("one pair" in n for n in body["notes"])
+    md = (tmp_path / "pair" / "overhead.md").read_text(encoding="utf-8")
+    assert "| backend_cpu_s_per_s |" in md and ("under" if under else "at or over") in md
+    assert f"{cpu['delta_pct']:+.1f} %" in capsys.readouterr().out
+    capsys.readouterr()
+    assert runner.cmd_overhead(overhead_ns(on, off)) == code  # by default next to the off run
+    assert (off / "overhead.json").is_file() and (off / "overhead.md").is_file()
+
+
+@pytest.mark.parametrize(
+    ("on_over", "off_over", "needle"),
+    [
+        ({}, {"instrumentation": "on"}, "one instrumentation-on run, then one off: got on and on"),
+        ({"instrumentation": "off"}, {}, "got off and on"),
+        ({}, {"instrumentation": "off", "profile": "B"}, "differ in profile"),
+        ({}, {"instrumentation": "off", "flag": "off"}, "differ in flag"),
+        ({}, {"instrumentation": "off", "feeder": "proc"}, "differ in feeder"),
+        ({}, {"instrumentation": "off", "machine_profile": "other"}, "differ in machine_profile"),
+        ({}, {"instrumentation": "off", "loop": "uvloop"}, "differ in loop"),
+        ({}, {"instrumentation": "off", "cpus": ["0-3", "4-7"]}, "differ in cpus"),
+        ({}, {"instrumentation": "off", "k6_exit": 107}, "is INVALID"),
+    ],
+)
+def test_overhead_refuses_a_pair_it_cannot_compare_and_names_why(
+    on_over: dict[str, Any],
+    off_over: dict[str, Any],
+    needle: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    on = overhead_run(tmp_path / "on", cpu_s=610.0, ttd=4.0, lag=LAG_ON, **on_over)
+    off = overhead_run(tmp_path / "off", cpu_s=600.0, ttd=3.0, lag=LAG_OFF, **off_over)
+    assert runner.cmd_overhead(overhead_ns(on, off, tmp_path / "pair")) == 2
+    out = capsys.readouterr().out
+    assert needle in out and "::error::overhead refused" in out
+    assert not (tmp_path / "pair").exists()
+
+
+def test_overhead_is_a_runner_subcommand(tmp_path: Path) -> None:
+    on = overhead_run(tmp_path / "on", cpu_s=601.0, ttd=4.0, lag=LAG_ON)
+    off = overhead_run(tmp_path / "off", cpu_s=600.0, ttd=3.0, lag=LAG_OFF, instrumentation="off")
+    assert runner.main(["overhead", str(on), str(off), "--out-dir", str(tmp_path / "o")]) == 0
+    assert (tmp_path / "o" / "overhead.json").is_file()
+
+
+def test_the_feeder_child_inherits_only_the_allowed_variables() -> None:
+    """#4852 (a Fable carry): the child's environment is an allow-list, so nothing of the backend's
+    own (a credential, a token, a setting) reaches it, whatever the parent holds."""
+    parent = {"PATH": "/usr/bin", "TZ": "UTC", "CV_SECRET": "x", "AWS_SESSION_TOKEN": "y"}
+    assert feed_proc.child_env(parent) == {"PATH": "/usr/bin", "TZ": "UTC"}
+    assert set(feed_proc.CHILD_ENV_KEYS) == {"PATH", "LANG", "LC_ALL", "TZ"}

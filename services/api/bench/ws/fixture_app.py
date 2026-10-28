@@ -28,11 +28,16 @@ cannot be pointed at a stub exchange (no setting overrides the hosts).
   `--feeder proc` runs it in a child process (`feed_proc`), pinned to `--feeder-cpus` when given,
   and only its receiver stays here, so the backend's `process_*` numbers are the gateway's and the
   child's CPU is `cv_bench_feeder_cpu_seconds_total` (#571).
+- **Instrumentation.** `--instrumentation on` (the default) is the build as it ships;
+  `--instrumentation off` (#571's uninstrumented build) stands E17-T06's hot-path series in by
+  no-ops from before the server starts until it has stopped (`bench.ws.instrumentation`) and
+  passes no span ids, so the 2 % overhead line is measured on one build. Nothing else changes.
 - **Bench-only knobs** (environment, read here only): `CV_BENCH_WS_SEND_DELAY_MS` delays every
   outbound `websocket.send` inside the `cv_ws_fanout_seconds` span (the self-check), and
   `CV_BENCH_FEED_SEED`. Ready line on stdout: `CV_BENCH_WS_READY port=<p> pid=<n> tokens=<path>`.
 
     uv run python -m bench.ws.fixture_app --profile A --flag on --out DIR [--feeder proc]
+        [--instrumentation off]
 """
 
 from __future__ import annotations
@@ -65,6 +70,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from bench.ws import HARNESS_VERSION, READY, profiles
 from bench.ws.feed_proc import RemoteFeeder
 from bench.ws.feeder import BookSource, Feeder, TradesSource, tier_plan
+from bench.ws.instrumentation import MODES, uninstrumented
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -238,6 +244,7 @@ class BackendConfig:
     ws_path: str = "/ws"
     feeder: str = "inproc"  # FEEDERS
     feeder_cpus: str | None = None  # the child's cpus (`--feeder proc`); None: the backend's
+    instrumentation: str = "on"  # `instrumentation.MODES`: off stands E17-T06's series in
 
     @classmethod
     def for_profile(
@@ -251,6 +258,7 @@ class BackendConfig:
         ws_path: str = "",
         feeder: str = "inproc",
         feeder_cpus: str | None = None,
+        instrumentation: str = "on",
     ) -> BackendConfig:
         p = profiles.resolve(table, name)
         feed = table["feeds"][p["feed"]]
@@ -267,6 +275,7 @@ class BackendConfig:
             ws_path=profiles.ws_path(ws_path or p["ws_path"]),
             feeder=feeder,
             feeder_cpus=feeder_cpus or None,
+            instrumentation=instrumentation,
         )
 
 
@@ -282,6 +291,10 @@ class Backend:
         tiers = tier_plan(len(cfg.symbols), cfg.hot, cfg.warm, table["tiers"])
         if cfg.feeder not in FEEDERS:
             raise ValueError(f"feeder {cfg.feeder!r}: one of {', '.join(FEEDERS)}")
+        if cfg.instrumentation not in MODES:
+            raise ValueError(f"instrumentation {cfg.instrumentation!r}: one of {', '.join(MODES)}")
+        #: Off: E17-T06's hot-path names hold no-ops while this backend serves (`__aenter__`).
+        self._patch = contextlib.ExitStack()
         self.feeder: Feeder | RemoteFeeder = (
             RemoteFeeder(
                 self.hub, self.bus, cfg.symbols, tiers, seed=cfg.seed, depths=cfg.depths,
@@ -322,7 +335,8 @@ class Backend:
                 }
             ),
             sequencing=self.hub,
-            span_ids=new_span_id,  # `sp` on 1 frame in 32, as with CV_TELEMETRY_ENABLED
+            # `sp` on 1 frame in 32, as with CV_TELEMETRY_ENABLED; none without instrumentation
+            span_ids=new_span_id if cfg.instrumentation == "on" else None,
         )
         registry = ConnectionRegistry(
             self._principal, lambda: time.time_ns() // 1_000_000, services
@@ -400,16 +414,22 @@ class Backend:
         if isinstance(self.feeder, RemoteFeeder):  # its hello holds the scales the bars ask for
             await self.feeder.start()
         await self.bars.start()
-        self._tasks = [
-            spawn(self.server.serve(sockets=[self.sock]), name="bench-ws-uvicorn"),
-            spawn(self.feeder.run(), name="bench-ws-feeder"),
-            spawn(self._sample_lag(), name="bench-ws-lag"),
-        ]
-        self._tasks[1].add_done_callback(feeder_ended)  # a feed that dies is logged as it dies
-        while not self.server.started:
-            if self._tasks[0].done():
-                self._tasks[0].result()
-            await asyncio.sleep(0.01)
+        if self.cfg.instrumentation == "off":  # before the first connection, until `__aexit__`
+            self._patch.enter_context(uninstrumented())
+        try:
+            self._tasks = [
+                spawn(self.server.serve(sockets=[self.sock]), name="bench-ws-uvicorn"),
+                spawn(self.feeder.run(), name="bench-ws-feeder"),
+                spawn(self._sample_lag(), name="bench-ws-lag"),
+            ]
+            self._tasks[1].add_done_callback(feeder_ended)  # a feed that dies is logged as it dies
+            while not self.server.started:
+                if self._tasks[0].done():
+                    self._tasks[0].result()
+                await asyncio.sleep(0.01)
+        except BaseException:
+            self._patch.close()  # a backend that never served leaves no name patched
+            raise
         return self
 
     async def wait(self) -> None:
@@ -420,7 +440,10 @@ class Backend:
         self.server.should_exit = True
         for task in self._tasks[1:]:
             task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        try:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        finally:
+            self._patch.close()  # the production names again, once nothing serves
         if isinstance(self.feeder, RemoteFeeder):  # no orphan: the child is ended and reaped
             await self.feeder.close()
         await self.bars.stop()
@@ -442,7 +465,7 @@ async def serve(args: argparse.Namespace) -> None:
     cfg = BackendConfig.for_profile(
         table, args.profile, flag=args.flag == "on", seed=args.seed,
         send_delay_ms=args.send_delay_ms, ws_path=args.ws_path,
-        feeder=args.feeder, feeder_cpus=args.feeder_cpus,
+        feeder=args.feeder, feeder_cpus=args.feeder_cpus, instrumentation=args.instrumentation,
     )  # fmt: skip
     out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="cv-bench-ws-"))
     out.mkdir(parents=True, exist_ok=True)
@@ -461,6 +484,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--ws-path", default="", help="k6's path; /ws and /api/v1/ws are always served")
     ap.add_argument("--feeder", choices=FEEDERS, default="inproc", help="the feeder's process")
     ap.add_argument("--feeder-cpus", default="", help="--feeder proc: the child's cpus")
+    ap.add_argument(
+        "--instrumentation", choices=MODES, default="on",
+        help="off: E17-T06's hot-path series stood in by no-ops (#571's overhead measurement)",
+    )  # fmt: skip
     args = ap.parse_args(argv)
     with contextlib.redirect_stdout(sys.stderr):  # the handler binds stdout, the ready line's
         configure_logging(

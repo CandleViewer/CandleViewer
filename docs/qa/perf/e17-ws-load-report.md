@@ -116,6 +116,51 @@ modes publish the same frames and bus events, which a test pins). `feeder` is re
 baseline; the gate and the reproducibility check refuse runs of mixed modes, and a baseline gates only runs of its
 own mode (an artefact without `feeder` is `inproc`, the only mode there was).
 
+**The uninstrumented build (#571).** E17-T06's DoD line ("instrumentation overhead under 2 % of the fan-out path,
+measured against an uninstrumented build") is measured with `--instrumentation off` (runner `run` and `fixture_app`;
+the workflow's `instrumentation` input, smoke, A, B and C only). `CV_TELEMETRY_ENABLED` is not that switch: it drops
+the span ids and the telemetry router, not the hot-path series. No such switch exists in the product, so this is a
+bench-only startup flag: before the fixture serves, `bench/ws/instrumentation.py` sets each name below, where its
+reader looks it up at run time, to a stand-in of the same interface that records nothing, passes `span_ids=None`,
+and restores every original once the server has stopped. No production module changes. Setting the sampler mask to
+all ones means no `s` is ever a multiple of it, so every frame takes the unstamped path that 31 in 32 take with
+instrumentation on. That path has no clock read, no timed encode, no `sp` and no span log. The residue is one
+`seq & SAMPLE_MASK` test per frame.
+
+| E17-T06 instrument (slice)                                                           | where it is read (`candleviewer/ws/`)                                       | off          |
+| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- | ------------ |
+| 1-in-32 sampler: receipt stamp, `sp` (#2891, #3251)                                  | `sequencing.py:638`, `:669`, `:740`, `:766` (`SAMPLE_MASK`)                 | all bits set |
+| span ids `sp` (#3251)                                                                | `SubscriptionServices.span_ids` (fixture)                                   | `None`       |
+| `cv_ws_fanout_seconds` (#2891)                                                       | `gateway.py:1942`, `:1996` (`FANOUT_SECONDS`)                               | no-op        |
+| `cv_ws_frame_encode_seconds`, `cv_ws_frame_bytes` `{json,msgpack}`, flag off (#2921) | `gateway.py:1926-1937` (`*_ENCODE_SECONDS`, `*_FRAME_BYTES`, `frame_bytes`) | no-op        |
+| the same pair, flag on (#2921)                                                       | `pipeline.py:237`, `:308`, `:321-323` (same names, `_cost`)                 | no-op        |
+| `cv_ws_frame_encode_seconds`, `cv_ws_frame_bytes` per CVWB kind (#2921)              | `binary.py:145`, `:201-202` (`ENCODE_COST`)                                 | no-op        |
+| sampled frame span log `ws frame span` (#3251)                                       | `gateway.py:1944`, `:1999` (`_log_span`)                                    | no-op        |
+| `cv_ws_queue_bytes`, `cv_ws_queue_frames` (#3409)                                    | `pipeline.py:376-377`                                                       | no-op        |
+| `cv_ws_connection_class{state}` (#3409)                                              | `pipeline.py:666-668` (`CLASS_COUNTS`)                                      | no-op        |
+| `cv_ws_conflated_total{topic}`, `cv_ws_coalesced_updates` (#3409)                    | `pacing.py:512-513` (`CONFLATED`, `COALESCED_UPDATES`)                      | no-op        |
+| `cv_ws_rtt_seconds` (#3409)                                                          | `pacing.py:270`, `:289`                                                     | no-op        |
+
+Not covered, as they are not E17-T06's: `cvwb_frames_encoded_total` and `cvwb_bytes_encoded_total` (E17-T02,
+`binary.py:204-205`), `cv_ws_overflow_total` (E17-T03, which a passing run never increments), the connection,
+handshake, auth and resync series (E17-S01, E17-T03), and the product's own logic, including the pacer, its RTT
+probe and the classification it feeds. The harness's own series stay too: `process_*`, the loop-lag sampler and the
+feeder counters. An off run is judged in **overhead mode**. Budget #6 reads a series that is now empty, so it is
+listed as not measured, never as an INVALID run, and the run stands on k6's tick-to-decode, the backend CPU and the
+validity guards. It is never gated and never a baseline. `instrumentation` is in `run.json`, the baseline name
+(`-instr-off`) and every comparability check, so on and off runs never mix (an artefact without it is `on`). The
+pair, one dispatch each with the same profile, flag, feeder and runner:
+
+    uv run python -m bench.ws.runner run A --staging --out-dir ON
+    uv run python -m bench.ws.runner run A --staging --instrumentation off --out-dir OFF
+    uv run python -m bench.ws.runner overhead ON OFF   # overhead.json and overhead.md, next to OFF
+
+`overhead` refuses (exit 2, naming why) a pair that is not one `on` run and then one `off` run of the same profile,
+flag, feeder, machine profile, loop, length and placement, or that has an INVALID run. It reports backend CPU
+(core-seconds per second), k6 tick-to-decode p50, p95 and p99 and loop lag p95 and p99, each with its on/off delta,
+and exits 1 when the CPU delta is at or over 2 %. With `--feeder inproc` the feeder's CPU is in both denominators,
+which understates the fan-out path's share, so `--feeder proc` is the pair to read.
+
 ### Recorded deviations from the written shapes
 
 - **The 8-series cap binds below the written shapes.** `bars.*` and `footprint.*` each lease a bar series, and the

@@ -14,6 +14,11 @@ Budget #3 is feeder-stamped print time to k6 decode-complete, and k6's decode-co
 paint (no real paint is measured, the report says so). `gate_on` picks the variant that gates:
 `excluding` (decode minus the envelope `ts`, the server's throttle wait out, as budget #6's span
 starts at a paced frame's release) or `including`; the other is reported beside it.
+
+A run with E17-T06's instrumentation off (`instrumentation: off`, #571) is judged in `overhead`
+mode: the server records no fan-out histogram and no `sp`, so budget #6 is not measured (named in
+`not_judged`, never an INVALID run for want of its samples) and the run stands on k6's latency, the
+backend CPU and the harness's own series; such a run is the uninstrumented half of an overhead pair.
 """
 
 from __future__ import annotations
@@ -58,9 +63,12 @@ HELLO_RTT: Final = "cv_hello_rtt_ms"
 #: `skew_estimator`: which hello the guard's figure is read at (`clock_skew`).
 MIN_RTT_HELLO, MAX_OVER_HELLOS, RAW_MAX = "min_rtt_hello", "max_over_hellos", "raw_max"
 SCRAPE_LINE: Final = "scrape.metrics_timeout"
+B6_LINE: Final = "budget6.cv_ws_fanout_seconds.p95"
+#: `Result.mode`: a run judged on every budget, or the uninstrumented half of an overhead pair.
+BUDGETS_MODE, OVERHEAD_MODE = "budgets", "overhead"
 #: What reads the server's counter deltas, so is not judged when a boundary scrape never answered.
 SCRAPE_BUDGETS: Final = (
-    "budget6.cv_ws_fanout_seconds.p95",
+    B6_LINE,
     "backpressure and sequence series",
     "event-loop lag",
     "feeder ratio",
@@ -235,6 +243,7 @@ class Result:
     informational: list[Check] = field(default_factory=list)
     clock_skew: ClockSkew | None = None  # what the clock-skew guard read, reported beside it
     not_judged: list[str] = field(default_factory=list)  # budgets a lost boundary scrape left out
+    mode: str = BUDGETS_MODE  # OVERHEAD_MODE: instrumentation off, budget #6 not measured
 
     @property
     def status(self) -> str:
@@ -257,6 +266,7 @@ class Result:
             "clock_skew": {**asdict(cs), "judged": cs.judged} if (cs := self.clock_skew) else None,
             "not_judged": self.not_judged,
             "not_measurable": list(NOT_MEASURABLE),
+            "mode": self.mode,
         }
 
 
@@ -333,7 +343,8 @@ def clock_skew(summ: Mapping[str, Any], send_delay_ms: float = 0.0) -> ClockSkew
 def evaluate(
     prof: Mapping[str, Any], summ: Mapping[str, Any], t0: Scrape, t1: Scrape, facts: Facts
 ) -> Result:
-    """The run's verdict. `prof` is the resolved profile (`flag`, `gate_on`, `probe`, `name`)."""
+    """The run's verdict. `prof` is the resolved profile (`flag`, `gate_on`, `probe`, `name`, and
+    `instrumentation`: `off` judges it in `OVERHEAD_MODE`)."""
     sc = facts.scrapes
     lost = sc.missing if sc else []  # the boundary scrapes that never answered
     d = {} if lost else delta(t0, t1)
@@ -343,6 +354,10 @@ def evaluate(
     incl = prof.get("gate_on", "excluding") == "including"
     hours = facts.steady_s / 3600.0
     m = v.metrics
+    overhead = prof.get("instrumentation", "on") == "off"
+    if overhead:  # no server series of E17-T06 to read: said once, never an INVALID run
+        res.mode = OVERHEAD_MODE
+        res.not_judged.append(f"{B6_LINE}: not measured (instrumentation off, overhead mode)")
 
     if sc and sc.attempted:  # a run saved before the counts has none
         n, within = len(sc.timed_out_ms), f"within {sc.timeout_s:g} s"
@@ -357,7 +372,10 @@ def evaluate(
     if lost:  # the budgets that read the scrape deltas have no window to read
         gone = f"{' and '.join(lost)} scrape timed out"
         names = [*SCRAPE_BUDGETS, *([HELD_BUDGET] if "t0" in lost else [])]
-        res.not_judged = [f"{b}: not judged ({gone})" for b in names]
+        names = [b for b in names if not (overhead and b == B6_LINE)]  # not measured either way
+        res.not_judged += [f"{b}: not judged ({gone})" for b in names]
+    elif overhead:
+        pass
     elif count < MIN_FANOUT_SAMPLES * SAMPLE_EVERY:
         res.invalid.append(
             f"fanout_samples: {count / SAMPLE_EVERY:.0f} sampled frames, need {MIN_FANOUT_SAMPLES}"
@@ -366,7 +384,7 @@ def evaluate(
         frames = count / SAMPLE_EVERY
         v.add(
             Check(
-                "budget6.cv_ws_fanout_seconds.p95",
+                B6_LINE,
                 "#6",
                 (p95s or 0.0) * 1000,
                 B6_FANOUT_S * 1000,
@@ -505,7 +523,7 @@ def evaluate(
                 m["event_loop_lag_ms"] = _scalar(lag * 1000)
 
     frames = sum(v for k, v in counters.items() if k.startswith("cv_frames_"))
-    if frames:  # E17-T06: about one data frame in 32 carries a span id (23 3.1)
+    if frames and not overhead:  # E17-T06: about one data frame in 32 carries a span id (23 3.1)
         share = counters.get("cv_sp_frames", 0.0) / frames
         ok = 1 / (2 * SAMPLE_EVERY) <= share <= 2 / SAMPLE_EVERY
         res.informational.append(
