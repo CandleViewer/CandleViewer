@@ -16,11 +16,12 @@ section D names each row's role).
 Usage: python3 -I docs/design/_tools/e42_d05_admin_audit.py
 (prints Markdown; exit 1 on a FAIL, 2 on a tool error)
 
-Exit codes: 0 every gated row passes and every §16 number matches; 1 a gated row FAILs or a
-number §16 states differs from this audit; 2 the tool itself cannot run (a helper that does not
-load, a theme layered unlike verify_tokens.py, a duplicate key, a table cell with no pair, a token
-with no colour or not an opaque #RRGGBB, a §16 row the spec no longer holds), so a caller never
-reads a tool error as a FAIL.
+Exit codes: 0 every gated row passes and every §16 number matches; 1 a gated row FAILs, a
+number §16 states differs from this audit, or a §16 row this audit expects is missing or renamed
+(reported as "spec row missing or renamed": a spec edit, never a tool outage); 2 the tool itself
+cannot run (a helper that does not load, a theme layered unlike verify_tokens.py, a duplicate key,
+a table cell with no pair, a token with no colour or not an opaque #RRGGBB, no §16 in the spec),
+so a caller never reads a tool error as a FAIL.
 
 Roles. `text` (4.5:1, WCAG 1.4.3) and `non-text` (3:1, WCAG 1.4.11) rows are gated in every theme,
 and one FAIL exits 1. Every gated text row is also measured against the high-contrast theme's 7:1
@@ -769,8 +770,9 @@ def compare(
     """One line per cell: the spec's text, this audit's, and whether they agree."""
     out = []
     for row in rows:
-        if row.label not in spec:
-            tool_error(f"§16 holds no row {row.label!r}")
+        if row.label not in spec:  # a deleted or renamed row is a spec change: a FAIL, not exit 2
+            out.append([row.label[:48], "all", "spec row missing or renamed", "-", "DIFF"])
+            continue
         for theme, mine, theirs in zip(
             ("dark", "light", "high-contrast"),
             regenerated[row.label],
@@ -790,10 +792,15 @@ def cited_in_spec(spec: dict[str, list[str]], vals: dict[str, list[float]]) -> l
     tert = CONTRAST_TABLE[3].label
     glyph = CONTRAST_TABLE[4].label
     spark = CONTRAST_TABLE[11].label
+
+    def verdict(label: str) -> str:
+        """§16's Verdict cell for a row; empty when the row is missing (reported as a DIFF)."""
+        return spec.get(label, [""])[-1]
+
     checks = [
-        ("`text.disabled` (T2 verdict)", f"({disabled})", spec[t2][-1]),
-        ("`text.secondary` instead (verdict)", selected, spec[tert][-1]),
-        ("light check, never as text", f"(light {vals['glyph.check'][1]:.2f})", spec[glyph][-1]),
+        ("`text.disabled` (T2 verdict)", f"({disabled})", verdict(t2)),
+        ("`text.secondary` instead (verdict)", selected, verdict(tert)),
+        ("light check, never as text", f"(light {vals['glyph.check'][1]:.2f})", verdict(glyph)),
         ("`border.strong` rejected (label)", f"rejected: {rejected}", spark),
     ]
     return [[w, want, "match" if want in where else "DIFF"] for w, want, where in checks]
