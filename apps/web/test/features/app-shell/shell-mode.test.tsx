@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { act, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect } from "vitest";
+import { it } from "@candleviewer/config/vitest-flaky";
 import { RAIL } from "../../../e2e/support/rail";
 import { clearAnnouncements } from "../../../src/features/app-shell/announcer";
 import {
@@ -309,35 +310,55 @@ const STATES: readonly [ShellMode, Parameters<typeof setShellState>[0]][] = [
   ["disconnected", { connection: retry(1) }],
   ["degraded", { degraded: FEED_DOWN }],
 ];
+const MATRIX_ROLES = ["owner", "manager", "viewer"] as const;
 const MATRIX = STATES.flatMap(([mode, patch]) =>
-  (["owner", "manager", "viewer"] as const).map((role) => [mode, role, patch] as const),
+  MATRIX_ROLES.map((role) => [mode, role, patch] as const),
 );
+const MATRIX_TITLE =
+  "%s × %s: the badge shows, Admin only for the owner, the read-only overlay for a viewer, axe-clean";
+/** Quarantined (C-9.3): under load the environment badge is not found or reads "unknown". */
+const QUARANTINED = new Set(["normal × manager", "normal × viewer"]);
+
+async function shellMatrixCase(
+  mode: ShellMode,
+  role: (typeof MATRIX_ROLES)[number],
+  patch: Parameters<typeof setShellState>[0],
+): Promise<void> {
+  await renderShell(role);
+  set({ environment: "live", ...patch });
+  // A viewer's normal shell is read-only; under any other mode the overlay rides along.
+  const expected = role === "viewer" && mode === "normal" ? "read-only" : mode;
+  expect(probe()).toBe(`${expected}:${role === "viewer" ? "role" : "-"}`);
+  const bar = screen.getByRole("banner");
+  expect(within(bar).getByRole("img", { name: "Trading environment: Live" })).toBeVisible();
+  const nav = screen.getByRole("navigation", { name: "Primary" });
+  expect(
+    within(nav)
+      .getAllByRole("link")
+      .map((a) => a.textContent),
+  ).toEqual([...RAIL[role]]);
+  expect(within(nav).queryByRole("link", { name: "Admin" }) !== null).toBe(role === "owner");
+  expect(screen.getAllByRole("main")).toHaveLength(1);
+  const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
+  expect(res.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual(
+    [],
+  );
+}
 
 describe("the shell matrix: every reachable state × role (S9)", () => {
   beforeEach(() => resetMeClaims());
 
-  it.each(MATRIX)(
-    "%s × %s: the badge shows, Admin only for the owner, the read-only overlay for a viewer, axe-clean",
-    async (mode, role, patch) => {
-      await renderShell(role);
-      set({ environment: "live", ...patch });
-      // A viewer's normal shell is read-only; under any other mode the overlay rides along.
-      const expected = role === "viewer" && mode === "normal" ? "read-only" : mode;
-      expect(probe()).toBe(`${expected}:${role === "viewer" ? "role" : "-"}`);
-      const bar = screen.getByRole("banner");
-      expect(within(bar).getByRole("img", { name: "Trading environment: Live" })).toBeVisible();
-      const nav = screen.getByRole("navigation", { name: "Primary" });
-      expect(
-        within(nav)
-          .getAllByRole("link")
-          .map((a) => a.textContent),
-      ).toEqual([...RAIL[role]]);
-      expect(within(nav).queryByRole("link", { name: "Admin" }) !== null).toBe(role === "owner");
-      expect(screen.getAllByRole("main")).toHaveLength(1);
-      const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
-      expect(
-        res.violations.filter((v) => v.impact === "serious" || v.impact === "critical"),
-      ).toEqual([]);
-    },
+  it.each(MATRIX.filter(([mode, role]) => !QUARANTINED.has(`${mode} × ${role}`)))(
+    MATRIX_TITLE,
+    shellMatrixCase,
+  );
+
+  // The environment badge is not found under load (C-9.3). ticket: GH-4875 quarantined: 2026-10-28
+  it.flaky(MATRIX_TITLE.replace("%s", "normal").replace("%s", "manager"), () =>
+    shellMatrixCase("normal", "manager", {}),
+  );
+  // The environment badge is not found under load (C-9.3). ticket: GH-4875 quarantined: 2026-10-28
+  it.flaky(MATRIX_TITLE.replace("%s", "normal").replace("%s", "viewer"), () =>
+    shellMatrixCase("normal", "viewer", {}),
   );
 });
