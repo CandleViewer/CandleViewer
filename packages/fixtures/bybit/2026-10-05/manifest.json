@@ -636,6 +636,39 @@
       "notable_event": "snapshot + deltas incl. explicit 0",
       "http_status": 200,
       "size_cap_bytes": 4000
+    },
+    {
+      "path": "rest/recorded_tickers_BTCUSDT.json",
+      "symbol": "BTCUSDT",
+      "stream": "GET /v5/market/tickers",
+      "host": "api.bybit.com",
+      "capture_date": "2026-10-28",
+      "source": "capture_fixture.py --rest-path (redacted)",
+      "notable_event": "recorded: one linear tickers reply for BTCUSDT (highPrice24h / lowPrice24h present), E08-T08 (#4707)",
+      "http_status": 200,
+      "size_cap_bytes": 4000
+    },
+    {
+      "path": "rest/recorded_tickers_ETHUSDT.json",
+      "symbol": "ETHUSDT",
+      "stream": "GET /v5/market/tickers",
+      "host": "api.bybit.com",
+      "capture_date": "2026-10-28",
+      "source": "capture_fixture.py --rest-path (redacted)",
+      "notable_event": "recorded: one linear tickers reply for ETHUSDT (highPrice24h / lowPrice24h present), E08-T08 (#4707)",
+      "http_status": 200,
+      "size_cap_bytes": 4000
+    },
+    {
+      "path": "rest/recorded_tickers_SOLUSDT.json",
+      "symbol": "SOLUSDT",
+      "stream": "GET /v5/market/tickers",
+      "host": "api.bybit.com",
+      "capture_date": "2026-10-28",
+      "source": "capture_fixture.py --rest-path (redacted)",
+      "notable_event": "recorded: one linear tickers reply for SOLUSDT (highPrice24h / lowPrice24h present), E08-T08 (#4707)",
+      "http_status": 200,
+      "size_cap_bytes": 4000
     }
   ]
 }
