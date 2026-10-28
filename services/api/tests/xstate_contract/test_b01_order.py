@@ -782,7 +782,7 @@ async def test_inv_b1_r_an_exit_the_state_does_not_take_is_denied_and_recorded(
         assert (receipt.deferred, receipt.error) == (False, None)
         assert (set(interp.current_state_ids), interp.deferred_count) == (before, 0)
         assert rec.actions[mark:] == []  # the refusal alone: nothing written, sent or posted
-        refused = None if state == "untracked" else {"trigger": exit_, "state": state}
+        refused = {"trigger": exit_, "state": state}  # `untracked`'s own refusal too (INV-B1-l)
         assert records == [(_refusal(state).removeprefix("audit_"), refused)]
     finally:
         await interp.stop()
