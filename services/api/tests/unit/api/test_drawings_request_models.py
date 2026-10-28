@@ -392,21 +392,24 @@ class _Sized(BaseModel):
     xs: Annotated[list[int], Field(min_length=1, max_length=2)]
 
 
-@pytest.mark.parametrize(
-    "raws",
-    [
-        ('{"xs": [1, 2, 3]}', '{"xs": [1, 2, 3, 4, 5]}'),  # too_long
-        ('{"xs": [1', '{"xs": [1, 2, 3'),  # json_invalid, its position differing
-    ],
-)
-def test_format_errors_lengths_and_broken_json_answer_one_message(raws: tuple[str, ...]) -> None:
-    entries = []
+def _messages(raws: tuple[str, ...]) -> list[str]:
+    out = []
     for raw in raws:
         with pytest.raises(ValidationError) as ei:
             _Sized.model_validate_json(raw)
-        entries.append(format_errors(ei.value))
-    assert entries[0] == entries[1]
-    assert ", not " not in entries[0][0]["message"] and " column " not in entries[0][0]["message"]
+        out.append(format_errors(ei.value)[0]["message"])
+    return out
+
+
+def test_format_errors_a_length_bound_answers_its_bound_not_the_count() -> None:
+    assert (
+        _messages(('{"xs": [1, 2, 3]}', '{"xs": [1, 2, 3, 4, 5]}'))
+        == ["List should have at most 2 items after validation"] * 2
+    )
+
+
+def test_format_errors_broken_json_answers_a_fixed_sentence() -> None:
+    assert _messages(('{"xs": [1', '{"xs": [1, 2, 3')) == ["The body is not valid JSON."] * 2
 
 
 class _Checked(BaseModel):

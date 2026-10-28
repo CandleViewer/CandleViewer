@@ -243,7 +243,8 @@ def make_recording_writes_router(
             raise common.Problem(422, BAD, "Idempotency-Key must be a UUID.") from None
         body = parse(request, raw)
         if entry_id is not None:
-            try:  # the id's own parse; `visible` looks it up, after the admission
+            try:  # the id's shape, before the limit; `visible` parses it again for its one 404
+                # (malformed, another env's or restricted-away), after the admission
                 uuid.UUID(entry_id)
             except ValueError:
                 raise _missing() from None

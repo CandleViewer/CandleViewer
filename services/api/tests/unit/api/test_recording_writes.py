@@ -231,12 +231,21 @@ async def test_past_the_limit_a_malformed_request_is_answered_and_spends_no_budg
     for _ in range(29):
         await env.add(symbol="BTCUSDT")
     seen, stored = env.actions(), dict(fake.entries)
+    # a case without its own path targets the existing entry: the pin route or the entry route
     target = path or (_PIN if method == "PUT" else f"{_ADD}/{{}}").format(entry.id)
     for _ in range(3):  # past the limit, were they counted
         answer = await env.http.request(method, target, **kwargs)
         assert answer.status_code == status
     assert env.actions() == seen and fake.entries == stored
-    assert (await env.add(symbol="SOLUSDT")).status_code == 201  # the 30th write
+
+
+async def test_after_malformed_requests_the_30th_write_still_lands_and_the_31st_is_429() -> None:
+    env = _Env(None, *W)
+    for _ in range(29):
+        await env.add(symbol="BTCUSDT")
+    for _ in range(5):  # malformed bodies past the 29th write: none of them is counted
+        assert (await env.http.post(_ADD, json={"symbol": "btc"})).status_code == 422
+    assert (await env.add(symbol="SOLUSDT")).status_code == 201
     assert (await env.add(symbol="SOLUSDT")).status_code == 429
 
 
