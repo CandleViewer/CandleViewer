@@ -1085,11 +1085,15 @@ def test_e29_leaves_ruling_q7s_hop_and_the_clock_resync_after_l1d3_in_its_map_an
         "(i), E29-T13 (ii) | Owner sign-off pending: with L1d-3's finding on #2701; target Sprint "
         "08 (by 2026-11-19) |",
     )
-    assert not _missing(  # ruled Medium (2026-10-28 07:55Z), the orchestrator's remedy verbatim
+    assert not _missing(  # Medium (07:55Z), both readings (09:25Z), the remedy verbatim
         fsync,
         "the lane's `machine_events` WAL sink writes and fsyncs each of its transitions on the "
         "lane's loop thread before it returns (`audit/machine_events.py`)",
-        "past ruling Q11's 120 ms, against",
+        "with the serving tick held fresh, all under ruling Q11's 120 ms",
+        "with the runtime's own tick, two of them over it",
+        "Six runs cannot separate the tick's effect from the fsync queue's run-to-run variance; "
+        "L4's fence refused no re-send in any of them, which bounds the exposure to the kill "
+        "path's latency.",
         "The remedy, the write-ahead rule (C-2.9) its floor: group-commit per lane turn (one fsync "
         "per batch) awaited before any external send or answer, or the sink's fsync on a worker "
         "thread that the lane still awaits before the external effect; never a write-behind that "
