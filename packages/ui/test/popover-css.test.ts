@@ -64,7 +64,11 @@ describe("popover.css contract (CMP-017)", () => {
     const exit = find(normal, ".cv-popover[hidden]", "transition");
     expect(exit).toContain("display: none");
     expect(exit).toContain("pointer-events: none");
-    expect(exit).toContain("opacity var(--motion-duration-fast) var(--motion-easing-accelerate)");
+    expect(exit).toContain(
+      "opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate))",
+    );
+    // The easing tokens are bare lists ("0, 0, 0, 1"): every use is wrapped, or the declaration is invalid.
+    expect(all.replace(/cubic-bezier\(var\(--motion-easing-\w+\)\)/g, "")).not.toContain("easing");
   });
 
   it("reduced motion: the in-app override and the OS preference both cut the exit", () => {

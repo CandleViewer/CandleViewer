@@ -51,10 +51,14 @@ describe("tooltip.css contract (CMP-016)", () => {
 
   it("motion-safe: fades in over fast / decelerate and out over fast / accelerate, opacity only", () => {
     expect(find(normal, ".cv-tooltip", "transition")).toContain(
-      "transition: opacity var(--motion-duration-fast) var(--motion-easing-decelerate)",
+      "transition: opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-decelerate))",
     );
     const exit = find(normal, ".cv-tooltip[hidden]", "transition");
-    expect(exit).toContain("opacity var(--motion-duration-fast) var(--motion-easing-accelerate)");
+    expect(exit).toContain(
+      "opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate))",
+    );
+    // The easing tokens are bare lists ("0, 0, 0, 1"): every use is wrapped, or the declaration is invalid.
+    expect(all.replace(/cubic-bezier\(var\(--motion-easing-\w+\)\)/g, "")).not.toContain("easing");
     expect(exit).toContain("pointer-events: none");
     expect(exit).toContain("display: none");
     expect(all).toMatch(/@starting-style\s*\{\s*\.cv-tooltip\s*\{\s*opacity: 0;/);
