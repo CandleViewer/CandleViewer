@@ -4,6 +4,7 @@ import { TOKEN_SCHEMA_VERSION, Placeholder } from "../src/index.js";
 import type {
   ButtonProps,
   CheckboxProps,
+  FormFieldProps,
   IconButtonProps,
   NumericStepperInputProps,
   RadioGroupProps,
@@ -55,6 +56,20 @@ describe("@candleviewer/ui control atoms (E05-S01)", () => {
           SliderProps,
         ]
       | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui molecules (E05-S03)", () => {
+  it.each([["FormField", Atoms.FormField]])(
+    "exports %s from the package entry as a component function",
+    (_name, component) => {
+      expect(typeof component).toBe("function");
+    },
+  );
+
+  it("exports each molecule's props type (checked by the typechecker)", () => {
+    const props: [FormFieldProps] | null = null;
     expect(props).toBeNull();
   });
 });

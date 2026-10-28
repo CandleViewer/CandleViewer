@@ -66,6 +66,8 @@ export type {
   GlobalErrorBoundaryFallbackProps,
   GlobalErrorScope,
 } from "./GlobalErrorBoundaryFallback.js";
+export { FormField } from "./FormField.js";
+export type { FormFieldLayout, FormFieldProps } from "./FormField.js";
 
 export { Avatar } from "./Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Avatar.js";

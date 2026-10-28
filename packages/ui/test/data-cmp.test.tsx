@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   Button,
   Checkbox,
+  FormField,
   IconButton,
   NumericStepperInput,
   RadioGroup,
@@ -45,6 +46,14 @@ const atoms: [string, () => JSX.Element][] = [
   [
     "CMP-010",
     () => <Slider aria-label="Level" value={1} min={0} max={5} step={1} onChange={noop} />,
+  ],
+  [
+    "CMP-040",
+    () => (
+      <FormField label="Name">
+        <TextInput />
+      </FormField>
+    ),
   ],
 ];
 

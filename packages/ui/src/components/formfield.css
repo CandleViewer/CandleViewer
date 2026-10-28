@@ -1,0 +1,85 @@
+/*
+ * CMP-040 FormField (E05-S03, D02F CMP-040, conventions 23, 24, 28, 29): the label, the control, then the reason,
+ * error and help lines. Tokens only. Lines appear and go at once: no motion of any kind.
+ * Stacked: the label over the control, space.stack.xs apart. Inline: a label column the host sizes
+ * (--cv-formfield-label-width), space.field.gap to the control; the row wraps, so it stacks below its fit width.
+ */
+.cv-formfield {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+}
+
+.cv-formfield[data-layout="inline"] {
+  flex-flow: row wrap;
+  align-items: flex-start;
+  column-gap: var(--space-field-gap);
+}
+
+.cv-formfield__label {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  overflow-wrap: anywhere;
+}
+
+/* Inline: the label is centred on the control's first line and keeps its column; it wraps, never clips. */
+.cv-formfield[data-layout="inline"] > .cv-formfield__label {
+  display: flex;
+  flex: 0 0 var(--cv-formfield-label-width, auto);
+  align-items: center;
+  box-sizing: border-box;
+  min-height: var(--size-control-height);
+}
+
+.cv-formfield__optional {
+  color: var(--color-text-tertiary);
+}
+
+.cv-formfield__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The control's fit width: below it plus the label column, the inline row wraps (stacks). */
+.cv-formfield[data-layout="inline"] > .cv-formfield__body {
+  flex-basis: calc(var(--size-control-height) * 5);
+}
+
+/* Reason and help: caption in text.secondary, space.stack.xs from the control and from each other. */
+.cv-formfield__line {
+  padding-block-start: var(--space-stack-xs);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  overflow-wrap: anywhere;
+}
+
+/* The error line is the field atoms' message line (a pre-rendered live region); here it keeps the stack step. */
+.cv-formfield__body > .cv-field__message:not(:empty) {
+  padding-block-start: var(--space-stack-xs);
+}
+
+/*
+ * Plain disabled: the label dims with the control (the inactive exemption of its `<label for>`); T2 never dims.
+ * The help line keeps full contrast: it is text, not part of the inactive control, and often says why.
+ */
+.cv-formfield[data-disabled] > .cv-formfield__label {
+  opacity: var(--opacity-disabled);
+}
+
+@media (forced-colors: active) {
+  .cv-formfield__label,
+  .cv-formfield__optional,
+  .cv-formfield__line {
+    color: CanvasText;
+  }
+
+  .cv-formfield[data-disabled] > .cv-formfield__label {
+    color: GrayText;
+    opacity: 1;
+  }
+}

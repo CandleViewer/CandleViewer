@@ -18,3 +18,29 @@ the sentence to the atom's own `disabledReason`, so the atom stays focusable wit
 `aria-disabled="true"` and its reason as the accessible description. It has no keys of its own:
 Enter, Space and a click on a denied control do nothing. Only the inline form ships; the tooltip and
 notice forms follow CMP-016 Tooltip.
+
+## Keyboard
+
+Each component's keyboard table lives here (the WAI-ARIA pattern it follows, then keys and actions),
+with its accessible name and role table.
+
+### FormField (CMP-040, no widget pattern: a labelled-field wrapper)
+
+| Keys                      | Action                                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab           | The child's Tab order; the field adds no stop of its own.                                             |
+| Any key in the control    | The child's own keys (CMP-007, CMP-008, CMP-009); the field handles none.                             |
+| Pointer press (the label) | Focuses the control: natively through `<label for>`, and by a handler for an `aria-labelledby` child. |
+
+| Element      | Role                                                   | Name                         | ARIA                                                                                                  |
+| ------------ | ------------------------------------------------------ | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| label        | `<label for>`; without `for` for a non-labelable child | —                            | `id` = `labelId`, the `aria-labelledby` target of a radiogroup, slider, grid or div combobox          |
+| control      | its own                                                | the label, with "(optional)" | `aria-describedby`: the error id, then the help id (the reason id alone while T2); `aria-required`    |
+| error node   | none                                                   | —                            | `aria-live="polite"`, `aria-atomic="true"`, in the DOM at mount, empty while valid; never shown in T2 |
+| help, reason | text                                                   | —                            | referenced, not live; while T2 the help line stays visible but leaves the description                 |
+| lock glyph   | img (the child's, in its well)                         | "Not available"              | CMP-019 `decorative=false`                                                                            |
+| error glyph  | none                                                   | —                            | `aria-hidden="true"`                                                                                  |
+
+Inside a FormField, TextInput, Select and NumericStepperInput draw no error or reason line of their
+own: the field draws each once. A stepper's own parse message ("Maximum 100") shows in the field's
+error line. Outside a FormField the atoms keep their own lines.
