@@ -6132,10 +6132,16 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List own watchlists */
+    /**
+     * List own watchlists
+     * @description The caller's own lists, each with its `version` (E08-T07). Another user's lists are never listed, whatever the caller's role.
+     */
     get: operations["listWatchlists"];
     put?: never;
-    /** Create a watchlist */
+    /**
+     * Create a watchlist
+     * @description Creates one of the caller's lists at `version` 1 (E08-T07). A `name` that another of the caller's lists already uses, case-insensitively (as Postgres `lower()` folds it), is `409 conflict` with `errors[0].rule = name_taken` and `field` `name`. A list that breaks a rule of `WatchlistInput` is `422 validation_failed` naming the field and the rule: `too_many_symbols` (over 200), `unknown_symbol` (not a trading USDT linear perpetual of the instrument catalogue) or `duplicate_symbol` (a symbol twice in one list), each on `symbols`. Either way nothing is written. Audited write-ahead as `watchlist.created`.
+     */
     post: operations["createWatchlist"];
     delete?: never;
     options?: never;
@@ -6153,10 +6159,16 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Replace a watchlist */
+    /**
+     * Replace a watchlist
+     * @description Replaces the whole list and stores it as its next `version` (E08-T07). `If-Match` is required: a stale write is never applied silently. Without it the answer is `428 precondition_required`; with a tag that does not name the list's current version the answer is `412 version_conflict`, whose `ETag` header names the current version. Either way nothing changes: reload, then edit again. The name and list rules are those of `createWatchlist` (`409 conflict` / `name_taken`, `422 validation_failed`). Another user's list id is `404`, as an id that does not exist, never `403`. When several refusals apply, the first in this order answers: `404` (so a missing or stale tag never tells another user's list apart from no list), then `428` or `412`, then `422`, then `409`. Audited write-ahead as `watchlist.updated`.
+     */
     put: operations["updateWatchlist"];
     post?: never;
-    /** Delete a watchlist */
+    /**
+     * Delete a watchlist
+     * @description Deletes one of the caller's lists; the row is removed, and its history is the audit trail (`watchlist.deleted`, written ahead). Another user's list id is `404`, as an id that does not exist, never `403` (E08-T07).
+     */
     delete: operations["deleteWatchlist"];
     options?: never;
     head?: never;
@@ -11258,16 +11270,20 @@ export interface components {
     };
     Watchlist: components["schemas"]["WatchlistInput"] & {
       /** Format: date-time */
-      created_at?: string;
+      created_at: string;
       /** Format: uuid */
-      id?: string;
+      id: string;
       /** Format: date-time */
-      updated_at?: string;
+      updated_at: string;
+      /** @description Server-assigned: 1 on create, one more on each replace. `updateWatchlist` takes it back through `If-Match` (`WatchlistETag`), never in the body. */
+      readonly version: number;
     };
     WatchlistInput: {
       /** @description Column ids shown for this watchlist, in order. */
       columns?: string[];
+      /** @description Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`). */
       name: string;
+      /** @description The list, in order: each a trading USDT linear perpetual of the instrument catalogue, none twice (`422 validation_failed`: `too_many_symbols`, `unknown_symbol`, `duplicate_symbol`). */
       symbols: components["schemas"]["Symbol"][];
     };
     /** @description Response object. Readers must ignore unknown properties (C-6.3). */
@@ -11967,6 +11983,8 @@ export interface components {
     RateLimitReset: number;
     /** @description Seconds the client should wait before retrying. */
     RetryAfter: number;
+    /** @description `W/"<id>:<version>"` of the watchlist answered (E08-T07). Send it as `If-Match` on `updateWatchlist`: the server compares the id and the version it names, so the weak tag matches. `listWatchlists` carries no `ETag`: a client builds the tag of a list item from its `id` and `version`. */
+    WatchlistETag: string;
   };
   pathItems: never;
 }
@@ -21419,6 +21437,7 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -21448,13 +21467,17 @@ export interface operations {
       /** @description Created. */
       201: {
         headers: {
+          ETag: components["headers"]["WatchlistETag"];
           [name: string]: unknown;
         };
         content: {
           "application/json": components["schemas"]["Watchlist"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -21462,6 +21485,8 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
+        /** @description The `ETag` of the list as last read (`WatchlistETag`). The server compares the id and the version it names; any other value (`*`, a list of tags, another list's tag, an unparseable value) is `412 version_conflict`, never a match. */
+        "If-Match": string;
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -21482,17 +21507,40 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Updated. */
+      /** @description Replaced. */
       200: {
         headers: {
+          ETag: components["headers"]["WatchlistETag"];
           [name: string]: unknown;
         };
         content: {
           "application/json": components["schemas"]["Watchlist"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      /** @description `If-Match` does not name the list's current version (`version_conflict`). Nothing changed; the `ETag` header names the current version. */
+      412: {
+        headers: {
+          ETag: components["headers"]["WatchlistETag"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      422: components["responses"]["UnprocessableEntity"];
+      /** @description The replace carried no `If-Match` (`precondition_required`). Nothing changed; read the list, then send its `ETag` back. */
+      428: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -21523,6 +21571,7 @@ export interface operations {
         };
         content?: never;
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];

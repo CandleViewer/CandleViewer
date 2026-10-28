@@ -5595,8 +5595,21 @@ class WatchlistInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    name: Annotated[str, Field(max_length=80, min_length=1)]
-    symbols: Annotated[list[Symbol], Field(max_length=200)]
+    name: Annotated[
+        str,
+        Field(
+            description="Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`).",
+            max_length=80,
+            min_length=1,
+        ),
+    ]
+    symbols: Annotated[
+        list[Symbol],
+        Field(
+            description="The list, in order: each a trading USDT linear perpetual of the instrument catalogue, none twice (`422 validation_failed`: `too_many_symbols`, `unknown_symbol`, `duplicate_symbol`).\n",
+            max_length=200,
+        ),
+    ]
     columns: Annotated[
         list[str] | None, Field(description="Column ids shown for this watchlist, in order.")
     ] = None
@@ -7266,9 +7279,16 @@ class Job(BaseModel):
 
 
 class Watchlist(WatchlistInput):
-    id: UUID | None = None
-    created_at: AwareDatetime | None = None
-    updated_at: AwareDatetime | None = None
+    id: UUID
+    version: Annotated[
+        JsonInt,
+        Field(
+            description="Server-assigned: 1 on create, one more on each replace. `updateWatchlist` takes it back through `If-Match` (`WatchlistETag`), never in the body.\n",
+            ge=1,
+        ),
+    ]
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
     _WatchlistInput__null_refused = field_validator("columns", mode="before")(_take_null)
 
 
