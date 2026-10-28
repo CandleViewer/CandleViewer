@@ -35,6 +35,8 @@ from candleviewer.ws.metrics import (
     EXPORTED_NAMES,
     FRAME_KINDS,
     PRINCIPAL_LOAD_FAILURE_REASONS,
+    TAPE_DROP_REASONS,
+    TRADES_REJECT_REASONS,
     WITHHELD_REASONS,
 )
 from candleviewer.ws.outbound import LadderEvent
@@ -98,6 +100,9 @@ _CLOSED: Final[dict[str, dict[str, frozenset[str]]]] = {
     "cv_ws_malformed_updates_total": {"topic": _TOPIC_FAMILIES},
     "cv_ws_subscribe_total": {"topic": _TOPIC_FAMILIES},
     "cv_ws_snapshot_overdue_total": {"topic": _TOPIC_FAMILIES},
+    "cv_ws_frames_emitted_total": {"topic": _TOPIC_FAMILIES},
+    "cv_ws_tape_prints_dropped_total": {"reason": TAPE_DROP_REASONS},
+    "cv_ws_trades_subscribe_rejected_total": {"reason": TRADES_REJECT_REASONS},
     "cv_ws_upstream_consumers_in_use": {"topic": _TOPIC_FAMILIES},
     "cv_machine_ws_publish_total": {"entity_kind": frozenset(MACHINE_KINDS)},
     "cv_machine_ws_scope_missing_total": {"entity_kind": frozenset(MACHINE_KINDS)},

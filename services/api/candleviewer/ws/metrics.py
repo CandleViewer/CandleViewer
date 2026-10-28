@@ -151,6 +151,8 @@ cv_ws_frames_emitted_total = Counter(
     "Frames a topic publisher emitted, per topic family (E22-T02: `trades`).",
     labelnames=("topic",),
 )
+#: Bounded `cv_ws_tape_prints_dropped_total{reason}` values: a print below the set's `min_size`.
+TAPE_DROP_REASONS: Final = frozenset({"min_size"})
 cv_ws_tape_prints_dropped_total = Counter(
     "cv_ws_tape_prints_dropped_total",
     "Prints a `trades` option set dropped before clustering, by reason (`min_size`).",
@@ -170,7 +172,8 @@ cv_ws_trades_subscribe_rejected_total = Counter(
     labelnames=("reason",),
 )
 cv_ws_frames_emitted_total.labels(topic="trades")
-cv_ws_tape_prints_dropped_total.labels(reason="min_size")
+for _drop_reason in TAPE_DROP_REASONS:
+    cv_ws_tape_prints_dropped_total.labels(reason=_drop_reason)
 for _trades_reason in TRADES_REJECT_REASONS:
     cv_ws_trades_subscribe_rejected_total.labels(reason=_trades_reason)
 
