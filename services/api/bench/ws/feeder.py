@@ -352,6 +352,10 @@ class Feeder:
                     stream.missed, due = stream.missed + skipped, due + skipped * stream.interval
                 await self.step(stream)
                 heapq.heappush(heap, (due + stream.interval, i))
+                # #4833: a step never suspends (the book's publish is synchronous, the bus's queue
+                # is not full), so a backlog of due slots would otherwise run in one loop turn,
+                # beside the gateway it feeds: each slot gives the loop a turn.
+                await asyncio.sleep(0)
 
     async def step(self, stream: _Stream) -> None:
         if stream.kind == "book":

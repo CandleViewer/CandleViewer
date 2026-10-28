@@ -196,6 +196,50 @@ async def test_book_parts_decode_to_the_structured_body_and_trade_ids_never_repe
     assert {i.rsplit(".", 1)[1] for i in ids} >= {"0", "1"}
 
 
+async def test_a_feeder_that_fell_behind_gives_the_loop_a_turn_between_the_slots_it_replays() -> (
+    None
+):
+    """#4833 (#571): a feeder up to `MAX_LATE_S` behind replays every slot it missed. Its steps
+    never suspend (the book's publish is synchronous, the bus's queue is not full), so without a
+    yield the whole backlog ran in one loop turn, beside the gateway it feeds. Each slot it
+    replays now gives the loop a turn: no two steps at one loop-turn count."""
+    turns, enough = 0, asyncio.Event()
+    at_step: list[int] = []  # the loop-turn count at each step
+    began = 1000.0
+    reads = iter([began])  # `run` reads its start once, then finds itself 0.9 s behind
+
+    def clock() -> float:
+        return next(reads, began + 0.9)
+
+    class Counting(Feeder):
+        async def step(self, stream: Any) -> None:
+            at_step.append(turns)
+            if len(at_step) >= 40:
+                enough.set()
+            await super().step(stream)
+
+    symbols = TABLE["symbols"][:4]
+    f = Counting(
+        cast(SequencingHub, Recorder()), Bus(), symbols, tier_plan(4, 1, 1, TABLE["tiers"]),
+        seed=7, wall_ms=lambda: NOW_MS, clock=clock,
+    )  # fmt: skip
+
+    async def tick() -> None:
+        nonlocal turns
+        while True:  # a turn counts as it is taken
+            turns += 1
+            await asyncio.sleep(0)
+
+    ticker, run = asyncio.create_task(tick()), asyncio.create_task(f.run())
+    async with asyncio.timeout(10):  # a hang guard, never a latency bound
+        await enough.wait()
+    run.cancel()
+    ticker.cancel()
+    await asyncio.wait({run, ticker})
+    runs = [len(list(steps)) for _, steps in itertools.groupby(at_step)]
+    assert max(runs) == 1, runs
+
+
 def test_the_schedule_is_drift_free_and_the_rate_is_the_tiers() -> None:
     f = make_feeder(7, Recorder(), 2)
     plan = f.schedule(2000)
