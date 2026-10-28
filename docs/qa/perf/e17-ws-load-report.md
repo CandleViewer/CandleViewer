@@ -161,6 +161,18 @@ flag, feeder, machine profile, loop, length and placement, or that has an INVALI
 and exits 1 when the CPU delta is at or over 2 %. With `--feeder inproc` the feeder's CPU is in both denominators,
 which understates the fan-out path's share, so `--feeder proc` is the pair to read.
 
+**Result (2026-10-28).** Three interleaved pairs on `cv-bench-01`: profile A, flag on, `--feeder proc`, 900 s
+after the warm-up, all PASS, dispatched on, off, on, off, on, off.
+
+| Pair | On run      | Off run     | Backend CPU on / off (core-s/s) |  Δ CPU |
+| ---- | ----------- | ----------- | ------------------------------- | -----: |
+| 1    | 40696826943 | 40700157046 | 0.4067 / 0.4074                 | −0.2 % |
+| 2    | 40703589466 | 40707111963 | 0.4018 / 0.3940                 | +2.0 % |
+| 3    | 40710658908 | 40714269856 | 0.4019 / 0.4173                 | −3.7 % |
+
+The median is −0.16 % and no pair is over the 2 % line. The cost sits inside the harness's run-to-run noise:
+these runs cannot resolve it below about ±3 %, so "under 2 %" means "not measurable at this resolution".
+
 ### Recorded deviations from the written shapes
 
 - **The 8-series cap binds below the written shapes.** `bars.*` and `footprint.*` each lease a bar series, and the

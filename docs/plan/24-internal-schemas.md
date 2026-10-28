@@ -5262,7 +5262,7 @@ class ServerConfig(BaseModel):
     bind_host: str = "127.0.0.1"          # Tailscale/WSL-internal only, never 0.0.0.0
     bind_port: int = 8080
     ws_max_connections: int = 50
-    ws_backpressure_enabled: bool = False # C-4.13 flag, removal #2900; off keeps the 1 024-frame push bound
+    ws_backpressure_enabled: bool = True # C-4.13 flag, on by default (#571), removal #2900; off keeps the 1 024-frame push bound
     ws_queue_bytes: int = 8_388_608       # 23 §8.4 budget; lower only, floor 4 194 304
     ws_queue_frames: int = 2_000          # 23 §8.4 budget; lower only, floor 256
     ws_classify_interval_ms: int = 1_000  # 23 §8.3; 500..10 000

@@ -1,6 +1,6 @@
 """E17-T03 (#412): the backpressure flag and the outbound budget settings.
 
-`CV_WS_BACKPRESSURE_ENABLED` (C-4.13: off by default, removal ticket #2900) and the three
+`CV_WS_BACKPRESSURE_ENABLED` (C-4.13: on by default since #571, removal ticket #2900) and the three
 `CV_WS_*` budget settings of `23-ws-protocol.md` §4.3. The queue budget may be lowered, never
 raised (the contract value is the ceiling; a raise needs a security review, E17 threat model §6),
 and the classify interval is bounded to 500..10 000 ms. Every check is a field check, so a refusal
@@ -70,8 +70,9 @@ def _refusal(monkeypatch: pytest.MonkeyPatch, env: str, value: str) -> Validatio
     return refused.value
 
 
-def test_backpressure_flag_defaults_off() -> None:
-    assert Settings().ws_backpressure_enabled is False
+def test_backpressure_flag_defaults_on() -> None:
+    """#571: the §8.4 rollout precondition is met, so the flag is on unless set off."""
+    assert Settings().ws_backpressure_enabled is True
 
 
 @pytest.mark.parametrize(("raw", "expected"), [("true", True), ("false", False)])

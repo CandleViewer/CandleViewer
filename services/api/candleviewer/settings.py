@@ -703,15 +703,16 @@ class Settings(BaseSettings):
     # closes a frame 4 KiB above it, and `welcome` advertises the effective value (#572).
     ws_max_inbound_frame_bytes: int = Field(default=262_144, ge=1024, le=262_144)
     # E17-T03 (#412): the WS backpressure pipeline (coalescing, adaptive throttling and the §8.4
-    # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: off by default; removal ticket
-    # #2900). It swaps the mechanism that bounds a connection's outbound frames and never removes
-    # the bound (C-2.18): off keeps today's 1 024-frame push bound, so it gates no safety invariant
-    # (C-4.14). With it on, `create_app` passes a `BackpressureConfig` and every frame goes through
-    # `ws/pipeline.py`; `welcome.features.coalescing` mirrors it (`23-ws-protocol.md` §4.2).
-    # Rollout precondition: keep it off until the slow-consumer and burst chaos scenarios pass and
-    # the open items of `23-ws-protocol.md` §8.6 close (§8.4 Rollout; `tests/chaos/ws/SCENARIOS.md`,
-    # #410).
-    ws_backpressure_enabled: bool = False
+    # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: on by default since #571;
+    # removal ticket #2900). It swaps the mechanism that bounds a connection's outbound frames and
+    # never removes the bound (C-2.18): off keeps today's 1 024-frame push bound, so it gates no
+    # safety invariant (C-4.14). With it on, `create_app` passes a `BackpressureConfig` and every
+    # frame goes through `ws/pipeline.py`; `welcome.features.coalescing` mirrors it
+    # (`23-ws-protocol.md` §4.2).
+    # On by default (#571): its rollout precondition is met, the slow-consumer and burst chaos
+    # scenarios pass (`tests/chaos/ws/SCENARIOS.md`, #410) and the open items of
+    # `23-ws-protocol.md` §8.6 are closed (§8.4 Rollout). Off stays available until #2900.
+    ws_backpressure_enabled: bool = True
     # The per-connection outbound budget (§8.4) and the classification cadence (§8.3). The contract
     # values (`ws.outbound.QUEUE_BYTES` / `QUEUE_FRAMES`) are the ceilings, so either may be lowered
     # and never raised (a raise needs a security review: E17 threat model §6). M1 may not import
