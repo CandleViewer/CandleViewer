@@ -168,6 +168,26 @@ cv_ws_audit_failures_total = Counter(
 )
 for _audit_reason in AUDIT_FAILURE_REASONS:  # bound now, so increase() sees the first failure
     cv_ws_audit_failures_total.labels(reason=_audit_reason)
+# -- #571 (E17-T06, #2525 review): the store-backed WS principal load (`ws_wiring.py`) ----------
+#: How a principal load (`StorePrincipalLoader`, at a first `auth` and at each re-evaluation)
+#: failed. `timeout`: a `TimeoutError`, its `PRINCIPAL_LOAD_TIMEOUT_S` bound or the store's own.
+#: `error`: anything else raised (the store, an unknown user or role). Either way the load answers
+#: the deny-all snapshot, as it did before the count. A non-active user's deny-all is the store's
+#: answer and is not counted.
+PrincipalLoadFailureReason = Literal["timeout", "error"]  # the closed set
+PRINCIPAL_LOAD_FAILURE_REASONS: Final[tuple[str, ...]] = get_args(PrincipalLoadFailureReason)
+cv_ws_principal_load_failures_total = Counter(
+    "cv_ws_principal_load_failures_total",
+    "WS principal loads that failed and answered the deny-all snapshot: timeout or error.",
+    labelnames=("reason",),
+)
+for _load_reason in PRINCIPAL_LOAD_FAILURE_REASONS:  # bound now, so increase() sees the first
+    cv_ws_principal_load_failures_total.labels(reason=_load_reason)
+#: The two children, so the failure path does no label lookup.
+PRINCIPAL_LOAD_FAILURES: Final = {
+    r: cv_ws_principal_load_failures_total.labels(reason=r) for r in PRINCIPAL_LOAD_FAILURE_REASONS
+}
+
 #: #3185: one per `ws.subscribe.denied` record a connection's budget kept from the writer
 #: (`limits.DENIAL_AUDITS_PER_WINDOW` in any sliding `DENIAL_AUDIT_WINDOW_S`), however many
 #: refusals it held. Deliberate, not a failure: no `cv_ws_audit_failures_total` reason, so
@@ -265,6 +285,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_connections_in_use",
         "cv_ws_handshake_seconds",
         "cv_ws_auth_failures_total",
+        "cv_ws_principal_load_failures_total",
         "cv_ws_closes_total",
         "cv_ws_connect_rate_limited_total",
         "cv_ws_audit_failures_total",
@@ -279,6 +300,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_recorder_subscriptions_in_use",
         "cv_ws_revoked_total",
         "cv_ws_permission_snapshots_refused_total",
+        "cv_ws_publish_denied_total",
         "cv_ws_upstream_consumers_in_use",
         "cv_ws_resync_total",
         "cv_ws_rebuild_refused_total",

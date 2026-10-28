@@ -166,6 +166,21 @@ cv_ws_resync_total = Counter(
 # reason). `WsUpstreamDesyncHigh` (#571) reads the `upstream_desync` series.
 for _resync_reason in COUNTED_SNAP_REASONS:
     cv_ws_resync_total.labels(reason=_resync_reason)
+#: #571 (E17-T06, #2521 review): the families `cv_ws_publish_denied_total` counts, every private
+#: one (a public family has no publish-time check). The closed `topic` set, bound below at import.
+PUBLISH_DENIED_FAMILIES: Final[tuple[str, ...]] = tuple(
+    f.family for f in FAMILIES.values() if f.private
+)
+cv_ws_publish_denied_total = Counter(
+    "cv_ws_publish_denied_total",
+    "Deltas the publish-time check denied to a subscription its connection still held; the "
+    "topic label holds the family.",
+    labelnames=("topic",),
+)
+#: family -> its child, bound now: a series exists at 0 from import, and a denial does no lookup.
+PUBLISH_DENIED: Final = {
+    f: cv_ws_publish_denied_total.labels(topic=f) for f in PUBLISH_DENIED_FAMILIES
+}
 cv_ws_snapshot_bytes = Histogram(
     "cv_ws_snapshot_bytes",
     "Serialized snapshot size (all chunks); the topic label holds the topic family.",
@@ -916,15 +931,26 @@ def in_scope(
     #2521), and nobody when the event names none; a NONE
     family (`recorder`) reaches every subscription. A `machines` subscription is matched by its
     entity: its kind's whole §6.4 row, applied to the scope stored on it at `sub` (no lookup)."""
+    return _routed(authz, sub, account, user) is True
+
+
+def _routed(
+    authz: ConnectionAuthz, sub: Subscription, account: uuid.UUID | None, user: uuid.UUID | None
+) -> bool | None:
+    """`in_scope`'s answer, with its two kinds of no told apart for the fan-out (#571): `False`,
+    the event is not for `sub` (another account, another user's alert); `None`, denied: the
+    connection still holds `sub`, but its principal as it is now may not read the family (or,
+    for `machines`, fails its kind's §6.4 row). Only a denial is counted and logged."""
     family = sub.topic.family
     if not family.private:
         return True
     if sub.topic.entity_kind is not None:  # §6.4: the whole row, on the scope stored at `sub`
-        return machine_refusal(authz.principal, sub.topic.entity_kind, sub.entity) is None
+        allowed = machine_refusal(authz.principal, sub.topic.entity_kind, sub.entity) is None
+        return True if allowed else None
     # `decide()`'s permission clause, inline: no per-delta `Allow()`; pinned: test_decide_fanout.py
     # nosemgrep: cv-ws-no-adhoc-authz reason=fan-out owner=@CandleViewer/security review=2027-03-25
     if family.permission not in authz.principal.permissions:
-        return False
+        return None
     if family.scope is Scope.SELF:  # #2521: the owner recorded at admit, as the snapshot reads
         return user is not None and sub.owner == user
     if family.scope is Scope.NONE:
@@ -968,6 +994,11 @@ class Sink(Protocol):
 FAILURE_LOG_INTERVAL_S: Final = 1.0
 
 
+#: The hub logs `ws delta denied at publish` at most once per connection in this many seconds,
+#: with a `suppressed` count of the denials it held back (`SequencingHub._denied`).
+DENIED_LOG_INTERVAL_S: Final = 60.0
+
+
 class SequencingHub:
     """Routes owning-module events to every live connection's `Sink` (E17-S03 side of
     the fan-out; coalescing and the overflow ladder are E17-T03). Bounded by the gateway's
@@ -985,6 +1016,8 @@ class SequencingHub:
         self._clock = clock
         #: `_quiet`, per (event, family): when its interval ends, and the lines held back in it.
         self._log_window: dict[tuple[str, str], tuple[float, int]] = {}
+        #: `_denied`'s line window, per connection: dropped with it, so one entry per live socket.
+        self._denied_log: dict[int, tuple[float, int]] = {}
 
     def __len__(self) -> int:
         return len(self._conns)
@@ -994,6 +1027,7 @@ class SequencingHub:
 
     def unregister(self, authz: ConnectionAuthz) -> None:
         self._conns.pop(id(authz), None)
+        self._denied_log.pop(id(authz), None)
 
     def subscriptions(self, ch: str, replay_session_id: str | None = None) -> list[Subscription]:
         """The live (or one replay session's) subscriptions of `ch`, before `publish`'s scope and
@@ -1035,7 +1069,11 @@ class SequencingHub:
         sent = 0
         for authz, emitter in list(self._conns.values()):
             sub = authz.find(ch, replay_session_id)
-            if sub is None or not in_scope(authz, sub, account, user):
+            if sub is None:
+                continue
+            if (routed := _routed(authz, sub, account, user)) is not True:
+                if routed is None:  # denied: counted and logged; nothing runs on the allowed path
+                    self._denied(authz, sub)
                 continue
             if select is not None and not select(sub):
                 continue
@@ -1221,12 +1259,41 @@ class SequencingHub:
         """None holds a log line back: one per `key` (event, family) per `FAILURE_LOG_INTERVAL_S`
         on the hub's clock, as `ConnectionPipeline._quiet` does per connection. Else how many it
         held back since the last line (`suppressed`). Bounded: one entry per (event, family)."""
-        now, last = self._clock(), self._log_window.get(key)
-        if last is not None and now < last[0]:
-            self._log_window[key] = (last[0], last[1] + 1)
-            return None
-        self._log_window[key] = (now + FAILURE_LOG_INTERVAL_S, 0)
-        return 0 if last is None else last[1]
+        return _held_back(self._log_window, key, self._clock(), FAILURE_LOG_INTERVAL_S)
+
+    def _denied(self, authz: ConnectionAuthz, sub: Subscription) -> None:
+        """A delta `_routed` denied to `sub` (#571, #2521 review): one increment of its family's
+        `cv_ws_publish_denied_total` child, and `ws delta denied at publish` at most once per
+        connection per `DENIED_LOG_INTERVAL_S`, with a `suppressed` count. The line names the
+        connection and the family only: no account, user, channel or payload (C-12.6). A failing
+        logger or clock changes nothing: the fan-out goes on."""
+        family = sub.topic.family.family
+        PUBLISH_DENIED[family].inc()
+        with contextlib.suppress(Exception):  # never into the fan-out
+            now = self._clock()
+            if (
+                held := _held_back(self._denied_log, id(authz), now, DENIED_LOG_INTERVAL_S)
+            ) is None:
+                return
+            _log().warning(
+                "ws delta denied at publish",
+                connection_id=authz.connection_id,
+                family=family,
+                suppressed=held,
+            )
+
+
+def _held_back[K](
+    window: dict[K, tuple[float, int]], key: K, now: float, interval: float
+) -> int | None:
+    """One capped log line per `key` per `interval`: None holds this one back (and counts it);
+    else how many were held back since the last line (`suppressed`), with a new window begun."""
+    last = window.get(key)
+    if last is not None and now < last[0]:
+        window[key] = (last[0], last[1] + 1)
+        return None
+    window[key] = (now + interval, 0)
+    return 0 if last is None else last[1]
 
 
 def _live_symbol(symbol: str, *, book_only: bool) -> Callable[[Subscription], bool]:
