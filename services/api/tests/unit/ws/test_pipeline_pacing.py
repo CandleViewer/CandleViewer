@@ -372,7 +372,9 @@ def test_s5_positions_is_just_ahead_of_trade_groups_in_causal_order() -> None:
 def test_s5_a_held_trade_groups_window_counts_and_is_shed_like_any_other() -> None:
     """§8.4: a `trade_groups` window held behind a `positions` one counts against the budget from
     its first update and keeps one heap entry (C-2.18); step 1 drops it like any window, marked
-    for its `backpressure` snapshot and with nothing left, though nothing was queued."""
+    for its `backpressure` snapshot and with nothing left, though nothing was queued. The
+    `positions` window, far smaller, is not needed to get below the drain line: it stays,
+    unmarked (#4833)."""
     hub = SequencingHub()
     pipe, conn = _private_rig(hub, max_bytes=1_500)
     hub.publish_private(ACC_A, _event(1, "positions"))
@@ -381,9 +383,12 @@ def test_s5_a_held_trade_groups_window_counts_and_is_shed_like_any_other() -> No
     _queued(pipe)
     for at in range(3, 60):  # a cold lane, held: every update waits in its window
         hub.publish_private(ACC_A, _event(at, "trade_groups"))
-    groups = conn.authz.find("trade_groups")
+    groups, positions = conn.authz.find("trade_groups"), conn.authz.find("positions")
     assert groups is not None and groups.pending_reason == "backpressure"
-    assert (len(pipe.queue), _pacer(pipe).pending_bytes, len(_pacer(pipe)._dues)) == (0, 0, 2)
+    assert positions is not None and not positions.snapshot_pending
+    window = _pacer(pipe).lanes[positions.sub_id].bytes
+    assert window > 0  # all that is pending: nothing of the dropped `trade_groups` window
+    assert (len(pipe.queue), _pacer(pipe).pending_bytes, len(_pacer(pipe)._dues)) == (0, window, 2)
 
 
 _S5_OPS = ("positions", "trade_groups", "event", _BOOK, "tick", "wait", "ctl", "classify")

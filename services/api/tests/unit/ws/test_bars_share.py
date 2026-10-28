@@ -164,10 +164,33 @@ def test_over_the_share_alone_step_1_sheds_bars_and_nothing_else() -> None:
     assert not trades.snapshot_pending and _grew(before) == {"drop_share": 1}
 
 
-@pytest.mark.parametrize(("n_bars", "n_book"), [(2, 7), (5, 4)], ids=["share_under", "share_over"])
-def test_over_the_whole_budget_every_family_drops_as_before(n_bars: int, n_book: int) -> None:
-    """Nine frames against eight, the share (4 frames) under or over too: step 1 as before,
-    every throttled topic holding frames dropped and counted `drop`."""
+def test_over_the_share_alone_every_bars_topic_goes_not_only_the_largest() -> None:
+    """#4833 keeps SR-E12-07's step 1 as it was: the size-ranked cut at the drain line is the
+    budget's only. Over the share, the 21 frames of one `bars` topic would be enough to go, but
+    the other `bars` topic, one frame, is dropped and marked with it."""
+    conn, _, queue, ladder, subs, _ = _rig(max_bytes=60_000)  # a share of 20 frames
+    five = _sub(conn, queue, "bars.BTCUSDT.time.5")
+    for i in range(21):
+        conn.emitter.delta(subs[0], _bars(i))
+    conn.emitter.delta(five, _bars(1))
+    assert queue.share_over() and not ladder.over_budget()
+    events = ladder.check([*subs, five])
+    assert events == [LadderEvent("drop", (_BARS, five.ch), "share")]
+    assert five.snapshot_pending and queue.share_frames == 0
+
+
+@pytest.mark.parametrize(
+    ("n_bars", "n_book", "dropped", "left"),
+    [(2, 7, (_BOOK,), 2), (5, 4, (_BARS, _BOOK), 0)],
+    ids=["share_under", "share_over"],
+)
+def test_over_the_whole_budget_every_family_drops_largest_first(
+    n_bars: int, n_book: int, dropped: tuple[str, ...], left: int
+) -> None:
+    """Nine frames against eight, the share (4 frames) under or over too: step 1 over the
+    budget, the share no matter, counted `drop`. #4833: largest first down to the drain line,
+    `bars` ranked with the others: seven `book` frames suffice (two of eight left), five `bars`
+    frames do not (four of eight is not below half), so `book` goes too."""
     conn, _, queue, ladder, subs, _ = _rig(max_frames=8)
     for i in range(n_bars):
         conn.emitter.delta(subs[0], _bars(i))
@@ -175,8 +198,8 @@ def test_over_the_whole_budget_every_family_drops_as_before(n_bars: int, n_book:
         conn.emitter.delta(subs[1], _bid("BTCUSDT", str(90 + i)))
     assert ladder.over_budget() and queue.share_over() == (n_bars > 4)
     before = _counts()
-    assert ladder.check(subs) == [LadderEvent("drop", (_BARS, _BOOK))]
-    assert len(queue) == 0 and _grew(before) == {"drop": 2}
+    assert ladder.check(subs) == [LadderEvent("drop", dropped)]
+    assert len(queue) == left and _grew(before) == {"drop": len(dropped)}
 
 
 def test_over_the_share_a_paused_bars_subscription_is_shed_without_the_mark() -> None:
@@ -256,8 +279,9 @@ def test_a_share_check_keeps_another_familys_redrop_count() -> None:
     bars, book, trades = subs
     pacer.drop(book)
     assert ladder.drain() == [LadderEvent("resnapshot", (_BOOK,))]
-    for _ in range(40):
-        queue.push(encode(_frame("d", _TRADES)))
+    for ch, n in ((_BOOK, 21), (_TRADES, 20)):  # 42 frames: #4833 ranks the book first, and
+        for _ in range(n):  # the 20 `trades` frames left are not below half: both go
+            queue.push(encode(_frame("d", ch)))
     assert ladder.check(subs) == [LadderEvent("drop", (_BOOK, _TRADES))]
     assert ladder.drain() == [LadderEvent("resnapshot", (_BOOK,))]  # its second try, queued
     for _ in range(21):

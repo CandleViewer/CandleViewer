@@ -59,6 +59,7 @@ ORDERS_PER_TICK = 16  # s2b: 128 updates/s of account A's orders
 HEARTBEAT_S = 15.0  # §9.1 `heartbeat.interval_ms`
 TOPICS = ({"ch": BOOK}, TRADES)
 CHANNELS = (BOOK, TRADES["ch"])
+TAPE = TRADES["ch"]
 HEALTHY = (uuid.UUID(int=0x201), uuid.UUID(int=0x202))
 SLEEPER = uuid.UUID(int=0x203)
 BUDGET = BackpressureConfig()  # `flag_on`'s, checked against the sleeper's queue
@@ -346,12 +347,16 @@ async def test_s2_sleeping_client_stays_in_its_budget_and_costs_the_others_nothi
     queued, pending, frames = assert_d8(asleep)
     assert any(c.exit[1] for c in asleep)
     assert queued + pending > BUDGET.max_bytes  # the pause took it there; the drop answered
-    # §8.4 in order. Step 1, once, asleep: on the check that went over, both topics' queued
-    # frames and windows go and both are marked; only control frames are left.
+    # §8.4 in order. Step 1, once, asleep: on the check that went over, the tape, by far the
+    # largest, goes and is marked; that takes the queue below the drain line, so the book keeps
+    # its queued frames and window, unmarked (#4833).
     (drop,) = [c for c in asleep if c.events]
-    assert [(e.reason, e.topics) for e in drop.events] == [("drop", CHANNELS)]
-    assert (drop.droppable, drop.exit[1], drop.marked, drop.cls) == (0, 0, CHANNELS, "saturated")
-    assert grew(cv_ws_overflow_total, overflow) == {"drop": 2}  # once per topic, nothing else
+    assert [(e.reason, e.topics) for e in drop.events] == [("drop", (TAPE,))]
+    assert (drop.marked, drop.cls) == ((TAPE,), "saturated") and drop.droppable > 0
+    queued_at, pending_at, frames_at = drop.exit
+    depth = 100 * max((queued_at + pending_at) / BUDGET.max_bytes, frames_at / BUDGET.max_frames)
+    assert depth < DRAIN_PCT
+    assert grew(cv_ws_overflow_total, overflow) == {"drop": 1}  # the tape alone, nothing else
 
     lane.inject(Fault.HEAL)
     healed_at = loop.time()
@@ -371,16 +376,17 @@ async def test_s2_sleeping_client_stays_in_its_budget_and_costs_the_others_nothi
         )
 
     # §8.4 step 2 needs no publish: the writer's first turns after its parked send returns queue
-    # both snapshots. They are awaited before the awake feed, so the `d` after each is published
-    # after it however long the lane takes to recover in wall time: a fixed feed paced by the
-    # healthy clients alone can end first, and nothing publishes after it (#4264). The lane's
-    # stall that night was most likely a zero-window probe (not confirmed); a backed-off probe or
-    # retransmit comes no later than about as long after `HEAL` as the window was shut, plus a
-    # retransmit timeout. The virtual clock is frozen here, so a snapshot parked as not ready
-    # would wait for the coarse timer in vain: S2's source never parks one.
-    resnapped = ["initial", "d", "backpressure"]
+    # the tape's snapshot, behind the book's frames it kept. It is awaited before the awake feed,
+    # so the `d` after it is published after it however long the lane takes to recover in wall
+    # time: a fixed feed paced by the healthy clients alone can end first, and nothing publishes
+    # after it (#4264). The lane's stall that night was most likely a zero-window probe (not
+    # confirmed); a backed-off probe or retransmit comes no later than about as long after `HEAL`
+    # as the window was shut, plus a retransmit timeout. The virtual clock is frozen here, so a
+    # snapshot parked as not ready would wait for the coarse timer in vain: S2's source never
+    # parks one.
+    resnapped = {BOOK: ["initial", "d"], TAPE: ["initial", "d", "backpressure"]}
     await slow.until(
-        lambda: all(snaps(slow, ch) == resnapped for ch in CHANNELS),
+        lambda: all(snaps(slow, ch) == resnapped[ch] for ch in CHANNELS),
         f"resnapshotted ({BUFFERS})",  # a stall here can be a buffer under its floor
         within_s=max(TIMEOUT_S, healed_at - paused_at + 1.0),  # at least as long as it was shut
         detail=state,
@@ -388,21 +394,22 @@ async def test_s2_sleeping_client_stays_in_its_budget_and_costs_the_others_nothi
     lane_s = loop.time() - healed_at
     assert run.books == PAUSE_TICKS  # the feed has not run since HEAL: no publish was needed
     await run.feed(AFTER_TICKS)
-    stream = [*resnapped, "d"]
+    stream = {BOOK: ["initial", "d"], TAPE: [*resnapped[TAPE], "d"]}
     await slow.until(
-        lambda: all(snaps(slow, ch) == stream for ch in CHANNELS),
+        lambda: all(snaps(slow, ch) == stream[ch] for ch in CHANNELS),
         f"recovered ({BUFFERS})",
         detail=state,
     )
     assert_d8(spy.checks[ladder])
     # Step 2, awake: one `backpressure` snapshot per drain, each begun below 50 % of the budget.
     sent = [(depth, e.topics) for depth, events in spy.drains[ladder] for e in events]
-    assert sorted(t for _, t in sent) == [(ch,) for ch in CHANNELS]  # nothing else from a drain
+    assert [t for _, t in sent] == [(TAPE,)]  # nothing else from a drain
     assert all(depth < DRAIN_PCT for depth, _ in sent)
-    # Step 3 never: what was left could always be dropped. The sleeper recovered through the
-    # snapshots: what was in flight before the drop, the snapshot, the stream again, no gap.
+    # Step 3 never: what was left could always be dropped. The sleeper recovered: the tape through
+    # its snapshot (what was in flight before the drop, the snapshot, the stream again), the book
+    # through the frames it kept, no gap.
     assert [e.reason for e in spy.events(ladder)] == ["drop"]
-    assert grew(cv_ws_overflow_total, overflow) == {"drop": 2, "resnapshot": 2}
+    assert grew(cv_ws_overflow_total, overflow) == {"drop": 1, "resnapshot": 1}
     assert grew(cv_ws_closes_total, closes) == {} and slow.gaps == [] and slow.closes == []
 
     # Healthy clients: every update in its tick (no class the sleeper degraded, no frame held),
