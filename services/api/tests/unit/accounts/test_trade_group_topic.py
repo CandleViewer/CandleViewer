@@ -302,7 +302,9 @@ def test_a_terminal_frame_is_the_groups_last() -> None:
     topic.leg_changed(_leg(1, 0, _A, status="error"))
     topic.group_changed(_group(1, "failed"))
     [last] = hub.to(_sub(_A))
+    [entry] = hub.to(_sub(_A, status=["failed"]))  # it enters that view whole, at its end
     assert last.item["status"] == "failed" and len(hub) == 2 and _snap(topic, _sub(_A)) == []
+    assert entry.item["status"] == "failed" and len(entry.item["legs"]) == 1
 
 
 @pytest.mark.parametrize("final", _FINALS)
