@@ -32,6 +32,9 @@ export type { CopyButtonProps, CopyStatus, UseCopyOptions, UseCopyResult } from 
 export { Countdown } from "./Countdown.js";
 export type { CountdownFormat, CountdownPhase, CountdownProps } from "./Countdown.js";
 
+export { Dialog } from "./Dialog.js";
+export type { DialogCloseReason, DialogProps, DialogRole, DialogSize } from "./Dialog.js";
+
 export { Divider, DividerLabel } from "./Divider.js";
 export type { DividerLabelProps, DividerProps } from "./Divider.js";
 

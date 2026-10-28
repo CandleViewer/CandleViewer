@@ -128,3 +128,31 @@ roles and names.
 A switch never moves focus off the tab, and a panel that takes focus as it mounts (an `autoFocus` or an effect)
 gives it back to the tab. Selection and the panel swap are cuts. The strip scrolls in one row; it never wraps or hides
 a tab.
+
+### Dialog (CMP-043, APG Dialog (Modal); Alert Dialog for `role="alertdialog"`)
+
+| Keys                 | Action                                                                                                                                        |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| On open              | Focus to `initialFocusRef` (or the first tab stop inside it), else the first field, else the heading. An alertdialog passes its Cancel (H32). |
+| Tab / Shift+Tab      | Cycle inside the card, in DOM order; the page under it is inert.                                                                              |
+| Esc                  | Closes the topmost layer only: a tooltip, then a popover or menu, then the dialog. Focus returns to the opener, else `fallbackFocusRef`.      |
+| A press on the scrim | Cancel for a `dialog`; nothing for an `alertdialog`.                                                                                          |
+| Enter / Space        | The focused control's own; the dialog adds none.                                                                                              |
+
+| Element | Role                   | Name                                           | ARIA                                                                                            |
+| ------- | ---------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| card    | dialog or alertdialog  | the title (`aria-labelledby`), or `aria-label` | `aria-modal="true"`; `aria-describedby` → the description; `aria-busy` while busy               |
+| title   | heading, `h2`          | its text                                       | `tabindex="-1"`: the fallback focus target                                                      |
+| close   | button (`dialog` only) | "Close {title}"                                | CMP-002 `ghost`                                                                                 |
+| body    | none, or group         | the title, when it is a Tab stop               | a body that scrolls with no control in it takes `tabindex="0"` so the keyboard can scroll it    |
+| scrim   | none                   | —                                              | `aria-hidden="true"`; the page under it `inert` (`aria-hidden` where the engine has no `inert`) |
+
+`onOpenChange(false, reason)` reports `escape`, `scrim` or `close`; the host decides. A lock ignores
+`Esc` by keeping `open`; a form with unsaved changes opens its own stacked CMP-044 alertdialog
+("Discard unsaved changes?", H36), whose `Esc` returns to the form as it was. While open, every
+subtree outside the dialog's layer is inert except elements marked `data-cv-inert-exempt` (the
+shell's TopBar, env band, StatusBar and announcer regions, H23); the shell can inset the scrim with
+`--cv-scrim-inset-top` and `--cv-scrim-inset-bottom`. The page does not scroll, and the scrollbar's
+width is given back as padding (`--cv-scroll-lock-gutter` for fixed bars), so nothing shifts. A
+Popover, Tooltip or nested Dialog rendered inside portals into the dialog's layer. There is no
+NoEscClose: `Esc` always cancels before a send, and closes the view after one (H22).

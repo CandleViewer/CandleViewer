@@ -13,6 +13,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "./internal/cx.js";
+import { trapTab, useFocusTrap } from "./internal/focusTrap.js";
+import { useLayer, useLayerPortal } from "./internal/layers.js";
 import { tabStopAfter, tabbables } from "./internal/tabbable.js";
 import { useAnchoredPosition } from "./internal/useAnchoredPosition.js";
 import { useControllable } from "./internal/useControllable.js";
@@ -78,10 +80,9 @@ const reducedMotion = (): boolean => {
  * (so the anchor's `aria-controls` stays valid): its heading, body and footer render only while open
  * and through the exit fade.
  *
- * Known limits (future work): a non-modal popover closes when focus moves into another portalled
- * layer, such as a menu opened from inside it (nested overlays are not modelled yet); and a Popover
- * inside a future CMP-043 Dialog is portalled outside that dialog's trap, which the Dialog slice
- * handles.
+ * It is a layer of the overlay stack: `Esc` closes the topmost layer only, a layer opened above it (a
+ * menu, a nested popover) keeps it open while focus or a press is there, and inside a CMP-043 Dialog
+ * it portals into that dialog's layer, so it stays outside the inert page and inside the trap's scope.
  */
 export function Popover(props: PopoverProps): JSX.Element {
   const {
@@ -100,6 +101,7 @@ export function Popover(props: PopoverProps): JSX.Element {
   const label = props["aria-label"];
   const labelledBy = props["aria-labelledby"];
   const id = useId();
+  const portalRoot = useLayerPortal();
   const headingId = `${id}-heading`;
   const [open, setHeld] = useControllable(openProp, defaultOpen);
   const trigger = useRef<HTMLElement | null>(null);
@@ -199,19 +201,14 @@ export function Popover(props: PopoverProps): JSX.Element {
     };
   }, [open]);
 
-  // Esc while it is open but focus is outside it (on the anchor, or lost to the body). The panel's
-  // own handler stops Esc pressed inside; a tooltip's capture listener takes it first (topmost).
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      event.preventDefault();
-      event.stopPropagation();
-      latest.current(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  // Esc while it is open but focus is outside it (on the anchor, or lost to the body) reaches the
+  // layer stack, which closes the topmost layer. The panel's own handler stops Esc pressed inside; a
+  // tooltip's capture listener takes it first (topmost).
+  const layer = useLayer(open, {
+    element: surface,
+    modal,
+    onEscape: () => latest.current(false),
+  });
 
   // The outside-press guard: closes only when a press both starts and ends outside (and off the anchor).
   useEffect(() => {
@@ -219,7 +216,9 @@ export function Popover(props: PopoverProps): JSX.Element {
     const within = (ref: RefObject<HTMLElement | null>, target: EventTarget | null): boolean =>
       target instanceof Node && (ref.current?.contains(target) ?? false);
     const onDown = (event: PointerEvent): void => {
-      if (within(surface, event.target)) press.current = null;
+      const target = event.target instanceof Node ? event.target : null;
+      // A press in a layer opened above this one (a menu from it) is not an outside press.
+      if (within(surface, target) || layer.inLayerAbove(target)) press.current = null;
       else press.current = within(trigger, event.target) ? "anchor" : "outside";
     };
     const onUp = (event: PointerEvent): void => {
@@ -246,21 +245,16 @@ export function Popover(props: PopoverProps): JSX.Element {
       document.removeEventListener("pointercancel", onCancel, true);
       press.current = null;
     };
-  }, [open]);
+  }, [open, layer]);
 
-  // Modal only: focus that escapes the trap without a press (a script, a shortcut) is taken back.
-  useEffect(() => {
-    if (!open || !modal) return undefined;
-    const onFocusIn = (event: FocusEvent): void => {
-      const panel = surface.current;
-      if (panel === null || panel.hidden || press.current !== null) return;
-      if (!(event.target instanceof Node)) return;
-      if (!panel.contains(event.target))
-        (lastInside.current ?? panel).focus({ preventScroll: true });
-    };
-    document.addEventListener("focusin", onFocusIn);
-    return () => document.removeEventListener("focusin", onFocusIn);
-  }, [open, modal]);
+  // Modal only: focus that escapes the trap without a press (a script, a shortcut) is taken back,
+  // unless it went into a layer opened above this one.
+  useFocusTrap(open && modal, {
+    container: surface,
+    allow: (node) => layer.inLayerAbove(node),
+    paused: () => press.current !== null,
+    lastInside,
+  });
 
   const moveOut = (target: HTMLElement): void => {
     leaving.current = true;
@@ -278,23 +272,16 @@ export function Popover(props: PopoverProps): JSX.Element {
     }
     const panel = surface.current;
     if (event.key !== "Tab" || panel === null) return;
+    if (modal) {
+      // APG Dialog (Modal): Tab cycles inside, in DOM order from the initial focus.
+      trapTab(event, panel);
+      return;
+    }
     const items = tabbables(panel);
     const first = items[0];
     const last = items[items.length - 1];
     const active = document.activeElement;
     const onItem = items.some((item) => item === active);
-    if (modal) {
-      // APG Dialog (Modal): Tab cycles inside, in DOM order from the initial focus.
-      if (first === undefined || last === undefined) event.preventDefault();
-      else if (event.shiftKey && (active === first || !onItem)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (active === last || !onItem)) {
-        event.preventDefault();
-        first.focus();
-      }
-      return;
-    }
     // Non-modal (H11): Shift+Tab before the first control returns to the anchor and closes it;
     // Tab past the last closes it and moves on from the anchor.
     if (event.shiftKey && (first === undefined || active === first || !onItem)) {
@@ -314,7 +301,7 @@ export function Popover(props: PopoverProps): JSX.Element {
     const panel = surface.current;
     if (!open || leaving.current || press.current !== null || next === null || panel === null)
       return;
-    if (panel.contains(next)) return;
+    if (panel.contains(next) || layer.inLayerAbove(next)) return;
     // Non-modal: focus leaving it closes it. Modal: the document `focusin` guard takes it back.
     if (!modal) change(false);
   };
@@ -385,7 +372,7 @@ export function Popover(props: PopoverProps): JSX.Element {
   return (
     <>
       {cloneElement(anchor, anchorProps)}
-      {typeof document === "undefined" ? null : createPortal(panel, document.body)}
+      {portalRoot === null ? null : createPortal(panel, portalRoot)}
     </>
   );
 }

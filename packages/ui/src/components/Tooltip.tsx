@@ -12,6 +12,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "./internal/cx.js";
+import { useLayerPortal } from "./internal/layers.js";
 import { useAnchoredPosition, type AnchoredSide } from "./internal/useAnchoredPosition.js";
 
 export type TooltipSide = AnchoredSide;
@@ -112,6 +113,8 @@ export function Tooltip({
   children,
 }: TooltipProps): JSX.Element {
   const id = useId();
+  // Inside a Dialog it portals into the dialog's layer, so the inert page does not take it.
+  const portalRoot = useLayerPortal();
   const empty = content.trim() === "";
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLElement | null>(null);
@@ -263,7 +266,7 @@ export function Tooltip({
   return (
     <>
       {cloneElement(children, triggerProps)}
-      {empty || typeof document === "undefined" ? null : createPortal(tooltip, document.body)}
+      {empty || portalRoot === null ? null : createPortal(tooltip, portalRoot)}
     </>
   );
 }

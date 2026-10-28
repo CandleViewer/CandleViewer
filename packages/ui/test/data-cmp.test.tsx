@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Dialog,
   FormField,
   FormSection,
   IconButton,
@@ -99,5 +100,10 @@ describe("molecules carry their catalogue id", () => {
   it.each(molecules)("%s marks exactly one root with data-cmp", async (id, render) => {
     const host = await mount(render());
     expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
+  });
+
+  it("CMP-043 marks exactly one root with data-cmp (in its portalled layer)", async () => {
+    await mount(<Dialog open title="Go to date" onOpenChange={noop} />);
+    expect(document.querySelectorAll('[data-cmp="CMP-043"]')).toHaveLength(1);
   });
 });
