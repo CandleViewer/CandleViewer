@@ -20,15 +20,19 @@ from opentelemetry import trace
 from opentelemetry.propagate import extract, inject
 from opentelemetry.trace import Span, Status, StatusCode
 
-from candleviewer.observability.redaction import redact_text
+from candleviewer.observability.redaction import redact_structure, redact_text
 from candleviewer.observability.secret_type import Secret
 
 TRACER_NAME: Final = "candleviewer"
 
-#: Order path, in causal order, then replay session start.
+#: Order path (`20-architecture.md` §12.3): a single order's submission, its three children in
+#: their steps' order, a trade group's fan-out, the venue's create and a fill; then replay start.
 ORDER_PATH_SPANS: Final[tuple[str, ...]] = (
     "http.request",
+    "oms.submit",
     "oms.validate",
+    "oms.persist",
+    "oms.send",
     "oms.fanout",
     "exchange.place_order",
     "private_ws.fill",
@@ -57,6 +61,7 @@ SPAN_ATTRIBUTE_ALLOWLIST: Final[frozenset[str]] = frozenset(
 SANCTIONED_SPANS: Final[frozenset[str]] = frozenset(
     ORDER_PATH_SPANS + REPLAY_SPANS + CREDENTIAL_SPANS
 )
+_ORDER_LINK_ID: Final = "order_link_id"
 
 
 class UnsanctionedSpanError(ValueError):
@@ -94,7 +99,9 @@ def _class_only(s: Span) -> Iterator[None]:
 
 
 def _safe_attrs(attributes: Mapping[str, object]) -> dict[str, str | int | bool]:
-    """Allow-listed keys only; `Secret`→`***`; strings run through the redaction rule set."""
+    """Allow-listed keys only; `Secret`→`***`; strings run through the redaction rule set, an
+    `order_link_id` through the logs' typed pass (#3865, SR-E29-16): a §8.3 id is kept as it is,
+    as 20 §12.3's `oms.submit` carries it, and any other value is scanned."""
     out: dict[str, str | int | bool] = {}
     for key, value in attributes.items():
         if key not in SPAN_ATTRIBUTE_ALLOWLIST:
@@ -103,6 +110,8 @@ def _safe_attrs(attributes: Mapping[str, object]) -> dict[str, str | int | bool]
             out[key] = "***"
         elif isinstance(value, bool | int):
             out[key] = value
+        elif key == _ORDER_LINK_ID:
+            out[key] = str(redact_structure({key: str(value)})[key])
         else:
             out[key] = redact_text(str(value))
     return out

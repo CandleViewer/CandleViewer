@@ -14,9 +14,11 @@ import re
 from pathlib import Path
 
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
+from candleviewer.observability.tracing import CREDENTIAL_SPANS, ORDER_PATH_SPANS
 
 PLAN = OPENAPI_SPEC_PATH.parent
-SUBMIT = Path(__file__).resolve().parents[2] / "candleviewer" / "oms" / "submit.py"
+PACKAGE = Path(__file__).resolve().parents[2] / "candleviewer"
+SUBMIT = PACKAGE / "oms" / "submit.py"
 
 
 def _words(text: str) -> str:
@@ -115,3 +117,42 @@ def test_adr_0014_points_at_20_for_the_order_paths_names() -> None:
     addendum = _section(adr, r"^## Addendum \([0-9-]+\) — E29-T04 order-path spans$")
     assert "Status: reconciled; no decision overturned." in addendum
     assert "§5's order-path span names are maintained in `20-architecture.md` §12.3." in addendum
+
+
+def _started(module: Path) -> list[str]:
+    """The span names `module` starts: each `span("...")` call's literal name, sorted."""
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    return sorted(
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "span"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    )
+
+
+def test_tracing_holds_20s_order_path_names_and_the_code_starts_each_where_20_says() -> None:
+    """S4-G3: `ORDER_PATH_SPANS`, with the credential borrow's span, is exactly the span names 20
+    Sec.12.3 gives the order path, so a name added in one place only fails here; and each is
+    started where 20 and 24 Sec.8.2 put it: the route's `http.request`, the pipeline's
+    `oms.submit` family, the command port's `exchange.place_order`, the facade's one span,
+    `private_ws.fill`, and the broker's borrow. `oms.fanout` is E34-S02's, started nowhere yet."""
+    named = set(re.findall(r"`([a-z_]+\.[a-z_]+)`", _tracing()))
+    assert named - {"tracing.py"} == set(ORDER_PATH_SPANS) | set(CREDENTIAL_SPANS)
+    path_names = set(ORDER_PATH_SPANS) | set(CREDENTIAL_SPANS)
+    started = {
+        module.relative_to(PACKAGE).as_posix(): names
+        for module in sorted(PACKAGE.rglob("*.py"))
+        if "migrations" not in module.parts  # SQL text, never a span
+        and (names := [name for name in _started(module) if name in path_names])
+    }
+    assert started == {
+        "api/orders.py": ["http.request"],
+        "oms/commands.py": ["exchange.place_order"],
+        "oms/order_machine.py": ["private_ws.fill"],
+        "oms/submit.py": ["oms.persist", "oms.send", "oms.submit", "oms.validate"],
+        "secrets/broker.py": ["secrets.credential_borrow"],
+    }

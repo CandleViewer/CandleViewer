@@ -29,10 +29,16 @@ def _tracer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(trace, "get_tracer", _PROVIDER.get_tracer)
 
 
-def test_span_order_path_names_are_the_adr_0014_set() -> None:
+def test_span_order_path_names_are_20_12_3s() -> None:
+    """`20-architecture.md` §12.3's names (`tests/contract/test_order_path_spans_contract.py` ties
+    them to the text): a single order's submission and its children, the fan-out, the create and
+    the fill."""
     assert ORDER_PATH_SPANS == (
         "http.request",
+        "oms.submit",
         "oms.validate",
+        "oms.persist",
+        "oms.send",
         "oms.fanout",
         "exchange.place_order",
         "private_ws.fill",
@@ -88,3 +94,17 @@ def test_a_span_that_ends_cleanly_keeps_its_status_unset() -> None:
         pass
     [ended] = _EXPORTER.get_finished_spans()
     assert ended.status.status_code is StatusCode.UNSET
+
+
+def test_an_order_link_id_reaches_its_span_as_the_logs_keep_it() -> None:
+    """20 Sec.12.3's `oms.submit` carries its `order_link_id`: a Sec.8.3 id under that key is kept
+    as the log redactor's typed pass keeps it (#3865), where a scan alone would mask its key-shape
+    word; any other value under the key, or a Sec.8.3 id under another key, is scanned."""
+    link = "cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en"  # 24 Sec.8.3's worked example
+    with span("oms.submit", {"order_link_id": link, "symbol": link}):
+        pass
+    with span("oms.submit", {"order_link_id": link + "-x"}):  # no Sec.8.3 form: scanned
+        pass
+    kept, scanned = (dict(s.attributes or {}) for s in _EXPORTER.get_finished_spans())
+    assert kept["order_link_id"] == link and kept["symbol"] != link
+    assert scanned["order_link_id"].startswith("[redacted")

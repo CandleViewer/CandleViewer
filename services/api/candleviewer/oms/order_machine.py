@@ -720,9 +720,7 @@ class OrderMachines:
         payload: dict[str, Any] = {"gates": dict(gates), "order": _order_fields(order)}
         if rate_reservation is not None:
             payload["rate_reservation"] = rate_reservation
-        attrs = {"order_link_id": order.order_link_id, "symbol": order.symbol, "env": environment}
-        with span("oms.validate", attrs):
-            return await self._first(order, environment, "VALIDATE", payload, first=first)
+        return await self._first(order, environment, "VALIDATE", payload, first=first)
 
     async def discover(
         self, order: NewOrder, *, environment: str, pass_id: str | None = None
