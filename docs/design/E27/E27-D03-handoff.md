@@ -6,21 +6,21 @@ CMP-178, CMP-201, CMP-203, CMP-011 and CMP-033); Tables 1–5, the Density table
 each with a leading `Component` column; the Storybook story lists with their cells; then §A, the `16` §12 design-QA
 checklist, and §B, the `05` §10 template, for the eight screens. **E27-D06 (#819) embeds this file by reference**
 (BQ-14, RULED: written now, beside the spec, because `16` §11.4 ties it to the contract change). Every number below is
-`docs/design/_tools/e27_d03_hifi_audit.py`'s (spec §9). The boards are PENDING: the Penpot page is
-`E27-D03 Accounts and key vault hi-fi`, named in spec §0 and referenced by name only until the boards step records its
-id. Fixture values only; no key material, secret, real UID or real address appears anywhere. A `[~]` line (met in
-text, its board or library half pending) and a `[ ] PENDING` line are open until the boards PR, and none may remain
-at Done: `16` §11.4's grammar is `[x]` with its evidence or `[ ] N/A — <reason>`.
+`docs/design/_tools/e27_d03_hifi_audit.py`'s (spec §9). The boards are drawn (2026-10-28): the Penpot page is
+`E27-D03 Accounts and key vault hi-fi`, page id `2cfb7e8e-8725-806d-8008-daee3d38d63c`, and spec §0 lists every board
+id and PNG. Fixture values only; no key material, secret, real UID or real address appears anywhere. A `[~]` line
+(met in text and on the boards, its library or story half pending) is open, and none may remain at Done: `16`
+§11.4's grammar is `[x]` with its evidence or `[ ] N/A — <reason>`.
 
 ## Handoff checklist — CMP-175 KeyPermissionBadge (E27-D03, #816)
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — PENDING: page `E27-D03 Accounts and key vault hi-fi` (spec §0), boards 01 and 02 (its
-      light twin); exports `docs/design/E27/img/E27-D03-01-cmp-175-key-states.png` and
+- [x] **Final Penpot link** — page `E27-D03 Accounts and key vault hi-fi` (spec §0), boards 01 and 02 (its light
+      twin), drawn 2026-10-28; exports `docs/design/E27/img/E27-D03-01-cmp-175-key-states.png` and
       `docs/design/E27/img/E27-D03-02-cmp-175-key-states-light.png` with their greyscale, deuteranopia and protanopia
-      renders, all in the boards PR; no board exists yet
+      renders; the board ids in spec §0
 - [x] **Variants × States matrix** — thirteen states in the `key` scope (`badge` and `inline` forms) and the
       `aggregate` line's eight forms, each with its served source, class, glyph and word (spec §2.1); Table 1
 - [x] **Keyboard table** — none of its own: static text, never focusable; the row's actions are CMP-176's (spec
@@ -49,7 +49,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [ ] **Contrast and CVD** — open on the `pairs.mjs` owner: 0 gated FAIL in spec §9, where `c175-pass-word`,
       `c175-pass-glyph`, `c175-danger-glyph`, `c175-critical-border`, `c175-unknown-word`, `c175-unknown-glyph` and
       `c175-info-glyph` are PROPOSED rows waiting for registration (spec D03-H7); ΔE76 and luma are reported (spec §9);
-      the renders of boards 01 and 02 come with the boards PR
+      the greyscale, deuteranopia and protanopia renders of boards 01 and 02 are drawn (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A
       and B below
 - [ ] **Sign-off** — owner approval pending (the owner's `approved` comment on #816, or the merged spec PR)
@@ -59,11 +59,11 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — PENDING: page `E27-D03 Accounts and key vault hi-fi`, boards 03 (the rows, blocked,
-      both disabled forms, the 200 % card) and 04 with its light twin 05 (SCR-125's records); exports
+- [x] **Final Penpot link** — page `E27-D03 Accounts and key vault hi-fi`, boards 03 (the rows, blocked, both
+      disabled forms, the 200 % card) and 04 with its light twin 05 (SCR-125's records), drawn 2026-10-28; exports
       `docs/design/E27/img/E27-D03-03-components-and-looks.png`,
       `docs/design/E27/img/E27-D03-04-scr-125-128-accounts.png` and
-      `docs/design/E27/img/E27-D03-05-scr-125-128-accounts-light.png`, in the boards PR
+      `docs/design/E27/img/E27-D03-05-scr-125-128-accounts-light.png`; the board ids in spec §0
 - [x] **Variants × States matrix** — the state slot's sixteen states in their precedence, the blocked danger
       treatment, the two disabled forms at full text contrast, the menu and the details disclosure, the 200 % card
       (spec §2.2, §3.2); Table 1
@@ -102,8 +102,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — PENDING: page `E27-D03 Accounts and key vault hi-fi`, board 01 (the masked id beside
-      CMP-175's set) and every screen board that names a key; exports in the boards PR
+- [x] **Final Penpot link** — page `E27-D03 Accounts and key vault hi-fi`, board 01 (the masked id beside CMP-175's
+      set) and every screen board that names a key (04–09), drawn 2026-10-28; exports and board ids in spec §0
 - [x] **Variants × States matrix** — one state, masked, in four hosts (a row, a dialog, a table cell, with its
       description) and forced colours; no reveal, timer or copy state exists (BQ-8, RULED; spec §2.3); Table 1
 - [x] **Keyboard table** — none: not focusable, no control (spec §2.3); Table 2
@@ -238,13 +238,13 @@ the "not yet served" strips are board annotations, never a story.
       DS-3's alias bound to `color.text.tertiary` until it lands, CMP-015's skeleton name (spec D03-C12) and `15`'s
       non-token names, each replaced by an A-row (spec §9, Appendix A).
 - [~] Verified in all three themes at both densities — the matrix is computed in dark, light and high contrast (spec
-  §9); the boards draw dark with two light twins (spec §0); every story runs in six cells (above); the visual
-  parity check runs on the drawn boards in the boards PR.
+  §9); the boards draw dark with two light twins (spec §0); every story runs in six cells (above); the boards
+  are drawn and live-checked (spec §0, as built).
 - [x] Passes the contrast matrix for every pair introduced or touched — 57 gated rows, 0 FAIL, 29 registered and 28
       PROPOSED for `tools/contrast/pairs.mjs` (spec D03-H7); the rejected looks are reported and never drawn.
-- [~] CVD simulation reviewed — ΔE76 under protanopia, deuteranopia and tritanopia, and Rec. 601 luma, for every
-  CMP-175 class (spec §9); the greyscale, deuteranopia and protanopia renders of boards 01 and 02 come with the
-  boards PR (BQ-16).
+- [x] CVD simulation reviewed — ΔE76 under protanopia, deuteranopia and tritanopia, and Rec. 601 luma, for every
+      CMP-175 class (spec §9); the greyscale, deuteranopia and protanopia renders of boards 01 and 02 are drawn and
+      keep every state's word and glyph (spec §0; BQ-16).
 - [~] Every documented State has a Penpot variant and a story — named (Table 1; spec §13) and drawn as named frames
   on the boards; the library variants and the stories are the implementing stories' (E27-S01..S05).
 - [x] Disabled states use the disabled-with-reason pattern (CMP-079) — the one rule, view-as first (spec §10.1), with
@@ -312,7 +312,7 @@ Feature: E27-D03 accounts and key vault — accessibility acceptance criteria
     Then the state is also conveyed via shape/icon and text, not colour alone (a word of its
       own, its class's glyph, and BLOCKED's bold word and 2 px border)
     And the feature passes deuteranopia/protanopia/tritanopia simulation review (ΔE76 per
-      class in spec §9; the board renders of boards 01 and 02 come with the boards PR)
+      class in spec §9; the board renders of boards 01 and 02 in spec §0)
 
   Scenario: Contrast
     Given the feature is rendered in the default dark theme and the
