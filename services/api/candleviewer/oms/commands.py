@@ -605,6 +605,14 @@ def _paired(
     return paired.get("stop_loss"), paired.get("take_profit")
 
 
+def _moved(row: OrderRow, sides: Mapping[str, Decimal | None]) -> dict[str, Decimal | None]:
+    """The sides an amend changes. The exit service re-pairs both into its terms, the unchanged one
+    at the order's own value (Q2, 24 Sec.8.9), and that side is no change: its record says
+    `changed: "false"` (`_record_amend`)."""
+    current = {"stop_loss": row.stop_loss, "take_profit": row.take_profit}
+    return {side: value for side, value in sides.items() if value != current.get(side)}
+
+
 def _check_amend_stops(request: AmendOrderRequest) -> None:
     """C-2.6 before the send: a TP/SL sent is a price above zero (the venue reads `0` as remove)."""
     for name, value in (("stop_loss", request.stop_loss), ("take_profit", request.take_profit)):
@@ -1465,8 +1473,9 @@ class OmsCommandPort:
             try:  # any other failure raises: a timed-out insert may have committed rows that only
                 # the complete read resolves, so it is never answered as unsent (fold 2 minor 2)
                 recorded = await self._record_amend(
-                    row, stop, take_profit, detail, sides, by=by, actor=actor, request_id=rid
-                )
+                    row, stop, take_profit, detail, _moved(row, sides), by=by, actor=actor,
+                    request_id=rid,
+                )  # fmt: skip
             except StopRequestInFlight:
                 return _held(row.order_link_id, STOP_REQUEST_RETRY_AFTER_S)
         port = self._router.port_for(account.environment)
