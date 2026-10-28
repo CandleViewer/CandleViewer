@@ -150,6 +150,36 @@ export const WithSelect: Story = {
   },
 };
 
+/** Plain disabled with a Select: the label dims and still names the combobox through aria-labelledby. */
+export const DisabledSelect: Story = {
+  args: {
+    label: "Order type",
+    disabled: true,
+    help: "Market fills at the best price.",
+    children: <Select options={options} value="market" onChange={noop} />,
+  },
+  play: async ({ canvasElement }) => {
+    const combo = within(canvasElement).getByRole("combobox", { name: "Order type" });
+    await expect(combo).toHaveAttribute("aria-disabled", "true");
+  },
+};
+
+/** T2 with a Select: the lock in the trigger, the reason alone as the description. */
+export const SelectWithReason: Story = {
+  args: {
+    label: "Order type",
+    disabledReason: REASON,
+    children: <Select options={options} value="market" onChange={noop} />,
+  },
+  play: async ({ canvasElement }) => {
+    const combo = within(canvasElement).getByRole("combobox", { name: "Order type" });
+    await userEvent.tab();
+    await expect(combo).toHaveFocus();
+    await expect(combo).toHaveAccessibleDescription(REASON);
+    await expect(within(canvasElement).getAllByText(REASON)).toHaveLength(1);
+  },
+};
+
 /** The stepper's own parse error shows once, in the field's line. */
 export const WithStepper: Story = {
   args: {
@@ -198,6 +228,12 @@ export const AllStates: Story = {
       </FormField>
       <FormField label="Gated" disabledReason={REASON}>
         <TextInput defaultValue="trader_01" />
+      </FormField>
+      <FormField label="Disabled select" disabled>
+        <Select options={options} value="market" onChange={noop} />
+      </FormField>
+      <FormField label="Gated select" disabledReason={REASON}>
+        <Select options={options} value="market" onChange={noop} />
       </FormField>
       <FormField label="Read only">
         <TextInput defaultValue="trader_01" readOnly />

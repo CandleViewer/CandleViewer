@@ -204,6 +204,69 @@ describe("FormField (CMP-040)", () => {
     expect(within(host).getByRole("textbox")).toHaveAttribute("id", "user");
   });
 
+  it("the field's id wins over a text input's own, so the label still names it", async () => {
+    const host = await mount(
+      <FormField label="Username">
+        <TextInput id="mine" />
+      </FormField>,
+    );
+    const field = within(host).getByRole("textbox", { name: "Username" });
+    expect(field).not.toHaveAttribute("id", "mine");
+    expect(within(host).getByText("Username")).toHaveAttribute("for", field.id);
+  });
+
+  it("the field's id wins over a stepper's own, so the label still names it", async () => {
+    const host = await mount(
+      <FormField label="Leverage">
+        <NumericStepperInput
+          id="mine"
+          label="Leverage"
+          value={10}
+          step={1}
+          precision={0}
+          onChange={noop}
+        />
+      </FormField>,
+    );
+    const spin = within(host).getByRole("spinbutton", { name: "Leverage" });
+    expect(spin).not.toHaveAttribute("id", "mine");
+    expect(within(host).getByText("Leverage")).toHaveAttribute("for", spin.id);
+  });
+
+  it("T2 suppresses an atom's own invalid verdict and message", async () => {
+    const host = await mount(
+      <FormField label="Username" disabledReason={REASON}>
+        <TextInput invalid errorMessage={ERROR} defaultValue="trader_01" />
+      </FormField>,
+    );
+    const field = within(host).getByRole("textbox", { name: "Username" });
+    expect(field).not.toHaveAttribute("aria-invalid");
+    expect(field).toHaveAccessibleDescription(REASON);
+    expect(within(host).queryByText(ERROR)).toBeNull();
+  });
+
+  it("a Select's own aria-label names it inside a field; the label stays unlinked", async () => {
+    const host = await mount(
+      <FormField label="Order type">
+        <Select aria-label="Type of order" options={options} value="a" onChange={noop} />
+      </FormField>,
+    );
+    const combo = within(host).getByRole("combobox", { name: "Type of order" });
+    expect(combo).not.toHaveAttribute("aria-labelledby");
+    expect(within(host).getByText("Order type")).not.toHaveAttribute("for");
+  });
+
+  it("a plain-disabled field disables a Select and keeps it named", async () => {
+    const host = await mount(
+      <FormField label="Order type" disabled>
+        <Select options={options} value="a" onChange={noop} />
+      </FormField>,
+    );
+    const combo = within(host).getByRole("combobox", { name: "Order type" });
+    expect(combo).toHaveAttribute("aria-disabled", "true");
+    expect(combo).not.toHaveAttribute("tabindex");
+  });
+
   it("inline layout marks the root and carries the host's label column width", async () => {
     const host = await mount(
       <FormField label="Qty" layout="inline" labelWidth="56px">

@@ -17,7 +17,10 @@ export type FormFieldLayout = "stacked" | "inline";
 export interface FormFieldProps {
   /** The visible, persistent label: the control's accessible name, never a placeholder. */
   readonly label: string;
-  /** The control's id (`<label for>`); generated when absent and handed to a field atom. */
+  /**
+   * The control's id (`<label for>`); generated when absent and handed to a field atom, which takes it over any id
+   * of its own, so the label always points at the control. Set a control's id here, not on the atom.
+   */
   readonly htmlFor?: string;
   /** The label's id, for a control that is not natively labelable (`aria-labelledby`); generated when absent. */
   readonly labelId?: string;
@@ -84,7 +87,7 @@ export function FormField({
   // A T2 field never validates (D02F CMP-040): no message and no aria-invalid while gated.
   const message = reason.gated ? undefined : (reported ?? error);
   const invalid = message !== undefined && message !== "";
-  // Error then help; while T2 the reason alone, and the help line stays visible (D09 §9.2).
+  // Error then help; while T2 the reason id alone (D02F CMP-040 a11y table, D09 §9.2); the help line stays visible.
   const describedBy = reason.gated ? reason.ariaDescribedBy : cx(errorId, hasHelp && helpId);
 
   const context = useMemo<FieldContextValue>(

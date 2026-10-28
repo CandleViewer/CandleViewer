@@ -44,3 +44,8 @@ with its accessible name and role table.
 Inside a FormField, TextInput, Select and NumericStepperInput draw no error or reason line of their
 own: the field draws each once. A stepper's own parse message ("Maximum 100") shows in the field's
 error line. Outside a FormField the atoms keep their own lines.
+
+The field owns the control's id: a field atom takes the field's `htmlFor` (or a generated id) over
+any id of its own, so set a control's id on the field. RadioGroup, Slider, SegmentedControl and
+Checkbox do not read the field yet; name them with `aria-labelledby` set to the field's `labelId`
+until a later E05-S03 (#266) slice wires them.

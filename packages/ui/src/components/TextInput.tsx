@@ -18,6 +18,8 @@ export interface TextInputProps extends Omit<
   | "aria-disabled"
   | "aria-invalid"
 > {
+  /** Outside a field only: inside a CMP-040 FormField the field's id wins; set it there through `htmlFor`. */
+  id?: string;
   /** Native text-like types only; the role stays `textbox` except for `password`. */
   type?: "text" | "password" | "search" | "email" | "url" | "tel";
   /** Leading content inside the well (a glyph or text); a glyph is `aria-hidden` through `Icon`. */
@@ -101,7 +103,7 @@ export function TextInput({
         <ReasonEcho text={control.reasonFromField ? undefined : reason.reason}>
           <input
             {...rest}
-            id={rest.id ?? control.field?.controlId}
+            id={control.field?.controlId ?? rest.id}
             ref={inputRef}
             type={type}
             className="cv-field__input"

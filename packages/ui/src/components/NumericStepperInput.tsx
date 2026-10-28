@@ -27,6 +27,7 @@ export interface NumericStepperInputProps {
   /** Names the field by an element instead; `label` still names the step buttons. */
   "aria-labelledby"?: string;
   "aria-describedby"?: string;
+  /** Outside a field only: inside a CMP-040 FormField the field's id wins; set it there through `htmlFor`. */
   id?: string;
   name?: string;
   placeholder?: string;
@@ -279,7 +280,7 @@ export function NumericStepperInput({
           ) : null}
           <input
             ref={inputRef}
-            id={id ?? control.field?.controlId}
+            id={control.field?.controlId ?? id}
             name={name}
             placeholder={placeholder}
             type="text"
