@@ -379,7 +379,7 @@ export function Table<T>({
             {...role("cell")}
           >
             {/* Stacked: a visible header label on every cell but the heading line; hidden from AT, which
-                already reads the cell's columnheader, so the header is said once, then the value. */}
+                already reads the cell's columnheader in table navigation (browse mode reads values alone). */}
             {stacked && c > 0 ? (
               <span className="cv-table__cell-label" aria-hidden="true">
                 {column.header}

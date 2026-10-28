@@ -475,8 +475,9 @@ Below the sum of its columns' `minWidthEm` (default 8 each, in the table's own `
 counts) the table stacks, one block per row, read in order: the header buttons (wrapped, still
 sorting), then each row with its first cell as the heading line and every other cell as its header
 label then its value. The label is visible but hidden from assistive technology, which takes the
-header from the cell's `columnheader` (the explicit table roles stay while stacked), so a screen
-reader says the header once, then the value.
+header from the cell's `columnheader` (the explicit table roles stay while stacked). In table
+navigation a screen reader says the header once, then the value; reading linearly in browse mode it
+reads the values without their headers. Not yet confirmed with NVDA or VoiceOver: an E05-D05 check.
 
 The polite line clears as a load, a pending sort or a Retry starts, so a result identical to the
 last one (the same row count after a reload, the same failure after a Retry) is said again. The
