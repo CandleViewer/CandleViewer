@@ -83,6 +83,7 @@ from candleviewer.ws.gateway import (
     make_ws_router,
 )
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
+from candleviewer.ws.pacing import LoopStall
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub, new_span_id
@@ -308,6 +309,7 @@ class Backend:
             hub=self.gateway,
             backpressure=BackpressureConfig.from_settings(self.settings) if cfg.flag else None,
             server_version=HARNESS_VERSION,
+            loop_stall=LoopStall(),  # #4833: as `create_app` wires it, one per process
         )
         include_ws_router(app, router)  # `/ws` and `/api/v1/ws`, as `create_app` serves it (#3916)
         if cfg.ws_path not in (WS_PATH, WS_SERVER_BASE + WS_PATH):  # another prefix: served too
