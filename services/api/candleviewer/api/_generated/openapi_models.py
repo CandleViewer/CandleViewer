@@ -1533,6 +1533,37 @@ class Ticker(BaseModel):
     stale: StrictBool | None = None
 
 
+class TickersItem(Ticker):
+    symbol: Annotated[
+        str,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ]
+    ts: AwareDatetime
+    stale: StrictBool
+
+
+class TickersResponse(BaseModel):
+    items: Annotated[
+        list[TickersItem],
+        Field(
+            description="One `Ticker` per requested symbol the snapshot holds, in the order first requested, each with its `symbol`, `ts`, `stale` and every field the snapshot has a value for, `high_24h` and `low_24h` included. A field Bybit leaves empty is left out, never `null`.",
+            max_length=200,
+        ),
+    ]
+    unknown_symbols: Annotated[
+        list[Symbol],
+        Field(
+            description="The requested symbols the snapshot has no ticker for, each once, in the order first requested; empty when every symbol was found.",
+            max_length=200,
+        ),
+    ]
+    meta: PageMeta
+
+
 class Bar(BaseModel):
     index: Annotated[
         JsonInt | None,

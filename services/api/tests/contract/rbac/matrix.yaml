@@ -912,6 +912,13 @@ operations:
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
+  GET /market/tickers:
+    permissions: ['marketdata:read']
+    scope: none
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml (E08-T08 contract PR, #4707); its implementation PR mounts it
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /market/trades:
     permissions: ['marketdata:read']
     scope: none

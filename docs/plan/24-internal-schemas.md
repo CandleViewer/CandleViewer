@@ -327,16 +327,20 @@ class TickerEvent(MarketEvent):
     turnover_24h: Notional | None
     volume_24h: Qty | None
     price_24h_pcnt: Decimal | None
+    high_24h: Px | None                # optional for completeness, like open_interest_value
+    low_24h: Px | None
     funding_rate: Decimal | None
     next_funding_time: TsUs | None
     is_delta: bool                     # Bybit tickers pushes deltas for linear
 ```
 
-**Mapping — `tickers.{symbol}` (~100 ms, delta-encoded for linear):** `lastPrice→last_price`, `markPrice→mark_price`, `indexPrice→index_price`, `bid1Price/bid1Size→bid1_price/bid1_qty`, `ask1Price/ask1Size→ask1_price/ask1_qty`, `openInterest→open_interest`, `openInterestValue→open_interest_value`, `turnover24h`, `volume24h`, `price24hPcnt`, `fundingRate`, `nextFundingTime` (ms→µs).
+**Mapping — `tickers.{symbol}` (~100 ms, delta-encoded for linear):** `lastPrice→last_price`, `markPrice→mark_price`, `indexPrice→index_price`, `bid1Price/bid1Size→bid1_price/bid1_qty`, `ask1Price/ask1Size→ask1_price/ask1_qty`, `openInterest→open_interest`, `openInterestValue→open_interest_value`, `turnover24h`, `volume24h`, `price24hPcnt`, `highPrice24h→high_24h`, `lowPrice24h→low_24h`, `fundingRate`, `nextFundingTime` (ms→µs).
 
 **Critical edge case:** Bybit's linear ticker stream is a **delta** stream — absent fields mean _unchanged_, not _null_. The adapter keeps a per-symbol last-known ticker and emits a **fully-populated** `TickerEvent` with `is_delta=False` downstream, so no consumer ever implements merge logic. The raw delta is what the recorder stores.
 
-**Shipped (E08-S03):** `exchange/bybit/ticker.py` parses frames into a neutral `TickerDelta`; `ingestion/ticker_stream.py` merges (required fields: all except `open_interest_value`, `next_funding_time`) and publishes on `{env}.md.{symbol}.ticker` with `CONFLATE_LATEST`-friendly semantics. Empty-string wire values mean absent; explicit `"0"` is a value. Until a complete state exists the topic is `warming` (health event) and nothing is published; reconnect emits `reconnecting` and rebuilds from the next push.
+**Shipped (E08-S03):** `exchange/bybit/ticker.py` parses frames into a neutral `TickerDelta`; `ingestion/ticker_stream.py` merges (required fields: the twelve named in the next paragraph; every other field, `open_interest_value`, `next_funding_time`, `high_24h` and `low_24h` included, is optional) and publishes on `{env}.md.{symbol}.ticker` with `CONFLATE_LATEST`-friendly semantics. Empty-string wire values mean absent; explicit `"0"` is a value. Until a complete state exists the topic is `warming` (health event) and nothing is published; reconnect emits `reconnecting` and rebuilds from the next push.
+
+**24 h high and low (E08-T08, #4707).** `high_24h` and `low_24h` are the highest and lowest traded price of the last 24 h. Like `open_interest_value` and `next_funding_time` they are not required: a merged state is complete without them, so a symbol never stays `warming` because Bybit left them out, and once they arrive they are carried forward like any other field. The required set is a named list, not every field a delta can carry: `last_price`, `mark_price`, `index_price`, `bid1_price`, `bid1_qty`, `ask1_price`, `ask1_qty`, `open_interest`, `turnover_24h`, `volume_24h`, `price_24h_pcnt` and `funding_rate`.
 
 ### 2.4 KlineEvent
 
@@ -423,7 +427,7 @@ Sources: live accruing rate from `tickers.{symbol}` (`fundingRate`, `nextFunding
 | `TradeEvent`             | `publicTrade.{s}` / `recent-trade` | per match           | yes (hot+cold)                     | `md.trade.{symbol}`                    |
 | `BookSnapshot`           | `orderbook.{d}.{s}` type=snapshot  | on subscribe/resync | yes                                | `md.book.{symbol}`                     |
 | `BookDelta`              | `orderbook.{d}.{s}` type=delta     | 20–200 ms           | yes (deltas, not re-snapshots)     | `md.book.{symbol}`                     |
-| `TickerEvent`            | `tickers.{s}`                      | ~100 ms             | yes (downsampled 1 Hz cold)        | `md.ticker.{symbol}`                   |
+| `TickerEvent`            | `tickers.{s}`                      | ~100 ms             | yes (downsampled 1 Hz cold)        | `{env}.md.{symbol}.ticker`             |
 | `KlineEvent`             | `kline.{i}.{s}` / REST             | 1–60 s              | yes                                | `md.kline.{symbol}.{interval}`         |
 | `LiquidationEvent`       | `allLiquidation.{s}`               | ≤1 push/500 ms      | yes                                | `md.liq.{symbol}`                      |
 | `OpenInterestEvent`      | ticker / REST OI                   | 100 ms / 5 min      | yes                                | `md.oi.{symbol}`                       |

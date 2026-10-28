@@ -3638,6 +3638,51 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/market/tickers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Latest tickers of up to 200 symbols at once, from one shared snapshot
+     * @description The bulk read beside `getTicker`, for the symbols a list shows but does not stream: the
+     *     `Ticker` of each requested symbol, from one snapshot of every Bybit linear ticker that the
+     *     server shares among all callers. Live values still come from the WS `ticker` topics; this
+     *     read draws on neither their 40-symbol cap nor the rebuild budget (`23-ws-protocol.md`
+     *     §6.1, §7.5).
+     *
+     *     **Freshness.** The route reads a shared cache: the snapshot, the last good answer of
+     *     Bybit's `GET /v5/market/tickers` (category `linear`). At most one call to it starts per
+     *     5 s, a failed call included, however many clients ask. A request is answered from the
+     *     snapshot while that is at most 5 s old. Otherwise it waits for the one on-demand refresh,
+     *     bounded by a server-side deadline and shared by every request waiting; no request starts a
+     *     call of its own. When that call fails or misses its deadline, or none may start yet, the
+     *     answer comes from the last snapshot while that is at most 15 s old, and is
+     *     `503 exchange_unavailable` with `Retry-After` once it is older or while there is none: no
+     *     value more than 15 s old is ever served. `Retry-After` is the whole seconds until the next
+     *     call may start, between 1 and 5. The snapshot's age counts from its receipt, on the
+     *     server's clock, never from Bybit's `time`, so exchange clock skew cannot shift the 5 s or
+     *     15 s bounds. Each item's `ts` is the snapshot's time, that of Bybit's answer, so the items
+     *     of one answer share it; `stale` is `true` on every item of a snapshot more than 5 s old,
+     *     the threshold of the WS `ticker` items (`23-ws-protocol.md` §14.8), and `false` otherwise.
+     *
+     *     **Symbols.** `symbols` names 1 to 200 symbols, a watchlist's cap
+     *     (`WatchlistInput.symbols`), each answered once, in the order first named. None, more than
+     *     200, or a value that is not a `Symbol` is `400 validation_failed`. A well-formed symbol
+     *     the snapshot has no ticker for (Bybit lists no such linear perpetual) is reported in
+     *     `unknown_symbols`, never dropped silently and never a `404`.
+     */
+    get: operations["getTickers"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/market/trades": {
     parameters: {
       query?: never;
@@ -10834,6 +10879,16 @@ export interface components {
       turnover_24h?: components["schemas"]["Decimal"];
       volume_24h?: components["schemas"]["Decimal"];
     };
+    /** @description One item of `TickersResponse`: a `Ticker` that always carries its `symbol`, `ts` and `stale`. `Ticker` itself requires none of them. */
+    TickersItem: WithRequired<components["schemas"]["Ticker"], "symbol" | "ts" | "stale">;
+    /** @description The answer of `getTickers`. Never paginated: it holds every requested symbol, so `meta.has_more` is `false`, `meta.next_cursor` is `null` and `meta.count` counts `items`. */
+    TickersResponse: {
+      /** @description One `Ticker` per requested symbol the snapshot holds, in the order first requested, each with its `symbol`, `ts`, `stale` and every field the snapshot has a value for, `high_24h` and `low_24h` included. A field Bybit leaves empty is left out, never `null`. */
+      items: components["schemas"]["TickersItem"][];
+      meta: components["schemas"]["PageMeta"];
+      /** @description The requested symbols the snapshot has no ticker for, each once, in the order first requested; empty when every symbol was found. */
+      unknown_symbols: components["schemas"]["Symbol"][];
+    };
     /** @enum {string} */
     TimeInForce: "GTC" | "IOC" | "FOK" | "PostOnly";
     TokenBundle: {
@@ -17431,6 +17486,33 @@ export interface operations {
       503: components["responses"]["ServiceUnavailable"];
     };
   };
+  getTickers: {
+    parameters: {
+      query: {
+        /** @description Repeatable. 1 to 200 symbols, a watchlist's cap; each is answered once. */
+        symbols: components["schemas"]["Symbol"][];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Tickers, and the requested symbols that have none. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TickersResponse"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
   getTrades: {
     parameters: {
       query: {
@@ -22017,3 +22099,6 @@ export interface operations {
     };
   };
 }
+type WithRequired<T, K extends keyof T> = T & {
+  [P in K]-?: T[P];
+};
