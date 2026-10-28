@@ -140,9 +140,23 @@ def _validator(schema_id: str) -> Draft202012Validator:
     return Draft202012Validator(schema, registry=_REGISTRY)
 
 
+@cache
+def schema_section(schema_id: str) -> str:
+    """Where `23-ws-protocol.md` defines `schema_id` (its file part): the section heading above
+    its `"$id"` line, as `23-ws-protocol.md §14.3 BarsBatch` (E12-Q04, AC3)."""
+    lines = PROTOCOL_DOC.read_text(encoding="utf-8").splitlines()
+    at = lines.index(f'  "$id": "{schema_id.partition("#")[0]}",')
+    heading = next(line for line in reversed(lines[:at]) if line.startswith(("## ", "### ")))
+    number, _, title = heading.lstrip("#").strip().partition(" ")
+    return f"{PROTOCOL_DOC.name} §{number.rstrip('.')} {title.replace('`', '')}"
+
+
 def check_schema(schema_id: str, doc: Any, what: str) -> None:
-    errors = sorted(_validator(schema_id).iter_errors(doc), key=str)
-    assert not errors, f"{what} violates {schema_id}: {[e.message for e in errors][:3]}"
+    """`doc` against `schema_id`; a failure names the frame, the schema, the section of 23 that
+    defines it and each error's JSON path (a breaking rename reads as the member it broke)."""
+    errors = sorted(_validator(schema_id).iter_errors(doc), key=lambda e: (e.json_path, e.message))
+    found = "; ".join(f"{e.json_path}: {e.message}" for e in errors[:3])
+    assert not errors, f"{what} violates {schema_id} ({schema_section(schema_id)}): {found}"
 
 
 #: Envelope `t` -> the §13 payload schema of its `p` (frames whose `p` is family-specific are
