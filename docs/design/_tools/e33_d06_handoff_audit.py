@@ -1957,12 +1957,22 @@ REFUSED = (
     r"\bcontrols? (?:are |is )?(?:absent|hidden|removed)\b",
 )
 
+AC = "Acceptance-criteria"  # the section key of the AC table
+AC3_RULED = ("BQ-1 RULED", "SC-9")  # the AC3 row states the ruling and the drawn rule it keeps
+
 
 def g_ruled(t: Texts) -> list[Finding]:
     bad = []
     for key, sent in REQUIRED:
         if sent not in strip_comments(h2(t.spec, key)):
             bad.append(F("G-RULED", f"{key}: the sentence {sent[:55]!r} is missing", sec=key))
+    ac3 = [ln for ln in strip_comments(t.spec).split("\n") if ln.startswith("| AC3 ")]
+    if len(ac3) != 1:
+        bad.append(
+            F("G-RULED", f"AC3: {len(ac3)} rows, want the one that states BQ-1's ruling", sec=AC)
+        )
+    elif not all(w in ac3[0] for w in AC3_RULED):
+        bad.append(F("G-RULED", f"AC3: the row must name {' and '.join(AC3_RULED)}", sec=AC))
     for rx in REFUSED:
         for sk, block in sections(t.spec):
             if sk == "§15":
@@ -2688,6 +2698,10 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("M-12", "G-RULED", "write that LIVE is enabled in §8", say(S8, " LIVE is enabled.")),
     M("M-13", "G-RULED", "write that the Viewer's controls are absent in §8",
       say(S8, " The Viewer's controls are absent.")),
+    M("M-71", "G-RULED", "drop BQ-1 RULED from the AC3 row",
+      sub("| BQ-1 RULED, two compatible rules:", "| Two compatible rules:")),
+    M("M-72", "G-RULED", "delete the AC3 row", lambda t: replace(
+      t, spec=t.spec.replace(row_line("| AC3 ")(t.spec), "", 1))),
     M("M-14", "G-SESSION", "write that the walkthrough session was held in §12",
       say(S12, " The walkthrough session was held.")),
     M("M-15", "G-SESSION", "write that engineers met and walked through the pack in §12",
