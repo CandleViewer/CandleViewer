@@ -350,7 +350,7 @@ E40-D01 CR-25 hc | color.status.danger.strong | color.status.danger.subtle | hig
 
 # key | value  -- the anatomy constants the boards quote (the computed counts are added in code)
 CONSTANTS_TABLE = """
-boards | 13
+boards | 10
 handoff_blocks | 2
 handoff_lines | 13
 tick_pct | 80
@@ -708,7 +708,7 @@ def print_markdown(
         "`palette.light.amber.300` (light): an amber in a danger ramp.\n"
         "CVD: no colour here carries meaning alone - glyph + word + number first (E39-D01 D8); the "
         "status fills are reinforcement, the DEMO / LIVE badge is text; the simulation "
-        "(`cvd_sim.py`) runs on the exports after drawing."
+        "(`cvd_sim.py`) renders are committed beside each export."
     )
 
 
