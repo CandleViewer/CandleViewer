@@ -51,6 +51,7 @@ import "../src/components/skiplink.css";
 import "../src/components/slider.css";
 import "../src/components/sparkline.css";
 import "../src/components/swatchlegend.css";
+import "../src/components/table.css";
 import "../src/components/tabs.css";
 import "../src/components/tag.css";
 import "../src/components/toast.css";

@@ -444,3 +444,29 @@ The band (`color.surface.selected` behind the days between the ends) is decorati
 fields and the two sentences carry the range. While the end is pending it previews to the day under
 the pointer, else the focused day, and selects nothing. The fields wrap, so End stacks under Start
 when the host is narrower than both.
+
+### Table (CMP-049, table mode: the WAI-ARIA APG Table pattern)
+
+| Keys                                             | Action                                                                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                  | The scroll region when it scrolls (named by the caption), then the sortable header buttons in order; the body has no stop. |
+| Arrows, Page Up / Down, Home / End on the region | Scroll it (native).                                                                                                        |
+| Enter / Space on a header button                 | Sorts ascending, then descending; while that column is `sortPending` the press changes nothing.                            |
+
+| Element     | Role                            | Name             | ARIA                                                                                            |
+| ----------- | ------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------- |
+| table       | table (native `<table>`)        | the caption      | `aria-rowcount` (rows and the header; -1 while loading); `aria-busy="true"` while loading       |
+| region      | region, only while it scrolls   | the caption      | `tabindex="0"`; no role and no stop when everything fits                                        |
+| header cell | columnheader (`th scope="col"`) | its label        | `aria-sort` on the sorted column, `none` on the other sortable ones, none on plain headers      |
+| sort button | button                          | the header label | `aria-busy="true"` while `sortPending`; a CMP-014 spinner replaces the glyph                    |
+| row         | row                             | —                | `aria-rowindex` (absolute: the header row is 1)                                                 |
+| live region | status, one per table           | —                | polite: a settled sort ("Sorted by Size, ascending"), a finished load ("3 rows"), an error once |
+
+The consumer sorts the rows: `onSortChange` asks for the next sort and the host passes the sorted
+`rows` and `sort` back. Numeric columns (`numeric`, a NumericText format) are end-aligned and never
+truncate; text cells truncate with an ellipsis and keep the full text in the DOM. Loading keeps the
+header row under CMP-015 skeleton rows and shows the caption's loading words; empty and
+filtered-empty render the host's CMP-026 (`emptyState`) across every column; an error renders CMP-027
+with Retry, spoken once by the table's region (the panel itself is not live). v0 renders every row
+and is not virtualised: above 200 rows it warns in development (#266). Grid mode, selection, row
+actions and the stacked reflow are later E05-S03 slices.

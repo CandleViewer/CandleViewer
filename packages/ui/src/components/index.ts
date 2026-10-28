@@ -1,6 +1,17 @@
 export { SwatchLegendItem } from "./SwatchLegendItem.js";
 export type { DirectionalSwatchColor, SwatchLegendItemProps } from "./SwatchLegendItem.js";
 
+export { Table } from "./Table.js";
+export type {
+  TableColumn,
+  TableError,
+  TableNumericColumn,
+  TableProps,
+  TableSort,
+  TableSortDirection,
+  TableTextColumn,
+} from "./Table.js";
+
 export { Tabs } from "./Tabs.js";
 export type { TabItem, TabsBaseProps, TabsProps } from "./Tabs.js";
 
