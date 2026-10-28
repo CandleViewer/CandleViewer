@@ -544,7 +544,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-048 Combobox / AutoComplete
 
 - **Tier**: Molecule · **Purpose**: base for SymbolSearchInput (CMP-160) and any type-ahead selector.
-- **Props**: `value` · `onChange` · `options[]|asyncSearch(query)` · `loading?` · `placeholder?` · `noResultsText: string` (the host's sentence; required with `asyncSearch`) · `invalid?` · `disabled?` · `disabledReason?`.
+- **Props**: `value` · `onChange` · `options[]|asyncSearch(query, signal)` (`signal` aborts a superseded search) · `loading?` · `placeholder?` · `noResultsText: string` (the host's sentence; required with `asyncSearch`) · `searchFailedText: string` (the host's sentence; required with `asyncSearch`) · `invalid?` · `disabled?` · `disabledReason?`.
 - **States**: default, hover, focus-visible, open, loading (busy: a "Searching…" status row, the listbox `aria-busy`), no results (availability: the host's sentence), search failed (the `danger` glyph and the host's sentence), invalid, disabled, disabled-with-reason (`docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079 and CMP-040: the CMP-019 `lock` leads the value inside the well).
 - **A11y**: WAI-ARIA Combobox pattern, `aria-activedescendant`, `aria-expanded`, results count announced via polite live region on each query update (debounced to avoid flooding): once per settled query, 500 ms after the last keystroke; status rows are not options; `Esc` closes the listbox and keeps the text.
 - **Tokens**: input the CMP-007 well; listbox `color.surface.overlay`, `elevation.popover`, `radius.card`, at most 10 rows; options as CMP-009's, the matched text `type.ui.body-strong`; status rows `type.ui.body` + `color.text.secondary`. (Replaces `elevation.2`.)

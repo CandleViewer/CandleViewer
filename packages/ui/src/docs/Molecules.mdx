@@ -105,6 +105,27 @@ roles and names.
 | title   | heading at `headingLevel` (2–4)        | its text                        | Default level 3. `headingLevel={0}` renders plain text, for a card inside a listbox option. |
 | actions | their own                              | their own                       | An icon-only action's `aria-label` includes the card's title (CMP-002's rule).              |
 
+### Combobox (CMP-048, APG Combobox: editable, list autocomplete)
+
+| Keys              | Action                                                                                                                    |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Typing            | Edits the query; once it settles (500 ms) the list opens: local matches, or "Searching…" while `asyncSearch` runs.        |
+| ↓ / ↑             | Open at once if closed; next / previous option: ↓ from the text reaches the first, ↑ on the first returns to it.          |
+| Alt+↓ / Alt+↑     | Open at once without moving / close.                                                                                      |
+| Enter             | Chooses the active option (its label fills the input); a T2 option says its reason instead; none: the host's.             |
+| Esc               | Closes the list and keeps the text (in a CMP-043 Dialog, only the list); a second Esc, or one before the settle, bubbles. |
+| ← / →, Home / End | Move the caret. Tab leaves, closing the list without choosing.                                                            |
+| Any key while T2  | Changes nothing; the first refused key of a focus visit says the reason once.                                             |
+
+The input is `role="combobox"` with `aria-autocomplete="list"`, named by CMP-040's label or, outside a field,
+`aria-label` / `aria-labelledby`; `prefix` leads the well as CMP-007's, after a T2 lock, and a press on the well
+focuses the input. `aria-activedescendant` names the active option, which takes `aria-selected`. The listbox, named
+like the input and `aria-busy` while searching, portals as CMP-017 does; inside a Dialog it portals into the
+dialog's layer, where the overlay stack gives the list the first Esc. Status rows (searching, no results, a failed
+search) are not options. One polite status says the count ("8 results") or the host's sentence once per settled
+query; "Searching…" is shown, never said. `asyncSearch` gets an `AbortSignal`; an older answer never overwrites a
+newer query's.
+
 ### Tabs (CMP-042, APG Tabs)
 
 | Keys                                    | Action                                                                                                                                 |

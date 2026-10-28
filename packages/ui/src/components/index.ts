@@ -23,6 +23,9 @@ export type {
   SwatchGlyphTone,
 } from "./ColorSwatch.js";
 
+export { Combobox } from "./Combobox.js";
+export type { ComboboxOption, ComboboxProps } from "./Combobox.js";
+
 export { ConfidenceDots } from "./ConfidenceDots.js";
 export type { ConfidenceDotsProps, ConfidenceLevel } from "./ConfidenceDots.js";
 
