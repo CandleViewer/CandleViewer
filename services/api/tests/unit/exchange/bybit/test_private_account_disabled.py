@@ -42,7 +42,7 @@ def _adapter(venue: PrivateVenue, calls: list[Call] | None = None) -> ExchangeBy
 
 
 async def _live(adapter: ExchangeBybitService, clock: VirtualClock) -> Consumer:
-    consumer = Consumer(await adapter.trading_port("demo").subscribe_private(account()))
+    consumer = Consumer(await adapter.open_private_stream(account()))
     await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
     return consumer
 
@@ -58,7 +58,7 @@ async def test_a_disable_closes_the_keys_stream_and_refuses_a_new_one_until_the_
     assert consumer.statuses()[-1] == "closed:account_disabled:1"
     signed, dialled = len(calls), len(venue.dialled)
     with pytest.raises(AuthError):
-        await adapter.trading_port("demo").subscribe_private(account())
+        await adapter.open_private_stream(account())
     assert (len(calls), len(venue.dialled)) == (signed, dialled)  # nothing signed or dialled
     assert adapter.reopen_private_streams(account().key_ref, reason="account_disabled") is True
     again = await _live(adapter, clock)  # the consumer's next refresh subscribes: no resubscribe
@@ -94,7 +94,7 @@ async def test_a_revoked_or_rotated_key_stays_closed_whatever_lifts_it(
     assert adapter.reopen_private_streams(key_ref, reason="account_disabled") is False
     assert adapter.reopen_private_streams(key_ref) is False
     with pytest.raises(AuthError):
-        await adapter.trading_port("demo").subscribe_private(account())
+        await adapter.open_private_stream(account())
     await adapter.stop(5.0)
 
 
