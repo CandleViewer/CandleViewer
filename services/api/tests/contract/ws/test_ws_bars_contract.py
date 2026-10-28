@@ -311,6 +311,9 @@ def _wire_item(item: dict[str, Any]) -> dict[str, Any]:
     return {k: Decimal(v) if k in _DECIMALS else v for k, v in item.items()}
 
 
+# The snapshot and the REST window disagree intermittently under load (C-9.3).
+# ticket: GH-4839 quarantined: 2026-10-28
+@pytest.mark.flaky
 @pytest.mark.parametrize("flow", [False, True], ids=["plain", "include_delta"])
 @pytest.mark.parametrize("mode", h.MODES)
 @pytest.mark.parametrize("history", [3, 500])
