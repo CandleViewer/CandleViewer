@@ -11,8 +11,8 @@ they are PROPOSED until owner approval (D04:3-8).
 
 **Key.** `D04:n` = a line of `docs/design/E42/E42-D04.md` at this branch; `D03` = `docs/design/E42/E42-D03.md`;
 `D09` = `docs/design/E09/E09-D09.md`; `Y`, `W`, `M`, `svc/` and `tok` as D04's key (D04:10-17). `15` entries are
-read at `origin/main` `43d1145e6` (unchanged at `c888406d2`, the re-base), where the six contracts above are still the text D04 quotes as "Old" (verbatim at
-`b7154f951`); this branch applies Appendix A's rows but CMP-173's on `main`'s text (`cba937ef0`, re-based on `c888406d2` with no Old moved; D04 §20's C-row). CMP-173's base is E42-D03's Appendix A text (merged as `58660d32f`), which reaches `15` with E42-D03's
+read at `origin/main` `43d1145e6` (unchanged at `c888406d2`, the re-base, then `d9a924f01`, `.trufflehog-exclude` only), where the six contracts above are still the text D04 quotes as "Old" (verbatim at
+`b7154f951`); this branch applies Appendix A's rows but CMP-173's on `main`'s text (`cba937ef0`, re-based on `c888406d2`, then `d9a924f01`, with no Old moved; D04 §20's C-row). CMP-173's base is E42-D03's Appendix A text (merged as `58660d32f`), which reaches `15` with E42-D03's
 boards PR (#886); until then `15`'s CMP-173 is the pre-D03 entry. **Merged contracts read, per the orchestrator's
 2026-10-25 rulings for E42-D03:** CMP-044 is the entry #4414 merged (a natively disabled typed Confirm, `role?`), never
 E42-D03's Appendix A rows; D04 composes no CMP-138. The `origin/main` pin and every `D04:n` are refreshed at the
