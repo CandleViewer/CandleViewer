@@ -10,10 +10,11 @@ name: _job-contract
 #      suite: ws-schema-drift.test.ts, runtime-binary.test.ts,
 #      generated-guard.test.ts) plus the generated-models contract suite
 #      (services/api/tests/contract/test_generate_protocol_models.py).
-#   3. Schemathesis fuzz on /v1 (CONSTITUTION §9 check 6) — deferred until a
-#      real /v1 route exists to fuzz (R0 has none beyond health/metrics);
-#      tracked as a follow-up once E04+ lands the first REST route, so this
-#      step is a documented placeholder rather than a silent no-op.
+#   3. Schemathesis fuzz (CONSTITUTION §9 check 6), in part: E12-Q04 (#420)
+#      fuzzes GET /market/klines and /market/bars in process inside step 1's
+#      pytest run (tests/contract/test_market_schemathesis_contract.py); the
+#      live-instance run over every operation is not wired (23 §16.5). The
+#      E12-Q04 conformance matrix lands in this job's step summary.
 #
 # CI-CON-001 (route/field drift) is raised by
 # candleviewer/api/contract_conformance.py; WS/codec drift codes are owned
@@ -73,8 +74,3 @@ jobs:
         # $ref closure and every section 12 example frame. Prints schema/example counts.
         # Also runs the E17-T05 blocking gate error_registry_single_source.
         run: make contracts
-
-      - name: Schemathesis fuzz on /v1 (deferred — no /v1 route exists yet)
-        run: |
-          echo "No REST route beyond /healthz, /readyz, /metrics exists in R0 (services/api/candleviewer/app.py)."
-          echo "Schemathesis fuzz on /v1 activates once the first /v1 route lands; tracked in the owning epic's ticket, not skipped silently."
