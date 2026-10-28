@@ -38,8 +38,8 @@ priority lane, after a budget check, since `apply` may fold a window. Right afte
 through `pong`, where any other id costs one comparison and keeps nothing (an unanswered probe is
 retired after 10 s). The probe leaves out what `stalled` (the gateway's `LoopStall`) says the
 server's own loop stalled meanwhile (#4833). The gateway's idle heartbeat `ping` is unchanged, but
-the probe keeps the
-outbound traffic from idling for its 20 s, so it does not fire while the probe runs; a socket with
+the probe keeps the outbound traffic from idling for its 20 s, so it does not fire while the probe
+runs; a socket with
 no inbound traffic for 45 s still closes `heartbeat_timeout` (§9.1). E17-T06 counts each attached
 connection under its class in `cv_ws_connection_class` until `release`, and each classification
 observes the depth it read; `Pacer` counts merged windows and each RTT sample (`ws/pacing.py`).

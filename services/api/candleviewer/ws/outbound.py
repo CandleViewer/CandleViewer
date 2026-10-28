@@ -482,7 +482,12 @@ class Backpressure:
         """Step 1 over the budget (module docstring, #4833): the candidates by queued plus pending
         bytes, largest first, ties by topic name, cut at the shortest prefix whose drop takes the
         queue below `DRAIN_PCT` with the `stale` frames gone; all of them when none does. One scan
-        of the normal lane counts each key's frames, then the cut is arithmetic."""
+        of the normal lane counts each key's frames, then the cut is arithmetic. The order is by
+        bytes, the cut by the larger of the byte and frame depths, so when frames bind it may shed
+        more than the fewest topics would; never too few. A live and a replay subscription of one
+        topic rank apart. A cut below `DRAIN_PCT` also clears the `bars` share whenever
+        `BARS_SHARE_PCT` is at least `DRAIN_PCT` (pinned by a test): the `bars` frames are part of
+        what it takes under the line, so the share rule needs no second pass here."""
         frames = self.queue.key_frames()
         size = self.queue.bytes + self.pacer.pending_bytes - sum(costs[key] for key in stale)
         count = len(self.queue) - sum(frames.get(key, 0) for key in stale)

@@ -228,8 +228,10 @@ class RttProbe:
     #4833: an age, outstanding, answered or retired, leaves out what `stalled` (`LoopStall`) says
     the server's own loop stalled since the probe was stamped. The probe's send and its `pong`'s
     handling both wait for that loop, so without this a stall read as the client's RTT and turned
-    a client that keeps up `saturated`. A client's own delay, beside a stall or not, still counts
-    in full; the retirement goes by the age as stamped. Never stalled by default."""
+    a client that keeps up `saturated`. A client's own delay outside a stall counts in full; one
+    that overlaps a stall is not counted for the overlap (a client that falls behind still shows
+    in its queue depth, which classifies it too). The retirement goes by the age as stamped.
+    Never stalled by default."""
 
     def __init__(
         self,

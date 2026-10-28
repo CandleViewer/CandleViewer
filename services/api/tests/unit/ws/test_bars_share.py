@@ -596,3 +596,10 @@ def _widest_item_bytes() -> int:
     plain = bar_item(_bar(closed=False), generation=generation, bar_kind="tick", include_delta=True)
     assert max(sizes) > len(_dumps(plain)), "the widening changed no item"
     return max(sizes)
+
+
+def test_a_cut_under_the_drain_line_also_clears_the_bars_share() -> None:
+    """#4833: over the budget, step 1 sheds largest first until the queue is under `DRAIN_PCT` of
+    each limit. The `bars` frames are part of that queue, so the cut leaves them under their
+    share too while the share is at least the drain line: no second pass for SR-E12-07."""
+    assert limits.BARS_SHARE_PCT >= outbound.DRAIN_PCT
