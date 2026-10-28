@@ -3720,9 +3720,9 @@ export interface paths {
      *       server defaults, never a query parameter, and the page's `meta` returns it as
      *       `big_trade_threshold` with its `big_trade_mode` (`TradesPageMeta`).
      *
-     *     **Bounds promised, enforced from #654's implementation PR** (not yet in force): `to - from`
+     *     **Bounds** (E22-T02), checked before the tape is read: `to - from`
      *     is at most 6 h, or 15 min when `cluster_window_ms` is over 2000 (SR-E22-04), and an
-     *     over-window request is 400 `invalid_time_range` (SR-E22-01); `limit`
+     *     over-window or inverted request is 400 `invalid_time_range` (SR-E22-01); `limit`
      *     is at most 500 (SR-E22-02, as `Limit` already declares); `min_size` meets the floor above
      *     (SR-E22-03), with 400 `invalid_min_size`.
      *
@@ -17918,7 +17918,7 @@ export interface operations {
         from?: components["parameters"]["From"];
         /** @description Page size. */
         limit?: components["parameters"]["Limit"];
-        /** @description Raw size floor in base units: prints whose own size is below it are dropped before clustering. Absent means no extra filter; a supplied value must be at least the per-instrument `MIN_SIZE_FLOOR` (400 `invalid_min_size` otherwise, enforced from #654's implementation PR, SR-E22-03). Not the big-trade threshold. */
+        /** @description Raw size floor in base units: prints whose own size is below it are dropped before clustering. Absent means no extra filter; a supplied value must be at least the per-instrument `MIN_SIZE_FLOOR` (400 `invalid_min_size` otherwise, SR-E22-03). Not the big-trade threshold. */
         min_size?: components["schemas"]["Decimal"];
         side?: "buy" | "sell";
         symbol: components["parameters"]["SymbolQuery"];

@@ -80,7 +80,7 @@ def _trades(
         (T0_MS + t - base, _scaled(p, ps), _scaled(q, qs), int(s == "sell"), 2 * (s == "sell"))
         for t, p, q, s in prints
     )
-    body = {"symbol": "BTCUSDT", "trades": trades}
+    body = {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": trades}
     return body, Frame(TRADES, records, flags, ps, qs, base), None
 
 
@@ -171,11 +171,12 @@ def test_a_merged_window_leaves_in_its_body_kind_and_decodes_to_the_merged_body(
     window: str,
 ) -> None:
     """§3.4, §8.2: one part of the family's kind, read back equal to the merged structured body,
-    with the window's count (a `trades` batch counts 1, §8.6; the emitter sets bit1 from it)."""
+    with the window's count (a `trades` batch counts the batches it appended, §8.6, E22-T02; the
+    emitter sets bit1 from it)."""
     family = window.split("_", 1)[0]
     [emission] = _take(family, _WINDOWS[window]())
     assert emission.part is not None and emission.part.body_kind == _KINDS[window]
-    assert emission.coalesced_count == (1 if family == "trades" else 2)
+    assert emission.coalesced_count == 2
     assert _rows(_decoded(emission.part)) == _rows(emission.body)
 
 
@@ -229,7 +230,7 @@ def test_a_merged_window_without_a_part_it_can_carry_leaves_structured(
     family: str, updates: Callable[[], list[Update]]
 ) -> None:
     [emission] = _take(family, updates())
-    assert (emission.part, emission.coalesced_count) == (None, 1 if family == "trades" else 2)
+    assert (emission.part, emission.coalesced_count) == (None, 2)
 
 
 def test_a_kind_with_no_encoder_arm_leaves_structured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -392,7 +393,11 @@ def test_a_trades_batch_past_the_item_bound_in_parts_leaves_structured() -> None
     """A part without a print still counts, so updates that carry none cannot grow the batch."""
     _, part, _ = _trades((0, "100", "1", "buy"))
     assert part is not None
-    empty = ({"symbol": "BTCUSDT", "trades": []}, replace(part, records=()), None)
+    empty = (
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []},
+        replace(part, records=()),
+        None,
+    )
     [emission] = _take("trades", [empty] * 3, max_items=2)
     assert emission.part is None
 

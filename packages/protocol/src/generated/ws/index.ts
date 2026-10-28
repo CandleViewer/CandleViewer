@@ -2016,7 +2016,7 @@ export interface TradesSymbol {
   /**
    * Arbitrary-precision decimal as a string; never a JSON number.
    */
-  big_trade_threshold?: string;
+  big_trade_threshold: string;
   coalesced?: boolean;
   /**
    * Source batches this frame appended (§8.6).

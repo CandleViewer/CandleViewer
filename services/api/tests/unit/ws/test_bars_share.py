@@ -36,7 +36,7 @@ _BARS, _BOOK, _TRADES = "bars.BTCUSDT.time.1", "book.BTCUSDT.50", "trades.BTCUSD
 _SERIES = {"symbol": "BTCUSDT", "bar_type": "time", "param": "1"}
 _OHLCV = {"o": "1", "h": "2", "l": "1", "c": "2", "v": "3", "confirm": False}
 _TRADE = {"id": "t", "ts_ms": 1, "price": "1", "size": "1", "side": "buy"}
-_PRINT = {"symbol": "BTCUSDT", "trades": [_TRADE]}
+_PRINT = {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": [_TRADE]}
 _REASONS = ("drop", "drop_share", "resnapshot", "close_budget", "close_redrop")
 
 

@@ -219,15 +219,18 @@ def test_a_merged_window_counts_n_less_one_under_its_family_and_observes_n(
 
 @pytest.mark.parametrize("case", ["lone", "appended", "whole_frames", "suppressed"])
 def test_a_window_that_merges_nothing_or_never_leaves_counts_nothing(case: str) -> None:
-    """A lone update (count 1); trades, appended and never merged (a window of them is one frame of
-    count 1); a book a healthy client asked not to coalesce (`coalesce: false`: whole frames); and a
-    merged window the emitter suppresses, its subscription paused before it closed: the client got
-    no frame, so nothing was conflated into one."""
+    """A lone update (count 1); trades, appended and never merged (a window of them is one
+    frame, which discloses the batches it appended, E22-T02, and conflates nothing); a book a
+    healthy client asked not to coalesce (`coalesce: false`: whole frames); and a merged window the
+    emitter suppresses, its subscription paused before it closed: the client got no frame, so
+    nothing was conflated into one."""
     conn, pacer = _paced()
     opts = {"coalesce": False} if case == "whole_frames" else {}
     sub = _subscribed(conn, _TRADES if case == "appended" else _BOOK, **opts)
     updates = [
-        {"symbol": "BTCUSDT", "trades": [_print(i)]} if case == "appended" else _bid(f"10{i}")
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": [_print(i)]}
+        if case == "appended"
+        else _bid(f"10{i}")
         for i in range(1 if case == "lone" else 3)
     ]
     before = _read()
@@ -237,7 +240,7 @@ def test_a_window_that_merges_nothing_or_never_leaves_counts_nothing(case: str) 
     if case == "suppressed":
         sub.effective["paused"] = True
     pacer.tick(101.0)
-    expected = {"lone": [1], "appended": [1, 1], "whole_frames": [1, 1, 1], "suppressed": [1]}
+    expected = {"lone": [1], "appended": [1, 2], "whole_frames": [1, 1, 1], "suppressed": [1]}
     assert [f["p"].get("coalesced_count", 1) for f in conn.take()] == expected[case]
     assert _moved(before) == {}
 

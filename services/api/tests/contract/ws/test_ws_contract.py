@@ -39,6 +39,7 @@ from tests.contract.ws._harness import (
     connect,
     entry,
     heatmap_reference,
+    kept_fields,
     publish,
     raw_payload,
     scenario_frames,
@@ -120,10 +121,8 @@ def test_contract_cvwb_kind_decodes_and_its_structured_form_validates(kind: int)
     family, name = _KINDS[kind]
     frame = _FRAMES[name]
     assert frame.body_kind == kind
-    body = {
-        **topic_fields({"book": "book.BTCUSDT.50"}.get(family) or _topic(family)),
-        **structured(decode(encode(frame))),
-    }
+    ch = {"book": "book.BTCUSDT.50"}.get(family) or _topic(family)
+    body = {**topic_fields(ch), **kept_fields(ch), **structured(decode(encode(frame)))}
     check_schema(f"cv://ws/v1/{family}.schema.json", body, f"kind {kind} ({name})")
 
 
@@ -163,7 +162,8 @@ def test_contract_a_corrupted_cvwb_layout_is_rejected_and_never_validates(kind: 
 
 
 def test_contract_a_corrupted_structured_twin_fails_schema_validation() -> None:
-    twin = {**topic_fields("trades.BTCUSDT"), **structured(_FRAMES["trades"])}
+    twin = {**topic_fields("trades.BTCUSDT"), **kept_fields("trades.BTCUSDT")}
+    twin |= structured(_FRAMES["trades"])
     check_schema("cv://ws/v1/trades.schema.json", twin, "control")
     twin["trades"][0]["price"] = 100.5  # a JSON number, never a decimal string (§13 common)
     with pytest.raises(AssertionError, match="violates"):

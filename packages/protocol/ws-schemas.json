@@ -3938,7 +3938,7 @@
       "properties": {
         "big_trade_threshold": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
-          "description": "The engine's current effective big-trade threshold for the symbol, absolute: base units in `absolute_size` mode, USDT in `notional` and `percentile` (§6.1). Every frame of the `trades` publisher (E22-T02, #654) carries it; it is optional here only because frames built before that publisher, the §3.4 conformance vectors among them (`candleviewer/ws/cvwb_vectors.py`, kind 3), predate it; #654's implementation PR makes it required."
+          "description": "The engine's current effective big-trade threshold for the symbol, absolute: base units in `absolute_size` mode, USDT in `notional` and `percentile` (§6.1). Every frame of the `trades` publisher (E22-T02, #654) carries it. A kind-3 body has no slot for it (§3.4): a binary client keeps the value from `sub_ok.effective` and the latest structured frame."
         },
         "coalesced": {
           "default": false,
@@ -4017,7 +4017,8 @@
       },
       "required": [
         "symbol",
-        "trades"
+        "trades",
+        "big_trade_threshold"
       ],
       "title": "trades.{symbol}",
       "type": "object"

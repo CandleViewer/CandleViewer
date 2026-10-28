@@ -475,10 +475,11 @@ def test_coalescer_200_prints_one_window_all_in_order_unmerged() -> None:
     queue = CoalescingQueue("trades")
     prints = [{"id": f"t{i}", "price": "1", "size": "1", "side": "buy"} for i in range(200)]
     for p in prints:
-        queue.offer({"symbol": "BTCUSDT", "trades": [p]})
+        queue.offer({"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": [p]})
     [frame] = queue.take()
     assert frame.body["trades"] == prints
-    assert frame.coalesced_count == 1  # appended, never merged: nothing to disclose
+    # appended, never merged; `trades` counts the source batches it appended (§8.6, E22-T02)
+    assert (frame.coalesced_count, frame.window_count) == (200, 1)
 
 
 @pytest.mark.parametrize("family", ["orders", "executions"])
@@ -715,10 +716,15 @@ def test_coalescer_pending_bytes_track_state_not_updates() -> None:
 
 def test_coalescer_trades_dropped_counts_add_up() -> None:
     queue = CoalescingQueue("trades")
-    queue.offer({"symbol": "X", "trades": [], "dropped": 2})
-    queue.offer({"symbol": "X", "trades": [{"id": "1"}], "dropped": 3})
+    queue.offer({"symbol": "X", "big_trade_threshold": "0", "trades": [], "dropped": 2})
+    queue.offer({"symbol": "X", "big_trade_threshold": "0", "trades": [{"id": "1"}], "dropped": 3})
     [frame] = queue.take()
-    assert frame.body == {"symbol": "X", "trades": [{"id": "1"}], "dropped": 5}
+    assert frame.body == {
+        "symbol": "X",
+        "big_trade_threshold": "0",
+        "trades": [{"id": "1"}],
+        "dropped": 5,
+    }
 
 
 def test_coalescer_positions_removed_after_upsert_and_upsert_after_removed() -> None:

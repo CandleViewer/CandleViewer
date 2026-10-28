@@ -67,6 +67,9 @@ Refusal = Literal["full", "unmergeable", "malformed"]
 
 #: §8.2: append, never merge; throttling batches them into arrays.
 APPENDED_FAMILIES: Final = frozenset({"trades", "liquidations"})
+#: Appended families whose payload declares `coalesced_count`, the source batches a window
+#: appended (§8.6, §14.2; E22-T02): `trades`. A `liquidations` batch (§14.9) declares neither.
+_COUNTED_APPENDS: Final = frozenset({"trades"})
 #: Merged whatever `coalesce` says: the appended families, and §6.4's one pending payload.
 _ALWAYS_MERGED: Final = APPENDED_FAMILIES | {"machines"}
 
@@ -112,7 +115,8 @@ _CAUSES: Final[Mapping[type[Exception], Refusal]] = {
 class Emission:
     """One frame's payload. `part` is its CVWB form: an unmerged update's own, or the one a merged
     window keeps (`CoalescingQueue._encoded`). `coalesced_count` sums the producers' counts merged
-    into `body`, 1 for a batch of the append families, which never merge. `window_count` is how many
+    into `body`: for `trades`, the source batches its window appended (E22-T02), and 1 for a
+    `liquidations` batch: the append families never merge. `window_count` is how many
     updates the queue itself merged into it: 1 for a lone update, a whole frame or an append batch
     (a window cut in frames, §3.6: both on its first, 1 on the rest). `ts_ms` is the source event
     time a replay frame carries; `meta` the envelope `meta` of the last update in it."""
@@ -906,6 +910,7 @@ class CoalescingQueue:
             if like.body_kind == BARS:
                 return _bars_parts(body, like, self._meta)
             if like.body_kind == TRADES:  # kind 3 has no `dropped` field: never lose it silently
+                # (an update with a cluster or a new threshold came without a part: `_carry`)
                 dropped = body.get("dropped", 0) > 0
                 return [(body, None if dropped else _trades_batch(self._batch, like))]
             return [(body, _book_delta(body, like) if like.body_kind == BOOK_DELTA else None)]
@@ -957,7 +962,9 @@ class CoalescingQueue:
         if self._count == 1 and self._first is not None and not merge.trimmed:
             out = [self._first]
         elif self._count:
-            count, window = (1, 1) if self.family in APPENDED_FAMILIES else (self._sum, self._count)
+            count, window = (self._sum, self._count)
+            if self.family in APPENDED_FAMILIES:  # one frame against the budget, never a merge
+                count, window = (self._sum if self.family in _COUNTED_APPENDS else 1), 1
             out = []
             for i, (body, part) in enumerate(self._encoded(merge.result())):
                 if i:  # a window cut into several frames (§3.6) counts once, on its first

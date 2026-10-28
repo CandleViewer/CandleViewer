@@ -338,12 +338,14 @@ async def test_three_redrops_close_with_close_redrop() -> None:
     under budget: `close_redrop`, not `close_budget`, the topic in the hint and the trigger in the
     audit row. No frame of that snapshot reaches the socket."""
     rig, sock = _Rig(BackpressureConfig(max_bytes=8192)), _Wire()
-    rig.source.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    rig.source.bodies["trades"] = SnapshotBody(
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []}
+    )
     before = _counts()
     async with asyncio.timeout(_DEADLINE_S):
         handler, _ = await rig.open(sock)
         await rig.sub(sock, _TRADES)
-        big = {"symbol": "BTCUSDT", "trades": [], "pad": "x" * 9000}
+        big = {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": [], "pad": "x" * 9000}
         rig.source.bodies["trades"] = SnapshotBody(big)
         rig.source.gen += 1  # from now on a snapshot never fits the budget
         rig.sequencing.publish(_TRADES, big)  # one delta over the budget: dropped
@@ -414,7 +416,9 @@ async def test_the_timer_retries_one_parked_snapshot_per_tick_and_logs_once_per_
     pipe, _, conn = _attached(classify_interval_ms=1000)
     source = conn.emitter.source
     assert isinstance(source, Source) and pipe.ladder is not None
-    source.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    source.bodies["trades"] = SnapshotBody(
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []}
+    )
     subs = [_structured(conn, ch) for ch in (_BOOK, "book.ETHUSDT.50", _TRADES)]
     _queued(pipe)
     attempts, failing, real = list[str](), {_BOOK, "book.ETHUSDT.50", _TRADES}, source.build

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import msgpack
 import pytest
@@ -167,6 +167,16 @@ _CONTROL_SCHEMA = {
 }
 
 
+#: The big-trade threshold a binary `trades` client keeps from `sub_ok.effective` and the latest
+#: structured frame, since a kind-3 body has no slot for it (§3.4, E22-T02): the World's value.
+KEPT_THRESHOLD: Final = "0"
+
+
+def kept_fields(ch: str) -> dict[str, Any]:
+    """The fields a binary client holds from elsewhere (§3.4): `trades`' `big_trade_threshold`."""
+    return {"big_trade_threshold": KEPT_THRESHOLD} if ch.startswith("trades.") else {}
+
+
 def topic_fields(ch: str) -> dict[str, Any]:
     """The topic-derived fields a binary body does not carry (§14: `symbol`, `bar_type`, ...)."""
     parts = ch.split(".")
@@ -208,7 +218,7 @@ def structured_of(frame: dict[str, Any]) -> dict[str, Any]:
     if frame["e"] == "j":
         body: dict[str, Any] = frame["p"]
         return body
-    return {**topic_fields(frame["ch"]), **structured(cvwb_part(frame))}
+    return {**topic_fields(frame["ch"]), **kept_fields(frame["ch"]), **structured(cvwb_part(frame))}
 
 
 def validate_frame(frame: dict[str, Any]) -> None:
@@ -254,7 +264,7 @@ def _bodies() -> dict[str, SnapshotBody]:
     frames = dict(vector_frames())
     series = {"symbol": SYM, "bar_type": "time", "param": "1"}
     extras: dict[str, tuple[str, dict[str, Any]]] = {
-        "trades": ("trades", {"symbol": SYM}),
+        "trades": ("trades", {"symbol": SYM, "big_trade_threshold": KEPT_THRESHOLD}),
         "bars": ("bars_v2", series),
         "footprint": ("footprint", series),
         "heatmap": ("heatmap_column", {"symbol": SYM, "time_bucket_ms": 500}),
