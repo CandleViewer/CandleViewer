@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import time
 import unicodedata
 import uuid
 from collections import OrderedDict
@@ -25,7 +26,11 @@ from candleviewer.rules.arming import ArmingFacts, check_arming
 from candleviewer.rules.compiler.common import check_bounds
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir import Rule, ir_hash
-from candleviewer.rules.ir.accounts import collect_account_ids, redact_account_ids
+from candleviewer.rules.ir.accounts import (
+    collect_account_ids,
+    holds_account_key,
+    redact_account_ids,
+)
 from candleviewer.rules.ir.canonical import IrValueError
 from candleviewer.rules.issues import Issue, RuleCompileError
 from candleviewer.rules.lifecycle import MODES, LifecycleError, RuleLifecycle, mode_of
@@ -166,6 +171,21 @@ def _owner_field(owner: str) -> dict[str, str]:
         return {}  # non-UUID owner: no scope owner (the runner fails closed on actions)
 
 
+#: Why a save body member is refused (G-12, #4835), with the message its refusal shows.
+BODY_REFUSALS: Final = {
+    "accounts_outside_scope": "A rule names its accounts only in ir.scope.account_ids.",
+    "unknown_field": "A rule save does not take this field.",
+}
+#: The most members one body refusal names: a problem's `errors` stay bounded.
+MAX_BODY_REFUSALS: Final = 20
+
+
+def _member(key: str) -> str:
+    """`key` as a refusal names it: an ASCII identifier of at most 64 characters, else `$` (the
+    body), so no refusal reflects arbitrary client text (C-12.6)."""
+    return key if len(key) <= 64 and key.isascii() and key.isidentifier() else "$"
+
+
 @dataclass(frozen=True, slots=True)
 class Actor:
     user_id: str
@@ -199,6 +219,19 @@ async def _noop_bc(_payload: dict[str, Any]) -> None:
 
 def _noop_metric(_name: str, _labels: dict[str, str]) -> None:
     return None
+
+
+def _now_us() -> int:
+    """The server's clock for a stored version's authorship, in µs (24 §11.2 `TsUs`)."""
+    return time.time_ns() // 1_000
+
+
+def _authorship(actor: Actor, at_us: int) -> dict[str, Any]:
+    """The IR authorship a stored version carries (G-4, SR-E36-02): the acting user and the
+    server's clock, whatever the document claimed. An actor id that is not a UUID records no
+    `created_by`, as `_owner_field` reads an owner."""
+    by = _owner_field(actor.user_id).get("created_by")
+    return {"created_by": by, "created_at": at_us, "updated_at": at_us}
 
 
 _DRAFT_TO_ARMED = (
@@ -267,8 +300,10 @@ class RulesManager:
         broadcast: Broadcast = _noop_bc,
         on_metric: Metric = _noop_metric,
         lifecycle: RuleLifecycle | None = None,
+        now_us: Callable[[], int] = _now_us,
     ) -> None:
         self._s = store
+        self._now_us = now_us
         self._reg = registry
         self._audit = audit
         self._bc = broadcast
@@ -519,6 +554,36 @@ class RulesManager:
             out["ir"] = copy.deepcopy(v.ir)
         return out
 
+    async def check_save_body(
+        self,
+        body: dict[str, Any],
+        members: frozenset[str],
+        op: str,
+        actor: Actor,
+        rule_id: str = "",
+    ) -> None:
+        """G-12 (#4835): a save body takes only the `members` its contract names, and a rule's
+        accounts only in `ir.scope.account_ids`: a member outside `ir` holding an account key at
+        any depth is refused whatever its name. A refusal is audited first (C-2.9), as a scope
+        refusal of `op` whose reason is `accounts_outside_scope` when a member names accounts,
+        else `unknown_field`, then answered `422 rule_ir_invalid` naming each member (at most
+        `MAX_BODY_REFUSALS`). Nothing is stored."""
+        refused: list[tuple[str, str]] = []
+        for key, value in body.items():
+            outside = key != "ir" and holds_account_key({key: value})
+            if outside or key not in members:
+                refused.append((key, "accounts_outside_scope" if outside else "unknown_field"))
+        if not refused:
+            return
+        reasons = {reason for _, reason in refused}
+        why = "accounts_outside_scope" if "accounts_outside_scope" in reasons else "unknown_field"
+        await self._refuse_scope(rule_id, op, why, actor)
+        errors = [
+            {"field": _member(key), "rule": reason, "message": BODY_REFUSALS[reason]}
+            for key, reason in refused[:MAX_BODY_REFUSALS]
+        ]
+        raise RuleError(422, "rule_ir_invalid", errors[0]["message"], errors=errors)
+
     @staticmethod
     def check_document(doc: Any) -> None:
         """The bounds compile and validate apply (`check_bounds`), first on every save and for any
@@ -558,6 +623,7 @@ class RulesManager:
     ) -> VersionRow:
         row.latest_version += 1
         doc = {**rule.model_dump(mode="json"), "version": row.latest_version}
+        doc |= _authorship(actor, self._now_us())  # the server's, never the document's (G-4)
         v = VersionRow(
             str(uuid.uuid4()),
             row.id,

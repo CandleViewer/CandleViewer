@@ -24,6 +24,22 @@ def model_account_fields(*models: type[BaseModel]) -> set[str]:
     return {name for m in models for name in m.model_fields if is_account_key(name)}
 
 
+def holds_account_key(doc: Any) -> bool:
+    """Whether ``doc`` holds an account-reference key at any depth, whatever its value (an empty
+    list names accounts too): a save body names a rule's accounts only in ``ir.scope.account_ids``
+    (#4835). Iterative, so no depth exhausts the stack."""
+    todo = [doc]
+    while todo:
+        cur = todo.pop()
+        if isinstance(cur, dict):
+            if any(is_account_key(k) for k in cur):
+                return True
+            todo.extend(cur.values())
+        elif isinstance(cur, list | tuple):
+            todo.extend(cur)
+    return False
+
+
 def collect_account_ids(doc: Any) -> tuple[str, ...]:
     """All account ids referenced anywhere in ``doc`` (dicts/lists/tuples), in order."""
     out: list[str] = []

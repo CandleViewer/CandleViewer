@@ -141,3 +141,11 @@ def test_a_saved_version_echoes_exactly_the_accounts_its_save_sent() -> None:
     saved = client.put(f"/rules/{rid}", json=edited, headers={"If-Match": "1"})
     assert saved.status_code == 200, saved.text
     assert stored(rid) == [str(A)]
+
+
+def test_the_save_routes_take_exactly_the_members_22_names() -> None:
+    """G-12: the save routes read the members they take from 22's two body schemas."""
+    from candleviewer.api.rules_crud import CREATE_MEMBERS, UPDATE_MEMBERS
+
+    assert set(CREATE_MEMBERS) == set(_SCHEMAS["RuleInput"]["properties"])
+    assert set(UPDATE_MEMBERS) == set(_SCHEMAS["RuleUpdateInput"]["properties"])

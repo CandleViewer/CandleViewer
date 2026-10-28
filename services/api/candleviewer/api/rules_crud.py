@@ -6,20 +6,22 @@ Thin HTTP adapter over `rules.manager.RulesManager` (`22-api-openapi.yaml`
 fresh step-up) or `None` (401). `rules:read` gates reads, `rules:write` gates writes;
 live arming additionally needs `rules:arm_live` + a fresh one-shot step-up, enforced by the
 manager's synchronous arming check (statecharts record, code enforces - C-2.21). Bodies are read
-through `api/rule_body.py` (413 `payload_too_large`) before anything parses them.
+through `api/rule_body.py` (413 `payload_too_large`) before anything parses them, and a save body
+holds only the members `22` names, with a rule's accounts only in `ir.scope.account_ids` (G-12).
 """
 
 from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
+from candleviewer.api._generated.openapi_models import RuleInput, RuleUpdateInput
 from candleviewer.api.rule_body import read_object
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import refuse_unstorable_text
@@ -30,6 +32,17 @@ from candleviewer.rules.scope import ScopeResolver
 
 _READ = "rules:read"
 _WRITE = "rules:write"
+
+
+def _members(model: type[BaseModel]) -> frozenset[str]:
+    """The body members a generated contract model names, by their JSON names."""
+    return frozenset(field.alias or name for name, field in model.model_fields.items())
+
+
+#: The members `22` names in each save body (`RuleInput`, `RuleUpdateInput`), read from the
+#: generated contract models: a save body naming any other is refused (G-12, #4835).
+CREATE_MEMBERS: Final = _members(RuleInput)
+UPDATE_MEMBERS: Final = _members(RuleUpdateInput)
 
 
 def _problem(status: int, code: str, title: str, detail: str, **extra: Any) -> JSONResponse:
@@ -178,6 +191,7 @@ def make_rules_crud_router(
         if (refused := _unstorable(body, "note")) is not None:
             return refused
         try:
+            await mgr.check_save_body(body, CREATE_MEMBERS, "create", actor)
             mgr.check_document(doc)  # the bounds first: the scope check below reads the scope
         except RuleError as exc:
             return _from_error(exc)
@@ -220,9 +234,10 @@ def make_rules_crud_router(
         if (refused := _unstorable(body, "note")) is not None:
             return refused
         try:
-            # The stored rule first (owner, every version's accounts), then the bounds, then the
-            # submitted scope.
+            # The stored rule first (owner, every version's accounts), then the body's members,
+            # then the bounds, then the submitted scope.
             await mgr.require_visible(str(ruleId), actor, "update")
+            await mgr.check_save_body(body, UPDATE_MEMBERS, "update", actor, str(ruleId))
             mgr.check_document(doc)
             denied = await _scope_check(actor, doc.get("scope"), arming=False)
             if denied is not None:
