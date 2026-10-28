@@ -10,19 +10,27 @@ import {
   type RefObject,
 } from "react";
 import { Button } from "./Button.js";
+import { Countdown } from "./Countdown.js";
 import { Dialog, type DialogCloseReason, type DialogRole, type DialogSize } from "./Dialog.js";
 import { ErrorState, type ErrorStateAction } from "./ErrorState.js";
 import { FormField } from "./FormField.js";
 import { TextInput } from "./TextInput.js";
+import { clampHold, PRESS_WINDOW_MS, useHoldGate, type HoldGate } from "./internal/holdGate.js";
 
-/** `standard` confirms on one activation; `typed` first asks for an exact token (the hold gates are slice 6's). */
-export type ConfirmDialogVariant = "standard" | "typed";
+/**
+ * `standard` confirms on one activation; `typed` first asks for an exact token; `hold` asks for a press held
+ * for `holdDurationMs`, or two separate key presses (H25).
+ */
+export type ConfirmDialogVariant = "standard" | "typed" | "hold";
 /** The gate the confirm passed, for the host's audit event (E05-S03 plan §3 item 4). */
-export type ConfirmGate = "click" | "typed";
+export type ConfirmGate = "click" | "typed" | HoldGate;
 /** `danger` for a destructive confirm, the side for an order confirm, `primary` for a context switch (H24). */
 export type ConfirmButtonVariant = "danger" | "buy" | "sell" | "primary";
-/** Why the dialog cancelled: its Cancel, or the dialog's own `Esc`, scrim press (a `dialog`) or close button. */
-export type ConfirmCancelReason = DialogCloseReason | "cancel";
+/**
+ * Why the dialog cancelled: its Cancel, the dialog's own `Esc`, scrim press (a `dialog`) or close button, or
+ * `timeout` when an `autoCancelMs` countdown ran out.
+ */
+export type ConfirmCancelReason = DialogCloseReason | "cancel" | "timeout";
 
 export interface ConfirmMeta {
   readonly variant: ConfirmDialogVariant;
@@ -74,10 +82,23 @@ export interface ConfirmDialogProps {
   confirmVariant?: ConfirmButtonVariant | undefined;
   /** Default `standard`. */
   variant?: ConfirmDialogVariant | undefined;
-  /** `typed`: the exact token (the object's own name, or `FLATTEN` / `LIVE`); paste is allowed. */
+  /**
+   * `typed`: the exact token (the object's own name, or `FLATTEN` / `LIVE`); paste is allowed. With `hold`
+   * it gates the hold too: no press starts until the field matches (E29-D02 §8.4).
+   */
   typedConfirmValue?: string | undefined;
   /** `typed`: the field's visible label and Confirm's description; default "Type {token} to confirm". */
   typedInstruction?: string | undefined;
+  /** `hold`: the press length, ms; default 800, clamped to 300–2,000 (H2, the user's setting). */
+  holdDurationMs?: number | undefined;
+  /** `hold`: Confirm's name once the first key press armed it; default "Press again to {effect}". */
+  armedLabel?: string | undefined;
+  /**
+   * An order confirm's auto-cancel, ms (SCR-114's setting, e.g. 20,000): "Cancels in 0:20" at the footer's
+   * start. Any key or pointer input restarts it; it speaks politely at 0:10 and 0:00, and at 0:00 the dialog
+   * cancels (`onCancel("timeout")`), never confirms. It stops once Confirm has fired.
+   */
+  autoCancelMs?: number | undefined;
   /** The summary is still loading: Confirm is natively disabled (availability, not T2). */
   summaryLoading?: boolean | undefined;
   /**
@@ -113,6 +134,24 @@ const CONFIRM_DELAY_FLOOR_MS = 400;
 
 const monotonic = (): number => performance.now();
 
+/**
+ * "Freeze sub_001 — …" reads "Press again to freeze sub_001 — …"; a leading all-caps word ("BUY", "LIVE")
+ * keeps its case.
+ */
+const lowerFirst = (text: string): string => {
+  const second = text.charAt(1);
+  return second !== "" && second === second.toUpperCase() && second !== second.toLowerCase()
+    ? text
+    : text.charAt(0).toLowerCase() + text.slice(1);
+};
+
+/** An auto-cancel's thresholds (E30-D03 D3 (6)): polite at 0:10 and 0:00 only. */
+const AUTO_CANCEL_MARKS: readonly number[] = [10, 0];
+const autoCancelSpeech = (seconds: number): string =>
+  seconds === 0
+    ? "Confirmation timed out — nothing was sent"
+    : "10 seconds until this confirmation cancels";
+
 const isActivationKey = (key: string): boolean => key === "Enter" || key === " ";
 
 /**
@@ -144,6 +183,65 @@ const useKeyGuard = (
   };
 };
 
+interface HoldRingProps {
+  readonly labelledBy: string;
+  readonly progress: number;
+  readonly percent: number;
+  /** The armed press's 5 s window end, on the dialog's clock: shown as its count while armed. */
+  readonly windowEndsAt: number | null;
+  readonly now: () => number;
+}
+
+/**
+ * The hold ring (E39-D03 §5): a `progressbar` named by Confirm, its value and text twin at up to 2 updates a
+ * second, the arc redrawn at up to 10. Reduced motion hides the arc (CSS): the percentage text alone. While
+ * armed, the second press's window counts down beside it, `aria-live="off"`.
+ */
+function HoldRing({
+  labelledBy,
+  progress,
+  percent,
+  windowEndsAt,
+  now,
+}: HoldRingProps): JSX.Element {
+  return (
+    <span className="cv-confirm__hold">
+      <span
+        className="cv-confirm__ring"
+        role="progressbar"
+        aria-labelledby={labelledBy}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        aria-valuetext={`${String(percent)} %`}
+      >
+        {/* No viewBox: user units are CSS px; pathLength 100 makes the dash offset the unfilled share. */}
+        {/* eslint-disable-next-line candleviewer/no-raw-svg -- the hold's progress arc, not a registry glyph */}
+        <svg className="cv-confirm__arc" aria-hidden="true" focusable="false">
+          <circle className="cv-confirm__track" cx="50%" cy="50%" r="35%" pathLength={100} />
+          <circle
+            className="cv-confirm__fill"
+            cx="50%"
+            cy="50%"
+            r="35%"
+            pathLength={100}
+            strokeDasharray="100 100"
+            strokeDashoffset={100 - Math.min(1, Math.max(0, progress)) * 100}
+          />
+        </svg>
+        <span className="cv-confirm__percent" aria-hidden="true">
+          {`${String(percent)} %`}
+        </span>
+      </span>
+      {windowEndsAt === null ? null : (
+        <span className="cv-confirm__window">
+          <Countdown expiresAt={windowEndsAt} now={now} thresholds={[]} />
+        </span>
+      )}
+    </span>
+  );
+}
+
 /**
  * CMP-044: a confirm gate on CMP-043 (APG Alert Dialog; APG Dialog (Modal) for an order confirm). Focus opens
  * on Cancel and Tab runs in DOM order from there: Confirm, the close button (a `dialog`), the body. Confirm
@@ -151,6 +249,9 @@ const useKeyGuard = (
  * after it rearms), the click that ends such a press however late, and every key repeat; it fires once. `typed`: Confirm stays natively disabled until the summary has loaded and the field matches
  * the token exactly (form validity, not T2); `Enter` in the field never confirms. A reason given mid-dialog
  * turns Confirm into CMP-001's T2 form in place, with one assertive announcement when it held focus.
+ * `hold` (H25): Confirm never reads a click; a pointer held for `holdDurationMs`, `Enter` held as long, or two
+ * non-repeat `Enter` / `Space` presses 250 ms – 5 s apart confirm, the guard applying to each press's start.
+ * `autoCancelMs` counts down in CMP-035, restarts on any input and cancels at 0:00, never confirming.
  */
 export function ConfirmDialog({
   open,
@@ -171,6 +272,9 @@ export function ConfirmDialog({
   variant = "standard",
   typedConfirmValue,
   typedInstruction,
+  holdDurationMs,
+  armedLabel,
+  autoCancelMs,
   summaryLoading = false,
   confirmDelayMs = 400,
   busy = false,
@@ -194,8 +298,13 @@ export function ConfirmDialog({
    * and whatever blur or pointercancel came between. Cleared by that click or by a press begun after the window.
    */
   const tripped = useRef(false);
-  /** onConfirm already ran for this opening (the single-fire latch). */
+  /** onConfirm already ran for this opening (the single-fire latch); `sent` is its rendered twin. */
   const fired = useRef(false);
+  const [sent, setSent] = useState(false);
+  /** The auto-cancel ran out: nothing confirms after it, whatever the host does next. */
+  const expired = useRef(false);
+  /** The auto-cancel's deadline on the dialog's clock, or null. */
+  const [deadline, setDeadline] = useState<number | null>(null);
   const [typed, setTyped] = useState("");
   const [polite, setPolite] = useState<Spoken>({ n: 0, text: "" });
   const [assertive, setAssertive] = useState<Spoken>({ n: 0, text: "" });
@@ -204,7 +313,9 @@ export function ConfirmDialog({
 
   const trimmedReason = confirmDisabledReason?.trim();
   const reason = trimmedReason === undefined || trimmedReason === "" ? undefined : trimmedReason;
-  const isTyped = variant === "typed";
+  const isHold = variant === "hold";
+  // `typed`, or a `hold` that also asks for the token (E29-D02 §8.4).
+  const isTyped = variant === "typed" || (isHold && typedConfirmValue !== undefined);
   const token = typedConfirmValue ?? "";
   const matched = !isTyped || (token !== "" && typed === token);
   const ready = !summaryLoading && matched;
@@ -213,6 +324,11 @@ export function ConfirmDialog({
   const delayMs = Number.isFinite(confirmDelayMs)
     ? Math.max(confirmDelayMs, CONFIRM_DELAY_FLOOR_MS)
     : CONFIRM_DELAY_FLOOR_MS;
+  const holdMs = clampHold(holdDurationMs);
+  const autoCancel =
+    autoCancelMs !== undefined && Number.isFinite(autoCancelMs) && autoCancelMs > 0
+      ? autoCancelMs
+      : null;
   const failureKey = failure === undefined ? null : failure.message;
 
   useLayoutEffect(() => {
@@ -220,6 +336,8 @@ export function ConfirmDialog({
     armedAt.current = openedAt.current;
     tripped.current = false;
     fired.current = false;
+    expired.current = false;
+    setSent(false);
     if (open) {
       setTyped("");
       setPolite({ n: 0, text: "" });
@@ -237,10 +355,14 @@ export function ConfirmDialog({
   useLayoutEffect(() => {
     const before = wasBusy.current;
     wasBusy.current = busy;
-    if (before && !busy) fired.current = false;
+    if (before && !busy) {
+      fired.current = false;
+      setSent(false);
+    }
   }, [busy]);
   useLayoutEffect(() => {
     fired.current = false;
+    setSent(false);
   }, [failureKey]);
 
   useEffect(() => {
@@ -248,9 +370,36 @@ export function ConfirmDialog({
     if (confirmLabel.trim().toLowerCase() === "confirm")
       warn('confirmLabel names the effect, never "Confirm" (H24).');
     if (isTyped && token === "") warn("variant typed needs a non-empty typedConfirmValue.");
+    if (isHold && holdMs !== holdDurationMs && holdDurationMs !== undefined)
+      warn(`holdDurationMs is clamped to ${String(holdMs)} ms (300–2,000).`);
     if (delayMs !== confirmDelayMs)
       warn(`confirmDelayMs below ${String(CONFIRM_DELAY_FLOOR_MS)} ms is raised to it.`);
-  }, [open, confirmLabel, isTyped, token, delayMs, confirmDelayMs]);
+  }, [open, confirmLabel, isTyped, token, delayMs, confirmDelayMs, isHold, holdMs, holdDurationMs]);
+
+  // The auto-cancel starts at the opening; any key or pointer input restarts it (E30-D03 D3 (5)–(6)).
+  // The dialog is modal, so input anywhere on the page is input to it.
+  useLayoutEffect(() => {
+    setDeadline(open && autoCancel !== null ? clock.current() + autoCancel : null);
+  }, [open, autoCancel]);
+  const counting = open && autoCancel !== null && !busy && !sent;
+  useEffect(() => {
+    if (!counting) return;
+    const restart = (): void => {
+      if (!expired.current) setDeadline(clock.current() + autoCancel);
+    };
+    document.addEventListener("keydown", restart, true);
+    document.addEventListener("pointerdown", restart, true);
+    return () => {
+      document.removeEventListener("keydown", restart, true);
+      document.removeEventListener("pointerdown", restart, true);
+    };
+  }, [counting, autoCancel]);
+  const expire = (): void => {
+    // Cancels, never confirms; a confirm already sent is the host's to finish.
+    if (!open || fired.current || expired.current) return;
+    expired.current = true;
+    onCancel("timeout");
+  };
 
   // H30: gated mid-dialog while Confirm held focus, one assertive announcement; focus stays.
   const wasGated = useRef(reason !== undefined);
@@ -271,22 +420,55 @@ export function ConfirmDialog({
 
   const confirm = (): void => {
     const at = clock.current();
-    const opened = openedAt.current;
     // The guard: a press that began in the window does nothing, whenever it lands; so does a click in it.
     const rejected = tripped.current || inWindow(at);
     tripped.current = false;
-    if (opened === null || rejected || fired.current) return;
+    // A hold Confirm never reads a click: only its hold gate confirms.
+    if (isHold || rejected) return;
+    send(isTyped ? "typed" : "click", at);
+  };
+
+  /** The single fire: open, past every gate, not yet sent, not timed out. */
+  const send = (gate: ConfirmGate, at: number): void => {
+    const opened = openedAt.current;
+    if (opened === null || fired.current || expired.current) return;
     // `busy` and T2 are Button's too (it drops the click); kept here as defence in depth.
     if (!ready || busy || reason !== undefined) return;
     fired.current = true;
-    onConfirm({ variant, gate: isTyped ? "typed" : "click", elapsedMs: at - opened });
+    setSent(true);
+    onConfirm({ variant, gate, elapsedMs: at - opened });
   };
+
+  const armedName = armedLabel ?? `Press again to ${lowerFirst(confirmLabel)}`;
+  const hold = useHoldGate({
+    durationMs: holdMs,
+    enabled: isHold && open && available && !busy && !sent,
+    clock: () => clock.current(),
+    canStart: (at) => !inWindow(at),
+    onFire: (gate) => send(gate, clock.current()),
+    // H25: the armed name is spoken politely, once per arming.
+    onArm: () => setPolite((s) => ({ n: s.n + 1, text: armedName })),
+  });
 
   const cancelKeys = useKeyGuard();
   const confirmKeys = useKeyGuard(startPress);
 
   const footer = (
     <>
+      {counting && deadline !== null ? (
+        // CMP-035 at the footer's start; its digits are `aria-live="off"`, its two marks polite.
+        <p className="cv-confirm__countdown">
+          Cancels in{" "}
+          <Countdown
+            expiresAt={deadline}
+            now={() => clock.current()}
+            thresholds={AUTO_CANCEL_MARKS}
+            announce={autoCancelSpeech}
+            onExpire={expire}
+          />
+          <span className="cv-visually-hidden"> unless you act</span>
+        </p>
+      ) : null}
       {/* The initial focus target: Dialog focuses the first tab stop inside a ref that is none. */}
       <span ref={cancelRef} className="cv-confirm__cancel">
         <Button {...cancelKeys} onClick={() => onCancel("cancel")}>
@@ -300,16 +482,26 @@ export function ConfirmDialog({
         {...(reason === undefined ? {} : { disabledReason: reason })}
         {...(isTyped ? { "aria-describedby": instructionId } : {})}
         loading={busy}
-        {...confirmKeys}
-        onPointerDown={startPress}
+        {...(isHold ? hold.handlers : { ...confirmKeys, onPointerDown: startPress })}
+        data-holding={hold.holding ? "" : undefined}
+        data-armed={hold.armedAt === null ? undefined : ""}
         onClickCapture={() => {
           // T2: Enter, Space or a press re-shows the reason with one polite announcement (D09 §9.3).
           if (reason !== undefined) setPolite((s) => ({ n: s.n + 1, text: reason }));
         }}
         onClick={confirm}
       >
-        {confirmLabel}
+        {hold.armedAt === null ? confirmLabel : armedName}
       </Button>
+      {isHold ? (
+        <HoldRing
+          labelledBy={confirmId}
+          progress={hold.progress}
+          percent={hold.percent}
+          windowEndsAt={hold.armedAt === null ? null : hold.armedAt + PRESS_WINDOW_MS}
+          now={() => clock.current()}
+        />
+      ) : null}
       {reason === undefined ? null : (
         // H30 (a): the host's reason under the footer (15 CMP-044 States), besides CMP-001's echo; the
         // accessible description is CMP-001's own reason node.

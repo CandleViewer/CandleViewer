@@ -34,6 +34,44 @@ describe("confirmdialog.css contract (CMP-044)", () => {
     expect(find(normal, ".cv-confirm__cancel", "display")).toContain("display: contents");
   });
 
+  it("the hold ring: a 3 px stroke (thick + hairline), danger over a border.strong track, text num.sm", () => {
+    expect(find(normal, ".cv-confirm__arc circle", "stroke-width")).toContain(
+      "stroke-width: calc((var(--border-thick) + var(--border-hairline)) * 1px)",
+    );
+    expect(find(normal, ".cv-confirm__fill", "stroke")).toContain(
+      "stroke: var(--color-status-danger-default)",
+    );
+    expect(find(normal, ".cv-confirm__track", "stroke")).toContain(
+      "stroke: var(--color-border-strong)",
+    );
+    const text = find(normal, ".cv-confirm__hold", "font");
+    expect(text).toContain("var(--type-num-sm-font-size)");
+    expect(text).toContain("color: var(--color-text-secondary)");
+  });
+
+  it("the auto-cancel count: the footer's start in text.primary", () => {
+    const line = find(normal, ".cv-confirm__countdown", "color");
+    expect(line).toContain("color: var(--color-text-primary)");
+    expect(line).toContain("margin-inline-end: auto");
+  });
+
+  it("reduced motion hides the arc (override and OS): the percentage text alone", () => {
+    expect(find(normal, ':root[data-motion="reduce"] .cv-confirm__arc', "display")).toContain(
+      "display: none",
+    );
+    const os = normal.split("@media (prefers-reduced-motion: reduce)")[1] ?? "";
+    expect(find(os, ":root:not([data-motion]) .cv-confirm__arc", "display")).toContain(
+      "display: none",
+    );
+  });
+
+  it("forced colours: the ring is Highlight on a CanvasText track; its text CanvasText", () => {
+    expect(find(forced, ".cv-confirm__fill", "stroke")).toContain("stroke: Highlight");
+    expect(find(forced, ".cv-confirm__track", "stroke")).toContain("stroke: CanvasText");
+    expect(find(forced, ".cv-confirm__hold", "color")).toContain("color: CanvasText");
+    expect(find(forced, ".cv-confirm__countdown", "color")).toContain("color: CanvasText");
+  });
+
   it("forced colours: the restatement keeps an edge, its label and the reason are CanvasText", () => {
     expect(find(forced, ".cv-confirm__restatement", "border-color")).toContain(
       "border-color: CanvasText",

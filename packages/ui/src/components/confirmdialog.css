@@ -2,7 +2,8 @@
  * CMP-044 ConfirmDialog (E05-D02 slice 4; H24, H30, H32). Tokens only; the card, the scrim and the motion are
  * CMP-043's. The restatement is a "What this does" box on `color.surface.raised`, `radius.card`, padding
  * `space.inset.md`, its sentences `type.ui.body` in `color.text.primary`, a `strong` line `type.ui.body-strong`.
- * A gated Confirm's reason sits under the footer in `color.text.secondary`. Static: no motion of its own.
+ * A gated Confirm's reason sits under the footer in `color.text.secondary`. The hold ring's arc is redrawn by
+ * the component at up to 10 updates a second with no CSS transition; reduced motion hides it. Static otherwise.
  */
 .cv-confirm {
   display: flex;
@@ -55,7 +56,81 @@
     var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
 }
 
+/* An auto-cancel's count at the footer's start ("Cancels in 0:20"): text.primary, no colour step (E30-D04 M7). */
+.cv-confirm__countdown {
+  margin: 0;
+  margin-inline-end: auto;
+  align-self: center;
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+/* The hold ring beside Confirm (E39-D03 §5) and, while armed, the second press's window. */
+.cv-confirm__hold {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: var(--space-inset-xs);
+  color: var(--color-text-secondary);
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-confirm__ring {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+}
+
+.cv-confirm__arc {
+  display: block;
+  flex: none;
+  width: var(--size-icon-lg);
+  height: var(--size-icon-lg);
+  transform: rotate(-90deg);
+}
+
+/* A 3 px ring (thick + hairline, the CMP-039 constant recipe): danger over a border.strong track. */
+.cv-confirm__arc circle {
+  fill: none;
+  stroke-width: calc((var(--border-thick) + var(--border-hairline)) * 1px);
+}
+
+.cv-confirm__track {
+  stroke: var(--color-border-strong);
+}
+
+.cv-confirm__fill {
+  stroke: var(--color-status-danger-default);
+}
+
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): no sweep, the text alone. */
+:root[data-motion="reduce"] .cv-confirm__arc {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) .cv-confirm__arc {
+    display: none;
+  }
+}
+
 @media (forced-colors: active) {
+  .cv-confirm__track {
+    stroke: CanvasText;
+  }
+
+  .cv-confirm__fill {
+    stroke: Highlight;
+  }
+
+  .cv-confirm__countdown,
+  .cv-confirm__hold {
+    color: CanvasText;
+  }
+
   .cv-confirm__restatement {
     border-color: CanvasText;
   }

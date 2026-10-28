@@ -167,6 +167,11 @@ action's `loading` itself.
 | Tab / Shift+Tab                    | The trap in DOM order from Cancel: Confirm, the close button (an order confirm), the body's controls, back to Cancel.    |
 | Enter / Space / a press on Confirm | Confirms once, unless the press began in the first `confirmDelayMs` (at least 400 ms) of the guard; repeats never count. |
 | Typing in the typed field          | Confirm enables when the text matches the token exactly (paste allowed); Enter in the field never confirms.              |
+| Hold, pointer                      | Press and hold Confirm for `holdDurationMs` (800 ms, 300–2,000); an early release resets the ring and fires nothing.     |
+| Hold, keyboard                     | Hold Enter as long, or two non-repeat Enter / Space presses 250 ms – 5 s apart; the first arms ("Press again to …").     |
+| Space on a hold Confirm            | One press on its keyup, never a hold; a click or a pointer press never arms.                                             |
+| Esc or blur on a hold Confirm      | Disarms and drops the hold; Esc then cancels the dialog.                                                                 |
+| Any key or pointer input           | Restarts an `autoCancelMs` count; at 0:00 the dialog cancels (`"timeout"`), never confirms.                              |
 | Esc                                | Cancels (`onCancel("escape")`); focus returns to the opener, else `fallbackFocusRef`.                                    |
 | Enter / Space on a T2 Confirm      | Nothing; the reason is re-shown with one polite announcement.                                                            |
 | A press on the scrim               | Nothing for an `alertdialog`; Cancel (`"scrim"`) for an order `dialog`.                                                  |
@@ -178,9 +183,12 @@ action's `loading` itself.
 | typed field | textbox                                          | the instruction ("Type FLATTEN to confirm"), its label | —                                                                                                                                                  |
 | Confirm     | button                                           | the effect, never "Confirm"                            | native `disabled` until the summary loads and the token matches (validity); `aria-describedby` → the instruction; T2: `aria-disabled` + the reason |
 | status      | status, alert                                    | —                                                      | visually hidden: a T2 re-show (polite); a Confirm gated while it held focus (assertive, once)                                                      |
+| hold ring   | progressbar                                      | Confirm's name (`aria-labelledby`)                     | `aria-valuenow` 0–100 and its text twin at up to 2 updates a second; the arc at up to 10, hidden under reduced motion                              |
+| countdown   | text (CMP-035)                                   | "Cancels in 20 seconds unless you act"                 | `aria-live="off"`; polite at 0:10 and 0:00 only                                                                                                    |
 
-`onConfirm(meta)` reports `{ variant, gate: "click" | "typed", elapsedMs }` for the host's audit event;
-`onCancel(reason)` reports `cancel`, `escape`, `close` or `scrim`. Events are not filtered on
+`onConfirm(meta)` reports `{ variant, gate, elapsedMs }` for the host's audit event, the gate being
+`click`, `typed`, `pointer-hold`, `key-hold` or `double-press`; `onCancel(reason)` reports `cancel`,
+`escape`, `close`, `scrim` or `timeout`. Events are not filtered on
 `isTrusted`. The guard runs from the moment the dialog opens and applies to pointer, Enter and Space
 alike. A typed mismatch, a loading summary and a sent confirm (`busy`) are not T2; only a reason
 given while open (H30) is, and focus stays on Confirm. A partial failure is CMP-027's inline error
@@ -194,7 +202,11 @@ the click that ends it clears the mark. `onConfirm` fires at most once per openi
 message or `busy` going false allows one more. The clock is `performance.now` (monotonic). A `Space`
 released on Cancel or Confirm activates only when its own press began there.
 
-Not yet in this slice: `variant="hold"` and `autoCancelMs` (an expiry that cancels, never confirms)
-come with slice 6, so no host should rely on an auto-cancel here yet. With `summaryLoading` set while
+A hold Confirm never reads a click, so a synthetic `click()` confirms nothing. The guard applies to the moment
+each hold or press begins. Completion is read from the clock: it fires at the duration, never
+before. A `typedConfirmValue` on a hold gates it too: no press starts until the field matches. The
+`autoCancelMs` count stops once Confirm has fired, so a sent confirm is never cancelled by it.
+
+With `summaryLoading` set while
 Confirm holds focus, Confirm becomes natively disabled and focus is lost; that inherited spec gap is
 open for the host or the spec to decide.

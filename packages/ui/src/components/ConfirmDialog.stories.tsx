@@ -276,6 +276,187 @@ export const OrderConfirm: Story = {
   },
 };
 
+/** The kill switch's hold confirm (E39-D03 S20), on the story clock so a hold is timed without wall time. */
+const holdDemo = (props: DemoProps = {}): JSX.Element => (
+  <Demo
+    opener="Flatten all"
+    title="Flatten all positions?"
+    message="Every account, LIVE and DEMO."
+    restatement={<p>Closes 4 positions at market — all accounts, LIVE + DEMO.</p>}
+    confirmLabel="Flatten 4 positions — all accounts, LIVE + DEMO"
+    variant="hold"
+    now={storyNow}
+    {...props}
+  />
+);
+const holdConfirm = (): HTMLElement =>
+  page.getByRole("button", { name: /flatten 4 positions — all accounts/i });
+const ring = (): HTMLElement => page.getByRole("progressbar");
+
+/** Variant=hold: the confirm naming the effect, its ring at 0 % and "0 %"; a full pointer hold confirms. */
+export const Hold: Story = {
+  render: () => holdDemo(),
+  play: async ({ canvasElement }) => {
+    // One session, so a key or button pressed in one call is released in the next.
+    const user = userEvent.setup();
+    clock.t = 0;
+    await opened(canvasElement, "Flatten all");
+    await expect(ring()).toHaveAccessibleName("Flatten 4 positions — all accounts, LIVE + DEMO");
+    await expect(ring()).toHaveAttribute("aria-valuenow", "0");
+    await expect(page.getByText("0 %")).toBeVisible();
+    clock.t = 500;
+    await user.pointer({ keys: "[MouseLeft>]", target: holdConfirm() });
+    clock.t = 1300;
+    await closed();
+    await expect(within(canvasElement).getByTestId("outcome")).toHaveTextContent(
+      "Confirmed: hold, pointer-hold, after 1300 ms.",
+    );
+    await user.pointer({ keys: "[/MouseLeft]" });
+  },
+};
+
+/** Gherkin "Hold-to-confirm gate": a release at 400 of 800 ms fires nothing and the ring resets. */
+export const HoldReleasedEarly: Story = {
+  render: () => holdDemo(),
+  play: async ({ canvasElement }) => {
+    // One session, so a key or button pressed in one call is released in the next.
+    const user = userEvent.setup();
+    clock.t = 0;
+    await opened(canvasElement, "Flatten all");
+    clock.t = 500;
+    const target = holdConfirm();
+    await user.pointer({ keys: "[MouseLeft>]", target });
+    clock.t = 900;
+    await waitFor(() => expect(target).toHaveAttribute("data-holding", ""));
+    await user.pointer({ keys: "[/MouseLeft]", target });
+    await expect(target).not.toHaveAttribute("data-holding");
+    await expect(ring()).toHaveAttribute("aria-valuenow", "0");
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+    await expect(within(canvasElement).getByTestId("outcome")).toHaveTextContent("Nothing sent.");
+  },
+};
+
+/** State=holding: a pointer hold frozen at half way, the ring at 50 % and "50 %". */
+export const Holding: Story = {
+  render: () => holdDemo(),
+  play: async ({ canvasElement }) => {
+    // One session, so a key or button pressed in one call is released in the next.
+    const user = userEvent.setup();
+    clock.t = 0;
+    await opened(canvasElement, "Flatten all");
+    clock.t = 500;
+    await user.pointer({ keys: "[MouseLeft>]", target: holdConfirm() });
+    clock.t = 900;
+    await waitFor(() => expect(ring()).toHaveAttribute("aria-valuenow", "50"));
+    await expect(page.getByText("50 %")).toBeVisible();
+  },
+};
+
+/** State=armed: the keyboard path after the first press, renamed "Press again to …", the 5 s window. */
+export const Armed: Story = {
+  render: () => holdDemo(),
+  play: async ({ canvasElement }) => {
+    // One session, so a key or button pressed in one call is released in the next.
+    const user = userEvent.setup();
+    clock.t = 0;
+    await opened(canvasElement, "Flatten all");
+    holdConfirm().focus();
+    clock.t = 500;
+    await user.keyboard("{Enter}");
+    await expect(
+      page.getByRole("button", {
+        name: "Press again to flatten 4 positions — all accounts, LIVE + DEMO",
+      }),
+    ).toHaveFocus();
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+  },
+};
+
+/** The keyboard-only path: two separate presses 250 ms – 5 s apart confirm; Space never holds. */
+export const HoldKeyboard: Story = {
+  render: () => holdDemo(),
+  play: async ({ canvasElement }) => {
+    // One session, so a key or button pressed in one call is released in the next.
+    const user = userEvent.setup();
+    clock.t = 0;
+    await opened(canvasElement, "Flatten all");
+    holdConfirm().focus();
+    clock.t = 500;
+    await user.keyboard("[Space>]");
+    clock.t = 3000;
+    await user.keyboard("[/Space]");
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^Press again to flatten 4 positions/ }),
+    ).toHaveFocus();
+    clock.t = 3400;
+    await user.keyboard("{Enter}");
+    await closed();
+    await expect(within(canvasElement).getByTestId("outcome")).toHaveTextContent(
+      "Confirmed: hold, double-press, after 3400 ms.",
+    );
+  },
+};
+
+/** Reduced motion (the in-app override): no sweep, the percentage text alone. */
+export const HoldReducedMotion: Story = {
+  globals: { motion: "on" },
+  render: () => holdDemo(),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => expect(document.documentElement).toHaveAttribute("data-motion", "reduce"));
+    clock.t = 0;
+    await opened(canvasElement, "Flatten all");
+    const arc = document.querySelector(".cv-confirm__arc");
+    await expect(arc === null ? "" : getComputedStyle(arc).display).toBe("none");
+    await expect(page.getByText("0 %")).toBeVisible();
+  },
+};
+
+/** State=counting-down: an order confirm's "Cancels in 0:20" at the footer's start, frozen on the story clock. */
+export const CountingDown: Story = {
+  render: () => (
+    <Demo
+      opener="Review order"
+      role="dialog"
+      aria-label="Confirm order - BTCUSDT - LIVE - Main"
+      title="Confirm order"
+      restatementLabel=""
+      restatement={
+        <p>
+          <strong>BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0</strong>
+        </p>
+      }
+      confirmVariant="buy"
+      confirmLabel="BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0"
+      autoCancelMs={20_000}
+      now={storyNow}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    clock.t = 0;
+    await opened(canvasElement, "Review order");
+    await expect(page.getByText(/^Cancels in/)).toHaveTextContent("Cancels in 0:20");
+  },
+};
+
+/** State=timed-out: at 0:00 the dialog cancels, never confirms, and focus returns to the opener. */
+export const TimedOut: Story = {
+  render: () => <Demo opener="Review order" role="dialog" autoCancelMs={20_000} now={storyNow} />,
+  play: async ({ canvasElement }) => {
+    clock.t = 0;
+    const opener = await opened(canvasElement, "Review order");
+    clock.t = 20_000;
+    // The count reads the clock once a second: the expiry lands on its next tick.
+    await waitFor(() => expect(document.querySelector(".cv-dialog-layer")).toBeNull(), {
+      timeout: 3000,
+    });
+    await expect(within(canvasElement).getByTestId("outcome")).toHaveTextContent(
+      "Cancelled (timeout). Nothing sent.",
+    );
+    await expect(opener).toHaveFocus();
+  },
+};
+
 /** Long text: a long title, restatement and effect label wrap; the footer wraps (conventions 39). */
 export const LongText: Story = {
   render: () => (
