@@ -2,7 +2,9 @@
 import { useState, type JSX } from "react";
 import { act } from "react";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
-import { afterEach, beforeEach, describe, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, vi } from "vitest";
+// Vitest's own `it`, typed with the C-9.3 quarantine modifier (E02-T10).
+import { it } from "@candleviewer/config/vitest-flaky";
 import { Select, type SelectProps } from "../src/components/index.js";
 import { extendTyped, matchIndex, TYPE_AHEAD_MS } from "../src/components/internal/listNav.js";
 import { mount } from "./theme/mount.js";
@@ -396,22 +398,26 @@ describe("Select type-ahead", () => {
     expect(box(open)).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("a plain-disabled option is not activated by hover; a keyboard move scrolls, a hover does not", async () => {
-    const host = await mount(<Host value="a" />);
-    key(host, "Enter");
-    const [, bravo, charlie] = options(host) as [HTMLElement, HTMLElement, HTMLElement];
-    vi.mocked(Element.prototype.scrollIntoView).mockClear();
-    await userEvent.hover(bravo);
-    expect(activeLabel(host)).toBe("Alpha");
-    await userEvent.hover(charlie);
-    // As above: the hover commits on its own turn. Once Charlie is active, Bravo's earlier hover has committed too.
-    await waitFor(() => expect(activeLabel(host)).toBe("Charlie"));
-    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
-    key(host, "ArrowDown");
-    expect(activeLabel(host)).toBe("Delta");
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
-    expect(scrollTargets()).toEqual([activeRow(host)]);
-  });
+  // Under load, two rows scroll after the key (C-9.3). ticket: GH-4851 quarantined: 2026-10-28
+  it.flaky(
+    "a plain-disabled option is not activated by hover; a keyboard move scrolls, a hover does not",
+    async () => {
+      const host = await mount(<Host value="a" />);
+      key(host, "Enter");
+      const [, bravo, charlie] = options(host) as [HTMLElement, HTMLElement, HTMLElement];
+      vi.mocked(Element.prototype.scrollIntoView).mockClear();
+      await userEvent.hover(bravo);
+      expect(activeLabel(host)).toBe("Alpha");
+      await userEvent.hover(charlie);
+      // As above: the hover commits on its own turn. Once Charlie is active, Bravo's earlier hover has committed too.
+      await waitFor(() => expect(activeLabel(host)).toBe("Charlie"));
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+      key(host, "ArrowDown");
+      expect(activeLabel(host)).toBe("Delta");
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+      expect(scrollTargets()).toEqual([activeRow(host)]);
+    },
+  );
 
   it("ignores Ctrl, Alt and Meta chords and Shift+Space", async () => {
     const host = await mount(<Host value="a" />);

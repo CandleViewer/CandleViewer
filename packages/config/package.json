@@ -14,6 +14,7 @@
     "./tsconfig/node.json": "./tsconfig.node.json",
     "./tsconfig/dom.json": "./tsconfig.dom.json",
     "./vitest": "./vitest.preset.mjs",
+    "./vitest-flaky": "./src/vitest-flaky.mjs",
     "./no-restricted-imports": "./no-restricted-imports.mjs"
   },
   "scripts": {

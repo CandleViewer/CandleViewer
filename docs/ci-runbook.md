@@ -1218,9 +1218,13 @@ section in the same sprint — do not just work around it and move on.
 
 - ADR-0013 binding rule 10: a job that fails then passes on retry is
   recorded; three occurrences in a week auto-open a quarantine issue.
-- On a quarantine issue: mark the test `@flaky` (Python) or `.fixme`/skip
-  annotation with a linked issue (TypeScript/Playwright) within 24 hours
-  (C-9.3) — never silently delete a flaky test to make CI green.
+- On a quarantine issue: mark the test `@flaky` (Python) or `it.flaky` /
+  `test.flaky` / `describe.flaky` (Vitest; import `it` from
+  `@candleviewer/config/vitest-flaky`), with a `ticket:` line naming the issue,
+  within 24 hours (C-9.3); a Playwright test keeps its `.fixme` annotation with
+  the linked issue. Never silently delete a flaky test to make CI green.
+  `pnpm gate:flaky-quarantine` lists every marked test and fails a mark with no
+  ticket; it runs locally, not yet as a CI gate.
 - A `flaky` mark drops the Python test from every lane: the addopts `-m` of
   every pytest config deselects it (`services/api/pyproject.toml`,
   `scripts/pytest.ini`, and the root `pytest.ini` for every other suite), and
