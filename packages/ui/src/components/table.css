@@ -1,13 +1,26 @@
 /*
  * CMP-049 Table, table mode (E05-S03, D02F CMP-049). Tokens only; static (no motion: the skeletons and the sort
- * spinner bring CMP-015's and CMP-014's own). The host sizes the table's box; the region scrolls inside it and
+ * spinner bring CMP-015's and CMP-014's own, so reduced motion needs nothing here, the reflow included). The host sizes the table's box; the region scrolls inside it and
  * the header row sticks to its top. `separate` borders, so the sticky header keeps its rule.
  */
 .cv-table {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-block-size: 0;
   max-block-size: 100%;
+}
+
+/* A 1 em box the reflow observer watches, so a font-size change at a fixed width re-measures. */
+.cv-table__em-probe {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 1em;
+  block-size: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .cv-table__region {
@@ -140,6 +153,80 @@
   padding: 0;
 }
 
+/*
+ * Stacked reflow (`16` §3 rule 4): below the columns' summed `minWidthEm` (set as `data-layout` by the
+ * component) every part is a block with its explicit table role. The header row wraps its sort buttons and no
+ * longer sticks; each body row is one block: the first cell its heading line, every other cell a header–value
+ * pair. Text wraps instead of truncating, so nothing overflows sideways. Static: no motion.
+ */
+.cv-table[data-layout="stacked"] :is(table, caption, thead, tbody, tr, th, td) {
+  display: block;
+}
+
+.cv-table[data-layout="stacked"] thead tr {
+  display: flex;
+  flex-wrap: wrap;
+  background: var(--color-surface-hover);
+  border-block-end: calc(var(--border-hairline) * 1px) solid var(--color-border-subtle);
+}
+
+.cv-table[data-layout="stacked"] .cv-table__header {
+  position: static;
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  block-size: auto;
+  min-block-size: var(--size-row-height);
+  border-block-end: 0;
+}
+
+.cv-table[data-layout="stacked"] .cv-table__sort {
+  inline-size: auto;
+  max-inline-size: 100%;
+}
+
+.cv-table[data-layout="stacked"] .cv-table__label {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.cv-table[data-layout="stacked"] .cv-table__row {
+  padding-block: var(--space-inset-xs);
+}
+
+.cv-table[data-layout="stacked"] .cv-table__cell {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-inset-sm);
+  block-size: auto;
+  min-block-size: var(--size-row-height);
+  text-align: start;
+}
+
+/* The heading line: the first cell, in the label weight, with no header label of its own. */
+.cv-table[data-layout="stacked"] .cv-table__cell:first-child {
+  font-weight: var(--type-ui-label-font-weight);
+}
+
+.cv-table__cell-label {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  color: var(--color-text-secondary);
+}
+
+.cv-table[data-layout="stacked"] .cv-table__text {
+  min-inline-size: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.cv-table[data-layout="stacked"] .cv-table__cell-label + .cv-table__text {
+  text-align: end;
+}
+
 @media (forced-colors: active) {
   .cv-table__region:focus-visible {
     outline-color: Highlight;
@@ -155,5 +242,15 @@
 
   .cv-table__sort-glyph {
     color: currentColor;
+  }
+
+  /* Stacked: one separator per row block, not per cell. */
+  .cv-table[data-layout="stacked"] thead tr,
+  .cv-table[data-layout="stacked"] .cv-table__row {
+    border-block-end: 1px solid CanvasText;
+  }
+
+  .cv-table[data-layout="stacked"] .cv-table__row .cv-table__cell {
+    border-block-end: 0;
   }
 }

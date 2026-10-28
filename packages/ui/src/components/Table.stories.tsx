@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState, type JSX } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { EmptyState } from "./EmptyState.js";
 import { Table, type TableColumn, type TableProps, type TableSort } from "./Table.js";
@@ -273,4 +275,134 @@ export const CaptionHidden: Story = {
 /** Density=compact: 24 px rows (the toolbar sets it for every story; this one pins it). */
 export const Compact: Story = {
   render: () => <Host density="compact" />,
+};
+
+/** Reflow columns: 44 em of minimums (704 px at 16 px, 1,408 px at 200 %). */
+const MIN_EM: Readonly<Record<string, number>> = {
+  symbol: 10,
+  account: 9,
+  size: 7,
+  entry: 8,
+  pnl: 10,
+};
+const REFLOW_COLUMNS: readonly TableColumn<Position>[] = COLUMNS.map((column) => ({
+  ...column,
+  minWidthEm: MIN_EM[column.id] ?? 8,
+}));
+
+/** Checks the stacked layout: no sideways overflow, every row with every column's value and its label. */
+const stackedFits = async (canvasElement: HTMLElement): Promise<void> => {
+  const canvas = within(canvasElement);
+  const shell = canvasElement.querySelector<HTMLElement>('[data-cmp="CMP-049"]');
+  await waitFor(() => expect(shell).toHaveAttribute("data-layout", "stacked"));
+  const region = canvasElement.querySelector<HTMLElement>(".cv-table__region");
+  await expect(region?.scrollWidth).toBeLessThanOrEqual(region?.clientWidth ?? 0);
+  const table = canvas.getByRole("table", { name: CAPTION });
+  const rows = within(table).getAllByRole("row").slice(1);
+  await expect(rows).toHaveLength(POSITIONS.length);
+  for (const row of rows) {
+    const cells = within(row).getAllByRole("cell");
+    await expect(cells).toHaveLength(REFLOW_COLUMNS.length);
+    for (const [i, cell] of cells.entries()) {
+      const label = cell.querySelector(".cv-table__cell-label");
+      const value = cell.querySelector(".cv-table__text, [data-cmp='CMP-020']");
+      await expect(value?.textContent?.trim()).not.toBe("");
+      if (i === 0) await expect(label).toBeNull();
+      else await expect(label).toHaveTextContent(REFLOW_COLUMNS[i]?.header ?? "");
+      await expect(cell.getBoundingClientRect().right).toBeLessThanOrEqual(
+        (region?.getBoundingClientRect().right ?? 0) + 0.5,
+      );
+    }
+  }
+};
+
+/**
+ * State=reflow (`16` §3 rule 4, conventions 28), compact density: at a root font size of 200 % on the 1280 x 800
+ * frame, and at 640 px, the table stacks, one block per row: no sideways overflow and every column's value
+ * present with its header label. Back at 100 % on the 1280 px frame it is a table again.
+ */
+export const Reflow: Story = {
+  parameters: { layout: "fullscreen" },
+  render: () => (
+    // The 1280 x 800 frame (numbers: CSS px that root zoom does not scale); the inner box narrows to 640.
+    <div style={{ width: 1280, height: 800 }}>
+      <div data-frame="" style={{ width: "100%", height: "100%", overflow: "auto" }}>
+        <Host columns={REFLOW_COLUMNS} density="compact" />
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement, step }) => {
+    const root = document.documentElement;
+    const frame = canvasElement.querySelector<HTMLElement>("[data-frame]");
+    const shell = canvasElement.querySelector<HTMLElement>('[data-cmp="CMP-049"]');
+    const before = root.style.fontSize;
+    try {
+      await step("100 % on 1280 px: a table", async () => {
+        await waitFor(() => expect(shell).not.toHaveAttribute("data-layout"));
+      });
+      await step("200 % on 1280 x 800: stacked", async () => {
+        root.style.fontSize = "200%";
+        await stackedFits(canvasElement);
+      });
+      await step("200 % at 640 px: stacked", async () => {
+        if (frame !== null) frame.style.width = "50%"; // 640 px
+        await stackedFits(canvasElement);
+      });
+      await step("back to 100 % on 1280 px: a table again", async () => {
+        if (frame !== null) frame.style.width = "100%";
+        root.style.fontSize = before;
+        await waitFor(() => expect(shell).not.toHaveAttribute("data-layout"));
+        await expect(
+          within(canvasElement).getByRole("table", { name: CAPTION }),
+        ).not.toHaveAttribute("role");
+      });
+    } finally {
+      root.style.fontSize = before;
+    }
+  },
+};
+
+const BUDGET_MS = 16.7;
+const BOUND: readonly Position[] = Array.from({ length: 200 }, (_, i) => ({
+  id: `b${i}`,
+  symbol: `PAIR${String(i + 1).padStart(3, "0")}USDT`,
+  account: ["Main", "Hedge", "Swing"][i % 3] ?? "Main",
+  size: (i + 1) * 0.25,
+  entry: 100 + i * 1.75,
+  pnl: (i % 7) * 9.5 - 30,
+}));
+
+/**
+ * The frame budget: a first render (a fresh root, the 200-row v0 bound, the DOM commit) stays within one frame,
+ * the median of 15 warmed mounts. Tagged `perf`: a wall-clock budget is no pass/fail check on a shared runner,
+ * so the storybook project skips it (#269) unless `CV_STORYBOOK_PERF=1`.
+ */
+export const Perf200Rows: Story = {
+  tags: ["perf"],
+  render: () => (
+    <p>200-row first-render benchmark: the play function mounts and times the table.</p>
+  ),
+  play: async ({ canvasElement }) => {
+    const samples: number[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      const host = canvasElement.appendChild(document.createElement("div"));
+      const root = createRoot(host);
+      const start = performance.now();
+      flushSync(() =>
+        root.render(
+          <Table<Position>
+            caption={`Bound ${String(i)}`}
+            columns={COLUMNS}
+            rows={BOUND}
+            rowKey={(p) => p.id}
+          />,
+        ),
+      );
+      samples.push(performance.now() - start);
+      root.unmount();
+      host.remove();
+    }
+    const median = samples.slice(5).sort((a, b) => a - b)[7] ?? Infinity;
+    await expect(median).toBeLessThanOrEqual(BUDGET_MS);
+  },
 };

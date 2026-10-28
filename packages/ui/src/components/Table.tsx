@@ -29,6 +29,11 @@ interface TableColumnBase {
   readonly header: string;
   /** A sort button in the header (with `onSortChange`). */
   readonly sortable?: boolean;
+  /**
+   * The narrowest the column reads well, in `em` of the table's font size. The table stacks below the sum of
+   * its columns' minimums, so the threshold tracks text scale and zoom. Default 8.
+   */
+  readonly minWidthEm?: number;
 }
 
 /** A text column: the cell truncates with an ellipsis and keeps its full text in the DOM. */
@@ -88,6 +93,8 @@ export interface TableProps<T> {
 /** The v0 bound (#266 out of scope: no virtualised rendering). */
 const MAX_ROWS = 200;
 const SKELETON_ROWS = 5;
+/** A column's `minWidthEm` when it gives none: room for a short label or an 8-digit number. */
+const DEFAULT_MIN_WIDTH_EM = 8;
 
 const rowsWord = (n: number): string => (n === 0 ? "No rows" : n === 1 ? "1 row" : `${n} rows`);
 
@@ -127,7 +134,9 @@ function SortGlyph({
 
 /**
  * Whether the region scrolls, so it takes a Tab stop (WCAG 2.1.1). Measured when `content` (the state and the
- * row and column counts) changes, and as the region or its table resizes.
+ * row and column counts) changes, and as the region or its table resizes. With ResizeObserver the first measure
+ * is its initial callback, after the browser's own layout, so a mount forces no synchronous reflow (the frame
+ * budget); without it, the effect measures once.
  */
 function useScrolls(region: RefObject<HTMLDivElement | null>, content: string): boolean {
   const [scrolls, setScrolls] = useState(false);
@@ -137,14 +146,47 @@ function useScrolls(region: RefObject<HTMLDivElement | null>, content: string): 
     const measure = (): void => {
       setScrolls(node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth);
     };
-    measure();
-    if (typeof ResizeObserver === "undefined") return undefined;
+    if (typeof ResizeObserver === "undefined") {
+      measure();
+      return undefined;
+    }
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     for (const child of node.children) observer.observe(child);
     return () => observer.disconnect();
   }, [region, content]);
   return scrolls;
+}
+
+/**
+ * The stacked reflow (`16` §3 rule 4): true while the shell's content width is narrower than `thresholdEm`
+ * times its computed font size. A CSS container query cannot sum dynamic column minimums, so a ResizeObserver
+ * watches the shell (its width) and a 1 em probe inside it (a font-size change at a fixed width: root zoom or
+ * text scale). A width of 0 (the shell is not laid out) keeps the last layout. Without ResizeObserver the
+ * table stays a table.
+ */
+function useStacked(
+  shell: RefObject<HTMLDivElement | null>,
+  probe: RefObject<HTMLSpanElement | null>,
+  thresholdEm: number,
+): boolean {
+  const [stacked, setStacked] = useState(false);
+  useEffect(() => {
+    const node = shell.current;
+    if (node === null || typeof ResizeObserver === "undefined") return undefined;
+    let width = 0;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) if (entry.target === node) width = entry.contentRect.width;
+      if (width <= 0) return;
+      const fontPx = parseFloat(getComputedStyle(node).fontSize);
+      if (!Number.isFinite(fontPx) || fontPx <= 0) return;
+      setStacked(width < thresholdEm * fontPx);
+    });
+    observer.observe(node);
+    if (probe.current !== null) observer.observe(probe.current);
+    return () => observer.disconnect();
+  }, [shell, probe, thresholdEm]);
+  return stacked;
 }
 
 interface ResultInputs<T> {
@@ -228,7 +270,9 @@ function useResultLine<T>({
  * `<table>` named by its caption inside a scroll region that takes a Tab stop when it scrolls, a sticky header
  * whose sortable labels are buttons with `aria-sort`, zebra rows, and one polite region for sort and load
  * results. States: loading (skeleton rows, `aria-busy`), empty and filtered-empty (CMP-026), error (CMP-027 with
- * Retry). The consumer sorts the rows; the table only asks.
+ * Retry). The consumer sorts the rows; the table only asks. Reflow: below the sum of the columns' `minWidthEm`
+ * (at its own font size, so at 200 % zoom too) it stacks, one block per row: the first cell is the heading line,
+ * the others header–value pairs, with explicit table roles kept.
  */
 export function Table<T>({
   columns,
@@ -246,6 +290,8 @@ export function Table<T>({
   density,
 }: TableProps<T>): JSX.Element {
   const captionId = useId();
+  const shell = useRef<HTMLDivElement>(null);
+  const probe = useRef<HTMLSpanElement>(null);
   const region = useRef<HTMLDivElement>(null);
   const state = loading
     ? "loading"
@@ -255,6 +301,14 @@ export function Table<T>({
         ? "empty"
         : "populated";
   const scrolls = useScrolls(region, `${state}:${rows.length}:${columns.length}`);
+  const stacked = useStacked(
+    shell,
+    probe,
+    columns.reduce((sum, column) => sum + (column.minWidthEm ?? DEFAULT_MIN_WIDTH_EM), 0),
+  );
+  // Explicit roles while stacked: `display: block` strips native table semantics in some engines.
+  const role = (name: "table" | "rowgroup" | "row" | "columnheader" | "cell"): { role?: string } =>
+    stacked ? { role: name } : {};
   const { line, retryStarted } = useResultLine({
     columns,
     rowCount: rows.length,
@@ -279,8 +333,8 @@ export function Table<T>({
   };
 
   const stateRow = (content: ReactNode): JSX.Element => (
-    <tr className="cv-table__state-row" aria-rowindex={2}>
-      <td className="cv-table__state" colSpan={columns.length}>
+    <tr className="cv-table__state-row" aria-rowindex={2} {...role("row")}>
+      <td className="cv-table__state" colSpan={columns.length} {...role("cell")}>
         {content}
       </td>
     </tr>
@@ -289,9 +343,9 @@ export function Table<T>({
   let body: ReactNode;
   if (state === "loading") {
     body = Array.from({ length: SKELETON_ROWS }, (_, i) => (
-      <tr key={i} className="cv-table__row" aria-hidden="true">
+      <tr key={i} className="cv-table__row" aria-hidden="true" {...role("row")}>
         {columns.map((column) => (
-          <td key={column.id} className="cv-table__cell">
+          <td key={column.id} className="cv-table__cell" {...role("cell")}>
             <Skeleton shape="text" count={1} />
           </td>
         ))}
@@ -316,13 +370,21 @@ export function Table<T>({
     body = stateRow(emptyState ?? <EmptyState title="No rows to show" />);
   } else {
     body = rows.map((row, i) => (
-      <tr key={rowKey(row)} className="cv-table__row" aria-rowindex={i + 2}>
-        {columns.map((column) => (
+      <tr key={rowKey(row)} className="cv-table__row" aria-rowindex={i + 2} {...role("row")}>
+        {columns.map((column, c) => (
           <td
             key={column.id}
             className="cv-table__cell"
             data-numeric={column.numeric === undefined ? undefined : ""}
+            {...role("cell")}
           >
+            {/* Stacked: a visible header label on every cell but the heading line; hidden from AT, which
+                already reads the cell's columnheader, so the header is said once, then the value. */}
+            {stacked && c > 0 ? (
+              <span className="cv-table__cell-label" aria-hidden="true">
+                {column.header}
+              </span>
+            ) : null}
             {column.numeric === undefined ? (
               <span className="cv-table__text">{column.cell(row)}</span>
             ) : (
@@ -337,7 +399,15 @@ export function Table<T>({
   const rowCount = state === "loading" ? -1 : state === "populated" ? rows.length + 1 : 2;
 
   return (
-    <div className="cv-table" data-cmp="CMP-049" data-density={density} data-state={state}>
+    <div
+      ref={shell}
+      className="cv-table"
+      data-cmp="CMP-049"
+      data-density={density}
+      data-state={state}
+      data-layout={stacked ? "stacked" : undefined}
+    >
+      <span ref={probe} className="cv-table__em-probe" aria-hidden="true" />
       <div
         ref={region}
         className="cv-table__region"
@@ -348,6 +418,7 @@ export function Table<T>({
           aria-labelledby={captionId}
           aria-rowcount={rowCount}
           aria-busy={loading ? true : undefined}
+          {...role("table")}
         >
           <caption className="cv-table__caption">
             <span id={captionId} className={captionHidden ? "cv-visually-hidden" : undefined}>
@@ -355,8 +426,8 @@ export function Table<T>({
             </span>
             {loading ? <span className="cv-table__loading">{loadingText}</span> : null}
           </caption>
-          <thead>
-            <tr aria-rowindex={1}>
+          <thead {...role("rowgroup")}>
+            <tr aria-rowindex={1} {...role("row")}>
               {columns.map((column) => {
                 const sortable = column.sortable === true && onSortChange !== undefined;
                 const direction = sort?.columnId === column.id ? sort.direction : undefined;
@@ -368,6 +439,7 @@ export function Table<T>({
                     className="cv-table__header"
                     data-numeric={column.numeric === undefined ? undefined : ""}
                     aria-sort={sortable ? (direction ?? "none") : undefined}
+                    {...role("columnheader")}
                   >
                     {sortable ? (
                       <button
@@ -387,7 +459,7 @@ export function Table<T>({
               })}
             </tr>
           </thead>
-          <tbody>{body}</tbody>
+          <tbody {...role("rowgroup")}>{body}</tbody>
         </table>
       </div>
       <div className="cv-visually-hidden" role="status" aria-live="polite" aria-atomic="true">

@@ -468,8 +468,15 @@ truncate; text cells truncate with an ellipsis and keep the full text in the DOM
 header row under CMP-015 skeleton rows and shows the caption's loading words; empty and
 filtered-empty render the host's CMP-026 (`emptyState`) across every column; an error renders CMP-027
 with Retry, spoken once by the table's region (the panel itself is not live). v0 renders every row
-and is not virtualised: above 200 rows it warns in development (#266). Grid mode, selection, row
-actions and the stacked reflow are later E05-S03 slices.
+and is not virtualised: above 200 rows it warns in development (#266). Grid mode, selection and row
+actions are a later E05-S03 slice.
+
+Below the sum of its columns' `minWidthEm` (default 8 each, in the table's own `em`, so 200 % zoom
+counts) the table stacks, one block per row, read in order: the header buttons (wrapped, still
+sorting), then each row with its first cell as the heading line and every other cell as its header
+label then its value. The label is visible but hidden from assistive technology, which takes the
+header from the cell's `columnheader` (the explicit table roles stay while stacked), so a screen
+reader says the header once, then the value.
 
 The polite line clears as a load, a pending sort or a Retry starts, so a result identical to the
 last one (the same row count after a reload, the same failure after a Retry) is said again. The

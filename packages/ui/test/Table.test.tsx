@@ -244,8 +244,11 @@ describe("Table (CMP-049), table mode", () => {
     };
     const host = await mount(<Toggle />);
     const region = host.querySelector(".cv-table__region");
-    const first = observers[0];
-    expect(observers).toHaveLength(1);
+    // The reflow's own observer (on the shell) is covered by the reflow tests; these watch the region.
+    const shell = host.querySelector('[data-cmp="CMP-049"]');
+    const scrollers = (): Stub[] => observers.filter((o) => !o.observed.some((t) => t === shell));
+    const first = scrollers()[0];
+    expect(scrollers()).toHaveLength(1);
     expect(first?.observed).toEqual([region, host.querySelector("table")]);
     expect(within(host).queryByRole("region")).toBeNull();
 
@@ -257,19 +260,237 @@ describe("Table (CMP-049), table mode", () => {
       fireEvent.click(within(host).getByRole("button", { name: "Fewer" }));
     });
     expect(first?.disconnected).toBe(true);
-    expect(observers).toHaveLength(2);
-    expect(observers[1]?.disconnected).toBe(false);
+    expect(scrollers()).toHaveLength(2);
+    const second = scrollers()[1];
+    expect(second?.disconnected).toBe(false);
 
     await act(async () => {
       fireEvent.click(within(host).getByRole("button", { name: "Hide" }));
     });
-    expect(observers[1]?.disconnected).toBe(true);
+    expect(second?.disconnected).toBe(true);
+  });
+
+  it("forces no synchronous reflow on mount when ResizeObserver exists: its first callback measures", async () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const read = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(100);
+    await mount(<Host />);
+    expect(read).not.toHaveBeenCalled();
   });
 
   it("captionHidden hides the caption visually and still names the table", async () => {
     const host = await mount(base({ captionHidden: true }));
     expect(within(host).getByText(CAPTION)).toHaveClass("cv-visually-hidden");
     expect(within(host).getByRole("table", { name: CAPTION })).toBeInTheDocument();
+  });
+});
+
+describe("Table (CMP-049) stacked reflow", () => {
+  interface Reflow {
+    /** Fires the shell's observer as a resize to `width` px of content box. */
+    readonly resize: (width: number) => Promise<void>;
+    /** Fires it as the 1 em probe resizing (a font-size change at the same width). */
+    readonly rescale: () => Promise<void>;
+    readonly observed: Element[];
+    readonly disconnected: () => boolean;
+  }
+
+  /** Stubs ResizeObserver and the shell's computed font size; returns the shell observer's controls. */
+  const stub = (fontPx: { value: number }): (() => Reflow) => {
+    class FakeObserver implements ResizeObserver {
+      readonly observed: Element[] = [];
+      disconnected = false;
+      constructor(readonly callback: ResizeObserverCallback) {
+        all.push(this);
+      }
+      observe(target: Element): void {
+        this.observed.push(target);
+      }
+      unobserve(): void {}
+      disconnect(): void {
+        this.disconnected = true;
+      }
+    }
+    const all: FakeObserver[] = [];
+    vi.stubGlobal("ResizeObserver", FakeObserver);
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) =>
+      el instanceof HTMLElement && el.dataset["cmp"] === "CMP-049"
+        ? ({ fontSize: `${fontPx.value}px` } as CSSStyleDeclaration)
+        : real(el, pseudo),
+    );
+    return () => {
+      const o = all.filter((x) => x.observed.some((t) => t.matches('[data-cmp="CMP-049"]'))).at(-1);
+      if (o === undefined) throw new Error("no shell observer");
+      const fire = async (entries: Partial<ResizeObserverEntry>[]): Promise<void> => {
+        await act(async () => o.callback(entries as ResizeObserverEntry[], o));
+      };
+      const shell = o.observed[0] as Element;
+      return {
+        resize: (width) => fire([{ target: shell, contentRect: { width } as DOMRectReadOnly }]),
+        rescale: () =>
+          fire([
+            { target: o.observed[1] as Element, contentRect: { width: 0 } as DOMRectReadOnly },
+          ]),
+        observed: o.observed,
+        disconnected: () => o.disconnected,
+      };
+    };
+  };
+
+  const layout = (host: HTMLElement): string | undefined =>
+    host.querySelector<HTMLElement>('[data-cmp="CMP-049"]')?.dataset["layout"];
+
+  // COLUMNS give no minWidthEm: 3 x the default 8 em = 24 em; at 16 px that is 384 px.
+  it("stacks below the summed default minimums times the shell's font size, and not at or above it", async () => {
+    const fontPx = { value: 16 };
+    const observer = stub(fontPx);
+    const host = await mount(base());
+    const ro = observer();
+    expect(ro.observed).toEqual([
+      host.querySelector('[data-cmp="CMP-049"]'),
+      host.querySelector(".cv-table__em-probe"),
+    ]);
+    expect(layout(host)).toBeUndefined();
+    await ro.resize(384);
+    expect(layout(host)).toBeUndefined();
+    await ro.resize(383.5);
+    expect(layout(host)).toBe("stacked");
+  });
+
+  it("sums each column's minWidthEm, defaulting the ones without", async () => {
+    const fontPx = { value: 10 };
+    const observer = stub(fontPx);
+    const columns: readonly TableColumn<User>[] = [
+      { ...COLUMNS[0], minWidthEm: 20 } as TableColumn<User>,
+      COLUMNS[1] as TableColumn<User>,
+      { ...COLUMNS[2], minWidthEm: 12 } as TableColumn<User>,
+    ];
+    const host = await mount(base({ columns }));
+    const ro = observer();
+    await ro.resize(399); // (20 + 8 + 12) em x 10 px = 400 px
+    expect(layout(host)).toBe("stacked");
+    await ro.resize(400);
+    expect(layout(host)).toBeUndefined();
+  });
+
+  it("tracks a font-size change at the same width (200 % zoom) through the em probe", async () => {
+    const fontPx = { value: 16 };
+    const observer = stub(fontPx);
+    const host = await mount(base());
+    const ro = observer();
+    await ro.resize(600);
+    expect(layout(host)).toBeUndefined();
+    fontPx.value = 32; // 24 em = 768 px > 600
+    await ro.rescale();
+    expect(layout(host)).toBe("stacked");
+    fontPx.value = 16;
+    await ro.rescale();
+    expect(layout(host)).toBeUndefined();
+  });
+
+  it("switches back to the table layout, dropping the explicit roles and the header labels", async () => {
+    const observer = stub({ value: 16 });
+    const host = await mount(base());
+    const ro = observer();
+    await ro.resize(200);
+    expect(layout(host)).toBe("stacked");
+    expect(host.querySelectorAll(".cv-table__cell-label").length).toBeGreaterThan(0);
+    await ro.resize(800);
+    expect(layout(host)).toBeUndefined();
+    expect(host.querySelector("[role]:not([role=status])")).toBeNull();
+    expect(host.querySelector(".cv-table__cell-label")).toBeNull();
+  });
+
+  it("a zero width (not laid out) keeps the last layout", async () => {
+    const observer = stub({ value: 16 });
+    const host = await mount(base());
+    const ro = observer();
+    await ro.resize(200);
+    await ro.resize(0);
+    expect(layout(host)).toBe("stacked");
+  });
+
+  it("keeps explicit table roles while stacked: table, rowgroups, rows, column headers and cells", async () => {
+    const observer = stub({ value: 16 });
+    const host = await mount(
+      base({ sort: { columnId: "pnl", direction: "ascending" }, onSortChange: () => undefined }),
+    );
+    await observer().resize(200);
+    const table = within(host).getByRole("table", { name: CAPTION });
+    expect(table).toHaveAttribute("role", "table");
+    expect(host.querySelectorAll("thead[role=rowgroup], tbody[role=rowgroup]")).toHaveLength(2);
+    const rows = within(table).getAllByRole("row");
+    expect(rows).toHaveLength(4);
+    for (const row of rows) expect(row).toHaveAttribute("role", "row");
+    expect(rows.map((r) => r.getAttribute("aria-rowindex"))).toEqual(["1", "2", "3", "4"]);
+    const headers = within(table).getAllByRole("columnheader");
+    expect(headers.map((h) => h.getAttribute("role"))).toEqual(Array(3).fill("columnheader"));
+    expect(within(table).getByRole("columnheader", { name: "PnL" })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+    expect(within(table).getAllByRole("cell")).toHaveLength(9);
+  });
+
+  it("stacked cells: the first is the heading line; the others carry a visible, AT-hidden header label before the value", async () => {
+    const observer = stub({ value: 16 });
+    const host = await mount(base());
+    await observer().resize(200);
+    const row = within(host).getAllByRole("row")[1] as HTMLElement;
+    const [first, accounts, pnl] = within(row).getAllByRole("cell");
+    expect(first?.querySelector(".cv-table__cell-label")).toBeNull();
+    expect(first).toHaveTextContent("alex");
+    const label = accounts?.querySelector(".cv-table__cell-label");
+    expect(label).toHaveTextContent("Accounts");
+    expect(label).toHaveAttribute("aria-hidden", "true");
+    expect(label?.nextElementSibling).toHaveTextContent("3");
+    // The accessible name is the value alone: the header comes from the columnheader, once.
+    expect(within(row).getByRole("cell", { name: "+12.50" })).toBe(pnl);
+  });
+
+  it("stays a table without ResizeObserver", async () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    const host = await mount(base());
+    expect(layout(host)).toBeUndefined();
+  });
+
+  it("disconnects its observer on unmount, and re-observes when the threshold changes", async () => {
+    const observer = stub({ value: 16 });
+    const Switch = (): JSX.Element => {
+      const [shown, setShown] = useState(true);
+      const [wide, setWide] = useState(false);
+      const columns = wide ? COLUMNS.map((c) => ({ ...c, minWidthEm: 30 })) : COLUMNS;
+      return (
+        <>
+          <button type="button" onClick={() => setWide(true)}>
+            Wide
+          </button>
+          <button type="button" onClick={() => setShown(false)}>
+            Hide
+          </button>
+          {shown ? base({ columns: columns as readonly TableColumn<User>[] }) : null}
+        </>
+      );
+    };
+    const host = await mount(<Switch />);
+    const first = observer();
+    await act(async () => {
+      fireEvent.click(within(host).getByRole("button", { name: "Wide" }));
+    });
+    expect(first.disconnected()).toBe(true);
+    const second = observer();
+    await second.resize(800); // 90 em x 16 px = 1440 px
+    expect(layout(host)).toBe("stacked");
+    await act(async () => {
+      fireEvent.click(within(host).getByRole("button", { name: "Hide" }));
+    });
+    expect(second.disconnected()).toBe(true);
   });
 });
 
