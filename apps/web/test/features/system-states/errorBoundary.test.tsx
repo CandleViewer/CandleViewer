@@ -126,13 +126,18 @@ describe("PanelErrorBoundary", () => {
   });
 
   it("announces once: Copy and Technical detail leave the alert's text unchanged", async () => {
-    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn(async () => undefined) } });
+    // The copy settles when the test says so, never on a timer: the "Copied" region is
+    // pre-rendered empty, so a check that finds the region before the copy settles sees it empty.
+    let settle = (): void => undefined;
+    const pending = (): Promise<void> => new Promise((resolve) => (settle = resolve));
+    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn(pending) } });
     renderPanel();
     await heading(CRASH_COPY.panel.heading);
     const alert = screen.getByRole("alert");
     const before = alert.textContent;
     fireEvent.click(button(CRASH_COPY.copyDiagnostics));
     expect(await screen.findByRole("status")).toHaveTextContent(CRASH_COPY.copied);
+    settle(); // too late: the check above has already read the region
     fireEvent.click(button(CRASH_COPY.technicalDetail));
     expect(screen.getByText(new RegExp(`crash panel ${ID}`))).toBeVisible();
     expect(alert.textContent).toBe(before);
