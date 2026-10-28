@@ -2337,13 +2337,18 @@ def all_units(t: Texts) -> list[Unit]:
     return spec_units(t.spec, compute(t)) + deck_units(t)
 
 
+EMPTY_PIN = "(empty)"
+
+
 def write_pins(units: list[Unit]) -> str:
     head = (
         "# E33-D06 pins (every unit of the spec and every deck entry): doc, region (heading path "
         f"#occurrence), location, exact normalised text; {len(units)} units.\n# Written by "
         "`--repin-ruled` only; `--check` reads it (never hand-edit; see the tool's G-RULED-PIN).\n"
     )
-    return head + "".join("\t".join(u) + "\n" for u in units)
+    # An empty field is written as EMPTY_PIN so no row ends in a tab (git diff --check).
+    rows = ("\t".join(f or EMPTY_PIN for f in u) for u in units)
+    return head + "".join(r + "\n" for r in rows)
 
 
 def parse_pins(text: str) -> tuple[Unit, ...]:
@@ -2351,7 +2356,8 @@ def parse_pins(text: str) -> tuple[Unit, ...]:
     for ln in text.split("\n"):
         parts = ln.split("\t")
         if ln and not ln.startswith("#") and len(parts) == 4:
-            out.append((parts[0], parts[1], parts[2], parts[3]))
+            a, b, c, d = (("" if f == EMPTY_PIN else f) for f in parts)
+            out.append((a, b, c, d))
     return tuple(out)
 
 
@@ -2774,6 +2780,11 @@ def self_test() -> int:
         return 1
     d0, disk0 = texts_digest(t0), disk_digest()
     ok = True
+    probe: list[Unit] = [("spec", "(top)#1", "shape", ""), ("deck", "x#1", "", "y")]
+    pin_text = write_pins(probe)
+    if parse_pins(pin_text) != tuple(probe) or "\t\n" in pin_text:
+        print("self-test: the pin file does not round-trip an empty field without a trailing tab")
+        ok = False
     for mu in MUTATIONS:
         t1 = mu.edit(copy.deepcopy(t0))
         if texts_digest(t1) == d0:

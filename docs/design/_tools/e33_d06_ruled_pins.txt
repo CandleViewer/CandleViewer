@@ -1,6 +1,6 @@
 # E33-D06 pins (every unit of the spec and every deck entry): doc, region (heading path #occurrence), location, exact normalised text; 542 units.
 # Written by `--repin-ruled` only; `--check` reads it (never hand-edit; see the tool's G-RULED-PIN).
-spec	(top)#1	shape	
+spec	(top)#1	shape	(empty)
 spec	E33-D06 — Engineering hand-off pack for the emulated-algo builders and monitor (SCR-066..SCR-068, SCR-069's OCO half, SCR-070 and SCR-063's Algos tab)#1	heading	# E33-D06 — Engineering hand-off pack for the emulated-algo builders and monitor (SCR-066..SCR-068, SCR-069's OCO half, SCR-070 and SCR-063's Algos tab)
 spec	E33-D06 — Engineering hand-off pack for the emulated-algo builders and monitor (SCR-066..SCR-068, SCR-069's OCO half, SCR-070 and SCR-063's Algos tab)#1	s1	**Ticket:** E33-D06 (#990) · **Epic:** E33 · **Kind:** design hand-off pack, text first · **Version:** v1 (E33-S05 and E33-S06 cite the version they build against, §13) · **Status:** Draft, one PR.
 spec	E33-D06 — Engineering hand-off pack for the emulated-algo builders and monitor (SCR-066..SCR-068, SCR-069's OCO half, SCR-070 and SCR-063's Algos tab)#1	s2	Owner approval pending (#2701): nothing here claims the owner's `approved`, which stands in for every sign-off the ticket names (T Adapt).
