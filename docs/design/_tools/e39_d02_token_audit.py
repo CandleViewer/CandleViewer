@@ -350,7 +350,7 @@ E40-D01 CR-25 hc | color.status.danger.strong | color.status.danger.subtle | hig
 
 # key | value  -- the anatomy constants the boards quote (the computed counts are added in code)
 CONSTANTS_TABLE = """
-boards | 13
+boards | 10
 handoff_blocks | 2
 handoff_lines | 13
 tick_pct | 80
