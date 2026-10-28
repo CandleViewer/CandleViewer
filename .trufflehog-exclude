@@ -8,3 +8,8 @@
 (^|/)services/api/tests/unit/api/test_health_report_router\.py$
 # Postgres detector: placeholder DSNs (u/h/d dummies) for DSN-conversion unit tests
 (^|/)services/api/tests/unit/migrations/test_boot_advisory_lock_unit\.py$
+# PhraseAccessToken detector: a generated ruled-pin table (the design audit tool's --repin-ruled output: one row per
+# ruled unit with its heading path, location and normalised text). One row's heading path contains "phrases" and
+# its text holds a 64-letter shape signature; together they match the detector's keyword + token pattern. Spec text,
+# never a credential; gitleaks still scans the file (E08-D08, PR #4864's gates run).
+(^|/)docs/design/_tools/e08_d08_ruled_pins\.txt$
