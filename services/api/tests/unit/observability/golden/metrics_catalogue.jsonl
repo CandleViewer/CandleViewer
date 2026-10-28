@@ -271,6 +271,8 @@
 ["oms_cancel_all_fold_members", "histogram", ["outcome"], "planned", "E29"]
 ["oms_clock_drift_blocked_total", "counter", [], "planned", "E29"]
 ["oms_clock_halt_trips_total", "counter", [], "planned", "E29"]
+["oms_command_deferred_total", "counter", [], "planned", "E29"]
+["oms_command_unsettled_total", "counter", [], "planned", "E29"]
 ["oms_db_write_seconds", "histogram", ["table"], "planned", "E29"]
 ["oms_exit_chart_denied_total", "counter", [], "planned", "E29"]
 ["oms_exit_deferred_total", "counter", [], "planned", "E29"]
