@@ -34,13 +34,14 @@ from candleviewer.ws.metrics import (
     CV_WS_NAMES,
     EXPORTED_NAMES,
     FRAME_KINDS,
+    PRINCIPAL_LOAD_FAILURE_REASONS,
     WITHHELD_REASONS,
 )
 from candleviewer.ws.outbound import LadderEvent
 from candleviewer.ws.pacing import ConnectionClass
 from candleviewer.ws.pipeline import CLOSE_FLUSH_DEADLINE
 from candleviewer.ws.revocation import RevokedReason
-from candleviewer.ws.sequencing import COUNTED_SNAP_REASONS
+from candleviewer.ws.sequencing import COUNTED_SNAP_REASONS, PUBLISH_DENIED_FAMILIES
 from candleviewer.ws.topics import FAMILIES, MACHINE_KINDS
 from tests.unit.ws._seq_support import ACC_A, USER
 from tests.unit.ws._ws_metrics_session import Run, Scrape, run_session_once
@@ -83,6 +84,8 @@ _CLOSED: Final[dict[str, dict[str, frozenset[str]]]] = {
     "cv_ws_closes_total": {"reason": frozenset({*CLOSE_REASONS, OTHER_CLOSE_REASON})},
     "cv_ws_system_frames_withheld_total": {"reason": frozenset(WITHHELD_REASONS)},
     "cv_ws_audit_failures_total": {"reason": frozenset(AUDIT_FAILURE_REASONS)},
+    "cv_ws_principal_load_failures_total": {"reason": frozenset(PRINCIPAL_LOAD_FAILURE_REASONS)},
+    "cv_ws_publish_denied_total": {"topic": frozenset(PUBLISH_DENIED_FAMILIES)},
     "cv_ws_revoked_total": {"reason": frozenset(get_args(RevokedReason))},
     "cv_ws_resync_total": {"reason": frozenset(COUNTED_SNAP_REASONS)},
     "cv_ws_overflow_total": {"reason": _OVERFLOW},
@@ -94,6 +97,7 @@ _CLOSED: Final[dict[str, dict[str, frozenset[str]]]] = {
     "cv_ws_snapshot_build_seconds": {"topic": _TOPIC_FAMILIES},
     "cv_ws_malformed_updates_total": {"topic": _TOPIC_FAMILIES},
     "cv_ws_subscribe_total": {"topic": _TOPIC_FAMILIES},
+    "cv_ws_snapshot_overdue_total": {"topic": _TOPIC_FAMILIES},
     "cv_ws_upstream_consumers_in_use": {"topic": _TOPIC_FAMILIES},
     "cv_machine_ws_publish_total": {"entity_kind": frozenset(MACHINE_KINDS)},
     "cv_machine_ws_scope_missing_total": {"entity_kind": frozenset(MACHINE_KINDS)},
