@@ -50,10 +50,7 @@ from candleviewer.ws._generated.cvwb_layout import KINDS
 from candleviewer.ws.lifecycle import CLOSE_REASONS, OTHER_CLOSE_REASON
 from candleviewer.ws.metrics import SAMPLE_EVERY
 from candleviewer.ws.pacing import ConnectionClass
-from tests.unit.ws._ws_metrics_session import Run, run_session_once
-
-#: Frames the sampler stamps: one in `SAMPLE_EVERY` per subscription, weighted by it.
-_DELTAS = 2 * SAMPLE_EVERY
+from tests.unit.ws._ws_metrics_session import _DELTAS, Run, run_session_once
 
 
 @pytest.fixture(scope="module")
