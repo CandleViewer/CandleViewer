@@ -497,8 +497,8 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged (within the 23 §4.3 budget)       |
 | Revocation close failures           | —                                    | `ws_session_revocation_close_failures_total`     | E02      | merged; ticket `WsRevocationCloseFailed` |
 | Refused stale snapshots (SR-E17-07) | `ws.permission_snapshot.refused`     | `cv_ws_permission_snapshots_refused_total`       | E02      | merged (#2318)                           |
-| Failed WS principal loads (#2525)   | none, by design; one line per load   | `cv_ws_principal_load_failures_total{reason}`    | D02, E02 | merged (#571); dashboard, no alert       |
-| Deltas denied at publish (#2521)    | none, by design; capped log line     | `cv_ws_publish_denied_total{topic}`              | E02      | merged (#571); dashboard, no alert       |
+| Failed WS principal loads (#2525)   | none, by design; one line per load   | `cv_ws_principal_load_failures_total{reason}`    | D02, E02 | merged (#4862); dashboard, no alert      |
+| Deltas denied at publish (#2521)    | none, by design; capped log line     | `cv_ws_publish_denied_total{topic}`              | E02      | merged (#4862); dashboard, no alert      |
 | Withheld `system` frames (SR-188)   | none, by design (no row per frame)   | `cv_ws_system_frames_withheld_total{reason}`     | I05      | merged (#3125)                           |
 | Audit write failures on the WS path | —                                    | `cv_ws_audit_failures_total{reason}`             | R04      | merged (#2174); `WsAuditWriteFailed`     |
 | Refused WS upgrades (Origin check)  | `auth.ws_origin_refused` (#2269)     | `cv_ws_closes_total{reason="origin_forbidden"}`  | S06      | merged (#2239; audit #2269)              |
