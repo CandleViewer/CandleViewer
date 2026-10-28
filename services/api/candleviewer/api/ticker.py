@@ -58,7 +58,8 @@ def _iso(us: int | None) -> str | None:
 
 
 def serialize_ticker(event: TickerEvent, *, stale: bool) -> dict[str, object]:
-    return {
+    """The REST `Ticker`: a field the merged state lacks is left out, never `null` (E08-T08)."""
+    body: dict[str, object] = {
         "symbol": event.symbol,
         "last_price": _dec(event.last_price),
         "mark_price": _dec(event.mark_price),
@@ -68,8 +69,8 @@ def serialize_ticker(event: TickerEvent, *, stale: bool) -> dict[str, object]:
         "ask1_price": _dec(event.ask1_price),
         "ask1_size": _dec(event.ask1_qty),
         "price_change_pct_24h": _dec(event.price_24h_pcnt),
-        "high_24h": None,
-        "low_24h": None,
+        "high_24h": _dec(event.high_24h),
+        "low_24h": _dec(event.low_24h),
         "volume_24h": _dec(event.volume_24h),
         "turnover_24h": _dec(event.turnover_24h),
         "open_interest": _dec(event.open_interest),
@@ -79,6 +80,7 @@ def serialize_ticker(event: TickerEvent, *, stale: bool) -> dict[str, object]:
         "ts": _iso(event.ts_event),
         "stale": stale,
     }
+    return {key: value for key, value in body.items() if value is not None}
 
 
 def make_ticker_router(

@@ -25,6 +25,8 @@ TICKER_FIELDS: tuple[str, ...] = (
     "turnover_24h",
     "volume_24h",
     "price_24h_pcnt",
+    "high_24h",
+    "low_24h",
     "funding_rate",
     "next_funding_time",
 )

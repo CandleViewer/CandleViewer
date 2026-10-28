@@ -39,13 +39,17 @@ from candleviewer.ingestion.rejection import RejectionLog
 from candleviewer.ingestion.watchdog import FeedHealthEvent, feed_health, prune_unlisted
 from candleviewer.observability.context import spawn
 
-#: A merged ticker is publishable only once these are all known. The optional
-#: remainder (`open_interest_value`, `next_funding_time`) may legitimately stay
-#: absent and is carried forward when it does arrive.
-REQUIRED_FIELDS: frozenset[str] = frozenset(TICKER_FIELDS) - {
-    "open_interest_value",
-    "next_funding_time",
-}
+#: A merged ticker is publishable only once these are all known: a named list (24 §2.3), not
+#: every field a delta can carry. The optional remainder (`open_interest_value`,
+#: `next_funding_time`, `high_24h`, `low_24h`) may legitimately stay absent and is carried
+#: forward when it does arrive.
+REQUIRED_FIELDS: frozenset[str] = frozenset(
+    {
+        "last_price", "mark_price", "index_price", "bid1_price", "bid1_qty", "ask1_price",
+        "ask1_qty", "open_interest", "turnover_24h", "volume_24h", "price_24h_pcnt",
+        "funding_rate",
+    }
+)  # fmt: skip
 WRITE_QUEUE_MAXSIZE = 1024  # bounded write-behind (C-2.18); drop-oldest, counted
 
 
