@@ -231,7 +231,14 @@ def _load(
         tool.write_text(f"#!{sys.executable}\n{body}", encoding="utf-8")
         tool.chmod(0o755)
     outputs = tmp_path / "output"
-    base = {"PROFILE": "A", "FLAG": "on", "RUNS": "3", "DURATION": "", "WS_PATH": "/ws"}
+    base = {
+        "PROFILE": "A",
+        "FLAG": "on",
+        "RUNS": "3",
+        "DURATION": "",
+        "WS_PATH": "/ws",
+        "FEEDER": "inproc",
+    }
     done = subprocess.run(
         [bash, "-e", "-c", _named("WS load run")["run"]],
         cwd=tmp_path,
@@ -282,6 +289,24 @@ def test_the_prefix_the_results_pr_dispatches_reaches_every_run(tmp_path: Path) 
     assert len(calls) == 3 and all(c[-2:] == ["--ws-path", "/api/v1/ws"] for c in calls)
 
 
+@pytest.mark.parametrize("feeder", ["inproc", "proc"])
+def test_the_feeder_input_reaches_every_run_through_env_and_inproc_is_the_default(
+    tmp_path: Path, feeder: str
+) -> None:
+    """#571: the `feeder` input is a choice defaulting to `inproc` (the runs as before), reaches
+    the step as `FEEDER` (never an expression in the script) and every run as `--feeder`."""
+    inputs = _doc()[True]["workflow_dispatch"]["inputs"]
+    assert inputs["feeder"]["options"] == ["inproc", "proc"]
+    assert inputs["feeder"]["default"] == "inproc"
+    step = _named("WS load run")
+    assert step["env"]["FEEDER"] == "${{ inputs.feeder }}"
+    assert '"$FEEDER"' in step["run"] and "inputs.feeder" not in step["run"]
+    done, calls, _ = _load(tmp_path, "0", FEEDER=feeder)
+    assert done.returncode == 0, done.stderr
+    assert len(calls) == 3
+    assert all(c[c.index("--feeder") + 1] == feeder for c in calls)
+
+
 @pytest.mark.parametrize(("profile", "runs"), [("selfcheck", "1"), ("W5", "1")])
 def test_the_self_check_and_w5_run_once(
     tmp_path: Path, profile: str, runs: str
@@ -299,6 +324,9 @@ def test_the_self_check_and_w5_run_once(
         {"RUNS": "4"},
         {"FLAG": "maybe"},
         {"DURATION": "9;ls"},
+        {"FEEDER": "x"},
+        {"FEEDER": "proc --staging"},
+        {"FEEDER": ""},
     ],
 )
 def test_an_input_that_fails_validation_ends_the_step_before_uv_and_leaves_no_run_count(

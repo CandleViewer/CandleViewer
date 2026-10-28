@@ -30,6 +30,10 @@ name: perf-ws-load
 # even after a red one, and its exit code is the worst of them. The checkout drops its token
 # (nothing here pushes or fetches again), as on every other workflow; the machine profile is named,
 # as the soak names its own, so a baseline's key does not depend on the runner's CPU count.
+# The `feeder` input (#571) moves the bench feeder out of the backend's process (`proc`: a child
+# on k6's cpus 4-7, inside the backend's systemd scope and its quota), so the backend's CPU and loop
+# are the gateway's alone; `inproc` (the default) is the feeder on the backend's loop, as before.
+# Runs and baselines of one mode are never gated against the other.
 on:
   workflow_dispatch:
     inputs:
@@ -56,6 +60,11 @@ on:
         description: "Where the fixture serves the gateway and k6 connects: /ws, or a prefix and /ws such as /api/v1/ws"
         type: string
         default: "/ws"
+      feeder:
+        description: "The bench feeder on the backend's loop (inproc, as before) or in a child process on k6's cpus (proc: the backend's numbers are the gateway's alone)"
+        type: choice
+        options: [inproc, proc]
+        default: inproc
 permissions:
   actions: read # the guard lists the soak's jobs
   contents: read
@@ -129,7 +138,7 @@ jobs:
           tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
           ./k6 version | grep -F "k6 ${K6_VERSION} "
           echo "K6_BIN=$dir/k6" >> "$GITHUB_ENV"
-      - name: WS load run (${{ inputs.profile }}, flag ${{ inputs.flag }}, ${{ inputs.runs }} run(s))
+      - name: WS load run (${{ inputs.profile }}, flag ${{ inputs.flag }}, ${{ inputs.runs }} run(s), feeder ${{ inputs.feeder }})
         id: load
         working-directory: services/api
         env:
@@ -138,13 +147,15 @@ jobs:
           RUNS: ${{ inputs.runs }}
           DURATION: ${{ inputs.duration_s }}
           WS_PATH: ${{ inputs.ws_path }}
+          FEEDER: ${{ inputs.feeder }}
         run: |
           set -uo pipefail
           set +e # the runner's bash -e would end the step at the first red run
           [[ "$FLAG" =~ ^(on|off)$ ]] || { echo "flag must be on or off" >&2; exit 2; }
           [[ "$RUNS" =~ ^[1-3]$ ]] || { echo "runs must be 1, 2 or 3" >&2; exit 2; }
           [[ "$WS_PATH" =~ ^(/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)*/ws$ ]] || { echo "ws_path must be /ws or a prefix and /ws" >&2; exit 2; }
-          extra=(--ws-path "$WS_PATH")
+          [[ "$FEEDER" =~ ^(inproc|proc)$ ]] || { echo "feeder must be inproc or proc" >&2; exit 2; }
+          extra=(--feeder "$FEEDER" --ws-path "$WS_PATH")
           if [ -n "$DURATION" ]; then
             [[ "$DURATION" =~ ^[0-9]+$ ]] || { echo "duration_s must be whole seconds" >&2; exit 2; }
             extra+=(--duration-s "$DURATION")
