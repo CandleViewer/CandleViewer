@@ -44,10 +44,13 @@ test.describe("Default load path (#3410)", () => {
     try {
       const win = await app.firstWindow();
 
-      // The root element renders the default route. Without a backend session that is the
-      // sign-in screen (R-001).
+      // The root element renders a route. No backend answers the renderer here (its /api/v1 calls
+      // resolve against app://, which it cannot fetch), so the boot opens R-902's takeover
+      // (SCR-159 backend-unreachable) rather than a sign-in that could not reach a server.
       await expect(win.locator("#root main")).toBeVisible();
-      await expect(win.getByRole("heading", { level: 1, name: /sign in/i })).toBeVisible();
+      await expect(
+        win.getByRole("heading", { level: 1, name: /can't reach the server/i }),
+      ).toBeVisible();
       const loaded = new URL(win.url());
       expect(`${loaded.protocol}//${loaded.host}`).toBe("app://candleviewer");
 
