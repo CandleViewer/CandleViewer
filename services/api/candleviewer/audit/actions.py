@@ -241,6 +241,12 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "scanner_preset.created",
         "scanner_preset.updated",
         "scanner_preset.deleted",
+        # E08-T07 (#4706): watchlist writes, written ahead of the change to the row (C-2.9), with
+        # `object_kind` `watchlist` and the list's id; the state carries the name, the symbol count
+        # and the version, never the symbols (24 Sec.15.5).
+        "watchlist.created",
+        "watchlist.updated",
+        "watchlist.deleted",
         "recorder.start",
         "recorder.stop",
         # #2188 (orchestrator ruling): `update_manual` changed a manual entry's streams or depth.

@@ -3492,7 +3492,7 @@ Conflict detection (two actions on one chord) is a save-time application check w
 #### 3.8.6 `watchlists`
 
 E08-T07 (#4706): the lists `/watchlists` persists for SCR-100 and SCR-101 (`docs/design/E08/E08-D07.md`
-§12 C-4, C-5). Specified by the contract slice; its migration ships with the router slice. A list
+§12 C-4, C-5). Shipped as `0055_watchlists`. A list
 belongs to one user and is read and written only by its owner: the API answers another user's list
 id as an id that does not exist (`404`). `symbols` is the list in order, at most 200 and none twice;
 each is a trading USDT linear perpetual of the instrument catalogue when it joins the list (the
@@ -4933,6 +4933,7 @@ NAMING_CONVENTION = {
 | `0051_replay_symbols_streams`   | `replay_sessions.symbols`, `streams` and CHECKs `rps_symbols`, `rps_streams` (§3.6.4): every symbol and stream a session replays, what the retention guard reads; existing rows backfilled — **#2674** (E26 G7); the downgrade refuses while a row holds a list the backfill cannot rebuild                                             |
 | `0053_tg_frozen_after_draft`    | trigger `trg_tg_write_once` (§3.3.2): once a group leaves `draft` it never returns, and `symbol`, `side`, `entry_type`, `origin`, `is_paper`, `algo`, `algo_params`, `created_at`, `origin_rule_id` and `origin_rule_run_id` are frozen — **E28-T05 #909** (SEC-2-04); the downgrade (rollback only) restores 0039's function           |
 | `0054_scanner_presets`          | `scanner_presets` (§3.8.7) with `ux_sp_name` and `ux_sp_default`, and `scanner` added to `lp_kind` (§3.8.1) — **E08-T09 #4708**; the downgrade refuses while any preset or a `scanner` pane exists                                                                                                                                      |
+| `0055_watchlists`               | `watchlists` (§3.8.6): a user's lists, `symbols` in order and at most 200, `version` the guard of a replace, unique index `ux_wl_name` on `(user_id, lower(name))` — **E08-T07 #4706**; the downgrade refuses while any list exists                                                                                                     |
 
 ---
 

@@ -2064,6 +2064,25 @@ scanner_presets = Table(
     Index("ux_sp_default", "user_id", unique=True, postgresql_where=text("is_default")),
 )
 
+#: `watchlists` (E08-T07 #4706, revision 0055_watchlists): 21 Sec.3.8.6.
+watchlists = Table(
+    "watchlists",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("name", Text, nullable=False),
+    Column("symbols", ARRAY(Text), nullable=False, server_default=text("'{}'")),
+    Column("columns", ARRAY(Text), nullable=False, server_default=text("'{}'")),
+    Column("version", Integer, nullable=False, server_default=text("1")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("char_length(name) BETWEEN 1 AND 80", name="wl_name_len"),
+    CheckConstraint("cardinality(symbols) <= 200", name="wl_symbols_max"),
+    CheckConstraint("cardinality(columns) <= 32", name="wl_columns_max"),
+    CheckConstraint("version >= 1", name="wl_version"),
+    Index("ux_wl_name", "user_id", text("lower(name)"), unique=True),
+)
+
 
 #: `settings` (E42-T01, revision 0025_settings): 21-database-schema.md Sec.3.9, `settings` only.
 settings = Table(
