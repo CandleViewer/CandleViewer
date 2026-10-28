@@ -4,9 +4,25 @@ import { tabStopAfter, tabbables } from "../src/components/internal/tabbable.js"
 
 afterEach(() => document.body.replaceChildren());
 
-const html = (markup: string): HTMLElement => {
+/**
+ * One element built node by node, so no markup is parsed: its attributes (a boolean one such as
+ * `disabled` takes ""), then its text or its child elements.
+ */
+const el = (
+  tag: string,
+  attributes: Readonly<Record<string, string>> = {},
+  content: string | readonly HTMLElement[] = [],
+): HTMLElement => {
+  const element = document.createElement(tag);
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+  if (typeof content === "string") element.textContent = content;
+  else element.append(...content);
+  return element;
+};
+/** A fresh root in the body that holds `children`, in order. */
+const fixture = (...children: HTMLElement[]): HTMLElement => {
   const root = document.body.appendChild(document.createElement("div"));
-  root.innerHTML = markup;
+  root.append(...children);
   return root;
 };
 const names = (elements: HTMLElement[]): string[] =>
@@ -14,13 +30,17 @@ const names = (elements: HTMLElement[]): string[] =>
 
 describe("tabbables", () => {
   it("keeps tab stops in DOM order: links, controls, tabindex 0; contenteditable=false is none", () => {
-    const root = html(`
-      <a data-n="link" href="#x">x</a><a data-n="no-href">y</a>
-      <button data-n="button">b</button><input data-n="input" />
-      <input data-n="hidden-input" type="hidden" />
-      <select data-n="select"></select><textarea data-n="textarea"></textarea>
-      <div data-n="zero" tabindex="0"></div>
-      <div data-n="no-edit" contenteditable="false"></div>`);
+    const root = fixture(
+      el("a", { "data-n": "link", href: "#x" }, "x"),
+      el("a", { "data-n": "no-href" }, "y"),
+      el("button", { "data-n": "button" }, "b"),
+      el("input", { "data-n": "input" }),
+      el("input", { "data-n": "hidden-input", type: "hidden" }),
+      el("select", { "data-n": "select" }),
+      el("textarea", { "data-n": "textarea" }),
+      el("div", { "data-n": "zero", tabindex: "0" }),
+      el("div", { "data-n": "no-edit", contenteditable: "false" }),
+    );
     expect(names(tabbables(root))).toEqual([
       "link",
       "button",
@@ -32,29 +52,32 @@ describe("tabbables", () => {
   });
 
   it("drops disabled controls, those in a disabled fieldset, and tabindex=-1", () => {
-    const root = html(`
-      <button data-n="off" disabled>a</button>
-      <fieldset disabled><input data-n="in-fieldset" /></fieldset>
-      <button data-n="roving" tabindex="-1">r</button>
-      <button data-n="t2" aria-disabled="true">t2</button>`);
+    const root = fixture(
+      el("button", { "data-n": "off", disabled: "" }, "a"),
+      el("fieldset", { disabled: "" }, [el("input", { "data-n": "in-fieldset" })]),
+      el("button", { "data-n": "roving", tabindex: "-1" }, "r"),
+      el("button", { "data-n": "t2", "aria-disabled": "true" }, "t2"),
+    );
     expect(names(tabbables(root))).toEqual(["t2"]);
   });
 
   it("drops elements under a hidden or inert ancestor", () => {
-    const root = html(`
-      <div hidden><button data-n="hidden">h</button></div>
-      <div inert><button data-n="inert">i</button></div>
-      <button data-n="seen">s</button>`);
+    const root = fixture(
+      el("div", { hidden: "" }, [el("button", { "data-n": "hidden" }, "h")]),
+      el("div", { inert: "" }, [el("button", { "data-n": "inert" }, "i")]),
+      el("button", { "data-n": "seen" }, "s"),
+    );
     expect(names(tabbables(root))).toEqual(["seen"]);
   });
 });
 
 describe("tabStopAfter", () => {
   it("finds the next stop after an element, skipping its own subtree and a given node", () => {
-    const root = html(`
-      <button data-n="from"><span tabindex="0" data-n="inner"></span></button>
-      <div data-n="skip"><button data-n="skipped">s</button></div>
-      <button data-n="next">n</button>`);
+    const root = fixture(
+      el("button", { "data-n": "from" }, [el("span", { tabindex: "0", "data-n": "inner" })]),
+      el("div", { "data-n": "skip" }, [el("button", { "data-n": "skipped" }, "s")]),
+      el("button", { "data-n": "next" }, "n"),
+    );
     const from = root.querySelector<HTMLElement>("[data-n=from]");
     const skip = root.querySelector("[data-n=skip]");
     if (from === null) throw new Error("no from");
@@ -63,7 +86,7 @@ describe("tabStopAfter", () => {
   });
 
   it("is undefined when nothing follows", () => {
-    const root = html(`<button data-n="only">o</button>`);
+    const root = fixture(el("button", { "data-n": "only" }, "o"));
     const only = root.querySelector<HTMLElement>("button");
     if (only === null) throw new Error("no button");
     expect(tabStopAfter(only, null)).toBeUndefined();
