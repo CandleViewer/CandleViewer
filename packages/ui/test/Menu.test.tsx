@@ -44,6 +44,15 @@ const openWith = async (keys: string): Promise<void> => {
   await press(keys);
 };
 
+/** Lets a macrotask pass (the menu's report and context-key windows end there). */
+const tick = async (): Promise<void> => {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+};
+
 describe("Menu (CMP-041) trigger", () => {
   it("is an APG menu button: haspopup, expanded, controls the menu it names", async () => {
     await renderMenu();
@@ -460,6 +469,59 @@ describe("Menu (CMP-041) dismissal and layers", () => {
     expect(changes).toEqual([true, false]);
   });
 
+  it("controlled: a host that refuses the close still hears the next outside press", async () => {
+    const onOpenChange = fn();
+    await mount(
+      <div>
+        <Menu
+          open
+          onOpenChange={onOpenChange}
+          trigger={<Button>Row actions</Button>}
+          items={treeRow()}
+        />
+        <Button>After</Button>
+      </div>,
+    );
+    const after = page.getByRole("button", { name: "After" });
+    await userEvent.click(after);
+    expect(onOpenChange.mock.calls).toEqual([[false]]);
+    await tick();
+    await userEvent.click(after);
+    expect(onOpenChange.mock.calls).toEqual([[false], [false]]);
+    expect(menu()).toBeVisible();
+  });
+
+  it("unmounting while open removes its outside-press listener and its layer", async () => {
+    const onOpenChange = fn();
+    const onDialog = fn();
+    let hide = noop;
+    function Host(): JSX.Element {
+      const [show, setShow] = useState(true);
+      hide = () => setShow(false);
+      return show ? (
+        <Menu
+          trigger={<Button>Row actions</Button>}
+          items={alertRow()}
+          onOpenChange={onOpenChange}
+        />
+      ) : (
+        <Dialog open title="Chart settings" onOpenChange={onDialog}>
+          <Button>Inside</Button>
+        </Dialog>
+      );
+    }
+    await mount(<Host />);
+    await openWith("{Enter}");
+    await press("{ArrowDown}{ArrowRight}");
+    expect(onOpenChange.mock.calls).toEqual([[true]]);
+    await act(async () => hide());
+    await userEvent.click(page.getByRole("button", { name: "Inside" }));
+    expect(onOpenChange.mock.calls).toEqual([[true]]);
+    // Neither menu level is left on the layer stack: Esc reaches the dialog.
+    await press("{Escape}");
+    expect(onDialog).toHaveBeenCalledWith(false, "escape");
+  });
+
   it("inside a Dialog, Esc closes only the menu; the next Esc closes the dialog", async () => {
     const onDialog = fn();
     await mount(
@@ -630,7 +692,7 @@ describe("Menu (CMP-041) submenus", () => {
     expect(onOpenChange.mock.calls).toEqual([[true], [false]]);
   });
 
-  it("a gated submenu item never opens; it re-shows its reason", async () => {
+  it("a gated submenu item never opens; a press re-shows its reason, a plain → does not", async () => {
     await renderMenu({
       items: alertRow(noop, { disabledReason: "Only the owner can snooze shared alerts." }),
     });
@@ -638,7 +700,24 @@ describe("Menu (CMP-041) submenus", () => {
     await press("{ArrowDown}{ArrowRight}");
     expect(submenu()).toBeNull();
     expect(snoozeItem()).toHaveFocus();
+    expect(page.getByRole("status")).toHaveTextContent("");
+    await press("{Enter}");
+    expect(submenu()).toBeNull();
     expect(page.getByRole("status")).toHaveTextContent("Only the owner can snooze shared alerts.");
+  });
+
+  it("Home, End and type-ahead work inside a submenu", async () => {
+    await renderMenu({ items: alertRow(), now: () => 1000 });
+    await openWith("{Enter}");
+    await press("{ArrowDown}{ArrowRight}{End}");
+    expect(focused()).toBe("Until tomorrow");
+    await press("{Home}");
+    expect(focused()).toBe("15 m");
+    await press("1");
+    expect(focused()).toBe("1 h");
+    await press("u");
+    expect(focused()).toBe("1 h"); // "1u" matches nothing: focus stays
+    expect(snoozeItem()).toHaveAttribute("aria-expanded", "true");
   });
 
   it("a reason inside a submenu still renders the status region", async () => {
@@ -821,6 +900,44 @@ describe("Menu (CMP-041) context menu", () => {
     expect(focused()).toBe("Acknowledge");
     await act(async () => close());
     expect(row()).toHaveFocus();
+  });
+
+  it("after the key is released, a contextmenu with no press is not swallowed", async () => {
+    const onOpenChange = fn();
+    await mount(<ContextHost onOpenChange={onOpenChange} />);
+    act(() => row().focus());
+    await press("{Shift>}{F10}{/Shift}");
+    await tick();
+    await press("{Escape}");
+    expect(row()).toHaveFocus();
+    await act(async () => {
+      row().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    expect(contextMenu()).toBeVisible();
+    expect(onOpenChange.mock.calls).toEqual([[true], [false], [true]]);
+  });
+
+  it("a target mounted after the menu is bound on the menu's next render", async () => {
+    function Late(): JSX.Element {
+      const target = useRef<HTMLDivElement>(null);
+      const [shown, setShown] = useState(false);
+      return (
+        <div>
+          <Button onClick={() => setShown(true)}>Show row</Button>
+          {shown ? (
+            <div ref={target} tabIndex={0} role="row" aria-label="BTCUSDT row">
+              BTCUSDT
+            </div>
+          ) : null}
+          <Menu contextTarget={target} aria-label="BTCUSDT actions" items={alertRow()} />
+        </div>
+      );
+    }
+    await mount(<Late />);
+    await userEvent.click(page.getByRole("button", { name: "Show row" }));
+    act(() => row().focus());
+    await press("{Shift>}{F10}{/Shift}");
+    expect(contextMenu()).toBeVisible();
   });
 
   it("unmounting removes its listeners: the keys and the right-click reach the page again", async () => {

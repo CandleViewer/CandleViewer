@@ -232,6 +232,73 @@ interface MenuRoot {
 }
 
 /**
+ * The context trigger on `host`: a right-click at the pointer, Shift+F10 or the Menu key on the focused element.
+ * The key also makes the browser fire `contextmenu`; a right-click always presses first, so `byKey` tells them
+ * apart. The flag ends with the key's `contextmenu`, a press, another key, or a macrotask after the key is released
+ * (where no `contextmenu` follows), so a later synthetic `contextmenu` is never swallowed. Returns the teardown.
+ */
+function listenForContext(
+  host: HTMLElement,
+  open: (from: HTMLElement, at: AnchorReference) => void,
+): () => void {
+  let byKey = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const isContextKey = (event: globalThis.KeyboardEvent): boolean =>
+    event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey);
+  const onKey = (event: globalThis.KeyboardEvent): void => {
+    if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (!isContextKey(event)) {
+      if (event.key !== "Shift") byKey = false;
+      return;
+    }
+    event.preventDefault();
+    clearTimeout(timer);
+    byKey = true;
+    const from =
+      event.target instanceof HTMLElement && host.contains(event.target) ? event.target : host;
+    open(from, from);
+  };
+  const onContext = (event: globalThis.MouseEvent): void => {
+    event.preventDefault();
+    if (byKey) {
+      byKey = false;
+      return;
+    }
+    const active = document.activeElement;
+    const pressed = event.target instanceof Element ? event.target.closest(FOCUSABLE) : null;
+    const from =
+      active instanceof HTMLElement && active !== host && host.contains(active)
+        ? active
+        : pressed instanceof HTMLElement && host.contains(pressed)
+          ? pressed
+          : host;
+    open(from, pointAnchor(event.clientX, event.clientY));
+  };
+  const onDown = (): void => {
+    byKey = false;
+  };
+  const onKeyUp = (event: globalThis.KeyboardEvent): void => {
+    if (!byKey || (event.key !== "ContextMenu" && event.key !== "F10")) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      byKey = false;
+    }, 0);
+  };
+  // Bubbling to the document: the keys move focus into the menu, so their keyup is not on the target.
+  host.addEventListener("keydown", onKey);
+  document.addEventListener("keyup", onKeyUp);
+  host.addEventListener("contextmenu", onContext);
+  host.addEventListener("pointerdown", onDown);
+  return () => {
+    clearTimeout(timer);
+    host.removeEventListener("keydown", onKey);
+    document.removeEventListener("keyup", onKeyUp);
+    host.removeEventListener("contextmenu", onContext);
+    host.removeEventListener("pointerdown", onDown);
+  };
+}
+
+/**
  * CMP-041 Menu: the WAI-ARIA APG Menu Button, or a context menu. Enter, Space or ↓ on the trigger opens it on its
  * first item, ↑ on its last; a menu whose items all pick one value (radio) opens on its checked item. The arrows
  * wrap and reach every item, disabled, busy and gated ones too, none of which is ever activated; type-ahead moves to
@@ -279,6 +346,10 @@ export function Menu(props: MenuProps): JSX.Element {
   const triggerId = triggerElement?.props.id ?? `${id}-trigger`;
 
   // What this menu last reported or rendered: an outside press and the focus loss it causes report one close.
+  // A host that ignores the report (controlled, it keeps `open`) renders nothing new, so after a macrotask the
+  // rendered state wins again and the next Esc or outside press is reported too.
+  const rendered = useRef(open);
+  rendered.current = open;
   const reported = useRef(open);
   reported.current = open;
   const change = (next: boolean): void => {
@@ -286,6 +357,9 @@ export function Menu(props: MenuProps): JSX.Element {
     reported.current = next;
     setHeld(next);
     onOpenChange?.(next);
+    setTimeout(() => {
+      reported.current = rendered.current;
+    }, 0);
   };
   const latest = useRef(change);
   latest.current = change;
@@ -326,50 +400,29 @@ export function Menu(props: MenuProps): JSX.Element {
     latest.current(true);
   });
 
-  // The context trigger: a right-click at the pointer, Shift+F10 or the Menu key on the focused element. The key
-  // also makes the browser fire `contextmenu`; a right-click always presses first, so `byKey` tells them apart.
+  // The context target's element, re-resolved after every render: a target swapped or mounted after the Menu
+  // is bound on the Menu's next render (a target that mounts later without one is never bound).
+  const bound = useRef<{ element: HTMLElement | null; release: () => void }>({
+    element: null,
+    release: () => undefined,
+  });
   useEffect(() => {
-    const host = contextTarget?.current ?? null;
-    if (host === null) return undefined;
-    let byKey = false;
-    const onKey = (event: globalThis.KeyboardEvent): void => {
-      if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return;
-      const isKey = event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey);
-      if (!isKey) return;
-      event.preventDefault();
-      byKey = true;
-      const from =
-        event.target instanceof HTMLElement && host.contains(event.target) ? event.target : host;
-      openFrom.current(from, from);
-    };
-    const onContext = (event: globalThis.MouseEvent): void => {
-      event.preventDefault();
-      if (byKey) {
-        byKey = false;
-        return;
-      }
-      const active = document.activeElement;
-      const pressed = event.target instanceof Element ? event.target.closest(FOCUSABLE) : null;
-      const from =
-        active instanceof HTMLElement && active !== host && host.contains(active)
-          ? active
-          : pressed instanceof HTMLElement && host.contains(pressed)
-            ? pressed
-            : host;
-      openFrom.current(from, pointAnchor(event.clientX, event.clientY));
-    };
-    const onDown = (): void => {
-      byKey = false;
-    };
-    host.addEventListener("keydown", onKey);
-    host.addEventListener("contextmenu", onContext);
-    host.addEventListener("pointerdown", onDown);
+    const element = contextTarget?.current ?? null;
+    if (element === bound.current.element) return;
+    bound.current.release();
+    const release =
+      element === null
+        ? () => undefined
+        : listenForContext(element, (from, at) => openFrom.current(from, at));
+    bound.current = { element, release };
+  });
+  useEffect(() => {
+    const binding = bound;
     return () => {
-      host.removeEventListener("keydown", onKey);
-      host.removeEventListener("contextmenu", onContext);
-      host.removeEventListener("pointerdown", onDown);
+      binding.current.release();
+      binding.current = { element: null, release: () => undefined };
     };
-  }, [contextTarget]);
+  }, []);
 
   const root: MenuRoot = {
     leaving,
@@ -594,7 +647,9 @@ function MenuSurface({
     if (item === undefined) return;
     const state = stateOf(item);
     const reason = reasonOf(item);
-    if (state === "gated" && reason !== undefined) root.refuse(itemId(index), reason);
+    // A press (Enter, Space, a click) re-shows a T2 reason; a plain → on a gated submenu item does not.
+    if (state === "gated" && reason !== undefined && how !== "right")
+      root.refuse(itemId(index), reason);
     if (state !== undefined) return;
     if (opensSubmenu(item)) {
       openSub(index);
@@ -677,6 +732,7 @@ function MenuSurface({
 
   const onMenuFocusOut = (event: FocusEvent<HTMLDivElement>): void => {
     const next = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+    // Focus lost to nothing (the window blurs) keeps it open; an outside press is caught by `pointerdown`.
     if (!open || root.leaving.current || next === null) return;
     if (surface.current?.contains(next) === true || layer.inLayerAbove(next)) return;
     onLeave(next);

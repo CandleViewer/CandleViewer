@@ -344,4 +344,14 @@ portals into the dialog's layer. An item with `items` opens a submenu: the same 
 (`right-start`, flipped to the left at the edge), each submenu its own layer, so Esc closes it alone. With
 `contextTarget` (a ref) instead of `trigger`, the menu is a context menu: no trigger renders, a right-click opens it at
 the pointer through a zero-size virtual reference (positioning only) and `Shift+F10` or the Menu key below the focused
-element; the target should be focusable, as a grid row is.
+element; the target should be focusable, as a grid row is. The target should mount with the menu: one swapped or
+mounted later is bound on the menu's next render.
+
+Submenu decisions (E05-S03):
+
+- Hover does not open a submenu; only `→`, Enter, Space or a click does.
+- There is no safe triangle: the pointer on another item of the parent closes the open submenu.
+- A gated (T2) submenu item never opens; a press (Enter, Space or a click) re-shows its reason, `→` does not.
+- A submenu always opens on its first item; a checked radio item in it does not choose where it starts.
+- No RTL mirroring yet: `→` opens and `←` closes in every direction, and a submenu opens `right-start`
+  (a known deferral, to be tracked in its own issue).
