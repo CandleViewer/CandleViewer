@@ -2606,6 +2606,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_snapshot_overdue_total",
+        "counter",
+        "subscriptions",
+        ("topic",),
+        "Subscriptions still snapshot_pending past their family's bound, once per wait (23 W11); "
+        "the topic label holds the topic family.",
+        "dashboard only (sustained growth: a symbol whose merged state never completes)",
+        _L,
+        "E08",
+        max_series=1,  # `ticker`, the one family with a bound (23 W11)
+        exported=True,
+    ),
+    _s(
         "cv_ws_fanout_seconds",
         "histogram",
         "seconds",

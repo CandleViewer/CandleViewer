@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import re
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Final, Literal
@@ -645,6 +645,15 @@ def _entity(seg: str, instrument_known: Callable[[str], bool] | None) -> tuple[s
 def _spelled_once(part: str) -> bool:
     """A `:` part of a `param` (§6.1): not empty, and a whole number has no leading zero."""
     return bool(part) and (not part.isdecimal() or _WHOLE_RE.fullmatch(part) is not None)
+
+
+def check_instruments(
+    symbols: Iterable[str], instrument_known: Callable[[str], bool] | None
+) -> None:
+    """E08-T08: each symbol a batched `ticker` names is refused as `ticker.{symbol}` refuses its
+    own (`unsupported_symbol`, §5.2): checked against the instrument cache, not only its shape."""
+    for symbol in symbols:
+        _segment("symbol", symbol, instrument_known)
 
 
 def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | None) -> Any:

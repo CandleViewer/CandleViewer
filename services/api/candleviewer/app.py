@@ -502,6 +502,7 @@ from candleviewer.ws.service import WsService
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import (
     IngestionUpstreamSink,
+    InstrumentRevisions,
     KillSwitchView,
     MachineRevocationAudit,
     StorePrincipalLoader,
@@ -514,6 +515,7 @@ from candleviewer.ws_wiring import (
     loop_call_later,
     recorder_topic,
     series_stale,
+    ticker_topic,
     wallet_topic,
 )
 
@@ -1753,6 +1755,13 @@ def create_app(
     # E16-T08 (#492): the recorder module's `recorder` topic; the recording status attaches below.
     ws_recorder = recorder_topic(ws_sequencing)
     snapshot_adapters["recorder"] = ws_recorder
+    # E08-T08 (#4707): the ingestion module's `ticker` topics, snapped from the ticker stream's
+    # merged state and fed by its bus topic; with the instrument revisions (23 §7.4), the runtime's.
+    ws_ticker = ticker_topic(ctx, ws_sequencing)
+    snapshot_adapters["ticker"] = ws_ticker
+    ws_revisions = InstrumentRevisions(
+        ctx.bus.bus, resolved.environment.value, ws_sequencing.instrument_revision
+    )
     # E17-T08: `sub` is authorised and snapped from `machine_states`, built above with the feed.
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
@@ -1789,7 +1798,9 @@ def create_app(
     app.state.ws_registry = ws_registry
     app.state.ws_hub = ws_hub
     app.state.ws_events = ws_events = WsEvents(ws_registry, ws_hub, kill_switch)
-    app.state.ws_runtime = WsRuntime(ws_hub, ws_upstream, resolved, machines=machine_states)
+    app.state.ws_runtime = WsRuntime(
+        ws_hub, ws_upstream, resolved, machines=machine_states, feeds=(ws_ticker, ws_revisions)
+    )
     # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, off by default. Without a config
     # the gateway keeps its 1 024-frame push bound: the flag swaps the bound, never removes it.
     ws_backpressure = (
