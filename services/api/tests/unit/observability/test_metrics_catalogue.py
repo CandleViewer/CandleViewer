@@ -233,6 +233,7 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_account_health_transitions_total"].labels("down", "no_success").inc()
     r["cv_wallet_reconcile_total"].labels("failed").inc()
     r["cv_key_rotation_notices_total"].labels("overdue").inc()
+    r["cv_account_disabled_total"].labels("flat").inc()
     r["cv_keys_rotation_state"].labels("overdue").set(1)
     r["cv_gc_pause_seconds"].labels("2").observe(0.06)
     r["cv_sizer_outcomes_total"].labels("ok", "none").inc()

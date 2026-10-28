@@ -547,8 +547,9 @@ operations:
     permissions: ['accounts:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
+    request:
+      json: {enabled: false}
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /exchange-accounts/{accountId}/consequences:
     permissions: ['accounts:write']
@@ -1781,8 +1782,10 @@ account_scope:
       viewer: {granted: admitted, foreign: 403 forbidden, absent: 403 forbidden}
   PATCH /exchange-accounts/{accountId}:
     step_up: accounts
+    request:
+      json: {enabled: false}
     cells:
-      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      owner: {granted: 503 store_unavailable, foreign: 503 store_unavailable, absent: 503 store_unavailable}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
       viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
   DELETE /exchange-accounts/{accountId}:

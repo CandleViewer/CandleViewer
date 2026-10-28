@@ -149,6 +149,12 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # key failed it (threat model E27-accounts §8.1, SR-E27-09; system actor, write-ahead).
         "account.tested",
         "account.disabled_by_policy",
+        # E27-S04 (#898 B3b2): `updateExchangeAccount`'s disable and its other changes (a re-enable,
+        # a relabel), each written ahead of its commit (C-2.9), a disable or re-enable naming the
+        # `challenge_id` of the `accounts` grant it spent; a refusal after the gate is the same
+        # action with outcome `denied` and its code. A repeat writes none.
+        "account.disabled",
+        "account.updated",
         # E27-T03 (#836, decision 12): a key that fails its verification policy, `{rule, key_id}`
         # (the account's id where no key is stored); critical for a withdraw, transfer, fiat or
         # card right, any right that moves funds.

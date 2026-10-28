@@ -137,7 +137,16 @@ def spies(world: RawWorld, monkeypatch: pytest.MonkeyPatch) -> Spies:
     for name in ("build", "generation", "continuity"):
         port = partial(_kept, seen.snaps, name, getattr(world.source, name))
         monkeypatch.setattr(world.source, name, port)
+    # §9.5 (#898 B3b2): the key standing's `closed`, read only for an account the grant admits;
+    # as the standing answers an account no read listed, or one enabled with a signable key.
+    monkeypatch.setattr(
+        world.registry.services, "account_closed", partial(_kept, seen.snaps, "closed", _open)
+    )
     return seen
+
+
+def _open(_account: uuid.UUID) -> bool:
+    return False
 
 
 @pytest.fixture
@@ -329,7 +338,7 @@ def test_x02_ac_05_the_spies_see_a_sub_that_is_served(world: RawWorld, spies: Sp
         served, _ = _observe(world, spies, c, "positions", [ACC_A])
         public, _ = _observe(world, spies, c, "ticker.BTCUSDT", None)
     assert served["reply"]["p"]["results"][0]["ok"] is True
-    assert "build" in served["lookups"]
+    assert {"closed", "build"} <= set(served["lookups"])  # `closed`: an admitted account only
     assert {"build", "generation"} <= set(public["lookups"])  # not `continuity`: no-snapshot only
 
 
@@ -339,6 +348,7 @@ def test_x02_ac_05_every_collaborator_of_the_subscription_services_is_known_to_t
     known |= {"qty_step"}  # SR-E12-03 (#3885): read only for a `bar_type` topic, to bound a param
     known |= {"indicators"}  # E13-T02 (#426): read only to hold an `indicators.*` topic's instances
     known |= {"trades"}  # E22-T02 (#654): read only to lease a live `trades.*` topic, authorised
+    known |= {"account_closed"}  # #898 B3b2 (§9.5): read only for an account the grant admits
     assert {f.name for f in fields(permissions.SubscriptionServices)} == known, (
         "a new collaborator of the subscription services: wire it into `spies` and the arms, so "
         "that a `sub` that reads it is seen, then add it here"

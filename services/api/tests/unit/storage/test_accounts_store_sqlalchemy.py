@@ -28,6 +28,7 @@ from candleviewer.storage.repositories.accounts import (
     AccountsStoreRuleError,
     AccountsStoreScopeDeniedError,
     AccountsStoreStaleError,
+    AccountsStoreUnchangedError,
     ApiKeyRotationRow,
     ApiKeyRow,
     ExchangeAccountPatch,
@@ -951,3 +952,60 @@ def test_decode_accepts_json_text_or_mapping(raw: object) -> None:
 def test_decode_fails_closed_on_a_non_object_snapshot(raw: object) -> None:
     with pytest.raises(TypeError):
         mod._decode(raw)
+
+
+# -- #898 B3b2: the patch's compare-and-set on `is_enabled` and its write-ahead -----------------
+
+
+def test_the_update_compares_the_enabled_flag_in_its_one_conditional_write() -> None:
+    sql = _sql(mod._UPDATE)
+    assert "CAST(:expect_enabled AS boolean) IS NULL" in sql
+    assert "ea.is_enabled = CAST(:expect_enabled AS boolean)" in sql
+
+
+async def test_a_missed_enabled_flag_on_a_live_unchanged_tag_is_unchanged_not_stale() -> None:
+    """Ruling 6: the second of two disables finds the account disabled, a repeat, not a 412."""
+    rel = _Rel(_Result(), _Result([]), _Result([_ea(is_enabled=False, updated_at=_T)]))
+    patch = ExchangeAccountPatch(is_enabled=False)
+    with pytest.raises(AccountsStoreUnchangedError):
+        await _store(rel).update_account(_OWNER, uuid4(), patch, if_match=None, expect_enabled=True)
+    assert rel.calls[1][1]["expect_enabled"] is True and rel.commits == 0
+    same = _Rel(_Result(), _Result([]), _Result([_ea(is_enabled=False, updated_at=_T)]))
+    with pytest.raises(AccountsStoreUnchangedError):  # the tag still matches: a repeat
+        await _store(same).update_account(_OWNER, uuid4(), patch, if_match=_T, expect_enabled=True)
+
+
+async def test_a_moved_tag_is_stale_whatever_the_enabled_flag() -> None:
+    later = datetime(2026, 10, 2, tzinfo=UTC)
+    rel = _Rel(_Result(), _Result([]), _Result([_ea(is_enabled=False, updated_at=later)]))
+    with pytest.raises(AccountsStoreStaleError):
+        await _store(rel).update_account(
+            _OWNER, uuid4(), ExchangeAccountPatch(is_enabled=False), if_match=_T,
+            expect_enabled=True,
+        )  # fmt: skip
+
+
+async def test_the_write_ahead_runs_on_the_updated_row_before_the_commit() -> None:
+    seen: list[tuple[str, int]] = []
+    rel = _Rel(_Result(), _Result([_ea(label="b", is_enabled=False)]))
+
+    async def ahead(row: Any) -> None:
+        seen.append((row.label, rel.commits))
+
+    await _store(rel).update_account(
+        _OWNER, uuid4(), ExchangeAccountPatch(is_enabled=False), if_match=None, write_ahead=ahead
+    )
+    assert seen == [("b", 0)] and rel.commits == 1
+
+
+async def test_a_write_ahead_that_fails_rolls_the_update_back() -> None:
+    rel = _Rel(_Result(), _Result([_ea()]))
+
+    async def refused(row: Any) -> None:
+        raise RuntimeError("audit writer stopped")
+
+    with pytest.raises(RuntimeError):
+        await _store(rel).update_account(
+            _OWNER, uuid4(), ExchangeAccountPatch(label="b"), if_match=None, write_ahead=refused
+        )
+    assert rel.commits == 0

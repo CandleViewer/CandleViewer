@@ -323,3 +323,30 @@ def test_the_manager_refuses_a_record_field_outside_the_disarm_extras() -> None:
     actor = Actor(str(OWNER), "s1", is_owner=True)
     with pytest.raises(ValueError, match="scope, executed_as and actor_role"):
         asyncio.run(manager.set_mode("r", "disabled", actor, "k", record={"actor": "x"}))
+
+
+# -- #898 B3b2: the lifecycle the patch stores through, and its counter --------------------------
+
+
+def test_the_lifecycle_is_wired_only_over_a_store_and_the_armed_rule_read() -> None:
+    from candleviewer.account_lifecycle_wiring import DISABLE_REASONS, wire_account_lifecycle
+    from candleviewer.accounts.lifecycle import AccountLifecycle
+    from candleviewer.observability.metrics_catalogue import CATALOGUE
+
+    bound: list[str] = []
+    counted: list[str] = []
+    child = SimpleNamespace(inc=lambda: counted.append(bound[-1]))
+    counter = SimpleNamespace(labels=lambda reason: bound.append(reason) or child)
+    ports: dict[str, Any] = {
+        "standings": object(), "subscriptions": object(), "rule_store": InMemoryRuleStore(),
+        "manager": lambda: None, "streams": object(), "disabled": counter,
+    }  # fmt: skip
+    profiles = SimpleNamespace(rules=object())
+    assert wire_account_lifecycle(None, SimpleNamespace(), **ports) is None  # fake: never read
+    assert wire_account_lifecycle(object(), None, **ports) is None and bound == []
+    wired = wire_account_lifecycle(object(), profiles, **ports)
+    assert isinstance(wired, AccountLifecycle) and bound == list(DISABLE_REASONS)  # bound at 0
+    wired._count("dead")
+    assert counted == ["dead"]
+    spec = next(s for s in CATALOGUE if s.name == "cv_account_disabled_total")
+    assert (spec.kind, spec.labels, spec.max_series) == ("counter", ("reason",), 4)

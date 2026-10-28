@@ -2281,10 +2281,14 @@ export interface paths {
      *     disabled, or a re-enable of one already enabled, answers `200` with the account
      *     unchanged and writes no `account.disabled` / `account.updated` record, beyond the
      *     step-up's own: the spent step-up is the caller's cost. A repeat reads no exposure and
-     *     flattens nothing: `open_exposure` on it is ignored. A re-enable that changes the account
-     *     is audited as any account update (`account.updated`). A body that names none of
-     *     `label`, `enabled`, `position_mode`, `margin_mode` is `422 validation_failed` (rule
-     *     `empty_patch`), decided before the gate like every `422`, so it spends no code.
+     *     flattens nothing: `open_exposure` on it is ignored. A repeat disable still completes what
+     *     an earlier disable left pending (the order hold, the WebSocket revoke, the rule disarm and
+     *     the bounded close of the private streams, each idempotent), so retrying a disable whose
+     *     close overran (`503 exchange_unavailable`) or that a restart interrupted finishes it. A
+     *     re-enable that changes the account is audited as any account update (`account.updated`).
+     *     A body that names none of `label`, `enabled`, `position_mode`, `margin_mode` is
+     *     `422 validation_failed` (rule `empty_patch`), decided before the gate like every `422`,
+     *     so it spends no code.
      *
      *     **Streams.** A disable closes the account's private streams with the temporary reason
      *     `account_disabled` (joins 24 §14.2 rule 13 and §14.4 with B4a) and narrows or ends the

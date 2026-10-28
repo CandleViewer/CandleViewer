@@ -41,6 +41,7 @@ E08-T09's contract slice (#4708) adds five unserved `/scanner*` operations: 103.
 #909 S2c serves the contract-first `createTradeGroupDefinition`: 99.
 E08-T09 PR 2a (#4708) serves the five contract-first preset and criteria operations: 94.
 E08-T09 PR 2b (#4708) serves the frozen `runScanner`: 93, frozen 89.
+#898 B3b2 serves the frozen `updateExchangeAccount`: 92, frozen 88.
 Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that
@@ -72,8 +73,8 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 93
-FROZEN_BASELINE = 89
+PENDING_BASELINE = 92
+FROZEN_BASELINE = 88
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")
 ALLOW: dict[str, dict[str, dict[str, str]]] = json.loads(

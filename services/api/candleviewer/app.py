@@ -35,6 +35,7 @@ from starlette.types import ASGIApp
 
 from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
 from candleviewer.account_health_wiring import wire_account_health
+from candleviewer.account_lifecycle_wiring import wire_account_lifecycle
 from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.accounts.service import AccountsService
@@ -175,6 +176,7 @@ from candleviewer.api.session_snapshot import SessionSnapshotResolver
 from candleviewer.api.sessions import AuditEmitter, make_session_router
 from candleviewer.api.step_up import (
     SpentGrant,
+    bound_request_elevation,
     make_read_only_guard,
     make_step_up_router,
     request_elevation,
@@ -2412,22 +2414,39 @@ def create_app(
     # #895 (E27-S01): `listExchangeAccounts` and `createExchangeAccount` over the M13 store built
     # above (real backend only), in the caller's grants (the profiles' resolver), each account with
     # the monitor's and the wallet cache's status.
+    accounts_store = None if accounts_counts is None else AccountsRepository(accounts_counts)
+    # E27-S04 B2b (#898): the consequence read over the exposure read and the profile wiring's
+    # store and armed-rule read (real backend only; else 503).
+    consequences = wire_consequence_read(
+        app.state.exposure_read, profiles, env=resolved.environment.value
+    )
+    # E27-S04 B3b2 (#898, 23 §9.5 F-01): a disabled account, or one whose last signable key is
+    # revoked, is out of every new subscription's scope; bound here, the standing being built late.
+    ws_services.account_closed = account_health.standings.closed
     app.include_router(
         make_exchange_accounts_router(
-            None if accounts_counts is None else AccountsRepository(accounts_counts),
+            accounts_store,
             _LazyAuditEmitter(ctx.audit),
             profiles_resolver,
             environment=resolved.environment.value,
             statuses=AccountStatusReader(account_health, account_health.wallets),
             auth=ctx.auth,  # a refusal names the caller's session (#4174)
             elevation=keys_elevation,  # the create's `keys`, after its shape rules (#2304)
-            # E27-S04 B2b (#898): the consequence read over the exposure read and the profile
-            # wiring's store and armed-rule read (real backend only; else 503).
-            consequences=wire_consequence_read(
-                app.state.exposure_read, profiles, env=resolved.environment.value
+            consequences=consequences,
+            # E27-S04 B3b2 (#898): the patch's disable, re-enable and relabel over the effect
+            # ports (the hold, the WS revoke, the disarm as the Owner, the bounded stream close),
+            # behind one fresh no-grace `accounts` code bound to the validated request; wired
+            # with the consequence read the disable reads (else 503).
+            lifecycle=wire_account_lifecycle(
+                None if consequences is None else accounts_store, profiles,
+                standings=account_health.standings, subscriptions=app.state.ws_events,
+                rule_store=rule_store, manager=lambda: ctx.rules.manager(),
+                streams=ctx.exchange_bybit,
+                disabled=register_r0(metrics_facade)["cv_account_disabled_total"],
             ),
+            bound=bound_request_elevation(ctx.auth, "accounts", _LazyAuditEmitter(ctx.audit)),
         )
-    )
+    )  # fmt: skip
     # #837 W3: the one order-entry gate every submit path consults, the maintenance check first and
     # then the account check (key standing and health; the wallet only feeds its sizing flag),
     # synchronous and never flag-gated (C-2.21, C-4.14). The flag runtime holds no gate until this

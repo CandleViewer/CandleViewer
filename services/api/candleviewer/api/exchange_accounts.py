@@ -54,8 +54,12 @@ from candleviewer.accounts.errors import (
     AccountRuleError,
     AccountScopeDeniedError,
     AccountsError,
+    AccountVersionConflictError,
 )
 from candleviewer.accounts.exposure import ExchangePosition, ExposureFailed, ExposureUnknown
+from candleviewer.accounts.exposure_gate import Choice, Proceed, Refuse, gate
+from candleviewer.accounts.flatten import Flattener, NoFlatten
+from candleviewer.accounts.lifecycle import AccountLifecycle, DisableReason
 from candleviewer.accounts.models import AccountKind, ExchangeAccount, ExchangeEnv
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.accounts.status import AccountStatusReader
@@ -64,6 +68,7 @@ from candleviewer.api.csrf import source_ip
 from candleviewer.api.idempotency import (
     IdempotencyCache,
     IdempotencyKeyReuse,
+    StoredResponse,
     idempotency_key,
     remember,
     replay,
@@ -72,14 +77,28 @@ from candleviewer.api.idempotency import (
 from candleviewer.api.profile_audit import Emitter
 from candleviewer.api.profiles import OnAccount, problem
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
-from candleviewer.api.step_up import RequestElevation, demand_elevation
-from candleviewer.api.step_up_challenge import register_account_text
+from candleviewer.api.step_up import (
+    BoundRequestElevation,
+    RequestElevation,
+    SpentGrant,
+    demand_bound_elevation,
+    demand_elevation,
+)
+from candleviewer.api.step_up_challenge import (
+    ChallengeText,
+    account_reference,
+    raw_request_target,
+    register_account_text,
+    typed_target,
+)
+from candleviewer.api.step_up_challenge import request_fingerprint as bound_fingerprint
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, account_scope, enforce
+from candleviewer.exchange.base.errors import PrivateStreamCloseOverran
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.storage.errors import StorageError, StorageQueryFailed, WriteAheadTimeout
 from candleviewer.storage.repositories.accounts import (
@@ -130,7 +149,13 @@ def _forbidden(permission: Permission) -> JSONResponse:
 
 
 def _stamp(value: datetime | None) -> str | None:
-    return None if value is None else value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    """RFC 3339 UTC with exactly six fractional digits and a `Z` (22 `AccountETag`, B4c)."""
+    return None if value is None else value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def account_etag(account: ExchangeAccount) -> str:
+    """22 `AccountETag`: `W/"<updated_at>"`, the body's own rendering."""
+    return f'W/"{_stamp(account.updated_at)}"'
 
 
 def account_document(
@@ -302,6 +327,53 @@ def exposure_problem(outcome: ExposureUnknown | ExposureFailed) -> JSONResponse:
     return problem("exchange_error", detail, status=502, **sent)
 
 
+_UNSERVED_MODE: Final = "A mode change is E27-S05's; nothing changed."
+_STALE: Final = "The account changed since the ETag sent; read it again."
+
+
+def _patch_refusal(sent: dict[str, Any]) -> JSONResponse | None:
+    """`updateExchangeAccount`'s `422`s, decided before the gate (22): a mode change, which
+    E27-S05 serves, then a body naming none of the members (`active_profile_id` is ignored)."""
+    for mode in ("position_mode", "margin_mode"):
+        if mode in sent:
+            detail = "Position and margin mode changes are not served yet: E27-S05 adds them."
+            entry = (f"body.{mode}", "mode_change_unavailable", _UNSERVED_MODE)
+            return _validation(_Refused(detail, entry))
+    if not {"label", "enabled"} & sent.keys():
+        detail = "The body names none of label, enabled, position_mode, margin_mode."
+        entry = ("body", "empty_patch", "Name at least one member to change; nothing changed.")
+        return _validation(_Refused(detail, entry))
+    return None
+
+
+def _open_detail(read: AccountConsequences, why: str | None) -> str:
+    if why == "native_stop_missing":
+        bare = sum(1 for p in read.open_positions if not p.native_stop_present)
+        return (
+            f"{bare} open position(s) without a native stop-loss, so "
+            "open_exposure=leave_positions is refused; resend with open_exposure=flatten_first."
+        )
+    held = (
+        f"{len(read.open_positions)} open position(s), {read.working_orders} working order(s) "
+        f"and {read.running_algos} running algo(s)"
+    )
+    if why == "still_not_flat":
+        return f"The account is still not flat: {held}; nothing was disabled."
+    return f"{held}; resend with an open_exposure choice."
+
+
+def _disable_reason(decision: Proceed, read: object, choice: Choice) -> DisableReason:
+    """`cv_account_disabled_total{reason}` of a disable going ahead."""
+    if decision.lifted:
+        return "dead"
+    if decision.flattened:
+        return "flattened"
+    flat = isinstance(read, AccountConsequences) and not (
+        read.open_positions or read.working_orders or read.running_algos
+    )
+    return "flat" if flat or choice is None else "leave_positions"
+
+
 def make_exchange_accounts_router(
     accounts: AccountsRepository | None, audit: Emitter, resolver: SnapshotResolver | None, *,
     environment: str, statuses: AccountStatusReader | None = None,
@@ -309,13 +381,21 @@ def make_exchange_accounts_router(
     new_id: Callable[[], uuid.UUID] = uuid.uuid4,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     elevation: RequestElevation | None = None, consequences: ConsequenceRead | None = None,
+    lifecycle: AccountLifecycle | None = None, bound: BoundRequestElevation | None = None,
+    flattener: Flattener | None = None,
 ) -> APIRouter:  # fmt: skip
     """The routes over `accounts` (`None`, the fake backend: 503) for the process's
     `environment`; `resolver=None` (no identity wired): 501 for every call. `elevation` demands
     the create's `keys` step-up (None: 503, nothing registered); `consequences` serves the
-    consequence read (None: 503)."""
+    consequence read (None: 503). The patch stores through `lifecycle` (None: 503) behind the
+    no-grace `accounts` step-up `bound` spends (None: 503), flattening with `flattener` (the
+    null one until E29/E39's lands)."""
     router = APIRouter(tags=["exchange-accounts"])
     cache = IdempotencyCache() if replays is None else replays
+    #: `updateExchangeAccount`'s own replays: its `200`s and its exposure `409`s for 24 h, never
+    #: a `502`/`503` (22 `OpenExposure`, ruling R5), as `createApiKey` keeps its own.
+    kept = IdempotencyCache()
+    flatten: Flattener = NoFlatten() if flattener is None else flattener
 
     async def admit(
         request: Request, permission: Permission
@@ -553,5 +633,262 @@ def make_exchange_accounts_router(
         if isinstance(read, AccountConsequences):
             return JSONResponse(consequence_document(read))
         return exposure_problem(read)
+
+    def answered(account: ExchangeAccount) -> JSONResponse:
+        doc = account_document(account, statuses)
+        return JSONResponse(doc, headers={"ETag": account_etag(account)})
+
+    def keep(who: str, key: str | None, digest: str, out: JSONResponse) -> JSONResponse:
+        """`out` kept for replay under the caller's key: a `200` or an exposure `409` only."""
+        if key is not None:
+            kept.put(who, key, StoredResponse(digest, out.status_code, bytes(out.body),
+                                              out.headers.get("etag")))  # fmt: skip
+        return out
+
+    def replayed(hit: StoredResponse, digest: str) -> Response:
+        if hit.digest != digest:
+            return problem("idempotency_key_reuse", "The key was used for another request.")
+        media = "application/json" if hit.status < 400 else "application/problem+json"
+        headers = {"Idempotency-Replayed": "true"} | ({"ETag": hit.etag} if hit.etag else {})
+        return Response(hit.body, hit.status, headers, media_type=media)
+
+    async def challenge(
+        owner: OwnerScope, account: ExchangeAccount, enabled: bool, choice: Choice
+    ) -> ChallengeText:
+        """22's templates: a disable names its choice and asks for the typed label (or the id
+        where the label is not unique among the caller's accounts, or not printable ASCII); a
+        re-enable asks for none."""
+        named = account_reference(account.label, account.env.value, account.exchange_uid)
+        if enabled:
+            return ChallengeText(f"Re-enable account {named}")
+        page = await accounts_of(owner, account)
+        others = [a.label for a in page.items if a.id != account.id]
+        if page.next_after is not None:  # not every label was read: never claim it is unique
+            others.append(account.label)
+        tail = "" if choice is None else f", open_exposure={choice}"
+        target = typed_target(account.label, str(account.id), others)
+        return ChallengeText(f"Disable account {named}{tail}", target)
+
+    async def accounts_of(owner: OwnerScope, account: ExchangeAccount) -> Any:
+        if accounts is None:  # the route answered 503 before
+            raise AccountsError("no accounts store")
+        return await accounts.list_accounts(owner, env=account.env, limit=500)
+
+    @router.patch("/exchange-accounts/{accountId}")  # nosem: no-raw-account-id reason=enforce-accounts:write-granted_accounts-on-the-path-id-then-OwnerScope-live-owner-gate-in-SQL-SR-051-one-404-and-account.disabled-or-updated-written-ahead-#898 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    async def update_exchange_account(
+        request: Request,
+        account_id: Annotated[uuid.UUID, Path(alias="accountId")],
+        body: api.UpdateExchangeAccountRequest,
+        open_exposure: Literal["leave_positions", "flatten_first"] | None = None,
+    ) -> Response:
+        if resolver is None:
+            return problem("not_implemented", "No principal resolver is wired.")
+        got = resolver.resolve(request)
+        if (principal := await got if inspect.isawaitable(got) else got) is None:
+            return problem("unauthenticated", "No verified session for this request.")
+        permission, named = Permission.ACCOUNTS_WRITE, NamesSession(audit, auth, request)
+        on_account = OnAccount(named, account_id)
+        try:  # 22: `accounts:write` on the account; a refusal names it (C-2.9)
+            await enforce(
+                principal, permission, scope=Scope.GRANTED_ACCOUNTS,
+                exchange_account_id=account_id, emitter=on_account,
+                actor_ip=source_ip(request.scope), request_id=current_request_uuid(),
+            )  # fmt: skip
+        except ForbiddenError:
+            return _forbidden(permission)
+        except (AuditError, RuntimeError):  # RuntimeError: the audit writer is not started
+            return problem("audit_unavailable", "The refusal could not be audited.")
+        if accounts is None or lifecycle is None:
+            return problem("store_unavailable", "Accounts are not available on this backend.")
+        sent = body.model_dump(mode="json", exclude_unset=True)
+        if (refused := _patch_refusal(sent)) is not None:
+            return refused
+        try:
+            key = idempotency_key(request, "updateExchangeAccount")
+        except ValueError:
+            msg = "The Idempotency-Key is not a UUID."
+            return _validation(
+                _Refused("The request was refused.", ("Idempotency-Key", "uuid", msg))
+            )
+        owner, who, store = OwnerScope(principal.user_id), str(principal.user_id), accounts
+
+        async def read_account() -> ExchangeAccount | JSONResponse:
+            """The account as stored now, or the answer that ends the request."""
+            try:
+                now = await store.get_account(owner, account_id)
+                if now.env.value != environment:  # C-2.11: never served here
+                    raise AccountNotFoundError("account")
+            except AccountNotFoundError:  # absent, deleted or of another environment: one answer
+                return problem("not_found", _NO_ACCOUNT)
+            except AccountScopeDeniedError:  # the store's live-owner gate (SR-051)
+                if not await _not_owner(on_account, principal, permission,
+                                        Scope.GRANTED_ACCOUNTS, request):  # fmt: skip
+                    return problem("audit_unavailable", "The refusal could not be audited.")
+                return _forbidden(permission)
+            except Exception as exc:  # mapped, or raised as a defect
+                return _unavailable(exc)
+            return now
+
+        if isinstance(now := await read_account(), JSONResponse):
+            return now
+        account: ExchangeAccount = now
+        digest = bound_fingerprint(request.method, raw_request_target(request), sent)
+        hit = None if key is None else kept.get(who, key)
+        if_match = request.headers.get("if-match")
+        if hit is None and if_match is not None and if_match != account_etag(account):
+            return problem("version_conflict", _STALE)  # before the gate: spends nothing
+        stamp = None if if_match is None else account.updated_at
+        enabled: bool | None = sent.get("enabled")
+        label: str | None = sent.get("label")
+        ip, request_id = source_ip(request.scope), current_request_uuid()
+
+        async def record(
+            action: str, *, outcome: str = "success", reason: str | None = None,
+            before: dict[str, Any] | None = None, after: dict[str, Any] | None = None,
+        ) -> None:  # fmt: skip
+            await audit.emit(
+                action, actor_label=who, actor_user_id=principal.user_id, actor_ip=ip,
+                object_kind="exchange_account", object_id=str(account_id), outcome=outcome,
+                severity="warning" if outcome == "denied" else "info", request_id=request_id,
+                env=account.env, reason=reason, before_state=before, after_state=after,
+            )  # fmt: skip
+
+        def ahead(action: str, **after: Any) -> Callable[[ExchangeAccount], Any]:
+            async def written(stored: ExchangeAccount) -> None:
+                state = {"label": stored.label, "enabled": stored.is_enabled} | after
+                before = {"label": account.label, "enabled": account.is_enabled}
+                await _written(record(action, before=before, after=state))
+
+            return written
+
+        async def denied(action: str, code: str, **after: Any) -> JSONResponse | None:
+            """A refusal after the gate, written ahead of its answer (R4): `None` once written,
+            else `503 audit_unavailable`."""
+            try:
+                await record(action, outcome="denied", reason=code, after=after)
+            except _UNWRITTEN:
+                return problem("audit_unavailable", "The refusal could not be audited.")
+            return None
+
+        async def stored_refusal(
+            exc: Exception, action: str | None, grant: dict[str, str] | None
+        ) -> JSONResponse:
+            """A store or effect failure: after the gate a `409`/`412` is recorded denied first;
+            an overrun of the close is `503 exchange_unavailable` (24 rule 13), never kept for
+            replay (the disable itself is stored; the retry, a repeat, completes it)."""
+            if isinstance(exc, PrivateStreamCloseOverran):
+                _log().warning("account_disable_close_overran", account_id=str(account_id))
+                detail = "The account's private streams are still closing; retry the request."
+                return problem("exchange_unavailable", detail, status=503)
+            if isinstance(exc, AccountAuditRefused | WriteAheadTimeout):
+                return problem(
+                    "audit_unavailable", "The audit record could not be written; nothing changed."
+                )
+            if isinstance(exc, AccountNotFoundError):
+                return problem("not_found", _NO_ACCOUNT)
+            refusal: tuple[str, JSONResponse]
+            if isinstance(exc, AccountVersionConflictError):
+                refusal = ("version_conflict", problem("version_conflict", _STALE))
+            elif isinstance(exc, AccountConflictError):
+                refusal = ("conflict", problem("conflict", _LABEL_TAKEN))
+            elif isinstance(exc, AccountRuleError):
+                entry = ("body.label", exc.rule, "The label breaks a stored rule.")
+                refusal = ("validation_failed", _validation(_Refused("Nothing changed.", entry)))
+            else:
+                return _unavailable(exc)
+            if action is not None and (failed := await denied(action, refusal[0], **(grant or {}))):
+                return failed
+            return refusal[1]
+
+        if enabled is None:  # a label-only patch: no step-up (22)
+            if hit is not None:
+                return replayed(hit, digest)
+            try:
+                relabelled = await lifecycle.relabel(
+                    owner, account_id, str(label), if_match=stamp,
+                    write_ahead=ahead("account.updated"),
+                )  # fmt: skip
+            except Exception as exc:  # mapped below, or raised as a defect
+                return await stored_refusal(exc, None, None)
+            return keep(who, key, digest, answered(relabelled))
+        choice: Choice = open_exposure if enabled is False else None  # a re-enable ignores it
+        try:
+            text = await challenge(owner, account, enabled, choice)
+        except Exception as exc:  # mapped, or raised as a defect
+            return _unavailable(exc)
+        spent = await demand_bound_elevation(bound, request, digest, text)
+        if not isinstance(spent, SpentGrant):
+            return spent  # every refusal before it spent nothing (22)
+        if hit is not None:  # read back only behind a fresh code (#2304 review)
+            return replayed(hit, digest)
+        # Decided on the account as stored after the gate, never the read before it: a change
+        # that landed while the grant was spent makes this request a change or a repeat as the
+        # row now says (round-1 F-1). The If-Match stamp stays the caller's, compared in the write.
+        if isinstance(now := await read_account(), JSONResponse):
+            return now  # the grant stays spent
+        account = now
+        grant = {"challenge_id": str(spent.challenge_id)}
+        action = "account.updated" if enabled else "account.disabled"
+        role = ",".join(sorted(principal.roles))  # the disarm record's `actor_role` (ruling 2)
+
+        if account.is_enabled == enabled:  # a repeat, decided after the gate (22): no record
+            try:
+                if enabled:
+                    done = await lifecycle.enable(
+                        owner, account, label=None, if_match=None, write_ahead=ahead(action)
+                    )
+                else:
+                    done = await lifecycle.complete_disable(owner, account, actor=principal.user_id,
+                                                            role=role)  # fmt: skip
+            except Exception as exc:  # mapped, or raised as a defect
+                return await stored_refusal(exc, None, None)
+            return keep(who, key, digest, answered(done.account))
+        if enabled:  # the re-enable: lift, store, release (lifecycle)
+            try:
+                done = await lifecycle.enable(
+                    owner, account, label=label, if_match=stamp,
+                    write_ahead=ahead(action, **grant),
+                )  # fmt: skip
+            except Exception as exc:  # mapped, or raised as a defect
+                return await stored_refusal(exc, action, grant)
+            return keep(who, key, digest, answered(done.account))
+        if consequences is None:
+            return problem("store_unavailable", "Consequences are not available on this backend.")
+        try:
+            read = await consequences.read(account_scope(principal), owner, account_id)
+        except AccountNotFoundError:
+            return problem("not_found", _NO_ACCOUNT)
+        except Exception as exc:  # mapped, or raised as a defect
+            return _unavailable(exc)
+        decision = await gate(
+            "disable", read, choice, last_signable=True, flattener=flatten,
+            actor=principal.user_id,
+        )  # fmt: skip
+        if isinstance(decision, Refuse):
+            if isinstance(read, ExposureFailed):  # retryable: no record, never kept (22)
+                return exposure_problem(read)
+            why = {"why": decision.why} if decision.why else {}
+            if failed := await denied(action, decision.kind, open_exposure=choice, **grant, **why):
+                return failed
+            if not isinstance(read, AccountConsequences):  # `exposure_unknown`, with its remedy
+                return keep(who, key, digest, exposure_problem(read))
+            out = problem("open_exposure", _open_detail(read, decision.why), status=409,
+                          consequences=consequence_document(read))  # fmt: skip
+            return keep(who, key, digest, out)
+        dead: dict[str, Any] = {}
+        if decision.lifted:  # 22 Dead: the code, each signable key's error, the lifted refusal
+            errors = [{"key_id": str(k), "error": e} for k, e in decision.key_errors]
+            dead = {"code": "exposure_unknown", "key_errors": errors, "lifted": True}
+        try:
+            done = await lifecycle.disable(
+                owner, account, label=label, if_match=stamp,
+                write_ahead=ahead(action, open_exposure=choice, flattened=decision.flattened,
+                                  **grant, **dead),
+                reason=_disable_reason(decision, read, choice), actor=principal.user_id,
+                role=role,
+            )  # fmt: skip
+        except Exception as exc:  # mapped, or raised as a defect
+            return await stored_refusal(exc, action, grant)
+        return keep(who, key, digest, answered(done.account))
 
     return router

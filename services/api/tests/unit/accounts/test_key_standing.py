@@ -675,3 +675,43 @@ def test_the_holds_are_bounded_one_per_account_and_a_spent_hold_leaves_nothing()
     standings.observe([key_row(ACC, key=NEW_KEY)], began=standings.read_begins())
     assert standings.release(ACC_B) is True
     assert standings._state.holds == {}
+
+
+# -- #898 B3b2 (23 §9.5, F-01): `closed`, the WS scope's synchronous refusal ----------------------
+
+
+def test_an_account_is_closed_under_a_lifecycle_hold_and_open_again_once_released() -> None:
+    standings, _, _ = _world(key_row(ACC), key_row(ACC_B))
+    assert (standings.closed(ACC), standings.closed(ACC_B)) == (False, False)
+    standings.hold(ACC, "account_disabled")
+    assert (standings.closed(ACC), standings.closed(ACC_B)) == (True, False)
+    standings.release(ACC)
+    assert standings.closed(ACC) is False
+
+
+def test_a_disabled_account_is_closed_by_the_read_alone_so_the_refusal_outlives_a_restart() -> None:
+    """After a restart no hold is held: the tracking read lists `is_enabled=false` again."""
+    standings, _, _ = _world(key_row(ACC, enabled=False), key_row(ACC_B, armed=False))
+    assert standings.closed(ACC) is True
+    assert standings.closed(ACC_B) is False  # trading disarmed is no disable
+
+
+def test_a_re_enable_opens_an_account_the_read_listed_disabled_before_the_next_read() -> None:
+    standings, _, _ = _world(key_row(ACC, enabled=False))
+    assert standings.release(ACC) is False  # no hold after a restart
+    assert standings.closed(ACC) is False
+    standings.observe([key_row(ACC, enabled=False)])  # a read still listing it disabled
+    assert standings.closed(ACC) is True
+
+
+def test_an_account_whose_every_listed_key_is_revoked_is_closed() -> None:
+    standings, _, _ = _world(key_row(ACC), key_row(ACC, key=NEW_KEY))
+    standings.revoke(ACC, KEY)
+    assert standings.closed(ACC) is False  # another signable key remains
+    standings.revoke(ACC, NEW_KEY)
+    assert standings.closed(ACC) is True
+
+
+def test_an_account_no_read_listed_is_not_closed_by_the_standing() -> None:
+    standings = KeyStandings(_Job(), interval_s=HOUR, stale_after_s=STALE_S, clock=FakeClock())
+    assert standings.closed(ACC) is False  # before the first read, or never keyed

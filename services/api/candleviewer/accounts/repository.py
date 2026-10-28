@@ -16,6 +16,7 @@ from candleviewer.accounts.errors import (
     AccountRuleError,
     AccountScopeDeniedError,
     AccountsError,
+    AccountUnchangedError,
     AccountVersionConflictError,
 )
 from candleviewer.accounts.models import (
@@ -37,6 +38,7 @@ from candleviewer.storage.repositories.accounts import (
     AccountsStoreRuleError,
     AccountsStoreScopeDeniedError,
     AccountsStoreStaleError,
+    AccountsStoreUnchangedError,
     AccountWriteAhead,
     ExchangeAccountPatch,
     ExchangeAccountRow,
@@ -83,6 +85,8 @@ class AccountsRepository:
             return AccountRuleError(exc.rule)
         if isinstance(exc, AccountsStoreStaleError):
             return AccountVersionConflictError()
+        if isinstance(exc, AccountsStoreUnchangedError):
+            return AccountUnchangedError()
         return AccountsError("store error")
 
     async def create_account(
@@ -147,9 +151,17 @@ class AccountsRepository:
         patch: ExchangeAccountPatch,
         *,
         if_match: datetime | None = None,
+        expect_enabled: bool | None = None,
+        write_ahead: Callable[[ExchangeAccount], Awaitable[None]] | None = None,
     ) -> ExchangeAccount:
+        """One compare-and-set: a stale `if_match` raises `AccountVersionConflictError`, a missed
+        `expect_enabled` `AccountUnchangedError`; `write_ahead` (C-2.9) is awaited on the updated
+        account before the commit, and anything it raises rolls the update back."""
         try:
-            row = await self._store.update_account(scope, account_id, patch, if_match=if_match)
+            row = await self._store.update_account(
+                scope, account_id, patch, if_match=if_match, expect_enabled=expect_enabled,
+                write_ahead=_as_rows(write_ahead),
+            )  # fmt: skip
         except AccountsStoreError as exc:
             raise self._map(exc) from None
         if row is None:
