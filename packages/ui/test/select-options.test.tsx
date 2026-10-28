@@ -453,6 +453,41 @@ describe("Select type-ahead", () => {
     expect(scrollTargets()).toEqual([activeRow(host)]);
   });
 
+  it("an options change scrolls the fallback row, and the hovered row again when it comes back", async () => {
+    function Flip(): JSX.Element {
+      const [off, setOff] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOff((was) => !was)}>
+            flip
+          </button>
+          <Select
+            options={OPTIONS.map((o) => (off && o.value === "e" ? { ...o, disabled: true } : o))}
+            value="a"
+            onChange={fn()}
+            aria-label="Pick"
+          />
+        </>
+      );
+    }
+    const host = await mount(<Flip />);
+    const flip = (): void => act(() => within(host).getByRole("button").click());
+    key(host, "Enter");
+    const charlieTwo = options(host)[4] as HTMLElement;
+    act(() => {
+      charlieTwo.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    expect(activeLabel(host)).toBe("Charlie two");
+    vi.mocked(Element.prototype.scrollIntoView).mockClear();
+    flip(); // Charlie two turns plain disabled: the active option falls back to the chosen Alpha
+    expect(activeLabel(host)).toBe("Alpha");
+    expect(scrollTargets()).toEqual([activeRow(host)]);
+    vi.mocked(Element.prototype.scrollIntoView).mockClear();
+    flip(); // reachable again: the change, not the pointer, brings it back, so it scrolls
+    expect(activeLabel(host)).toBe("Charlie two");
+    expect(scrollTargets()).toEqual([activeRow(host)]);
+  });
+
   it("ignores Ctrl, Alt and Meta chords and Shift+Space", async () => {
     const host = await mount(<Host value="a" />);
     for (const init of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {

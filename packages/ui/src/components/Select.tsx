@@ -147,7 +147,8 @@ export function Select({
   const [recall, setRecall] = useState<Recall>({ index: -1, count: 0 });
   const typed = useRef<Typed>({ text: "", at: 0 });
   // Only a keyboard move (or an open) scrolls the active row into view; a hover must not move the list under the pointer.
-  const scrollActive = useRef(true);
+  // The row the pointer made active (-1 after a key or an open), set with `active`: each commit keeps its own decision.
+  const [pointed, setPointed] = useState(-1);
 
   const chosen = options.findIndex((option) => option.value === value);
   // `options` may change while open: an index that no longer names a reachable option falls back to the start.
@@ -156,6 +157,9 @@ export function Select({
     activeOption !== undefined && !skipped(activeOption)
       ? active
       : openIndex(options, chosen, skipped);
+  // A fallback forgets the pointer's row, so that row scrolls if `options` bring it back. React re-runs this render
+  // before committing it, and the guard holds on the second pass.
+  if (pointed !== -1 && current !== active) setPointed(-1);
   const shown = options[chosen]?.label ?? placeholder;
   const optionId = (index: number): string => `${listId}-${String(index)}`;
   // Stable per option: the option's description points at its reason node.
@@ -164,12 +168,13 @@ export function Select({
   const endTyping = (): void => {
     typed.current = { text: "", at: 0 };
   };
-  const choose = (index: number): void => {
+  const choose = (index: number, pointer = false): void => {
     const option = options[index];
     if (option !== undefined && blocked(option)) {
       // An unavailable or T2 option is never chosen; its reason is shown again, every time. Plain disabled says nothing.
       if (look(option).reason !== undefined) {
         setActive(index); // a tap or an AT click with no prior pointer move: the pressed row is the active one
+        setPointed(pointer ? index : -1);
         setRecall((prev) => ({ index, count: prev.count + 1 }));
       }
       return;
@@ -178,9 +183,10 @@ export function Select({
     endTyping();
     setOpen(false);
   };
-  const moveTo = (index: number): void => {
+  const moveTo = (index: number, pointer = false): void => {
     setRecall((prev) => ({ index: -1, count: prev.count }));
     setActive(index);
+    setPointed(pointer ? index : -1);
   };
   const openAt = (index: number): void => {
     moveTo(index);
@@ -210,22 +216,20 @@ export function Select({
 
   // The active option stays in view in a long list.
   useEffect(() => {
-    if (open && current >= 0 && scrollActive.current) {
+    if (open && current >= 0 && current !== pointed) {
       // The whole row (label, reason and ring), not the option line inside it.
       document
         .getElementById(optionId(current))
         ?.closest(".cv-select__row")
         ?.scrollIntoView({ block: "nearest" });
     }
-    scrollActive.current = true;
-    // `optionId` is derived from `listId`, which is stable.
+    // `optionId` is derived from `listId`, which is stable; `pointed` is read as of the commit that moved `current`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, current]);
 
   const handleKey = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (reason.gated || reason.disabled) return;
     const { key } = event;
-    scrollActive.current = true;
     // Alt+Down opens (a no-op when open) and Alt+Up chooses (APG); every other chord belongs to the host (Shift+Tab is focus movement).
     if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
       if (key === "ArrowDown") {
@@ -409,14 +413,10 @@ export function Select({
                   data-kind={kind}
                   data-active={index === current ? "" : undefined}
                   onMouseMove={() => {
-                    if (kind !== "disabled" && index !== current) {
-                      scrollActive.current = false;
-                      moveTo(index);
-                    }
+                    if (kind !== "disabled" && index !== current) moveTo(index, true);
                   }}
                   onClick={() => {
-                    if (index !== current) scrollActive.current = false; // under the pointer already
-                    choose(index);
+                    choose(index, true); // under the pointer already
                   }}
                 >
                   <span className="cv-select__check">
