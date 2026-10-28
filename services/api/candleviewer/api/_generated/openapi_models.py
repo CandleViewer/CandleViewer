@@ -4553,9 +4553,10 @@ class LayoutPaneInput(BaseModel):
             "journal",
             "watchlist",
             "alerts",
+            "scanner",
         ],
         Field(
-            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n"
+            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). `scanner` (SCR-104) also shows many symbols and carries\nneither, but holds no account data: its rows are `runScanner`'s public market values. The\nserver accepts `scanner` once E08-T09's implementation adds it to `lp_kind`; until then a\nlayout naming it is refused with `422`. A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n"
         ),
     ]
     symbol: Annotated[
@@ -4606,9 +4607,10 @@ class LayoutPane(BaseModel):
             "journal",
             "watchlist",
             "alerts",
+            "scanner",
         ],
         Field(
-            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n"
+            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). `scanner` (SCR-104) also shows many symbols and carries\nneither, but holds no account data: its rows are `runScanner`'s public market values. The\nserver accepts `scanner` once E08-T09's implementation adds it to `lp_kind`; until then a\nlayout naming it is refused with `422`. A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n"
         ),
     ]
     symbol: Annotated[str | None, Field(pattern="^[A-Z0-9]{2,16}USDT$")]
@@ -5647,16 +5649,70 @@ class WatchlistInput(BaseModel):
     __null_refused = field_validator("columns", mode="before")(_refuse_null)
 
 
-class ScannerRow(BaseModel):
-    symbol: Annotated[
+class ScannerSortKeyStatus(BaseModel):
+    id: Annotated[
+        Literal[
+            "volume_24h",
+            "price_change_pct_24h",
+            "cvd",
+            "tape_speed",
+            "open_interest",
+            "liquidation_intensity",
+            "turnover_24h",
+            "funding_rate",
+            "spread_bps",
+            "range_pct_24h",
+            "tape_speed_zscore",
+            "oi_change_pct_24h",
+        ],
+        Field(
+            description="A `runScanner` ranking key. **Open-ended for readers** (C-6.3); a writer sends a listed value that `listScannerCriteria`'s `sort_keys` does not list with `available: false`. A preset stores one.\n"
+        ),
+    ]
+    available: Annotated[
+        StrictBool,
+        Field(
+            description="`false` while no source feeds the key: `runScanner` and the preset writes refuse it (`422` rule `criterion_unavailable`, field `sort`)."
+        ),
+    ]
+
+
+class ScannerInputFreshness(BaseModel):
+    input: Annotated[
+        Literal["tickers", "open_interest", "orderflow_metrics"],
+        Field(
+            description="`tickers` (the 24 h ticker values), `open_interest` (the 24 h open-interest baseline) or `orderflow_metrics` (tape speed and its z-score, regime, CVD and liquidation intensity). **Open-ended for readers** (C-6.3).\n"
+        ),
+    ]
+    as_of: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="The oldest latest-value timestamp the scan used from this input; `null` if it used none."
+        ),
+    ]
+    stale: Annotated[
+        StrictBool,
+        Field(
+            description="`true` when a value the scan used is stale: for `tickers`, a ticker carrying `stale: true` (`Ticker.stale`); for the others, a latest value older than 15 s (the E08-D04 `stale` threshold) at `generated_at`. A client then marks the whole scan as computed from possibly stale inputs.\n"
+        ),
+    ]
+
+
+class ScannerCriterionId(RootModel[str]):
+    root: Annotated[
         str,
         Field(
-            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
-            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-            pattern="^[A-Z0-9]{2,20}USDT$",
+            description="A criterion id. `ScannerFilter` lists the ids in force; a stored preset may still name one the server no longer knows or lists with `available: false` (`ScannerPreset.unavailable_criteria`, which also carries a stored `sort` key that `sort_keys` lists with `available: false`).\n",
+            pattern="^[a-z][a-z0-9_]{0,39}$",
         ),
     ]
-    last_price: Annotated[
+
+
+class ScannerRange(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    min: Annotated[
         str | None,
         Field(
             description="Arbitrary-precision decimal transported as a string (convention C6).",
@@ -5664,7 +5720,7 @@ class ScannerRow(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    price_change_pct_24h: Annotated[
+    max: Annotated[
         str | None,
         Field(
             description="Arbitrary-precision decimal transported as a string (convention C6).",
@@ -5672,53 +5728,66 @@ class ScannerRow(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    volume_24h: Annotated[
-        str | None,
+    __null_refused = field_validator("min", "max", mode="before")(_refuse_null)
+
+
+class Class(RootModel[str]):
+    root: Annotated[str, Field(pattern="^[a-z][a-z0-9_]{0,31}$")]
+
+
+class ScannerClassSet(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    classes: Annotated[list[Class], Field(max_length=16, min_length=1)]
+
+
+class ScannerCriterion(BaseModel):
+    id: Annotated[
+        str,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    open_interest: Annotated[
-        str | None,
-        Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    cvd: Annotated[
-        str | None,
-        Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    tape_speed: Annotated[
-        str | None,
-        Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    liquidation_intensity: Annotated[
-        str | None,
-        Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    recording: StrictBool | None = None
-    coverage: Annotated[
-        Literal["recorded", "live_only"],
-        Field(
-            description="`live_only` means no local history exists for this symbol, so criteria that need recorded history were skipped for this row rather than evaluated as zero.\n"
+            description="A criterion id. `ScannerFilter` lists the ids in force; a stored preset may still name one the server no longer knows or lists with `available: false` (`ScannerPreset.unavailable_criteria`, which also carries a stored `sort` key that `sort_keys` lists with `available: false`).\n",
+            pattern="^[a-z][a-z0-9_]{0,39}$",
         ),
     ]
+    label: Annotated[str, Field(description="The English display name, units included.")]
+    kind: Annotated[
+        Literal["range", "class_set"],
+        Field(description="`range` takes a `ScannerRange`, `class_set` a `ScannerClassSet`."),
+    ]
+    unit: Annotated[
+        Literal["fraction", "usdt", "bps", "zscore", "class"],
+        Field(
+            description="The unit of the bounds and of the matching `ScannerRow` field; `fraction` is a decimal ratio."
+        ),
+    ]
+    estimated: Annotated[
+        StrictBool,
+        Field(
+            description="`true` when the value is an estimate: the client badges the criterion and its column."
+        ),
+    ]
+    needs_recording: Annotated[
+        StrictBool,
+        Field(
+            description="`true` when the value needs recorded history, so it is skipped for `live_only` rows."
+        ),
+    ]
+    sortable: Annotated[
+        StrictBool, Field(description="`true` when the id is also a `ScannerSortKey`.")
+    ]
+    available: Annotated[
+        StrictBool,
+        Field(
+            description="`false` while no server source feeds the criterion (tape speed and regime until E10 writes `orderflow_metrics`, OI change until the recorded open-interest baseline is read): the client offers neither a filter nor a sort on it, and the server refuses one (`422` rule `criterion_unavailable`) rather than skipping it for every row. It turns `true` server-side when the source lands.\n"
+        ),
+    ]
+    classes: Annotated[
+        list[Class] | None,
+        Field(
+            description="Present for a `class_set` criterion only: its classes, in display order."
+        ),
+    ] = None
 
 
 class IndicatorOutput(BaseModel):
@@ -7321,6 +7390,240 @@ class Watchlist(WatchlistInput):
     created_at: AwareDatetime
     updated_at: AwareDatetime
     _WatchlistInput__null_refused = field_validator("columns", mode="before")(_take_null)
+
+
+class ScannerRow(BaseModel):
+    symbol: Annotated[
+        str,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ]
+    last_price: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    price_change_pct_24h: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    volume_24h: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    open_interest: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    cvd: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    tape_speed: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    liquidation_intensity: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    recording: StrictBool | None = None
+    coverage: Annotated[
+        Literal["recorded", "live_only"],
+        Field(
+            description="`live_only` means no local history exists for this symbol, so criteria that need recorded history were skipped for this row rather than evaluated as zero.\n"
+        ),
+    ]
+    turnover_24h: Annotated[
+        Decimal | None, Field(description="24 h turnover in USDT, `Ticker.turnover_24h`.")
+    ] = None
+    funding_rate: Annotated[
+        Decimal | None,
+        Field(description="The current funding rate, a fraction, `Ticker.funding_rate`."),
+    ] = None
+    spread_bps: Annotated[
+        Decimal | None,
+        Field(
+            description="`(ask1_price - bid1_price) / mid * 10000` in decimal arithmetic, `mid` being `(ask1_price + bid1_price) / 2`, from the same `Ticker`.\n"
+        ),
+    ] = None
+    range_pct_24h: Annotated[
+        Decimal | None,
+        Field(
+            description="`(high_24h - low_24h) / low_24h`, a fraction, from the same `Ticker`, in decimal arithmetic; `null` while `high_24h` or `low_24h` is unknown.\n"
+        ),
+    ] = None
+    oi_change_pct_24h: Annotated[
+        Decimal | None,
+        Field(
+            description="`(open_interest - open_interest 24 h earlier) / open_interest 24 h earlier`, a fraction, from recorded open interest; `null` for a `live_only` row.\n"
+        ),
+    ] = None
+    tape_speed_zscore: Annotated[
+        Decimal | None,
+        Field(
+            description="The latest `tape_speed_zscore` metric (`24-internal-schemas.md` §7.2); an estimate (`listScannerCriteria`); `null` for a `live_only` row.\n"
+        ),
+    ] = None
+    regime: Annotated[
+        str | None,
+        Field(
+            description="The latest regime class, one of the classes `listScannerCriteria` lists for `regime`; an estimate; `null` for a `live_only` row.\n",
+            pattern="^[a-z][a-z0-9_]{0,31}$",
+        ),
+    ] = None
+    price_path_24h: Annotated[
+        list[Decimal | None] | None,
+        Field(
+            description="Last price at each of the 24 hourly marks ending at `meta.generated_at`, oldest first, for a 24 h trend line; an hour with no price is `null`. Absent when the server holds no hourly prices for the symbol.\n",
+            max_length=24,
+        ),
+    ] = None
+    skipped_criteria: Annotated[
+        list[ScannerCriterionId] | None,
+        Field(
+            description="The active criteria skipped for this row because it is `live_only` and they need recorded history (`needs_recording`), in `listScannerCriteria` order; empty for a `recorded` row.\n"
+        ),
+    ] = None
+
+
+class ScannerMeta(DataMeta):
+    capped: Annotated[
+        StrictBool,
+        Field(
+            description="`true` when more instruments matched than `limit` returned (then `has_more` is `true` too): the rows are the first `limit` in the `sort` order.\n"
+        ),
+    ]
+    inputs: Annotated[
+        list[ScannerInputFreshness],
+        Field(description="One entry per input the scan read, in no particular order."),
+    ]
+
+
+class ScannerFilter(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    price_change_pct_24h: ScannerRange | None = None
+    turnover_24h: ScannerRange | None = None
+    funding_rate: ScannerRange | None = None
+    oi_change_pct_24h: ScannerRange | None = None
+    spread_bps: ScannerRange | None = None
+    tape_speed_zscore: ScannerRange | None = None
+    range_pct_24h: ScannerRange | None = None
+    regime: ScannerClassSet | None = None
+    __null_refused = field_validator("price_change_pct_24h", "turnover_24h", "funding_rate", "oi_change_pct_24h", "spread_bps", "tape_speed_zscore", "range_pct_24h", "regime", mode="before")(_refuse_null)
+
+
+class ScannerPresetInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[
+        str,
+        Field(
+            description="At most 80 characters as sent, at least 1 after sanitising (above). Unique per owner, case-insensitive (`409 conflict`, rule `name_taken`).",
+            max_length=80,
+            min_length=1,
+        ),
+    ]
+    filter: ScannerFilter
+    sort: Annotated[
+        Literal[
+            "volume_24h",
+            "price_change_pct_24h",
+            "cvd",
+            "tape_speed",
+            "open_interest",
+            "liquidation_intensity",
+            "turnover_24h",
+            "funding_rate",
+            "spread_bps",
+            "range_pct_24h",
+            "tape_speed_zscore",
+            "oi_change_pct_24h",
+        ],
+        Field(description="The ranking the preset applies; omitted means `turnover_24h`."),
+    ] = "turnover_24h"
+    is_default: Annotated[
+        StrictBool,
+        Field(
+            description="The preset a new scanner pane opens with. At most one per owner: setting it clears the owner's previous default (`createScannerPreset`)."
+        ),
+    ] = False
+
+
+class ScannerPreset(BaseModel):
+    id: UUID
+    name: str
+    filter: Annotated[
+        ScannerFilter, Field(description="The stored criteria the server knows today.")
+    ]
+    sort: Annotated[
+        Literal[
+            "volume_24h",
+            "price_change_pct_24h",
+            "cvd",
+            "tape_speed",
+            "open_interest",
+            "liquidation_intensity",
+            "turnover_24h",
+            "funding_rate",
+            "spread_bps",
+            "range_pct_24h",
+            "tape_speed_zscore",
+            "oi_change_pct_24h",
+        ],
+        Field(
+            description="A `runScanner` ranking key. **Open-ended for readers** (C-6.3); a writer sends a listed value that `listScannerCriteria`'s `sort_keys` does not list with `available: false`. A preset stores one.\n"
+        ),
+    ]
+    is_default: StrictBool
+    unavailable_criteria: Annotated[
+        list[ScannerCriterionId],
+        Field(
+            description="Criteria the stored filter names that the server no longer knows or lists with `available: false`, never silently dropped (and the stored `sort` key when `sort_keys` lists it with `available: false`; `sort` is returned as stored): they are left out of `filter` and `runScanner`, and listed here until a `PUT` saves the preset without them. Usually empty.\n"
+        ),
+    ]
+    version: Annotated[
+        JsonInt,
+        Field(
+            description="1 on create, raised by one on every change; informative only (no `If-Match`).",
+            ge=1,
+        ),
+    ]
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
 
 
 class IndicatorDescriptor(BaseModel):

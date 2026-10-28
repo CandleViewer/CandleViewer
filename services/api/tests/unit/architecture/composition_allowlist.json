@@ -34,6 +34,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "DELETE /scanner/presets/{presetId}": {
+      "reason": "contract-first operation (E08-T09 PR 1 contract slice); the E08-T09 implementation slices serve it",
+      "ticket": "#4708"
+    },
     "DELETE /settings/hotkeys/{hotkeyProfileId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -210,6 +214,14 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "GET /scanner/criteria": {
+      "reason": "contract-first operation (E08-T09 PR 1 contract slice); the E08-T09 implementation slices serve it",
+      "ticket": "#4708"
+    },
+    "GET /scanner/presets": {
+      "reason": "contract-first operation (E08-T09 PR 1 contract slice); the E08-T09 implementation slices serve it",
+      "ticket": "#4708"
+    },
     "GET /settings": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -330,6 +342,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "POST /scanner/presets": {
+      "reason": "contract-first operation (E08-T09 PR 1 contract slice); the E08-T09 implementation slices serve it",
+      "ticket": "#4708"
+    },
     "POST /session/environment": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -393,6 +409,10 @@
     "PUT /positions/{positionId}/tpsl": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
+    },
+    "PUT /scanner/presets/{presetId}": {
+      "reason": "contract-first operation (E08-T09 PR 1 contract slice); the E08-T09 implementation slices serve it",
+      "ticket": "#4708"
     },
     "PUT /settings/hotkeys/{hotkeyProfileId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",

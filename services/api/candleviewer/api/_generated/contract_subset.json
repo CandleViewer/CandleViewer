@@ -2252,7 +2252,7 @@
         "type": "string"
       },
       "PaneKind": {
-        "description": "Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n",
+        "description": "Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). `scanner` (SCR-104) also shows many symbols and carries\nneither, but holds no account data: its rows are `runScanner`'s public market values. The\nserver accepts `scanner` once E08-T09's implementation adds it to `lp_kind`; until then a\nlayout naming it is refused with `422`. A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n",
         "enum": [
           "chart",
           "dom",
@@ -2265,7 +2265,8 @@
           "positions",
           "journal",
           "watchlist",
-          "alerts"
+          "alerts",
+          "scanner"
         ],
         "type": "string"
       },
@@ -6104,6 +6105,52 @@
             "marketdata:read"
           ],
           "scope": "none"
+        }
+      }
+    },
+    "/scanner/criteria": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/scanner/presets": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/scanner/presets/{presetId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
         }
       }
     },
