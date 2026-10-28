@@ -708,7 +708,7 @@ def print_markdown(
         "`palette.light.amber.300` (light): an amber in a danger ramp.\n"
         "CVD: no colour here carries meaning alone - glyph + word + number first (E39-D01 D8); the "
         "status fills are reinforcement, the DEMO / LIVE badge is text; the simulation "
-        "(`cvd_sim.py`) runs on the exports after drawing."
+        "(`cvd_sim.py`) renders are committed beside each export."
     )
 
 
