@@ -530,6 +530,7 @@ class BatchIn(BaseModel):
 _MAX_SEGMENT: Final = 64
 _MAX_MESSAGE: Final = 200
 _TAG_MESSAGE: Final = "op must be one of create, update, delete"
+_OWN_MESSAGE: Final = frozenset({"value_error", "assertion_error"})  # a validator's fixed text
 
 
 def _clip(value: str, limit: int) -> str:
@@ -547,12 +548,15 @@ def format_errors(
     Client-chosen text can reach an error in two places: an unknown key becomes a path segment,
     and pydantic's discriminator messages quote the offending ``op`` value. So each string
     segment is sanitised and cut to 64 code points, union-tag errors use a fixed message, and
-    every message is sanitised and cut to 200. pydantic also puts the discriminator tag
+    every message is sanitised and cut to 200. A parse failure's detail (``ctx["error"]``, such
+    as "found `{` at 1" for a UUID) is derived from the input, so it is cut off the message and
+    one rule answers one message whatever the value (#4868); a validator's own ``value_error``
+    or ``assertion_error`` text is fixed and stays. pydantic also puts the discriminator tag
     (``create``/``update``/``delete``) into ``loc`` after the list index; it is internal, so it
     is dropped to give ``operations.3.drawing.tool``.
     """
     out: list[dict[str, str]] = []
-    for err in exc.errors(include_url=False, include_context=False, include_input=False)[:limit]:
+    for err in exc.errors(include_url=False, include_context=True, include_input=False)[:limit]:
         parts: list[str] = [prefix] if prefix else []
         prev: object = None
         for tok in err["loc"]:
@@ -561,5 +565,8 @@ def format_errors(
             prev = tok
         rule = err["type"]
         msg = _TAG_MESSAGE if rule in ("union_tag_invalid", "union_tag_not_found") else err["msg"]
+        detail = err.get("ctx", {}).get("error")
+        if detail is not None and rule not in _OWN_MESSAGE:
+            msg = msg.removesuffix(f", {detail}")
         out.append({"field": ".".join(parts), "rule": rule, "message": _clip(msg, _MAX_MESSAGE)})
     return out
