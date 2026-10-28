@@ -9453,12 +9453,11 @@ export interface components {
      *     `oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes
      *     (`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule
      *     `property_not_allowed_for_kind`). `scanner` (SCR-104) also shows many symbols and carries
-     *     neither, but holds no account data: its rows are `runScanner`'s public market values. The
-     *     server accepts `scanner` once E08-T09's implementation adds it to `lp_kind`; until then a
-     *     layout naming it is refused with `422`. A heatmap lives in the `dom` pane and orders in the
-     *     `positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is
-     *     marked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`
-     *     settings.
+     *     neither, but holds no account data: its rows are `runScanner`'s public market values;
+     *     E08-T09 PR 2a (`0054_scanner_presets`) added it to `lp_kind`. A heatmap lives in the
+     *     `dom` pane and orders in the `positions` pane. A footprint is a `chart` pane; until chart
+     *     templates exist (#2411) it is marked by `pane_config.settings.footprint: true`, its
+     *     options as further flat `footprint_*` settings.
      * @enum {string}
      */
     PaneKind:

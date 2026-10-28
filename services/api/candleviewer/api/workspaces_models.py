@@ -40,9 +40,11 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 from candleviewer.api.drawings_models import sanitize_text
 
 # --- enums: each Literal is pinned to the DB CHECK list by a unit test ------------------------
+#: `scanner` (SCR-104) is a many-symbol pane with no account data; `lp_kind` admits it from
+#: 0054_scanner_presets (E08-T09, #4708).
 PaneKind = Literal[
     "chart", "dom", "tape", "profile", "cvd", "oi", "deep_stats", "regime",
-    "positions", "journal", "watchlist", "alerts",
+    "positions", "journal", "watchlist", "alerts", "scanner",
 ]  # fmt: skip
 PaneScaleMode = Literal["auto", "linked", "manual", "log"]
 LayoutGridPreset = Literal["1x1", "2x1", "1x2", "2x2", "1+3", "3x3", "custom"]

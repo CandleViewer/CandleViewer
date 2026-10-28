@@ -261,6 +261,11 @@
       "path": "services/api/candleviewer/migrations/versions/0053_tg_frozen_after_draft.py",
       "sha256": "12040e541f3da00de45c4565daa56fb3e8419b1a1883ec58415fd28976330b11",
       "down_revision": "0052_ia_purge_anchor"
+    },
+    "0054_scanner_presets": {
+      "path": "services/api/candleviewer/migrations/versions/0054_scanner_presets.py",
+      "sha256": "84bdba27793077da42f923e89ab2215535f4d2922f35e3ab8ef0b2b1ce84b439",
+      "down_revision": "0053_tg_frozen_after_draft"
     }
   }
 }

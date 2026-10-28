@@ -229,6 +229,12 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "indicator_preset.updated",
         "indicator_preset.deleted",
         "indicator_preset.imported",
+        # E08-T09 (#4708): scanner-preset writes, written ahead of the row with a content hash,
+        # never the filter (24 Sec.15.5); a write refused after its record gets a second one
+        # with outcome `failure`. Another user's preset is `rbac.denied`.
+        "scanner_preset.created",
+        "scanner_preset.updated",
+        "scanner_preset.deleted",
         "recorder.start",
         "recorder.stop",
         # #2188 (orchestrator ruling): `update_manual` changed a manual entry's streams or depth.

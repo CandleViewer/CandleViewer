@@ -103,6 +103,8 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "trade_group_legs",
         # E13-T03 (0040_indicator_presets)
         "indicator_presets",
+        # E08-T09 (0054_scanner_presets)
+        "scanner_presets",
         # E29-T04 (0043_order_submission)
         "idempotency_anchors",
         "recorded_stops",
