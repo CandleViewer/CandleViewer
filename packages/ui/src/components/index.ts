@@ -56,6 +56,17 @@ export type {
 export { useFocusRing } from "./FocusRing.js";
 export type { FocusRingOptions, FocusRingProps } from "./FocusRing.js";
 
+export {
+  GlobalErrorAnnouncement,
+  GlobalErrorBoundaryFallback,
+  GLOBAL_ERROR_FALLBACK_COPY,
+} from "./GlobalErrorBoundaryFallback.js";
+export type {
+  GlobalErrorAnnouncementProps,
+  GlobalErrorBoundaryFallbackProps,
+  GlobalErrorScope,
+} from "./GlobalErrorBoundaryFallback.js";
+
 export { Avatar } from "./Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Avatar.js";
 
