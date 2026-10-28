@@ -79,7 +79,7 @@ import asyncio
 import json
 from collections import deque
 from collections.abc import Callable, Collection, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final
 
 from candleviewer.ws.limits import BARS_SHARE_PCT
@@ -185,11 +185,15 @@ class LadderEvent:
     (for `close`, the most expensive ones when the overflow began). A `close` names its step-3
     `trigger`: `budget` (still over budget after the drop) or `redrop` (`MAX_REDROPS`), for the
     metric label and the audit entry; a `drop` of the `bars` topics alone, over their share,
-    names `share` (SR-E12-07)."""
+    names `share` (SR-E12-07). #571: a `drop` also carries, for its log line and never compared,
+    its topics by queued plus pending bytes, largest first (`ranked`), and the depth (`pct`) the
+    check found before it (`pct_before`)."""
 
     action: str
     topics: tuple[str, ...]
     trigger: str | None = None
+    ranked: tuple[str, ...] = field(default=(), compare=False)
+    pct_before: float = field(default=0.0, compare=False)
 
     @property
     def reason(self) -> str:
@@ -431,6 +435,7 @@ class Backpressure:
             self._end()
         if not (over or self.queue.share_over()):
             return []
+        before = self.queue.pct(self.pacer.pending_bytes)
         subs = list(subs)
         self._settle()
         current = {sub.sub_id for sub in subs}  # forget the subscriptions that ended
@@ -462,13 +467,16 @@ class Backpressure:
             self.pacer.shed(sub)  # only (a pending `snap`, or paused): never a candidate's
         if over:  # over the share, every `bars` candidate goes (SR-E12-07)
             offending = self._offending(offending, queued, stale)
+        ranked = offending if over else self._ranked(offending, queued)  # before their windows go
         for sub in offending:
             self.pacer.drop(sub)
         self.queue.drop(stale | {_key(s) for s in offending})  # over the share: `bars` only
         events = []
         if offending:
             topics = tuple(sorted(sub.ch for sub in offending))
-            events.append(LadderEvent("drop", topics, None if over else "share"))
+            order = tuple(sub.ch for sub in ranked)
+            trigger = None if over else "share"
+            events.append(LadderEvent("drop", topics, trigger, ranked=order, pct_before=before))
         if self.over_budget():
             events.append(LadderEvent("close", hint, "budget"))
         elif self._looping(offending):
@@ -491,20 +499,25 @@ class Backpressure:
         frames = self.queue.key_frames()
         size = self.queue.bytes + self.pacer.pending_bytes - sum(costs[key] for key in stale)
         count = len(self.queue) - sum(frames.get(key, 0) for key in stale)
-        ranked = sorted(
-            candidates,
-            key=lambda sub: (
-                -(costs.get(_key(sub), 0) + self._window(sub)),
-                sub.ch,
-                sub.replay_session_id or "",
-            ),
-        )
+        ranked = self._ranked(candidates, costs)
         for n, sub in enumerate(ranked):
             if self.queue.depth_pct(size, count) < DRAIN_PCT:
                 return ranked[:n]
             size -= costs.get(_key(sub), 0) + self._window(sub)
             count -= frames.get(_key(sub), 0)
         return ranked
+
+    def _ranked(self, subs: list[Subscription], costs: Mapping[Key, int]) -> list[Subscription]:
+        """`subs` by queued plus pending bytes, largest first, ties by topic name, then live
+        before replay: step 1's order (`_offending`) and the drop's log line (#571)."""
+        return sorted(
+            subs,
+            key=lambda sub: (
+                -(costs.get(_key(sub), 0) + self._window(sub)),
+                sub.ch,
+                sub.replay_session_id or "",
+            ),
+        )
 
     def _window(self, sub: Subscription) -> int:
         """The bytes of `sub`'s pacer window as `Pacer.pending_bytes` counts them: what

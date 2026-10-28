@@ -139,6 +139,10 @@ SLOW_CONSUMER_MESSAGE: Final = "Client is not draining its outbound queue."
 CLOSE_FLUSH_DEADLINE: Final = "close_flush_deadline"
 #: §4.3: the close audit's `trigger` for an expired flush when step 3 gave none.
 FLUSH_DEADLINE_TRIGGER: Final = "flush_deadline"
+#: #571: `ws overflow drop` logs at most one line per connection per this many seconds, and names
+#: at most this many of the topics step 1 shed, largest first (as the `bye.hint`).
+OVERFLOW_LOG_WINDOW_S: Final = 10.0
+OVERFLOW_LOG_TOPICS: Final = 5
 #: The frame types the server sends (§13.1): a log line names one of these, else `other`.
 _SERVER_TYPES: Final = frozenset(
     (
@@ -229,6 +233,8 @@ class ConnectionPipeline:
         self.ladder: Backpressure | None = None
         #: The step 3 trigger of this connection's close (`budget` | `redrop`), for its audit.
         self.trigger: str | None = None
+        #: From `attach`: the gateway's clock, which caps `ws overflow drop` (`_shed`, #571).
+        self._clock: Callable[[], float] = lambda: self._now
         #: The connection's codec, for everything below that depends on it.
         self._msgpack = encoding == SUBPROTOCOL_MSGPACK
         self._dumps: FrameEncoder = msgpack_payload if self._msgpack else json_payload
@@ -294,7 +300,8 @@ class ConnectionPipeline:
         emitter.on_rebuild = self._rebuilt
         emitter.on_snapshot = pacer.snapshotted
         authz.on_drop, self._attached = partial(self._invalidate, pacer), (authz, pacer)
-        self._notify, self._classify_at = notify, emitter.clock() + self._interval_s
+        self._notify, self._clock = notify, emitter.clock
+        self._classify_at = emitter.clock() + self._interval_s
         self._count_as(pacer.cls)
 
     def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
@@ -420,14 +427,17 @@ class ConnectionPipeline:
         self.queue.wake()
         return True
 
-    def _quiet(self, key: tuple[str, str]) -> int | None:
+    def _quiet(
+        self, key: tuple[str, str], now: float | None = None, window_s: float | None = None
+    ) -> int | None:
         """None holds a log line back: one per `key` (event, family) per `classify_interval_ms`, on
-        `service`'s clock. Else how many it held back since the last line (`suppressed`)."""
+        `service`'s clock, or per `window_s` at `now`. Else how many it held back since the last
+        line (`suppressed`)."""
+        now = self._now if now is None else now
         until, held = self._held.get(key, (-math.inf, 0))
-        self._held[key] = (
-            (until, held + 1) if self._now < until else (self._now + self._interval_s, 0)
-        )
-        return None if self._now < until else held
+        window = self._interval_s if window_s is None else window_s
+        self._held[key] = (until, held + 1) if now < until else (now + window, 0)
+        return None if now < until else held
 
     def _skipped(self, frame: Mapping[str, Any]) -> bool:
         """The rest of a chunk set whose chunk its encoder refused: never queued, as no client
@@ -552,8 +562,29 @@ class ConnectionPipeline:
         for event in events:
             if event.action == "drop":
                 self.queue.wake()
+                with contextlib.suppress(Exception):  # a failing logger changes nothing
+                    self._shed(event)
             elif event.action == "close":
                 self._step3(event.trigger, event.topics)
+
+    def _shed(self, event: LadderEvent) -> None:
+        """#571: `ws overflow drop`, one line per connection per `OVERFLOW_LOG_WINDOW_S` on the
+        gateway's clock, the next counting those held back (`suppressed`). The shed topics,
+        largest first, at most `OVERFLOW_LOG_TOPICS`; `share` for a drop over the `bars` share
+        alone, else `budget`. Never a frame or a payload."""
+        held = self._quiet(("overflow", "drop"), self._clock(), OVERFLOW_LOG_WINDOW_S)
+        if held is None:
+            return
+        _log().warning(
+            "ws overflow drop",
+            connection_id=self._connection_id,
+            topics=list(dict.fromkeys(event.ranked))[:OVERFLOW_LOG_TOPICS],
+            shed=len(event.topics),
+            queue_pct_before=event.pct_before,
+            queue_pct_after=self.queue.pct(self.ladder.pacer.pending_bytes if self.ladder else 0),
+            trigger=event.trigger or "budget",
+            suppressed=held,
+        )
 
     def _step3(self, trigger: str | None, topics: tuple[str, ...]) -> None:
         self.trigger = trigger
@@ -639,11 +670,14 @@ class ConnectionPipeline:
         if not self.abandoned:
             self.abandoned = True
             cv_ws_overflow_total.labels(reason=CLOSE_FLUSH_DEADLINE).inc()
+        step3 = {} if self.trigger is None else {"trigger": self.trigger}  # #571: as `ws close`
         _log().warning(
             "ws close deadline passed",
             connection_id=self._connection_id,
             reason=reason,
             queued=len(self.queue),
+            flush_abandoned=True,
+            **step3,
         )
 
     def release(self) -> None:
