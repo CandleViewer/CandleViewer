@@ -28,7 +28,7 @@ export interface CalendarGridProps {
   readonly today: string;
   readonly min?: string | undefined;
   readonly max?: string | undefined;
-  /** The sentence naming the allowed range, under the grid; spoken once when an out-of-range day is chosen. */
+  /** The sentence naming the allowed range, under the grid; spoken on each press of an out-of-range day. */
   readonly caption?: string | undefined;
   /** The month heading's id: it names the dialog and the grid. */
   readonly headingId: string;
@@ -79,8 +79,8 @@ export function CalendarGrid({
   const [focused, setFocused] = useState(initialFocus);
   /** Set by a grid key: the newly focused day takes DOM focus after the render (a month button keeps it). */
   const moveFocus = useRef(false);
-  /** The caption is spoken once per opening, on the first press of an out-of-range day. */
-  const [spoken, setSpoken] = useState(false);
+  /** Presses of out-of-range days: each one inserts a fresh caption node into the status, so it is spoken again. */
+  const [refusals, setRefusals] = useState(0);
   const { year, month } = parseIsoDate(focused) ?? { year: 1970, month: 1 };
   const weeks = monthWeeks(year, month);
 
@@ -101,7 +101,7 @@ export function CalendarGrid({
 
   const choose = (iso: string): void => {
     if (isWithin(iso, min, max)) onPick(iso);
-    else setSpoken(true);
+    else setRefusals((n) => n + 1);
   };
 
   return (
@@ -174,7 +174,7 @@ export function CalendarGrid({
       </table>
       {caption === undefined ? null : <p className="cv-datepicker__caption">{caption}</p>}
       <span className="cv-visually-hidden" role="status">
-        {spoken && caption !== undefined ? caption : ""}
+        {refusals > 0 && caption !== undefined ? <span key={refusals}>{caption}</span> : null}
       </span>
     </div>
   );

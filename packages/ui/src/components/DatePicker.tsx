@@ -110,7 +110,9 @@ export function DatePicker({
   const lower = normaliseIso(min);
   const upper = normaliseIso(max);
   const caption = rangeCaption ?? composeCaption(lower, upper);
-  const parseError = `Enter a date as ${formatHint === "" ? DEFAULT_HINT : formatHint}.`;
+  /** The help line and the placeholder: an empty `formatHint` draws neither. */
+  const hint = formatHint === "" ? null : formatHint;
+  const parseError = `Enter a date as ${hint ?? DEFAULT_HINT}.`;
   const rangeError = caption ?? parseError;
 
   // An edit belongs to the value it was typed against: a host that moves the value discards it.
@@ -188,9 +190,13 @@ export function DatePicker({
     if (iso !== value) onChange(iso);
   };
 
-  /** A press on the well's padding or the suffix focuses the field; a press on the button stays the button's. */
+  /**
+   * A press on the well's padding or the suffix focuses the field; a press on the button stays the button's. The
+   * calendar is portaled, but React bubbles its presses here: a press anywhere in the dialog stays the dialog's.
+   */
   const forward = (event: MouseEvent<HTMLDivElement>): void => {
     if (event.button !== 0 || !(event.target instanceof Element)) return;
+    if (!event.currentTarget.contains(event.target)) return;
     if (event.target === inputRef.current || event.target.closest("button") !== null) return;
     event.preventDefault();
     inputRef.current?.focus();
@@ -203,7 +209,7 @@ export function DatePicker({
   const message = typedError ?? errorMessage;
   const description = control.describe(
     control.ownLines && errorId,
-    formatHint !== "" && hintId,
+    hint !== null && hintId,
     describedBy,
     suffixId,
   );
@@ -237,7 +243,7 @@ export function DatePicker({
             autoComplete="off"
             spellCheck={false}
             className="cv-field__input"
-            placeholder={formatHint}
+            placeholder={hint ?? undefined}
             value={edit?.text ?? value ?? ""}
             disabled={reason.disabled}
             readOnly={readOnly || reason.gated}
@@ -298,9 +304,9 @@ export function DatePicker({
       {control.ownLines ? (
         <FieldMessage id={errorId} message={shownInvalid ? message : undefined} />
       ) : null}
-      {formatHint === "" ? null : (
+      {hint === null ? null : (
         <div id={hintId} className="cv-datepicker__hint">
-          {formatHint}
+          {hint}
         </div>
       )}
       {control.reasonFromField ? null : (

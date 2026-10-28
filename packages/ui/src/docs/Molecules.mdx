@@ -391,7 +391,7 @@ Submenu decisions (E05-S03):
 | Page Up / Page Down                             | Previous / next month: the same day number, clamped to the month's last.                                            |
 | Shift+Page Up / Shift+Page Down                 | Previous / next year (29 February clamps to 28).                                                                    |
 | Enter / Space on a day                          | Picks it and closes.                                                                                                |
-| Enter / Space on an out-of-range day            | Nothing changes; the caption is spoken once per opening.                                                            |
+| Enter / Space on an out-of-range day            | Nothing changes; the caption is spoken on every such press.                                                         |
 | Tab / Shift+Tab (dialog)                        | Cycles the month buttons and the grid's one tab stop; focus stays in the dialog.                                    |
 | Esc                                             | Closes without a change. Every close returns focus to the calendar button.                                          |
 | Any key while T2                                | The field is read-only, the button `aria-disabled`: the dialog never opens; the reason is spoken once per visit.    |
@@ -408,4 +408,11 @@ Submenu decisions (E05-S03):
 
 The value is an ISO `YYYY-MM-DD` string in UTC, never a `Date`; today comes from an injectable
 `now` clock. The date math is in-house: no date library. The range form and `withTime` follow in
-slice 14.
+slice 14. `DatePickerProps` is provisional until then: `value: string | null` is the single form only,
+and adding `mode` will likely widen it to a union, a breaking change to this export.
+
+A press inside the open calendar stays the calendar's: React bubbles it through the portal to the
+well, which forwards only presses on its own padding and suffix to the field. A read-only field
+keeps its value selectable, and its calendar button is natively disabled, so it leaves the Tab
+order (T2's `aria-disabled` is for a gated field only). Empty cells before the 1st and after the
+last day are empty `gridcell`s, as in the APG example.

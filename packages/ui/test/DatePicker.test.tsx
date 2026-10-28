@@ -312,7 +312,7 @@ describe("DatePicker (CMP-047): the calendar dialog", () => {
     expect(focusedName()).toBe("23 October 2026");
   });
 
-  it("marks out-of-range days aria-disabled and speaks the caption once", async () => {
+  it("marks out-of-range days aria-disabled and speaks the caption on a press", async () => {
     const onChange = fn();
     const host = await mount(
       <Host
@@ -338,6 +338,51 @@ describe("DatePicker (CMP-047): the calendar dialog", () => {
     // In range, no aria-disabled.
     await key("ArrowRight");
     expect(document.activeElement).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("speaks the caption again on each later press, in this month or another", async () => {
+    const host = await mount(
+      <Host value="2026-09-01" min="2026-09-01" max="2026-10-28" rangeCaption={CAPTION} />,
+    );
+    await click(button(host));
+    const status = within(openDialog()).getByRole("status");
+    await key("ArrowLeft");
+    const day = document.activeElement as Element;
+    await click(day);
+    const first = status.firstElementChild;
+    expect(first).toHaveTextContent(CAPTION);
+    await click(day);
+    const second = status.firstElementChild;
+    expect(second).toHaveTextContent(CAPTION);
+    expect(second).not.toBe(first);
+    await key("PageUp");
+    expect(focusedName()).toBe("31 July 2026");
+    await click(document.activeElement as Element);
+    expect(status.firstElementChild).toHaveTextContent(CAPTION);
+    expect(status.firstElementChild).not.toBe(second);
+  });
+
+  it("tabs from Next month to the new month's roving day", async () => {
+    const host = await mount(<Host value="2026-01-31" />);
+    await click(button(host));
+    const next = within(openDialog()).getByRole("button", { name: "Next month" });
+    await act(async () => next.focus());
+    await click(next);
+    await act(async () => userEvent.tab());
+    expect(focusedName()).toBe("28 February 2026");
+  });
+
+  it("keeps focus in the dialog on a press of its heading", async () => {
+    const host = await mount(<Host value="2026-10-23" />);
+    await click(button(host));
+    const heading = within(openDialog()).getByRole("heading", { name: "October 2026" });
+    let unprevented = false;
+    await act(async () => {
+      unprevented = await fireEvent.mouseDown(heading);
+    });
+    expect(unprevented).toBe(true);
+    expect(field(host)).not.toHaveFocus();
+    expect(focusedName()).toBe("23 October 2026");
   });
 
   it("starts a fresh calendar on each opening", async () => {
