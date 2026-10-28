@@ -44,10 +44,14 @@ def test_20_names_a_single_orders_spans_and_their_parent() -> None:
     tracing = _tracing()
     assert (
         "A single order's submission is one trace: `http.request` (on `placeOrder`), then "
-        "`oms.submit`, then its three children in turn, `oms.validate`, `oms.persist` and "
-        "`oms.send`, with `exchange.place_order` under `oms.send`." in tracing
+        "`oms.submit`, then its children, `oms.validate`, `oms.persist` and `oms.send`, each "
+        "started when its first step is reached" in tracing
     )
-    assert "`oms.validate` exists today around B1's first persist" in tracing
+    assert "with `exchange.place_order` under `oms.send`." in tracing
+    assert (
+        "`oms.validate` wrapped B1's first persist in E29-T03's facade; from S4-G3 it covers "
+        "steps 1\u20138." in tracing
+    )
     assert (
         "so `oms.send` hands the venue call a W3C trace context in process (nothing goes to the "
         "exchange), and `exchange.place_order` starts under it as `oms.send`'s child." in tracing
@@ -75,11 +79,12 @@ def test_20s_step_ranges_are_order_submissions_own_steps() -> None:
     assert "`oms.send` covers steps 10\u201311, B1's `SEND` through the answer" in tracing
     doc = _words(ast.get_docstring(ast.parse(SUBMIT.read_text(encoding="utf-8"))) or "")
     steps = {int(n): text for n, text in re.findall(r"(?:^| )(\d{1,2})\. (\S+ \S+ \S+)", doc)}
-    assert set(steps) >= set(range(1, 12))
+    assert set(steps) == set(range(1, 12))
     assert steps[1].startswith("the clock halt")
     assert steps[8].startswith("the `order_link_id`")
     assert steps[9].startswith("the first persist")
     assert steps[10].startswith("`SEND`")
+    assert steps[11].startswith("the answer")
 
 
 def test_20_keeps_span_attributes_to_ids_and_codes_and_exceptions_to_their_class() -> None:
@@ -108,5 +113,5 @@ def test_24_says_the_facade_starts_one_span_and_the_pipeline_owns_a_submissions(
 def test_adr_0014_points_at_20_for_the_order_paths_names() -> None:
     adr = PLAN / "27-adrs" / "ADR-0014-observability.md"
     addendum = _section(adr, r"^## Addendum \([0-9-]+\) — E29-T04 order-path spans$")
-    assert "**Status: reconciled; no decision overturned.**" in addendum
+    assert "Status: reconciled; no decision overturned." in addendum
     assert "§5's order-path span names are maintained in `20-architecture.md` §12.3." in addendum
