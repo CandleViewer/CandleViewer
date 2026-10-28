@@ -3535,7 +3535,10 @@ export interface paths {
      *     size_tolerance_pct 0.2, **estimated**), `stop_run` (max_bars_to_reverse 3,
      *     reversal_pct 0.5, **estimated**), `adx` (14), `atr` (14), `hurst` (R/S window 256),
      *     `regime` (combined ADX/Hurst classification), `vwap` (+1σ/2σ bands),
-     *     `open_interest_delta`, `funding_basis`, `liquidation_intensity`.
+     *     `open_interest_delta`, `funding_basis`, `liquidation_intensity`,
+     *     `big_trade_notional` (largest print notional in the window; `window_ms` 1000) and
+     *     `big_trade_zscore` (z-score of print size against the rolling mean; `window` 500 prints,
+     *     `z_threshold` 3.0) — the defaults of the rules vocabulary and 24 §7.2 (E22-T02, #654).
      */
     get: operations["getMetrics"];
     put?: never;
@@ -3695,7 +3698,41 @@ export interface paths {
      * @description Raw recorded prints, newest-first. `cluster_window_ms` merges same-side same-price
      *     (±`cluster_tolerance_ticks`) prints inside the window into one display print — the
      *     split-fill aggregation of digest 08 §12.2, deliberately distinct from resting-side
-     *     iceberg detection. `min_size` implements the big-trade filter used by the tape widget.
+     *     iceberg detection.
+     *
+     *     **Big trades (E22-T02, #654).** The source is the hot tape: the last 1 000 prints per
+     *     symbol that the ingestion trade stream keeps in memory. `from`, `to` and the cursor page
+     *     within that bounded window; recorded history in QuestDB is not served here (E16). The
+     *     page is built through the big-trade engine (24 §2.10), the same code the WS
+     *     `trades.{symbol}` topic uses (23 §6.1), so for the same window and options the two agree
+     *     on the flagged prints and on cluster membership:
+     *     - `min_size` is a raw size floor: a print whose own `size` is below it is dropped before
+     *       clustering. It is never the big-trade threshold. Absent means no extra filter; a supplied
+     *       value must be at least `MIN_SIZE_FLOOR`, per instrument max(`lot_size`, one tick-notional)
+     *       (SR-E22-03, `docs/security/threat-models/E22-big-trades.md`). A value below the floor,
+     *       negative or not finite is 400 `invalid_min_size`.
+     *     - `cluster_window_ms` is 0–5000 here (SR-E22-04 caps WS at 2000) and 0, the default,
+     *       means no clustering. A clustered item takes its first print's `id`, `ts` and `price`,
+     *       the cluster's total `size` and its member count as `cluster_size`.
+     *     - `is_big_trade` is the engine's flag, never recomputed by a client; on a cluster it is
+     *       true when any member print is flagged: the engine flags prints, and exposes no
+     *       cluster-level evaluation of the cluster's total against the threshold. The threshold is per-symbol engine config with
+     *       server defaults, never a query parameter, and the page's `meta` returns it as
+     *       `big_trade_threshold` with its `big_trade_mode` (`TradesPageMeta`).
+     *
+     *     **Bounds promised, enforced from #654's implementation PR** (not yet in force): `to - from`
+     *     is at most 6 h, or 15 min when `cluster_window_ms` is over 2000 (SR-E22-04), and an
+     *     over-window request is 400 `invalid_time_range` (SR-E22-01); `limit`
+     *     is at most 500 (SR-E22-02, as `Limit` already declares); `min_size` meets the floor above
+     *     (SR-E22-03), with 400 `invalid_min_size`.
+     *
+     *     **Errors as built.** A malformed `symbol`, `from`, `to`, `min_size` or `cursor` is 400.
+     *     A parameter outside its schema here (`limit`, `side`, `cluster_window_ms`,
+     *     `cluster_tolerance_ticks`, a `cursor` over 512 characters) is 422 `validation_failed`,
+     *     whose `errors[]` entries name the field (`field`, as `query.cluster_window_ms`, with the
+     *     failed `rule`). This diverges from WS, where an out-of-range `cluster_window_ms` is
+     *     `invalid_options`, by intent: each surface keeps its own refusal shape (23 §6.1).
+     *     An instrument that is not listed is 404.
      */
     get: operations["getTrades"];
     put?: never;
@@ -8992,7 +9029,9 @@ export interface components {
       | "vwap"
       | "open_interest_delta"
       | "funding_basis"
-      | "liquidation_intensity";
+      | "liquidation_intensity"
+      | "big_trade_notional"
+      | "big_trade_zscore";
     MetricPoint: {
       /** @description Per-point detail for event-like metrics (iceberg, stop_run, absorption). */
       meta?: {
@@ -9769,7 +9808,17 @@ export interface components {
       /** @description Number of raw prints merged when clustering is on. */
       cluster_size?: number;
       id?: string;
+      /**
+       * @description The big-trade engine's flag against `meta.big_trade_threshold`; never recomputed by a client. On a cluster, true when any member print is flagged (the engine has no cluster-level evaluation).
+       * @default false
+       */
+      is_big_trade: boolean;
       is_block_trade?: boolean;
+      /**
+       * @description The print is liquidation-origin, as on WS `TradesBatch` (23 §14.2).
+       * @default false
+       */
+      is_liquidation: boolean;
       price?: components["schemas"]["Decimal"];
       /**
        * @description Taker/aggressor side, taken directly from Bybit `S`.
@@ -11498,6 +11547,13 @@ export interface components {
       | "closed"
       | "failed"
       | "cancelled";
+    /** @description `PageMeta` extended with the big-trade threshold the page was flagged against (E22-T02, #654). The threshold is per-symbol engine config with server defaults (24 §2.10). */
+    TradesPageMeta: components["schemas"]["PageMeta"] & {
+      /** @enum {string} */
+      big_trade_mode: "absolute_size" | "notional" | "percentile";
+      /** @description The engine's current effective threshold, absolute: base units when `big_trade_mode` is `absolute_size`, USDT when it is `notional` or `percentile`. */
+      big_trade_threshold: components["schemas"]["Decimal"];
+    };
     /** @description The `403 trading_disabled` problem the order-entry gate returns when it refuses a submission or amend that opens or increases exposure, before any OMS work (C-2.21): the problem body plus the gate's `reason`. `detail` is human text and never carries an id or a secret. The gate runs after authentication, RBAC and account-scope resolution, so an account outside the caller's scope never reaches it: an id route answers it as a missing id (`404`), and a request that names it in its body is refused with `403 account_scope_denied` (SR-E29-13). Cancels, flatten and quantity-reducing or stop-tightening amends never pass through the gate. Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never gated; "trigger re-armed" means an exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated. */
     TradingDisabledProblem: components["schemas"]["Problem"] & {
       /** @constant */
@@ -17841,6 +17897,7 @@ export interface operations {
     parameters: {
       query: {
         cluster_tolerance_ticks?: number;
+        /** @description 0 means no clustering. REST takes 0–5000; WS `trades` takes 0–2000 (SR-E22-04). */
         cluster_window_ms?: number;
         /** @description Opaque forward cursor from `meta.next_cursor`. Cursors expire after 1 hour. */
         cursor?: components["parameters"]["Cursor"];
@@ -17848,6 +17905,7 @@ export interface operations {
         from?: components["parameters"]["From"];
         /** @description Page size. */
         limit?: components["parameters"]["Limit"];
+        /** @description Raw size floor in base units: prints whose own size is below it are dropped before clustering. Absent means no extra filter; a supplied value must be at least the per-instrument `MIN_SIZE_FLOOR` (400 `invalid_min_size` otherwise, enforced from #654's implementation PR, SR-E22-03). Not the big-trade threshold. */
         min_size?: components["schemas"]["Decimal"];
         side?: "buy" | "sell";
         symbol: components["parameters"]["SymbolQuery"];
@@ -17868,10 +17926,14 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["Page"] & {
             items?: components["schemas"]["PublicTrade"][];
+            meta?: components["schemas"]["TradesPageMeta"];
           };
         };
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };

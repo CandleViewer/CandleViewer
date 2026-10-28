@@ -3061,6 +3061,7 @@
               "type": "integer"
             },
             "cluster_window_ms": {
+              "description": "The union's widest range, the batched `liquidations` one. `trades` takes 0–2000 (SR-E22-04, §6.1), and a value above it is `invalid_options`.",
               "maximum": 5000,
               "minimum": 0,
               "type": "integer"
@@ -3935,6 +3936,19 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "big_trade_threshold": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+          "description": "The engine's current effective big-trade threshold for the symbol, absolute: base units in `absolute_size` mode, USDT in `notional` and `percentile` (§6.1). Every frame of the `trades` publisher (E22-T02, #654) carries it; it is optional here only because frames built before that publisher, the §3.4 conformance vectors among them (`candleviewer/ws/cvwb_vectors.py`, kind 3), predate it; #654's implementation PR makes it required."
+        },
+        "coalesced": {
+          "default": false,
+          "type": "boolean"
+        },
+        "coalesced_count": {
+          "description": "Source batches this frame appended (§8.6).",
+          "minimum": 1,
+          "type": "integer"
+        },
         "dropped": {
           "description": "Prints filtered out by `min_size` since the previous frame; never silent.",
           "minimum": 0,
@@ -3954,6 +3968,11 @@
               },
               "id": {
                 "type": "string"
+              },
+              "is_big_trade": {
+                "default": false,
+                "description": "The big-trade engine's flag against the effective threshold (24 §2.10); never recomputed by a client. On a cluster, true when any member print is flagged: the engine exposes no cluster-level evaluation, only per-print flags (§6.1).",
+                "type": "boolean"
               },
               "is_block_trade": {
                 "default": false,

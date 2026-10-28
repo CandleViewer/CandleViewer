@@ -17,6 +17,7 @@ class ErrorCode(StrEnum):
     LOT_SIZE_VIOLATION = "lot_size_violation"
     INVALID_CURSOR = "invalid_cursor"
     INVALID_TIME_RANGE = "invalid_time_range"
+    INVALID_MIN_SIZE = "invalid_min_size"
     UNAUTHENTICATED = "unauthenticated"
     MFA_REQUIRED = "mfa_required"
     MFA_INVALID = "mfa_invalid"
@@ -125,6 +126,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.LOT_SIZE_VIOLATION: ErrorMeta(("rest",), None, False, None, None, "Quantity violates the instrument qty step / min / max"),
     ErrorCode.INVALID_CURSOR: ErrorMeta(("rest",), None, False, None, None, "Pagination cursor is malformed or expired"),
     ErrorCode.INVALID_TIME_RANGE: ErrorMeta(("rest",), None, False, None, None, "from/to range is inverted or exceeds the allowed window"),
+    ErrorCode.INVALID_MIN_SIZE: ErrorMeta(("rest",), None, False, None, None, "min_size is below the instrument's floor, negative or not finite"),
     ErrorCode.UNAUTHENTICATED: ErrorMeta(("rest",), None, False, None, None, "Missing, malformed or expired access token"),
     ErrorCode.MFA_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "Multi-factor authentication challenge must be completed"),
     ErrorCode.MFA_INVALID: ErrorMeta(("rest",), None, False, None, None, "MFA code rejected"),

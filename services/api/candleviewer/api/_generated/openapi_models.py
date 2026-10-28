@@ -1914,10 +1914,32 @@ class PublicTrade(BaseModel):
         Field(description="Taker/aggressor side, taken directly from Bybit `S`."),
     ] = None
     is_block_trade: StrictBool | None = None
+    is_liquidation: Annotated[
+        StrictBool,
+        Field(description="The print is liquidation-origin, as on WS `TradesBatch` (23 §14.2)."),
+    ] = False
+    is_big_trade: Annotated[
+        StrictBool,
+        Field(
+            description="The big-trade engine's flag against `meta.big_trade_threshold`; never recomputed by a client. On a cluster, true when any member print is flagged (the engine has no cluster-level evaluation)."
+        ),
+    ] = False
     cluster_size: Annotated[
         JsonInt | None, Field(description="Number of raw prints merged when clustering is on.")
     ] = None
     tick_direction: Literal["PlusTick", "ZeroPlusTick", "MinusTick", "ZeroMinusTick"] | None = None
+
+
+class TradesPageMeta(PageMeta):
+    big_trade_threshold: Annotated[
+        str,
+        Field(
+            description="The engine's current effective threshold, absolute: base units when `big_trade_mode` is `absolute_size`, USDT when it is `notional` or `percentile`.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    big_trade_mode: Literal["absolute_size", "notional", "percentile"]
 
 
 class Bid(RootModel[list[Decimal]]):
@@ -2007,6 +2029,8 @@ class MetricSeries(BaseModel):
         "open_interest_delta",
         "funding_basis",
         "liquidation_intensity",
+        "big_trade_notional",
+        "big_trade_zscore",
     ]
     estimated: Annotated[
         StrictBool | None, Field(description="True for heuristic metrics (arch P10).")
