@@ -5,9 +5,9 @@ adapter's own registry (`PrivateStreams`) and the fake venue (`PrivateVenue`): t
 chaos suite's virtual clock, and the lane's own bounds on a loop whose clock moves only when a test
 advances it (`LaneClock`). A stalled serving loop is one blocked on an event, a wedged lane one
 whose thread is; each wait on another thread is a bound on the test, never a time it expects
-(C-13.7). Those cross-thread waits (`BOUND_S`) are the exception 03 Sec.14 allows: the suite's
-timeout interrupts only the main thread, so a lane thread blocked on an event, or a `finally`
-that must stop the lane, needs a bound of its own. No network (C-13.5)."""
+(C-13.7). Those cross-thread waits (`BOUND_S`) are a stated exception to 03 Sec.14's rule: the
+suite's timeout interrupts only the main thread, so a lane thread blocked on an event, or a
+`finally` that must stop the lane, needs a bound of its own. No network (C-13.5)."""
 
 from __future__ import annotations
 

@@ -471,7 +471,9 @@ async def test_the_span_starts_as_the_registry_queues_a_fill_after_its_frames_pa
     takes it (`put_events`), after its frame's parse (`classify`, then `read_push`), never before
     it as `ts_ingest` is; its end on the lane as its read's batch lands there, or in the control
     as its consumer reads it on the serving loop; and each read on `CLOCK`, which is
-    `time.monotonic`, as ruled: a clock that counts, put in its place, gives every reading."""
+    `time.monotonic`, as ruled: a clock that counts, put in its place, gives every reading. Its
+    `BOUND_S` waits are a stated exception to 03 Sec.14's rule: the suite's timeout interrupts
+    only the main thread, so a wait on the lane's or the serving loop's thread needs its own."""
     assert CLOCK is time.monotonic
     ticks, parse = Ticks(), list[float]()
     classify, read_push = private_parse.classify, private_parse.read_push
