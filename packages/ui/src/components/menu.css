@@ -1,0 +1,248 @@
+/*
+ * CMP-041 Menu (D02 slice 4, conventions 30): an anchored floating surface holding `role="menu"`. Positioned by
+ * `useAnchoredPosition` with `fit` (fixed, `space.inset.xs` from the trigger, flipped at the viewport edge), which
+ * writes `--cv-anchor-width` (at least as wide as its trigger) and `--cv-available-height` (the room on its side:
+ * past it the menu scrolls, conventions 39). Items are `size.row.height` tall (24 / 32 by density) and wrap.
+ * Motion (conventions 35): it takes focus, so it opens at once; it closes with a `fast` / `accelerate` fade with no
+ * pointer events; reduced motion is a cut. Stacking: portalled, no z-index, as CMP-017.
+ */
+.cv-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: var(--cv-anchor-width, auto);
+  max-width: calc(100vw - 2 * var(--space-inset-xs));
+  max-height: var(--cv-available-height, calc(100vh - 2 * var(--space-inset-xs)));
+  padding-block: var(--space-inset-xs);
+  overflow: auto;
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-overlay);
+  box-shadow: var(--elevation-popover);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  overflow-wrap: break-word;
+  opacity: 1;
+}
+
+/* The menu itself takes focus only when it has no item (conventions 32); it is not a control. */
+.cv-menu:focus {
+  outline: none;
+}
+
+.cv-menu__group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A group's caption: not focusable, `type.ui.caption` in tertiary. */
+.cv-menu__group-label {
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  color: var(--color-text-tertiary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* A 1 px `color.border.default` rule with `space.inset.xs` above and below. */
+.cv-menu__separator {
+  flex: none;
+  margin-block: var(--space-inset-xs);
+  border-top: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+/* The hit target is the row: `size.row.height` tall (a minimum: it grows with wrapped text) and the full width. */
+.cv-menu__row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-block-size: var(--size-row-height);
+  padding-inline: var(--space-inset-sm);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+/* Two lines (a reason or a description): block padding keeps the inset ring off the text. */
+.cv-menu__row[data-lines] {
+  padding-block: var(--space-inset-xs);
+}
+
+/* The menuitem holds the label; the row draws its focus. */
+.cv-menu__item {
+  outline: none;
+}
+
+.cv-menu__row:hover,
+.cv-menu__row:has(.cv-menu__item:focus) {
+  background: var(--color-surface-hover);
+}
+
+/* CMP-039's inset ring (H8): 2px `color.focus.ring` drawn inside the row, so the scroll box never clips it. */
+.cv-menu__row:has(.cv-menu__item:focus-visible) {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * -2px);
+}
+
+.cv-menu__row:active {
+  background: var(--color-surface-selected);
+}
+
+/* The leading slot: one `size.icon` glyph in secondary; the check in primary; the lock in tertiary. */
+.cv-menu__lead {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--size-icon);
+  block-size: var(--size-icon);
+  color: var(--color-text-secondary);
+}
+
+.cv-menu__row[data-checked] .cv-menu__lead {
+  color: var(--color-text-primary);
+}
+
+.cv-menu__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The second line: a T2 reason or a description. */
+.cv-menu__second {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* The trailing shortcut: `type.num.sm` in tertiary. */
+.cv-menu__kbd {
+  flex: none;
+  margin-inline-start: var(--space-inset-sm);
+  color: var(--color-text-tertiary);
+  font-size: var(--type-num-sm-font-size);
+}
+
+/* Plain disabled: `opacity.disabled`, reached, never activated. */
+.cv-menu__row[data-state="disabled"] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* T2 (conventions 36): the lock and the label in tertiary, the reason in secondary; never `opacity.disabled`. */
+.cv-menu__row[data-state="gated"] {
+  cursor: not-allowed;
+}
+
+.cv-menu__row[data-state="gated"] .cv-menu__item,
+.cv-menu__row[data-state="gated"] .cv-menu__lead {
+  color: var(--color-text-tertiary);
+}
+
+.cv-menu__row[data-state="busy"] {
+  cursor: progress;
+}
+
+/* Danger (H16): the glyph in `status.danger.strong`; the label stays primary. */
+.cv-menu__row[data-danger] .cv-menu__lead {
+  color: var(--color-status-danger-strong);
+}
+
+/* Out over `fast` / `accelerate`; no pointer events from the first frame of the exit (conventions 35). */
+.cv-menu[hidden] {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-easing-accelerate),
+    display var(--motion-duration-fast) allow-discrete;
+}
+
+/* Never seen at the origin: transparent (still focusable, unlike `visibility`) until the first placement lands. */
+.cv-menu:not([data-positioned]) {
+  opacity: 0;
+}
+
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): the exit is a cut. */
+:root[data-motion="reduce"] .cv-menu[hidden] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) .cv-menu[hidden] {
+    transition: none;
+  }
+}
+
+/* The universal reduce pair (as theme.css applies it), kept here so the file is self-contained. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* Forced colours (conventions 38): a CanvasText edge on Canvas; the focused item a Highlight fill. */
+@media (forced-colors: active) {
+  .cv-menu {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .cv-menu__separator {
+    border-top-color: CanvasText;
+  }
+
+  .cv-menu__group-label,
+  .cv-menu__second,
+  .cv-menu__kbd,
+  .cv-menu__lead,
+  .cv-menu__row[data-danger] .cv-menu__lead {
+    color: CanvasText;
+  }
+
+  /* T2 is not greyed: its lock, label and reason stay CanvasText (slice 3 conventions 29). */
+  .cv-menu__row[data-state="gated"] .cv-menu__item,
+  .cv-menu__row[data-state="gated"] .cv-menu__lead {
+    color: CanvasText;
+  }
+
+  .cv-menu__row[data-state="disabled"] {
+    color: GrayText;
+    opacity: 1;
+  }
+
+  .cv-menu__row:has(.cv-menu__item:focus) {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .cv-menu__row:has(.cv-menu__item:focus-visible) {
+    outline-color: HighlightText;
+  }
+
+  /* After the state twins, at higher weight: the Highlight fill needs HighlightText on every part. */
+  .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__item,
+  .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__lead,
+  .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__second,
+  .cv-menu__row:has(.cv-menu__item:focus) .cv-menu__kbd {
+    color: HighlightText;
+  }
+}

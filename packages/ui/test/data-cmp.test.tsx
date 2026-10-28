@@ -12,6 +12,7 @@ import {
   FormSection,
   IconButton,
   InfoPanel,
+  Menu,
   NumericStepperInput,
   RadioGroup,
   SearchBox,
@@ -143,5 +144,15 @@ describe("molecules carry their catalogue id", () => {
       <InfoPanel defaultOpen variant="inline" title="Iceberg" content="Text" trigger={trigger} />,
     );
     expect(host.querySelectorAll('[data-cmp="CMP-069"]')).toHaveLength(1);
+  });
+
+  it("CMP-041 marks exactly one root with data-cmp (its portalled menu, closed)", async () => {
+    await mount(
+      <Menu
+        trigger={<Button>Actions</Button>}
+        items={[{ id: "a", label: "Alpha", onSelect: noop }]}
+      />,
+    );
+    expect(document.querySelectorAll('[data-cmp="CMP-041"]')).toHaveLength(1);
   });
 });

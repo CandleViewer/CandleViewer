@@ -132,6 +132,9 @@ export type { LinkProps, LinkRoute, LinkRouteProps } from "./Link.js";
 export { MaskedValue, maskAllValues } from "./MaskedValue.js";
 export type { MaskedValueProps, MaskedValueState } from "./MaskedValue.js";
 
+export { Menu } from "./Menu.js";
+export type { MenuGroup, MenuItem, MenuItemKind, MenuProps, MenuTriggerProps } from "./Menu.js";
+
 export { NumericStepperInput } from "./NumericStepperInput.js";
 export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
 
