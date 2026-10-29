@@ -17,16 +17,14 @@ from uuid import UUID
 
 from candleviewer.exchange.base.models import AccountRef, Order, PrivateEvent
 from candleviewer.exchange.bybit import private_parse as pp
+from candleviewer.exchange.bybit.private_stream import REQUIRED_OPS
 from candleviewer.oms.errors import POST_TERMINAL_PUSH
-from candleviewer.oms.stream_push import HANDOVER_BOUND_S
 from candleviewer.storage.repositories.orders import NewOrder
 from candleviewer.storage.repositories.positions import PositionRow
 from tests.unit.audit.audit_waits import virtual
 from tests.unit.exchange.bybit._private import linear_execution, linear_order, push, row
 from tests.unit.oms.order_rig import T0
 from tests.unit.oms.stream_world import (
-    FILLS,
-    ORDERS,
     REFUSED,
     RESYNCING,
     A,
@@ -38,6 +36,10 @@ from tests.unit.oms.stream_world import (
 )
 from tests.unit.oms.submission_contract import trading_stop
 
+#: The topics the adapter subscribes (`private_stream.REQUIRED_OPS`), each by the neutral topic its
+#: parser reads it as (`private_parse.TOPICS`): every frame of these tests is sent on one of them.
+TOPIC = {pp.TOPICS[topic]: topic for ops in REQUIRED_OPS for topic in ops}
+ORDERS, FILLS, POSITIONS, WALLET = (TOPIC[t] for t in ("order", "execution", "position", "wallet"))
 #: The transcribed fill's taker fee rate: a derived fill's fee is this rate of its own value, as
 #: B1 bounds a fee by its value (`MAX_FEE_RATE`).
 FEE_RATE = Decimal(row("execution")["feeRate"])
@@ -203,18 +205,21 @@ def manual_order(w: World) -> Order:
 async def test_a_fill_with_no_oms_intent_opens_the_accounts_lockout() -> None:
     """Gherkin "A fill with no OMS intent opens the account's lockout": with every order of the
     account bound to its row, a trade fill of an order no row is bound to and no record matches
-    opens the shipped stand-in lockout once, keyed by the fill's `exec_id`, within the 5 s
-    hand-over bound: `oms.no_intent_detected` (`frozen: false` until E39-T04 #4208, SR-E27-19
-    open), then one P1, then the hand-over, which `NoHandoverStore` refuses and counts. Keeping the
-    fill for the next pass is E29-T06's (the ruling Q2); a redelivery pages nothing more."""
+    opens the shipped stand-in lockout once per key, the fill's `exec_id`:
+    `oms.no_intent_detected` (`frozen: false` until E39-T04 #4208, SR-E27-19 open), then one P1,
+    then the hand-over, which `NoHandoverStore` refuses and counts. The 5 s hand-over bound is
+    pinned at the push level, on a fake clock that its reads advance
+    (`test_stream_push.py::test_handle_reads_under_one_deadline_not_one_per_read`); here no fake
+    second passes, so this test pins the order that bound covers: the record, then the P1, before
+    the hand-over. Keeping the fill for the next pass is E29-T06's (the ruling Q2); a redelivery
+    pages nothing more, and the order's next fill, another key, opens it again."""
     async with opened(parsed) as w:
         order = await w.submitted()
         w.venue.seed_order(manual_order(w), uid="100001")
-        began = asyncio.get_running_loop().time()
         w.send(FILLS, foreign())
         await w.settle()
         [(action, record)] = w.emitted
-        assert action == "oms.no_intent_detected" and record["at"] - began <= HANDOVER_BOUND_S
+        assert action == "oms.no_intent_detected"
         assert record["after_state"] == {
             "account_id": str(A), "finding": "execution", "key": "eF",
             "exchange_placed": False, "frozen": False,
@@ -226,7 +231,11 @@ async def test_a_fill_with_no_oms_intent_opens_the_accounts_lockout() -> None:
         w.send(FILLS, foreign())  # redelivered: the lockout is open for its key
         await w.settle()
         assert len(w.emitted) == len(w.pages) == 1 and w.trace.count("handover") == 2
-        assert (w.count("push", "no_intent"), w.count("push", "handover_unavailable")) == (2, 2)
+        w.send(FILLS, foreign("eG"))  # the order's next fill: its own key, never once per account
+        await w.settle()
+        assert [r["after_state"]["key"] for _, r in w.emitted] == ["eF", "eG"]
+        assert len(w.pages) == 2 and w.trace[-3:] == ["emit", "page", "handover"]
+        assert (w.count("push", "no_intent"), w.count("push", "handover_unavailable")) == (3, 3)
         assert (await w.row(order.id)).lifecycle_state == "submitted"
 
 

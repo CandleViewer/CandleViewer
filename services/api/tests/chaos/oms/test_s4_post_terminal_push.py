@@ -9,8 +9,8 @@ import pytest
 
 from candleviewer.oms.errors import POST_TERMINAL_PUSH
 from tests.unit.audit.audit_waits import virtual
-from tests.unit.oms.stream_world import FILLS, ORDERS, opened
-from tests.unit.oms.test_e29_t05_acceptance import fill_row, order_row, parsed
+from tests.unit.oms.stream_world import opened
+from tests.unit.oms.test_e29_t05_acceptance import FILLS, ORDERS, fill_row, order_row, parsed
 
 pytestmark = pytest.mark.chaos
 

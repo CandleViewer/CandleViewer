@@ -65,7 +65,6 @@ from tests.unit.oms.order_rig import GATES, NOW_US, T0, Rig, build_rig, gated, o
 A = AccountId(UUID("a1000000-0000-4000-8000-000000000001"))
 B = AccountId(UUID("a1000000-0000-4000-8000-000000000002"))
 GROUP = GroupId(UUID("0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f"))  # the trade group of every order
-ORDERS, FILLS = "order.linear", "execution.linear"  # the topics the adapter subscribes
 RESYNCING = "oms.account_resyncing"
 #: The page the reconciliation stand-in's refusal raises, once per episode (E29-T06's pass).
 REFUSED = ("page", "oms.stream_consumer", "an account's reconciliation request was refused")
@@ -260,7 +259,7 @@ class World:
     # the audit writer, the successor's release audit and the pager
     async def emit(self, action: str, **values: Any) -> None:
         self.trace.append("emit")
-        self.emitted.append((action, values | {"at": asyncio.get_running_loop().time()}))
+        self.emitted.append((action, values))
 
     async def write(self, record: KeyedRecord) -> None:
         self.keyed.append(record)

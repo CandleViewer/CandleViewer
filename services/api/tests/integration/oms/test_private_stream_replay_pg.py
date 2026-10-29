@@ -56,9 +56,16 @@ from tests.integration.oms.test_submission_pipeline_pg import pg_dsn
 from tests.unit.exchange.bybit._private import linear_execution, linear_order, row, usdt_wallet
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.order_rig import Pager
-from tests.unit.oms.stream_world import FILLS, ORDERS, REFUSED, RESYNCING, opened
+from tests.unit.oms.stream_world import REFUSED, RESYNCING, opened
 from tests.unit.oms.submit_rig import REGISTRY, STOP, Profiles, ReadOnly
-from tests.unit.oms.test_e29_t05_acceptance import FEE_RATE, parsed
+from tests.unit.oms.test_e29_t05_acceptance import (
+    FEE_RATE,
+    FILLS,
+    ORDERS,
+    POSITIONS,
+    WALLET,
+    parsed,
+)
 from tests.unit.oms.test_oms_runtime import (
     Binder,
     BridgedPort,
@@ -74,7 +81,6 @@ from tests.unit.oms.test_oms_runtime import (
 pytestmark = pytest.mark.integration
 __all__ = ["pg_dsn"]  # C6's database for this module
 
-POSITIONS, WALLET = "position.linear", "wallet"
 #: How long a step may take on Postgres: the bound only turns a hang into a failure.
 BOUND_S = 30.0
 
@@ -271,7 +277,7 @@ async def test_a_private_session_replayed_across_a_mid_sequence_disconnect_misse
     statuses as 24 Sec.14.2 rule 13 orders them. Each of its three fills is one `executions` row,
     its order `filled` with their sum; the position row is one `ws_push` snapshot; the drop is one
     notice; the first `live`'s request and the reconnect's are each refused (E29-T06's pass) and
-    paged once, for the episode; nothing opens the lockout."""
+    paged once, for the episode, the only page; nothing opens the lockout."""
     rig, order_id = await _submitted(rel, pg_dsn)
     qty, price, link, xid = _terms(pg_dsn, order_id)
     at_ms = _ms(c6._db_now(pg_dsn)) - 1_000
@@ -340,7 +346,7 @@ async def test_a_private_session_replayed_across_a_mid_sequence_disconnect_misse
     assert frames == [(RESYNCING, [str(rig.account)])]
     labels = {"env": "demo", "stage": "consumer", "outcome": "reconciliation_unavailable"}
     refused = parts.metrics.registry.get_sample_value("oms_stream_outcomes_total", labels)
-    assert (refused, parts.pager.calls.count(REFUSED[2])) == (2.0, 1)
+    assert (refused, parts.pager.calls) == (2.0, [REFUSED[2]])  # one page, and nothing else
     assert "oms.no_intent_detected" not in [action for action, _ in parts.writer.actions]
 
 

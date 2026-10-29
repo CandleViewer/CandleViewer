@@ -13,8 +13,8 @@ from decimal import Decimal
 import pytest
 
 from tests.unit.audit.audit_waits import virtual
-from tests.unit.oms.stream_world import FILLS, REFUSED, RESYNCING, A, opened
-from tests.unit.oms.test_e29_t05_acceptance import fill_row, parsed
+from tests.unit.oms.stream_world import REFUSED, RESYNCING, A, opened
+from tests.unit.oms.test_e29_t05_acceptance import FILLS, fill_row, parsed
 
 pytestmark = pytest.mark.chaos
 
