@@ -48,8 +48,11 @@ emitter wrapped for JSON (`e: "b64"`) goes out raw instead, as `e: "b"` with a `
 from __future__ import annotations
 
 import base64
+import functools
 import math
+import operator
 from collections.abc import Mapping
+from itertools import compress, repeat
 from typing import Any, Final, NoReturn, TypeAlias
 
 import msgpack
@@ -89,7 +92,6 @@ MAX_MSGPACK_VALUES: Final = 16_384
 #: frames there, a `hello` and an `auth` with each enum list naming every member once, are charged
 #: 36 and 16: this is twice the larger.
 MAX_PREAUTH_MSGPACK_VALUES: Final = 72
-_SCALARS: Final = (str, int, type(None))  # a bool is an int
 
 # `TypeAlias`, not a PEP 695 `type` statement: Semgrep cannot parse that, and it must scan this
 # security control whole (#2509 round 6).
@@ -102,26 +104,63 @@ class MsgpackFrameError(ValueError):
     """A client frame that is not a valid `cv.v1` MessagePack envelope (`frame_malformed`)."""
 
 
+#: What a decoded value may be: what JSON carries (a bool is its own type here; `bytes` from a
+#: binary string is not among them).
+_ALLOWED_TYPES: Final[frozenset[type]] = frozenset({dict, list, str, int, float, bool, type(None)})
+_CONTAINER_TYPES: Final[frozenset[type]] = frozenset({dict, list})
+_IS_FLOAT: Final = functools.partial(operator.is_, float)
+
+
 class _Budget:
     """Charges each container as the unpacker completes it: 1 for the container, 1 per array
-    element, 2 per map entry as read (so duplicate keys still cost). Ends the decode once spent."""
+    element, 2 per map entry as read (so duplicate keys still cost). Ends the decode once spent.
+
+    It also checks each container as it completes, so the decoded value needs no second walk
+    (#4924): every element and map value is of a type JSON carries, every float is finite, every
+    map key a string, and no container nests deeper than `MAX_MSGPACK_DEPTH`. Each check runs over
+    a container's items with C iterators (`map`, `set`, `compress`), not a Python loop per value.
+    A container's height (1, plus its deepest child's) is kept by `id`: the children are alive in
+    their parent, so no id is reused while the decode runs."""
 
     def __init__(self, limit: int) -> None:
         self.limit = limit
         self.left = limit
+        self._heights: dict[int, int] = {}
 
     def _charge(self, cost: int) -> None:
         self.left -= cost
         if self.left < 0:
             raise MsgpackFrameError(f"more than {self.limit} values")
 
+    def _checked(self, container: list[Any] | dict[Any, Any], items: Any) -> None:
+        """Check `items`, the elements or map values of `container`, and record its height."""
+        items = items if isinstance(items, list) else list(items)
+        kinds = set(map(type, items))
+        if not kinds <= _ALLOWED_TYPES:
+            name = min(t.__name__ for t in kinds - _ALLOWED_TYPES)
+            raise MsgpackFrameError(f"{name} is not allowed")
+        floats = compress(items, map(_IS_FLOAT, map(type, items))) if float in kinds else ()
+        if not all(map(math.isfinite, floats)):
+            raise MsgpackFrameError("non-finite number")
+        height = 1
+        if kinds & _CONTAINER_TYPES:
+            height += max(map(self._heights.get, map(id, items), repeat(0, len(items))))
+            if height > MAX_MSGPACK_DEPTH:
+                raise MsgpackFrameError(f"nesting deeper than {MAX_MSGPACK_DEPTH}")
+        self._heights[id(container)] = height
+
     def array(self, items: list[Any]) -> list[Any]:
         self._charge(1 + len(items))
+        self._checked(items, items)
         return items
 
     def map(self, pairs: list[tuple[Any, Any]]) -> dict[Any, Any]:
         self._charge(1 + 2 * len(pairs))
-        return dict(pairs)
+        value = dict(pairs)  # a repeated key keeps its last value, which alone is checked
+        if not set(map(type, value)) <= {str}:  # e.g. a binary-string key
+            raise MsgpackFrameError("map keys must be strings")
+        self._checked(value, value.values())
+        return value
 
 
 def decode_client_frame(
@@ -130,7 +169,7 @@ def decode_client_frame(
     """One client frame's decoded value, or `MsgpackFrameError` (SR-185). `max_values` can only
     lower the value budget: the gateway passes `MAX_PREAUTH_MSGPACK_VALUES` until `auth_ok`. A
     decode that succeeds appends to `charged`, if given, the values it charged (the gateway's
-    post-decode debit of the inbound rate, §8.5; #4924)."""
+    post-decode refund of the inbound rate, §8.5; #4924)."""
     if not isinstance(raw, bytes | bytearray):  # a memoryview's len() is not its byte count
         raise MsgpackFrameError("a msgpack frame is binary")
     if len(raw) > MAX_INBOUND_FRAME_BYTES:
@@ -158,7 +197,7 @@ def decode_client_frame(
         raise MsgpackFrameError("undecodable frame: UnicodeDecodeError") from None
     except ValueError as exc:  # format, stack, truncated input, lengths, map keys: no content
         raise MsgpackFrameError(f"undecodable frame: {type(exc).__name__}") from exc
-    _check(value)
+    _check_top(value)
     if charged is not None:
         charged.append(budget.limit - budget.left)
     return value
@@ -176,23 +215,10 @@ def _refuse_ext(code: int, data: bytes) -> NoReturn:
     raise MsgpackFrameError(f"ext type {code} is not allowed")
 
 
-def _check(value: Any) -> None:
-    """Refuse what JSON could not carry and nesting deeper than the cap, without recursing.
-    The value budget already bounds the walk."""
-    stack: list[tuple[Any, int]] = [(value, 1)]  # (node, its level if it is a container)
-    while stack:
-        node, level = stack.pop()
-        if isinstance(node, dict | list):
-            if level > MAX_MSGPACK_DEPTH:
-                raise MsgpackFrameError(f"nesting deeper than {MAX_MSGPACK_DEPTH}")
-            if isinstance(node, dict):
-                if not all(isinstance(key, str) for key in node):  # e.g. a binary-string key
-                    raise MsgpackFrameError("map keys must be strings")
-                stack.extend((item, level + 1) for item in node.values())
-            else:
-                stack.extend((item, level + 1) for item in node)
-        elif isinstance(node, float):
-            if not math.isfinite(node):
-                raise MsgpackFrameError("non-finite number")
-        elif not isinstance(node, _SCALARS):
-            raise MsgpackFrameError(f"{type(node).__name__} is not allowed")
+def _check_top(value: Any) -> None:
+    """The checks `_Budget` makes of a container's items, for the frame's own value, which is in
+    no container: a container was checked as it completed."""
+    if type(value) not in _ALLOWED_TYPES:
+        raise MsgpackFrameError(f"{type(value).__name__} is not allowed")
+    if type(value) is float and not math.isfinite(value):
+        raise MsgpackFrameError("non-finite number")
