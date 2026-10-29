@@ -148,11 +148,13 @@ def test_contract_bars_close_t_ms_is_sent_for_non_time_bars_only(bar_type: str, 
     rig, ch = _stored_rig(), f"bars.BTCUSDT.{bar_type}.{param}"
     with h.connect(rig.w) as c:
         hold = _hydrate(rig, spec)
-        c.sub({"ch": ch, "opts": {"encoding": "structured"}})
-        frames = [c.next_of("snap")]
-        rig.emit(spec, _up("update", tape_bars(spec)[-1]))
-        frames.append(c.next_of("d"))
-        hold.release()
+        try:
+            c.sub({"ch": ch, "opts": {"encoding": "structured"}})
+            frames = [c.next_of("snap")]
+            rig.emit(spec, _up("update", tape_bars(spec)[-1]))
+            frames.append(c.next_of("d"))
+        finally:
+            hold.release()
     assert _items(frames)
     _check_close_t_ms(frames, bar_type)
 
@@ -197,12 +199,14 @@ def _encoded(rig: _Rig, c: h.Client, mode: str) -> list[dict[str, Any]]:
     """The frames a subscription in `mode` gets for `_encoding_script`, the two stored bars as its
     snapshot; `include_delta` on, `CV_WS_BACKPRESSURE_ENABLED` off."""
     hold = _hydrate(rig, _TICK)
-    c.sub({"ch": "bars.BTCUSDT.tick.100", "opts": {"encoding": mode, "include_delta": True}})
-    frames = [c.next_of("snap")]
-    for emission in _encoding_script():
-        rig.emit(_TICK, *emission)
-        frames.append(c.next_of("d"))
-    hold.release()
+    try:
+        c.sub({"ch": "bars.BTCUSDT.tick.100", "opts": {"encoding": mode, "include_delta": True}})
+        frames = [c.next_of("snap")]
+        for emission in _encoding_script():
+            rig.emit(_TICK, *emission)
+            frames.append(c.next_of("d"))
+    finally:
+        hold.release()
     return frames
 
 
@@ -263,6 +267,8 @@ def _declared() -> set[str]:
     shapes: dict[str, Any] = {}
     bundle._visit(shapes, "bars", "", bundle.node("bars"))
     named = {"bars": "BarsBatch", "bars#/properties/bars/items": "BarsBatch.bars[]"}
+    unnamed = sorted(set(shapes) - set(named))
+    assert not unnamed, f"§14.3 BarsBatch has object schemas this walk does not name: {unnamed}"
     members = ((named[key], member) for key, shape in shapes.items() for member in shape["members"])
     return {f"{where}.{member}" for where, member in members}
 
