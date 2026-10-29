@@ -53,6 +53,15 @@ const CASES: readonly Case[] = [
   { name: "connecting", event: connecting },
   { name: "welcome", event: { type: "welcome", connectionId: "ID_A" } },
   { name: "welcome, not a string", event: { type: "welcome", connectionId: wire(7) } },
+  // E10-S04 (SCR-157): the build label, kept and junk
+  {
+    name: "welcome with a build label",
+    event: { type: "welcome", connectionId: "ID_A", protocol: "cv.v1", serverVersion: "9.9.9" },
+  },
+  {
+    name: "welcome with a junk build label", // not a text, and padded
+    event: { type: "welcome", connectionId: "ID_A", protocol: wire(1), serverVersion: " 9.9.9" },
+  },
   { name: "auth_ok off", event: authOk(OFF), claims: V_OFF },
   { name: "auth_ok on, with prose", event: authOk(PROSE), claims: V_ON },
   { name: "auth_ok scoped", event: authOk(SCOPED), claims: V_SCOPED },
@@ -129,6 +138,9 @@ const isFresh = (s: WsState, e: EngineEvent): boolean =>
   e.type === "auth_ok" && s.link.kind === "connecting";
 const finite = (v: unknown): number | undefined =>
   typeof v === "number" && Number.isFinite(v) ? v : undefined;
+/** A build label: 1 to 32 printable ASCII characters (`hello.client_version`'s bound), unpadded. */
+const label = (v: unknown): string | null =>
+  typeof v === "string" && /^[\x20-\x7e]{1,32}$/.test(v) && v.trim() === v ? v : null;
 const classToQuality = (c: unknown): Quality | undefined =>
   c === "healthy" || c === "lagging"
     ? c
@@ -216,6 +228,11 @@ function reference(s: WsState, c: Case): WsState {
         e.type === "request_id" && typeof e.requestId === "string" ? e.requestId : requestId,
     },
     outage,
+    // each welcome refreshes it; nothing else touches it
+    server:
+      e.type === "welcome"
+        ? { protocol: label(e.protocol), version: label(e.serverVersion) }
+        : s.server,
   };
 }
 

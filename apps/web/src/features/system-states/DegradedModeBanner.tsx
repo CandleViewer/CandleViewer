@@ -26,7 +26,7 @@ const TABBABLE =
   "a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]";
 
 /** The slot's next stop after `el` in document order (§13: the dismiss lands there after the last row). */
-function nextStopAfter(el: HTMLElement): HTMLElement | undefined {
+export function nextStopAfter(el: HTMLElement): HTMLElement | undefined {
   return [...document.querySelectorAll<HTMLElement>(TABBABLE)].find(
     (c) =>
       c.tabIndex >= 0 &&

@@ -371,13 +371,14 @@ export function createConnection(options: ConnectionOptions): Connection {
   function onWelcome(c: Conn, frame: ControlOf<"welcome">): void {
     if (c.phase !== "hello") return;
     const { connection_id: connectionId, heartbeat, limits, server_time_ms: serverMs } = frame.p;
+    const { protocol, server_version: serverVersion } = frame.p; // SCR-157: unvetted, `reduce` vets
     const skew = frame.p.clock_skew_ms;
     topicsPerRequest = limits.max_topics_per_request;
     minThrottleMs = limits.min_throttle_ms;
     c.skewMs = typeof skew === "number" && Number.isFinite(skew) ? skew : serverMs - wall();
     c.heartbeatMs = clampMs(heartbeat.interval_ms);
     c.timeoutMs = clampMs(heartbeat.timeout_ms);
-    emit({ type: "welcome", connectionId });
+    emit({ type: "welcome", connectionId, protocol, serverVersion });
     armWatchdog(c, c.timeoutMs);
     const { token } = c;
     c.token = undefined; // from here on it lives in the `auth` frame alone

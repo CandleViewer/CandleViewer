@@ -149,6 +149,26 @@ describe("startShell", () => {
     handle.stop();
   });
 
+  it("hands the store the last welcome's build label: undefined until the first, then each one's (SCR-157)", () => {
+    setShellState({ serverProtocol: "cv.v1", serverVersion: "0.0.9" }); // what an earlier shell left
+    const { port, handle } = started();
+    const label = () => [getShellState().serverProtocol, getShellState().serverVersion];
+    expect(label()).toEqual([undefined, undefined]); // never welcomed
+    const build = (protocol: string | null, version: string | null): WsState => ({
+      ...INITIAL_WS_STATE,
+      server: { protocol, version },
+    });
+    port.say({ t: "state", state: build("cv.v1", "1.4.3") });
+    expect(label()).toEqual(["cv.v1", "1.4.3"]);
+    port.say({ t: "state", state: build("cv.v1", "v".repeat(33)) }); // refused at the port
+    expect(label()).toEqual(["cv.v1", "1.4.3"]);
+    port.say({ t: "state", state: build(null, "1.4.3") }); // welcomed, protocol label refused
+    expect(label()).toEqual([null, "1.4.3"]); // null, never undefined: 10b fails closed on it
+    port.say({ t: "state", state: build("cv.v1", null) }); // a server_version the worker refused
+    expect(label()).toEqual(["cv.v1", undefined]);
+    handle.stop();
+  });
+
   it("holds every link the client can be in to one the shell knows", () => {
     expect(toConnectionState(withLink({ kind: "connecting" }))).toEqual({ kind: "connecting" });
     for (const cause of ["offline", "tailnet_unreachable", "backend_unreachable"] as const) {
@@ -427,6 +447,15 @@ describe("startShell on the real path", () => {
       () => expect(getShellState().systemByKind.health).toMatchObject({ health: "degraded" }),
       WAIT,
     );
+    handle.stop();
+  });
+
+  it("carries welcome's protocol and server_version from the worker to the store (SCR-157)", async () => {
+    const { handle } = await liveShell();
+    expect([getShellState().serverProtocol, getShellState().serverVersion]).toEqual([
+      "cv.v1",
+      "test", // the fake gateway's server_version
+    ]);
     handle.stop();
   });
 

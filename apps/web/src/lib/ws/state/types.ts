@@ -57,6 +57,12 @@ export interface Outage {
   readonly lastDataMs: number | null;
 }
 
+/** SCR-157: the last `welcome`'s label (23 §4.2); a part is `null` when `reduce` refused it. */
+export interface ServerBuild {
+  readonly protocol: string | null;
+  readonly version: string | null;
+}
+
 export interface WsState {
   readonly transport: TransportState;
   /** +1 exactly once per change of `transport`: the chrome announces a transition once, not per heartbeat. */
@@ -75,6 +81,8 @@ export interface WsState {
   readonly diagnostics: { readonly connectionId: string | null; readonly requestId: string | null };
   /** `null` while up, and before the first `auth_ok`: a session start is not an outage (E17-D02 §11 row 15). */
   readonly outage: Outage | null;
+  /** `null` until a `welcome` (unlike a refused label); refreshed by each, kept when lost. */
+  readonly server: ServerBuild | null;
 }
 
 /**
@@ -89,7 +97,13 @@ export interface WsState {
  */
 export type EngineEvent =
   | { readonly type: "connecting"; readonly lost?: Outage | undefined }
-  | { readonly type: "welcome"; readonly connectionId: string }
+  | {
+      readonly type: "welcome";
+      readonly connectionId: string;
+      /** `welcome.protocol` and `server_version` as they came; `reduce` keeps bounded ones only. */
+      readonly protocol?: string | undefined;
+      readonly serverVersion?: string | undefined;
+    }
   | { readonly type: "auth_ok"; readonly killSwitch: KillSwitchPayload | undefined }
   | {
       readonly type: "reconnecting";

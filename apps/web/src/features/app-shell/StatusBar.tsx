@@ -3,10 +3,10 @@ import { Icon, type IconName } from "@candleviewer/ui";
 import type { ConnectionState, Environment } from "../../shell/bootstrap/store.js";
 import { useShellSelector } from "../../shell/useShellSelector.js";
 import type { LatencyState } from "../../lib/telemetry/latencyIndicator.js";
+import { CLIENT_VERSION } from "../../lib/ws/protocol/frames.js";
+import { VERSION_COPY } from "../system-states/copy";
+import { checkVersion } from "../system-states/versionMismatch";
 import { useUtcClock } from "./clock";
-
-/** The build-time version (`lib/ws/globals.d.ts`), the same one `hello` reports. */
-export const APP_VERSION: string = __CV_APP_VERSION__;
 
 /** Visually hidden, read in browse mode (the standard clip pattern; not layout spacing). */
 const HIDDEN: CSSProperties = {
@@ -158,6 +158,19 @@ function EnvRepeat(): JSX.Element {
   );
 }
 
+/**
+ * SCR-157's reminder after Later (E10-D03 §9.1, board 10; D02 :230's proposal, PROPOSED), until
+ * the next launch: plain text beside the version, outside the live part, so it is never announced.
+ */
+function UpdateReminder(): JSX.Element | null {
+  const shown = useShellSelector(
+    (s) =>
+      s.updateDeferred &&
+      checkVersion(CLIENT_VERSION, s.serverProtocol, s.serverVersion) === "update_available",
+  );
+  return shown ? <Chip kind="update" tone="none" text={VERSION_COPY.label} /> : null;
+}
+
 export interface StatusBarProps {
   /** The bar-close countdown's slot; the chart features fill it. */
   readonly barClose?: ReactNode;
@@ -186,8 +199,9 @@ export function StatusBar({ barClose }: StatusBarProps): JSX.Element {
         <UtcClock />
       </span>
       <span data-shell-slot="bar-close">{barClose}</span>
+      <UpdateReminder />
       <EnvRepeat />
-      <span style={TERTIARY}>{`v${APP_VERSION}`}</span>
+      <span style={TERTIARY}>{`v${CLIENT_VERSION}`}</span>
     </div>
   );
 }

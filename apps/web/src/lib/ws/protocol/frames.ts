@@ -37,6 +37,10 @@ export interface ControlPayloads {
 /** `Sec-WebSocket-Protocol` offer. D3: msgpack joins only once it can be decoded (#2886). */
 export const SUBPROTOCOLS = ["cv.v1.json"] as const;
 export const CLIENT_NAME = "candleviewer-web";
+/** The protocol `hello` names (23 §2.3); SCR-157 holds `welcome.protocol` to it. */
+export const CLIENT_PROTOCOL: HelloPayload["protocol"] = "cv.v1";
+/** The build (`apps/web/package.json`, the `__CV_APP_VERSION__` define): `hello` reports it. */
+export const CLIENT_VERSION: string = __CV_APP_VERSION__;
 /** 23 13.1: the server drops a longer correlation `id`, so its reply could not be matched. */
 export const MAX_ID_LENGTH = 64;
 type Capability = NonNullable<HelloPayload["capabilities"]>[number];
@@ -81,7 +85,7 @@ export const hello = (id: string, args: HelloArgs): ClientFrame => ({
   id,
   p: {
     client: CLIENT_NAME,
-    protocol: "cv.v1",
+    protocol: CLIENT_PROTOCOL,
     encodings: ["binary", "structured"],
     capabilities: [...CAPABILITIES],
     ...args,

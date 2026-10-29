@@ -8,5 +8,6 @@ declare const __CV_ALLOW_FAULT_INJECTION__: boolean;
 /**
  * The web app's version, `apps/web/package.json`'s `version`, substituted at build time by `define` in
  * `vite.config.ts` (and `vitest.config.mjs`). `hello` reports it and the status bar shows it (E10-S01 S4).
+ * Read it through `CLIENT_VERSION` (`protocol/frames.ts`), its one definition.
  */
 declare const __CV_APP_VERSION__: string;

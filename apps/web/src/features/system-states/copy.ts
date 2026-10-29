@@ -148,6 +148,22 @@ export const GPU_COPY = {
 } as const;
 
 /**
+ * SCR-157's banner (`docs/design/E10/E10-D03.md` §9.1, board 10). What will happen is each shell
+ * adapter's `caps.reason.autoUpdate`, which §9.1 cites. Not here: What's new and the position line.
+ */
+export const VERSION_COPY = {
+  /** §9.1 and board 10; the StatusBar's reminder after Later too (D02 :230, PROPOSED there). */
+  label: "Update available",
+  /** PROPOSED: D02 f23's "(this tab runs 1.4.2, the server serves 1.4.3)" (`14` SCR-157 A11y). */
+  versions: (desktop: boolean, client: string, server: string): string =>
+    `This ${desktop ? "app" : "tab"} runs ${client}, the server serves ${server}.`,
+  /** §9.1 and board 10: CMP-001 secondary, for the session. */
+  later: "Later",
+  /** §9.1 and board 10: the browser's CMP-001 primary. */
+  reload: "Reload",
+} as const;
+
+/**
  * SCR-156 / CMP-091: the copy lives with the component (`@candleviewer/ui`
  * `GLOBAL_ERROR_FALLBACK_COPY`, E05-S04), each string with its source there.
  */

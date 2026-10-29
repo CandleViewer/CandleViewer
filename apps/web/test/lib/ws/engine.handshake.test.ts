@@ -34,12 +34,13 @@ describe("handshake (C1)", () => {
     expect(rest).toEqual([]);
   });
 
-  it("announces the socket, then welcome, then auth_ok, and is ready once", async () => {
+  it("announces the socket, then welcome with its build label, then auth_ok, and is ready once", async () => {
     const t = connectionHarness();
     await t.connect();
     expect(t.events).toEqual([
       { type: "connecting" },
-      { type: "welcome", connectionId: "ws_1" },
+      // E10-S04 (SCR-157): `welcome.protocol` and `server_version` as they came; the reducer vets them
+      { type: "welcome", connectionId: "ws_1", protocol: "cv.v1", serverVersion: "test" },
       { type: "auth_ok", killSwitch: { engaged: false, scope: "global" } },
     ]);
     assertEngineOrder(t.events);

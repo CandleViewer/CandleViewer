@@ -10,6 +10,7 @@ import { recordDecode } from "../lib/telemetry/aggregator.js";
 import type { TokenSource } from "../lib/ws/api.js";
 import { setActiveClient } from "../lib/ws/client/activeClient.js";
 import { createWsClient } from "../lib/ws/client/createWsClient.js";
+import { CLIENT_VERSION } from "../lib/ws/protocol/frames.js";
 import { openWorkerPort } from "../lib/ws/client/workerPort.js";
 import type { PortLike } from "../lib/ws/port/endpoint.js";
 import type { WsState } from "../lib/ws/state/types.js";
@@ -25,9 +26,6 @@ import {
   setShellState,
   type ConnectionState,
 } from "./bootstrap/store.js";
-
-/** The version `hello` names (`apps/web/package.json`, the build-time define the status bar shows). */
-const CLIENT_VERSION = __CV_APP_VERSION__;
 
 export interface StartShellOptions extends BootstrapDeps {
   readonly wsUrl: string;
@@ -116,12 +114,20 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
   });
   let wasLive = false;
   const forward = (): void => {
-    const connection = toConnectionState(client.getState());
+    const state = client.getState();
+    const connection = toConnectionState(state);
     const live = connection.kind === "live";
     if (wasLive && !live) liveness.probeNow(); // an observed loss: check now
     if (live && !wasLive) liveness.markReachable(); // an observed success: the server answered
     wasLive = live;
-    setShellState({ connection });
+    // SCR-157 (#306 slice 10a): the last `welcome`'s build label, read and vetted in the worker;
+    // a refused protocol stays `null`, apart from "never welcomed"
+    const { server } = state;
+    setShellState({
+      connection,
+      serverProtocol: server === null ? undefined : server.protocol,
+      serverVersion: server?.version ?? undefined,
+    });
   };
   client.subscribe(forward); // `client.stop()` drops it
   forward();
