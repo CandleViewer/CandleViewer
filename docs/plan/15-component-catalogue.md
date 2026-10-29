@@ -487,6 +487,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: selected tab a 2 px `color.border.selected` bottom rule (`border.thick`) with the label `color.text.primary`, no fill; unselected labels `color.text.secondary`; tab padding `space.inset.sm` inline (compact) / `space.inset.md` (comfortable), `type.ui.label`; a 1 px `color.border.default` line under the strip (J9). (Replaces `color.action.selected` and `space.tabs.*`.)
 - **Storybook**: Default, Vertical, WithIcons, ManualActivation, GatedTab (J9).
 - **Tests**: unit, visual, axe, keyboard.
+- **As built (E05-S03)**: the tablist takes a required name, `aria-label` or `aria-labelledby`; panels come from `renderPanel(id)`, and only the selected tab's panel is mounted; adds `density?` (`data-density`). Storybook adds Hover, FocusVisible, Selected, Overflow, AllStates and a GatedContrastLight / GatedContrastHighContrast pair.
 
 ### CMP-043 Dialog (Modal)
 
@@ -508,6 +509,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: CMP-043's; Confirm a CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`), or the side's CMP-001 `buy` / `sell` for an order confirm (`color.buy.default` / `color.sell.default`, `color.text.inverse`; `docs/design/E30/E30-D03.md` §2); the restatement box (a "What this does" group) `color.surface.raised`, `radius.card`, `space.inset.md`; the hold ring `color.status.danger.default` over `color.border.strong`, its percentage `type.num.sm` + `color.text.secondary`; the countdown CMP-035 in `color.text.primary`, its number swapped once a second, no colour change (`docs/design/E30/E30-D04.md` M7). (Replaces `color.status.danger`, read as `.default`, and `elevation.4`, a primitive.)
 - **Storybook**: Standard, TypedConfirm, HoldToConfirm(with keyboard fallback demo), Busy, PartialFailure, ConfirmGated, OrderConfirm. **E35-D02 —** RuleDisarm.
 - **Tests**: unit, visual, axe, keyboard-only path for hold-variant (explicit CI gate per a11y standard §3.1.4).
+- **As built (E05-S03)**: no `initialFocus` prop: focus always starts on Cancel (H32). Adds `confirmVariant?: "danger"|"buy"|"sell"|"primary"` (default `danger`), `restatementLabel?` (default "What this does"), `typedInstruction?` (default "Type {token} to confirm"), `armedLabel?` (default "Press again to {effect}"), `summaryLoading?` (Confirm natively disabled until the summary loads), `failure?: {message, retry?, details?}` (the partial-failure state), `confirmDisabledReason?` (the gated Confirm), `size?`, `fallbackFocusRef?` and an injected `now?` clock. `onConfirm(meta)` carries `{variant, gate, elapsedMs}`, where `gate` is `click`, `typed`, `pointer-hold`, `key-hold` or `double-press` (the audit hook under Observability); `onCancel(reason)` adds `cancel` and `timeout` to CMP-043's reasons. Storybook ships Standard, Guard, Typed, TypedMatch, Hold, HoldReleasedEarly, Holding, Armed, HoldKeyboard (the keyboard path), HoldReducedMotion, Busy, PartialFailure, ConfirmGated, OrderConfirm, CountingDown, TimedOut, LongText and a contrast pair; no RuleDisarm story yet. The gate × state matrix for E05-X02 is in `docs/plan/qa/E05-S03-qa-handoff.md`.
 
 ### CMP-045 Toast / Notification
 
@@ -529,6 +531,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.surface.overlay`; `elevation.dialog` (modal, over the scrim) or `elevation.popover` (non-modal); a 1 px `color.border.default` inner edge and header rule; `space.panel.padding`, `space.stack.md`; title `type.ui.heading-sm`; it slides over `motion.duration.normal` with `motion.easing.decelerate` (closing `accelerate`; a docked drawer that reflows its host arrives in one frame; motion-reduce: instant). (Replaces `elevation.3`, a primitive, and `motion.slide`, which is not a shipped token.)
 - **Storybook**: Modal, NonModal, LeftSide, RightSide, Loading, Narrow.
 - **Tests**: unit, visual, axe, focus-trap test.
+- **As built (E05-S03)**: `width?` is the host's width in CSS px (default 480); `busy?` sets `aria-busy` on the body while the host renders its CMP-015 rows; adds `footer?`, `fallbackFocusRef?`, `id?` and `className?`; `onOpenChange(open, reason)` adds the reason, `"escape"|"scrim"|"close"`, as CMP-043's. Storybook adds HostWidthAndName, LongText, FallbackReturn and a contrast pair.
 
 ### CMP-047 DatePicker / DateRangePicker
 
@@ -551,6 +554,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: input the CMP-007 well; listbox `color.surface.overlay`, `elevation.popover`, `radius.card`, at most 10 rows; options as CMP-009's, the matched text `type.ui.body-strong`; status rows `type.ui.body` + `color.text.secondary`. (Replaces `elevation.2`.)
 - **Storybook**: Sync, AsyncLoading, NoResults, SearchFailed, DisabledWithReason.
 - **Tests**: unit, visual, axe, keyboard + debounced-announcement test.
+- **As built (E05-S03)**: `onChange(value, option?)` passes the chosen option; options are `{value, label, disabledReason?}`, and a gated option is reached but never chosen; `asyncSearch(query, signal)` takes an `AbortSignal` (a stale request is aborted) and needs `searchFailedText` beside `noResultsText`; a source is local `options` or `asyncSearch`, never both; adds `prefix?` (a CMP-007 well prefix) and `aria-label?` / `aria-labelledby?`. The listbox portals into the topmost layer, so inside a Dialog `Esc` closes the list first.
 
 ### CMP-049 Table (base data table)
 
@@ -574,6 +578,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.surface.raised`, `radius.card`; `elevated` lifts by `elevation.card`, `flat` takes a 1 px `color.border.default` hairline (`border.hairline`); title `type.ui.heading-sm` + `color.text.primary`; body padding `space.panel.padding` (J11). (Replaces `radius.lg` and `elevation.1`, which are primitives.)
 - **Storybook**: Default, WithActions, NoPadding, Flat, RegionTile, InOption (J11).
 - **Tests**: unit, visual, axe.
+- **As built (E05-S03)**: `padding` is `"panel"|"none"` (default `panel`). Storybook adds NoHeader, LongTitle and AllStates.
 
 ### CMP-051 Accordion
 
@@ -611,6 +616,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: inherits CMP-007; the leading `search` glyph `size.icon` + `color.text.tertiary`; the clear button a CMP-002 ghost, flush in the well.
 - **Storybook**: Default, WithValue, Disabled.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S03)**: takes the native input props besides these (so `placeholder` is the input's own) and adds `density?` (`data-density`); the field is a native `type="search"` input. Storybook adds ClearReturnsFocus, Focused, Hover, LongText and AllStates.
 
 ### CMP-055 FilterBar
 
@@ -714,6 +720,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: heading `type.ui.heading-sm` + `color.text.primary`; description and notice `type.ui.caption` + `color.text.secondary`; `space.stack.xs` (heading to description), `space.stack.md` (between fields), `space.stack.lg` (between sections). (Replaces `space.formsection.*`.)
 - **Storybook**: Default, Collapsible, WithErrors, DisabledWithReason.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S03)**: `collapsible` takes `open?` / `defaultOpen?` / `onOpenChange?` (controlled or not); `errorCount?` overrides the count of invalid FormFields a collapsed section names; adds `density?`. Storybook adds HeadingLevel2, Collapsed, Disabled, LongText, OpensOnSubmit, OpensOnNativeInvalid and AllStates.
 
 ### CMP-066 Stepper (multi-step wizard indicator)
 
@@ -751,6 +758,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: inherits CMP-046.
 - **Storybook**: Default, Inline, Loading, Error (J17).
 - **Tests**: unit, visual, axe.
+- **As built (E05-S03)**: `trigger` is a render prop that receives `aria-expanded`, `aria-controls`, `aria-haspopup` and `onClick`, so the host's chip (CMP-227 later) stays the trigger; adds `values?` (the parameter values under the static text), `loading?`, `error?` with `onRetry?`, `open?` / `defaultOpen?` / `onOpenChange?`, `side?` and `width?` (the drawer form, default `right` and 480 px), `headingLevel?` (the inline form, default 3) and `fallbackFocusRef?`. Storybook ships Default, Inline, InlineCollapsed, Loading, LoadError, InlineLoading and a contrast pair.
 
 ---
 
