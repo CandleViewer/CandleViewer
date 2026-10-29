@@ -213,7 +213,8 @@ CD6 = RULED_STRINGS[6]
 SAFETY_FRAME = "SCR-131 / Safety: the native stop-loss as a fixed statement"
 STOP_RE = re.compile(r"stop-loss|native stop|native-stop|turned off|\bSL\b", re.IGNORECASE)
 CONTROL_RE = re.compile(
-    r"check ?box|toggle|switch|radio|opt[- ]out|\[x\]|\[ \]|\bturn (?:it )?off\b|\bdisable\b",
+    r"check ?box|toggle|switch|radio|opt[- ]out|\[x\]|\[ \]|\bturn (?:it )?off\b|\bdisable\b"
+    r"|\[[^\]\n]*\bv\]|\(o\)|\( \)|\[on\b|\[off\b",
     re.IGNORECASE,
 )
 
@@ -390,6 +391,41 @@ def permissions(sch24: str) -> set[str]:
     return set(re.findall(r'= "([a-z_]+:[a-z_]+)"', m.group(1))) if m else set()
 
 
+def registered(act: str) -> set[str]:
+    """The audit codes `ACT` registers (every quoted dotted name in it)."""
+    return set(re.findall(r'"([a-z_]+\.[a-z_.]+)"', act))
+
+
+def mx_permissions(mx: str) -> dict[str, set[str]]:
+    """'METHOD /path' -> the permissions the matrix's first block of each route requires."""
+    perms: dict[str, set[str]] = {}
+    current = ""
+    for line in mx.splitlines():
+        rm = re.match(r"^  ((?:GET|PUT|POST|DELETE|PATCH) /\S*):\s*$", line)
+        if rm:
+            current = rm.group(1)
+            continue
+        if re.match(r"^  \S", line):
+            current = ""
+            continue
+        pm = re.match(r"^    permissions:\s*\[(.*)\]", line)
+        if pm and current and current not in perms:
+            perms[current] = set(re.findall(r"'([a-z_]+:[a-z_]+)'", pm.group(1)))
+    return perms
+
+
+def enum_values(api22: str, schema: str, member: str) -> list[str]:
+    """The enum of `member` inside the `22` component `schema` (the first one after it)."""
+    m = re.search(rf"^    {schema}:\n", api22, re.MULTILINE)
+    if not m:
+        return []
+    rest = api22[m.end() :]
+    stop = re.search(r"^    \S", rest, re.MULTILINE)
+    body = rest[: stop.start()] if stop else rest
+    mm = re.search(rf"\b{member}:.*?enum:\s*\[(.*?)\]", body, re.DOTALL)
+    return [v for v in re.findall(r"[a-z_]+", mm.group(1)) if v != "null"] if mm else []
+
+
 def known_events(texts: list[str]) -> set[str]:
     """Every dotted name the sources use, `a.b|c` alternations expanded to `a.b` and `a.c`."""
     names: set[str] = set()
@@ -533,19 +569,24 @@ def gate_sources(ctx: Ctx, r: Result) -> None:
     ops = operations(ctx.api22)
     perms = permissions(ctx.sch24)
     events = known_events([ctx.cat14, ctx.act, ctx.api22, ctx.sch24])
+    codes = registered(ctx.act)
+    needs = mx_permissions(ctx.mx)
     for row in register(ctx.spec):
         issues = []
         sources = 0
+        rb = ticked(row[5])
         for tok in ticked(row[4]):
             if tok in ops or (tok in TOPICS and f"| `{tok}`" in ctx.ws23):
                 sources += 1
+                missing = needs.get(" ".join(ops[tok]), set()) - set(rb) if tok in ops else set()
+                if missing:
+                    issues.append(f"{tok} needs {sorted(missing)} in RBAC")
             elif re.fullmatch(r"[a-z]+[A-Z]\w*", tok):
                 issues.append(f"{tok!r} is not a 22 operation")
         if re.search(r"not yet served: G-\d", row[4]):
             sources += 1
         if not sources:
             issues.append("no data source")
-        rb = ticked(row[5])
         issues += [f"{t!r} is not a 24 permission" for t in rb if ":" in t and t not in perms]
         if not any(t in perms or t == "self" for t in rb):
             issues.append("no RBAC permission")
@@ -553,6 +594,8 @@ def gate_sources(ctx: Ctx, r: Result) -> None:
             issues.append("no role")
         evs = [t for t in ticked(row[6]) if re.fullmatch(r"[a-z_]+\.[a-z_.]+", t)]
         issues += [f"event {t!r} is named by no source" for t in evs if t not in events]
+        routed = "analytics" in row[6] or re.search(r"\bC-\d", row[6])
+        issues += [f"event {t!r} is not registered" for t in evs if t not in codes and not routed]
         if not evs and "no event" not in row[6]:
             issues.append("no event")
         if issues:
@@ -587,9 +630,16 @@ def gate_served(ctx: Ctx, r: Result) -> None:
     r.numbers["frames_not_yet_served"] = stamped
 
 
+def refs(cell: str) -> list[int]:
+    """The register rows a disposition names after "frame: row(s)"."""
+    m = re.match(r"frame: rows? ([\d, ]+)", cell)
+    return [int(n) for n in re.findall(r"\d+", m.group(1))] if m else []
+
+
 def gate_checklist(ctx: Ctx, r: Result) -> None:
     table = rows(section(ctx.spec, 12), 5)
     have = {(x[1], x[3]): x for x in table}
+    frames = {int(x[0]): frame_of(x) for x in register(ctx.spec)}
     expected: set[tuple[str, str]] = set()
     for scr in SCREENS:
         _, items = checklist(ctx.cat14, scr)
@@ -600,6 +650,10 @@ def gate_checklist(ctx: Ctx, r: Result) -> None:
                 r.fail("CHECKLIST", f"{scr}: {item[:60]!r} is not quoted in section 12")
             elif not re.match(r"(frame: rows? \d|E34-D0[23]\b|N/A — )", x[4]):
                 r.fail("CHECKLIST", f"row {x[0]}: disposition {x[4][:40]!r}")
+            else:
+                bad = [n for n in refs(x[4]) if screen_of(frames.get(n, "")) != scr]
+                if bad:
+                    r.fail("CHECKLIST", f"row {x[0]}: register rows {bad} are not {scr} frames")
     for key, x in have.items():
         if key not in expected:
             r.fail("CHECKLIST", f"row {x[0]}: {key[1][:60]!r} is not a {key[0]} checklist item")
@@ -609,14 +663,22 @@ def gate_checklist(ctx: Ctx, r: Result) -> None:
 def gate_copy(ctx: Ctx, r: Result) -> None:
     deck = rows(section(ctx.spec, 10), 5)
     rules = " ".join(x[1] for x in deck)
-    for key in RULE_KEYS:
+    served = [
+        *enum_values(ctx.api22, "TradeGroupPreview", "code"),
+        *enum_values(ctx.api22, "TradeGroupPreview", "warnings"),
+        *enum_values(ctx.api22, "TradeGroupReadiness", "reason"),
+        *enum_values(ctx.api22, "ProfileWarning", "code"),
+    ]
+    keys = list(dict.fromkeys([*RULE_KEYS, *(f"`{v}`" for v in served)]))
+    for key in keys:
         if key not in rules:
             r.fail("COPY", f"rule {key} has no section 10 string")
     for x in deck:
         if not x[2]:
             r.fail("COPY", f"row {x[0]}: empty string")
     r.numbers["copy_rows"] = len(deck)
-    r.numbers["copy_rules"] = len(RULE_KEYS)
+    r.numbers["copy_rules"] = len(keys)
+    r.numbers["copy_rules_from_22"] = len(set(served))
 
 
 def gate_ruled(ctx: Ctx, r: Result) -> None:
@@ -781,9 +843,9 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
         ),
     ),
     ("FRAMES", regex(r"^(\| 4 +\| `SCR-130 / delete.*\| )board 01( +\|)$", r"\1board 02\2")),
-    ("CATALOGUE", regex(r'^(\| 55 +\|.*\| )"stale-preview"', r"\1stale preview")),
+    ("CATALOGUE", regex(r'^(\| 56 +\|.*\| )"stale-preview"', r"\1stale preview")),
     ("SOURCES", sub("`getAccountDefaultProfile`", "`getAccountDefaultProfiles`")),
-    ("SERVED", regex(r"^(\| 46 +\|.*\| )not yet served: G-9; ", r"\1")),
+    ("SERVED", regex(r"^(\| 47 +\|.*\| )not yet served: G-9; ", r"\1")),
     ("CHECKLIST", regex(r"^(\| 36 +\| SCR-133 .*\| )frame: row 34", r"\1drawn later")),
     ("COPY", regex(r"^(\| 33 +\| )`ladder_sum`", r"\1`ladder`")),
     ("RULED", sub("Capped by profile: 5x", "Capped by profile 5x", 0)),
@@ -794,7 +856,13 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
             "the native stop-loss statement (CD-6) beside a checkbox",
         ),
     ),
-    ("SCAN", sub("## 1. Purpose", "b1e2c3d4-aaaa-4bbb-8ccc-dddddddddddd\n\n## 1. Purpose")),
+    (
+        "SCAN",
+        sub(
+            "## 1. Purpose",
+            "-".join(["b1e2c3d4", "aaaa", "4bbb", "8ccc", "d" * 12]) + "\n\n## 1. Purpose",
+        ),
+    ),
     ("CITES", sub("`22:3499-3501`", "`22:3399-3401`", 0)),
 )
 
@@ -842,7 +910,8 @@ def main(argv: list[str]) -> int:
         for line in res.warns:
             print(f"WARN {line}")
         print(
-            f"gates: {len(GATES)} ({', '.join(GATES)}); FAIL {len(res.fails)}, WARN {len(res.warns)}"
+            f"gates: {len(GATES)} ({', '.join(GATES)}); "
+            f"FAIL {len(res.fails)}, WARN {len(res.warns)}"
         )
         if testing:
             for line in st:
