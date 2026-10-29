@@ -75,8 +75,7 @@ def test_trades_min_size_drops_are_counted_in_dropped_across_frame_boundaries() 
 def test_trades_pending_is_bounded_and_an_overflow_is_counted_in_dropped() -> None:
     """More items than the pending bound before one frame: the oldest are shed, and their prints
     are counted in `dropped` (`overflow`), beside the `min_size` drops: never silent."""
-    w = World()
-    w.topic._pending_max = 3
+    w = World(pending_max=3)
     conn = w.conn()
     _, sub = w.sub(conn, {"min_size": "0.05", "encoding": "structured"})
     assert sub is not None
@@ -92,6 +91,27 @@ def test_trades_pending_is_bounded_and_an_overflow_is_counted_in_dropped() -> No
     w.window([event(7, "0.1")])
     [after] = _data(conn)
     assert (after["p"]["dropped"], [t["id"] for t in after["p"]["trades"]]) == (0, ["t00007"])
+
+
+def test_trades_a_shed_cluster_counts_every_print_it_held_in_dropped() -> None:
+    """Two two-print clusters close in one window with room for one: the shed cluster's two
+    prints, not one item, are counted in `dropped` (`overflow`)."""
+    w = World(pending_max=1)
+    conn = w.conn()
+    w.sub(conn, {"cluster_window_ms": 250, "cluster_tolerance_ticks": 1, "encoding": "structured"})
+    conn.take()
+    over = _value(cv_ws_tape_prints_dropped_total, reason="overflow")
+    buys, sells = (
+        [event(1, "0.2"), event(2, "0.3")],
+        [event(3, "0.1", side="sell"), event(4, "0.15", side="sell")],
+    )
+    w.window(buys + sells)
+    w.now_us = T0_US + 2_000_000  # the reader's clock passes every deadline and the grace
+    w.window()
+    frames = _data(conn)
+    kept = [t["cluster_size"] for f in frames for t in f["p"]["trades"]]
+    assert kept == [2] and sum(f["p"]["dropped"] for f in frames) == 2
+    assert _value(cv_ws_tape_prints_dropped_total, reason="overflow") - over == 2
 
 
 # -- Scenario: Clustering is signalled on both encodings ---------------------------------------
@@ -396,7 +416,8 @@ def test_trades_a_pending_percentile_symbol_echoes_the_notional_default_never_ze
     result, sub = w.sub(conn, {"encoding": "structured"})
     assert sub is not None and sub.snapshot_pending
     eff = result["effective"]
-    assert (eff["big_trade_threshold"], eff["big_trade_mode"]) == ("250000", "percentile")
+    default = format(BigTradeConfig().value, "f")  # the server's notional default
+    assert (eff["big_trade_threshold"], eff["big_trade_mode"]) == (default, "percentile")
     w.tape = Tape([event(1, "0.1")])
     w.window()
     [snap] = _data(conn)

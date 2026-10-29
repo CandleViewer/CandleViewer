@@ -124,7 +124,12 @@ class World:
     """One process: the hot tape, the `trades` topic and its hub, and the connections built on
     them (a real `ConnectionAuthz`, `SequencingHub` and `TopicEmitter`; fake clocks)."""
 
-    def __init__(self, tape: Tape | None = None, config: BigTradeConfig = SMALL) -> None:
+    def __init__(
+        self,
+        tape: Tape | None = None,
+        config: BigTradeConfig = SMALL,
+        pending_max: int | None = None,
+    ) -> None:
         self.tape: Tape | None = tape or Tape()
         self.clock = Clock()
         self.now_us = T0_US
@@ -139,6 +144,7 @@ class World:
             config=lambda _s: config,
             clock=self.clock,
             now_us=lambda: self.now_us,
+            **({} if pending_max is None else {"pending_max": pending_max}),
         )
         self.services = SubscriptionServices(
             upstream=UpstreamRefs(), snapshots=self.topic, trades=self.topic
