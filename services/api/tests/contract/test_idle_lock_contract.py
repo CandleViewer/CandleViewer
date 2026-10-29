@@ -429,6 +429,7 @@ def test_lock_contract_locks_as_if_the_idle_deadline_fell_due(spec: dict[str, An
     # row (INV-B16-e), through its existing transition.
     description = _flat(_op(spec, "post", _LOCK)["description"])
     assert "exactly as if its idle deadline fell due now" in description
+    assert "the lock is stored and answered `200`" in description
     assert "nothing is sent to B16 at lock time, as for extend (28 B16.7)" in description
     assert "B16 records the lock on its next read of the row, as if the idle" in description
     auth = default_registry().get("session")["states"]["auth"]["states"]
@@ -480,6 +481,7 @@ def test_lock_contract_writes_one_record_per_lock(spec: dict[str, Any]) -> None:
     description = _flat(_op(spec, "post", _LOCK)["description"])
     assert "already idle-locked answers `200` with its `SessionInfo` and changes" in description
     assert "nothing. It writes no second `auth.session_locked`: one record per lock" in description
+    assert "one record per lock, and the access log has the call." in description
 
 
 def test_lock_answers_session_revoked_when_revoked_or_expired(spec: dict[str, Any]) -> None:
@@ -504,7 +506,7 @@ def test_lock_is_recorded_ahead_and_by_b16_at_its_next_read(spec: dict[str, Any]
     description = _flat(op["description"])
     assert "The lock's record is `auth.session_locked`, written ahead (C-2.9)" in description
     assert "carries the lock moment, not the time of that read." in description
-    assert "the answer is `503` and the session is not locked." in description
+    assert "audit sink is down the answer is `503` and the session is not locked." in description
 
 
 def test_24_lists_the_lock_record_as_registered() -> None:
