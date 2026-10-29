@@ -198,8 +198,8 @@ The offline break-glass CLI is modelled as a trust boundary distinct from the ru
   was running (`07-release-and-prr.md`, AuthBreakGlassAttempted); a
   pre-audit refusal does not page. A completed reset still pages (AuthBreakGlassUsed, while its
   event is unresolved), and a failure to read that state raises a ticket
-  (AuthBreakGlassStateReadFailing): decision R8 as built under #2496, awaiting the owner's
-  confirmation on #2119. The break-glass abuse-detection row of §8 routes all three and states what
+  (AuthBreakGlassStateReadFailing): decision R8 as built under #2496, confirmed
+  2026-10-21 under the owner's delegation (#2119 comment 6305872005). The break-glass abuse-detection row of §8 routes all three and states what
   they cannot see.
 - **Residual risk stated explicitly (not assumed away):** an attacker who has already achieved
   host-level compromise (RDP/SSH into the Windows host, or physical access) can use break-glass to

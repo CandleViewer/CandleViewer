@@ -12,10 +12,10 @@
   root.
 - Method: white-box code walk by an agent (read-only on 2026-10-23), plus the two drills of §3 and
   §4 on a dev compose stack. This was not the conversational review with the epic owner that the
-  ticket describes; the E09 gate rests on the owner's rulings and the delegated sign-off (§7).
+  ticket describes; the E09 gate rests on the rulings and the delegated sign-off (§7).
 - Public record: open findings carry only id, severity, area, status and tracker (`SECURITY.md` §1).
 
-> **Status: re-examined 2026-10-23; the owner ruled on 2026-10-29 (§7).** The review found
+> **Status: re-examined 2026-10-23; the orchestrator ruled, under the owner's delegation, on 2026-10-29 (§7).** The review found
 > Critical: none; High: none new. #4254, which corrects the break-glass runbook, merged as
 > `e78556cf` (2026-10-23), and nobody has re-run the merged text (DoD 2). The break-glass notice
 > was never observed, and its UI half and WCAG check are #306. No armed rule was drilled for AC4.
@@ -37,7 +37,7 @@ and §4.
 | SR-011 Argon2id, params stored, rehash on login | `auth/hashing.py:34` (m=65536, t=3, p=4; argon2-cffi's 16-byte salt), `:126`; rehash at `auth/login_service.py:148-152` | `tests/unit/auth/test_hashing.py::test_hasher_needs_rehash_true_for_stale_params`; AC-CRED-01 | PASS. The ≥100 ms on-host cost is FU-3 (#2097) |
 | SR-012 opaque tokens, cookie flags | `auth/session_service.py:417` (256-bit), `:331`; cookie flags at `api/sessions.py:423-432` (path `/api/v1/auth`, stricter than `/`); the SR-041 token at `api/csrf.py:194` (#2238) | AC-CSRF-03 (`tests/security/auth/test_csrf_cookie_abuse.py`) | PASS. F-2 (no IP/UA binding) is accepted (§2) |
 | SR-013 rotate on login, TOTP, step-up, password change, role change | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2101 (R-1), #2110 (R-4) |
-| SR-014 uniform login failures + dummy verify | details held in the private repository advisory (maintainers) | — | **FAIL-T** #1233 (L1) |
+| SR-014 uniform login failures + dummy verify | details held in the private repository advisory (maintainers) | — | **FAIL-T** #1233 (L1), #4961 (D12-1) |
 | SR-015 per-account + per-IP throttling | details held in the private repository advisory (maintainers) | — | **FAIL-T** #1233 (M1) |
 | SR-016 lockout + owner alert | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2621, #1233 (M1) |
 | SR-017 deny-by-default start-up | `api/deny_by_default.py:71-82` (build), `:85-96` (runtime `403`, WS `1008`) | `tests/unit/api/test_deny_by_default.py:19`, `:30` | PASS |
@@ -48,12 +48,12 @@ and §4.
 | SR-022 recovery codes | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2152 (M3) |
 | SR-023 break-glass CLI | `breakglass.py`; `admin/breakglass.py:5-11`, `:395-411`, `:464-502`; `secrets/service.py:688-707`; the notice at `ws/gateway.py:1682-1688` and `app.py:1699` | `tests/unit/admin/test_breakglass_flow.py:256` (`test_break_glass_requires_host_filesystem_and_kek_present`); the drill (§3) | PASS in code (#2119). The drill passes AC3, and AC2 is met for R0 by the owner's rulings (§3) |
 | SR-024 timeouts + 12 h trading freshness | 12 h absolute at `auth/session_service.py:87`, carried on refresh at `:576`; `extend` only re-stamps idle (`api/sessions.py:1321-1343`) | `tests/unit/auth/test_session_service.py` | PASS, by construction. #2108 (R-2) open. |
-| SR-025 step-up, 5 min, scoped | `auth/step_up.py:72`, `:83`, `:98`, `:457-483` (password and TOTP, #2154), `:658`; the view-as start is handler-gated (`api/step_up.py`) | `tests/unit/auth/test_step_up.py`; AC-STEP-01..04 | PASS. D-2 shipped in #2154. U35's binding is on `main` since #2304 closed on 2026-10-27 (`auth/step_up.py:128-129`) |
+| SR-025 step-up, 5 min, scoped | `auth/step_up.py:72`, `:83`, `:98`, `:457-483` (password and TOTP, #2154), `:658`; the view-as start is handler-gated (`api/step_up.py`) | `tests/unit/auth/test_step_up.py`; AC-STEP-01..04 | PASS. D-2 shipped in #2154. U35's binding is on `main` since #2304 closed on 2026-10-27 (`auth/step_up.py:128-129` at `be164eca`) |
 | SR-026 no target-user on self-service | `security/semgrep/auth/no-target-user-on-self-service.yml`; `undeclared_query_refusal` at `api/auth.py:562` | rule fixtures under `security/semgrep/auth/fixtures/` | PASS |
 | SR-027 invite creates least-privilege user | `auth/models.py:376-381` (#2124) | `tests/unit/api/test_invites_router.py::test_create_rejects_owner_role_and_duplicate`; AC-INV-01..04 | PASS. R-3 is fixed (#2124) |
 | SR-028 password policy + other-session revoke | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2110, #2099 (R-4) |
 | SR-029 disable user → sessions, sockets, pending actions | `api/users.py:790`; `admin/user_disable.py:1-30`, `:75`, `:293` (E42-T04, #965) | `tests/security/auth/test_disable_user_e2e.py:427`, `:477`, `:483`; `tests/security/auth/test_disable_user_drill.py` (#4254); the drill (§4) | PASS in code. The drill meets AC4, its rule-engine clause through an accepted test (§4) |
-| SR-050 two-layer authZ | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2094 (FU-1), #1237 (L3; scope: comment 6369101975) |
+| SR-050 two-layer authZ | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2094 (FU-1), #1237 (L3) |
 | SR-051 server-side account resolution | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2291 (M2) |
 
 ### 1.1 Other items in the brief
@@ -87,7 +87,7 @@ The rules are in `infra/prometheus/alerts/`:
 ## 2. Findings triage
 
 Dates are when the item was raised, then the due date the 2026-10-23 re-examination proposes,
-which #2701 ledger addendum A row A12 accepts as proposed (§7). An accepted risk needs a dated
+which #2701 ledger addendum A row A12 accepts as proposed (§7); D12-1's and ENV-1's are set by the delegated sign-off (§7). An accepted risk needs a dated
 Owner signature: F-2 rests on #2161's record of 2026-10-10, which row A8 signs (its
 handling is below), and F-4 and F-8 were accepted on 2026-10-22 under the #2701 delegation, which
 row A8 confirms. One other open item is accepted: M4, under E42's AD-F14 until #1238 (§7).
@@ -124,7 +124,7 @@ the SR-ids row is proposed by #4288, which wrote this refresh, and so is F-8's e
 | R-7 | this review | SR-029 disable cascade missing | Elevation of privilege | High | Accounts/admin | E42-T04 (#965) | 2026-10-09 | **Fixed** under #965 by #3062, #3096, #3135, #3414, #3440, with the 4403 close by #2581. The drill is §4 |
 | D-1 | this review | SR-022 says Argon2id for recovery codes; code uses keyed HMAC-SHA256 (≈138-bit codes) | — | Info | Security + Owner | Owner item AD on #1778 | 2026-10-09 | **Decided** (#1778 AD, `issuecomment-6083128397`): keep the keyed HMAC; SR-022 amended by #2122; the follow-up is #2152 (M3) |
 | D-2 | this review | SR-025 says password + TOTP for step-up; code requires TOTP only | Spoofing | Low | Architect + Owner | Owner item AE on #1778 | 2026-10-09 | **Decided** (AE): password plus TOTP, shipped in #2154 |
-| M1 | this review | SR-016: details held in the private repository advisory (maintainers) | Denial of service | Medium | Security | #1233 (comment 6367778083); #2621 | 2026-10-23 / #2621 2026-11-26; #1233 2027-02-25 | Open |
+| M1 | this review | SR-016: details held in the private repository advisory (maintainers) | Denial of service | Medium | Security | #1233; #2621 | 2026-10-23 / #2621 2026-11-26; #1233 2027-02-25 | Open |
 | M2 | E09-Q03 | SR-051: details held in the private repository advisory (maintainers) | Information disclosure | Medium | Backend | #2291 (P1, `sla-breached`) | 2026-10-23 / 2026-11-05 | Open |
 | M3 | this review | SR-022: details held in the private repository advisory (maintainers) | Spoofing | Medium | Security | #2152 | 2026-10-23 / 2027-02-25 | Open |
 | M4 | this review | U20: details held in the private repository advisory (maintainers) | Repudiation | Medium | Security | #1238; E42's AD-F14 | 2026-10-23 / 2027-02-04 | Open; accepted under AD-F14 until #1238 |
@@ -294,7 +294,7 @@ Controls that most warrant external testing before R4 live enablement, in priori
 6. The break-glass CLI: precondition enforcement (host filesystem + KEK), its KEK-default semantics
    (unset `CV_KEK_*` settings fall back to the `handle` source at `/run/secrets/cv_kek`), attempt
    recording and the pre-audit refusal.
-7. SR-015, SR-016, SR-014 (M1, L1)
+7. SR-015, SR-016, SR-014 (M1, L1, D12-1)
 
 Out of scope for this note: the key vault (E27) and the order path beyond its `authorize()`
 calls.
@@ -304,13 +304,13 @@ calls.
 Completed at READY, 2026-10-29: the sign-off below is recorded on #300 (comment 6501580457).
 
 This record is the security gate (E09-X04) of #36, the epic "[E09] Auth, sessions, 2FA & RBAC".
-The owner's rulings are #2701 ledger addendum A, rows A7–A13 (comment 6499102601), cited in this
+The rulings are #2701 ledger addendum A, rows A7–A13 (comment 6499102601), made by the orchestrator under the owner's delegation (comment 6490317249), cited in this
 record as "row A7" and so on (§3's A1 to A13 are the operator's ambiguities):
 
 <!-- prettier-ignore -->
 | Row | Item | Ruling (2026-10-29) |
 |---|---|---|
-| A7 | Item U: the drill evidence | The agent-run dev-stack drills (§3, §4) are the R0 evidence; the human repeat on staging, #2298, is a post-GA confirmation line, not a gate |
+| A7 | Item U: the drill evidence | The agent-run dev-stack drills (§3, §4) are the R0 evidence; the human repeat on staging, #2298, is a post-GA confirmation line once a staging host exists, not a gate |
 | A8 | F-2, F-4 and F-8 | F-2 accepted, review 2027-01-22; F-4 and F-8 confirmed as accepted (2026-10-22), review 2027-01-22 |
 | A9 | O3, the `live` variant | A dated residual (U10), review 2027-02-25, rehearsed on the GA host before the GA cut: a release-readiness line (E49 / PRR), not an E09 gate |
 | A10 | AC4's rule-engine clause | `test_disable_user_e2e.py::test_rule_disarmed_audited` is the evidence; no re-drill |
@@ -325,8 +325,8 @@ record as "row A7" and so on (§3's A1 to A13 are the operator's ambiguities):
 - Open accepted risks, each signed by its row above with the review date there: F-2, F-4 and F-8
   (row A8), the dated residual U10 / O3 (row A9), U45 and the §3.6.1 residual (row A12); and M4,
   under E42's AD-F14 until #1238 (`docs/security/threat-models/e42-admin.md` §13.2), its #2701 ask
-  (comment 6244844061) accepted by #2701 ledger 2 row 12 (comment 6493096777), review 2027-02-04.
+  (comment 6244844061, which lists it as AD-T02) accepted by #2701 ledger 2 row 12 (comment 6493096777), review 2027-02-04.
 - Gate statement: "R0 area-6 is met by these rulings plus this record's delegated sign-off."
 
 The conditional sign-offs of 2026-10-09 on #300 (the Owner's, from #1778 item U, and the Security
-engineer's, owner-delegated) both withheld the gate.
+engineer's, owner-delegated) both withheld the gate; §7 above supersedes them.
