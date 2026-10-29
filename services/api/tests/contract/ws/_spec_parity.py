@@ -240,10 +240,27 @@ def _probe(module: str, word: str) -> Callable[[], bool]:
     )
 
 
+def _heatmap_names(word: str) -> bool:
+    """True once the heatmap producer (`orderflow/heatmap.py`, #605) or `ws.limits` names a cap."""
+    for module in ("candleviewer.orderflow.heatmap", "candleviewer.ws.limits"):
+        try:
+            names = vars(importlib.import_module(module))
+        except ModuleNotFoundError:
+            continue
+        if any(word in n for n in names if n.isupper()):
+            return True
+    return False
+
+
 #: 16.2 rows the contract states and no code enforces yet: the owning ticket, and a probe that is
 #: true once code for it exists (the row must then be mapped above, so this list cannot rot).
-#: None is left: the last one, the deep-book cap, was built by #604 (E21-T01) and is mapped.
-CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {}
+#: The deep-book cap was built by #604 (E21-T01) and is mapped. The heatmap spec caps and snapshot
+#: bound are #605's: their probe fires once `orderflow.heatmap` or `ws.limits` names one.
+CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {
+    "Max `heatmap.*` specs / symbol": ("#605", lambda: _heatmap_names("SPEC")),
+    "Max `heatmap.*` specs / server": ("#605", lambda: _heatmap_names("SPEC")),
+    "`heatmap` snapshot bound": ("#605", lambda: _heatmap_names("SNAPSHOT")),
+}
 #: 3.6 table rows that 16.2 does not repeat: the JSON bounds of SR-184.
 SECTION_3_6_ROWS: Final = {
     "Max inbound JSON nesting depth": "limits.MAX_JSON_DEPTH",

@@ -4482,10 +4482,21 @@ CREATE TABLE heatmap_cells (
   ask_size    DOUBLE,
   bid_age_ms  LONG,               -- how long this level has rested (iceberg/refresh heuristics)
   ask_age_ms  LONG,
-  refill_count INT
+  refill_count INT,
+  estimated   BOOLEAN,            -- E21-T02: column built while the book was resyncing; NULL = before E21-T02
+  samples     INT,                -- E21-T02: book states aggregated into the column; 0 = none
+  off_window_bid_qty DOUBLE,      -- E21-T02: resting bid size outside the column's price window
+  off_window_ask_qty DOUBLE       -- E21-T02: the same for asks
 ) TIMESTAMP(ts) PARTITION BY HOUR WAL
   DEDUP UPSERT KEYS(ts, symbol, price);
 ```
+
+**E21-T02 (#605) additions (BQ-3).** `estimated`, `samples`, `off_window_bid_qty` and `off_window_ask_qty` are the four columns of `24-internal-schemas.md` §6.1 that the table lacked. They are additive and nullable (C-5.1); a row recorded before them reads `NULL` and is taken as `estimated = false`, its `samples` and off-window totals unknown. They describe the column, not the level, so every row of a column repeats them. The QuestDB definition lives where C-5.8 puts table definitions; no definition of this table exists in code yet, so the code PR creates it with every column above, and no `ALTER` is shipped. T02 does not write `bid_age_ms`, `ask_age_ms` or `refill_count`.
+
+- **What a row is.** One populated level of the engine's **native column**: 100 ms, one tick per row, at most 512 rows around the mid (`24` §6.1, §6.2). The stored bucket never follows a subscription's `time_bucket_ms` or `price_grouping`; a coarser bucket or step is built **at read** (`24` §6.3), never at write. Rows go through the recorder's write path (E16), and retention is the policy of §7 (7 d hot, 90 d cold, the 180-day downsample), unchanged.
+- **Gaps.** A column with no populated level is not stored. A bucket with no row reads as `samples = 0` and empty, whether the engine stalled, was down, or had nothing resting in the window; the reader never interpolates it and the renderer draws the grey stripe (`24` §6.3).
+- **Restart.** No checkpoint of the engine is persisted in v1. A restarted engine re-seeds from the live book (`BookEngine`), starts a new column at the next 100 ms boundary and writes nothing for the time it was down; the interval reads as the gap above.
+- **Types.** The table stores `DOUBLE`, where the wire carries scaled integers; the conversion in both directions is `24` §6.5.
 
 ### 4.13 `engine_metrics` — internal telemetry
 

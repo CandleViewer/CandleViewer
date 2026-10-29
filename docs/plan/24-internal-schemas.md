@@ -988,6 +988,8 @@ class HeatmapColumn(BaseModel):
     ask_sizes: tuple[float, ...]
     best_bid_ticks: Ticks
     best_ask_ticks: Ticks
+    off_window_bid_qty: float      # resting bid size outside the window (§6.2 step 4)
+    off_window_ask_qty: float
     estimated: bool                # True when built from a partial/resyncing book
     samples: int                   # book states aggregated into this column
 
@@ -1023,6 +1025,13 @@ class HeatmapGridSpec(BaseModel):
 ### 6.4 Liquidation heatmap (realized)
 
 Same grid geometry, different source: cumulative liquidated notional per `(price bucket, time bucket)` from `LiquidationEvent`, with optional exponential decay `w = exp(-Δt / half_life_ms)` (default half-life 30 min) so recent liquidations dominate. Split into `long_liq_notional` / `short_liq_notional` per cell. This is **realized** liquidation history; predicted/estimated liquidation levels (Coinglass-style) are explicitly a later research/design phase (research 08 open Q #6) and are **not** in v1.
+
+### 6.5 Storage and wire representation (E21-T02, #605)
+
+The engine computes in `float` (C3), and no heatmap value crosses into the OMS, journal or audit in E21, so C3's `Decimal` boundary is not exercised. Two other boundaries convert it.
+
+- **Storage** (`21-database-schema.md` §4.12). `price` is written as a `DOUBLE` of the level's `Decimal` price (`price_origin_ticks`, `price_step_ticks` and the tick size). On read it comes back as `Decimal(str(x)).quantize(tick_size)`, and the integer tick follows (C5), so a stored price round-trips exactly. `bid_size`, `ask_size` and the two off-window totals are the engine's floats unchanged, and a column's `estimated` and `samples` are its own. A size that is negative or not finite is never written, and is counted as a producer fault.
+- **Wire** (`23-ws-protocol.md` §3.4 kind 6). The header's `price_scale` and `qty_scale` come from the instrument (`price_scale` from its tick, `qty_scale` from its quantity step), and `price_min`, `price_step`, `bid_size` and `ask_size` are scaled integers: `round(x * 10^scale)`, ties to even, as `u64` for a size. A time-weighted size below half a quantity step rounds to 0 on the wire, which reads as no level; storage keeps it. The wire carries `estimated` (header flag bit0); it carries neither `samples` nor the off-window totals, which this section does not move onto it.
 
 ---
 
