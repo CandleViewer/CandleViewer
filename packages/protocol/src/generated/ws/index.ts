@@ -775,9 +775,26 @@ export interface HeatmapSymbol {
     price_step: string;
     /**
      * Resting bid size per price row, ascending from `price_min`.
+     *
+     * @maxItems 512
      */
     bids: number[];
+    /**
+     * @maxItems 512
+     */
     asks: number[];
+    /**
+     * Book states aggregated into the column (24 §6.1). Present only when lower than the bucket's native count, `time_bucket_ms` / 100 (a stall or gap; 0 is a column the engine missed, 24 §6.3); absent on a complete column.
+     */
+    samples?: number;
+    /**
+     * Resting bid size outside the column's price window (24 §6.2 step 4). Present only when non-zero, and so only on the structured wire.
+     */
+    off_window_bid_qty?: number;
+    /**
+     * As `off_window_bid_qty`, for asks.
+     */
+    off_window_ask_qty?: number;
     /**
      * False while the time bucket is still accumulating.
      */
