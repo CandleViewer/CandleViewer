@@ -13,8 +13,8 @@ account's figures are not available yet: the preview reads cached figures only (
 share the planner's totals sum. A figure the sizer never reached is left out, never 0. Decimals are
 `plain`: every digit, no exponent, no trailing zero.
 
-`previewed_entry` is ruling 2's `trade_group.previewed` row for an answered preview, `200` or
-`403`: the request's symbol, side and account ids, the actor's role and its legs' outcome counts,
+`previewed_entry` is ruling 2's `trade_group.previewed` row for an answered preview, `200` or a
+refusal: the request's symbol, side and account ids, the actor's role and its legs' outcome counts,
 never a figure. The route writes it ahead of its answer (S3c, C-2.9).
 """
 
@@ -142,25 +142,26 @@ class PreviewedRow(TypedDict):
 
 
 def previewed_entry(
-    request: GroupRequest, answer: GroupPlan | GroupRefused, *, actor: RefusalActor
+    request: GroupRequest | None, answer: GroupPlan | GroupRefused | str, *, actor: RefusalActor
 ) -> PreviewedRow:
-    """The row for `answer` to `request` (module docstring): `emit(PREVIEWED_ACTION, **row)`."""
-    refused = isinstance(answer, GroupRefused)
-    counts = (
-        {"refused": len(answer.legs)}
-        if isinstance(answer, GroupRefused)
-        else {status: sum(leg.status == status for leg in answer.legs) for status in _STATUSES}
-    )
+    """The row for `answer` to `request` (module docstring): `emit(PREVIEWED_ACTION, **row)`. A
+    refusal the route answers before planning (S3c) is its rule or code, with no leg counted; one
+    answered before the body was read names no request."""
+    if isinstance(answer, GroupPlan):
+        counts = {status: sum(leg.status == status for leg in answer.legs) for status in _STATUSES}
+    else:
+        counts = {"refused": len(answer.legs)} if isinstance(answer, GroupRefused) else {}
+    refused = not isinstance(answer, GroupPlan)
+    reason = answer if isinstance(answer, str) else Refused.problem if refused else None
+    named = {} if request is None else {
+        "symbol": request.symbol, "side": request.side,
+        "exchange_account_ids": [str(leg.account_id) for leg in request.legs],
+    }  # fmt: skip
     return PreviewedRow(
         actor_label=str(actor.user_id), actor_user_id=actor.user_id, actor_ip=actor.ip,
         object_kind="trade_group_preview",
         outcome=AuditOutcome.DENIED if refused else AuditOutcome.SUCCESS,
-        severity=Severity.WARNING if refused else Severity.INFO,
-        reason=Refused.problem if refused else None,
-        after_state={
-            "symbol": request.symbol, "side": request.side, "role": actor.role,
-            "exchange_account_ids": [str(leg.account_id) for leg in request.legs],
-            "outcomes": counts,
-        },
+        severity=Severity.WARNING if refused else Severity.INFO, reason=reason,
+        after_state=named | {"role": actor.role, "outcomes": counts},
         request_id=actor.request_id, env=ExchangeEnv(actor.env),
     )  # fmt: skip

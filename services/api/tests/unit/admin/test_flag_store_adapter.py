@@ -79,10 +79,13 @@ async def _set(store: StorageFlagStore, seen: list[StoredFlag]) -> StoredFlag:
 async def test_ensure_seeds_each_flag_at_its_default_or_its_environments_seed(
     environment: str, oms: bool
 ) -> None:
-    """#913 slice 3 Q3: `trading.oms_enabled` is seeded on in a demo process alone."""
+    """#913 slice 3 Q3 and E28-T05 S3c: `trading.oms_enabled` and `trading.trade_groups` are
+    seeded on in a demo process alone."""
     repo = _Repo()
     await _store(repo, environment=environment).ensure(FLAGS)
-    seeded = {f.key: f.default for f in FLAGS} | {"trading.oms_enabled": oms}
+    seeded = {f.key: f.default for f in FLAGS} | dict.fromkeys(
+        ("trading.oms_enabled", "trading.trade_groups"), oms
+    )
     assert repo.seeds == [
         FlagSeed(f.key, f.kind.value, f.description, seeded[f.key], f.is_killswitch, f.variants)
         for f in FLAGS

@@ -3,6 +3,7 @@ switch, the live gate and the account row, the first reason winning. The ports a
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Callable, Iterator
 from types import SimpleNamespace
@@ -18,6 +19,9 @@ from structlog.testing import capture_logs
 from candleviewer import app as appmod
 from candleviewer import oms_wiring, trade_groups_wiring
 from candleviewer.accounts.trade_group_readiness import ReadinessMember, ReadinessReason, readiness
+from candleviewer.api.trade_group_preview import PREVIEW_PATH
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.domain.order_entry import REFUSAL_REASONS, OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
 from candleviewer.oms_wiring import InterimKillSwitch
@@ -153,8 +157,8 @@ def test_the_root_wires_the_definition_reads_and_announces_the_interim_lockouts_
     assert source._live_enabled is False  # the setting's default
     assert source._live_flag is app.state.feature_flags.live_enabled  # the OMS's view of the flag
     assert isinstance(getattr(source._kill_switch, "__self__", None), InterimKillSwitch)
-    gate = app.state.trade_groups_gate  # S2c: over the flag's view; the preview's not ready (S3c)
-    assert (gate._enabled, gate._preview_ready) == (app.state.feature_flags.trade_groups, False)
+    gate = app.state.trade_groups_gate  # over the flag's view, the preview ready (S3c, ruling 6)
+    assert (gate._enabled, gate._preview_ready) == (app.state.feature_flags.trade_groups, True)
     # a router given no store or no readiness answers 503, not this
     got = TestClient(app, client=("127.0.0.1", 50000)).get(f"/trade-group-definitions/{CORE3}")
     assert got.status_code == 200 and got.json()["readiness"]["total"] == 3
@@ -227,3 +231,36 @@ def test_the_root_mounts_the_group_reads_over_a_pool_of_their_own(
     assert [i["id"] for i in client.get("/trade-groups").json()["items"]] == groups.ids_of(
         *groups.NEWEST_FIRST
     )
+
+
+def test_the_root_mounts_the_preview_behind_the_flag_now_that_its_gate_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E28-T05 S3c (#909): the root mounts the preview over the OMS runtime, the profile wiring and
+    the gate it builds `preview_ready`: with the flag's view unread, so off, an Owner's preview is
+    `403 trading_disabled` with no `reason`, recorded; once the view reads the demo seed, on, the
+    preview passes the gate to the body's 422. The wiring's pool is lazy: nothing connects."""
+    world, recorded = World(), list[str]()
+    world.principal = PrincipalSnapshot(UUID(int=7), frozenset({"owner"}), frozenset(Permission))
+    real = Settings(storage_backend="real")
+
+    def wired(_settings: Settings, metrics: Any, bus: Any = None) -> Any:
+        return wire_profiles(real, metrics, bus)
+
+    async def emit(action: str, **_fields: Any) -> None:
+        recorded.append(action)
+
+    monkeypatch.setattr(appmod, "wire_profiles", wired)
+    runtime = SimpleNamespace(readiness="ok")  # never started here, never asked past the gate
+    monkeypatch.setattr(appmod, "build_oms_runtime", lambda *_args, **_kwargs: runtime)
+    app = appmod.create_app(principal_resolver=world)
+    app.state.app_context.audit._writer = SimpleNamespace(emit=emit)
+    wire_fake_sessions(app, "owner")  # SR-041: a state-changing request needs a bearer
+    client = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
+    off = client.post(PREVIEW_PATH, json={}, headers={"Authorization": "Bearer owner"})
+    assert (off.status_code, off.json()["code"], "reason" in off.json()) == (
+        403, "trading_disabled", False,
+    )  # fmt: skip
+    asyncio.run(app.state.feature_flags.trade_groups.refresh())  # the demo seed: on
+    on = client.post(PREVIEW_PATH, json={}, headers={"Authorization": "Bearer owner"})
+    assert (on.status_code, recorded) == (422, ["trade_group.previewed"] * 2)

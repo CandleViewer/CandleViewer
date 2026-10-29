@@ -25,8 +25,9 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Protocol
@@ -34,6 +35,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.accounts.trade_group_repository import TradeGroupReader, TradeGroupRepository
 from candleviewer.accounts.trade_groups import ScopedTradeGroup
@@ -76,6 +78,7 @@ from candleviewer.oms.day_figures import DayRiskFigures, Tiers
 from candleviewer.oms.errors import (
     AccountScopeDenied,
     AuditNotDurable,
+    OmsError,
     OmsNotReady,
     OrderEntryRefused,
     OrderHistoryRefused,
@@ -93,6 +96,7 @@ from candleviewer.oms.exits import (
     InFlightGuard,
     OrderExits,
 )
+from candleviewer.oms.fanout.guard import LegGuard, S4SGuard
 from candleviewer.oms.idempotency import AnchorService, Lookup, Replay
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator
 from candleviewer.oms.order_machine import (
@@ -110,21 +114,25 @@ from candleviewer.oms.ports import (
     NO_TIER_REQUESTS,
     ArmRecords,
     ClockHealth,
+    Instruments,
     Interim,
     KeyedRecord,
     MarketReading,
     NoDayFigures,
     NoHandoverStore,
+    OrderFigures,
     Profiles,
     RequestRecord,
     RuntimePortName,
     SubmissionPorts,
     SubmitActor,
     TierRequests,
+    TradingAccounts,
     TradingSwitches,
     announce_interim_port,
     announce_interim_ports,
 )
+from candleviewer.oms.ports import StopResolver as StopPort
 from candleviewer.oms.repository import (
     ExecutionRepository,
     IdempotencyAnchorRepository,
@@ -137,6 +145,7 @@ from candleviewer.oms.repository import (
     WriteTimer,
 )
 from candleviewer.oms.routing import RoutedPort, TradingRouter
+from candleviewer.oms.sizing import with_rates
 from candleviewer.oms.stop_gate import ResolvingStopGate, StopVoidAudit
 from candleviewer.oms.stop_resolution import CompleteRead, StopResolver, store_timeout_for
 from candleviewer.oms.stream_consumer import StreamEvidence
@@ -1642,6 +1651,53 @@ class OrderRoute:
     versions: OrderVersions
 
 
+class PeekedFigures(Protocol):
+    """The leg accounts' cached figures for the trade-group preview (E28-T05 S3c, #909)."""
+
+    async def peeked(
+        self, symbol: Symbol, fallbacks: Mapping[UUID, Decimal | None]
+    ) -> dict[UUID, AccountFigures | None]: ...
+
+
+class PreviewFigures:
+    """`PeekedFigures` over the order path's own account binding and figures, on the order lane
+    (SR-E28-22): each account resolved as an order's is, so the preview never holds a key ref, its
+    kept reading peeked at its bound profile's fallback and its symbol's rates merged as the size
+    step merges them (`with_rates`). No venue read and no tiers asked: an account it cannot resolve
+    (deleted, of another environment or keyless since the route's scope check, or unread), or with
+    nothing fresh kept, has none, and its leg is `figure_unknown`."""
+
+    def __init__(self, accounts: TradingAccounts, figures: OrderFigures) -> None:
+        self._accounts, self._figures = accounts, figures
+
+    async def peeked(
+        self, symbol: Symbol, fallbacks: Mapping[UUID, Decimal | None]
+    ) -> dict[UUID, AccountFigures | None]:
+        known: dict[UUID, AccountFigures | None] = dict.fromkeys(fallbacks)
+        for account_id, fallback in fallbacks.items():
+            try:
+                ref = await self._accounts.trading_account(AccountId(account_id))
+            except OmsError:
+                continue
+            reading = self._figures.peek(ref, (symbol,), fallback_sl_offset_pct=fallback)
+            known[account_id] = None if reading is None else with_rates(reading, symbol)
+        return known
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewParts:
+    """What the trade-group preview reads of the composed OMS (E28-T05 S3c), the order path's own
+    and never a write (the read-only guarantee): the leg guard over its risk gate and switches, its
+    stop resolver, the listing and the ticker stream (with no demand, so no venue call), each read
+    in place as the order route reads its switches, and the legs' figures, peeked on the lane."""
+
+    guard: LegGuard
+    stops: StopPort
+    instruments: Instruments
+    prices: ReferencePricesBinding
+    figures: PeekedFigures
+
+
 @dataclass(frozen=True, slots=True)
 class _Parts:
     """What `start()` composed; `stop()` runs the `closers` after its drain, in their order."""
@@ -1663,6 +1719,7 @@ class _Parts:
     stream: StreamWiring
     #: When the fencing grace since the lock was taken ends, on the runtime's `monotonic`.
     admit_after: float
+    preview: PreviewParts
     #: E29-T13's snapshot reads on the lane, which the WS topics take once `ready`; None without
     #: the topics.
     topic_reads: TopicReads | None = None
@@ -1720,6 +1777,18 @@ class OnLaneGroups:
 
     async def get(self, scope: AccountScope, group_id: GroupId) -> ScopedTradeGroup:
         return await _on_lane(self.parts, self.parts.route.groups.get(scope, group_id))
+
+
+@dataclass(frozen=True, slots=True)
+class OnLanePreview:
+    """`PreviewParts.figures` from the serving loop: peeked on the lane, where they are kept."""
+
+    parts: _Parts
+
+    async def peeked(
+        self, symbol: Symbol, fallbacks: Mapping[UUID, Decimal | None]
+    ) -> dict[UUID, AccountFigures | None]:
+        return await _on_lane(self.parts, self.parts.preview.figures.peeked(symbol, fallbacks))
 
 
 @dataclass(frozen=True, slots=True)
@@ -2124,6 +2193,13 @@ class OmsRuntime:
         return OrderRoute(
             lane, raw.arm_records, raw.switches, lane, groups, raw.environment, raw.versions
         )
+
+    @property
+    def preview(self) -> PreviewParts:
+        """The trade-group preview's reads (`PreviewParts`), its figures peeked on the order lane
+        (`OnLanePreview`); `OmsNotReady` before it is composed."""
+        parts = self._composed()
+        return replace(parts.preview, figures=OnLanePreview(parts))
 
     @property
     def exits(self) -> OnLaneExits:
@@ -2775,6 +2851,11 @@ class OmsRuntime:
                 # after the commands
                 closers.insert(3, ("ticker_demand", lambda: serving.call(demand.close())))
             instruments = InstrumentsBinding(ingestion.instruments)
+            # E28-T05 S3c: the preview's reads, the order path's own; its prices ask no demand
+            preview = PreviewParts(
+                S4SGuard(ports.risk_gate, submits), ports.stop_resolver, instruments,
+                ReferencePricesBinding(tickers), PreviewFigures(accounts, figures),
+            )  # fmt: skip
             validator = Validator(read_only_gate=self._read_only)
             # the profile cache is the serving loop's: the pipeline and the exits share one bridge
             profiles = ServedProfiles(self.profiles, serving)
@@ -2845,7 +2926,7 @@ class OmsRuntime:
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
-                stream, admit_after, reads,
+                stream, admit_after, preview, reads,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping

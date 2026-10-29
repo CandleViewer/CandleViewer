@@ -69,10 +69,12 @@ def test_the_buckets_are_bounded_to_the_least_recently_used_1024_users() -> None
 
 def test_a_clock_that_steps_back_neither_refills_nor_lengthens_the_wait() -> None:
     clock = _Clock()
-    limiter = PreviewLimiter(1, clock=clock)
+    limiter = PreviewLimiter(2, clock=clock)
+    assert limiter.try_take(A) is None
+    clock.t -= 5.0  # the token left is kept, and none is added for the step
     assert [limiter.try_take(A), limiter.try_take(A)] == [None, 1]
-    clock.t -= 5.0  # no token for the step, and not the six seconds it would add
-    assert limiter.try_take(A) == 1
+    clock.t += 0.5  # due when the answer said, not once the clock passes the old stamp
+    assert limiter.try_take(A) is None
 
 
 @pytest.fixture

@@ -213,6 +213,7 @@
 ["cv_sizer_outcomes_total", "counter", ["outcome", "reason"], "live", "E28"]
 ["cv_sizer_stop_fallback_total", "counter", [], "live", "E28"]
 ["cv_statechart_library_info", "gauge", ["version", "sha256"], "planned", "E50"]
+["cv_tradegroup_preview_total", "counter", ["outcome"], "live", "E28"]
 ["cv_user_lifecycle_steps_total", "counter", ["step", "outcome"], "live", "E42"]
 ["cv_user_lifecycle_total", "counter", ["action", "result"], "live", "E42"]
 ["cv_wallet_reconcile_total", "counter", ["result"], "live", "E27"]

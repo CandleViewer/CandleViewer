@@ -196,7 +196,11 @@ def test_the_previewed_row_holds_ids_symbol_side_and_counts_never_a_figure(
     }  # fmt: skip
     assert (denied["outcome"], denied["severity"]) == ("denied", "warning")
     assert denied["reason"] == "risk_limit_breached"
-    for made in (row, denied):  # whose request it was, and what it was about
+    early = previewed_entry(None, "trading_disabled", actor=ACTOR)  # S3c: before the body is read
+    assert (early["after_state"], early["outcome"], early["reason"]) == (
+        {"role": "manager", "outcomes": {}}, "denied", "trading_disabled",
+    )  # fmt: skip
+    for made in (row, denied, early):  # whose request it was, and what it was about
         assert (made["actor_ip"], made["object_kind"]) == (ACTOR.ip, "trade_group_preview")
     assert PREVIEWED_ACTION == "trade_group.previewed" and PREVIEWED_ACTION in AUDIT_ACTIONS
     assert set(row) <= set(inspect.signature(AuditWriter.emit).parameters) - {"self", "action"}

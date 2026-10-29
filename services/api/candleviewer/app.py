@@ -161,6 +161,7 @@ from candleviewer.api.order_cancel_all import make_cancel_all_router
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import SessionTradingPrincipalResolver
 from candleviewer.api.orders import OrderPrincipals, make_orders_router
+from candleviewer.api.preview_limiter import PreviewLimiter
 from candleviewer.api.profile_writes import SaveMeasures, make_profile_writes_router
 from candleviewer.api.profiles import make_profiles_router
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
@@ -196,6 +197,7 @@ from candleviewer.api.trade_group_definition_writes import (
     make_trade_group_definition_writes_router,
 )
 from candleviewer.api.trade_group_definitions import make_trade_group_definitions_router
+from candleviewer.api.trade_group_preview import PreviewReads, make_trade_group_preview_router
 from candleviewer.api.trade_groups import make_trade_groups_router
 from candleviewer.api.trade_groups_gate import TradeGroupsGate
 from candleviewer.api.users import (
@@ -2537,9 +2539,10 @@ def create_app(
         )
     )
     # E28-T05 S2c, S2d (#909): the definition writes (create, replace, delete), behind
-    # `trading.trade_groups` (the preview stays refused until S3c builds the gate
-    # `preview_ready`), over this environment's catalogue.
-    app.state.trade_groups_gate = TradeGroupsGate(feature_flags.trade_groups)
+    # `trading.trade_groups`, over this environment's catalogue. S3c builds the gate
+    # `preview_ready`, here alone, with the preview's audited refusals before planning (ruling 6):
+    # the flag then gates the preview too.
+    app.state.trade_groups_gate = TradeGroupsGate(feature_flags.trade_groups, preview_ready=True)
     app.include_router(make_trade_group_definition_writes_router(
         definition_writes(profiles, definitions, readiness, ctx),
         app.state.trade_groups_gate, _LazyAuditEmitter(ctx.audit), profiles_resolver,
@@ -2603,6 +2606,20 @@ def create_app(
             auth=ctx.auth,
         )
     )
+    # E28-T05 S3c (#909): `previewTradeGroup`, the submit's dry run, over the same principals and
+    # runtime (its figures, guard and listing), the profile wiring's accounts and cache, readiness
+    # and the flag's gate; rate-bounded per user. No runtime or no wiring (the fake backend): none.
+    preview_reads = None if profiles is None or oms_runtime_of(app.state) is None else PreviewReads(
+        profiles.accounts, profiles.effective, readiness, resolved.environment.value
+    )  # fmt: skip
+    app.include_router(make_trade_group_preview_router(
+        order_principals, lambda: oms_runtime_of(app.state), reads=preview_reads,
+        gate=app.state.trade_groups_gate, audit=_LazyAuditEmitter(ctx.audit),
+        limiter=PreviewLimiter(
+            resolved.tradegroups_preview_rate_per_user_per_second, clock=time.monotonic
+        ),
+        metrics=metrics_facade, auth=ctx.auth,
+    ))  # fmt: skip
     # #913 slice 4 S4-E (24 Sec.8.4, the exit routes): `cancelAllOrders`' own router over the same
     # runtime, principals and records, included ahead of the exit routes' router (the 19:43Z
     # ruling; pinned with the exit routes' below). `trading.oms_enabled` never gates it: a cancel is

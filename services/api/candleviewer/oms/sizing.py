@@ -90,6 +90,7 @@ from .errors import (
 from .ports import (
     NO_TIER_REQUESTS,
     UNKNOWN_FIGURES,
+    FiguresReading,
     OrderEffect,
     OrderFigures,
     OrderType,
@@ -257,6 +258,17 @@ def _answered(leg: LegSizing) -> LegSizing:
     raise SizingUnavailable(retry_after_s=SIZING_RETRY_AFTER_S)  # figure_unknown
 
 
+def with_rates(reading: FiguresReading, symbol: Symbol) -> AccountFigures:
+    """The account's figures with `symbol`'s rates, as the leg on it is sized; with no entry for
+    the symbol (the source reads no rates), the account's alone. The size step's merge and the
+    trade-group preview's (E28-T05 S3c), which asks no tiers."""
+    rates = reading.symbols.get(symbol)
+    if rates is None:
+        return reading.account
+    update = {"maintenance_margin_rate": rates.maintenance_margin_rate}
+    return reading.account.model_copy(update=update | {"taker_fee_rate": rates.taker_fee_rate})
+
+
 def sizing_market(mid: Px | None, last: Px | None) -> SizingMarket:
     """Step 3a's read as the sizer takes it; a price no `Price` holds is no price."""
     try:
@@ -414,17 +426,10 @@ class EntrySizer:
         except Exception as exc:
             _log().warning("oms_submit_figures_unread", failure=type(exc).__name__)
             return UNKNOWN_FIGURES, False
-        rates = reading.symbols.get(symbol)
-        if rates is None:  # no entry: the source has no rates to read (live, another venue), so
-            # no tiers to ask for; `TierRequests` asks only where the figures read them
-            return reading.account, False
-        known = reading.account.model_copy(
-            update={
-                "maintenance_margin_rate": rates.maintenance_margin_rate,
-                "taker_fee_rate": rates.taker_fee_rate,
-            }
-        )
-        return known, rates.maintenance_margin_rate is None
+        rates = reading.symbols.get(symbol)  # none: no rates to read (live, another venue), so
+        # no tiers to ask for; `TierRequests` asks only where the figures read them
+        untiered = rates is not None and rates.maintenance_margin_rate is None
+        return with_rates(reading, symbol), untiered
 
     def _observed(
         self,

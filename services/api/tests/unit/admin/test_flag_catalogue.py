@@ -9,7 +9,11 @@ from types import MappingProxyType
 import pytest
 
 from candleviewer.admin.flags import default_registry
-from candleviewer.admin.flags.catalogue import ENVIRONMENT_SEEDS, TRADING_OMS_ENABLED
+from candleviewer.admin.flags.catalogue import (
+    ENVIRONMENT_SEEDS,
+    TRADING_OMS_ENABLED,
+    TRADING_TRADE_GROUPS,
+)
 from candleviewer.admin.flags.registry import Category
 
 _B, _ALL, _OWN = "boolean", "all_roles", "owner_only"
@@ -82,8 +86,10 @@ def test_oms_flag_is_an_all_roles_rollout_off_but_seeded_on_in_a_demo_process() 
         "all_roles",
     )
     assert "owner @basiltt" in spec.description and spec.description.endswith("removal #4227")
-    assert ENVIRONMENT_SEEDS == {TRADING_OMS_ENABLED: {"demo": True}}
-    assert "trading.trade_groups" not in ENVIRONMENT_SEEDS  # ruling 6 on #909: no seed before S3c
+    assert ENVIRONMENT_SEEDS == {
+        TRADING_OMS_ENABLED: {"demo": True},
+        TRADING_TRADE_GROUPS: {"demo": True},
+    }  # the second with the preview's audited refusals before planning (E28-T05 S3c, ruling 6)
     assert isinstance(ENVIRONMENT_SEEDS, MappingProxyType)  # read-only, and each entry with it
     assert all(isinstance(seeds, MappingProxyType) for seeds in ENVIRONMENT_SEEDS.values())
     seeded = [registry[key] for key in ENVIRONMENT_SEEDS]
@@ -92,7 +98,8 @@ def test_oms_flag_is_an_all_roles_rollout_off_but_seeded_on_in_a_demo_process() 
 
 def test_trade_groups_flag_is_an_all_roles_rollout_off_with_its_removal_ticket() -> None:
     """E28-T05 (#909), C-4.13: off by default and while the store cannot be read, owned, with its
-    removal ticket; a rollout flag, never a kill switch or the live gate (C-4.14)."""
+    removal ticket; seeded on in a demo process alone (S3c); a rollout flag, never a kill switch
+    or the live gate (C-4.14)."""
     spec = default_registry()["trading.trade_groups"]
     assert (spec.gates, spec.default, spec.restrictive, spec.visibility.value) == (
         Category.FEATURE_ROLLOUT,

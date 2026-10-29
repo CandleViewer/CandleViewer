@@ -733,6 +733,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E28",
         max_series=42,
     ),
+    # E28-T05 S3c (#909): the trade-group preview's answers no audit row reads alone (PF-D01).
+    _s(
+        "cv_tradegroup_preview_total",
+        "counter",
+        "previews",
+        ("outcome",),
+        "Trade-group previews by outcome: rate_limited, past the per-user bucket (a 429, never "
+        "audited), and environment_mismatch, a leg outside this server's environment (SR-E28-16).",
+        "dashboard only",
+        _L,
+        "E28",
+        max_series=2,
+    ),
     # #906 D3e: the bridge from `ProfilesChanged` to the sockets (`profile_notices_wiring`).
     _s(
         "cv_profile_propagation_seconds",

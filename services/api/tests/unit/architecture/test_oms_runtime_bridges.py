@@ -40,6 +40,8 @@ from candleviewer.oms_wiring import (
     OnLaneCancelAll,
     OnLaneExits,
     OnLaneGroups,
+    OnLanePreview,
+    PreviewFigures,
     TradingAccountsBinding,
 )
 
@@ -58,6 +60,7 @@ WRAPPED: dict[type, dict[str, type]] = {
         ("scope", "accounts_in_scope", "deny", "cancel_admitted", "amend"), OrderExits
     ),
     OnLaneCancelAll: dict.fromkeys(("scope", "run"), CancelAll),
+    OnLanePreview: {"peeked": PreviewFigures},  # E28-T05 S3c: the preview's figures
     LaneStreams: dict.fromkeys(("open", "aclose"), PrivateStreams),
 }
 HOPS = [(bridge, name) for bridge, wrapped in WRAPPED.items() for name in wrapped]

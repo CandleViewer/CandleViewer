@@ -811,8 +811,8 @@ members before and after and their `membership_change` (the account ids `added`,
 against the caller's grants at its use.
 
 E28-T05 (#909) registers §8.1's `tradegroup.preview` as `trade_group.previewed`, 24 §15.5's name (`audit/actions.py`;
-21 §3.10.1 lists it): one row per answered preview, `200` or `403`, with the request's ids, symbol and side and its
-legs' outcome counts, never a figure.
+21 §3.10.1 lists it): one row per answered preview, `200` or a refusal, with the request's ids, symbol and side, the
+actor's role and its legs' outcome counts, never a figure.
 
 ### Review log
 

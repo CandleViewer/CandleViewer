@@ -140,6 +140,8 @@ rules:
       #   print, {renko, volume} (`bars/metrics.PRINT_REJECT_REASONS`); max_series=2.
       # stream, also (#2294, parquet_hot_cold_parity_mismatch_total): a `storage.models.StreamKind`
       #   value (13, a closed enum), never a symbol or a path; max_series=13.
+      # outcome, also (E28-T05 #909, cv_tradegroup_preview_total): {rate_limited,
+      #   environment_mismatch}, literals at the preview route's two call sites; max_series=2.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|builtin|cap|cause|class|code|depth|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger_mode|version|where|wire)$).*$"

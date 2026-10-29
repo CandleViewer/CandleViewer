@@ -5467,7 +5467,7 @@ Resolution order (first match wins): session override → user override → role
 | ----------------------------------------------------------------- | ------- | ---------------------------- | ----------- | --------------------------------------------------------------------- |
 | `live_trading`                                                    | boolean | `false`                      | ✔           | Master gate for any live order. Off until the R4 pen-test gate passes |
 | `trading.enabled`                                                 | boolean | `true`                       | ✔           | Global halt of all order entry (demo included)                        |
-| `trading.trade_groups`                                            | boolean | `false`                      | ✘           | Trade-group definition writes and the preview (21 §10.7, C-4.13)      |
+| `trading.trade_groups`                                            | boolean | `false` (demo `true`)        | ✘           | Trade-group definition writes and the preview (21 §10.7, C-4.13)      |
 | `trading.algos.oco` / `.iceberg` / `.twap` / `.chase` / `.scaled` | boolean | `false`                      | ✘           | Per-algo rollout                                                      |
 | `rules.enabled`                                                   | boolean | `true`                       | ✔           | Rule engine master switch                                             |
 | `rules.arm_live`                                                  | boolean | `false`                      | ✔           | Allows a rule to include `live` in scope                              |
