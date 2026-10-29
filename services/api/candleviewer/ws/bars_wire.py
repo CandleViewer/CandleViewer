@@ -207,7 +207,7 @@ def bar_item(
         "v": _dec(bar.volume, bar, generation, "volume"),
         "turnover": _dec(bar.turnover, bar, generation, "turnover"),
         "trades": bar.trade_count,
-        "closed": bar.closed,
+        "confirm": bar.closed,
     }
     if bar_kind not in TIME_KINDS:
         item["close_t_ms"] = bar.close_time // 1000
