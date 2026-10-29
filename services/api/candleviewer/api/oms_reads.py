@@ -80,7 +80,7 @@ from candleviewer.oms.reads import AggregatePosition, OmsReads, aggregate_positi
 from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.executions import ExecType
 from candleviewer.storage.repositories.oms_reads import Keyset, ListedExecution, ListedOrder
-from candleviewer.storage.repositories.orders import OrderEventRow, OutOfScope
+from candleviewer.storage.repositories.orders import MAX_EVENT_PAGE, OrderEventRow, OutOfScope
 from candleviewer.storage.repositories.positions import PositionRow
 
 __all__ = ["flag_param", "make_oms_reads_router"]
@@ -391,6 +391,10 @@ def make_oms_reads_router(
         if isinstance(found, OutOfScope):
             holder = found.account_id
             return await missing(principal, request, _DIAGNOSTICS, "order", order_id, holder)
+        if found.more_events:  # never a partial chain (#4997)
+            _log().error("oms_diagnostics_chain_too_long", limit=MAX_EVENT_PAGE)
+            detail = "The order's event chain is too long to serve whole."
+            return problem(503, "store_unavailable", detail)
         try:
             calls = exchange_calls(found.events)
         except RecordRefused:  # logged by the check; never a partial answer (OM-I05)
@@ -434,6 +438,7 @@ def make_oms_reads_router(
             events = flag_param(request.query_params, "include_events")
         except ParamsInvalid as exc:
             return invalid(exc)
+        seq = None if versions is None else versions(order_id)  # never fresher than the body
         try:
             found = await service.order(account_scope(principal.snapshot), order_id, events=events)
         except (AccountScopeDenied, StoreUnavailable) as exc:
@@ -445,7 +450,6 @@ def make_oms_reads_router(
         body["executions"] = [execution_document(x) for x in found.executions]
         if events:
             body["events"] = [event_document(e) for e in found.events]
-        seq = None if versions is None else versions(order_id)
         headers = {} if seq is None else {"ETag": order_etag(order_id, seq)}
         return JSONResponse(body, headers=headers)
 

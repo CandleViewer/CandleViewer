@@ -26,7 +26,7 @@ def oms_reads(settings: Settings) -> OmsReads | None:
         return None
     pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "oms-reads")
     store = SqlAlchemyOmsReads(pool, statement_timeout_ms=settings.oms_statement_timeout_ms)
-    return OmsReads(store, settings.environment.value)
+    return OmsReads(store, settings.environment.value, release=pool.dispose)
 
 
 def order_versions(runtime: Callable[[], OmsRuntime | None]) -> Callable[[UUID], int | None]:

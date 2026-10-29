@@ -111,12 +111,14 @@ class ListedExecution:
 
 @dataclass(frozen=True, slots=True)
 class OrderDetail:
-    """22 `OrderWithEvents`' rows: the order in scope, its events when asked (none otherwise) and
-    its fills, oldest first."""
+    """22 `OrderWithEvents`' rows: the order in scope, its events when asked (none otherwise),
+    the first `MAX_EVENT_PAGE` of them, and its fills, oldest first; `more_events` when the chain
+    holds more events than that, so a reader that must serve it whole refuses it (#4997)."""
 
     scoped: ScopedOrder
     events: tuple[OrderEventRow, ...]
     executions: tuple[ListedExecution, ...]
+    more_events: bool = False
 
 
 @dataclass(frozen=True, slots=True)

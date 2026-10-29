@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Coroutine, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final, Literal
@@ -127,12 +127,17 @@ class OmsReads:
 
     def __init__(
         self, store: OmsReadStore, environment: Environment, *,
-        timeout_s: float = STORE_TIMEOUT_S,
+        timeout_s: float = STORE_TIMEOUT_S, release: Callable[[], Awaitable[None]] | None = None,
     ) -> None:  # fmt: skip
         if not 0 < timeout_s <= STORE_TIMEOUT_S:  # NaN fails it too
             raise ValueError("a read's bound is only ever tightened, never raised")
-        self._store, self._timeout = store, timeout_s
+        self._store, self._timeout, self._release = store, timeout_s, release
         self.environment: Environment = environment
+
+    async def aclose(self) -> None:
+        """At shutdown (the lifespan's teardown): the store's own pool, disposed."""
+        if self._release is not None:
+            await self._release()
 
     async def orders(
         self, scope: AccountScope, query: OrderQuery, *, after: Keyset | None, limit: int

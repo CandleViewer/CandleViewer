@@ -7,6 +7,10 @@ accounts settled first in the same transaction (`accounts_in_scope_statement`, `
 order and the event reads of `getOrder` are `in_scope_statement` and `list_events_statement`, the
 exit routes' own. Lists render their states with literals, as `list_open_statement` does, so the
 planner matches `ix_orders_open`, and a position's `size > 0` with a literal 0 for `ix_pos_open`.
+A page of orders or fills is read per account (`LATERAL` over the settled accounts' `VALUES`),
+each by its `(account, time DESC)` index (`ix_orders_recent`, `ix_exec_acct_time`) from the
+keyset's scalar bound (`time <= :at`, the id breaking a tie), and merged in the database: no read
+sorts every matching row, and a deep page starts where the cursor left off (#4997).
 """
 
 from __future__ import annotations
@@ -71,18 +75,42 @@ def _text(column: sa.ColumnElement[Any]) -> sa.ColumnElement[Any]:
     return sa.type_coerce(column, sa.Text)
 
 
+def _scoped_accounts(accounts: Collection[UUID]) -> sa.Values:
+    """The settled accounts as a `VALUES` list, each read by its own index-ordered scan."""
+    column = sa.column("account_id", sa.Uuid)
+    return sa.values(column, name="scoped_accounts").data([(a,) for a in sorted(accounts)])
+
+
+def _before(
+    at: sa.ColumnElement[Any], key: sa.ColumnElement[Any], after: Keyset
+) -> tuple[sa.ColumnElement[bool], ...]:
+    """The keyset bound past `after`, newest first, as scalar predicates: `at <= :at` is an index
+    condition on `(account, at DESC)`, and the rest breaks the tie on the id."""
+    return at <= after.at, sa.or_(at < after.at, key < after.id)
+
+
+def _merged(scoped: sa.Values, page: sa.Select[Any], at: str, limit: int) -> sa.Select[Any]:
+    """One page across the accounts, merged in the database: per account (`LATERAL`) the newest
+    `limit` rows its `(account, time DESC)` index yields in order, then the newest `limit` of
+    those, so no read sorts every matching row and a deep page re-scans none (#4997)."""
+    per_account = page.limit(limit).lateral("page")
+    merged = sa.select(per_account).select_from(scoped).join(per_account, sa.true())
+    return merged.order_by(per_account.c[at].desc(), per_account.c.id.desc()).limit(limit)
+
+
 def orders_statement(
     scope: AccountScope, query: OrderQuery, environment: Environment,
     accounts: Collection[UUID], after: Keyset | None, limit: int,
 ) -> sa.Select[Any]:  # fmt: skip
     """`listOrders`' page: the settled accounts' orders the scope views, newest first."""
     tree = orders.outerjoin(trade_group_legs, _L.id == _O.trade_group_leg_id)
-    account = _O.exchange_account_id
+    account, scoped = _O.exchange_account_id, _scoped_accounts(accounts)
     stmt = (
         sa.select(*ORDER_COLUMNS, _L.trade_group_id)
         .select_from(tree)
         .where(
-            account.in_(sorted(accounts)), scope_clause(scope, environment, account, trade=False)
+            account == scoped.c.account_id,
+            scope_clause(scope, environment, account, trade=False),
         )
     )
     if (states := query.wanted_states()) is not None:
@@ -98,8 +126,8 @@ def orders_statement(
     if query.until is not None:
         stmt = stmt.where(_O.created_ts < query.until)
     if after is not None:
-        stmt = stmt.where(sa.tuple_(_O.created_ts, _O.id) < sa.tuple_(after.at, after.id))
-    return stmt.order_by(_O.created_ts.desc(), _O.id.desc()).limit(limit)
+        stmt = stmt.where(*_before(_O.created_ts, _O.id, after))
+    return _merged(scoped, stmt.order_by(_O.created_ts.desc(), _O.id.desc()), "created_ts", limit)
 
 
 def _fills() -> tuple[sa.FromClause, sa.ColumnElement[Any]]:
@@ -119,12 +147,13 @@ def executions_statement(
     """`listExecutions`' page: the settled accounts' fills the scope views, newest first;
     `closed`, `listClosedPnl`'s: only the fills that carry a closed PnL."""
     tree, group = _fills()
-    account = _X.exchange_account_id
+    account, scoped = _X.exchange_account_id, _scoped_accounts(accounts)
     stmt = (
         sa.select(*EXECUTION_COLUMNS, group)
         .select_from(tree)
         .where(
-            account.in_(sorted(accounts)), scope_clause(scope, environment, account, trade=False)
+            account == scoped.c.account_id,
+            scope_clause(scope, environment, account, trade=False),
         )
     )
     if closed:
@@ -140,8 +169,8 @@ def executions_statement(
     if query.until is not None:
         stmt = stmt.where(_X.exec_ts < query.until)
     if after is not None:
-        stmt = stmt.where(sa.tuple_(_X.exec_ts, _X.id) < sa.tuple_(after.at, after.id))
-    return stmt.order_by(_X.exec_ts.desc(), _X.id.desc()).limit(limit)
+        stmt = stmt.where(*_before(_X.exec_ts, _X.id, after))
+    return _merged(scoped, stmt.order_by(_X.exec_ts.desc(), _X.id.desc()), "exec_ts", limit)
 
 
 def order_fills_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
@@ -235,7 +264,7 @@ class SqlAlchemyOmsReads(CappedStore):
             account = found.order.exchange_account_id
             chain: tuple[OrderEventRow, ...] = ()
             if events:
-                listed = list_events_statement(account, order_id, -1, MAX_EVENT_PAGE)
+                listed = list_events_statement(account, order_id, -1, MAX_EVENT_PAGE + 1)
                 chain = tuple(
                     OrderEventRow(
                         order_link_id=r["order_link_id"], **{n: r[n] for n in EVENT_FIELDS}
@@ -243,7 +272,9 @@ class SqlAlchemyOmsReads(CappedStore):
                     for r in (await uow.session.execute(listed)).mappings()
                 )
             fills = await uow.session.execute(order_fills_statement(account, order_id))
-            return OrderDetail(found, chain, tuple(_execution(r) for r in fills.mappings()))
+            more = len(chain) > MAX_EVENT_PAGE
+            listed_fills = tuple(_execution(r) for r in fills.mappings())
+            return OrderDetail(found, chain[:MAX_EVENT_PAGE], listed_fills, more)
 
     async def executions(
         self, scope: AccountScope, query: ExecutionQuery, *, environment: Environment,

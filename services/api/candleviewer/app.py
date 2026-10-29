@@ -2589,11 +2589,12 @@ def create_app(
     )
     # E29-T07 #915 PR 1: the OMS reads (`listOrders`, `getOrder`, `listPositions`, `getPosition`,
     # `listExecutions`) over a scoped read store of their own, after the order routers; no flag
-    # gates a read, and none waits for the OMS (`oms_reads_wiring`).
+    # gates a read, and none waits for the OMS (`oms_reads_wiring`). The lifespan disposes its pool.
+    app.state.oms_reads = oms_reads(resolved)
     app.include_router(
         make_oms_reads_router(
             order_principals,
-            oms_reads(resolved),
+            app.state.oms_reads,
             audit=_LazyAuditEmitter(ctx.audit),
             auth=ctx.auth,
             versions=order_versions(lambda: oms_runtime_of(app.state)),

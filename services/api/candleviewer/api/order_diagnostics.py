@@ -34,6 +34,8 @@ __all__ = ["RECORD_KEY", "RecordRefused", "exchange_calls"]
 
 #: The event payload's member holding the call's record (`oms.commands._record`).
 RECORD_KEY: Final = "record"
+#: The members the route computes from the event, which a stored record never names (#4997).
+_COMPUTED: Final = frozenset({"event_id", "at"})
 
 
 class RecordRefused(Exception):
@@ -50,13 +52,13 @@ def _log() -> Any:
 
 
 def _call(event: OrderEventRow, record: object) -> dict[str, object]:
-    if not isinstance(record, Mapping):
+    if not isinstance(record, Mapping) or _COMPUTED & set(record):  # never its own link or time
         raise RecordRefused(event.id, "shape")
     stored = {RECORD_KEY: dict(record)}
     if redact_exchange_payload(stored) != stored:  # check 1: the redactor would change it
         raise RecordRefused(event.id, "redaction")
     at = event.event_ts.astimezone(UTC).isoformat(timespec="microseconds")
-    candidate = {"event_id": event.id, "at": at, **record}
+    candidate = {**record, "event_id": event.id, "at": at}
     try:  # check 2: the contract's closed shape, strictly
         shaped = api.ExchangeCallRecord.model_validate_json(json.dumps(candidate), strict=True)
     except (ValidationError, TypeError, ValueError):
