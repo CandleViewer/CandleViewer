@@ -108,6 +108,26 @@ describe("createCrashReporter", () => {
       metrics: { shell_crash_total: { panel: 1, route: 0, app: 0, window: 1 } },
     });
   });
+
+  it("settles once its appends in flight have, failed ones too, and drains them (#306 9c)", async () => {
+    let written: () => void = () => {};
+    const append = vi
+      .fn<() => Promise<void>>()
+      .mockReturnValueOnce(new Promise<void>((resolve) => (written = resolve)))
+      .mockRejectedValueOnce(new Error("io"));
+    const crashLog = { capabilities: { crashLog: true } as never, crashLog: { append } };
+    const reporter = C.createCrashReporter({ port: crashLog });
+    reporter.report("a", "app");
+    reporter.report("b", "app");
+    expect(reporter.pending()).toBe(2);
+    let done = false;
+    void reporter.settled().then(() => (done = true));
+    for (let turn = 0; turn < 10; turn += 1) await Promise.resolve(); // to quiescence
+    expect(done).toBe(false); // one append is still in flight
+    written();
+    await reporter.settled();
+    expect(reporter.pending()).toBe(0);
+  });
 });
 
 describe("report() on hostile errors (M1)", () => {

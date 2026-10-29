@@ -9,6 +9,7 @@ import {
   handOverPrivateReconnect,
   reduceDegraded,
   selectDegradedIssues,
+  setGpuFallback,
   type DegradedFacts,
 } from "../../../src/features/system-states/degradedIssues";
 
@@ -204,6 +205,24 @@ describe("degraded issues", () => {
       expect(row.message).toMatch(/\.$/);
       if (row.stillWorks !== null) expect(row.stillWorks).toMatch(/\.$/);
     }
+  });
+
+  it("test_degraded_gpu_fallback_is_the_clients_info_row_last_and_never_read_from_a_frame", () => {
+    const kept = setGpuFallback(INITIAL_DEGRADED_FACTS, true); // #306 9c: Keep software rendering
+    expect(degradedIssues(kept)).toEqual([
+      {
+        id: "gpuFallback",
+        severity: "info",
+        message: "Chart engine in fallback — reduced visuals.",
+        stillWorks: "Order entry unaffected.",
+        dismissible: true,
+        assertedSeq: 1,
+      },
+    ]);
+    const both = reduceDegraded(kept, health([{ name: "recorder", state: "down" }]));
+    expect(ids(both)).toEqual(["recorderDown", "gpuFallback"]); // §8's order; frames keep it
+    expect(ids(setGpuFallback(both, false))).toEqual(["recorderDown"]); // a new crash's page
+    expect(ids(run(health([{ name: "gpu", state: "down" }])))).toEqual([]); // none on the wire
   });
 });
 

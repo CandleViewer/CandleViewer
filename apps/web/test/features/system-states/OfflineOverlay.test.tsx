@@ -14,8 +14,11 @@ import {
   ShellAnnouncer,
 } from "../../../src/features/app-shell/announcer";
 import { ShellLayout } from "../../../src/features/app-shell/ShellLayout";
-import { ShellCanvasOverlaySlot } from "../../../src/features/app-shell/slots";
+import { ShellBannerSlot, ShellCanvasOverlaySlot } from "../../../src/features/app-shell/slots";
+import { resumeBoot, takeHandedBack } from "../../../src/features/system-states/bootOffline";
 import {
+  DEGRADED_COPY,
+  GPU_COPY,
   OFFLINE_COPY,
   SCR159_COPY,
   TAILNET_CHECKS,
@@ -25,9 +28,12 @@ import { setActiveClient } from "../../../src/lib/ws/client/activeClient";
 import type { WsClientHandle } from "../../../src/lib/ws/client/createWsClient";
 import { INITIAL_WS_STATE, reduce } from "../../../src/lib/ws/state/reducer";
 import type { WsState } from "../../../src/lib/ws/state/types";
+import { watchGpu, type GpuPort } from "../../../src/shell/bootstrap/gpuCrash.js";
 import { startLiveness } from "../../../src/shell/bootstrap/liveness.js";
 import { REACHABLE, type Reachability } from "../../../src/shell/bootstrap/reachability.js";
 import { resetShellState, setShellState } from "../../../src/shell/bootstrap/store.js";
+import { installCrashReporter, reportCrash } from "../../../src/shell/crash/reportCrash.js";
+import type { GpuCrash } from "../../../src/shell/ShellPort.js";
 import { OFF, authOk, connecting, stream } from "../../lib/ws/support/engineEvents";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -54,12 +60,14 @@ function Workspace(): JSX.Element {
   }, []);
   return shown ? <button type="button">Chart control</button> : <p>No control</p>;
 }
-const shell = (strict = false) => {
+const shell = (strict = false, banner = false) => {
   const tree = (
     <>
       <AppShell
         mainId="cv-main"
         nav={<button type="button">Rail item</button>}
+        connection={<button type="button">Header control</button>}
+        banner={banner ? <ShellBannerSlot /> : undefined}
         canvasOverlay={<ShellCanvasOverlaySlot />}
       >
         <Workspace />
@@ -440,6 +448,190 @@ describe("SCR-159 in the canvas: offline and tailnet-unreachable", () => {
   });
 });
 
+describe("SCR-159 in the canvas: GPU-unavailable, the desktop app's (slice 9c)", () => {
+  const SENTENCE =
+    "The graphics process stopped at 13:59:58 UTC and CandleViewer restarted the charts in software rendering.";
+  const retry = vi.fn<GpuPort["retry"]>();
+  let crashed: (crash: GpuCrash) => void = () => {};
+  let unwatch: () => void = () => {};
+  const crash = (restartCount = 1): void =>
+    act(() => crashed({ crashedAtMs: T0 - 2_000, restartCount, reason: "crashed" }));
+  const button = (name: string): HTMLElement => screen.getByRole("button", { name });
+
+  beforeEach(() => {
+    retry.mockReset().mockResolvedValue(undefined);
+    const onCrashed: GpuPort["onCrashed"] = (handler) => {
+      crashed = handler;
+      return () => {
+        crashed = () => {};
+      };
+    };
+    unwatch = watchGpu({ onCrashed, retry });
+  });
+  afterEach(() => {
+    unwatch();
+    installCrashReporter({ version: "x", target: undefined }); // no crash-log port again
+  });
+
+  it("a crash shows the page: its h1, the fallback and its limits, the count and two actions", async () => {
+    shell();
+    crash(2);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(GPU_COPY.heading);
+    expect(within(page()).getByText(SENTENCE)).toBeInTheDocument();
+    const limits = within(page()).getAllByRole("listitem");
+    expect(limits.map((li) => li.textContent)).toEqual([...GPU_COPY.limits]);
+    expect(within(page()).getByText("GPU process restarted 2 times this session")).toBeVisible();
+    const actions = within(page()).getAllByRole("button");
+    expect(actions.map((b) => [b.textContent, b.getAttribute("data-variant")])).toEqual([
+      [SCR159_COPY.retryNow, "primary"],
+      [GPU_COPY.keep, "secondary"],
+    ]);
+    expect(within(page()).queryByText(SCR159_COPY.fallback)).toBeNull(); // the server answers
+    expect(screen.queryByText(/^Retrying in/)).toBeNull();
+    const header = screen.getByRole("button", { name: "Header control" });
+    expect(header.closest("[inert]")).toBeNull(); // the chrome, its Safety cluster's slot too, stays
+    expect(await seriousAxe(page())).toEqual([]);
+  });
+
+  it("enters as 9a's pages do: at once and quiet, then the sentence as the alert, then the h1", async () => {
+    shell();
+    otherWriter(); // the entry waits out its 5 s
+    const alerts = watch("assertive");
+    crash();
+    await settle();
+    expect(screen.getByRole("heading", { level: 1 })).toBeVisible();
+    expect(alerts).toEqual([]);
+    expect(document.activeElement).toBe(document.body);
+    await advance(REGION_BUDGET_MS);
+    expect(alerts).toEqual([SENTENCE]); // never the heading or the count
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
+    crash(2); // a second crash: the count changes, nothing is said
+    await settle();
+    expect(alerts).toHaveLength(1);
+  });
+
+  it("Retry now relaunches only from a click, once, after the crash log's appends in flight", async () => {
+    let written: () => void = () => {};
+    const append = vi.fn(() => new Promise<void>((resolve) => (written = resolve)));
+    const port = { capabilities: { crashLog: true } as never, crashLog: { append } };
+    installCrashReporter({ version: "x", target: undefined, port });
+    shell();
+    crash();
+    await advance(60_000);
+    expect(retry).not.toHaveBeenCalled(); // never by itself
+    reportCrash(new Error("a panel"), "panel"); // its append is still in flight
+    fireEvent.click(button(SCR159_COPY.retryNow));
+    fireEvent.click(button(SCR159_COPY.retryNow));
+    await settle();
+    expect(page()).toHaveAttribute("aria-busy", "true");
+    expect(retry).not.toHaveBeenCalled(); // main's app.exit(0) would drop that entry
+    act(() => written());
+    await settle();
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0); // the 2 s bound's timer goes with the wait
+  });
+
+  it("waits 2 s at most for an append that never settles, then relaunches", async () => {
+    const append = vi.fn(() => new Promise<void>(() => {}));
+    const port = { capabilities: { crashLog: true } as never, crashLog: { append } };
+    installCrashReporter({ version: "x", target: undefined, port });
+    shell();
+    crash();
+    await settle();
+    reportCrash(new Error("a panel"), "panel"); // its append hangs
+    fireEvent.click(button(SCR159_COPY.retryNow));
+    await advance(1_999);
+    expect(retry).not.toHaveBeenCalled();
+    await advance(1);
+    expect(retry).toHaveBeenCalledTimes(1); // one lost log line beats a Retry that never runs
+  });
+
+  it("a refusal says nothing new: the page stays as it was, not busy, and Retry runs again", async () => {
+    shell();
+    crash();
+    await settle();
+    const alerts = watch("assertive");
+    const before = page().textContent;
+    retry.mockRejectedValueOnce(new Error("GPU retry refused"));
+    fireEvent.click(button(SCR159_COPY.retryNow));
+    await settle();
+    expect(page()).not.toHaveAttribute("aria-busy");
+    expect([page().textContent, alerts]).toEqual([before, []]);
+    fireEvent.click(button(SCR159_COPY.retryNow));
+    await settle();
+    expect(retry).toHaveBeenCalledTimes(2);
+  });
+
+  it("Keep software rendering: the page goes, focus goes back, SCR-153's GPU row holds", async () => {
+    act(() => setShellState({ connection: { kind: "live" } }));
+    shell(false, true);
+    const polite = watch("polite");
+    const control = screen.getByRole("button", { name: "Chart control" });
+    control.focus();
+    crash();
+    await settle();
+    fireEvent.click(button(GPU_COPY.keep));
+    await settle();
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    expect(document.activeElement).toBe(control);
+    expect(control.parentElement).not.toHaveAttribute("inert");
+    const row = `Dismiss ${DEGRADED_COPY.gpuFallback.message}`;
+    expect(button(row)).toBeVisible();
+    expect(polite).toEqual([DEGRADED_COPY.gpuFallback.message]); // never "Connected again"
+    crash(2); // a later crash: its page, and the row yields to it (one reason, one surface)
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(GPU_COPY.heading);
+    expect(screen.queryByRole("button", { name: row })).toBeNull();
+  });
+
+  it("yields to the server's pages: a crash during an outage shows once the server is back", () => {
+    shell();
+    reach(lost("offline"));
+    crash();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      OFFLINE_COPY.offline.heading,
+    );
+    reach(REACHABLE);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(GPU_COPY.heading);
+    const canvas = screen.getByRole("button", { name: "Chart control" }).parentElement;
+    expect(canvas).toHaveAttribute("inert");
+  });
+
+  it("says a second outage under a GPU page that stays up, and its recovery", async () => {
+    act(() => setShellState({ connection: { kind: "live" } }));
+    shell();
+    const alerts = watch("assertive");
+    const polite = watch("polite");
+    crash();
+    await settle();
+    for (let outage = 0; outage < 2; outage += 1) {
+      reach(lost("offline"));
+      await advance(REGION_BUDGET_MS);
+      reach(REACHABLE);
+      await advance(REGION_BUDGET_MS);
+    }
+    expect(alerts.filter((a) => a.startsWith(OFFLINE_COPY.offline.heading))).toHaveLength(2);
+    expect(polite).toEqual([SCR159_COPY.recovered, SCR159_COPY.recovered]);
+    expect(document.querySelectorAll('[aria-live="assertive"]')[0]).toHaveTextContent(
+      GPU_COPY.heading,
+    );
+  });
+
+  it("under StrictMode says one alert, takes focus, runs no clock; remounted, it says it again", async () => {
+    const view = shell(true);
+    const alerts = watch("assertive");
+    crash();
+    await settle();
+    expect(alerts).toEqual([SENTENCE]);
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
+    expect(vi.getTimerCount()).toBe(0); // no countdown on this page
+    view.unmount();
+    shell();
+    await advance(REGION_BUDGET_MS);
+    expect(alerts).toEqual([SENTENCE, SENTENCE]);
+    expect(retry).not.toHaveBeenCalled();
+  });
+});
+
 describe("SCR-159 beside CMP-077 in the shell layout", () => {
   let ws: WsState = INITIAL_WS_STATE;
   const listeners = new Set<() => void>();
@@ -517,5 +709,27 @@ describe("SCR-159 beside CMP-077 in the shell layout", () => {
     await advance(1);
     expect(announcer().textContent).toBe(OFFLINE_COPY.tailnet_unreachable.sentence);
     router.dispose();
+  });
+});
+
+describe("R-902's resume, said by the overlay", () => {
+  afterEach(() => void takeHandedBack());
+  const live = (): void => void act(() => setShellState({ connection: { kind: "live" } }));
+  it.each([
+    ["a ready resume, the socket already live", true, true, false, 1],
+    ["a ready resume, the socket live later", true, false, false, 1],
+    ["a ready resume with a GPU page waiting", true, false, true, 1],
+    ["a sign-in resume", false, false, false, 0],
+    ["no resume at all", null, false, false, 0],
+  ])("%s", async (_name, ready, liveAtMount, crashed, said) => {
+    if (ready !== null) resumeBoot(ready);
+    if (liveAtMount) live();
+    const crash = { crashedAtMs: T0 - 2_000, restartCount: 1, reason: "crashed" } as const;
+    if (crashed) act(() => setShellState({ gpuCrash: crash }));
+    const polite = watch("polite");
+    shell(true); // StrictMode, so its rehearsal must not say it twice
+    live();
+    await settle();
+    expect(polite).toHaveLength(said);
   });
 });
