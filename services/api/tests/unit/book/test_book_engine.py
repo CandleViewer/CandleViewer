@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from candleviewer.book.models import BookPhase, BookStatus
+from candleviewer.book.models import BookDesyncEvent, BookPhase, BookStatus
 from candleviewer.book.resync import BREAKER_MAX, BUFFER_BOUND, BookEngine
 from candleviewer.book.state import BookState
 from candleviewer.book.tiers import TieredBook
@@ -36,7 +36,7 @@ class _Harness:
         return e
 
     def books(self) -> list[object]:
-        return [o for o in self.out if not isinstance(o, BookStatus)]
+        return [o for o in self.out if not isinstance(o, BookStatus | BookDesyncEvent)]
 
 
 async def test_snapshot_then_deltas_reaches_live_before_publishing() -> None:

@@ -88,8 +88,8 @@ async def test_engine_resyncs_with_reason_grid_on_a_mixed_grid_delta() -> None:
     await eng.start()
     await eng.on_event(snap(10, [lvl(98, 1), lvl(99, 2)], [lvl(101, 3)]))
     await eng.on_event(delta(11, 10, [lvl(99, 5), at(49, "9.8", 4)]))  # on 0.1, then 9.8 on 0.2
-    status = out[-1]
-    assert isinstance(status, BookStatus) and status.state is BookPhase.DESYNCED
+    status = [o for o in out if isinstance(o, BookStatus)][-1]  # E21-T01: a desync event follows
+    assert status.state is BookPhase.DESYNCED
     assert status.reason == "grid" and eng.phase is BookPhase.SNAPSHOT_PENDING
     assert eng.book is None and eng.live_snapshot() is None and eng.last_u == 10
     assert not any(isinstance(o, BookDelta) for o in out)  # nothing of the delta was served
