@@ -44,10 +44,10 @@ async def _columns() -> list[dict[str, Any]]:
         w.at(k * COLUMN_MS)
     assert eng.phase is BookPhase.LIVE
     out = []
-    for entry in w.topic._symbols[SYM].specs[SPEC].ring:
-        wire = wire_column(entry.column, tick)
-        out.append({**wire, "estimated": entry.column.estimated,
-                    "samples_held": entry.column.samples})  # fmt: skip
+    for column in w.topic._symbols[SYM].specs[SPEC].ring:
+        wire = wire_column(column, tick)
+        out.append({**wire, "estimated": column.estimated,
+                    "samples_held": column.samples})  # fmt: skip
     assert len(out) == len(ring(w, SPEC)) == COLUMNS
     return out
 

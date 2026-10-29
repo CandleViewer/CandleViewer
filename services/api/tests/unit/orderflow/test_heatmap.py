@@ -172,7 +172,7 @@ async def live(w: World, bids: list[BookLevel] | None = None, asks: list[BookLev
 
 def ring(w: World, spec: HeatmapSpec) -> list[HeatmapColumn]:
     """The columns a spec's ring holds, oldest first."""
-    return [e.column for e in w.topic._symbols[spec.symbol].specs[spec].ring]
+    return list(w.topic._symbols[spec.symbol].specs[spec].ring)
 
 
 def missing(symbol: str = SYM) -> float:
@@ -497,6 +497,83 @@ def _ring(n: int, rows: int = 400) -> list[HeatmapColumn]:
     return [_col(100 * i, rows) for i in range(n)]
 
 
+def test_the_ring_is_columnar_and_returns_each_column_as_appended() -> None:
+    """M-B (23 §6.1, §16.2): a spec's ring is one float64 buffer and a vector a field, 15.6 MiB
+    and a little at 2 000 x 512; a column comes back as it went in, None prices included."""
+    ring = H._Ring(HEATMAP_SNAPSHOT_MAX_COLUMNS)
+    assert ring.nbytes <= 16 * 2**20 and ring._sizes.shape == (2_000, 2 * ROWS)
+    col = replace(
+        _col(0, 3, samples=2, off=0.5, est=True),
+        best_bid_ticks=None,
+        bid_sizes=array("d", [0.1, 0.0, 2.5]),
+        ask_sizes=array("d", [0.0, 1e-9, 3.0]),
+    )
+    ring.append(col)
+    assert ring[0] == col and ring[-1] == col and list(ring) == [col]
+    assert ring.rows(0) == 3 and ring.t_ms(0) == T0 and ring.estimated(0)
+    empty = replace(_col(100, 0, samples=0), best_ask_ticks=None)
+    ring.append(empty)
+    assert ring[1] == empty and ring[1].rows == 0
+
+
+def test_the_ring_drops_its_oldest_at_capacity_and_a_read_column_keeps_its_values() -> None:
+    """As `deque(maxlen=)`: the oldest out at capacity; a column read before its slot is reused
+    is a copy, unchanged by the reuse."""
+    ring = H._Ring(3)
+    ring.extend(_col(100 * i, 2 + i) for i in range(3))
+    first = ring[0]
+    ring.append(_col(300, 5))
+    assert [c.ts_ms for c in ring] == [T0 + 100, T0 + 200, T0 + 300]
+    assert first.ts_ms == T0 and first.rows == 2  # its slot now holds T0 + 300
+    with pytest.raises(IndexError):
+        ring.appendleft(_col(-100, 1))
+    with pytest.raises(IndexError):
+        ring[3]
+    assert ring.pop().ts_ms == T0 + 300 and len(ring) == 2
+    ring.appendleft(_col(0, 1))
+    assert [c.ts_ms for c in ring] == [T0, T0 + 100, T0 + 200]
+
+
+def test_the_ring_copies_its_newest_columns_and_refuses_a_column_past_rows() -> None:
+    """A seed's donor columns are copied (24 §6.3): later appends to the donor do not move them;
+    a column past `ROWS` (G-07a) is refused, as is a side shorter than the other."""
+    ring = H._Ring(4)
+    ring.extend(_col(100 * i, 1) for i in range(6))  # wrapped: T0+200 .. T0+500
+    copy = ring.newest(3)
+    ring.append(_col(600, 1))
+    assert [c.ts_ms for c in copy] == [T0 + 300, T0 + 400, T0 + 500]
+    assert copy.pop().ts_ms == T0 + 500 and len(copy) == 2
+    assert len(H._Ring(0).newest(5)) == 0
+    H._Ring(0).append(_col(0, 1))  # the native spec keeps no ring
+    with pytest.raises(ValueError, match="ROWS"):
+        ring.append(_col(0, ROWS + 1))
+    with pytest.raises(ValueError, match="ROWS"):
+        ring.append(replace(_col(0, 2), ask_sizes=array("d", [1.0])))
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_the_rings_g03_walk_takes_the_columns_snapshot_columns_takes(seed: int) -> None:
+    """G-03 (23 §6.1): the ring's vectorised walk is `snapshot_columns`' walk, in kind 6's and
+    in §14.5's sizes, whatever the rows, the wrap and the bounds."""
+    import random
+
+    rng = random.Random(seed)  # noqa: S311 - seeded test data
+    cap = rng.randint(1, 40)
+    ring = H._Ring(cap)
+    cols = [_col(100 * i, rng.randint(0, 30)) for i in range(rng.randint(0, 2 * cap))]
+    ring.extend(cols)
+    held = cols[-cap:] if cols else []
+    for as_json, per_col, per_row in ((False, 48, 16), (True, 320, 48)):
+        frames, nbytes = rng.randint(0, 2 * cap + 2), rng.randint(0, 4_000)
+        want = H.snapshot_columns(held, window_seconds=900, bucket_ms=100, queue_bytes=nbytes,
+                                queue_frames=frames, structured=as_json)  # fmt: skip
+        limit = H._limit(window_seconds=900, bucket_ms=100, queue_frames=frames)
+        got = ring.newest_fitting(per_col, per_row, limit, nbytes // 2)
+        assert [ring[i] for i in got] == want
+        assert ring.times(got) == [c.ts_ms for c in want]
+        assert ring.total_rows(got) == sum(c.rows for c in want)
+
+
 def test_snapshot_cap_window_900s_at_100ms_holds_at_most_2000_columns() -> None:
     """Gherkin "Snapshot cap": `window_seconds` 900 at 100 ms is 9 000 buckets; the snapshot holds
     at most the 2 000 most recent (older ones are REST's), when no other G-03 bound binds."""
@@ -646,16 +723,14 @@ async def test_a_seed_runs_in_slices_and_never_in_the_sub() -> None:
     spec = HeatmapSpec(SYM, time_bucket_ms=100)
     w.hold(spec)
     st = w.topic._symbols[SYM]
-    st.specs[spec].ring.extend(
-        H._Entry(_col(100 * i, 512)) for i in range(HEATMAP_SNAPSHOT_MAX_COLUMNS)
-    )
+    st.specs[spec].ring.extend(_col(100 * i, 512) for i in range(HEATMAP_SNAPSHOT_MAX_COLUMNS))
     w.topic._seed_turn_s = 0.0  # one column a turn
     new = HeatmapSpec(SYM, price_grouping=2, time_bucket_ms=100)
     w.hold(new, consumer="c2")
     state = st.specs[new]
     assert state.seed is not None and len(state.seed) == HEATMAP_SNAPSHOT_MAX_COLUMNS
     assert len(state.ring) == 0
-    assert w.topic._seed_turn() == 1 and state.ring[0].column.ts_ms == T0 + 100 * 1_999
+    assert w.topic._seed_turn() == 1 and state.ring[0].ts_ms == T0 + 100 * 1_999
     assert w.topic.next_due() == w.now  # a queued seed makes the loop turn at once
 
 
@@ -898,8 +973,8 @@ async def test_a_binary_snapshot_builds_its_parts_a_step_each_and_keeps_none() -
         taken += 1
     assert taken == 3 and isinstance(body, SnapshotBody)
     assert list(body.parts) == published
-    entry = w.topic._symbols[SYM].specs[HeatmapSpec(SYM, time_bucket_ms=100)].ring[0]
-    assert set(type(entry).__slots__) == {"column"}  # nothing derived is kept
+    ring = w.topic._symbols[SYM].specs[HeatmapSpec(SYM, time_bucket_ms=100)].ring
+    assert isinstance(ring, H._Ring) and not hasattr(ring, "__dict__")  # nothing derived is kept
 
 
 async def test_a_new_spec_closes_what_is_due_before_integrating_the_others() -> None:
@@ -927,7 +1002,7 @@ async def test_a_structured_snapshot_counts_its_json_bytes_at_the_byte_bound() -
     sizes = [0.1234567891234567 * (i + 1) + 7e-9 for i in range(ROWS)]  # full float reprs
     for i in range(2_000):
         col = replace(_col(100 * i, ROWS), bid_sizes=array("d", sizes), ask_sizes=array("d", sizes))
-        state.ring.append(H._Entry(col))
+        state.ring.append(col)
     sub.effective = {"encoding": "structured", "window_seconds": 900}
     body = w.topic.build(sub)
     assert isinstance(body, SnapshotBody)

@@ -48,7 +48,7 @@ from candleviewer.orderflow.heatmap import (
     HeatmapColumn,
     HeatmapSpec,
     HeatmapTopic,
-    _Entry,
+    _Ring,
     rebucket,
     window_column,
 )
@@ -117,6 +117,7 @@ class Report:
     emit_structured_8_connections_asking_turn_cpu_ms: float = 0.0
     emit_structured_8_connections_later_turn_cpu_max_ms: float = 0.0
     #: M-B: a ring entry's bytes and a spec's ring at 2 000 columns x 512 rows (tracemalloc).
+    ring_spec_bytes: int = 0
     ring_entry_bytes: int = 0
     ring_spec_mib: float = 0.0
     #: m-B: the re-seed's CPU, 1 000 columns of 512 rows re-bucketed 1 -> 2: by `window_column`
@@ -396,18 +397,21 @@ def snapshot_and_seed(report: Report, seed: int) -> Report:
     ]
     tracemalloc.start()
     before = tracemalloc.get_traced_memory()[0]
-    for i, data in enumerate(raw):  # M-B: what the ring holds per column, measured
+    ring = _Ring(len(raw))  # M-B: a spec's ring, built and filled under tracemalloc
+    for i, data in enumerate(raw):
         bids, asks = array("d"), array("d")
         bids.frombytes(data[: 8 * ROWS])
         asks.frombytes(data[8 * ROWS :])
         column = HeatmapColumn(T0 + 100 * i, 100, 630_924, 1, bids, asks, 631_180, 631_181, 0.0,
                                0.0, False, 1, 1)  # fmt: skip
-        state.ring.append(_Entry(column))
+        ring.append(column)
     held = tracemalloc.get_traced_memory()[0] - before
     tracemalloc.stop()
+    state.ring = ring
+    report.ring_spec_bytes = held
     report.ring_entry_bytes = held // len(raw)
     report.ring_spec_mib = held / 2**20
-    columns = [e.column for e in list(state.ring)[:1_000]]
+    columns = [ring[i] for i in range(1_000)]
     began = time.perf_counter()
     for c in columns:  # the dict path `rebucket` took before it was vectorised
         prices = [c.price_origin_ticks + i * c.price_step_ticks for i in range(c.rows)]

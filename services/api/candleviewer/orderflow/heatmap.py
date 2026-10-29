@@ -40,9 +40,9 @@ published state (`phase`, `depth`, `book`).
   come from REST (E21-T03).
 - **Snapshot (G-03).** The newest columns that fit all of `window_seconds`, the column cap, half
   the queue's bytes (48 + 16 x rows a column) and half its frames, oldest first; kind 6 beside it
-  only when every column is complete (23 §14.5) and its scales are known and fit. Each column's
-  kind-6 part is built and packed (encoded once) at its close and cached on its ring entry, so a
-  binary snapshot is a slice of cached parts that the gateway re-encodes header only.
+  only when every column is complete (23 §14.5) and its scales are known and fit. The ring is
+  columnar (`_Ring`: one float64 buffer, a numpy vector a field, 15.6 MiB a spec at 2 000 x 512);
+  a column's kind-6 part or §14.5 form is built when a reader asks, a column per snapshot step.
 - **Storage.** Each native column with a populated row is queued for the injected store, bounded
   by cells (`STORE_CELLS_MAX`, oldest dropped and logged); a size that is negative or not finite
   is never written (24 §6.5).
@@ -58,7 +58,7 @@ import math
 import time
 from array import array
 from collections import deque
-from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_EVEN, Context, Decimal
 from typing import Any, Final, Protocol
@@ -480,13 +480,163 @@ class _Integrator:
         )
 
 
-@dataclass(slots=True)
-class _Entry:
-    """A ring column. Nothing derived from it is kept (M-B, 23 §6.1, §16.2: a spec's state is its
-    columns' sizes, 16 B a row): its kind-6 part and §14.5 form are built when a reader asks, a
-    column per step of a snapshot (`build_steps`), and once for its `d` at its close."""
+#: A `best_*_ticks` of None in a ring's int64 vectors.
+_NO_PRICE: Final = -(2**63)
+_F64 = np.dtype[np.float64]
+_I64 = np.dtype[np.int64]
 
-    column: HeatmapColumn
+
+class _Ring:
+    """A spec's columns, oldest first, columnar (M-B; 23 §6.1, §16.2, 24 §6.5): one preallocated
+    `(capacity, 2 x ROWS)` float64 buffer (a column's bid sizes in its row's first `ROWS` cells,
+    its ask sizes in the rest; 15.6 MiB at 2 000 columns) and one numpy vector a column field.
+    No per-column Python object is kept: a reader gets a `HeatmapColumn` built (copied) from its
+    slot when it asks, so a column stays as it was when the slot is reused. Float64, not float32:
+    24 §6.5 rounds each size from the float's exact value, which float32 would change.
+
+    A circular buffer: `append` drops the oldest at capacity (as `deque(maxlen=)`), `appendleft`
+    (a seed, older columns) only below it, `pop` takes the newest."""
+
+    __slots__ = ("_asks_off", "_best_ask", "_best_bid", "_bids_off", "_bucket", "_count",
+                 "_estimated", "_expected", "_head", "_origin", "_rows", "_samples", "_sizes",
+                 "_step", "_t_ms", "capacity")  # fmt: skip
+
+    def __init__(self, capacity: int) -> None:
+        self.capacity = capacity
+        self._head = self._count = 0
+        self._sizes: np.ndarray[Any, _F64] = np.zeros((capacity, 2 * ROWS), dtype=np.float64)
+        ints = [np.zeros(capacity, dtype=np.int64) for _ in range(9)]
+        (self._t_ms, self._bucket, self._origin, self._step, self._rows, self._samples,
+         self._expected, self._best_bid, self._best_ask) = ints  # fmt: skip
+        self._bids_off: np.ndarray[Any, _F64] = np.zeros(capacity, dtype=np.float64)
+        self._asks_off: np.ndarray[Any, _F64] = np.zeros(capacity, dtype=np.float64)
+        self._estimated = np.zeros(capacity, dtype=np.bool_)
+
+    def __len__(self) -> int:
+        return self._count
+
+    def _slot(self, i: int) -> int:
+        if i < 0:
+            i += self._count
+        if not 0 <= i < self._count:
+            raise IndexError("ring index out of range")
+        return (self._head + i) % self.capacity
+
+    def _put(self, slot: int, column: HeatmapColumn) -> None:
+        n = column.rows
+        if n > ROWS or len(column.ask_sizes) != n:
+            raise ValueError("a column has at most ROWS rows, as many asks as bids (G-07a)")
+        self._sizes[slot, :n] = np.asarray(column.bid_sizes, dtype=np.float64)
+        self._sizes[slot, ROWS : ROWS + n] = np.asarray(column.ask_sizes, dtype=np.float64)
+        self._t_ms[slot], self._bucket[slot] = column.ts_ms, column.bucket_ms
+        self._origin[slot], self._step[slot] = column.price_origin_ticks, column.price_step_ticks
+        self._rows[slot], self._samples[slot] = n, column.samples
+        self._expected[slot] = column.expected
+        bb, ba = column.best_bid_ticks, column.best_ask_ticks
+        self._best_bid[slot] = _NO_PRICE if bb is None else bb
+        self._best_ask[slot] = _NO_PRICE if ba is None else ba
+        self._bids_off[slot], self._asks_off[slot] = (column.off_window_bid_qty,
+                                                      column.off_window_ask_qty)  # fmt: skip
+        self._estimated[slot] = column.estimated
+
+    def append(self, column: HeatmapColumn) -> None:
+        """The newest column; the oldest is dropped at capacity."""
+        if self.capacity == 0:
+            return
+        if self._count == self.capacity:
+            self._put(self._head, column)
+            self._head = (self._head + 1) % self.capacity
+        else:
+            self._put((self._head + self._count) % self.capacity, column)
+            self._count += 1
+
+    def appendleft(self, column: HeatmapColumn) -> None:
+        """An older column than every one held (a seed): only below capacity."""
+        if self._count >= self.capacity:
+            raise IndexError("the ring is full")
+        self._head = (self._head - 1) % self.capacity
+        self._put(self._head, column)
+        self._count += 1
+
+    def extend(self, columns: Iterable[HeatmapColumn]) -> None:
+        for column in columns:
+            self.append(column)
+
+    def pop(self) -> HeatmapColumn:
+        """Take the newest column."""
+        column = self[-1]
+        self._count -= 1
+        return column
+
+    def __getitem__(self, i: int) -> HeatmapColumn:
+        s = self._slot(i)
+        n = int(self._rows[s])
+        bids, asks = array("d"), array("d")
+        bids.frombytes(self._sizes[s, :n].tobytes())
+        asks.frombytes(self._sizes[s, ROWS : ROWS + n].tobytes())
+        bb, ba = int(self._best_bid[s]), int(self._best_ask[s])
+        return HeatmapColumn(
+            int(self._t_ms[s]), int(self._bucket[s]), int(self._origin[s]), int(self._step[s]),
+            bids, asks, None if bb == _NO_PRICE else bb, None if ba == _NO_PRICE else ba,
+            float(self._bids_off[s]), float(self._asks_off[s]), bool(self._estimated[s]),
+            int(self._samples[s]), int(self._expected[s]),
+        )  # fmt: skip
+
+    def __iter__(self) -> Iterator[HeatmapColumn]:
+        return (self[i] for i in range(self._count))
+
+    def t_ms(self, i: int) -> int:
+        return int(self._t_ms[self._slot(i)])
+
+    def rows(self, i: int) -> int:
+        return int(self._rows[self._slot(i)])
+
+    def estimated(self, i: int) -> bool:
+        return bool(self._estimated[self._slot(i)])
+
+    def _slots(self, span: range) -> np.ndarray[Any, _I64]:
+        return (self._head + np.arange(span.start, span.stop, dtype=np.int64)) % max(
+            1, self.capacity
+        )
+
+    def times(self, span: range) -> list[int]:
+        """The `ts_ms` of the columns at `span`'s indices."""
+        return [int(t) for t in self._t_ms[self._slots(span)].tolist()]
+
+    def total_rows(self, span: range) -> int:
+        return int(self._rows[self._slots(span)].sum())
+
+    def any_estimated(self, span: range) -> bool:
+        return bool(self._estimated[self._slots(span)].any())
+
+    def newest_fitting(self, per_column: int, per_row: int, limit: int, budget: int) -> range:
+        """The newest columns, at most `limit`, whose sizes (`per_column + per_row x rows` each)
+        sum to at most `budget`: their indices, oldest first. Vectorised (G-03's walk)."""
+        n = min(limit, self._count)
+        if n <= 0:
+            return range(self._count, self._count)
+        slots = (self._head + np.arange(self._count - 1, self._count - n - 1, -1)) % self.capacity
+        used = np.cumsum(per_column + per_row * self._rows[slots])  # newest first
+        fit = int(np.searchsorted(used, budget, side="right"))
+        return range(self._count - fit, self._count)
+
+    def newest(self, n: int) -> _Ring:
+        """A copy of the newest `n` columns (a seed's donor columns, 24 §6.3), one numpy copy."""
+        n = min(n, self._count)
+        out = _Ring(n)
+        slots = (self._head + np.arange(self._count - n, self._count)) % max(1, self.capacity)
+        for name in ("_sizes", "_t_ms", "_bucket", "_origin", "_step", "_rows", "_samples",
+                     "_expected", "_best_bid", "_best_ask", "_bids_off", "_asks_off",
+                     "_estimated"):  # fmt: skip
+            setattr(out, name, getattr(self, name)[slots])
+        out._count = n
+        return out
+
+    @property
+    def nbytes(self) -> int:
+        """Its numpy buffers' bytes."""
+        return sum(int(getattr(self, n).nbytes) for n in self.__slots__
+                   if n.startswith("_") and isinstance(getattr(self, n), np.ndarray))  # fmt: skip
 
 
 @dataclass(slots=True)
@@ -494,13 +644,13 @@ class _SpecState:
     spec: HeatmapSpec
     start: int  # the open bucket's start, epoch ms
     acc: _Integrator
-    ring: deque[_Entry]
+    ring: _Ring
     samples: int = 0
     consumers: set[str] = field(default_factory=set)
     version: int = 0
     origin: int = 0  # the last column's origin: an empty column keeps it
     waiting: bool = True  # leased subscriptions may be pending until it is ready
-    seed: deque[HeatmapColumn] | None = None  # donor columns still to re-bucket, newest first
+    seed: _Ring | None = None  # donor columns still to re-bucket, popped newest first
 
     @property
     def end(self) -> int:
@@ -511,7 +661,7 @@ def _spec_state(
     spec: HeatmapSpec, now: float, ring: int = HEATMAP_SNAPSHOT_MAX_COLUMNS
 ) -> _SpecState:
     start = int(now) // spec.time_bucket_ms * spec.time_bucket_ms
-    return _SpecState(spec, start, _Integrator(now), deque(maxlen=ring))
+    return _SpecState(spec, start, _Integrator(now), _Ring(ring))
 
 
 @dataclass(slots=True)
@@ -567,6 +717,15 @@ def wire_column(column: HeatmapColumn, tick: Decimal) -> dict[str, Any]:
     return out
 
 
+def _limit(*, window_seconds: int, bucket_ms: int, queue_frames: int) -> int:
+    """G-03's column count: `window_seconds` of buckets, the column cap, half the frames."""
+    return min(
+        math.ceil(window_seconds * 1000 / bucket_ms),
+        HEATMAP_SNAPSHOT_MAX_COLUMNS,
+        queue_frames // 2,
+    )
+
+
 def _bounded[T](
     ring: Sequence[T],
     size: Callable[[T], int],
@@ -576,11 +735,7 @@ def _bounded[T](
     queue_bytes: int,
     queue_frames: int,
 ) -> list[T]:
-    limit = min(
-        math.ceil(window_seconds * 1000 / bucket_ms),
-        HEATMAP_SNAPSHOT_MAX_COLUMNS,
-        queue_frames // 2,
-    )
+    limit = _limit(window_seconds=window_seconds, bucket_ms=bucket_ms, queue_frames=queue_frames)
     budget, used = queue_bytes // 2, 0
     out: list[T] = []
     for item in reversed(ring):
@@ -783,7 +938,7 @@ class HeatmapTopic:
             return
         donor = max(donors, key=lambda s: s.spec.price_grouping)
         cap = min(HEATMAP_SNAPSHOT_MAX_COLUMNS, max(1, self._queue_frames // 2))
-        state.seed = deque(e.column for e in itertools.islice(reversed(donor.ring), cap))
+        state.seed = donor.ring.newest(cap)
         _log().info("heatmap_rebucket", symbol=spec.symbol, old_step=donor.spec.price_grouping,
                     new_step=spec.price_grouping, strategy="native_columns",
                     columns=len(state.seed))  # fmt: skip
@@ -797,12 +952,10 @@ class HeatmapTopic:
                 seed = state.seed
                 if seed is None:
                     continue
-                while seed and len(state.ring) < (state.ring.maxlen or 0):
+                while seed and len(state.ring) < state.ring.capacity:
                     if done and time.perf_counter() - began > self._seed_turn_s:
                         return done
-                    state.ring.appendleft(
-                        _Entry(rebucket(seed.popleft(), state.spec.price_grouping))
-                    )
+                    state.ring.appendleft(rebucket(seed.pop(), state.spec.price_grouping))
                     done += 1
                 state.seed = None
                 state.version += 1
@@ -956,10 +1109,9 @@ class HeatmapTopic:
         if state is st.native:
             self._native(st.symbol, column)
             return 0
-        entry = _Entry(column)
-        state.ring.append(entry)
+        state.ring.append(column)
         state.version += 1
-        return self._publish(st, state, entry, now)
+        return self._publish(st, state, column, now)
 
     def _delta(
         self, spec: HeatmapSpec, column: HeatmapColumn, steps: tuple[Decimal, Decimal]
@@ -972,11 +1124,13 @@ class HeatmapTopic:
         }  # fmt: skip
         return body, self._frame(column, steps) if column.binary_ok else None
 
-    def _publish(self, st: _SymbolState, state: _SpecState, entry: _Entry, now: float) -> int:
+    def _publish(
+        self, st: _SymbolState, state: _SpecState, column: HeatmapColumn, now: float
+    ) -> int:
         steps = self._steps(st.symbol)
         if steps is None or not state.consumers:
             return 0  # its subscriptions wait for the steps (`build`), then snap
-        spec, column = state.spec, entry.column
+        spec = state.spec
         body, part = self._delta(spec, column, steps)
         try:
             sent = self._hub.publish(
@@ -1088,47 +1242,55 @@ class HeatmapTopic:
             return None
         spec = state.spec
 
-        def bounded(size: Callable[[_Entry], int]) -> list[_Entry]:
-            return _bounded(
-                state.ring,
-                size,
-                window_seconds=int(sub.effective.get("window_seconds", DEFAULT_WINDOW_S)),
-                bucket_ms=spec.time_bucket_ms,
-                queue_bytes=self._queue_bytes,
-                queue_frames=self._queue_frames,
-            )
+        ring = state.ring
+
+        limit = _limit(
+            window_seconds=int(sub.effective.get("window_seconds", DEFAULT_WINDOW_S)),
+            bucket_ms=spec.time_bucket_ms,
+            queue_frames=self._queue_frames,
+        )
+
+        def bounded(per_column: int, per_row: int) -> range:
+            return ring.newest_fitting(per_column, per_row, limit, self._queue_bytes // 2)
 
         binary = sub.effective.get("encoding") == "binary"
-        entries = bounded(lambda e: e.column.wire_bytes) if binary else []
+        picked = bounded(COLUMN_FRAME_BYTES, ROW_BYTES) if binary else range(0)
         built: list[Any] = []
-        for entry in entries:  # a part a step: kind 6 only when every column has one
-            if not entry.column.binary_ok or (part := self._frame(entry.column, steps)) is None:
+        for i in picked:  # a part a step: kind 6 only when every column has one
+            column = ring[i]
+            if not column.binary_ok or (part := self._frame(column, steps)) is None:
                 built = []
                 break
             built.append(part)
             yield
         parts: tuple[Any, ...] = tuple(built)
         if not parts:  # structured: G-03 counts each column at its JSON's bound (23 §6.1)
-            entries = bounded(lambda e: e.column.json_bytes)
+            picked = bounded(STRUCTURED_COLUMN_BYTES, STRUCTURED_ROW_BYTES)
         # A binary snapshot sends its parts only: its structured side carries what the gateway
         # reads of it (each column's bucket and that it is complete, §8.2), not 1 024 floats a
         # column it would never send. A structured one gets every §14.5 column.
         tick = steps[0]
         columns: list[dict[str, Any]] = []
         if parts:
-            columns = [{"t_ms": e.column.ts_ms, "complete": True} for e in entries]
+            columns = [{"t_ms": t, "complete": True} for t in ring.times(picked)]
         else:
-            for entry in entries:
-                columns.append(wire_column(entry.column, tick))
+            for i in picked:
+                columns.append(wire_column(ring[i], tick))
                 yield
         structured = {
             "symbol": spec.symbol, "time_bucket_ms": spec.time_bucket_ms,
             "price_grouping": spec.price_grouping, "depth": spec.depth, "columns": columns,
         }  # fmt: skip
-        hint = None if parts else sum(e.column.json_bytes for e in entries) + 256
+        hint = (
+            None
+            if parts
+            else STRUCTURED_COLUMN_BYTES * len(picked)
+            + STRUCTURED_ROW_BYTES * ring.total_rows(picked)
+            + 256
+        )
         return self._body(structured, parts, price_scale=places(steps[0]),
                           qty_scale=places(steps[1]),
-                          estimated=any(e.column.estimated for e in entries),
+                          estimated=ring.any_estimated(picked),
                           size_hint=hint)  # fmt: skip
 
     def catch_up(self, sub: HeatmapSub, since: int) -> list[tuple[dict[str, Any], Any]] | None:
@@ -1144,7 +1306,7 @@ class HeatmapTopic:
             return []
         if missed > len(state.ring) or missed > CATCH_UP_MAX:
             return None
-        columns = [state.ring[i].column for i in range(len(state.ring) - missed, len(state.ring))]
+        columns = [state.ring[i] for i in range(len(state.ring) - missed, len(state.ring))]
         return [self._delta(state.spec, column, steps) for column in columns]
 
     def generation(self, sub: HeatmapSub) -> int:
