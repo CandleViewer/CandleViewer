@@ -1457,6 +1457,7 @@ Drag preview                Drop zones
 - **Components:** CMP-075 EnvBadgeLocal, CMP-100 PriceInput, CMP-101 QtyInput, CMP-102 SideToggle, CMP-105 AccountMultiSelect, CMP-107 OrderTicket, CMP-119 BracketEditor, CMP-121 RiskCalculatorPanel, CMP-124 TradeGroupSummaryCard, CMP-158 SafetyInvariantNotice, CMP-229 ArmToggle, CMP-231 TifSelect, CMP-232 LimitsChip.
 - **Stories:** US-PROF-005, US-PROF-006, US-PROF-007, US-PROF-008, US-ORD-013.
 - **Design sign-off acceptance checklist:** [ ] account selector with per-account computed size, leverage and SL preview drawn [ ] partial-failure state (3 of 5 accounts filled) drawn as the primary design case, not an afterthought [ ] per-account rate-limit budget indicator [ ] aggregate vs per-account confirmation drawn [ ] mandatory native SL per leg shown before submit [ ] retry/cancel-remaining actions for a partial fan-out [ ] DEMO/LIVE badge per account row
+- **Wireframes (E28-D02):** [E28-D02.md](../design/E28/E28-D02.md) §5.6 (text-first, ruled on #821; boards pending on page `E28-D02`) — the preview half only: the columns `acct · profile · qty · lev · SL · ok` from served fields, the SL never empty, ready / warn / skipped / blocked in words with each reason, refused whole apart from a blocked leg, stale preview apart from "Profile changed — review"; the send states are E34-D02's.
 
 ### SCR-062 — Trade-group manager
 
@@ -1470,6 +1471,7 @@ Drag preview                Drop zones
 - **Stories:** US-PROF-007, US-ADMIN-005.
 - **Design sign-off acceptance checklist:** [ ] group list with expansion to legs drawn [ ] partial-fill and partial-failure group states drawn [ ] flatten-group and cancel-remaining confirmations with the exact leg count restated [ ] per-leg retry [ ] degraded state when one account's private WS is down (the group is marked 'state unknown for sub_002' rather than assumed) [ ] every execution-affecting control confirmed to emit an audit event
 - **UX research (E28-D01):** [e28-risk-policy-fanout.md](../design/research/e28-risk-policy-fanout.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED except what #2701 ruled: edits definitions only, on their own paths, Owner-only (D8 ruled); no "who may use it" and no group arm flag — each member shows its armed state and environment in words (§5 B2, AD-9, C3–C5); the empty-symbol-intersection warning from allow and block lists (IM-16).
+- **Wireframes (E28-D02):** [E28-D02.md](../design/E28/E28-D02.md) §5.5 (text-first, ruled on #821; boards pending on page `E28-D02`) — the definition manager: readiness "N of M ready" from served counts, rows expanding to members in words, "state unknown for sub_002", Owner-only create behind the step-up, edit and delete not yet served (G-6); the execution grid is E34-D03's.
 
 ### SCR-063 — Positions & orders grid panel
 
@@ -2655,6 +2657,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Analytics/audit:** `profile.list_viewed` (analytics); `profile.created|updated|deleted|bound|unbound` are **audited** with before/after, because a profile directly determines order size and leverage.
 - **Design sign-off acceptance checklist:** [ ] the profile-to-account binding is unambiguous on every row [ ] unbound accounts are flagged (they cannot trade until bound) [ ] duplicate/clone action [ ] delete confirmation naming the affected account [ ] empty state [ ] the fields shown match the locked per-account profile schema (leverage, sizing rule, SL/TP offsets, max risk/day, allowed symbols)
 - **UX research (E28-D01):** [e28-risk-policy-fanout.md](../design/research/e28-risk-policy-fanout.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED except what #2701 ruled: one row per account naming its default profile, the ceiling, with alternates nested (§5 B1, AD-1, C1); trading on / off in words with the missing caps listed (AD-2); "Allows no symbol yet" as the default state (B3, CD-2).
+- **Wireframes (E28-D02):** [E28-D02.md](../design/E28/E28-D02.md) §5.1 (text-first, ruled on #821; boards pending on page `E28-D02`) — one row per account naming its default in text, alternates nested, trading on / off and the symbol state in words, the symbol count linking to SCR-133, delete naming the account and its served refusals.
 
 ### SCR-131 — Admin: profile editor
 
@@ -2686,6 +2689,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Stories:** US-PROF-001, US-PROF-002, US-PROF-003, US-PROF-004, US-ORD-013.
 - **Design sign-off acceptance checklist:** [ ] every profile field drawn (leverage, sizing rule + parameter, SL offset, TP offsets/ladder, max risk per trade, max risk per day, max position notional, allowed symbols, allowed order types, position mode) [ ] a worked example showing the resulting order size for a sample price and equity [ ] the mandatory native-SL floor is shown as non-removable [ ] validation messages against exchange limits [ ] 'applies to future orders only' stated [ ] step-up gate on save [ ] diff summary before save
 - **UX research (E28-D01):** [e28-risk-policy-fanout.md](../design/research/e28-risk-policy-fanout.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED except what #2701 ruled: the six sections hold with every stored field placed and no control without a column (§8, AD-5, C6); the native stop a fixed statement, never a control (S-1, CD-6); a checkable worked example, USDT first with R defined in USDT (§7, AD-3, AD-4); the daily-loss semantics ruled — the lockout counts realised loss, a new trade's ceiling nets open risk (§9) — with one label explaining both uses (AD-6, CD-7); relaxing changes marked before the step-up (AD-7).
+- **Wireframes (E28-D02):** [E28-D02.md](../design/E28/E28-D02.md) §5.2 (text-first, ruled on #821; boards pending on page `E28-D02`) — the six sections, the native stop-loss as a plain statement, the worked example under the sizing parameter, the diff summary with relaxing changes, the step-up on save, the second-pass refusal at its field, and a Manager's read-only view.
 
 ### SCR-132 — Admin: profile templates
 
@@ -2698,6 +2702,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Analytics/audit:** `profile.template_applied` `{templateId, accountId}` - **audited** (it results in a profile change); analytics: `profile.template_viewed`.
 - **Design sign-off acceptance checklist:** [ ] built-in templates drawn (conservative, standard, aggressive-demo-only) with their exact values [ ] user-saved templates with rename/delete [ ] 'aggressive' templates are unavailable for LIVE accounts without an explicit acknowledgement - state drawn [ ] apply always routes through the profile editor for confirmation [ ] empty state
 - **UX research (E28-D01):** [e28-risk-policy-fanout.md](../design/research/e28-risk-policy-fanout.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED except what #2701 ruled: a template only prefills SCR-131, and each account is its own audited step-up save (W3, IM-14); the "aggressive" acknowledgement is OQ-2.
+- **Wireframes (E28-D02):** [E28-D02.md](../design/E28/E28-D02.md) §5.3 (text-first, ruled on #821; boards pending on page `E28-D02`) — built-in cards with placeholder values under the ruled constraints (values set at E28-S02), saved templates not yet served (G-7), the LIVE acknowledgement, apply always through SCR-131.
 
 ### SCR-133 — Admin: symbol permissions matrix
 
@@ -2709,6 +2714,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Analytics/audit:** `symbol_permission.changed` `{accountId, symbol, allowed}` and `symbol_permission.bulk_changed` `{accountId, added, removed}` - **audited**; denying a symbol with an open position is refused and recorded as `symbol_permission.change_refused`.
 - **Design sign-off acceptance checklist:** [ ] matrix with row/column headers that stay visible while scrolling [ ] allow/deny states are glyph + text, not colour alone [ ] bulk row/column actions with confirmation [ ] symbols with open positions are marked and cannot be denied - state drawn [ ] search/filter [ ] unsaved-changes summary before save
 - **UX research (E28-D01):** [e28-risk-policy-fanout.md](../design/research/e28-risk-policy-fanout.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED except what #2701 ruled: deny-all by default (§5 B3); allowed, blocked and the row's "all symbols" state as glyph plus text, not one toggle (AD-8, C7); cell names carry account, symbol and state (AX-1).
+- **Wireframes (E28-D02):** [E28-D02.md](../design/E28/E28-D02.md) §5.4 (text-first, ruled on #821; boards pending on page `E28-D02`) — sticky real headers, three cell states by glyph and text, bulk actions with a confirm, narrowing under an open position allowed behind a confirm naming it, the per-account unsaved-changes summary and save report.
 
 ### SCR-134 — Admin: risk policy (global)
 
