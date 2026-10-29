@@ -56,7 +56,7 @@ protocol and the walkthrough · **open** = needs the owner (a decision, an appro
 | Scope: copy-deck seed for E27-D03                                                                                                    | §9 CD-1..CD-8                                                                                                    | done (seed; E27-D03 validates)                                                                                                                                                                                     |
 | Technical notes: 45-minute remote sessions, thematic analysis with two coders                                                        | protocol §3, §7                                                                                                  | substituted                                                                                                                                                                                                        |
 | Security notes: placeholders only; recordings Confidential and deleted after synthesis                                               | protocol §2                                                                                                      | done (rules stated); the cited `04` retention rule does not exist, and recordings never enter this public repository (Deviation 4); real key practice stays off #732 (§15)                                         |
-| Accessibility notes: a screen-reader or keyboard-only participant, or a parallel expert review; keyboard-operable prototypes         | §13 expert review; protocol §6 keyboard-only pass                                                                | substituted; the keyboard-operable medium is ruled (OQ-15, #732 comment 6364262239) and built in the boards PR; none exists yet (§1)                                                                               |
+| Accessibility notes: a screen-reader or keyboard-only participant, or a parallel expert review; keyboard-operable prototypes         | §13 expert review; protocol §6 keyboard-only pass                                                                | substituted; the keyboard-operable medium is ruled (OQ-15, #732 comment 6364262239) and specified, built on request (lever 4); none exists yet (§1)                                                                |
 | Performance notes: the perceived-time finding for the <=3 s SCR-126 budget                                                           | F-18, AD-16; protocol T1                                                                                         | heuristic-only                                                                                                                                                                                                     |
 | Observability: the analytics events that would answer the open questions                                                             | §14                                                                                                              | done                                                                                                                                                                                                               |
 | DoD: research plan approved by the CDO before fieldwork                                                                              | the owner's `approved` on #732 (adaptation)                                                                      | open; fieldwork itself is an optional post-GA line (#2701 ledger 1)                                                                                                                                                |
@@ -120,36 +120,65 @@ carries a PROPOSED stamp; fixture names only (protocol §2).
 **Think-aloud figures (not boards).** The low-fi sheets the protocol needs beyond board 06 — the import check list in
 each outcome (pass, refused, not checked, no verdict), the revoke / disable / delete choice in each exposure state
 (none, listed, a position without a stop, unknown and dead, unknown and fixable) and the SCR-079 drawer per role — are
-PNG figures rendered by a repository tool in the boards PR, beside the boards (`E27-D01-fig-NN-slug.png`), never Penpot
+PNG figures rendered by a repository tool, beside the boards (`E27-D01-fig-NN-slug.png`), never Penpot
 boards (coordinator ruling OQ-2, #732 comment 6364262239). A sheet used as a session prototype must be keyboard-operable
 (ticket Accessibility notes), and a PNG is not: the keyboard-operable medium is ruled as this report proposed it (OQ-15,
-the same comment): an HTML click-through rendered from the same source by the figures tool and built in the boards PR.
+the same comment): an HTML click-through rendered from the same source by the figures tool.
 Until it exists, part B runs as a paper walkthrough the moderator drives and the keyboard-only pass waits (protocol §4,
-§6). The figures and the click-through: TBD-after-draw.
+§6). The figures and the click-through are **specified (built on request)** under lever 4: the sessions are an
+optional post-GA line, not a gate (#2701 ledger 1 rows 18, 61 and 106), so the boards PR carries the eight Penpot boards
+only (orchestrator, 2026-10-29); part B runs on paper until a session asks for the click-through.
 
-Boards as drawn (TBD-after-draw: the date; board script r1, sha256 `TBD-after-draw`; page id `TBD-after-draw`; every
-board dark and exported at 1:1; no light twin, no board draws a theme comparison):
+Boards as drawn (2026-10-29; board script r1, sha256
+`f734cc84abdd1c3c9140659938065d123a6d054e83d40cd1687bbe25b81eb2a7`; file `E27-D01 research boards`, page `E27-D01`, page
+id `b96edf38-8e58-8006-8008-dd018bdbc198`; every board dark and exported at 1:1; no light twin, no board draws a theme
+comparison; each size is the PNG header's):
 
-- `01 custody-roles` — board id `TBD-after-draw` — `docs/design/research/img/E27-D01-01-custody-roles.png`
-  (TBD-after-draw)
-- `02 lifecycle-journey` — board id `TBD-after-draw` — `docs/design/research/img/E27-D01-02-lifecycle-journey.png`
-  (TBD-after-draw)
-- `03 hard-facts` — board id `TBD-after-draw` — `docs/design/research/img/E27-D01-03-hard-facts.png` (TBD-after-draw)
-- `04 rotation-avoidance` — board id `TBD-after-draw` — `docs/design/research/img/E27-D01-04-rotation-avoidance.png`
-  (TBD-after-draw)
-- `05 compromise-first-response` — board id `TBD-after-draw` —
-  `docs/design/research/img/E27-D01-05-compromise-first-response.png` (TBD-after-draw)
-- `06 think-aloud-mocks` — board id `TBD-after-draw` — `docs/design/research/img/E27-D01-06-think-aloud-mocks.png`
-  (TBD-after-draw)
-- `07 copy-deck-seed` — board id `TBD-after-draw` — `docs/design/research/img/E27-D01-07-copy-deck-seed.png`
-  (TBD-after-draw)
-- `08 implications-conflicts` — board id `TBD-after-draw` —
-  `docs/design/research/img/E27-D01-08-implications-conflicts.png` (TBD-after-draw)
+- `01 custody-roles` — board id `b96edf38-8e58-8006-8008-dd019c34026e` —
+  `docs/design/research/img/E27-D01-01-custody-roles.png` (2514 × 1332)
+- `02 lifecycle-journey` — board id `b96edf38-8e58-8006-8008-dd01a2cb43e7` —
+  `docs/design/research/img/E27-D01-02-lifecycle-journey.png` (2080 × 1199)
+- `03 hard-facts` — board id `b96edf38-8e58-8006-8008-dd01ad82a294` —
+  `docs/design/research/img/E27-D01-03-hard-facts.png` (1900 × 1059)
+- `04 rotation-avoidance` — board id `b96edf38-8e58-8006-8008-dd01b4ea5c0d` —
+  `docs/design/research/img/E27-D01-04-rotation-avoidance.png` (1640 × 965)
+- `05 compromise-first-response` — board id `b96edf38-8e58-8006-8008-dd01bcdf0a29` —
+  `docs/design/research/img/E27-D01-05-compromise-first-response.png` (2080 × 1667)
+- `06 think-aloud-mocks` — board id `b96edf38-8e58-8006-8008-dd01c624a1cc` —
+  `docs/design/research/img/E27-D01-06-think-aloud-mocks.png` (2080 × 1413)
+- `07 copy-deck-seed` — board id `b96edf38-8e58-8006-8008-dd01ce460da0` —
+  `docs/design/research/img/E27-D01-07-copy-deck-seed.png` (1890 × 1122)
+- `08 implications-conflicts` — board id `b96edf38-8e58-8006-8008-dd01d5b72f9e` —
+  `docs/design/research/img/E27-D01-08-implications-conflicts.png` (3390 × 3814)
+
+The live run: one call per board, each a first draw on the page, so nothing was removed and no duplicate is possible;
+every call returned rc 0 with the script's self-check ok and 0 warnings. The driver of this set has no relayout or
+dedupe step: overruns were checked before the draw by the offline mock (containment, board fit and the caption-width
+rule, 0 findings), and board 06 was also read at overview scale, with nothing clipped. Each live size equals the mock's
+planned size. Known gaps: the think-aloud figures and the HTML click-through are specified, not built (above); no
+session has run, so board 03's "unmeasured" stamp and the PROPOSED stamps of boards 03 to 08 stand. Board 04's RA-7
+cell still reads OQ-5's PROPOSED default, which ledger 1 row 64 has since ruled as proposed; the board keeps the memo's
+cell. Board 06's revoke dialog draws its confirm available while no radio is checked; AD-8 does not yet say how the
+confirm answers before a route is chosen, a question for E27-D02 (#733).
+
+Declared board readings: board 02 assigns the F-ids to the seven steps as register F-19 · 48 h wait F-15 · import and
+verify F-1, F-2, F-3, F-4, F-13, F-14, F-18 · health F-5, F-6, F-7, F-16, F-17, F-22 · rotate F-8, F-9 · compromise
+F-10, F-20, F-21 · revoke / disable / delete F-11, F-12 (each F-id once), with the legend "F-ids per step: this board's
+reading of §5 (every F-id once); each chip: the finding's Sev. in §5's table"; board 06's switched state counts down
+from the fixture value 14:59 (the 900 s window).
 
 Board 01's slug changed from the text round's `who-touches-a-key`: no board or shape name holds a denied word (the
 security-review label tool's list). Every word on a board is this report's, read from it as folded in the boards PR.
-CVD renders of boards 05 and 06, the two whose steps and states carry a status tone (`docs/design/_tools/cvd_sim.py`,
-greyscale and deuteranopia): TBD-after-draw.
+CVD renders of boards 05 and 06, the two whose drawn steps and states carry a status tone (board 02's severity chips
+carry their word in each chip) (`docs/design/_tools/cvd_sim.py`,
+greyscale and deuteranopia, from `main` after #4906):
+`docs/design/research/img/E27-D01-05-compromise-first-response-cvd-greyscale.png` and `-cvd-deuteranopia.png` (2080 ×
+1667), `docs/design/research/img/E27-D01-06-think-aloud-mocks-cvd-greyscale.png` and `-cvd-deuteranopia.png` (2080 ×
+1413); no status there is carried by tone alone: each toned card or state also carries its words.
+
+Stamp state: OQ-4, OQ-5, OQ-6, OQ-9, OQ-10, OQ-11, OQ-13 and OQ-16 read RULED (#2701 ledger 1 rows 63 to 67) and OQ-15
+is the coordinator's ruling, so no open question remains; the PROPOSED and "unmeasured" board stamps stand (above);
+the memo's owner approval is pending (C-10.1).
 
 ## 2. Method note (agent-delivery adaptation, owner decision 2026-09-25)
 
@@ -531,8 +560,8 @@ Tick what you walked; one line per item on what you saw or expected on the mocks
 mocks only, never about your real keys, where they live, who can reach them or when you last rotated one. Never paste a
 real key, secret, UID or IP, and never read a real credential aloud.
 
-- [ ] W1: on the mock, add a key for `sub_001`. Before you start, say whether you expect to test it before saving, and
-      where you would set its IP allowlist (§5, AD-1, AD-4)
+- [ ] W1: on paper (the import figure is built on request, §1), add a key for `sub_001`. Before you start, say whether
+      you expect to test it before saving, and where you would set its IP allowlist (§5, AD-1, AD-4)
 - [ ] W2: on the mock, rotate `sub_002`'s key. Say what happens to its open orders during the switch, how long the old
       key keeps working here, and what is left to do at Bybit afterwards (§6, AD-6)
 - [ ] W3: on the mock, a suspected compromise on `sub_001`, which holds two open positions. Say your first three actions
@@ -569,7 +598,7 @@ OQ-9 an interim ruling (both in the table below); every other question there is 
 | OQ-10 | Rotation's rung: E09-D02 draws key rotation as "code+confirmation: OtpInput + typed account-name" (`E09-D02:189-190`); E42-D01's ladder has no rotation row                                                                                                                                                       | owner · at E27-D02 review                                                 | rung 3: a fresh `keys` code and the typed account label, since nothing reverses the switch (AD-6; `E42-D01:860-862`); the typed token equals the server's `target` (`22:15563-15572`) — RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 64); it replaces the rung-1 default this report proposed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | OQ-11 | E09-D09's OQ-5 (`rbac.env`: "for you" or "for this account") and OQ-6 (mixed-scope aggregate controls), handed to E27 (`E09-D09:498-499`)                                                                                                                                                                         | owner / E27-S05 · before E27-D02's SCR-079 frames                         | keep "Live trading isn't enabled for you." (`E09-D09:93`) while `allowed_environments` is per session; for aggregates, E09-D09's own recommendation — act on the permitted subset and say so in the label — RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 64)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | OQ-13 | While a stored-key self-check latch holds, may the owner rotate, revoke or import — the way out (`RB:51-53`)?                                                                                                                                                                                                     | E27-S03 (#897), E27-S04 (#898) · before E27-D02's SCR-125 blocking frames | Test, Rotate and Revoke stay operable during the latch, and a passing Test does not clear it (`RB:34-38`); the restart that does leaves the failed key's account disarmed (G-12); import is refused while the failing key is still active (`KI:8-10`); a fund right found on a stored key — a withdraw, transfer, fiat or card right (`RB:29-30`) — means the key was edited at Bybit, or its row here (`RB:65-81`), so that case takes the §7 compromise path, never Rotate (`22:2830-2831`; the security read's narrowing, #732 comment 6364262239); where the row here was edited, the runbook's evidence and notice steps come before anything here changes (`RB:73-76`), so the revoke here waits for them, while the delete at Bybit does not; each frame notes the server behaviour as owed by #897 / #898 — RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 67) |
-| OQ-15 | Session medium (ruled): part B needs a keyboard-operable medium (ticket Accessibility notes); a PNG is not one (§1)                                                                                                                                                                                               | coordinator · ruled 2026-10-23 (#732 comment 6364262239)                  | ruled as proposed: a keyboard-operable medium for part B, never a PNG alone — an HTML click-through rendered from the figures' source by the same tool, built in the boards PR, fixture data only, no Penpot board; until it exists part B runs on paper and the keyboard-only pass waits (protocol §4, §6)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| OQ-15 | Session medium (ruled): part B needs a keyboard-operable medium (ticket Accessibility notes); a PNG is not one (§1)                                                                                                                                                                                               | coordinator · ruled 2026-10-23 (#732 comment 6364262239)                  | ruled as proposed: a keyboard-operable medium for part B, never a PNG alone — an HTML click-through rendered from the figures' source by the same tool, specified and built on request (lever 4, §1), fixture data only, no Penpot board; until it exists part B runs on paper and the keyboard-only pass waits (protocol §4, §6)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | OQ-16 | Compromise: may the owner wait for a flatten before the Bybit delete? A flatten through CandleViewer needs the compromised key valid at Bybit until it ends (`22:14146-14150`), against C-12.12's "revoke at Bybit immediately" (`CON:824`)                                                                       | owner · #2701 item 24, before E27-D02's compromise frames                 | the drawn path deletes at Bybit at once and waits on no flatten (§7, AD-7); if the owner allows the wait — by amending C-12.12 (C-16.1), never as a local exception (C-16.3) — a frame offers it never pre-selected, says before the confirm that the key stays valid at Bybit until the flatten ends, and sends a refused or unfinished flatten to the Bybit delete — RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 66)                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 **Input gaps**, each routed as a comment on its story issue (OQ-8 ruling, #732 comment 6364262239):
