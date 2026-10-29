@@ -21,7 +21,12 @@ from candleviewer.ingestion.metrics import (
     symbol_label,
 )
 from candleviewer.ingestion.planner import MAX_TOPICS_PER_FRAME, SubscriptionPlanner
-from candleviewer.orderbook_wiring import DEEP_TIER, BookStream
+from candleviewer.orderbook_wiring import (
+    DEEP_TIER,
+    SNAPSHOT_TIMEOUT_S,
+    WARMUP_DEADLINE_S,
+    BookStream,
+)
 from tests._corpus import TICKS, frames
 
 SYM = "BTCUSDT"
@@ -34,6 +39,8 @@ class Rig:
         self.desired: set[str] = set()
         self.resubs: list[str] = []
         self.perf = 0.0
+        self.now = 0.0
+        self.listed = {SYM}
 
         async def resub(topic: str) -> None:
             self.resubs.append(topic)
@@ -41,8 +48,9 @@ class Rig:
         self.stream = BookStream(
             bus=self.bus, env="live", set_desired=self._desire, topic_for=book_topic,
             parse_frame=lambda f: parse_book_frame(f, TICKS.get), resubscribe=resub,
-            is_listed=lambda _s: True, touch=lambda _t: None, clock=lambda: 0.0,
-            now_us=lambda: 0, rand=lambda: 0.0, depth_500=depth_500, perf=self._perf,
+            is_listed=self.listed.__contains__, touch=lambda _t: None, clock=lambda: self.now,
+            now_us=lambda: int(self.now * 1_000_000), rand=lambda: 0.0, depth_500=depth_500,
+            perf=self._perf,
         )  # fmt: skip
         self.quotes = self._sub("md", "quote")
         self.desyncs = self._sub("health", "book_desync")
@@ -99,6 +107,38 @@ async def test_the_tier_swaps_to_500_and_back_once_the_demand_is_gone() -> None:
     r.stream.release("ws:book:500", SYM)
     assert r.stream.tier(SYM) == 200 and await r.stream.apply_tiers() == 1
     r.stream.release("ws:book:200", SYM)
+    assert r.stream.tier(SYM) == 200
+
+
+async def test_a_warming_tier_that_never_snapshots_falls_back_past_its_deadline() -> None:
+    """F2: the warming 500 tier re-requests its snapshot on the active tier's timeout and, past
+    the warm-up deadline, is dropped, so the symbol is never wedged and demand can fall back."""
+    r = Rig(depth_500=True)
+    r.stream.acquire_depth("ws:book:200", SYM, 200)
+    await r.stream.handle_frame(RAW[0])
+    r.stream.acquire_depth("ws:book:500", SYM, 500)
+    assert await r.stream.apply_tiers() == 1  # no 500 snapshot ever arrives
+    r.now = SNAPSHOT_TIMEOUT_S + 1
+    assert await r.stream.check_timeouts() == 1 and r.resubs == [book_topic(SYM, 500)]
+    r.now = WARMUP_DEADLINE_S + 1
+    await r.stream.check_timeouts()
+    engine = r.stream.engine(SYM)
+    assert engine is not None and engine.depth == 200 and r.desired == {book_topic(SYM, 200)}
+    assert await r.stream.apply_tiers() == 1  # the 500 demand is still there: it warms again
+    r.stream.release("ws:book:500", SYM)
+    r.now += WARMUP_DEADLINE_S + 1
+    await r.stream.check_timeouts()
+    assert await r.stream.apply_tiers() == 0 and r.desired == {book_topic(SYM, 200)}
+
+
+async def test_a_delisted_symbol_forgets_its_depth_demand() -> None:
+    """F6: pruning an unlisted symbol drops its per-consumer depth demand with its book."""
+    r = Rig(depth_500=True)
+    r.stream.acquire_depth("ws:book:500", SYM, 500)
+    await r.stream.handle_frame(RAW[0])
+    assert r.stream.tier(SYM) == DEEP_TIER
+    r.listed.clear()
+    assert await r.stream.prune_unlisted() == [SYM]
     assert r.stream.tier(SYM) == 200
 
 

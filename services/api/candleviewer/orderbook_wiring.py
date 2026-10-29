@@ -20,7 +20,9 @@ Wires the venue-neutral `book` module to ingestion. Rules:
   kept per (symbol, depth); a 500 demand moves the tier to 500 only with
   `heatmap_depth_500` on (C-4.13, default off), and the tier returns to the
   default once no 500 demand is left (the WS references' grace has run by then).
-  The stream's tick applies a tier change, built muted and swapped in whole.
+  The stream's tick applies a tier change, built muted and swapped in whole. A
+  warming tier's snapshot times out as the active one's does; one not LIVE within
+  `WARMUP_DEADLINE_S` is dropped, so `apply_tiers` re-evaluates the demand.
 * E21-T01: `BestQuoteEvent` on `{env}.md.{symbol}.quote` after each event the
   active tier applied, only on change (`book.quote`); each resync incident's
   `BookDesyncEvent` on `{env}.health.{symbol}.book_desync` with its structured
@@ -76,6 +78,8 @@ def logger() -> Any:
 
 WRITE_QUEUE_MAXSIZE = 8192
 SNAPSHOT_TIMEOUT_S = 10.0
+#: E21-T01: a warming tier not LIVE this long after its change started is dropped (F2).
+WARMUP_DEADLINE_S = 3 * SNAPSHOT_TIMEOUT_S
 #: Per-symbol snapshot-request backoff (#1898 review r2): 250 ms doubling to 30 s,
 #: x[1, 1.25) jitter. A good snapshot resets it; suppressed requests are counted
 #: as `ingest_book_resyncs_total{reason="backoff"}` and the book stays out of LIVE.
@@ -209,6 +213,7 @@ class BookStream:
         tick_size: Callable[[str], Decimal | None] | None = None,
         depth_500: bool = False,
         perf: Callable[[], float] = time.perf_counter,
+        warmup_deadline_s: float = WARMUP_DEADLINE_S,
     ) -> None:
         self._clock, self._rand = clock, rand
         #: E21-T01: whether a 500 demand may move a symbol's tier (`heatmap_depth_500`), the
@@ -216,6 +221,9 @@ class BookStream:
         #: `book_apply_latency_ms` reads.
         self._depth_500, self._wants, self._perf = depth_500, dict[str, dict[str, int]](), perf
         self._quotes = QuoteTracker()
+        #: symbol -> clock() reading when its warming tier started, and the limit it has.
+        self._warm_since: dict[str, float] = {}
+        self._warmup_s = warmup_deadline_s
         #: #3806: the catalogue's tick size (the one `parse_frame` reads), and the grid each
         #: (symbol, depth) book was last snapshotted on. Without it the grid check is off.
         self._tick_size = tick_size
@@ -295,6 +303,7 @@ class BookStream:
         for symbol, tb in list(self._books.items()):
             want = self.tier(symbol)
             if tb.warming is None and tb.active.depth != want:
+                self._warm_since[symbol] = self._clock()
                 await tb.change_depth(want)
                 n += 1
         if n:
@@ -335,6 +344,8 @@ class BookStream:
 
     def _drop(self, symbol: str) -> None:
         self._books.pop(symbol, None)
+        self._wants.pop(symbol, None)  # F6: a pruned symbol's depth demand goes with it
+        self._warm_since.pop(symbol, None)
         for key in self._keys.pop(symbol, []):
             if self._supervisor is not None:
                 self._supervisor.detach(key)
@@ -398,6 +409,7 @@ class BookStream:
         if tb is None:
             self._depth = depth
             return
+        self._warm_since[symbol] = self._clock()
         await tb.change_depth(depth)
         self.sync()
 
@@ -568,6 +580,7 @@ class BookStream:
             if e.check_timeout(self._timeout_us):
                 n += 1
                 await e.on_snapshot_timeout()
+        n += await self._check_warming()
         now = self._clock()
         for sym in list(self._deferred):  # cooldown elapsed: the deferred snapshot request
             dtb = self._books.get(sym)
@@ -577,6 +590,27 @@ class BookStream:
             elif now >= bo.next_ok and dtb.active.phase is not BookPhase.LIVE:
                 n += 1
                 await dtb.active.request_snapshot()
+        return n
+
+    async def _check_warming(self) -> int:
+        """F2: a warming tier's snapshot times out as the active one's does; past the warm-up
+        deadline the tier is dropped and `sync` retires its topic, so `apply_tiers` re-evaluates
+        the demand (and falls back to the default tier once no 500 demand is left)."""
+        n, dropped, now = 0, False, self._clock()
+        for sym, tb in list(self._books.items()):
+            w = tb.warming
+            if w is None:
+                self._warm_since.pop(sym, None)
+            elif now - self._warm_since.setdefault(sym, now) >= self._warmup_s:
+                tb.warming, dropped = None, True
+                del self._warm_since[sym]
+                self._first_sub.discard((sym, w.depth))  # a later warm-up subscribes afresh
+                logger().warning("book_tier_warmup_abandoned", symbol=sym, depth=w.depth)
+            elif w.check_timeout(self._timeout_us):
+                n += 1
+                await w.on_snapshot_timeout()
+        if dropped:
+            self.sync()
         return n
 
     async def drain_writes(self, max_batch: int = 500) -> int:
