@@ -50,6 +50,12 @@ class AccountUnchangedError(AccountsError):
     stored it first, and nothing was written. The caller's request is then a repeat (#898)."""
 
 
+class KeyDestroyFailedError(AccountsError):
+    """A key of the account could not be destroyed (M2 refused or failed it), so the delete or the
+    revoke stopped there and nothing later ran; problem code `store_unavailable` (503), and a retry
+    destroys what is left (#898). Never carries M2's text."""
+
+
 class ProfileUnavailableError(AccountsError):
     """A profile could not be read. The effective read (the order path's cache) raises it when the
     store failed or timed out, when writes kept overtaking the read, or for an unreadable stored

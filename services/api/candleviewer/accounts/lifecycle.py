@@ -1,5 +1,5 @@
-"""An account's disable, re-enable and relabel (E27-S04 B3b2, #898; 22 `updateExchangeAccount`,
-24 §8.4.1 and §14.2 rule 13).
+"""An account's disable, re-enable, relabel (E27-S04 B3b2, #898; 22 `updateExchangeAccount`) and
+delete (B3c; 22 `deleteExchangeAccount`), 24 §8.4.1 and §14.2 rule 13.
 
 An M13 module (C-3.1): the store is the accounts repository, and the effects that follow a disable
 are ports the composition root binds (the key standing, the WS revoke, the rule disarm and the
@@ -25,6 +25,18 @@ the exposure first; this module stores the change and carries out its effects, i
   `account_disabled`, so a row that stays disabled never keeps lifted keys. A repeat stores
   nothing and writes no record.
 - **Relabel.** The compare-and-set alone, with `account.updated` written ahead; no effect follows.
+- **Delete.** The route holds the account's lock (`AccountLocks`) and has decided the step-up and
+  the exposure. One write switches the account off (`is_enabled` false) whose write-ahead hook
+  places the `account_disabled` hold, then writes `account.deleted`, both before the commit; a
+  commit that fails releases that hold only when the account was enabled (a disable's own hold
+  stands). After the commit the hold becomes `account_deleted`, which nothing releases, and the
+  delete is counted. Then every key not revoked yet is destroyed through M2 (`KeyDestroyer`:
+  fenced, recorded, revoked), and only then is the account soft-deleted (#898 R6: a crash in
+  between leaves a disabled account with no key M2 lends, never a deleted one with a live key; M2's
+  read also refuses a key of a deleted account). Then the WS revoke (`account_disabled`), the rule
+  disarm (`account_deleted`) and the bounded close of each destroyed key's streams (`key_revoked`,
+  permanent). Every key's close is asked for before an overrun is raised for the route to answer
+  (round-1 F1); the account is deleted by then, so its retry is a `404` while the close runs on.
 """
 
 from __future__ import annotations
@@ -36,7 +48,8 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
-from candleviewer.accounts.errors import AccountUnchangedError
+from candleviewer.accounts.errors import AccountUnchangedError, KeyDestroyFailedError
+from candleviewer.accounts.locks import AccountLocks
 from candleviewer.accounts.models import ApiKeyMetadata, ExchangeAccount, KeyStatus
 from candleviewer.storage.repositories.accounts import (
     AccountScope,
@@ -47,8 +60,10 @@ from candleviewer.storage.repositories.accounts import (
 __all__ = [
     "AccountLifecycle",
     "Changed",
+    "DeleteReason",
     "DisableReason",
     "Disarmer",
+    "KeyDestroyerPort",
     "LifecycleStore",
     "Standings",
     "Streams",
@@ -60,7 +75,15 @@ __all__ = [
 #: `leave_positions` choice, a `flatten_first` flatten that left it flat, or a dead account.
 type DisableReason = Literal["flat", "leave_positions", "flattened", "dead"]
 type WriteAhead = Callable[[ExchangeAccount], Awaitable[None]]
+type HoldReason = Literal["account_disabled", "account_deleted"]
+#: Why a stored delete went ahead (`cv_account_deleted_total{reason}`).
+type DeleteReason = Literal["flat", "flattened"]
+#: The WS revoke's reasons (23 §9.5): an account switched off, or its last signable key revoked.
+type RevokeReason = Literal["account_disabled", "key_revoked"]
+type DisarmLifecycle = Literal["account_disabled", "account_deleted", "key_revoked"]
+type CloseReason = Literal["account_disabled", "key_revoked"]
 _SIGNABLE = frozenset({KeyStatus.ACTIVE, KeyStatus.ROTATING})
+_REVOKED = KeyStatus.REVOKED
 
 
 class LifecycleStore(Protocol):
@@ -83,21 +106,23 @@ class LifecycleStore(Protocol):
         write_ahead: WriteAhead | None = None,
     ) -> ExchangeAccount: ...
 
+    async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> None: ...
+
 
 class Standings(Protocol):
-    """`KeyStandings.hold` and `.release` (B3b1)."""
+    """`KeyStandings.hold`, `.release` and `.revoke` (B3b1)."""
 
-    def hold(self, account_id: UUID, reason: Literal["account_disabled"]) -> None: ...
+    def hold(self, account_id: UUID, reason: HoldReason) -> None: ...
 
     def release(self, account_id: UUID) -> bool: ...
+
+    def revoke(self, account_id: UUID, key_id: UUID) -> None: ...
 
 
 class Subscriptions(Protocol):
     """`WsEvents.account_revoked` (B3b1)."""
 
-    async def account_revoked(
-        self, account_id: UUID, reason: Literal["account_disabled"]
-    ) -> object: ...
+    async def account_revoked(self, account_id: UUID, reason: RevokeReason) -> object: ...
 
 
 class Disarmer(Protocol):
@@ -107,7 +132,7 @@ class Disarmer(Protocol):
         self,
         account_id: UUID,
         *,
-        lifecycle: Literal["account_disabled"],
+        lifecycle: DisarmLifecycle,
         actor: UUID,
         role: str,
         at: datetime,
@@ -117,13 +142,32 @@ class Disarmer(Protocol):
 class Streams(Protocol):
     """The adapter's private-stream close and lift for one key (`key_ref`, the key's id)."""
 
-    async def close_private_streams(
-        self, key_ref: str, *, reason: Literal["account_disabled"]
-    ) -> object: ...
+    async def close_private_streams(self, key_ref: str, *, reason: CloseReason) -> object: ...
 
     def reopen_private_streams(
         self, key_ref: str, *, reason: Literal["account_disabled"]
     ) -> bool: ...
+
+
+class KeyDestroyerPort(Protocol):
+    """M2's `KeyDestroyer` (#898), which the composition root binds: destroys one stored key of one
+    account (fenced, `security.credential_destroyed` with the acting user, then revoked), or
+    raises; M13 never imports `secrets` (C-3.2)."""
+
+    async def destroy(
+        self, account_id: UUID, key_id: UUID, *, actor_user_id: str, actor_role: str
+    ) -> None: ...
+
+
+async def destroy_key(
+    destroyer: KeyDestroyerPort, account_id: UUID, key_id: UUID, actor: UUID, role: str
+) -> None:
+    """`destroyer.destroy`, any failure but a cancellation raised as `KeyDestroyFailedError`: M2's
+    codes and text never leave this call (C-12.2)."""
+    try:
+        await destroyer.destroy(account_id, key_id, actor_user_id=str(actor), actor_role=role)
+    except Exception:
+        raise KeyDestroyFailedError("a key was not destroyed") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,9 +192,15 @@ class AccountLifecycle:
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         count: Callable[[DisableReason], None] = lambda _reason: None,
+        destroyer: KeyDestroyerPort | None = None,
+        locks: AccountLocks | None = None,
+        count_deleted: Callable[[DeleteReason], None] = lambda _reason: None,
     ) -> None:
         self._store, self._standings, self._subscriptions = store, standings, subscriptions
         self._disarmer, self._streams, self._clock, self._count = disarmer, streams, clock, count
+        self._destroyer, self._count_deleted = destroyer, count_deleted
+        #: The delete's and the revoke's per-account lock (one table, shared with `KeyRevoke`).
+        self.locks = AccountLocks() if locks is None else locks
 
     async def relabel(
         self,
@@ -266,6 +316,62 @@ class AccountLifecycle:
         for key in keys:
             with suppress(Exception):
                 await self._streams.close_private_streams(str(key.id), reason="account_disabled")
+
+    async def delete(
+        self,
+        owner: OwnerScope,
+        account: ExchangeAccount,
+        *,
+        write_ahead: WriteAhead,
+        reason: DeleteReason,
+        actor: UUID,
+        role: str,
+    ) -> None:
+        """Store the delete of `account` (read under the account's lock, after the gate and the
+        exposure) and carry out its effects (module docstring). `KeyDestroyFailedError` when a
+        key was not destroyed: the account stays switched off and held, not deleted."""
+        if self._destroyer is None:
+            raise KeyDestroyFailedError("no key destroyer is wired")
+        held = False
+
+        async def holding(stored: ExchangeAccount) -> None:
+            nonlocal held  # the hold, placed ahead of the record and the commit
+            self._standings.hold(account.id, "account_disabled")
+            held = True
+            await write_ahead(stored)
+
+        try:
+            await self._store.update_account(
+                owner, account.id, ExchangeAccountPatch(is_enabled=False), write_ahead=holding
+            )
+        except Exception:  # rolled back: a hold placed for an enabled account goes
+            if held and account.is_enabled:
+                self._standings.release(account.id)
+            raise
+        self._standings.hold(account.id, "account_deleted")  # never released
+        self._count_deleted(reason)  # right after the commit, once
+        keys = [k for k in await self._store.list_keys(owner, account.id) if k.status != _REVOKED]
+        for key in keys:  # R6: every live key destroyed before the soft delete
+            await destroy_key(self._destroyer, account.id, key.id, actor, role)
+        await self._store.soft_delete_account(owner, account.id)
+        await self._subscriptions.account_revoked(account.id, "account_disabled")
+        await self._disarmer.disarm(
+            account.id, lifecycle="account_deleted", actor=actor, role=role, at=self._clock()
+        )
+        await self._close_every(keys)  # last: an overrun leaves only the close pending
+
+    async def _close_every(self, keys: list[ApiKeyMetadata]) -> None:
+        """Close every key's private streams before raising: one key's overrun never skips a
+        later key's close (and so its tombstone, set inside the close), since a retry of a deleted
+        account is a `404` that never reaches them (round-1 F1). The first failure is raised."""
+        failure: Exception | None = None
+        for key in keys:
+            try:
+                await self._streams.close_private_streams(str(key.id), reason="key_revoked")
+            except Exception as exc:  # raised after every close was asked for
+                failure = failure or exc
+        if failure is not None:
+            raise failure
 
     async def _signable(self, owner: OwnerScope, account_id: UUID) -> list[ApiKeyMetadata]:
         keys = await self._store.list_keys(owner, account_id)

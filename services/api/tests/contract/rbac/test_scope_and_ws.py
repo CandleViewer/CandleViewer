@@ -522,6 +522,11 @@ _BEFORE_THE_GATE = {
     # E27-S04 B3b2 (#898): the patch reads the account (the `404`) before the step-up, from the
     # store the fake backend lacks; `test_update_exchange_account_provider.py` reaches its gate.
     ("PATCH", "/exchange-accounts/{uid}"): (503, "store_unavailable"),
+    # E27-S04 B3c/B3d (#898): the delete and the revoke read the account (and the key) before the
+    # step-up, from the store the fake backend lacks; `test_delete_exchange_account_provider.py`
+    # and `test_revoke_api_key_provider.py` reach their gates (the revoke's both classes).
+    ("DELETE", "/exchange-accounts/{uid}"): (503, "store_unavailable"),
+    ("DELETE", "/exchange-accounts/{uid}/keys/{keyId}"): (503, "store_unavailable"),
 }
 
 
@@ -941,8 +946,11 @@ def test_a_step_up_gated_account_route_refuses_without_it_and_takes_no_other_cla
     world: World, key: str
 ) -> None:
     """SR-025 as the step-up unit tests prove it: refused without a step-up, refused with a live
-    step-up of any other class, admitted with one of its own class (the cell's own outcome)."""
-    cls, req = _SCOPE[key]["step_up"], _scope_req(key)
+    step-up of any other class, admitted with one of its own class (the cell's own outcome). A
+    row that lists two classes (the revoke's `[keys, accounts]`) is driven by its default
+    request, which demands its first; the other branch is its provider test's (#898)."""
+    listed, req = _SCOPE[key]["step_up"], _scope_req(key)
+    cls = listed[0] if isinstance(listed, list) else listed
     want = scope_expected(key, "owner", "granted")
     world.step_up.elevated = False
     refused = scope_request(world, key, req, "owner", GRANTED)

@@ -15,7 +15,8 @@ its `CandidateSigner`, a `SigningCapability`, and stores it only after the check
 It mints `SigningKeyRotator` for `admin` too (#889 S7): the signing key's rotation, which answers
 with public key material, or `ExportKeyRotationError`; and `RotationRunning` for the export route
 (#889 S10): whether a rotation runs, a bool; and `LoopSigning`, the order lane's (#913 L3b), over
-a store M2 builds with the root's `LoopStoreFactory` (#913 L1d).
+a store M2 builds with the root's `LoopStoreFactory` (#913 L1d). `KeyDestroyer` (#898), minted
+there for the account delete and the key revoke, destroys one stored key of one account.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCred
 from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.service import (
     CredentialBorrower,
+    KeyDestroyer,
     LoopSigning,
     LoopStoreFactory,
     SecretsLifecycle,
@@ -49,6 +51,7 @@ from candleviewer.secrets.service import (
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
+    mint_key_destroyer,
     mint_loop_signing,
     mint_rotation_running,
     mint_signing_key_rotator,
@@ -81,6 +84,7 @@ __all__ = [
     "KekRotationError",
     "KekSourceNotPermitted",
     "KekUnavailable",
+    "KeyDestroyer",
     "LoopSigning",
     "LoopStoreFactory",
     "Purpose",
@@ -103,6 +107,7 @@ __all__ = [
     "mint_borrower",
     "mint_candidate_keys",
     "mint_export_signer",
+    "mint_key_destroyer",
     "mint_loop_signing",
     "mint_rotation_running",
     "mint_signing_key_rotator",

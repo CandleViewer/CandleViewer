@@ -30,6 +30,9 @@ sees every account, anyone else only the accounts granted to them. Each item mer
 monitor's and the wallet cache's view (`accounts.status`); `include_balance=false` leaves out the
 three wallet members. The cursor is opaque, bound to its caller and filters, and expires after an
 hour; one that is not is `400 invalid_cursor`. Logs carry classes and ids, never a value (C-12.6).
+
+`updateExchangeAccount` (E27-S04 B3b2) and `deleteExchangeAccount` (B3c, #898) store through
+`accounts.lifecycle`; each handler's docstring gives its order.
 """
 
 from __future__ import annotations
@@ -55,6 +58,7 @@ from candleviewer.accounts.errors import (
     AccountScopeDeniedError,
     AccountsError,
     AccountVersionConflictError,
+    KeyDestroyFailedError,
 )
 from candleviewer.accounts.exposure import ExchangePosition, ExposureFailed, ExposureUnknown
 from candleviewer.accounts.exposure_gate import Choice, Proceed, Refuse, gate
@@ -890,5 +894,179 @@ def make_exchange_accounts_router(
         except Exception as exc:  # mapped, or raised as a defect
             return await stored_refusal(exc, action, grant)
         return keep(who, key, digest, answered(done.account))
+
+    def kept_answer(who: str, key: str | None, digest: str, out: Response) -> Response:
+        """`out` kept for replay under the caller's key: a `204` or an exposure `409` only."""
+        if key is not None:
+            kept.put(who, key, StoredResponse(digest, out.status_code, bytes(out.body), None))
+        return out
+
+    def replayed_answer(hit: StoredResponse, digest: str) -> Response:
+        if hit.digest != digest:
+            return problem("idempotency_key_reuse", "The key was used for another request.")
+        if hit.status == 204:
+            return Response(status_code=204, headers={"Idempotency-Replayed": "true"})
+        return Response(hit.body, hit.status, {"Idempotency-Replayed": "true"},
+                        media_type="application/problem+json")  # fmt: skip
+
+    @router.delete("/exchange-accounts/{accountId}", status_code=204)  # nosem: no-raw-account-id reason=enforce-accounts:write-scope-none-Owner-only-then-OwnerScope-live-owner-gate-in-SQL-SR-051-one-404-and-account.deleted-written-ahead-#898 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    async def delete_exchange_account(
+        request: Request,
+        account_id: Annotated[uuid.UUID, Path(alias="accountId")],
+        open_exposure: Literal["flatten_first"] | None = None,
+    ) -> Response:
+        """`deleteExchangeAccount` (E27-S04 B3c, #898), in the ruled order: the session, then
+        `accounts:write` (scope none: the Owner's alone; a 403 audited naming the account, `503`
+        when that record cannot be written), the store (503 on the fake backend), the `422` of a
+        choice other than `flatten_first` (FastAPI's, before anything), one byte-equal `404`, then
+        the fresh `accounts` code bound to the method and the raw target with its query, its
+        challenge naming the account and asking for its typed label. Under the account's lock the
+        account is read again (gone: `404`, the grant spent), its exposure read and gated (unknown
+        is always `409 exposure_unknown`; not flat `409 open_exposure`, the null flattener's
+        `still_not_flat` included), each `409` recorded denied ahead of its answer; then the
+        lifecycle's delete: `account.deleted` written ahead of the switch-off, the hold, every key
+        destroyed, the soft delete, the WS revoke, the disarm and the bounded close. An overrun is
+        `503 exchange_unavailable`, never kept: the account is deleted by then, so the retry is a
+        `404` while the close runs on (a residual the PR states). `204`s and the exposure `409`s
+        are kept for replay for 24 h."""
+        if resolver is None:
+            return problem("not_implemented", "No principal resolver is wired.")
+        got = resolver.resolve(request)
+        if (principal := await got if inspect.isawaitable(got) else got) is None:
+            return problem("unauthenticated", "No verified session for this request.")
+        permission, named = Permission.ACCOUNTS_WRITE, NamesSession(audit, auth, request)
+        on_account = OnAccount(named, account_id)
+        try:  # 22: `accounts:write`, scope none (the Owner's alone); a refusal names the account
+            await enforce(
+                principal, permission, scope=Scope.NONE, emitter=on_account,
+                actor_ip=source_ip(request.scope), request_id=current_request_uuid(),
+            )  # fmt: skip
+        except ForbiddenError:
+            return _forbidden(permission)
+        except (AuditError, RuntimeError):  # RuntimeError: the audit writer is not started
+            return problem("audit_unavailable", "The refusal could not be audited.")
+        if accounts is None or lifecycle is None or consequences is None:
+            return problem("store_unavailable", "Accounts are not available on this backend.")
+        try:
+            key = idempotency_key(request, "deleteExchangeAccount")
+        except ValueError:
+            msg = "The Idempotency-Key is not a UUID."
+            return _validation(
+                _Refused("The request was refused.", ("Idempotency-Key", "uuid", msg))
+            )
+        owner, who, store = OwnerScope(principal.user_id), str(principal.user_id), accounts
+        ip, request_id = source_ip(request.scope), current_request_uuid()
+
+        async def read_account() -> ExchangeAccount | Response:
+            try:
+                now = await store.get_account(owner, account_id)
+                if now.env.value != environment:  # C-2.11: never served here
+                    raise AccountNotFoundError("account")
+            except AccountNotFoundError:  # absent, deleted or of another environment: one answer
+                return problem("not_found", _NO_ACCOUNT)
+            except AccountScopeDeniedError:  # the store's live-owner gate (SR-051)
+                if not await _not_owner(on_account, principal, permission, Scope.NONE, request):
+                    return problem("audit_unavailable", "The refusal could not be audited.")
+                return _forbidden(permission)
+            except Exception as exc:  # mapped, or raised as a defect
+                return _unavailable(exc)
+            return now
+
+        if isinstance(now := await read_account(), Response):
+            return now
+        account: ExchangeAccount = now
+        digest = bound_fingerprint(request.method, raw_request_target(request), None)
+        try:
+            page = await accounts_of(owner, account)
+        except Exception as exc:  # mapped, or raised as a defect
+            return _unavailable(exc)
+        others = [a.label for a in page.items if a.id != account.id]
+        if page.next_after is not None:  # not every label was read: never claim it is unique
+            others.append(account.label)
+        named_account = account_reference(account.label, account.env.value, account.exchange_uid)
+        tail = "" if open_exposure is None else f", open_exposure={open_exposure}"
+        text = ChallengeText(f"Delete account {named_account}{tail}",
+                             typed_target(account.label, str(account.id), others))  # fmt: skip
+        spent = await demand_bound_elevation(bound, request, digest, text)
+        if not isinstance(spent, SpentGrant):
+            return spent  # every refusal before it spent nothing (22)
+        if key is not None and (hit := kept.get(who, key)) is not None:
+            return replayed_answer(hit, digest)  # read back only behind a fresh code
+        grant = {"challenge_id": str(spent.challenge_id)}
+        role = ",".join(sorted(principal.roles))  # the disarm record's `actor_role` (ruling 2)
+        action = "account.deleted"
+
+        async def record(
+            *, outcome: str = "success", reason: str | None = None,
+            before: dict[str, Any] | None = None, after: dict[str, Any] | None = None,
+        ) -> None:  # fmt: skip
+            await audit.emit(
+                action, actor_label=who, actor_user_id=principal.user_id, actor_ip=ip,
+                object_kind="exchange_account", object_id=str(account_id), outcome=outcome,
+                severity="warning", request_id=request_id, env=account.env, reason=reason,
+                before_state=before, after_state=after,
+            )  # fmt: skip
+
+        async with lifecycle.locks.hold(account_id):  # one delete or revoke of it at a time
+            # Decided on the account as stored now, after the gate: a concurrent delete that
+            # held the lock first leaves it gone, a 404 (22 declares no 412 here).
+            if isinstance(now := await read_account(), Response):
+                return now  # the grant stays spent
+            account = now
+            try:
+                read = await consequences.read(account_scope(principal), owner, account_id)
+            except AccountNotFoundError:
+                return problem("not_found", _NO_ACCOUNT)
+            except Exception as exc:  # mapped, or raised as a defect
+                return _unavailable(exc)
+            decision = await gate(
+                "delete", read, open_exposure, last_signable=True, flattener=flatten,
+                actor=principal.user_id,
+            )  # fmt: skip
+            if isinstance(decision, Refuse):
+                if isinstance(read, ExposureFailed):  # retryable: no record, never kept (22)
+                    return exposure_problem(read)
+                why = {"why": decision.why} if decision.why else {}
+                try:  # a refusal after the gate, written ahead of its answer (R4)
+                    refused = {"open_exposure": open_exposure, **grant, **why}
+                    await record(outcome="denied", reason=decision.kind, after=refused)
+                except _UNWRITTEN:
+                    return problem("audit_unavailable", "The refusal could not be audited.")
+                if not isinstance(read, AccountConsequences):  # `exposure_unknown`, its remedy
+                    return kept_answer(who, key, digest, exposure_problem(read))
+                detail = _open_detail(read, decision.why).replace("disabled", "deleted")
+                out = problem("open_exposure", detail, status=409,
+                              consequences=consequence_document(read))  # fmt: skip
+                return kept_answer(who, key, digest, out)
+            before = {"label": account.label, "enabled": account.is_enabled}
+
+            async def deleted(stored: ExchangeAccount) -> None:
+                after = {"label": stored.label, "enabled": stored.is_enabled, "deleted": True,
+                         "open_exposure": open_exposure, "flattened": decision.flattened,
+                         **grant}  # fmt: skip
+                await _written(record(before=before, after=after))
+
+            try:
+                await lifecycle.delete(
+                    owner, account, write_ahead=deleted,
+                    reason="flattened" if decision.flattened else "flat",
+                    actor=principal.user_id, role=role,
+                )  # fmt: skip
+            except PrivateStreamCloseOverran:
+                _log().warning("account_delete_close_overran", account_id=str(account_id))
+                detail = "The account is deleted; its private streams are still closing."
+                return problem("exchange_unavailable", detail, status=503)
+            except (AccountAuditRefused, WriteAheadTimeout):
+                return problem(
+                    "audit_unavailable", "The audit record could not be written; nothing changed."
+                )
+            except AccountNotFoundError:
+                return problem("not_found", _NO_ACCOUNT)
+            except KeyDestroyFailedError:
+                detail = "A key of the account could not be destroyed; it stays disabled. Retry."
+                return problem("store_unavailable", detail)
+            except Exception as exc:  # mapped, or raised as a defect
+                return _unavailable(exc)
+        return kept_answer(who, key, digest, Response(status_code=204))
 
     return router

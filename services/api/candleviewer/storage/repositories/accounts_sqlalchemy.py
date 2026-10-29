@@ -280,6 +280,7 @@ _UPDATE = sa.text(
 )
 _SOFT_DELETE = sa.text(
     "UPDATE exchange_accounts AS ea SET deleted_at = now(), trading_enabled = false, "
+    "is_enabled = false, "
     "updated_by = CAST(:caller AS uuid), "
     "updated_at = greatest(clock_timestamp(), ea.updated_at + interval '1 microsecond') "
     "WHERE ea.id = CAST(:id AS uuid) AND ea.deleted_at IS NULL"

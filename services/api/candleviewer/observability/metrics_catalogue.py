@@ -925,6 +925,30 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=4,
     ),
     _s(
+        "cv_account_deleted_total",
+        "counter",
+        "deletes",
+        ("reason",),
+        "Stored account deletes (deleteExchangeAccount, E27-S04) by why each went ahead: flat or "
+        "flattened (flatten_first); counted once the switch-off commits, before the key destroys.",
+        "dashboard",
+        _L,
+        "E27",
+        max_series=2,
+    ),
+    _s(
+        "cv_key_revocations_total",
+        "counter",
+        "revocations",
+        ("result",),
+        "Key revocations (revokeApiKey, E27-S04) by result: revoked (a first revoke completed), "
+        "completed (a repeat completed one) or overran (the stream close overran: 503, retried).",
+        "dashboard",
+        _L,
+        "E27",
+        max_series=3,
+    ),
+    _s(
         "cv_key_rotation_notices_total",
         "counter",
         "notices",

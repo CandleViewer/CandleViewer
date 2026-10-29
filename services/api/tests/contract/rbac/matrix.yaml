@@ -540,8 +540,9 @@ operations:
     permissions: ['accounts:write']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
+    request:
+      params: {open_exposure: flatten_first}
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   PATCH /exchange-accounts/{accountId}:
     permissions: ['accounts:write']
@@ -595,8 +596,9 @@ operations:
     permissions: ['keys:manage']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
+    request:
+      params: {open_exposure: leave_positions}
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /exchange-accounts/{accountId}/keys/{keyId}/rotate:
     permissions: ['keys:manage']
@@ -1792,7 +1794,7 @@ account_scope:
   DELETE /exchange-accounts/{accountId}:
     step_up: accounts
     cells:
-      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      owner: {granted: 503 store_unavailable, foreign: 503 store_unavailable, absent: 503 store_unavailable}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
       viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
   GET /exchange-accounts/{accountId}/consequences:
@@ -1827,7 +1829,7 @@ account_scope:
   DELETE /exchange-accounts/{accountId}/keys/{keyId}:
     step_up: [keys, accounts]  # `accounts` for the `flatten_first` branch (E27-S04, #898)
     cells:
-      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      owner: {granted: 503 store_unavailable, foreign: 503 store_unavailable, absent: 503 store_unavailable}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
       viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
   POST /exchange-accounts/{accountId}/keys/{keyId}/rotate:
