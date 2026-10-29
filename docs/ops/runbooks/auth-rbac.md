@@ -492,7 +492,7 @@ them (the audit lane key, below).
 refused ones included (it counts `auth.break_glass_attempt` rows, so a pre-audit refusal does not
 page), with three limits: it sees no rise without Prometheus history of the series (a new
 Prometheus, or a refused run after cv-api was stopped for over a week); runs under 15 minutes apart
-share one page; and the page comes only at the first scrape after cv-api restarts, since the CLI
+share one page; and the page comes at the first scrape after cv-api restarts, since the CLI
 runs while it is stopped (see the rule's comment in `infra/prometheus/alerts/system_page.yml` and
 `docs/plan/07-release-and-prr.md#alert-authbreakglassattempted`). A completed reset still pages
 through `AuthBreakGlassUsed`, which needs no history: it pages while a reset's event is unresolved.
@@ -1719,11 +1719,11 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 
 | Gap                                                                       | Reference      |
 | ------------------------------------------------------------------------- | -------------- |
-| Break-glass drill on staging (SR-023)                                     | #2494, #300    |
+| Break-glass drill on staging (SR-023)                                     | #2298          |
 | Owner route to resolve a break-glass event (section 3, step 7)            | E09-S12, #2710 |
 | `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110          |
 | Scheduled audit-chain verifier                                            | #2111          |
-| Disable-user drill on staging (SR-029)                                    | #2494, #300    |
+| Disable-user drill on staging (SR-029)                                    | #2298          |
 | No B16 record of a lost disable commit's sessions if not read back        | #2710, #3445   |
 | Session rotation on role change and step-up                               | #2101          |
 | Lock alerts lost inside quiet hours                                       | #2621          |
