@@ -137,7 +137,7 @@ def test_heatmap_depth_500_is_refused_while_heatmap_depth_500_is_off() -> None:
 
 
 def test_a_replay_heatmap_is_unknown_topic_with_the_byte_budget_on() -> None:
-    """Fable m-3: no replay producer serves `heatmap` yet, so a replay `sub` is refused
+    """No replay producer serves `heatmap` yet, so a replay `sub` is refused
     `unknown_topic` (§10.2 "topic not served"), never left `snapshot_pending` for good."""
     topic = _topic()
     conn, sink = _conn(topic, heatmap_off=False, depth_500=True)
@@ -262,7 +262,7 @@ async def test_a_heatmap_reference_holds_the_symbols_book() -> None:
 def test_heatmap_part_is_a_one_column_kind_6_frame() -> None:
     frame = heatmap_part(1_700_000_000_000, 99_510, 1, ((1_000, 2_000),), 1, 3, True)
     assert frame.body_kind == HEATMAP_COLUMN and frame.flags & 1
-    assert frame.raw is not None  # packed at the close: encoded once (#605, M-1)
+    assert frame.raw is not None  # packed at the close: encoded once (#605)
     back = structured(decode(encode(frame)))
     assert back["columns"] == [
         {"t_ms": 1_700_000_000_000, "price_min": "9951.0", "price_step": "0.1",

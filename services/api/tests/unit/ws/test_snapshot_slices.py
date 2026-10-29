@@ -1,4 +1,4 @@
-"""#605 (M-1): a snapshot whose render, chunking and encoding take more than one loop turn's CPU
+"""#605: a snapshot whose render, chunking and encoding take more than one loop turn's CPU
 (`SNAPSHOT_TURN_S`) is finished in later turns, a slice each, by `TopicEmitter`, for any family.
 Its frames are the same frames, queued together in its last slice, in order, the last with `s`;
 until then the subscription stays pending, so no `d` of it precedes them (23 §7.1, §3.6). One
@@ -22,7 +22,7 @@ from candleviewer.ws.sequencing import (
     SnapshotBody,
     SnapshotCache,
     _split_steps,
-    assemble_chunk,
+    assemble_steps,
     split_structured,
 )
 from tests.unit.ws._seq_support import Conn, Source, validate
@@ -81,14 +81,14 @@ def test_an_assembled_chunk_is_the_queue_encoders_bytes(
     if last:
         frame["sp"] = "a" * 16  # a sampled last chunk carries its span after `p`
     want = json_payload(frame) if wire == "json" else msgpack_payload(frame)
-    assert assemble_chunk(frame, chunk, wire) == want  # type: ignore[arg-type]
+    assert _finish(assemble_steps(frame, chunk, wire)) == want  # type: ignore[arg-type]
 
 
 def test_a_chunk_with_a_value_json_cannot_carry_is_never_assembled() -> None:
     [chunk] = _finish(_split_steps({"columns": [1.0, math.nan]}, 10**6))
     assert chunk.texts is None
     with pytest.raises(ValueError, match="not assembled"):
-        assemble_chunk({"p": chunk.payload}, chunk, "json")
+        _finish(assemble_steps({"p": chunk.payload}, chunk, "json"))
 
 
 def _big(columns: int = 60, rows: int = 200) -> SnapshotBody:
@@ -243,13 +243,13 @@ def test_a_small_snapshot_is_left_to_the_queues_encoder() -> None:
     assert queued == [] and len(conn.out) == 1  # as before: the dict, the queue encodes it
 
 
-# -- m-C: one turn budget, shared ------------------------------------------------------------------
+# -- one turn budget, shared -----------------------------------------------------------------------
 
 
 async def test_concurrent_snapshots_share_one_turn_budget_round_robin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """m-C: three large snapshots on three connections run under one budget a loop turn (here
+    """Three large snapshots on three connections run under one budget a loop turn (here
     one step a turn), taking turns, never three slices in one turn."""
     from candleviewer.ws import sequencing
 
@@ -283,7 +283,7 @@ async def test_concurrent_snapshots_share_one_turn_budget_round_robin(
     assert len(set(order[:3])) == 3  # round-robin: each job in turn
 
 
-# -- m-A: what changed meanwhile follows the snapshot ----------------------------------------------
+# -- what changed meanwhile follows the snapshot ---------------------------------------------------
 
 
 class _Moving(Source):
@@ -318,7 +318,7 @@ async def test_a_source_that_cannot_catch_up_is_snapshotted_again_when_it_moved(
     assert [f["s"] for f in snaps][:2] == [1, 2]  # the state it missed comes as a new snap
 
 
-# -- M-C: the snapshot cache's byte bound ---------------------------------------------------------
+# -- the snapshot cache's byte bound ---------------------------------------------------------------
 
 
 def test_the_snapshot_cache_is_bounded_by_bytes_oldest_out_first() -> None:
@@ -361,7 +361,7 @@ async def test_a_source_that_cannot_catch_up_is_never_spread() -> None:
 
 
 async def test_a_request_once_the_turns_budget_is_spent_waits_for_a_later_turn() -> None:
-    """m-C: a request's inline slice runs only while the loop turn's shared budget has room;
+    """A request's inline slice runs only while the loop turn's shared budget has room;
     once it is spent, a later request of that turn runs nothing inline and takes its steps in a
     later turn. The budget is the turn's: in the next turn a request is emitted at once."""
     from candleviewer.ws import sequencing
@@ -382,7 +382,7 @@ async def test_a_request_once_the_turns_budget_is_spent_waits_for_a_later_turn()
 
 
 async def test_a_source_that_cannot_catch_up_is_synchronous_whatever_the_turns_budget() -> None:
-    """m-C: only a source with `catch_up` waits for room; any other's snapshot is emitted in
+    """Only a source with `catch_up` waits for room; any other's snapshot is emitted in
     the call, as before #605, even when the turn's budget is spent."""
     from candleviewer.ws import sequencing
 
@@ -396,14 +396,14 @@ async def test_a_source_that_cannot_catch_up_is_synchronous_whatever_the_turns_b
 
 
 class _Uncached(_Catching):
-    """A source whose snapshots never enter the shared cache (#605 m-D: heatmap)."""
+    """A source whose snapshots never enter the shared cache (#605: heatmap)."""
 
     def cacheable(self, sub: Any) -> bool:
         return False
 
 
 async def test_a_source_that_opts_out_never_enters_the_snapshot_cache() -> None:
-    """m-D: a source saying `cacheable` False is built for each request and never cached, so
+    """A source saying `cacheable` False is built for each request and never cached, so
     its renders evict no other family's entry; any other public source is cached as before."""
     for source, cached in ((_Uncached(), 0), (_Catching(), 1)):
         source.bodies["heatmap"] = _big(columns=2, rows=4)
@@ -417,7 +417,7 @@ async def test_a_source_that_opts_out_never_enters_the_snapshot_cache() -> None:
 async def test_a_job_step_is_a_batch_of_its_own_steps_up_to_step_s(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """M-E: one `_step` of a job runs its own steps until `step_s` is spent, so a large snapshot
+    """One `_step` of a job runs its own steps until `step_s` is spent, so a large snapshot
     takes few round-robin steps; with room for all of it, one."""
     from candleviewer.ws import sequencing
 
@@ -465,7 +465,7 @@ class _Following(Source):
 
 
 async def test_a_catch_up_runs_a_d_a_step_and_no_live_d_crosses_it() -> None:
-    """M-F (§7.1): the catch-up's `d` frames follow the snapshot one per step, in order with
+    """§7.1: the catch-up's `d` frames follow the snapshot one per step, in order with
     consecutive `s`; a live `d` meanwhile is refused (its change is read as the tail), and the
     subscription takes live `d` frames again once the catch-up ends."""
     source = _Following()
@@ -495,7 +495,7 @@ async def test_a_catch_up_runs_a_d_a_step_and_no_live_d_crosses_it() -> None:
 
 
 async def test_a_job_dropped_mid_catch_up_lets_live_d_frames_through_again() -> None:
-    """M-F: a snapshot replacing one in its catch-up (or the end of the subscription) ends that
+    """A snapshot replacing one in its catch-up (or the end of the subscription) ends that
     catch-up, and nothing of it holds the subscription's live `d` frames back."""
     source = _Following()
     source.bodies["heatmap"] = _big()
@@ -511,3 +511,65 @@ async def test_a_job_dropped_mid_catch_up_lets_live_d_frames_through_again() -> 
         await asyncio.sleep(0)
     conn.emitter._drop_job(sub.sub_id)
     assert not conn.emitter._catching and conn.emitter.delta(sub, _column_body(99))
+
+
+def _no_close(reason: str, *, bye: dict[str, Any] | None = None) -> None:
+    """A pipeline's `close` that closes nothing."""
+
+
+async def test_a_large_snapshot_encoded_in_its_steps_keeps_its_encode_time_sample() -> None:
+    """E17-T06 with #605: a large snapshot's frames are encoded in its own steps, not by the
+    queue, so the encode-time sample of its stamped frame is taken there and handed over with
+    it; the connection's `cv_ws_frame_encode_seconds{kind="json"}` still observes it, with the
+    sampling weight."""
+    from candleviewer.ws.backpressure_config import BackpressureConfig
+    from candleviewer.ws.metrics import JSON_KIND, SAMPLE_EVERY, cv_ws_frame_encode_seconds
+    from candleviewer.ws.pipeline import ConnectionPipeline
+
+    conn = _conn(_big(), turn_s=0.0, max_frame_bytes=64_000)
+    pipe = ConnectionPipeline(
+        encoding="cv.v1.json",
+        config=BackpressureConfig(),
+        close=_no_close,
+        wall_ms=lambda: T_MS,
+        connection_id="ws_test",
+    )
+    pipe.attach(conn.authz, conn.emitter, lambda _body: None)
+    conn.emitter.push_data = pipe.push
+    sub = _sub(conn)
+    sub.seq = SAMPLE_EVERY - 1  # its snapshot's `s` is the stamped one
+    child = cv_ws_frame_encode_seconds.labels(JSON_KIND)
+    before = child.reading()[0][-1]
+    assert conn.emitter.snapshot(sub, "initial")
+    for _ in range(100_000):
+        await asyncio.sleep(0)
+        if not conn.emitter._jobs:
+            break
+    assert len(pipe.queue) > 1 and sub.seq == SAMPLE_EVERY  # encoded in its steps, queued
+    assert child.reading()[0][-1] - before == SAMPLE_EVERY
+
+
+def test_a_closed_loop_and_its_turns_are_collected() -> None:
+    """`_Turns` is kept per loop in a weak-keyed registry; it holds its loop weakly, so a closed
+    and dropped loop, and its entry, are collected rather than kept for the process's life."""
+    import gc
+    import weakref
+
+    from candleviewer.ws import sequencing
+
+    loop = asyncio.new_event_loop()
+
+    async def use() -> None:
+        turns = sequencing._Turns.of(asyncio.get_running_loop())
+        turns.charge(0.001)  # arms its turn-end callback on the loop
+
+    loop.run_until_complete(use())
+    loop.run_until_complete(asyncio.sleep(0))
+    loop.close()
+    gone = weakref.ref(loop)
+    entries = len(sequencing._Turns._BY_LOOP)
+    del loop
+    gc.collect()
+    # Other tests' dropped loops may be collected here too: at least this one's entry is gone.
+    assert gone() is None, gc.get_referrers(gone())
+    assert len(sequencing._Turns._BY_LOOP) <= entries - 1

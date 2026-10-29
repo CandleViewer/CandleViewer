@@ -221,7 +221,7 @@ class SnapshotRouter:
         return getattr(self._source(sub), "catch_up", None) is not None
 
     def cacheable(self, sub: Subscription) -> bool:
-        """Whether the family adapter's snapshot may enter the shared cache (#605 m-D): yes
+        """Whether the family adapter's snapshot may enter the shared cache (#605): yes
         unless it says no (`cacheable`)."""
         cacheable = getattr(self._source(sub), "cacheable", None)
         return cacheable is None or bool(cacheable(sub))
@@ -239,7 +239,7 @@ class SnapshotRouter:
     def catch_up_trim(
         self, sub: Subscription, since: int, held: tuple[int, ...], binary: bool
     ) -> int | None:
-        """The family adapter's `catch_up_trim` (#605 M-F: the snapshot's oldest columns to leave
+        """The family adapter's `catch_up_trim` (#605: the snapshot's oldest columns to leave
         out so it and its catch-up share half the queue); 0 without one."""
         trim = getattr(self._source(sub), "catch_up_trim", None)
         if trim is None:
@@ -355,7 +355,7 @@ def heatmap_part(
 ) -> Frame:
     """One heatmap column's CVWB kind-6 twin (23 §3.4): one column per frame, its own time base,
     packed (`binary.pack`): encoded once here, at the column's close, so a snapshot or a fan-out
-    of it re-encodes only the header (#605, M-1)."""
+    of it re-encodes only the header (#605)."""
     return pack(
         Frame(
             HEATMAP_COLUMN,

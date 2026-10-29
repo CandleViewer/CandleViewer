@@ -81,9 +81,9 @@ class Report:
     budget_6_pass: bool
     budget_14_pass: bool
     source: str
-    # Fable M-1 (#605): a `sub` at the full G-03 budget and a 2 000-column re-seed.
+    # #605: a `sub` at the full G-03 budget and a 2 000-column re-seed.
     snapshot_columns: int = 0
-    #: n-E: the whole build run to its end in one call (`HeatmapTopic.build`), total CPU across
+    #: The whole build run to its end in one call (`HeatmapTopic.build`), total CPU across
     #: what the gateway spreads over many loop turns, never one turn's.
     snapshot_build_ms: float = 0.0
     snapshot_encode_ms: float = 0.0
@@ -109,7 +109,7 @@ class Report:
     #: The same turns' CPU (`time.thread_time`), which a loaded host's preemption does not inflate.
     emit_binary_sliced_cpu_max_ms: float = 0.0
     emit_structured_sliced_cpu_max_ms: float = 0.0
-    #: m-C: eight connections' snapshots at once, one shared budget a turn.
+    #: Eight connections' snapshots at once, one shared budget a turn.
     emit_binary_8_connections_turn_max_ms: float = 0.0
     emit_binary_8_connections_cpu_max_ms: float = 0.0
     emit_structured_8_connections_turn_max_ms: float = 0.0
@@ -118,11 +118,11 @@ class Report:
     emit_binary_8_connections_later_turn_cpu_max_ms: float = 0.0
     emit_structured_8_connections_asking_turn_cpu_ms: float = 0.0
     emit_structured_8_connections_later_turn_cpu_max_ms: float = 0.0
-    #: M-B: a ring entry's bytes and a spec's ring at 2 000 columns x 512 rows (tracemalloc).
+    #: A ring entry's bytes and a spec's ring at 2 000 columns x 512 rows (tracemalloc).
     ring_spec_bytes: int = 0
     ring_entry_bytes: int = 0
     ring_spec_mib: float = 0.0
-    #: m-B: the re-seed's CPU, 1 000 columns of 512 rows re-bucketed 1 -> 2: by `window_column`
+    #: The re-seed's CPU, 1 000 columns of 512 rows re-bucketed 1 -> 2: by `window_column`
     #: (the dict path before #605's vectorising) and by `rebucket`.
     rebucket_dict_ms: float = 0.0
     rebucket_numpy_ms: float = 0.0
@@ -132,14 +132,14 @@ class Report:
     reseed_total_ms: float = 0.0
     #: One core's share at the G-02 cap: 32 specs x 10 columns/s x the close cost (`tick` p50).
     steady_core_share_at_cap: float = 0.0
-    #: M-E: K concurrent binary snapshots of one full spec while a column closes every 100 ms:
+    #: K concurrent binary snapshots of one full spec while a column closes every 100 ms:
     #: the slowest job's wall time to its last `snap` (s), and the snapshots taken again.
     spread_8_jobs_wall_s_max: float = 0.0
     spread_8_jobs_restarts: int = 0
     spread_32_jobs_wall_s_max: float = 0.0
     spread_32_jobs_restarts: int = 0
     spread_unfinished_at_cap: int = 0
-    #: M-F: one binary snapshot of a full spec while 300 columns close during it: the largest
+    #: One binary snapshot of a full spec while 300 columns close during it: the largest
     #: CPU of one job step (ms), the columns the snapshot kept and the `d` frames after it, and
     #: what they queued together, at G-03 sizes and as encoded.
     catch_up_step_cpu_max_ms: float = 0.0
@@ -393,7 +393,7 @@ def emit_scenario(report: Report, topic: HeatmapTopic, lease: Any) -> Report:
 
 async def _spread_jobs(topic: HeatmapTopic, lease: Any, state: Any, k: int,
                        cap_s: float = 90.0) -> tuple[float, int, int]:  # fmt: skip
-    """M-E: `k` connections ask for a binary snapshot of `lease`'s full spec at once while a
+    """`k` connections ask for a binary snapshot of `lease`'s full spec at once while a
     column closes every 100 ms of wall time (as `_close` keeps the ring), until every job has
     ended or `cap_s`: the slowest job's wall time to its last `snap`, the restarts (a source
     that could not catch up) and the jobs left."""
@@ -443,7 +443,7 @@ async def _spread_jobs(topic: HeatmapTopic, lease: Any, state: Any, k: int,
 
 async def _catch_up_burst(topic: HeatmapTopic, lease: Any, state: Any,
                           closes: int = 300) -> tuple[float, int, int, int, int]:  # fmt: skip
-    """M-F: one binary snapshot of `lease`'s full spec on a connection that queues encoded
+    """One binary snapshot of `lease`'s full spec on a connection that queues encoded
     frames, 5 columns closing a loop turn while it is pending until `closes` have (as `_close`
     keeps the ring), and nothing drained: the largest CPU of one job step (ms), the snapshot's
     columns, the `d` frames after it, and their G-03 and encoded bytes together."""
@@ -496,7 +496,7 @@ async def _catch_up_burst(topic: HeatmapTopic, lease: Any, state: Any,
 
 
 def snapshot_and_seed(report: Report, seed: int) -> Report:
-    """Fable M-1: `build()` for a binary `sub` at the default budget (8 MiB, 2 000 frames) over a
+    """`build()` for a binary `sub` at the default budget (8 MiB, 2 000 frames) over a
     full ring of 2 000 cached 512-row columns, the CVWB encode of its parts (what the gateway's
     render then does, once per generation), `hold()` of a coarser grouping and every loop turn of
     its re-seed."""
@@ -518,7 +518,7 @@ def snapshot_and_seed(report: Report, seed: int) -> Report:
     ]
     tracemalloc.start()
     before = tracemalloc.get_traced_memory()[0]
-    ring = _Ring(len(raw))  # M-B: a spec's ring, built and filled under tracemalloc
+    ring = _Ring(len(raw))  # a spec's ring, built and filled under tracemalloc
     for i, data in enumerate(raw):
         bids, asks = array("d"), array("d")
         bids.frombytes(data[: 8 * ROWS])

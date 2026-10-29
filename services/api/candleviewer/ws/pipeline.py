@@ -308,10 +308,16 @@ class ConnectionPipeline:
         self._count_as(pacer.cls)
 
     def push_encoded(
-        self, frame: Mapping[str, Any], payload: str | bytes, received: float | None = None
+        self,
+        frame: Mapping[str, Any],
+        payload: str | bytes,
+        received: float | None = None,
+        *,
+        encode_s: float | None = None,
     ) -> None:
-        """`push` of a frame its sender already encoded with this queue's encoder (#605)."""
-        self.push(frame, received, payload=payload)
+        """`push` of a frame its sender already encoded with this queue's encoder (#605), with
+        the seconds that encode took when the sender timed it (a stamped frame, E17-T06)."""
+        self.push(frame, received, payload=payload, encode_s=encode_s)
 
     def push(
         self,
@@ -319,10 +325,12 @@ class ConnectionPipeline:
         received: float | None = None,
         *,
         payload: str | bytes | None = None,
+        encode_s: float | None = None,
     ) -> None:
         """Queue one frame; nothing once a close or `release` happened (WS-D01). A frame the hub
         stamped (`received`) has its encode timed and sized here, once, its size without its `sp`
-        (23 §3.1; module docstring); one that came encoded (`payload`) is sized only."""
+        (23 §3.1; module docstring); one that came encoded (`payload`) is sized here and its
+        encode time is the sender's (`encode_s`), when it timed it."""
         if self.terminal is not None or self.released or (self._skips and self._skipped(frame)):
             return
         try:
@@ -342,8 +350,10 @@ class ConnectionPipeline:
             return
         if received is not None:  # E17-T06: the stamped frame's encode time and wire bytes
             seconds, size = self._cost
-            if payload is None:  # one that came encoded was timed by none of this
+            if payload is None:
                 seconds.observe(self._encode_s, SAMPLE_EVERY)
+            elif encode_s is not None:  # encoded by its sender, which timed it (#605)
+                seconds.observe(encode_s, SAMPLE_EVERY)
             sp = frame.get("sp")  # left out of the size (23 §3.1)
             size.observe(frame_bytes(item.payload, sp, msgpack=self._msgpack), SAMPLE_EVERY)
         if item.size > MAX_OUTBOUND_FRAME_BYTES:  # #2818: logged and sent, never refused

@@ -364,7 +364,7 @@ async def test_resync_past_the_estimate_hold_leaves_samples_zero() -> None:
     frames = [body for _, body, _ in w.hub.frames]
     last = frames[-1]["columns"][0]
     assert last["samples"] == 0 and last["bids"] == []
-    # Sonnet Major 1: every column closed during the resync is estimated, past the hold too.
+    # Every column closed during the resync is estimated, past the hold too.
     assert all(body["estimated"] is True for body in frames[1:])
 
 
@@ -499,7 +499,7 @@ def _ring(n: int, rows: int = 400) -> list[HeatmapColumn]:
 
 
 def test_the_ring_is_columnar_and_returns_each_column_as_appended() -> None:
-    """M-B (23 §6.1, §16.2): a spec's ring is one float64 buffer and a vector a field, 15.6 MiB
+    """23 §6.1, §16.2: a spec's ring is one float64 buffer and a vector a field, 15.6 MiB
     and a little at 2 000 x 512; a column comes back as it went in, None prices included."""
     ring = H._Ring(HEATMAP_SNAPSHOT_MAX_COLUMNS)
     assert ring.nbytes <= 16 * 2**20 and ring._sizes.shape == (2_000, 2 * ROWS)
@@ -548,7 +548,7 @@ def test_the_ring_copies_its_newest_columns_and_refuses_a_column_past_rows() -> 
     H._Ring(0).append(_col(0, 1))  # the native spec keeps no ring
     full = H._Ring(1)
     full.append(_col(0, ROWS))
-    full.append(_col(100, 3))  # n-D: the slot's reuse leaves no cell of its last column
+    full.append(_col(100, 3))  # the slot's reuse leaves no cell of its last column
     assert not full._sizes[0, 3:ROWS].any() and not full._sizes[0, ROWS + 3 :].any()
     with pytest.raises(ValueError, match="ROWS"):
         ring.append(_col(0, ROWS + 1))
@@ -722,7 +722,7 @@ async def test_a_price_grouping_change_rebuckets_the_held_columns() -> None:
 
 
 async def test_a_seed_runs_in_slices_and_never_in_the_sub() -> None:
-    """Fable M-1 (b): a 2 000-column donor is re-bucketed a slice per turn (`seed_turn_s`), the
+    """A 2 000-column donor is re-bucketed a slice per turn (`seed_turn_s`), the
     newest first, capped at the G-03 frame bound; `hold` itself only queues it."""
     w = World(queue_frames=4_000)
     spec = HeatmapSpec(SYM, time_bucket_ms=100)
@@ -797,7 +797,7 @@ def test_a_column_without_a_sample_is_empty_and_keeps_its_origin() -> None:
     assert (col.rows, col.price_origin_ticks, col.full) == (0, 1_000, False)
     low = H.window_column(ts_ms=T0, bucket_ms=100, step=1, bids={}, asks={}, best_bid=10,
                           best_ask=11, estimated=False, samples=0, expected=1)  # fmt: skip
-    assert low.price_origin_ticks == 0  # Fable n-5: an empty column never sits below price 0
+    assert low.price_origin_ticks == 0  # an empty column never sits below price 0
     assert H.native_count(T0, T0 + 250) == 2 and H.native_count(T0 + 250, T0 + 500) == 3
 
 
@@ -840,7 +840,7 @@ def test_a_size_that_is_not_finite_is_never_queued_and_counts_as_a_fault() -> No
 
 
 def test_the_store_queue_is_bounded_by_cells_and_sheds_its_oldest() -> None:
-    """Fable m-1: the bound counts cells, not columns (512 full columns, ~18 MiB of tuples)."""
+    """The bound counts cells, not columns (512 full columns, ~18 MiB of tuples)."""
     w = World(store=Store())
     full = H.STORE_CELLS_MAX // 512
     for i in range(full + 5):
@@ -911,7 +911,7 @@ async def test_the_loop_publishes_as_its_clock_passes_deadlines_and_stops() -> N
     assert all(body["columns"][0]["samples"] == 0 for _, body, _ in hub.frames)  # no book
 
 
-# -- Sonnet Major 3: a depth-500 spec demands the deep tier ---------------------------------------
+# -- a depth-500 spec demands the deep tier --------------------------------------------------------
 
 
 class Demand:
@@ -926,7 +926,7 @@ class Demand:
 
 
 async def test_a_depth_500_spec_demands_the_deep_tier_and_waits_for_its_swap() -> None:
-    """Sonnet Major 3: a depth-500 spec demands the symbol's 500 tier once (as `book.X.500`
+    """A depth-500 spec demands the symbol's 500 tier once (as `book.X.500`
     does), integrates nothing and stays pending while the tier is 200, and is flushed and served
     once the 500 tier is live; its last lease lets the demand go."""
     w = World()
@@ -958,7 +958,7 @@ async def test_a_depth_500_spec_demands_the_deep_tier_and_waits_for_its_swap() -
 
 
 async def test_a_binary_snapshot_builds_its_parts_a_step_each_and_keeps_none() -> None:
-    """M-B: the ring keeps each column's sizes only; a snapshot builds its parts a column per
+    """The ring keeps each column's sizes only; a snapshot builds its parts a column per
     step (`build_steps`, spread across loop turns by the gateway), equal to the parts its
     columns' `d` frames carried."""
     w = World()
@@ -983,7 +983,7 @@ async def test_a_binary_snapshot_builds_its_parts_a_step_each_and_keeps_none() -
 
 
 async def test_a_new_spec_closes_what_is_due_before_integrating_the_others() -> None:
-    """Sonnet #8: `hold` of a second spec closes the first spec's due buckets first, so none of
+    """`hold` of a second spec closes the first spec's due buckets first, so none of
     its buckets integrates time past its own end."""
     w = World()
     await live(w)
@@ -1033,7 +1033,7 @@ def test_snapshot_columns_counts_a_structured_column_at_its_json_bound() -> None
 async def test_a_column_closing_mid_snapshot_follows_it_as_a_d(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fable m-A (23 §7.1): a snapshot spread across loop turns holds the columns of its first
+    """23 §7.1: a snapshot spread across loop turns holds the columns of its first
     turn; a column that closes meanwhile follows it as a `d` (`catch_up`), never lost between."""
     from candleviewer.ws.permissions import Subscription
     from candleviewer.ws.sequencing import SnapshotCache, TopicEmitter
@@ -1083,7 +1083,7 @@ def _close_one(state: H._SpecState, rows: int) -> int:
 
 
 async def test_a_spread_snapshot_at_capacity_is_the_copy_of_its_first_step() -> None:
-    """Fable M-D: at capacity every close moves the ring's head; a snapshot spread across steps
+    """At capacity every close moves the ring's head; a snapshot spread across steps
     reads a copy taken at its first, so its parts and its `t_ms` agree, with no gap and no
     duplicate, and `catch_up` sends exactly the columns closed after the copy."""
     w = World()
@@ -1116,7 +1116,7 @@ async def test_a_spread_snapshot_at_capacity_is_the_copy_of_its_first_step() -> 
 async def test_many_spread_snapshots_over_a_moving_spec_all_end_and_none_restarts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fable M-E: 32 concurrent snapshots of one full spec while columns keep closing (more than
+    """32 concurrent snapshots of one full spec while columns keep closing (more than
     the old 64-column catch-up bound) all end, none is taken again, and each is followed by
     exactly the columns closed after its copy."""
     from candleviewer.ws.permissions import Subscription
@@ -1164,7 +1164,7 @@ async def test_many_spread_snapshots_over_a_moving_spec_all_end_and_none_restart
 
 
 async def test_a_catch_up_of_300_columns_runs_a_d_a_step_within_half_the_queue() -> None:
-    """Fable M-F (23 §6.1, §7.1, G-03): 300 columns close while a full binary snapshot is under
+    """23 §6.1, §7.1, G-03: 300 columns close while a full binary snapshot is under
     way. The snapshot leaves out its oldest columns so it and the 300 `d` frames after it cost at
     most half the queue's bytes at G-03 sizes (the encoded total stays under the whole queue: no
     `slow_consumer`); each `d` is its own step (its CPU, a `d`'s build, is the bench's

@@ -361,7 +361,7 @@ def test_router_turns_pending_into_none_and_no_continuity() -> None:
 
 
 def test_router_cacheable_is_the_family_adapters_and_yes_without_one() -> None:
-    """#605 m-D: the router forwards a family adapter's `cacheable`; one without it is cached."""
+    """#605: the router forwards a family adapter's `cacheable`; one without it is cached."""
     sub: Any = SimpleNamespace(topic=SimpleNamespace(family=SimpleNamespace(family="heatmap")))
     other: Any = SimpleNamespace(topic=SimpleNamespace(family=SimpleNamespace(family="trades")))
     uncached = SimpleNamespace(cacheable=lambda _sub: False)

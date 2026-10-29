@@ -507,7 +507,7 @@ def test_a_trades_window_never_carries_the_prints_of_an_earlier_window() -> None
 
 
 def test_a_merged_window_of_packed_producer_parts_still_leaves_as_kind_6() -> None:
-    """Fable M-A (#605): the producer's parts are packed (`ws_wiring.heatmap_part`); a merged
+    """#605: the producer's parts are packed (`ws_wiring.heatmap_part`); a merged
     window rebuilds each column's kind-6 frame from its structured column, never failing over to
     structured because the part it started from was packed."""
     from candleviewer.ws.binary import HEATMAP_COLUMN

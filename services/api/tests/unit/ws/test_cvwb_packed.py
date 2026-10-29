@@ -1,4 +1,4 @@
-"""#605 (M-1): a packed CVWB frame (`binary.pack`, `Frame.raw`) is a part encoded once. It must be
+"""#605: a packed CVWB frame (`binary.pack`, `Frame.raw`) is a part encoded once. It must be
 byte-identical to the frame it was packed from on every later encode, with the header's flags,
 scales and time base the caller sets (what `render` and a `d` set per subscription and chunk), so
 a snapshot or a fan-out re-encodes only the 24-byte header. Every kind, and the gateway's render
@@ -22,7 +22,6 @@ from candleviewer.ws.binary import (
     FrameEncodeError,
     encode,
     encode_b64,
-    frame_size,
     pack,
 )
 from candleviewer.ws.cvwb_vectors import vector_frames
@@ -35,7 +34,6 @@ def test_every_vector_frame_packs_to_its_own_bytes(name: str, frame: Frame) -> N
     packed = pack(frame)
     assert packed.raw is not None and packed.records == () and pack(packed) is packed
     assert encode(packed) == encode(frame) and encode_b64(packed) == encode_b64(frame)
-    assert frame_size(packed) == frame_size(frame) == len(encode(frame))
 
 
 @settings(max_examples=300, deadline=None)

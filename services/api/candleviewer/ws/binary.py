@@ -157,13 +157,6 @@ def pack(frame: Frame) -> Frame:
     )
 
 
-def frame_size(frame: Frame) -> int:
-    """The encoded size of ``frame`` in bytes, without encoding it."""
-    if frame.raw is not None:
-        return len(frame.raw)
-    return HEADER.size + _body_size(frame, _kind(frame.body_kind))
-
-
 def _encode_packed(frame: Frame, kind: Kind, raw: bytes) -> bytearray:
     if len(raw) < HEADER.size or raw[5] != kind.id:
         raise FrameEncodeError(f"{kind.name}: a packed frame's bytes are not of its kind")
@@ -441,6 +434,5 @@ __all__ = [
     "decode_b64",
     "encode",
     "encode_b64",
-    "frame_size",
     "pack",
 ]

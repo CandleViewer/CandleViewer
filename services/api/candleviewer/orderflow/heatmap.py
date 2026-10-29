@@ -270,7 +270,7 @@ def window_column(
 def rebucket(column: HeatmapColumn, step: int) -> HeatmapColumn:
     """`column` on the coarser `step`, which its own step divides (24 §6.3): each row summed into
     the row of its price, re-centred on the column's mid; what leaves the window joins the
-    off-window totals. Vectorised (m-B): one `bincount` a side."""
+    off-window totals. Vectorised: one `bincount` a side."""
     if step % column.price_step_ticks:
         raise ValueError("the column's step does not divide the new step")
     mid = _mid(column.best_bid_ticks, column.best_ask_ticks)
@@ -484,9 +484,10 @@ _I64 = np.dtype[np.int64]
 
 
 class _Ring:
-    """A spec's columns, oldest first, columnar (M-B; 23 §6.1, §16.2, 24 §6.5): one preallocated
-    `(capacity, 2 x ROWS)` float64 buffer (a column's bid sizes in its row's first `ROWS` cells,
-    its ask sizes in the rest; 15.6 MiB at 2 000 columns) and one numpy vector a column field.
+    """A spec's columns, oldest first, columnar (23 §6.1, §16.2, 24 §6.5), so a spec stays within
+    its memory figure: one preallocated `(capacity, 2 x ROWS)` float64 buffer (a column's bid
+    sizes in its row's first `ROWS` cells, its ask sizes in the rest; 15.6 MiB at 2 000 columns)
+    and one numpy vector a column field.
     No per-column Python object is kept: a reader gets a `HeatmapColumn` built (copied) from its
     slot when it asks, so a column stays as it was when the slot is reused. Float64, not float32:
     24 §6.5 rounds each size from the float's exact value, which float32 would change.
@@ -524,7 +525,7 @@ class _Ring:
         if n > ROWS or len(column.ask_sizes) != n:
             raise ValueError("a column has at most ROWS rows, as many asks as bids (G-07a)")
         row = self._sizes[slot]
-        row[:] = 0.0  # n-D: no cell of the slot's last column outlives it
+        row[:] = 0.0  # no cell of the slot's last column outlives it
         row[:n] = np.asarray(column.bid_sizes, dtype=np.float64)
         row[ROWS : ROWS + n] = np.asarray(column.ask_sizes, dtype=np.float64)
         self._t_ms[slot], self._bucket[slot] = column.ts_ms, column.bucket_ms
@@ -1275,7 +1276,7 @@ class HeatmapTopic:
         binary = sub.effective.get("encoding") == "binary"
         per = (COLUMN_FRAME_BYTES, ROW_BYTES) if binary else (STRUCTURED_COLUMN_BYTES,
                                                                STRUCTURED_ROW_BYTES)  # fmt: skip
-        # M-D: the span is resolved once, here, before any yield, and copied: a column closing
+        # The span is resolved once, here, before any yield, and copied: a column closing
         # while the snapshot is spread reuses a ring slot, never the snapshot's. Its newest
         # column is the ring's at this generation, so `catch_up` sends exactly what closed after.
         ring = state.ring.newest(len(state.ring.newest_fitting(*per, limit, budget)))
@@ -1327,14 +1328,14 @@ class HeatmapTopic:
     def catch_up(
         self, sub: HeatmapSub, since: int
     ) -> Iterator[tuple[dict[str, Any], Any] | None] | list[Any] | None:
-        """The `d` frames of the columns that closed since generation `since` (m-A, M-E, M-F,
-        23 §7.1): a snapshot spread across loop turns holds a copy of the ring's newest columns
-        at `since` (`build_steps`), and these follow it. A ready spec's generation moves by one a
-        closed column (`_close`), so they are the columns of generations `since + 1` to now.
-        Each is built when it is read (the gateway reads one a step), and found by its distance
-        from the newest, so columns closing meanwhile do not move it; None for one the ring no
-        longer holds. Only what the subscription's encoding sends is built. None when more closed
-        than the ring holds (2 000 columns), which no snapshot waits for."""
+        """The `d` frames of the columns that closed since generation `since` (23 §7.1): a
+        snapshot spread across loop turns holds a copy of the ring's newest columns at `since`
+        (`build_steps`), and these follow it. A ready spec's generation moves by one a closed
+        column (`_close`), so they are the columns of generations `since + 1` to now. Each is
+        built when it is read (the gateway reads one a step), and found by its distance from the
+        newest, so columns closing meanwhile do not move it; None for one the ring no longer
+        holds. Only what the subscription's encoding sends is built. None when more closed than
+        the ring holds (2 000 columns), which no snapshot waits for."""
         held = self._held(sub)
         if held is None:
             return None
@@ -1362,7 +1363,7 @@ class HeatmapTopic:
     def catch_up_trim(
         self, sub: HeatmapSub, since: int, held: tuple[int, ...], binary: bool
     ) -> int | None:
-        """M-F (23 §6.1, G-03): how many of the snapshot's oldest columns (`held`, their `t_ms`,
+        """23 §6.1 (G-03): how many of the snapshot's oldest columns (`held`, their `t_ms`,
         oldest first) to leave out so it and the columns closed since `since` cost at most half
         the queue's bytes and frames together, each at its G-03 size: kind 6's, or the bound on
         its §14.5 JSON. A snapshot column the ring no longer holds counts at `ROWS` rows. At most
@@ -1388,11 +1389,11 @@ class HeatmapTopic:
         by_frames = max(0, len(held) + missed - self._queue_frames // 2)
         # The snapshot keeps its newest column (its last frame carries `s`): past half the queue
         # the catch-up alone is paced a `d` a step, the writer draining between, rather than the
-        # snapshot taken again (a restart a slow snapshot would repeat, M-E).
+        # snapshot taken again (a restart a slow snapshot would repeat, so it might never finish).
         return min(max(by_bytes, by_frames), max(0, len(held) - 1))
 
     def cacheable(self, sub: HeatmapSub) -> bool:
-        """m-D: never in the shared snapshot cache. Its generation moves every bucket, so an
+        """Never in the shared snapshot cache. Its generation moves every bucket, so an
         entry is rarely hit, and a render of up to half a queue would evict other families'."""
         return False
 
