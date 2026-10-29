@@ -425,7 +425,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-037 SwatchLegendItem
 
 - **Tier**: Atom · **Purpose**: one legend row (colour + label + value), building block for CMP-113 HeatmapLegend and chart legends.
-- **Props**: `color` (a semantic `color.*` token reference) · `label` · `value?` · `glyph?: string` (non-colour channel, e.g. `▲`/`▼`, `aria-hidden`; required when `color` encodes direction: buy/sell, up/down).
+- **Props**: `color` (a semantic `color.*` token reference) · `label` · `value?` · `glyph?: string` (non-colour channel, e.g. `▲`/`▼`, `aria-hidden`; required when `color` encodes direction: buy/sell, up/down) · `shape?: "square" | "disc" | "pair"`; `pair` draws two `size.icon` swatches side by side (36 × 16 px with a `space.1` gap), each with the 1 px `color.border.strong` outline: a disc in `color` carrying `glyph` and a square of equal area in `color2?` carrying `glyph2?` (the ▲ / ▼ in `color.text.inverse`, `type.num.xs`).
 - **A11y**: grouped under parent legend's `role="group"` with `aria-label`; each item is an `li` of the legend's `ul`; swatch and glyph are `aria-hidden`, so the label text carries the meaning.
 - **Tokens**: swatch `size.icon` square, fill = the keyed data token (context-dependent `color.*`), 1 px `color.border.strong` outline; gap `space.inset.sm`; row min-height `size.row.height`; label `type.ui.caption` + `color.text.secondary`; value = CMP-020 NumericText `type.num.sm` + `color.text.primary`.
 - **Storybook**: Default, WithoutValue, WithGlyph.
@@ -1275,14 +1275,14 @@ interface HeatmapCanvasProps {
 
 ### CMP-112 BigTradeBubble
 
-- **Tier**: Chart-primitive (trading) · **Purpose**: marker for a large trade print, sized/coloured by notional.
-- **Props**: `time` · `price` · `notional` · `side: "buy"|"sell"` · `sizeScale: "linear"|"log"` · `shape: "circle"|"square"|"diamond"|"text"`.
-- **A11y**: DOM-mirror marker (sparse — big trades are inherently low-frequency, so full per-marker mirroring is affordable, unlike the heatmap) with `aria-label` "Big sell, 42,000 USDT, 65,410, 14:32:01".
-- **Tokens**: `color.buy/sell`, `size.bubble.scale`.
-- **API sketch**: `interface BigTradeBubbleProps { time: number; price: number; notional: number; side: "buy"|"sell"; sizeScale: "linear"|"log"; shape: "circle"|"square"|"diamond"|"text"; }`
-- **Data contract**: driven by the aggregated-trades WS stream (`publicTrade.{symbol}`), filtered client-side by a notional threshold to flag "big trades"; no REST dependency.
-- **Storybook**: Circle, Square, Diamond, TextMode, LogScale.
-- **Tests**: unit, visual, axe (mirror), interaction (hover/focus detail tooltip).
+- **Tier**: Chart-primitive (trading) · **Purpose**: the big-trade mark on the chart — a disc (buy) or a square of equal area (sell) sized by notional under a bounded law, with an age band, an above-cap label or outline, a cluster count badge, a sparse DOM mirror and a CMP-197 tooltip; the legend row is CMP-199's.
+- **Props**: `time` · `price` · `notional` · `side: "buy"|"sell"` · `sizeScale: "sqrt"|"log"|"linear"` (`sqrt` = the area-linear law, the default) · `shape: "circle"|"square"|"diamond"|"text"` — buy → `circle`, sell → `square` of equal area; `diamond` available, unused by SCR-053; `text` = the above-cap label mode · `rMinPx` (3) · `rMaxPx` (24) · `ageBand: "fresh"|"aged"` · `capped: boolean` · `clusterSize?: number` (≥ 2 shows the badge) · `estimated?: boolean` (clusters).
+- **A11y**: DOM-mirror marker (sparse — big trades are inherently low-frequency, so full per-marker mirroring is affordable, unlike the heatmap) with `aria-label` "Big sell, 42,000 USDT, 65,410, 14:32:01"; the format is fixed as `"Big {side}, {notional} USDT, {price}, {time}"`; a cluster node reads `"Cluster of {n}, {notional} USDT, {side}, {time}, estimated"` (PROPOSED: D02 Table 3's name plus the literal word, D03-C10); the abbreviated notional expands per CMP-020 in both names (`1.2M` → "1,200,000", `1.9M` → "1,900,000"); each node is a `button`, `Enter` locates and moves focus to the plot (D02 Table 2), focus shows the CMP-197 tooltip, `Esc` dismisses it; the badge's name carries the literal word "estimated".
+- **Tokens**: `color.buy.default` / `color.sell.default` (fills; `.hc` via the theme), `color.cvd.buy` / `color.cvd.sell` (the CVD palette), `color.text.inverse` (the ▲ / ▼ glyph), `type.num.xs` (the glyph's fixed 10 px box, bold), `color.text.primary` (label, badge), `color.surface.canvas` (the halo), `opacity.bubble.aged` (PROPOSED, CR-1), `type.num.sm`, `border.thick`, `space.1`, `color.focus.ring` + `border.focus`; `size.bubble.scale` retired in favour of `rMinPx` / `rMaxPx`.
+- **API sketch**: `interface BigTradeBubbleProps { time: number; price: number; notional: number; side: "buy"|"sell"; sizeScale: "sqrt"|"log"|"linear"; shape: "circle"|"square"|"diamond"|"text"; rMinPx: number; rMaxPx: number; ageBand: "fresh"|"aged"; capped: boolean; clusterSize?: number; estimated?: boolean; }`
+- **Data contract**: driven by the engine's `BigTradeEvent` / `TradeClusterEvent` once E22-T02 echoes them on `trades.{symbol}`; never a client-side threshold; no REST dependency.
+- **Storybook**: `ChartEngine/BigTradeBubble` — Circle, Square, Diamond, TextMode, LogScale, SqrtScale, LinearScale, Aged, Capped, CappedOutline, Clustered, ClusterBadgeSmall, Hover, FocusVisible, Stale, Hidden, LodShed, CvdPalette, HighContrast, Light, Greyscale, ReducedMotionIdentical.
+- **Tests**: unit, visual, axe (mirror), interaction (hover/focus detail tooltip), the one-draw-call assertion (`bench/bubbles-sdf-labels`), the shape-carries-side assertion in greyscale, the `aria-label` format test, the "(estimated)" word test on cluster tooltips and the legend row, the aged-band contrast assertion (≥ 3:1 on the canvas in three themes).
 
 ### CMP-113 HeatmapLegend
 
@@ -2483,7 +2483,7 @@ interface OrderLineOverlayProps {
 - **Tier**: Chart-primitive · **Purpose**: generic sparse-event marker primitive underlying BigTradeBubble (CMP-112), LiquidationMarker (CMP-127), ImbalanceStackIndicator (CMP-132), and simple flags like Bar POC / Unfinished Auction.
 - **Props**: `time` · `price` · `icon|shape` · `color` · `tooltip: ReactNode`.
 - **A11y**: base DOM-mirror marker contract reused by all sparse-event primitives listed above.
-- **Tokens**: `color.marker.*`.
+- **Tokens**: the consumer's own side / status tokens (CMP-112: `color.buy.default` / `color.sell.default`; CMP-127: `color.status.danger.default`); no `color.marker.*` family exists.
 - **Storybook**: IconMarker, ShapeMarker.
 - **Tests**: unit, visual, axe.
 
@@ -2528,7 +2528,7 @@ interface OrderLineOverlayProps {
 ### CMP-199 ChartLegend (per-pane series/indicator legend with visibility toggles)
 
 - **Tier**: Chart-primitive (DOM overlay) · **Purpose**: top-left per-pane legend — row 0 is the pane-label row (2 px pane-focus bar, label, collapse chevron, pane menu), rows 1…n are series rows (8 × 8 shape swatch = CMP-037, label, cursor value, eye toggle); the **one home** for per-series visibility toggles and cursor values (E11-D02 D12, A-14: CMP-224 becomes the toolbar's indicator entry).
-- **Props**: `items: { id, label, kind, colorToken, value, visible, estimated? }[]` · `paneLabel` · `collapsed` · `onToggleVisible` · `onRemove?` (E13's remove-with-undo).
+- **Props**: `items: { id, label, kind, colorToken, value, visible, estimated? }[]`; `kind` gains `pair` (a disc + square swatch for a two-sided series — the Big trades row) · `paneLabel` · `collapsed` · `onToggleVisible` · `onRemove?` (E13's remove-with-undo).
 - **Variants**: per density (rows 32 / 24 / 24).
 - **States**: default · one hidden (eye-off icon, `color.text.tertiary` label, value `—`, the word "hidden" in the name) · all hidden (`6 series · 6 hidden`) · overflow "+N more" (visible rows ≤ ⌊0.3 × pane height / row height⌋, min 3) · popover open · collapsed (`6 series · 2 hidden`) · pane-label row focused · estimated series ("(estimated)" in the label and the accessible name).
 - **A11y**: one roving stop placed before its pane's plot: `↑/↓` rows, `←/→` a row's controls, `Space` / `Enter` toggle ("EMA 20 hidden" / "shown", polite), `Enter` on "+N more" opens a focus-managed popover (`Esc` closes it and returns focus), `Esc` back to the plot; the eye toggle is `aria-pressed` with the **stable name** "EMA 20 visible"; the shape swatch repeats the series kind so colour is never alone; labels ellipsise at 18 characters with the full name in the accessible name and tooltip.
