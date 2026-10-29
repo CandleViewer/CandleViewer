@@ -262,42 +262,42 @@ CITED_TABLE = """
 14 | 1550 | recommendations PROPOSED pending the owner's sessions: the preview as a real table
 15 | 139 | ### CMP-010 Slider
 15 | 144 | `role="slider"`, `aria-valuenow/min/max/text`
-15 | 231 | ### CMP-019 Icon
-15 | 271 | ### CMP-023 Progress Bar
-15 | 549 | ### CMP-049 Table (base data table)
-15 | 552 | `virtualized?: boolean` (default true above 50 rows)
-15 | 844 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
-15 | 1357 | ### CMP-118 AlgoProgressCard (emulated TWAP/Iceberg/Chase/Scaled)
-15 | 1382 | ### CMP-119 BracketEditor (SL/TP attach widget)
-15 | 1517 | ### CMP-130 SlippageEstimateChip
-15 | 1841 | ### CMP-158 SafetyInvariantNotice
-15 | 2712 | ### CMP-228 PreviewTile
-15 | 2714 | the live miniature preview inside settings dialogs
-22 | 6731 | /trade-groups:
-22 | 6772 | summary: Place one ticket across N accounts (fan-out) with per-leg overrides
-22 | 6788 | `403 risk_limit_breached` with one `errors[]` entry per offending leg: its `field`
-22 | 6822 | Fan-out is scheduled against a **per-UID** rate budget
-22 | 7046 | /trade-groups/{tradeGroupId}/amend:
-22 | 7111 | operationId: cancelTradeGroup
-22 | 13563 | /trade-groups/preview:
-22 | 13577 | who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
-22 | 15330 | name: X-Arm-Token
-22 | 18273 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600 }
-22 | 18414 | max_concurrent_orders: { type: ["integer", "null"], minimum: 1, maximum: 500 }
-22 | 18418 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600, default: 30 }
-22 | 19297 | levels: { type: integer, minimum: 2, maximum: 50 }
-22 | 19300 | distribution: { type: string, enum: [equal, linear, geometric] }
-22 | 19304 | description: ">1 weights size toward `to_price`.",
-22 | 19622 | CreateTradeGroupRequest:
-22 | 19666 | ResolvedLegParams:
-22 | 19700 | TradeGroupLeg:
-22 | 19751 | LegError:
-22 | 19768 | retryable: { type: boolean }
-22 | 22786 | TradeGroupPreview:
-22 | 22843 | rate_budget_exhausted,
-23 | 3149 | ### 14.8 `TickerUpdate`
-23 | 3327 | ### 15.1 `OrderUpdate`
-23 | 3737 | ### 15.5 `TradeGroupUpdate`
+15 | 232 | ### CMP-019 Icon
+15 | 272 | ### CMP-023 Progress Bar
+15 | 554 | ### CMP-049 Table (base data table)
+15 | 557 | `virtualized?: boolean` (default true above 50 rows)
+15 | 849 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
+15 | 1362 | ### CMP-118 AlgoProgressCard (emulated TWAP/Iceberg/Chase/Scaled)
+15 | 1387 | ### CMP-119 BracketEditor (SL/TP attach widget)
+15 | 1522 | ### CMP-130 SlippageEstimateChip
+15 | 1846 | ### CMP-158 SafetyInvariantNotice
+15 | 2717 | ### CMP-228 PreviewTile
+15 | 2719 | the live miniature preview inside settings dialogs
+22 | 6802 | /trade-groups:
+22 | 6843 | summary: Place one ticket across N accounts (fan-out) with per-leg overrides
+22 | 6859 | `403 risk_limit_breached` with one `errors[]` entry per offending leg: its `field`
+22 | 6893 | Fan-out is scheduled against a **per-UID** rate budget
+22 | 7117 | /trade-groups/{tradeGroupId}/amend:
+22 | 7182 | operationId: cancelTradeGroup
+22 | 13653 | /trade-groups/preview:
+22 | 13667 | who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
+22 | 15420 | name: X-Arm-Token
+22 | 18389 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600 }
+22 | 18530 | max_concurrent_orders: { type: ["integer", "null"], minimum: 1, maximum: 500 }
+22 | 18534 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600, default: 30 }
+22 | 19440 | levels: { type: integer, minimum: 2, maximum: 50 }
+22 | 19443 | distribution: { type: string, enum: [equal, linear, geometric] }
+22 | 19447 | description: ">1 weights size toward `to_price`.",
+22 | 19765 | CreateTradeGroupRequest:
+22 | 19809 | ResolvedLegParams:
+22 | 19843 | TradeGroupLeg:
+22 | 19894 | LegError:
+22 | 19911 | retryable: { type: boolean }
+22 | 22956 | TradeGroupPreview:
+22 | 23013 | rate_budget_exhausted,
+23 | 3189 | ### 14.8 `TickerUpdate`
+23 | 3367 | ### 15.1 `OrderUpdate`
+23 | 3777 | ### 15.5 `TradeGroupUpdate`
 24 | 135 | `mode="conservative"` rounds a buy limit _down_ and a sell limit _up_
 24 | 2086 | ### 8.7 Rate budgeting
 24 | 2117 | submission fails fast with `RATE_BUDGET_EXCEEDED`
@@ -325,7 +325,7 @@ CITED_TABLE = """
 16 | 113 | | **Compact** (default for trading surfaces)
 16 | 114 | | **Comfortable** (default for admin/onboarding/settings)
 16 | 125 | 1. Density changes spacing-token resolution only
-23 | 4380 | `oms.account_stale`
+23 | 4420 | `oms.account_stale`
 E32-D02 | 285 | Account stale (`oms.account_stale`
 E32-D02 | 369 | `ladder.cancel.confirm` · `ladder.cancelled`
 E32-D02 | 466 | stale refuses order entry, never a tighten
