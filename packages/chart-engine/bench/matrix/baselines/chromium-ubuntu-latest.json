@@ -1,0 +1,266 @@
+{
+  "schema": "cv-matrix-report/1",
+  "dryRun": false,
+  "runtime": "chromium",
+  "timestamp": "2026-10-29T18:26:11.038Z",
+  "cotenancy": false,
+  "manifest": {
+    "schema": "cv-version-manifest/1",
+    "machine": {
+      "cpu": "AMD EPYC 9V74 80-Core Processor",
+      "cpuCount": 4,
+      "totalMemMb": 15984,
+      "os": "linux",
+      "osBuild": "7.0.0-1017-azure",
+      "arch": "x64",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "driver": "webgl-vendor:Google Inc. (Google)",
+      "webview2Version": null
+    },
+    "runtime": "chromium",
+    "versions": {
+      "node": "20.19.5",
+      "electron": null,
+      "chromium": "156.0.8078.4",
+      "tauri": null,
+      "webview2": null,
+      "playwright": "1.64.1"
+    },
+    "flagSet": {
+      "name": "pinned-K01 (software GL; override with a real-GPU set on the reference machine, see README)",
+      "flags": [
+        "--use-gl=angle",
+        "--use-angle=swiftshader",
+        "--disable-gpu-vsync",
+        "--enable-webgl2",
+        "--force-color-profile=srgb"
+      ]
+    }
+  },
+  "manifestIncomplete": [],
+  "seed": "20260928",
+  "seed32": 2904068074,
+  "fixture": {
+    "seed": "20260928",
+    "seed32": 2904068074,
+    "barCount": 100000,
+    "sha256": "dedf0e86781c31341d6e54e992ad0cfe85c2b65e25011becaff131eb77a9e579",
+    "fnv1a": "7716744d",
+    "serializedChars": 289533856
+  },
+  "driverScriptSha256": "d8ee23927a3106dc62ff75b7a87b4e05f4109975627e425cd8874af63634359d",
+  "config": {
+    "reps": 3,
+    "seed": "20260928",
+    "bars": 100000,
+    "durationMs": 20000,
+    "soakMs": 1800000
+  },
+  "capabilities": {
+    "webgl2": true,
+    "EXT_color_buffer_float": true,
+    "r16fSampling": true,
+    "OES_texture_float_linear": true,
+    "instancing": true,
+    "offscreenCanvas": true,
+    "offscreenCanvasWorker": false,
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "vendor": "Google Inc. (Google)",
+    "maxTextureSize": 8192
+  },
+  "cells": [
+    {
+      "scenario": "B1",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.10000000000582077,
+      "p95": 0.19999999999708962,
+      "p99": 0.20000000001164153,
+      "p95PerRep": [
+        0.19999999999708962,
+        0.19999999999708962,
+        0.19999999999708962
+      ],
+      "outliers33": 0,
+      "maxMs": 1.5,
+      "drawCalls": 4,
+      "mirrorP95Ms": 0.19999999999708962,
+      "texUploadMedianMs": null,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.15,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 2.208,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.72,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.35
+      }
+    },
+    {
+      "scenario": "B2",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.10000000000582077,
+      "p95": 0.19999999999708962,
+      "p99": 0.3000000000029104,
+      "p95PerRep": [
+        0.20000000001164153,
+        0.19999999999708962,
+        0.19999999999708962
+      ],
+      "outliers33": 0,
+      "maxMs": 1.5,
+      "drawCalls": 4,
+      "mirrorP95Ms": 0.19999999999708962,
+      "texUploadMedianMs": null,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.15,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 0.798,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.72,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.35
+      }
+    },
+    {
+      "scenario": "B3",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.10000000000582077,
+      "p95": 0.20000000001164153,
+      "p99": 0.3000000000029104,
+      "p95PerRep": [
+        0.3000000000029104,
+        0.20000000001164153,
+        0.20000000001164153
+      ],
+      "outliers33": 0,
+      "maxMs": 3.3000000000029104,
+      "drawCalls": 3,
+      "mirrorP95Ms": 0.19999999999708962,
+      "texUploadMedianMs": null,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "dataWindowRecompute": 0,
+        "footprintTextGeometry": 0.866138,
+        "paneRedraw": 0.54,
+        "compositePresent": 0.36000000000000004,
+        "inputHandling": 0.05,
+        "candleGeometry": 0,
+        "heatmapUpload": 0,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0
+      }
+    },
+    {
+      "scenario": "B4",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.10000000000582077,
+      "p95": 0.5,
+      "p99": 1.7000000000116415,
+      "p95PerRep": [
+        0.39999999999417923,
+        0.5,
+        0.5
+      ],
+      "outliers33": 0,
+      "maxMs": 6.2000000000116415,
+      "drawCalls": 5,
+      "mirrorP95Ms": 0.19999999999708962,
+      "texUploadMedianMs": 0,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.05,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 0,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.74,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.36000000000000004
+      }
+    },
+    {
+      "scenario": "B5",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.10000000000582077,
+      "p95": 0.5,
+      "p99": 64.30000000000291,
+      "p95PerRep": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "outliers33": 114,
+      "maxMs": 81.40000000000873,
+      "drawCalls": 15,
+      "mirrorP95Ms": 0.19999999999708962,
+      "texUploadMedianMs": 0,
+      "soak": null,
+      "composition": {
+        "indicatorSeries": 3,
+        "orderLines": 50,
+        "layers": [
+          "A:bars+LOD",
+          "B:footprint+SDF",
+          "C:heatmap-ring",
+          "indicators",
+          "order-lines"
+        ],
+        "visibleBars": 368,
+        "indicatorPointsPerFrame": 1104,
+        "gates": {
+          "p95FrameMs": 16.7,
+          "maxDrawCalls": 40,
+          "exitCriterion4": {
+            "p50FrameMs": 16.666666666666668,
+            "p95FrameMs": 18.181818181818183
+          }
+        }
+      },
+      "modelledStageMs": {
+        "inputHandling": 0.25,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 2.208,
+        "footprintTextGeometry": 0.866138,
+        "heatmapUpload": 0,
+        "paneRedraw": 2.3864,
+        "overlayRedraw": 0.32,
+        "domMirrorSync": 0,
+        "compositePresent": 0.36000000000000004
+      }
+    },
+    {
+      "scenario": "B9",
+      "status": "ok",
+      "repetitions": 3,
+      "coldInitToFirstFrameMs": 3
+    }
+  ],
+  "residentMemoryMb": {
+    "source": "PowerShell WorkingSet64 sum by process name",
+    "shellMetrics": [],
+    "sampledMb": [],
+    "peakMb": null
+  },
+  "runError": null
+}
