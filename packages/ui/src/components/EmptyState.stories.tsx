@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
-import { EmptyState } from "./EmptyState.js";
+import { EmptyState, type EmptyStateErrorProps } from "./EmptyState.js";
 import { ProgressBar } from "./ProgressBar.js";
+import { formatRbacReason } from "./rbacReasons.js";
 
 /** Theme and density come from the toolbars; every state below renders at each of the 3 x 2 combinations. */
 const meta: Meta<typeof EmptyState> = {
@@ -106,6 +107,84 @@ export const SentenceForm: Story = {
   },
 };
 
+/** SCR-102's copy (E08-D05 §6.2); the T2 reasons: `search.check_cooldown` (PROPOSED) and CMP-079's own. */
+const COOLDOWN = "Checked a moment ago.";
+const OWNER_ONLY = formatRbacReason("rbac.owner_only", { verb: "refresh the instrument list" });
+const REF = "urn:cv:req:0b9c1e52-7d4a-4f8e-9a61-2c3d4e5f6a7b";
+const loadFailed: EmptyStateErrorProps = {
+  variant: "error",
+  live: "assertive",
+  title: "Couldn't load the instrument list.",
+  description: "CandleViewer can't reach its server. Next try in 30 s.",
+  reference: REF,
+  actions: [
+    { label: "Retry now", onClick: fn() },
+    { label: "Refresh from Bybit", onClick: fn(), disabledReason: OWNER_ONLY },
+  ],
+};
+
+/** No matches after a symbol check (B03): Clear search, and Check again T2 for 60 s, its reason under it (2a). */
+export const FilteredEmptyNoMatch: Story = {
+  args: {
+    variant: "filtered-empty",
+    title: "No USDT perpetual matches 'xyzzy'.",
+    description:
+      "v1 supports Bybit USDT linear perpetuals only. Search by base asset, for example BTC. Checked with the server at 13:02 UTC.",
+    actions: [
+      { label: "Clear search", onClick: fn(), variant: "secondary" },
+      { label: "Check again", onClick: fn(), variant: "secondary", disabledReason: COOLDOWN },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const check = canvas.getByRole("button", { name: "Check again" });
+    await userEvent.tab();
+    await userEvent.tab();
+    await expect(check).toHaveFocus();
+    await expect(check).toHaveAttribute("aria-disabled", "true");
+    await expect(check).toHaveAccessibleDescription(COOLDOWN);
+    await userEvent.keyboard("{Enter}");
+    await expect(canvas.getByRole("status")).toHaveTextContent(COOLDOWN);
+    await expect(check).toHaveFocus();
+  },
+};
+
+/** The status rule (B03): View symbol info and Clear search, both secondary, reached in order. */
+export const FilteredEmptyStatusRule: Story = {
+  args: {
+    variant: "filtered-empty",
+    title: "LUNAUSDT is not trading on Bybit.",
+    description: "Status: Closed. It can't be opened as a new chart.",
+    actions: [
+      { label: "View symbol info", onClick: fn(), variant: "secondary" },
+      { label: "Clear search", onClick: fn(), variant: "secondary" },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    for (const name of ["View symbol info", "Clear search"]) {
+      await userEvent.tab();
+      await expect(within(canvasElement).getByRole("button", { name })).toHaveFocus();
+    }
+  },
+};
+
+/** Load failed (B03): the alert once, Retry now, Refresh from Bybit T2 for a non-owner, then the Ref line. */
+export const ErrorWithTwoActions: Story = {
+  args: loadFailed,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("alert")).toHaveTextContent(
+      "Couldn't load the instrument list.",
+    );
+    await expect(canvas.getByText(`Ref ${REF}`)).toBeVisible();
+    const refresh = canvas.getByRole("button", { name: "Refresh from Bybit" });
+    await expect(refresh).toHaveAccessibleDescription(OWNER_ONLY);
+    await userEvent.tab();
+    await userEvent.tab();
+    await expect(refresh).toHaveFocus();
+  },
+};
+
 /** The five variants and both sentence cells, at heading level 2. */
 export const AllVariants: Story = {
   render: () => (
@@ -195,6 +274,7 @@ const themeMatrix = (theme: string): Story => ({
         description="The store is unavailable."
         cta={{ label: "Retry", onClick: fn() }}
       />
+      <EmptyState {...loadFailed} />
     </div>
   ),
 });

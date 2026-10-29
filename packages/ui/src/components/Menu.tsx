@@ -124,6 +124,7 @@ export interface MenuButtonProps extends MenuOwnProps {
   /** One button (CMP-001 or CMP-002): it opens the menu, names it and gets its ARIA. */
   trigger: ReactElement<MenuTriggerProps>;
   contextTarget?: undefined;
+  anchor?: undefined;
   /** Overrides the name the menu takes from its trigger. */
   "aria-label"?: string;
 }
@@ -133,11 +134,40 @@ export interface ContextMenuProps extends MenuOwnProps {
   /** The element the context trigger listens on (a grid, a row); focus returns to the element it opened from. */
   contextTarget: RefObject<HTMLElement | null>;
   trigger?: undefined;
+  anchor?: undefined;
   /** A context menu has no trigger to name it. */
   "aria-label": string;
 }
 
-export type MenuProps = MenuButtonProps | ContextMenuProps;
+/** A viewport rectangle in CSS px, such as a right-click's point (`width` and `height` 0). */
+export interface MenuAnchorRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** What a host-opened menu is positioned against: an element (the active option) or a rectangle. */
+export type MenuAnchor = Element | MenuAnchorRect;
+
+/**
+ * A host-opened menu (E08-D05 A-D05-13): the host opens it through `open` from its own `Shift+F10`, Menu key or
+ * right-click, below the start of `anchor`, read as it opens: the active option of a list whose focus stays in its
+ * input, or the pointer. Keep an element anchor mounted while the menu is open (or pass its rect): one removed then
+ * leaves the menu at the viewport's corner. Focus returns to the element that held it when the menu opened, so `Esc`
+ * lands back there; focus leaving the menu closes it.
+ */
+export interface AnchoredMenuProps extends MenuOwnProps {
+  anchor: MenuAnchor;
+  /** The host's: nothing else opens this menu. */
+  open: boolean;
+  trigger?: undefined;
+  contextTarget?: undefined;
+  /** A host-opened menu has no trigger to name it. */
+  "aria-label": string;
+}
+
+export type MenuProps = MenuButtonProps | ContextMenuProps | AnchoredMenuProps;
 
 type ItemState = "gated" | "disabled" | "busy" | undefined;
 
@@ -154,6 +184,14 @@ const stateOf = (item: MenuItem): ItemState => {
 };
 
 const opensSubmenu = (item: MenuItem): item is MenuSubmenuItem => item.items !== undefined;
+
+/** A host's anchor as a positioning reference: the element itself, or its rectangle with no element. */
+const referenceOf = (at: MenuAnchor): AnchorReference => {
+  if ("getBoundingClientRect" in at) return at;
+  const { x, y, width, height } = at;
+  const rect = { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height };
+  return { getBoundingClientRect: () => rect };
+};
 
 /** True when any item, at any depth, carries a T2 reason (the menu then renders its status region). */
 const anyReason = (items: readonly MenuItem[]): boolean =>
@@ -293,7 +331,9 @@ function listenForContext(
  * focus back on its item. With `contextTarget` instead of a trigger, a right-click opens it at the pointer (a
  * point-anchored virtual reference) and `Shift+F10` or the Menu key below the focused element; focus returns to
  * that element. Anchored by `useAnchoredPosition` with `fit`, its height capped to the room on its side (it
- * scrolls). It opens at once and fades out over `fast`; submenus switch at once.
+ * scrolls). With `anchor` instead (E08-D05 A-D05-13), the host opens it through `open` from its own keys or a
+ * right-click, below the anchor's start; focus returns to the element that held it when it opened. It opens at once
+ * and fades out over `fast`; submenus switch at once.
  */
 export function Menu(props: MenuProps): JSX.Element {
   const {
@@ -308,6 +348,7 @@ export function Menu(props: MenuProps): JSX.Element {
   const ariaLabel = props["aria-label"];
   const triggerElement = props.trigger;
   const contextTarget = props.contextTarget;
+  const hostAnchor = props.anchor;
   const id = useId();
   const [open, setHeld] = useControllable(openProp, defaultOpen);
   /** Where focus returns: the trigger, or the element a context menu opened from. */
@@ -351,8 +392,19 @@ export function Menu(props: MenuProps): JSX.Element {
 
   // A controlled open has no press to read its origin from, and a trigger may remount while the menu stays
   // open: every open render re-resolves it (the trigger by its id, else the context target) unless the held
-  // element is still in the document.
+  // element is still in the document. A host-opened menu reads its anchor and its origin (the element that
+  // held focus) once per opening instead.
+  const wasOpen = useRef(false);
   useLayoutEffect(() => {
+    const opening = open && !wasOpen.current;
+    wasOpen.current = open;
+    if (hostAnchor !== undefined) {
+      if (!opening) return;
+      const held = document.activeElement;
+      origin.current = held instanceof HTMLElement && held !== document.body ? held : null;
+      anchor.current = referenceOf(hostAnchor);
+      return;
+    }
     if (!open || origin.current?.isConnected === true) return;
     const found =
       triggerElement === undefined
@@ -463,6 +515,7 @@ export function Menu(props: MenuProps): JSX.Element {
     },
   };
 
+  // No trigger: a context menu or a host-opened one, start-aligned, closed by any focus that leaves it.
   const isContext = triggerElement === undefined;
   return (
     <>

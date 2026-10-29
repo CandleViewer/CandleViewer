@@ -109,9 +109,10 @@ roles and names.
 
 | Keys              | Action                                                                                                                    |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Typing            | Edits the query; once it settles (500 ms) the list opens: local matches, or "Searching…" while `asyncSearch` runs.        |
+| Typing            | Edits the query; once it settles (`settleMs`, 500 ms by default) the list opens: local matches, or "Searching…".          |
 | ↓ / ↑             | Open at once if closed; next / previous option: ↓ from the text reaches the first, ↑ on the first returns to it.          |
 | Alt+↓ / Alt+↑     | Open at once without moving / close.                                                                                      |
+| PageDown / PageUp | On an open list, move the active option by the visible rows (10 if unmeasured): no wrap; PageUp stops at the first.       |
 | Enter             | Chooses the active option (its label fills the input); a T2 option says its reason instead; none: the host's.             |
 | Esc               | Closes the list and keeps the text (in a CMP-043 Dialog, only the list); a second Esc, or one before the settle, bubbles. |
 | ← / →, Home / End | Move the caret. Tab leaves, closing the list without choosing.                                                            |
@@ -125,7 +126,10 @@ dialog's layer, where the overlay stack gives the list the first Esc. Status row
 search) are not options. One polite status says the count ("8 results") or the host's sentence once per settled
 query; "Searching…" is shown, never said. `asyncSearch` gets an `AbortSignal`; an older answer never overwrites a
 newer query's. A local source without `noResultsText` keeps the list closed when nothing matches; the count
-("0 results") is still said, so give a host sentence where an empty answer needs one.
+("0 results") is still said, so give a host sentence where an empty answer needs one. `animated={false}` opens the
+popup at once, without its fade. `onKeyDown(event, active)` runs first on every key outside an IME composition, with
+the active option; its `preventDefault()` leaves that key to the host (`Shift+Enter`, `Shift+F10`, the Menu key, its
+own Esc) and the combobox skips it.
 
 ### CommandPalette (CMP-059, APG Combobox with a grouped listbox popup, inside the APG Dialog (Modal))
 
@@ -445,11 +449,12 @@ still opens with `Shift+F10`, and `aria-selected` stays on the rows.
 | Pointer on another item of the parent        | Closes the open submenu; the pointer crossing the submenu's own row leaves focus inside it.                   |
 | Shift+F10, the Menu key (context menu)       | Opens it below the focused element in its target, on its first item; focus returns there.                     |
 | A right-click (context menu)                 | Opens it at the pointer instead of the browser's menu; focus returns to the pressed control, else the target. |
+| The host's `open` (host-opened menu)         | Opens it below the `anchor`'s start, on its first item; focus returns to the element that held it.            |
 
 | Element       | Role                                        | Name                                             | ARIA                                                                                                        |
 | ------------- | ------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
 | trigger       | button (the host's CMP-001 or CMP-002)      | its label                                        | `aria-haspopup="menu"`, `aria-expanded`, `aria-controls` → the menu                                         |
-| menu          | menu                                        | the trigger (`aria-labelledby`), or `aria-label` | `hidden` while closed, so `aria-controls` stays valid; a context menu requires `aria-label`                 |
+| menu          | menu                                        | the trigger (`aria-labelledby`), or `aria-label` | `hidden` while closed, so `aria-controls` stays valid; a context or host-opened menu requires `aria-label`  |
 | group         | group, a `separator` between groups         | its caption, when it has one                     | danger items always form the last group (H16)                                                               |
 | item          | menuitem, menuitemcheckbox or menuitemradio | its visible label                                | `aria-checked` on checkable items; `aria-keyshortcuts` for a shortcut; glyphs and key caps `aria-hidden`    |
 | submenu item  | menuitem                                    | its visible label                                | `aria-haspopup="menu"`, `aria-expanded`, `aria-controls` → the open submenu; the chevron `aria-hidden`      |
@@ -469,7 +474,11 @@ portals into the dialog's layer. An item with `items` opens a submenu: the same 
 `contextTarget` (a ref) instead of `trigger`, the menu is a context menu: no trigger renders, a right-click opens it at
 the pointer through a zero-size virtual reference (positioning only) and `Shift+F10` or the Menu key below the focused
 element; the target should be focusable, as a grid row is. The target should mount with the menu: one swapped or
-mounted later is bound on the menu's next render.
+mounted later is bound on the menu's next render. With `anchor` and a controlled `open` instead (E08-D05 A-D05-13),
+the host opens the menu from its own keys or a right-click: no trigger renders, the menu opens below the anchor's
+start (an element such as the active option of a list whose focus stays in its input, or a viewport rect, read as
+it opens; keep an element mounted while open), focus returns to the element that held it when it opened, and its T2
+items behave as in any menu.
 
 Submenu decisions (E05-S03):
 

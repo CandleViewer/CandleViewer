@@ -121,6 +121,30 @@ export const HitTarget: Story = {
   },
 };
 
+/**
+ * The `⋯` in a bar one row high (E08-D05 A-D05-15, SCR-102's detail bar): the box is `size.control.height` square,
+ * one row high at each density, so it keeps 24 × 24 compact and 32 × 32 comfortable without a variant.
+ */
+export const RowTarget: Story = {
+  render: () => (
+    <div style={col}>
+      {(["compact", "comfortable"] as const).map((density) => (
+        <div key={density} data-density={density} style={{ blockSize: "var(--size-row-height)" }}>
+          <IconButton icon="more-horizontal" variant="ghost" label={`Actions, ${density}`} />
+        </div>
+      ))}
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    for (const [density, side] of Object.entries({ compact: 24, comfortable: 32 })) {
+      const box = within(canvasElement)
+        .getByRole("button", { name: `Actions, ${density}` })
+        .getBoundingClientRect();
+      await expect([box.width, box.height]).toEqual([side, side]);
+    }
+  },
+};
+
 /** Gated and pressed buttons under the light and high-contrast themes; axe checks each theme. */
 const gatedMatrix = (theme: string): Story => ({
   globals: { theme },

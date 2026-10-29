@@ -4,7 +4,8 @@ import { expect, userEvent, waitFor, within } from "storybook/test";
 import { Button } from "./Button.js";
 import { Dialog } from "./Dialog.js";
 import { IconButton } from "./IconButton.js";
-import { Menu, type MenuButtonProps, type MenuItem } from "./Menu.js";
+import { Menu, type MenuAnchor, type MenuButtonProps, type MenuItem } from "./Menu.js";
+import { formatRbacReason } from "./rbacReasons.js";
 
 /** Room below and above the trigger, so the preferred placement is the one drawn. */
 const stage = {
@@ -445,6 +446,75 @@ export const ContextMenuKeyboard: Story = {
     await expect(page.getByRole("menuitem", { name: "15 m" })).toHaveFocus();
     await userEvent.keyboard("{Escape}{Escape}");
     await expect(row).toHaveFocus();
+  },
+};
+
+/** E08-D05 §6.3's actions for ETHUSDT as a Manager sees them: Record is T2, CMP-079's `rbac.owner_only`. */
+const RECORD = formatRbacReason("rbac.owner_only", { verb: "start recording" });
+const symbolActions: MenuItem[] = [
+  { id: "open", label: "Open in Chart 1", shortcut: ["Enter"], onSelect: noop },
+  { id: "new", label: "Open in new chart", shortcut: ["Shift", "Enter"], onSelect: noop },
+  { id: "record", label: "Record this symbol…", disabledReason: RECORD, onSelect: noop },
+];
+
+/** SCR-102's shape: focus stays in the search input, whose `Shift+F10` or Menu key opens the menu at the row. */
+function HostOpenedDemo(): JSX.Element {
+  const row = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={stage}>
+      <div
+        style={{
+          display: "grid",
+          gap: "var(--space-stack-xs)",
+          color: "var(--color-text-primary)",
+        }}
+      >
+        <input
+          aria-label="Search symbols"
+          defaultValue="eth"
+          onKeyDown={(event) => {
+            if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+            event.preventDefault();
+            setAnchor(row.current);
+            setOpen(true);
+          }}
+        />
+        <div ref={row}>ETHUSDT · the active option</div>
+      </div>
+      {anchor === null ? null : (
+        <Menu
+          anchor={anchor}
+          open={open}
+          onOpenChange={setOpen}
+          aria-label="Actions for ETHUSDT"
+          items={symbolActions}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Host-opened (E08-D05 A-D05-13): at the active option, not the input; the T2 item is reached and inert. */
+export const HostOpened: Story = {
+  render: () => <HostOpenedDemo />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const input = canvas.getByRole("textbox", { name: "Search symbols" });
+    input.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = page.getByRole("menu", { name: "Actions for ETHUSDT" });
+    await waitFor(() => expect(menu).toHaveAttribute("data-positioned"));
+    const row = canvas.getByText(/ETHUSDT/).getBoundingClientRect();
+    await expect(Math.abs(menu.getBoundingClientRect().left - row.left)).toBeLessThan(2);
+    await expect(menu.getBoundingClientRect().top).toBeGreaterThanOrEqual(row.bottom);
+    await userEvent.keyboard("{End}{Enter}");
+    const record = page.getByRole("menuitem", { name: "Record this symbol…" });
+    await expect(record).toHaveFocus();
+    await expect(canvas.getByRole("status")).toHaveTextContent(RECORD);
+    await userEvent.keyboard("{Escape}");
+    await expect(input).toHaveFocus();
   },
 };
 

@@ -41,6 +41,25 @@ interface ComboboxBase {
   /** The name outside a CMP-040 FormField (whose label names the input and the list), passed to the input. */
   readonly "aria-label"?: string;
   readonly "aria-labelledby"?: string;
+  /**
+   * The rest after the last keystroke, ms, before the query settles: the search runs, the list opens and its count
+   * is said. Default 500 (E05-D02's debounce); CMP-160 passes 300 (E08-D05 A-D05-6; #4703 G-row 3).
+   */
+  readonly settleMs?: number;
+  /**
+   * `false` opens the popup at once, without E05-D02's `motion.duration.fast` fade (E08-D05's hand-off, Table 4: none
+   * animated; #4703 G-row 2). Default `true`; reduced motion is a cut either way.
+   */
+  readonly animated?: boolean;
+  /**
+   * Runs first on every key in the input (none while an IME composes), with the active option: a host binds its own
+   * keys here (`Shift+Enter`, `Shift+F10`, the Menu key, its own `Esc`). `preventDefault()` skips the combobox's own
+   * handling of that key, so every APG key stays the combobox's unless the host takes it (E08-D05 A-D05-6).
+   */
+  readonly onKeyDown?: (
+    event: KeyboardEvent<HTMLInputElement>,
+    active: ComboboxOption | undefined,
+  ) => void;
 }
 
 /** Local options, filtered as the query settles; without `noResultsText` a no match keeps the list closed. */
@@ -63,6 +82,8 @@ export type ComboboxProps = ComboboxBase & (LocalSource | AsyncSource);
 
 /** A query settles this long after the last keystroke (D02F CMP-048): the search runs, the count is said. */
 const SETTLE_MS = 500;
+/** Page Up / Page Down's step when nothing is laid out to measure a page by: the list's ten-row cap. */
+const FALLBACK_PAGE_ROWS = 10;
 /** The keys a gated input refuses besides the editing ones: those that would open the list. */
 const GATED_KEYS: ReadonlySet<string> = new Set(["ArrowDown", "ArrowUp"]);
 /** The active option (-1: the text) and whether the pointer put it there, so each move keeps its scroll decision. */
@@ -97,17 +118,26 @@ function marked(label: string, query: string): JSX.Element | string {
   );
 }
 
+/** One page for Page Up / Page Down: the rows that fit the list's visible height (by its first row), else the cap. */
+function pageRows(list: HTMLElement | null): number {
+  const view = list?.getBoundingClientRect().height ?? 0;
+  const row = list?.querySelector(".cv-select__row")?.getBoundingClientRect().height ?? 0;
+  return view > 0 && row > 0 ? Math.max(1, Math.floor(view / row)) : FALLBACK_PAGE_ROWS;
+}
+
 /**
  * CMP-048: the editable combobox with list autocomplete (APG). Focus stays in the input and
- * `aria-activedescendant` names the active option. Typing waits for the query to settle (500 ms after the last
- * keystroke): then local `options` filter, or `asyncSearch` runs with "Searching…" while it is in flight, and the
- * list opens; an older answer never overwrites a newer query's, and an arrow opens the list at once. The count, or
+ * `aria-activedescendant` names the active option. Typing waits for the query to settle (`settleMs`, 500 ms after the
+ * last keystroke by default): then local `options` filter, or `asyncSearch` runs with "Searching…" while it is in
+ * flight, and the list opens; an older answer never overwrites a newer query's, an arrow opens the list at once, and
+ * Page Up / Page Down move by the visible rows within an open list. The count, or
  * the host's sentence, is said politely once per settled query. The list portals and positions as CMP-017 does
  * and is a layer of the overlay stack: inside a CMP-043 Dialog it portals into the dialog's layer, and the first
  * `Esc` closes the list only.
  */
 export function Combobox(props: ComboboxProps): JSX.Element {
   const { value, onChange, loading = false, invalid = false, asyncSearch } = props;
+  const { settleMs = SETTLE_MS, animated = true } = props;
   const control = useFieldControl(props.disabled, props.disabledReason, invalid, undefined);
   const { reason } = control;
   const unavailable = reason.gated || reason.disabled;
@@ -192,7 +222,7 @@ export function Combobox(props: ComboboxProps): JSX.Element {
     timer.current = setTimeout(() => {
       setSettled(true);
       run(latest.current);
-    }, SETTLE_MS);
+    }, settleMs);
   };
   const choose = (index: number): void => {
     const option = shown[index];
@@ -205,8 +235,11 @@ export function Combobox(props: ComboboxProps): JSX.Element {
   };
 
   const handleKey = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.nativeEvent.isComposing) return;
+    const prevented = event.defaultPrevented; // before the host's turn
+    props.onKeyDown?.(event, current >= 0 ? shown[current] : undefined);
     const { key, altKey } = event;
-    if (unavailable || event.nativeEvent.isComposing) return;
+    if (unavailable || event.defaultPrevented !== prevented) return; // gated, or the host took the key
     if (event.ctrlKey || event.metaKey || event.shiftKey) return; // chords are the host's
     if (key === "ArrowDown" || key === "ArrowUp") {
       event.preventDefault();
@@ -221,6 +254,18 @@ export function Combobox(props: ComboboxProps): JSX.Element {
       const last = results().length - 1;
       const index = key === "ArrowDown" ? Math.min(current + 1, last) : current - 1;
       setActive({ index: Math.max(index, -1), pointer: false });
+    } else if (
+      (key === "PageDown" || key === "PageUp") &&
+      expanded &&
+      shown.length > 0 &&
+      !altKey
+    ) {
+      // One visible page (E13-D02 D3, adopted by E08-D05 A-D05-6), within the list: no wrap, never back to the text.
+      event.preventDefault();
+      const page = pageRows(document.getElementById(listId));
+      const down = Math.min(current + page, shown.length - 1);
+      const up = current < 0 ? current : Math.max(current - page, 0);
+      setActive({ index: key === "PageDown" ? down : up, pointer: false });
     } else if (key === "Enter" && current >= 0 && !altKey) {
       event.preventDefault(); // with none active, Enter is the host's
       choose(current);
@@ -266,6 +311,7 @@ export function Combobox(props: ComboboxProps): JSX.Element {
       ref={popup}
       role="presentation"
       className="cv-combobox__popup"
+      data-animated={animated ? undefined : "false"}
       onMouseDown={(event) => event.preventDefault()}
     >
       <div
