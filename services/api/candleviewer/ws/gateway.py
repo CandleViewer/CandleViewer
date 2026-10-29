@@ -174,6 +174,7 @@ from candleviewer.ws.limits import (
     AUTH_CALL_TIMEOUT_S,
     AUTH_TIMEOUT_S,
     ENVELOPE_ID_MAX_LEN,
+    INBOUND_WEIGHT_VALUES,
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_CONTAINERS,
     MAX_JSON_DEPTH,
@@ -1128,16 +1129,29 @@ class _Connection:
         if pong_bound and pong:
             self.close_with("protocol_violation")
             return _OVERSIZE
-        if not self.charge(pong=pong, weight=inbound_frame_weight(size)):
+        # #4924: a JSON frame's values, over-counted on its text once, here, and up to one past
+        # the bound only (`_parse` refuses the rest); a MessagePack frame's after its decode.
+        counted = json_values_over_count(raw) if isinstance(raw, str) and not self.msgpack else 0
+        weight = inbound_frame_weight(size, min(counted, MAX_MSGPACK_VALUES + 1))
+        charged_as = self.charge(pong=pong, weight=weight)
+        if charged_as is None:
             return _REFUSED
-        frame = self._parse(raw, values)
+        decoded: list[int] = []
+        frame = self._parse(raw, values, counted, decoded)
         if pong_bound and isinstance(frame, dict) and frame.get("t") == "pong":
             self.close_with("protocol_violation")  # its `t` comes later, or is written otherwise
             return _OVERSIZE
+        if charged_as == "pong" and not (isinstance(frame, dict) and frame.get("t") == "pong"):
+            # It opened with `t: "pong"` and is another kind: the rate counts it as any frame.
+            if self.charge(pong=False, weight=weight) is None:
+                return _REFUSED
+        if decoded:  # MessagePack: the values it held, debited now that they are known
+            self.rate.debit(decoded[0] // INBOUND_WEIGHT_VALUES)
         return frame
 
-    def charge(self, *, pong: bool, weight: int) -> bool:
-        """Charge one inbound frame before it is decoded (§8.5); False when it is refused.
+    def charge(self, *, pong: bool, weight: int) -> str | None:
+        """Charge one inbound frame before it is decoded (§8.5): `"pong"` when the `pong` budget
+        took it, `"rate"` when the inbound rate did, None when it is refused.
 
         A `pong` (`decode` has read its leading `t` from the first `auth_ok`) takes from its own
         budget first; past it, and for every other frame, the inbound rate takes `weight` tokens,
@@ -1146,27 +1160,31 @@ class _Connection:
         never read), the next the `4429` close, which the close's metric and audit row record."""
         now = self.clock()
         if pong and self.pongs.allow(now):
-            return True
+            return "pong"
         if self.rate.allow(now, weight):
-            return True
+            return "rate"
         self.rate_strikes += 1
         if self.rate_strikes > 1:
             self.close_with("client_rate_limited", retry_after_ms=1000)
         else:
             self.push(build_ws_error("client_rate_limited", id=None))
-        return False
+        return None
 
-    def _parse(self, raw: str | bytes, values: int) -> Any:
-        """`decode`'s parse of a frame within its size caps: the decoded value, `[]` if refused."""
+    def _parse(self, raw: str | bytes, values: int, counted: int, decoded: list[int]) -> Any:
+        """`decode`'s parse of a frame within its size caps: the decoded value, `[]` if refused.
+        `counted` is a JSON frame's value over-count (`json_values_over_count`); a MessagePack
+        decode appends the values it charged to `decoded`."""
         try:
             if self.msgpack:
-                return [] if isinstance(raw, str) else decode_client_frame(raw, max_values=values)
+                if isinstance(raw, str):
+                    return []
+                return decode_client_frame(raw, max_values=values, charged=decoded)
             if isinstance(raw, bytes):
                 return []  # a binary frame on cv.v1.json: a violation, never decoded
             openers = raw.count("[") + raw.count("{")  # not string-aware: it can only over-count
             if openers > MAX_JSON_CONTAINERS:
                 return []  # SR-184: too many containers -> protocol violation, never decoded
-            if json_values_over_count(raw) > MAX_MSGPACK_VALUES:
+            if counted > MAX_MSGPACK_VALUES:
                 return []  # #4924: past the SR-185 value bound, as on msgpack -> never decoded
             value = json.loads(raw)  # the C decoder; its nesting is bounded by the cap above
             if openers > MAX_JSON_DEPTH and json_nests_deeper(value, MAX_JSON_DEPTH):

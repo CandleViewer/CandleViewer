@@ -393,6 +393,15 @@ class InboundRateLimiter:
         self._minute += weight
         return True
 
+    def debit(self, tokens: int) -> None:
+        """Add `tokens` to the frame `allow` admitted last, after its decode (§8.5, #4924): later
+        frames are refused until both windows have room again. It adds no stamp, so the bound on
+        the stamps holds; with none (nothing admitted yet) there is nothing to add to."""
+        if tokens > 0 and self._stamps:
+            at, weight = self._stamps[-1]
+            self._stamps[-1] = (at, weight + tokens)
+            self._minute += tokens
+
 
 class PongBudget:
     """§8.5: a token bucket on the connection's clock, `burst` tokens refilled at `per_second`. From

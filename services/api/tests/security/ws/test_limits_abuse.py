@@ -376,9 +376,9 @@ def test_x02_frames_near_the_cap_past_the_rate_are_refused_unread_counted_and_au
     parsed: list[int] = []
     parse = gateway._Connection._parse
 
-    def spy(conn: gateway._Connection, raw: str | bytes, values: int) -> Any:
+    def spy(conn: gateway._Connection, raw: str | bytes, *rest: Any) -> Any:
         parsed.append(len(raw))
-        return parse(conn, raw, values)
+        return parse(conn, raw, *rest)
 
     def big(name: str) -> dict[str, Any]:
         return {"t": "ping", "id": name, "p": {"pad": "x" * 250_000}}
@@ -449,8 +449,9 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
     world: RawWorld, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AC-29: a principal with market data only (V) sends, each second of a minute, two frames of 50
-    private-family topics, and every third second one frame near 256 KiB, as often as its weight
-    lets the minute's 300 tokens hold the rest (8 tokens each, §8.5; #4924). The near-cap frame
+    private-family topics, and every fourth second one frame near 256 KiB, as often as its weight
+    lets the minute's 300 tokens hold the rest (§8.5, #4924: 10 tokens for its bytes and its 10 000
+    names on JSON, 8 on MessagePack). The near-cap frame
     gets one small `err` and no record; the other 120 are denied, 20 of them recorded (one record
     each, never one per topic) and the rest counted. Four `orders.submit` records go through the
     same `AuditWriter`, two while the 20 records are being written and two after: each lands in
@@ -491,7 +492,7 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
             big = _near_cap_sub(c)
             for second in range(MINUTE):
                 world.clock.now = float(second)
-                if second % 3 == 0:  # 20 x 8 tokens, + 120 + `hello` and `auth`: inside the 300
+                if second % 4 == 0:  # 15 x 10 tokens, + 120 + `hello` and `auth`: inside the 300
                     c.send_raw(big)
                     err = c.recv()
                     assert err == {"t": "err", "id": "big", "p": too_many}
@@ -523,5 +524,5 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
     assert [r for r in rows if r["action"] == "orders.submit"] == orders  # each one landed
     assert len(rows) == BUDGET + len(ordered)  # nothing else: no store growth with the flood
     assert (verdict.verified, verdict.entries_checked) == (True, len(rows))  # the fake's chain
-    assert (unaudited(), refused(), writer.refused_total) == (2 * MINUTE - BUDGET, MINUTE // 3, 0)
+    assert (unaudited(), refused(), writer.refused_total) == (2 * MINUTE - BUDGET, MINUTE // 4, 0)
     assert [f() for f in failed] == [0, 0, 0, 0]  # no audit row failed, timed out or was dropped

@@ -124,9 +124,13 @@ class _Budget:
         return dict(pairs)
 
 
-def decode_client_frame(raw: bytes, *, max_values: int = MAX_MSGPACK_VALUES) -> JsonValue:
+def decode_client_frame(
+    raw: bytes, *, max_values: int = MAX_MSGPACK_VALUES, charged: list[int] | None = None
+) -> JsonValue:
     """One client frame's decoded value, or `MsgpackFrameError` (SR-185). `max_values` can only
-    lower the value budget: the gateway passes `MAX_PREAUTH_MSGPACK_VALUES` until `auth_ok`."""
+    lower the value budget: the gateway passes `MAX_PREAUTH_MSGPACK_VALUES` until `auth_ok`. A
+    decode that succeeds appends to `charged`, if given, the values it charged (the gateway's
+    post-decode debit of the inbound rate, §8.5; #4924)."""
     if not isinstance(raw, bytes | bytearray):  # a memoryview's len() is not its byte count
         raise MsgpackFrameError("a msgpack frame is binary")
     if len(raw) > MAX_INBOUND_FRAME_BYTES:
@@ -155,6 +159,8 @@ def decode_client_frame(raw: bytes, *, max_values: int = MAX_MSGPACK_VALUES) -> 
     except ValueError as exc:  # format, stack, truncated input, lengths, map keys: no content
         raise MsgpackFrameError(f"undecodable frame: {type(exc).__name__}") from exc
     _check(value)
+    if charged is not None:
+        charged.append(budget.limit - budget.left)
     return value
 
 

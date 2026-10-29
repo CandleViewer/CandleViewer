@@ -263,14 +263,22 @@ def json_depth_exceeds(text: str, limit: int) -> bool:
 
 
 #: §8.5 (#4924, an orchestrator contract decision of 2026-10-29): an inbound frame takes one token
-#: of the inbound rate, plus one per full 32 KiB of its encoded bytes, before it is decoded. A
-#: frame at `MAX_INBOUND_FRAME_BYTES` takes 9; one at the pre-auth cap, or any `pong`, takes 1.
+#: of the inbound rate, plus one per full 32 KiB of its encoded bytes, plus one per full 4 096
+#: values (`INBOUND_WEIGHT_VALUES`). A JSON frame's values are its pre-decode over-count
+#: (`json_values_over_count`), charged with the rest before it is decoded; a MessagePack frame's
+#: are the values its decoder charged, debited right after decode (the C unpacker reads no value
+#: before its header is checked, so its count is known only then). A frame at
+#: `MAX_INBOUND_FRAME_BYTES` takes 9 for its bytes; one at the value bound 4 more; one at the
+#: pre-auth cap, or any `pong`, takes 1.
 INBOUND_WEIGHT_BYTES = 32 * 1024
+INBOUND_WEIGHT_VALUES = 4096
 
 
-def inbound_frame_weight(size: int) -> int:
-    """The inbound-rate tokens of a frame of `size` encoded bytes (§8.5)."""
-    return 1 + size // INBOUND_WEIGHT_BYTES
+def inbound_frame_weight(size: int, values: int = 0) -> int:
+    """The inbound-rate tokens of a frame of `size` encoded bytes holding `values` values (§8.5).
+    The caller counts `values` only up to one past the value bound (`codec.MAX_MSGPACK_VALUES`), so
+    a frame past it is refused as `frame_malformed`, never priced out of the rate's reach."""
+    return 1 + size // INBOUND_WEIGHT_BYTES + values // INBOUND_WEIGHT_VALUES
 
 
 def json_values_over_count(text: str) -> int:

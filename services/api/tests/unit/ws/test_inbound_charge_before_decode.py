@@ -315,8 +315,9 @@ def test_limits_value_bound_holds_the_widest_schema_valid_sub_and_ctl_with_room(
 # -- the frame weight (#4924): one token, plus one per full 32 KiB, before decode -----------------
 
 
-def test_inbound_frame_weight_is_one_plus_one_per_full_32_kib() -> None:
+def test_inbound_frame_weight_is_one_plus_one_per_full_32_kib_and_4096_values() -> None:
     assert [inbound_frame_weight(n) for n in (0, 32_767, 32_768, 65_535, 65_536)] == [1, 1, 2, 2, 3]
+    assert [inbound_frame_weight(0, v) for v in (4_095, 4_096, 16_384, 16_385)] == [1, 2, 5, 5]
     assert (
         inbound_frame_weight(MAX_PREAUTH_FRAME_BYTES) == inbound_frame_weight(MAX_PONG_BYTES) == 1
     )
@@ -355,12 +356,13 @@ def test_charge_a_frame_whose_weight_the_tokens_left_cannot_cover_is_refused_unr
 def test_charge_a_reconnect_re_subscribing_its_set_with_the_widest_subs_is_never_refused() -> None:
     """§9.2: no resumption, so a client reconnecting sends `hello`, `auth` and its whole set again:
     `MAX_SUBSCRIPTIONS` topics in `sub`s of `MAX_TOPICS_PER_SUB`, each here the widest the schema
-    allows, all in the same instant. None is rate-limited, and the tokens they take leave most of
-    the second's."""
+    allows, all in the same instant. None is rate-limited: with their bytes and their values they
+    take 18 of the second's 30 tokens."""
     sub = _widest_sub()
     frames = MAX_SUBSCRIPTIONS // MAX_TOPICS_PER_SUB
-    weight = inbound_frame_weight(len(json.dumps(sub).encode()))
-    assert weight == 2 and 2 + frames * weight <= RATE_PER_SECOND // 2
+    text = json.dumps(sub)
+    weight = inbound_frame_weight(len(text.encode()), json_values_over_count(text))
+    assert weight == 4 and 2 + frames * weight <= RATE_PER_SECOND  # 18 of the second's 30
     w = _World()
     for _ in range(3):  # reconnecting, again and again: each socket's budget is its own
         with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
@@ -372,3 +374,65 @@ def test_charge_a_reconnect_re_subscribing_its_set_with_the_widest_subs_is_never
                 assert (reply["t"], reply["id"]) == ("sub_ok", f"s{n}")
             _send(ws, {"t": "ping", "id": "p"})
             assert _recv(ws)["t"] == "pong"
+
+
+def _compact_at_bound(id: str) -> str:
+    """A JSON `ping` at the value bound in under 32 KiB: the container cap's lists, then `0`s."""
+    head, tail = f'{{"t":"ping","id":"{id}","p":{{"pad":[', "]}}"
+    lists = ",".join(["[]"] * (MAX_JSON_CONTAINERS - 3))
+    text = head + lists + ",0" * (MAX_MSGPACK_VALUES - json_values_over_count(head + lists + tail))
+    text += tail
+    assert json_values_over_count(text) == MAX_MSGPACK_VALUES and len(text) < 32 * 1024
+    return text
+
+
+def _msgpack_at_bound(id: str) -> bytes:
+    """A MessagePack `ping` its decoder charges the value bound exactly, in about 16 KiB."""
+    pad = [[None] * n for n in [128] * 125 + [119, 0]]
+    packed: bytes = msgpack.packb({"t": "ping", "id": id, "p": {"pad": pad}})
+    charged: list[int] = []
+    decode_client_frame(packed, charged=charged)
+    assert charged == [MAX_MSGPACK_VALUES]
+    return packed
+
+
+@pytest.mark.parametrize("encoding", [JSON[0], MSGPACK[0]], ids=["json-charged", "msgpack-debited"])
+def test_charge_a_frame_at_the_value_bound_takes_five_tokens_however_small(encoding: str) -> None:
+    """JSON: 1 + 0 + 4 before decode. MessagePack: 1 before decode, 4 debited right after it. So
+    six fit the second's 30 and the seventh is refused before it is decoded."""
+    conn = _connection(encoding, authed=True)
+    build = _compact_at_bound if encoding == JSON[0] else _msgpack_at_bound
+    answers = [_decode(conn, build(f"v{n}")) for n in range(7)]
+    assert [a is _REFUSED for a in answers] == [False] * 6 + [True]
+    assert all(a["t"] == "ping" for a in answers[:6])
+
+
+def test_inbound_rate_limiter_debit_adds_to_the_last_frame_admitted() -> None:
+    limiter = InboundRateLimiter()
+    limiter.debit(5)  # nothing admitted yet: nothing to add to
+    assert limiter.allow(0.0, 1)
+    limiter.debit(28)  # 29 of 30
+    assert limiter.allow(0.0, 1) and not limiter.allow(0.0, 1)
+    assert limiter.allow(1.0, 30)  # the second has passed; the minute holds 60 of 300
+
+
+@_ENCODINGS
+def test_charge_a_small_frame_led_by_t_pong_that_decodes_to_another_kind_is_charged_to_the_rate(
+    encoding: str,
+) -> None:
+    """From `auth_ok`, a frame that opens with `t: "pong"` takes the `pong` budget; one that turns
+    out to be another kind (a later `t` wins) is then counted by the rate too, and refused as the
+    rate refuses one when it has no room."""
+    if encoding == JSON[0]:
+        frame: str | bytes = '{"t":"pong","t":"ping","id":"x"}'
+    else:  # a fixmap of 2: `t: "pong"`, then `t: "ping"`
+        frame = b"\x82\xa1t\xa4pong\xa1t\xa4ping"
+    roomy = _connection(encoding, authed=True)
+    assert _decode(roomy, frame)["t"] == "ping"  # room: counted, and handled
+    assert not roomy.rate.allow(0.0, RATE_PER_SECOND)  # the rate took one of its 30
+    conn = _connection(encoding, authed=True)
+    _spent(conn, encoding)
+    _queued(conn)
+    assert _decode(conn, frame) is _REFUSED
+    (err,) = _queued(conn)
+    assert (err["p"]["code"], conn.rate_strikes) == ("client_rate_limited", 1)
