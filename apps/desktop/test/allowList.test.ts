@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ALLOWED_IPC_CHANNELS, buildAllowList, isChannelAllowed } from "../src/preload/allowList";
+import {
+  ALLOWED_IPC_CHANNELS,
+  ALLOWED_IPC_EVENTS,
+  buildAllowList,
+  isChannelAllowed,
+} from "../src/preload/allowList";
 
 describe("preload allow-list builder", () => {
   it("has exactly the named channels the ShellPort surface needs (SR-111)", () => {
@@ -8,7 +13,11 @@ describe("preload allow-list builder", () => {
       "cv:keychain:getKekHandle",
       "cv:updates:check",
       "cv:crashLog:append",
+      "cv:gpu:retry",
     ]);
+    expect(ALLOWED_IPC_EVENTS).toEqual(["cv:gpu:crashed"]);
+    expect(isChannelAllowed("cv:gpu:crashed")).toBe(false);
+    expect(isChannelAllowed("cv:gpu:retry", ALLOWED_IPC_EVENTS)).toBe(false);
   });
 
   it("rejects a channel not present in the allow-list", () => {

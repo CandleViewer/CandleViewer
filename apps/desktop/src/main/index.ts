@@ -18,6 +18,8 @@ import { applyGpuFlags, probeGpu } from "./gpu.js";
 import { getKekHandle } from "./keychain.js";
 import { checkForUpdate } from "./updateChannel.js";
 import { createCrashLog, type CrashLog } from "./crashLog.js";
+import type { GpuCrash } from "./gpuCrash.js";
+import { createGpuRecovery } from "./gpuRecovery.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -59,6 +61,21 @@ app.on("web-contents-created", (_event, contents) => {
     logAuditEvent("webview-denied", { url: safeOriginOf(params["src"] ?? "") });
     event.preventDefault();
   });
+});
+
+// GPU-process crashes (F15, E10-S04), counted from load so one before ready counts too. Each goes
+// to the windows on the shell page; before ready there are none, and so no dev-server decision.
+const gpuRecovery = createGpuRecovery({
+  argv: process.argv.slice(1),
+  relaunch: relaunchApp,
+  audit: logAuditEvent,
+});
+let readyDevServerUrl: DevServerUrl | undefined;
+app.on("child-process-gone", (_event, details) => {
+  const crash = gpuRecovery.childProcessGone(details);
+  if (crash !== undefined) {
+    sendGpuCrashed(crash, readyDevServerUrl);
+  }
 });
 
 /**
@@ -357,12 +374,39 @@ function fromShellPageWithArg<T>(
 /** Registers the fixed set of ipcMain handlers backing the preload bridge (SR-111). */
 function installIpcHandlers(devServerUrl: DevServerUrl | undefined, crashLog: CrashLog): void {
   ipcMain.handle("cv:gpu:info", fromShellPage(devServerUrl, probeGpu));
+  // No arguments: fromShellPage never hands the renderer's to the reply (F15, E10-S04).
+  ipcMain.handle("cv:gpu:retry", fromShellPage(devServerUrl, gpuRecovery.retry));
   ipcMain.handle("cv:keychain:getKekHandle", fromShellPage(devServerUrl, getKekHandle));
   ipcMain.handle("cv:updates:check", fromShellPage(devServerUrl, checkForUpdate));
   ipcMain.handle(
     "cv:crashLog:append",
     fromShellPageWithArg(devServerUrl, (entry) => crashLog.append(entry)),
   );
+}
+
+/**
+ * Sends a GPU-process crash (F15) to each window whose page is the shell's own, by the navigation
+ * rule; `send` reaches a window's main frame only.
+ */
+function sendGpuCrashed(crash: GpuCrash, devServerUrl: DevServerUrl | undefined): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) {
+      continue;
+    }
+    if (isNavigationAllowed(win.webContents.getURL(), devServerUrl)) {
+      win.webContents.send("cv:gpu:crashed", crash);
+    }
+  }
+}
+
+/**
+ * A relaunch: hardware acceleration cannot be turned back on in a running app (F15). `app.exit(0)`
+ * emits no `before-quit` and doesn't wait for the crash log's async appends, so a caller awaits its
+ * append first.
+ */
+function relaunchApp(args: string[]): void {
+  app.relaunch({ args });
+  app.exit(0);
 }
 
 app.on("window-all-closed", () => {
@@ -381,6 +425,7 @@ void app.whenReady().then(() => {
   const csp = buildCsp();
   // One dev-server decision per run, so the window's load, its guards and the IPC check agree.
   const devServerUrl = acceptedDevServerUrl();
+  readyDevServerUrl = devServerUrl;
   installCspHeader(csp);
   installAppProtocol(csp);
   installPermissionHandler();

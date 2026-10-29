@@ -1,12 +1,14 @@
-import { contextBridge, ipcRenderer } from "electron";
-import { ALLOWED_IPC_CHANNELS, isChannelAllowed } from "./allowList.js";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { ALLOWED_IPC_CHANNELS, ALLOWED_IPC_EVENTS, isChannelAllowed } from "./allowList.js";
 import { parseCrashEntry } from "../main/crashEntry.js";
+import { parseGpuCrash, type GpuCrash } from "../main/gpuCrash.js";
 
 /**
  * Exposes exactly one namespaced object, `window.cv`, as a fixed set of
  * named, typed functions (SR-111). There is no generic
  * `invoke(channel, ...)` and no `ipcRenderer` passthrough exposed to the
- * renderer: each function below calls `ipcRenderer.invoke` with a literal,
+ * renderer: each function below but `onGpuCrashed` (which subscribes through
+ * `subscribeAllowed`) calls `ipcRenderer.invoke` with a literal,
  * compile-time-constant channel string, never a caller-supplied one, and
  * `invokeAllowed` re-asserts the channel is on `ALLOWED_IPC_CHANNELS` before
  * every call as defence-in-depth against a future refactor accidentally
@@ -17,6 +19,22 @@ function invokeAllowed(channel: string, ...args: unknown[]): Promise<unknown> {
     throw new Error(`IPC channel "${channel}" is not on the allow-list`);
   }
   return ipcRenderer.invoke(channel, ...args);
+}
+
+/**
+ * The one way to listen to main: re-asserts the channel is on ALLOWED_IPC_EVENTS, hands `listener`
+ * the payload alone, never the IPC event (whose `sender` is ipcRenderer itself), and returns the
+ * unsubscribe.
+ */
+function subscribeAllowed(channel: string, listener: (payload: unknown) => void): () => void {
+  if (!isChannelAllowed(channel, ALLOWED_IPC_EVENTS)) {
+    throw new Error(`IPC event "${channel}" is not on the allow-list`);
+  }
+  const forward = (_event: IpcRendererEvent, payload: unknown): void => listener(payload);
+  ipcRenderer.on(channel, forward);
+  return () => {
+    ipcRenderer.removeListener(channel, forward);
+  };
 }
 
 const cv = Object.freeze({
@@ -30,6 +48,20 @@ const cv = Object.freeze({
       return Promise.reject(new Error("Crash log entry refused"));
     }
     return invokeAllowed("cv:crashLog:append", checked);
+  },
+  // No caller argument crosses; main relaunches only after a GPU crash, and rate-limits it.
+  gpuRetry: () => invokeAllowed("cv:gpu:retry"),
+  // Each GPU-process crash (F15), as a fresh copy checked here again.
+  onGpuCrashed: (listener: (crash: GpuCrash) => void) => {
+    if (typeof listener !== "function") {
+      throw new TypeError("GPU crash listener must be a function");
+    }
+    return subscribeAllowed("cv:gpu:crashed", (payload) => {
+      const crash = parseGpuCrash(payload);
+      if (crash !== undefined) {
+        listener(crash);
+      }
+    });
   },
 });
 

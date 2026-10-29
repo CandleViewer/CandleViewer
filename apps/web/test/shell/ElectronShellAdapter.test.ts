@@ -23,6 +23,8 @@ function makeStubBridge(): CvBridge {
       hardwareAccelerated: true,
       webgl2CapabilityParity: true,
     }),
+    gpuRetry: vi.fn().mockResolvedValue(undefined),
+    onGpuCrashed: vi.fn().mockReturnValue(() => {}),
     onDeepLink: vi.fn().mockReturnValue(() => {}),
   };
 }
@@ -80,6 +82,14 @@ describe("createElectronShellAdapter", () => {
     const unsubscribe = adapter.deepLinks.onDeepLink(() => {});
     expect(bridge.onDeepLink).toHaveBeenCalledTimes(1);
     expect(typeof unsubscribe).toBe("function");
+
+    await adapter.gpu.retry();
+    expect(bridge.gpuRetry).toHaveBeenCalledTimes(1);
+
+    const handleCrash = vi.fn();
+    const stopCrashes = adapter.gpu.onCrashed(handleCrash);
+    expect(bridge.onGpuCrashed).toHaveBeenCalledWith(handleCrash);
+    expect(typeof stopCrashes).toBe("function");
   });
 
   it("throws a clear error if used before the preload script installed window.cv", () => {
@@ -116,6 +126,8 @@ describe("ShellPort <-> preload allow-list type sync", () => {
       "notificationsShow",
       "crashLogAppend",
       "gpuInfo",
+      "gpuRetry",
+      "onGpuCrashed",
       "onDeepLink",
     ];
     for (const key of expectedKeys) {

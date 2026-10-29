@@ -348,6 +348,95 @@ FORBIDDEN_BRIDGE_KEYS = frozenset(
     }
 )
 CHANNEL_RE = re.compile(r"[\"'](cv:[A-Za-z0-9:_.-]+)[\"']")
+# SR-111: allowList.js's two tables, the invoke channels and the main-to-renderer events. Main
+# sends exactly the events and handles none; the preload subscribes to them only, through its one
+# guarded helper, and invokes none.
+TABLE_RE = re.compile(r"(ALLOWED_IPC_CHANNELS|ALLOWED_IPC_EVENTS)\s*=\s*\[([^\]]*)\]")
+EVENT_GUARD_RE = re.compile(
+    r"isChannelAllowed\(\s*channel\s*,\s*ALLOWED_IPC_EVENTS\s*\)"
+)
+# SR-111, an allow-list: the preload may touch `ipcRenderer.invoke`, and `on(` and
+# `removeListener(` only as the calls of the one guarded subscribe helper (check_subscriptions).
+IPC_MEMBER_RE = re.compile(r"ipcRenderer\s*\.\s*([A-Za-z_$][\w$]*)(\s*\()?")
+UNSUBSCRIBE_RE = re.compile(r"ipcRenderer\s*\.\s*removeListener\s*\(\s*([^,)]+)")
+# Named function declarations only: a helper written as an arrow or a method is not traced.
+FUNCTION_RE = re.compile(r"function\s+[A-Za-z_$][\w$]*\s*\(([^)]*)\)\s*\{")
+
+
+def _block_end(js: str, opened: int) -> int:
+    """Index of the `}` closing the `{` at `opened`, past strings, template literals and
+    comments; -1 if it never closes."""
+    stack = ["{"]
+    i = opened + 1
+    while i < len(js) and stack:
+        c = js[i]
+        if stack[-1] == "`":
+            if c == "\\":
+                i += 1
+            elif c == "`":
+                stack.pop()
+            elif js.startswith("${", i):
+                stack.append("{")
+                i += 1
+        elif js.startswith(("//", "/*"), i):
+            close = "\n" if js[i + 1] == "/" else "*/"
+            end = js.find(close, i + 2)
+            i = len(js) if end < 0 else end + len(close) - 1
+        elif c in "\"'":
+            i += 1
+            while i < len(js) and js[i] != c:
+                i += 2 if js[i] == "\\" else 1
+        elif c in "`{":
+            stack.append(c)
+        elif c == "}":
+            stack.pop()
+            if not stack:
+                return i
+        i += 1
+    return -1
+
+
+def _enclosing_function(js: str, at: int) -> tuple[str, int, int] | None:
+    """The innermost `function name(params) {...}` around `at`: its params and body span."""
+    found: tuple[str, int, int] | None = None
+    for m in FUNCTION_RE.finditer(js, 0, at):
+        end = _block_end(js, m.end() - 1)
+        if end > at:
+            found = (m.group(1), m.end(), end)
+    return found
+
+
+def check_subscriptions(preload_js: str, subject: str) -> list[Violation]:
+    """SR-111: one `ipcRenderer.on(channel, ...)` call site, in a function that checks
+    ALLOWED_IPC_EVENTS before it; `removeListener(channel, ...)` only inside that function."""
+    vs: list[Violation] = []
+    calls = list(re.finditer(r"ipcRenderer\s*\.\s*on\s*\(\s*([^,)]+)", preload_js))
+    helper: tuple[int, int] | None = None
+    if len(calls) > 1:
+        msg = f"{len(calls)} on() call sites; one guarded subscribe helper only"
+        vs.append(Violation("SR-111", subject, msg))
+    elif calls:
+        at = calls[0].start()
+        scope = _enclosing_function(preload_js, at)
+        if (
+            calls[0].group(1).strip() == "channel"
+            and scope is not None
+            and "channel" in (param.strip() for param in scope[0].split(","))
+            and EVENT_GUARD_RE.search(preload_js, scope[1], at)
+        ):
+            helper = (scope[1], scope[2])
+        else:
+            msg = (
+                "on() must sit in a named function declaration that checks "
+                "ALLOWED_IPC_EVENTS before it (arrows and methods are not traced)"
+            )
+            vs.append(Violation("SR-111", subject, msg))
+    for m in UNSUBSCRIBE_RE.finditer(preload_js):
+        inside = helper is not None and helper[0] <= m.start() < helper[1]
+        if not inside or m.group(1).strip() != "channel":
+            msg = "removeListener() off the guarded subscribe helper's channel"
+            vs.append(Violation("SR-111", subject, msg))
+    return vs
 
 
 def check_dev_affordances(subject: str, text: str) -> list[Violation]:
@@ -404,7 +493,8 @@ def check_auto_update(web_bundle: str, updates_js: str) -> list[Violation]:
 
 
 def check_preload(preload_js: str, allow_list_js: str, main_js: str) -> list[Violation]:
-    """SR-111 structural: no generic invoke/ipcRenderer passthrough; channel table is closed."""
+    """SR-111 structural: no generic invoke/ipcRenderer passthrough; the invoke and event
+    tables are closed and disjoint; one guarded subscribe helper."""
     vs: list[Violation] = []
     subject = "preload bundle"
     exposed = re.findall(
@@ -422,10 +512,18 @@ def check_preload(preload_js: str, allow_list_js: str, main_js: str) -> list[Vio
     for _, ident in exposed:
         if ident == "ipcRenderer":
             vs.append(Violation("SR-111", subject, "exposes ipcRenderer directly"))
-    if re.search(
-        r"ipcRenderer\s*\.\s*(?:send|sendSync|sendTo|on|once|postMessage)\b", preload_js
-    ):
-        vs.append(Violation("SR-111", subject, "uses a non-invoke ipcRenderer method"))
+    tables = {
+        m[1]: set(CHANNEL_RE.findall(m[2])) for m in TABLE_RE.finditer(allow_list_js)
+    }
+    events = tables.get("ALLOWED_IPC_EVENTS", set())
+    if both := tables.get("ALLOWED_IPC_CHANNELS", set()) & events:
+        msg = f"channels in both the invoke and the event table: {sorted(both)}"
+        vs.append(Violation("SR-111", "preload allow-list", msg))
+    for m in IPC_MEMBER_RE.finditer(preload_js):
+        if m[1] != "invoke" and not (m[2] and m[1] in ("on", "removeListener")):
+            msg = f"uses a non-invoke ipcRenderer method: {m[1]}"
+            vs.append(Violation("SR-111", subject, msg))
+    vs += check_subscriptions(preload_js, subject)
     for m in re.finditer(r"ipcRenderer\s*\.\s*invoke\s*\(\s*([^,)]+)", preload_js):
         arg = m.group(1).strip()
         if arg == "channel":
@@ -442,6 +540,9 @@ def check_preload(preload_js: str, allow_list_js: str, main_js: str) -> list[Vio
                     "SR-111", subject, f"invoke() with non-literal channel '{arg}'"
                 )
             )
+        elif arg[1:-1] in events:
+            msg = f"invoke() on event channel '{arg}'"
+            vs.append(Violation("SR-111", subject, msg))
     cv_obj = re.search(r"Object\.freeze\(\{(.*?)\}\)", preload_js, re.DOTALL)
     if cv_obj:
         for key in re.findall(r"(?:^|[,{\s])([A-Za-z_$][\w$]*)\s*:", cv_obj.group(1)):
@@ -449,8 +550,8 @@ def check_preload(preload_js: str, allow_list_js: str, main_js: str) -> list[Vio
                 vs.append(
                     Violation("SR-111", subject, f"bridge exposes generic key '{key}'")
                 )
-    table = set(CHANNEL_RE.findall(allow_list_js))
-    used = set(CHANNEL_RE.findall(preload_js)) - table
+    table = set(CHANNEL_RE.findall(allow_list_js)) - events
+    used = set(CHANNEL_RE.findall(preload_js)) - table - events
     if used:
         vs.append(
             Violation(
@@ -468,6 +569,10 @@ def check_preload(preload_js: str, allow_list_js: str, main_js: str) -> list[Vio
                 f"handlers {sorted(handled)} differ from allow-list table {sorted(table)}",
             )
         )
+    sent = set(re.findall(r"\.send\(\s*[\"'](cv:[^\"']+)[\"']", main_js))
+    if sent != events:
+        msg = f"events sent {sorted(sent)} differ from the event table {sorted(events)}"
+        vs.append(Violation("SR-111", "main webContents.send", msg))
     return vs
 
 

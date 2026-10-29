@@ -21,6 +21,8 @@ vi.mock("electron", () => ({
     emit: vi.fn(),
     requestSingleInstanceLock: vi.fn().mockReturnValue(true),
     quit: vi.fn(),
+    relaunch: vi.fn(),
+    exit: vi.fn(),
     commandLine: { appendSwitch: vi.fn() },
     isPackaged: false,
   },
@@ -435,6 +437,7 @@ const IPC_CHANNELS = [
   "cv:keychain:getKekHandle",
   "cv:updates:check",
   "cv:crashLog:append",
+  "cv:gpu:retry",
 ] as const;
 
 /** The listener the shell registered for `channel` at startup (no dev server set). */
@@ -567,5 +570,83 @@ describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", ()
   it("the renderer sees the error's name and a fixed message, nothing about the sender", () => {
     const shown = String(new IpcSenderRefusedError());
     expect(shown).toBe("IpcSenderRefusedError: IPC sender refused: not the shell's own page");
+  });
+});
+
+describe("the GPU-process crash signal and its relaunch (F15, E10-S04)", () => {
+  type GoneListener = (event: unknown, details: { type: string; reason: string }) => void;
+  // app.on is overloaded per event: the mock's calls are read untyped, as the webview test does.
+  const appOnCalls = () => (app.on as unknown as Mock).mock.calls;
+  const getAllWindows = vi.fn().mockReturnValue([]);
+  Object.assign(BrowserWindow, { getAllWindows });
+
+  /** Emits Electron's child-process-gone for a `type` process to the shell's listener. */
+  function childProcessGone(type: string): void {
+    const listener = appOnCalls().find(([name]) => name === "child-process-gone");
+    (listener?.[1] as GoneListener)({}, { type, reason: "crashed" });
+  }
+
+  /** A window whose main frame shows `url`; `gone` destroys the window or only its contents. */
+  function windowOn(url: string, gone?: "window" | "contents") {
+    const destroyed = (): never => {
+      throw new Error("Object has been destroyed");
+    };
+    const getURL = gone === undefined ? () => url : destroyed;
+    const webContents = { isDestroyed: () => gone !== undefined, getURL, send: vi.fn() };
+    // A destroyed window throws on its members, `webContents` included: read it only when live.
+    return {
+      isDestroyed: () => gone === "window",
+      get webContents() {
+        return gone === "window" ? destroyed() : webContents;
+      },
+      send: webContents.send,
+    };
+  }
+
+  beforeAll(async () => {
+    const names = () => appOnCalls().map(([name]) => name);
+    await vi.waitFor(() => expect(names()).toContain("child-process-gone"));
+  });
+
+  it("sends cv:gpu:crashed for a GPU crash only, and only to a window on the shell page", () => {
+    const shell = windowOn("app://candleviewer/terminal");
+    const other = windowOn("https://evil.test/");
+    getAllWindows.mockReturnValue([shell, other]);
+    childProcessGone("Utility");
+    expect(shell.webContents.send).not.toHaveBeenCalled();
+    childProcessGone("GPU");
+    const aNumber = expect.any(Number);
+    const crash = { crashedAtMs: aNumber, restartCount: aNumber, reason: "crashed" };
+    expect(shell.webContents.send.mock.calls).toEqual([["cv:gpu:crashed", crash]]);
+    expect(other.webContents.send).not.toHaveBeenCalled();
+  });
+
+  it("skips a destroyed window, or one whose contents are gone, instead of throwing in main", () => {
+    const at = "app://candleviewer/";
+    const shell = windowOn(at);
+    const gone = [windowOn(at, "window"), windowOn(at, "contents")];
+    getAllWindows.mockReturnValue([...gone, shell]);
+    expect(() => childProcessGone("GPU")).not.toThrow();
+    expect(shell.webContents.send).toHaveBeenCalledTimes(1);
+    gone.forEach((win) => expect(win.send).not.toHaveBeenCalled());
+  });
+
+  it("listens from module load, before whenReady is even called, so a pre-ready crash counts", () => {
+    const at = appOnCalls().findIndex(([name]) => name === "child-process-gone");
+    const listenedAt = (app.on as unknown as Mock).mock.invocationCallOrder[at] ?? Infinity;
+    const [readyAsked] = vi.mocked(app.whenReady).mock.invocationCallOrder;
+    expect(listenedAt).toBeLessThan(readyAsked ?? 0);
+  });
+
+  it("cv:gpu:retry after a crash relaunches the app, then exits it with 0", () => {
+    getAllWindows.mockReturnValue([]);
+    childProcessGone("GPU");
+    ipcListener("cv:gpu:retry")(invokeFrom("app://candleviewer/terminal", "main"), "ignored");
+    const args = [...process.argv.slice(1), "--cv-gpu-relaunched"];
+    expect(vi.mocked(app.relaunch).mock.calls).toEqual([[{ args }]]);
+    expect(vi.mocked(app.exit).mock.calls).toEqual([[0]]);
+    const [relaunched] = vi.mocked(app.relaunch).mock.invocationCallOrder;
+    const [exited] = vi.mocked(app.exit).mock.invocationCallOrder;
+    expect(relaunched).toBeLessThan(exited ?? 0);
   });
 });
