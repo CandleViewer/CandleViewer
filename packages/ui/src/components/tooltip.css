@@ -24,7 +24,7 @@
   white-space: normal;
   overflow-wrap: break-word;
   opacity: 1;
-  transition: opacity var(--motion-duration-fast) var(--motion-easing-decelerate);
+  transition: opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-decelerate));
 }
 
 /* The fade-in starts from transparent once `hidden` is removed (motion-safe). */
@@ -40,7 +40,7 @@
   opacity: 0;
   pointer-events: none;
   transition:
-    opacity var(--motion-duration-fast) var(--motion-easing-accelerate),
+    opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate)),
     display var(--motion-duration-fast) allow-discrete;
 }
 

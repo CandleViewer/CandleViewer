@@ -1,0 +1,87 @@
+/*
+ * CMP-048 Combobox (E05-S03, D02F CMP-048, conventions 26, 28 and 29): the input is the CMP-007 well (fields.css).
+ * The results popup portals and positions as CMP-017's surface (fixed, `space.inset.xs` under the well, flipped
+ * when the viewport has no room, at least the well's width); its option rows are CMP-009's (select.css). Tokens only.
+ */
+.cv-combobox__popup {
+  --cv-combobox-edge: calc(var(--border-hairline) * 1px);
+  position: fixed;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  min-width: var(--cv-anchor-width, auto);
+  max-width: calc(100vw - 2 * var(--space-inset-xs));
+  padding-block: var(--space-inset-xs);
+  border: var(--cv-combobox-edge) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-overlay);
+  box-shadow: var(--elevation-popover);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  transition: opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-decelerate));
+}
+
+/* Transparent (still in the accessibility tree) until the first placement lands, then it fades in. */
+.cv-combobox__popup:not([data-positioned]) {
+  opacity: 0;
+}
+
+/* Ten rows at most, then the list scrolls; never taller than the room on its side, one row at least. */
+.cv-combobox__list {
+  max-height: max(
+    var(--size-row-height),
+    min(
+      10 * var(--size-row-height),
+      var(--cv-available-height, 100vh) - 2 * (var(--space-inset-xs) + var(--cv-combobox-edge))
+    )
+  );
+  overflow-y: auto;
+}
+
+/* The matched part of a label: weight, not colour. */
+.cv-combobox__match {
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+/* Searching, no results, a failed search: words after a spinner or the `danger` glyph, never an option. */
+.cv-combobox__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-height: var(--size-row-height);
+  padding-inline: var(--space-inset-sm);
+  color: var(--color-text-secondary);
+}
+
+/* The universal reduce pair (as theme.css applies it): the fade is a cut. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* Forced colours (conventions 29): system colours set here, so CMP-009's Highlight rows keep theirs. */
+@media (forced-colors: active) {
+  .cv-combobox__popup {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .cv-combobox__status {
+    color: CanvasText;
+  }
+}
