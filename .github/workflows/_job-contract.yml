@@ -29,6 +29,8 @@ permissions:
 env:
   PYTHONIOENCODING: utf-8
   CV_CI_ALLOWED_HOSTS: ""
+  # E12-Q04: Schemathesis imports the module this names when the contract suite loads; none.
+  SCHEMATHESIS_HOOKS: ""
 
 jobs:
   contract:
