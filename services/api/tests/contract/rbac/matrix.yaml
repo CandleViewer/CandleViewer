@@ -1059,12 +1059,14 @@ operations:
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /orders/{orderId}/diagnostics:
-    permissions: ['orders:read']
+    permissions: ['orders:read', 'admin:read']
     scope: granted_accounts
     public: false
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
+    # D7, ruled on #915: the Owner's alone (`admin:read`), as every Owner-only route, so a Manager
+    # or Viewer is a capability 403 before any order is read, whatever the id.
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /permissions:
     permissions: ['users:read']
     scope: none
