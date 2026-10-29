@@ -1226,7 +1226,9 @@ LADDER_MARK = re.compile(
 # BQ-11 as the orchestrator upheld it (2026-10-29): the WS refusals `23` marks retryable stay on
 # the data-feed card and the transport's ladder runs for them (`23`:1626-1632). The allowed marker
 # is the phrase "refusals `23` marks retryable"; it excuses a claim only when every code the claim
-# names is one of the five and no HTTP 4xx number or class is named beside them
+# names is one of the five and no HTTP 4xx is named beside them, by number, class or name. The
+# refusal words are the subject itself, so they are cut before the 4xx lexicon is read (the
+# conformance delta's MJ-1: the marker no longer excuses a bad request or a validation error)
 WS_RETRYABLE = (
     "subscription_limit",
     "too_many_topics",
@@ -1239,6 +1241,11 @@ WS_MARK = re.compile(r"\brefusals `23` marks retryable\b", re.IGNORECASE)
 
 def ws_retryable(c: str) -> bool:
     if not WS_MARK.search(c) or re.search(r"\b4\d\d\b|\b4xx\b", CITE.sub(" ", c)):
+        return False
+    rest = re.sub(
+        r"\brefus\w*", " ", CODE.sub(" ", WS_MARK.sub(" ", c)), flags=re.IGNORECASE
+    )
+    if re.search(rf"{_FOUR_XX_WORDS}|{_NAME_429}", rest, re.IGNORECASE):
         return False
     named = {x.strip("`") for x in CODE.findall(c)} - {"23"}
     return named <= set(WS_RETRYABLE)
@@ -1286,7 +1293,7 @@ def g_progress(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
             w
             for w in re.findall(r"W-\d+", row[4] if len(row) > 4 else "")
             for q in quotes(words.get(w, ["", "", ""])[2])
-            if re.search(r"%|percent|\bleft\b", q)
+            if shows_progress(q)
         ]
 
     # M-1 of the orchestrator's round 1: bound per phase, not per string. A phase named `*-unknown`
@@ -1297,6 +1304,15 @@ def g_progress(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
             bad += [
                 f"{w} shows a percentage or a time left in {name}" for w in shares(r)
             ]
+            # the conformance delta's MJ-2: the phase's own Shows cell is read too, with the
+            # ruled marker and the elapsed figure cut, by the gate's full PCT and LEFT lexicons
+            shows = r[2] if len(r) > 2 else ""
+            if not progress_ruled(shows) or shows_progress(
+                PROGRESS_RULED.sub(" ", shows)
+            ):
+                bad.append(
+                    f"the {name} phase's Shows cell shows a percentage or a time left"
+                )
         elif name != "total-known" and shares(r):
             if len(r) < 2 or "D08-G1" not in r[1]:
                 bad.append(f"{name} shows a percentage without tying it to D08-G1")
@@ -1341,9 +1357,26 @@ PCT = re.compile(
     r"percent|%|\b(?:time|seconds?|minutes?|hours?) (?:left|to go)\b|\btime to\b|\bremaining\b|\bETA\b|\bestimated time\b"
     r"|\bshare of\b|\bfraction\b|\bproportion\b|\bratio\b|\bfills?\b|\bcomplet(?:e|ion)\b"
     r"|\bfinish\w*|\bdone by\b|\bend(?:ing)? time\b|\bwhen\b[^.;]{0,30}\bwill (?:end|finish|be done)\b"
-    r"|(?<!from )(?<!after )\b\d+(?:\.\d+)?\s?(?:ms|s|secs?|seconds?|min|minutes?)\b",
+    r"|(?<!from )(?<!after )\b\d+(?:\.\d+)?\s?(?:ms|s|secs?|seconds?|min|minutes?)\b"
+    # the delta's MJ-2: a share as a fraction in words, and a time to go without a unit
+    r"|\bto go\b|\bof the way\b|\b(?:halves|thirds|quarters|fifths|sixths|eighths|tenths)\b"
+    r"|\b(?:a|one|two|three|four) (?:half|third|quarter|fifth|tenth)\b|\bhalf(?:way| done| built)\b",
     re.IGNORECASE,
 )
+
+
+# the ruled elapsed figure ("2 min 10 s elapsed", "0:14 elapsed", "after {2 min 10 s}"): cut
+# before a deck string or a Shows cell is read for a share or a time left (the delta's MJ-2)
+ELAPSED_FIG = re.compile(
+    r"\bafter \{?(?:\d+ min )?\d+ (?:min|s)\b\}?(?: elapsed\b)?"
+    r"|\b(?:\d+ min )?\d+ (?:min|s) elapsed\b|\b\d+:\d\d elapsed\b",
+    re.IGNORECASE,
+)
+
+
+def shows_progress(q: str) -> bool:
+    t = ELAPSED_FIG.sub(" ", q)
+    return bool(PCT.search(t) or LEFT.search(t))
 
 
 # what a claim says the strip shows: any display or content verb makes it a claim, not a label
@@ -3616,6 +3649,30 @@ MUTATIONS: tuple[Mutation, ...] = (
                 "A `validation_failed` refusal `23` marks retryable is sent again on the ladder.",
                 "orch r1: the BQ-11 marker on a code outside the five",
             ),
+            (
+                "G-LADDER",
+                "5. ",
+                "The refusals `23` marks retryable and a bad request from the bars endpoint go through the same backoff.",
+                "orch r1 delta MJ-1: the BQ-11 marker beside a bad request",
+            ),
+            (
+                "G-LADDER",
+                "5. ",
+                "The refusals `23` marks retryable, validation errors included, rerun on the transport's ladder.",
+                "orch r1 delta MJ-1: the BQ-11 marker beside a validation error",
+            ),
+            (
+                "G-LADDER",
+                "5. ",
+                "The refusals `23` marks retryable, and an unprocessable bars request too, are re-sent after the next step.",
+                "orch r1 delta MJ-1: the BQ-11 marker beside an unprocessable request",
+            ),
+            (
+                "G-LADDER",
+                "5. ",
+                "The refusals `23` marks retryable and a forbidden topic follow the same schedule.",
+                "orch r1 delta MJ-1: the BQ-11 marker beside a forbidden topic",
+            ),
         )
     ),
     Mutation(
@@ -3725,6 +3782,36 @@ MUTATIONS: tuple[Mutation, ...] = (
             "over-budget",
             1,
             "elapsed past the estimate, or past 10<!--=CITE:budget.s--> s per 1 M prints",
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta MJ-2: the over-budget-unknown Shows cell words a share done",
+        row_cell(
+            "7.1 ",
+            "over-budget-unknown",
+            2,
+            '"taking longer than estimated" with the share of prints built so far beside the '
+            "elapsed time; `Cancel` stays; no auto-cancel",
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta MJ-2: W-45 gains a time to go",
+        swap(
+            '2 min 10 s elapsed · total unknown · taking longer than estimated"',
+            '2 min 10 s elapsed · total unknown · about 3 min to go"',
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta MJ-2: W-46 words the share as a fraction",
+        swap(
+            '"Build cancelled after 2 min 10 s elapsed. Still showing Volume 50 BTC."',
+            '"Build cancelled two fifths of the way through. Still showing Volume 50 BTC."',
         ),
         tag="X",
     ),
