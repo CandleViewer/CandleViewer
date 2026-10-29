@@ -114,9 +114,11 @@ ERRORS: list[str] = []
 # Decision 2026-10-09 (#1778 item Y): E35-S03 moved S14 -> S15 for its real E32-T01 (native-SL
 # choke point, C-2.6) dependency, dragging E35-S06/S07 with it; S15 carries +8 eng pts, funded
 # from the R5 defect/polish reserve. Decision 2026-10-29 (#2701 ledger 2 row 50): E29-T13 (#4207)
-# moved S19 -> S14, so S14 carries +3 eng pts. These downgrade to WARN so the governance CI gate stays
-# meaningful for *new* overages.
-ACCEPTED_OVERAGE = {"sprint": {7: 2, 14: 3, 15: 8}, "train": {"R1": 2}}
+# moved S19 -> S14, so S14 carries +3 eng pts. Decision 2026-10-29 (#2701 ledger addendum A row
+# A24): E35-S03 (#863) split into E35-T07…T14, which must precede the parent in Sprint 15; S15
+# carries +39 eng pts and train R3 +6, funded from the R5 defect/polish reserve. These downgrade
+# to WARN so the governance CI gate stays meaningful for *new* overages.
+ACCEPTED_OVERAGE = {"sprint": {7: 2, 14: 3, 15: 39}, "train": {"R1": 2, "R3": 6}}
 WARNINGS: list[str] = []
 MOVES: list[dict] = []
 UNFIXABLE_SPRINTS: set[int] = set()
