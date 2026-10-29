@@ -28,6 +28,7 @@ from candleviewer.storage.repositories.executions import ExecutionRow
 from candleviewer.storage.repositories.executions_sqlalchemy import EXECUTION_COLUMNS
 from candleviewer.storage.repositories.oms_reads import (
     MAX_ORDER_EXECUTIONS,
+    MAX_POSITIONS,
     ExecutionQuery,
     Keyset,
     ListedExecution,
@@ -36,6 +37,7 @@ from candleviewer.storage.repositories.oms_reads import (
     OrderQuery,
     PositionOutOfScope,
     PositionQuery,
+    PositionsTooMany,
 )
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
@@ -181,7 +183,7 @@ def order_fills_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
         .select_from(tree)
         .where(_X.exchange_account_id == account_id, _X.order_id == order_id)
         .order_by(_X.exec_ts, _X.id)
-        .limit(MAX_ORDER_EXECUTIONS)
+        .limit(MAX_ORDER_EXECUTIONS + 1)
     )
 
 
@@ -198,7 +200,7 @@ def positions_statement(
         stmt = stmt.where(_P.size > sa.literal_column("0"))
     if query.symbol is not None:
         stmt = stmt.where(_text(_P.symbol) == query.symbol)
-    return stmt.order_by(_P.symbol, account, _P.position_idx)
+    return stmt.order_by(_P.symbol, account, _P.position_idx).limit(MAX_POSITIONS + 1)
 
 
 def position_statement(
@@ -274,7 +276,10 @@ class SqlAlchemyOmsReads(CappedStore):
             fills = await uow.session.execute(order_fills_statement(account, order_id))
             more = len(chain) > MAX_EVENT_PAGE
             listed_fills = tuple(_execution(r) for r in fills.mappings())
-            return OrderDetail(found, chain[:MAX_EVENT_PAGE], listed_fills, more)
+            return OrderDetail(
+                found, chain[:MAX_EVENT_PAGE], listed_fills[:MAX_ORDER_EXECUTIONS], more,
+                len(listed_fills) > MAX_ORDER_EXECUTIONS,
+            )  # fmt: skip
 
     async def executions(
         self, scope: AccountScope, query: ExecutionQuery, *, environment: Environment,
@@ -310,7 +315,10 @@ class SqlAlchemyOmsReads(CappedStore):
             if not accounts:
                 return ()
             stmt = positions_statement(scope, query, environment, accounts)
-            return tuple(_position(r) for r in (await uow.session.execute(stmt)).mappings())
+            rows = tuple(_position(r) for r in (await uow.session.execute(stmt)).mappings())
+        if len(rows) > MAX_POSITIONS:
+            raise PositionsTooMany
+        return rows
 
     async def position(
         self, scope: AccountScope, position_id: UUID, *, environment: Environment

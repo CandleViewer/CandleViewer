@@ -64,11 +64,13 @@ from candleviewer.api.order_admission import (
     OrderPrincipals,
     problem,
     resolve_principal,
+    submit_actor,
 )
 from candleviewer.api.order_diagnostics import RecordRefused, exchange_calls
 from candleviewer.api.order_etag import order_etag
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.refusal_session import SessionsLike
+from candleviewer.api.view_as_subject import acting_user
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.metrics import count_authz_denial
@@ -204,6 +206,20 @@ def aggregate_document(found: AggregatePosition) -> Body:
     return _present(body, "weighted_avg_price", "unrealised_pnl")
 
 
+def record_actor(principal: TradingPrincipal, request: Request) -> dict[str, Any]:
+    """A read's records' actor, as 24 Sec.15.5 names an OMS record's (`user:<role>`, the user,
+    the session and the address): under a live view-as, the viewer, never the target the read
+    answers as (#3085; `acting_user`), so the audit tripwire never refuses the record, and only
+    an Owner views as another user."""
+    actor = submit_actor(principal, request)
+    acting = acting_user(str(actor.user_id))
+    role = actor.role if acting == str(actor.user_id) else "owner"
+    return {
+        "actor_label": f"user:{role}", "actor_user_id": uuid.UUID(acting),
+        "actor_ip": actor.ip, "session_id": actor.session_id,
+    }  # fmt: skip
+
+
 def _page(items: list[Body], nxt: str | None) -> JSONResponse:
     meta = {"next_cursor": nxt, "has_more": nxt is not None, "count": len(items)}
     return JSONResponse({"items": items, "meta": meta})
@@ -223,13 +239,10 @@ def make_oms_reads_router(
         named: Mapping[str, Any],
     ) -> None:  # fmt: skip
         """A scope refusal's `rbac.denied`, best effort: its answer stands (module docstring)."""
-        actor = principal.snapshot.user_id
         try:
             await audit.emit(
-                "rbac.denied", actor_label=str(actor), actor_user_id=actor,
-                actor_ip=source_ip(request.scope), session_id=principal.session_id,
-                outcome="denied", severity="warning", reason=reason,
-                request_id=current_request_uuid(), **named,
+                "rbac.denied", **record_actor(principal, request), outcome="denied",
+                severity="warning", reason=reason, request_id=current_request_uuid(), **named,
             )  # fmt: skip
         except (AuditError, RuntimeError) as exc:  # RuntimeError: the writer is not started
             _log().warning(
@@ -402,11 +415,10 @@ def make_oms_reads_router(
                 503, "store_unavailable", "The order's exchange records cannot be served."
             )
         scoped = found.scoped
-        account, actor = scoped.order.exchange_account_id, principal.snapshot.user_id
+        account = scoped.order.exchange_account_id
         try:  # written ahead of the body (C-2.9, SR-E29-09)
             await audit.emit(
-                "order.diagnostics_viewed", actor_label=str(actor), actor_user_id=actor,
-                actor_ip=source_ip(request.scope), session_id=principal.session_id,
+                "order.diagnostics_viewed", **record_actor(principal, request),
                 object_kind="order", object_id=str(order_id), outcome="success",
                 severity="info", after_state={"account_id": str(account)},
                 request_id=current_request_uuid(),
@@ -445,6 +457,11 @@ def make_oms_reads_router(
             return await scoped_failure(exc, principal, request, operation, ())
         if isinstance(found, OutOfScope):
             return await missing(principal, request, operation, "order", order_id, found.account_id)
+        if found.more_events or found.more_executions:  # never a cut timeline (#4997)
+            _log().error("oms_order_read_too_long", events=found.more_events)
+            return problem(
+                503, "store_unavailable", "The order's history is too long to serve whole."
+            )
         scoped = found.scoped
         body = order_document(ListedOrder(scoped.order, scoped.trade_group_id), service.environment)
         body["executions"] = [execution_document(x) for x in found.executions]

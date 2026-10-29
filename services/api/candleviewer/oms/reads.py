@@ -42,6 +42,7 @@ from candleviewer.storage.repositories.oms_reads import (
     OrderQuery,
     PositionOutOfScope,
     PositionQuery,
+    PositionsTooMany,
 )
 from candleviewer.storage.repositories.orders import (
     AccountsOutOfScope,
@@ -182,6 +183,9 @@ class OmsReads:
                 return await call
         except AccountsOutOfScope:  # the caller's scope, never an outage (SR-E29-13)
             raise AccountScopeDenied from None
+        except PositionsTooMany:  # refused whole, never cut (#4997)
+            _log().error("oms_read_too_many_positions", read=what)
+            raise StoreUnavailable from None
         except _UNREAD as exc:
             _log().warning("oms_read_unavailable", read=what, failure=type(exc).__name__)
             raise StoreUnavailable from None

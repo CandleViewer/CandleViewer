@@ -41,6 +41,15 @@ TERMINAL_STATES: Final = frozenset[OrderState](
 NON_TERMINAL_STATES: Final = frozenset(get_args(OrderState)) - TERMINAL_STATES
 #: The most executions one `getOrder` serves: an order's fills, which its quantity bounds.
 MAX_ORDER_EXECUTIONS: Final = 500
+#: The most positions one `listPositions` reads (C-2.18): the exchange holds one per account,
+#: symbol and `position_idx` (3), so this covers 25 accounts (22's `AccountIdsQuery` bound) of
+#: some 130 symbols each, open or flat. A read past it is refused whole (`PositionsTooMany`).
+MAX_POSITIONS: Final = 10_000
+
+
+class PositionsTooMany(Exception):
+    """`positions` found more rows than `MAX_POSITIONS`: refused whole, never cut (#4997). The
+    caller's request, not an outage; names no value."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,13 +121,15 @@ class ListedExecution:
 @dataclass(frozen=True, slots=True)
 class OrderDetail:
     """22 `OrderWithEvents`' rows: the order in scope, its events when asked (none otherwise),
-    the first `MAX_EVENT_PAGE` of them, and its fills, oldest first; `more_events` when the chain
-    holds more events than that, so a reader that must serve it whole refuses it (#4997)."""
+    the first `MAX_EVENT_PAGE` of them, and its fills, oldest first, the first
+    `MAX_ORDER_EXECUTIONS`; `more_events` and `more_executions` when either holds more than that,
+    so a reader that must serve it whole refuses it (#4997)."""
 
     scoped: ScopedOrder
     events: tuple[OrderEventRow, ...]
     executions: tuple[ListedExecution, ...]
     more_events: bool = False
+    more_executions: bool = False
 
 
 @dataclass(frozen=True, slots=True)

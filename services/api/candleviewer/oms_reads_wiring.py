@@ -8,6 +8,7 @@ while the OMS starts or is degraded (20 Sec.6.2). None on the fake backend (503 
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Final
 from uuid import UUID
 
 from candleviewer.oms.errors import OmsNotReady
@@ -17,14 +18,23 @@ from candleviewer.settings import Settings
 from candleviewer.storage.repositories.oms_reads_sqlalchemy import SqlAlchemyOmsReads
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 
-__all__ = ["oms_reads", "order_versions"]
+__all__ = ["READS_POOL_SIZE", "oms_reads", "order_versions"]
+
+#: The reads' connections, a fixed share of Postgres's budget (#4997): each read is one short
+#: transaction capped at the OMS stores' statement timeout and bounded at 2 s by `OmsReads`, so a
+#: burst of blotter reads waits on the pool (and is answered 503 past that bound) instead of
+#: taking connections the order lane, the audit writer or ingestion need. No overflow.
+READS_POOL_SIZE: Final = 4
 
 
 def oms_reads(settings: Settings) -> OmsReads | None:
     """The reads of this process's environment (C-2.11); None unless the backend is real."""
     if settings.storage_backend != "real":
         return None
-    pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "oms-reads")
+    dsn = settings.pg_dsn.get_secret_value()
+    pool = SqlAlchemyRelationalRepository(
+        dsn, "oms-reads", pool_size=READS_POOL_SIZE, max_overflow=0
+    )
     store = SqlAlchemyOmsReads(pool, statement_timeout_ms=settings.oms_statement_timeout_ms)
     return OmsReads(store, settings.environment.value, release=pool.dispose)
 
