@@ -266,9 +266,12 @@ describe("StepUpChallengeGate (#2725, E09-D06)", () => {
     mount();
     answer();
     expect(await screen.findByRole("alert")).toHaveTextContent("Incorrect code.");
-    expect(screen.getByLabelText("Authenticator code")).toHaveValue("");
-    expect(screen.getByLabelText("Password")).toHaveValue("");
-    expect(screen.getByLabelText("Password")).toHaveFocus();
+    // The alert and the cleared fields are separate React updates: wait for the clear.
+    await waitFor(() => {
+      expect(screen.getByLabelText("Authenticator code")).toHaveValue("");
+      expect(screen.getByLabelText("Password")).toHaveValue("");
+      expect(screen.getByLabelText("Password")).toHaveFocus();
+    });
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(calls("/keys/k1/rotate")).toHaveLength(0);
   });
