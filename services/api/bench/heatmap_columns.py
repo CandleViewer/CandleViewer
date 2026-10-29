@@ -27,10 +27,11 @@ import statistics
 import time
 from array import array
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Final, cast
 from uuid import UUID
 
 from candleviewer.book.resync import BookEngine
@@ -39,14 +40,15 @@ from candleviewer.domain.primitives import EventId
 from candleviewer.exchange.base.models import BookDelta, BookLevel, BookSnapshot
 from candleviewer.orderflow.heatmap import (
     COLUMN_MS,
+    FAMILY,
     ROWS,
     HeatmapColumn,
     HeatmapSpec,
     HeatmapTopic,
     _Entry,
 )
-from candleviewer.ws.binary import encode, encode_b64
-from candleviewer.ws.sequencing import SnapshotBody
+from candleviewer.ws.binary import decode, encode, encode_b64
+from candleviewer.ws.sequencing import SnapshotBody, render
 from candleviewer.ws_wiring import heatmap_part
 
 SYMBOL = "BTCUSDT"
@@ -74,6 +76,12 @@ class Report:
     snapshot_columns: int = 0
     snapshot_build_ms: float = 0.0
     snapshot_encode_ms: float = 0.0
+    #: The gateway's render of that snapshot (`sequencing.render`, one loop turn), 20 runs:
+    #: packed parts (#605) against the same parts unpacked (the render before #605).
+    render_packed_ms_p95: float = 0.0
+    render_packed_ms_max: float = 0.0
+    render_plain_ms_p95: float = 0.0
+    render_plain_ms_max: float = 0.0
     hold_ms: float = 0.0
     reseed_turns: int = 0
     reseed_turn_p95_ms: float = 0.0
@@ -220,6 +228,21 @@ async def run(events: list[BookSnapshot | BookDelta], source: str) -> Report:
     )  # fmt: skip
 
 
+#: The b64 budget of one outbound frame at the 4 MiB cap, less a generous envelope (§3.6).
+RENDER_BUDGET: Final = 3 * 1_048_576
+
+
+@dataclass
+class _RenderSub:
+    """The fields of a binary live `heatmap` subscription `render` reads."""
+
+    topic: Any = field(
+        default_factory=lambda: SimpleNamespace(family=SimpleNamespace(family=FAMILY))
+    )
+    effective: dict[str, Any] = field(default_factory=lambda: {"encoding": "binary"})
+    replay_session_id: str | None = None
+
+
 def snapshot_and_seed(report: Report, seed: int) -> Report:
     """Fable M-1: `build()` for a binary `sub` at the default budget (8 MiB, 2 000 frames) over a
     full ring of 2 000 cached 512-row columns, the CVWB encode of its parts (what the gateway's
@@ -254,6 +277,17 @@ def snapshot_and_seed(report: Report, seed: int) -> Report:
     for frame in body.parts:
         encode_b64(frame)
     t2 = time.perf_counter()
+    encode_ms = (t2 - t1) * 1000
+    plain = replace(body, parts=tuple(decode(encode(p)) for p in body.parts))
+    for name, snap in (("packed", body), ("plain", plain)):
+        runs = []
+        for _ in range(20):
+            began = time.perf_counter()
+            render(cast(Any, _RenderSub()), snap, RENDER_BUDGET)
+            runs.append((time.perf_counter() - began) * 1000)
+        setattr(report, f"render_{name}_ms_p95", statistics.quantiles(runs, n=100)[94])
+        setattr(report, f"render_{name}_ms_max", max(runs))
+    t2 = time.perf_counter()
     topic.hold("b", HeatmapSpec(SYMBOL, price_grouping=2, time_bucket_ms=COLUMN_MS))
     t3 = time.perf_counter()
     turns: list[float] = []
@@ -263,7 +297,7 @@ def snapshot_and_seed(report: Report, seed: int) -> Report:
         turns.append((time.perf_counter() - began) * 1000)
     report.snapshot_columns = len(body.parts)
     report.snapshot_build_ms = (t1 - t0) * 1000
-    report.snapshot_encode_ms = (t2 - t1) * 1000
+    report.snapshot_encode_ms = encode_ms
     report.hold_ms = (t3 - t2) * 1000
     report.reseed_turns = len(turns)
     report.reseed_turn_p95_ms = statistics.quantiles(turns, n=100)[94] if len(turns) > 1 else 0.0
