@@ -239,6 +239,15 @@ class LoginService:
             self._per_ip_throttle.record_failure(source_ip)
             raise AccountDisabled("Account disabled - contact the owner")
 
+        if not user.mfa_required:
+            # A password-only full session is undecided (#2295 Q6), and C-12.2
+            # forbids such a user (#965 refuses `mfa_required: false`). Fail
+            # closed: never fabricate a session shape for it, and answer it as a wrong password
+            # (SR-014, #4961), held to the same floor, and counted from this address as any
+            # refusal is. Like every refusal, it comes before the success-path work below.
+            self._per_ip_throttle.record_failure(source_ip)
+            raise MfaNotRequired()
+
         if self._hasher.needs_rehash(user.password_hash, DEFAULT_ARGON2_PARAMS):
             new_hash = await self._hasher.hash(request.password, DEFAULT_ARGON2_PARAMS)
             await self._repository.rehash_password(
@@ -252,15 +261,6 @@ class LoginService:
             # only an enrolment-only session (never enrolled, or after an owner
             # reset or a recovery sign-in). The router mints it; no challenge row.
             return EnrolmentOnlyLogin(user_id=user.id)
-        if not user.mfa_required:
-            # A password-only full session is undecided (#2295 Q6), and C-12.2
-            # forbids such a user (#965 refuses `mfa_required: false`). Fail
-            # closed: never fabricate a session shape for it, and answer it as a wrong password
-            # (SR-014, #4961), held to the same floor, and counted from this address as any
-            # refusal is.
-            self._per_ip_throttle.record_failure(source_ip)
-            raise MfaNotRequired()
-
         mfa_token = self._mfa_token_factory()
         if self._mfa_repository is not None:
             # E09-S02: persist the challenge so `MfaService.verify()` /

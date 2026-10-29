@@ -511,3 +511,25 @@ async def test_login_every_account_state_verifies_once_then_waits_out_the_same_f
     assert [e for e in events if e[0] == "record_failure"] == [("record_failure",)]
     assert events[-1] == ("sleep", pytest.approx(_FLOOR_S - 0.01))
     assert time.now == pytest.approx(_FLOOR_S)
+
+
+@pytest.mark.parametrize("name", sorted(n for n, (_, _, ok) in _ACCOUNT_STATES.items() if ok))
+async def test_login_every_refusal_after_the_password_comes_before_the_success_path_work(
+    name: str,
+) -> None:
+    """A refusal after a right password neither rehashes a stored hash of older parameters nor
+    records a success, whatever the account's state: before its hold it does only the verify a
+    wrong password does."""
+    update, identifier, verdict = _ACCOUNT_STATES[name]
+    older = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1).hash("stored-password")
+    user = make_user(password_hash=older, **update)
+    service, repo, events = _world(older, verdict=verdict, user=user)
+    assert service._hasher.needs_rehash(older, DEFAULT_ARGON2_PARAMS)  # the case is real
+
+    with pytest.raises((AccountDisabled, AccountLocked, MfaNotRequired)):
+        await service.login(
+            LoginRequest(identifier=identifier, password="a-guess"), source_ip="10.0.0.1"
+        )
+
+    assert repo.rehash_calls == []
+    assert ("record_login_success",) not in events
