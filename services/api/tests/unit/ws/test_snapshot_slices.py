@@ -393,3 +393,45 @@ async def test_a_source_that_cannot_catch_up_is_synchronous_whatever_the_turns_b
     sub = _sub(conn)
     assert conn.emitter.snapshot(sub, "initial") and len(conn.out) == 1
     assert not conn.emitter._jobs
+
+
+class _Uncached(_Catching):
+    """A source whose snapshots never enter the shared cache (#605 m-D: heatmap)."""
+
+    def cacheable(self, sub: Any) -> bool:
+        return False
+
+
+async def test_a_source_that_opts_out_never_enters_the_snapshot_cache() -> None:
+    """m-D: a source saying `cacheable` False is built for each request and never cached, so
+    its renders evict no other family's entry; any other public source is cached as before."""
+    for source, cached in ((_Uncached(), 0), (_Catching(), 1)):
+        source.bodies["heatmap"] = _big(columns=2, rows=4)
+        cache = SnapshotCache()
+        conn = Conn(source, cache=cache)
+        sub = _sub(conn)
+        assert conn.emitter.snapshot(sub, "initial") and len(conn.out) == 1
+        assert len(cache) == cached and cache.bytes == (0 if not cached else cache.bytes)
+
+
+async def test_a_job_step_is_a_batch_of_its_own_steps_up_to_step_s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M-E: one `_step` of a job runs its own steps until `step_s` is spent, so a large snapshot
+    takes few round-robin steps; with room for all of it, one."""
+    from candleviewer.ws import sequencing
+
+    conn = _conn(_big(), turn_s=0.0, max_frame_bytes=64_000)  # no inline slice: all deferred
+    sub = _sub(conn)
+    assert conn.emitter.snapshot(sub, "initial") and conn.out == []
+    conn.emitter.turn_s, conn.emitter.step_s = 10.0, 10.0
+    calls: list[int] = []
+    real = sequencing.TopicEmitter._step
+
+    def counted(self: Any, job: Any) -> bool:
+        calls.append(1)
+        return bool(real(self, job))
+
+    monkeypatch.setattr(sequencing.TopicEmitter, "_step", counted)
+    await asyncio.sleep(0)
+    assert len(calls) == 1 and conn.out and conn.out[-1]["s"] == 1

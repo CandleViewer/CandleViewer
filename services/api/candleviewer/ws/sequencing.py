@@ -149,6 +149,9 @@ SNAPSHOT_CACHE_MAX_BYTES: Final = 64 * 1024 * 1024
 #: #605 (M-1): CPU one loop turn spends on a snapshot (render, chunking, encoding) before the rest
 #: waits for the next turn (`TopicEmitter.snapshot`), so a turn stays inside budget #6 (20 ms).
 SNAPSHOT_TURN_S: Final = 0.005
+#: #605 (M-E): CPU one step of a snapshot job under way takes (`TopicEmitter._step`): a batch of
+#: its own steps (a column, a chunk), so a large snapshot is tens of steps, not hundreds.
+SNAPSHOT_STEP_S: Final = 0.001
 #: A snapshot of at least this many payload bytes, on a connection that queues encoded frames, is
 #: encoded a frame per step before it is queued; a smaller one is left to the queue's encoder.
 PREPARE_MIN_BYTES: Final = 64 * 1024
@@ -371,6 +374,8 @@ def _weight(payload: Mapping[str, Any], hint: int | None) -> int:
     total = 256
     for value in payload.values():
         if isinstance(value, list) and value:
+            # n-C: sized from the first item alone, so the estimate is O(1) a list; a list of
+            # uneven items is mis-sized either way, which is why a large one sends `size_hint`.
             total += len(value) * (len(_dumps(value[0])) + 1)
     return total
 
@@ -826,7 +831,8 @@ class SnapshotCache:
         """`get`, yielding inside its render (`render_steps`): a hit is no step at all, and a
         render is entered in the cache only once it is whole."""
         fam = sub.topic.family
-        if fam.private:
+        cacheable = getattr(source, "cacheable", None)  # #605 (m-D): a source may opt out
+        if fam.private or (cacheable is not None and not cacheable(sub)):
             rendered = yield from self._build(sub, source, max_part_bytes)
         else:
             # `paused` gates deltas, not the rendered state (#2517): it never splits the cache.
@@ -986,6 +992,7 @@ class TopicEmitter:
         self._snap_ids = 0
         #: #605: CPU a snapshot spends per loop turn (`SNAPSHOT_TURN_S`), and those under way.
         self.turn_s = SNAPSHOT_TURN_S
+        self.step_s = SNAPSHOT_STEP_S
         self._jobs: dict[str, _SnapJob] = {}
         #: #605: with the flag on, the pipeline's: queue a frame already encoded with
         #: `encode_payload` in `wire` (`ConnectionPipeline.attach`). None: frames go as dicts.
@@ -1080,8 +1087,13 @@ class TopicEmitter:
         if sub.ended:
             self._drop_job(sub.sub_id)
             return False
+        began = time.perf_counter()
+        step_s = min(self.step_s, self.turn_s)
         try:
-            next(job.steps)
+            while True:  # M-E: a step is a batch of the job's own steps, about `step_s` of CPU
+                next(job.steps)
+                if time.perf_counter() - began >= step_s:
+                    break
         except StopIteration:
             self._jobs.pop(sub.sub_id, None)
             if job.restart:  # its source could not catch up: the snapshot is taken again

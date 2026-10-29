@@ -220,6 +220,12 @@ class SnapshotRouter:
         loop turns (`catch_up`): only then is it spread (#605)."""
         return getattr(self._source(sub), "catch_up", None) is not None
 
+    def cacheable(self, sub: Subscription) -> bool:
+        """Whether the family adapter's snapshot may enter the shared cache (#605 m-D): yes
+        unless it says no (`cacheable`)."""
+        cacheable = getattr(self._source(sub), "cacheable", None)
+        return cacheable is None or bool(cacheable(sub))
+
     def catch_up(self, sub: Subscription, since: int) -> list[tuple[Any, Any]] | None:
         """The family adapter's `catch_up` (#605: the `d` frames a snapshot spread across loop
         turns missed), or None, which takes the snapshot again, when it has none."""

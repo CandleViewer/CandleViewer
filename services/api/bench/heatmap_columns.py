@@ -130,6 +130,13 @@ class Report:
     reseed_total_ms: float = 0.0
     #: One core's share at the G-02 cap: 32 specs x 10 columns/s x the close cost (`tick` p50).
     steady_core_share_at_cap: float = 0.0
+    #: M-E: K concurrent binary snapshots of one full spec while a column closes every 100 ms:
+    #: the slowest job's wall time to its last `snap` (s), and the snapshots taken again.
+    spread_8_jobs_wall_s_max: float = 0.0
+    spread_8_jobs_restarts: int = 0
+    spread_32_jobs_wall_s_max: float = 0.0
+    spread_32_jobs_restarts: int = 0
+    spread_unfinished_at_cap: int = 0
 
 
 class _Hub:
@@ -374,6 +381,58 @@ def emit_scenario(report: Report, topic: HeatmapTopic, lease: Any) -> Report:
     return report
 
 
+async def _spread_jobs(topic: HeatmapTopic, lease: Any, state: Any, k: int,
+                       cap_s: float = 90.0) -> tuple[float, int, int]:  # fmt: skip
+    """M-E: `k` connections ask for a binary snapshot of `lease`'s full spec at once while a
+    column closes every 100 ms of wall time (as `_close` keeps the ring), until every job has
+    ended or `cap_s`: the slowest job's wall time to its last `snap`, the restarts (a source
+    that could not catch up) and the jobs left."""
+    parsed = parse_topic(f"heatmap.{SYMBOL}")
+    opts = {"encoding": "binary", "window_seconds": 900}
+    last: dict[int, float] = {}
+    restarts = [0]
+    real = TopicEmitter._catch_up
+
+    def counted(self: TopicEmitter, sub: Any, source: Any, gen0: int) -> None:
+        real(self, sub, source, gen0)
+        job = self._jobs.get(sub.sub_id)
+        if job is not None and job.restart:
+            restarts[0] += 1
+
+    def close() -> None:
+        newest = state.ring[-1]
+        state.ring.append(replace(newest, ts_ms=newest.ts_ms + COLUMN_MS))
+        state.version += 1
+
+    emitters = []
+    began = time.perf_counter()
+    TopicEmitter._catch_up = counted  # type: ignore[method-assign]  # counted for the bench
+    try:
+        for j in range(k):
+
+            def seen(frame: dict[str, Any], *_: Any, j: int = j) -> None:
+                if frame.get("t") == "snap" and frame.get("s") is not None:
+                    last[j] = time.perf_counter() - began
+
+            emitter = TopicEmitter(seen, connection_id=f"c{j}", wall_ms=lambda: T0,
+                                   clock=time.monotonic, source=cast(Any, topic),
+                                   cache=SnapshotCache())  # fmt: skip
+            emitter.push_encoded, emitter.encode_payload, emitter.wire = seen, json_payload, "json"
+            sub = Subscription(f"s{j}", parsed, opts, effective_options(parsed, opts))
+            sub.heatmap_lease = lease
+            emitter.snapshot(sub, "initial")
+            emitters.append(emitter)
+        due = time.perf_counter() + 0.1
+        while any(e._jobs for e in emitters) and time.perf_counter() - began < cap_s:
+            if time.perf_counter() >= due:
+                close()
+                due += 0.1
+            await asyncio.sleep(0)
+    finally:
+        TopicEmitter._catch_up = real  # type: ignore[method-assign]
+    return max(last.values(), default=0.0), restarts[0], sum(1 for e in emitters if e._jobs)
+
+
 def snapshot_and_seed(report: Report, seed: int) -> Report:
     """Fable M-1: `build()` for a binary `sub` at the default budget (8 MiB, 2 000 frames) over a
     full ring of 2 000 cached 512-row columns, the CVWB encode of its parts (what the gateway's
@@ -463,6 +522,11 @@ def snapshot_and_seed(report: Report, seed: int) -> Report:
     report.reseed_turn_max_ms = max(turns, default=0.0)
     report.reseed_total_ms = sum(turns)
     report.steady_core_share_at_cap = 32 * 10 * report.build_ms_p50 / 1000
+    for k in (8, 32):
+        wall, restarts, unfinished = asyncio.run(_spread_jobs(topic, lease, state, k))
+        setattr(report, f"spread_{k}_jobs_wall_s_max", wall)
+        setattr(report, f"spread_{k}_jobs_restarts", restarts)
+        report.spread_unfinished_at_cap += unfinished
     return report
 
 
