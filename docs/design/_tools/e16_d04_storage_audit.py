@@ -1094,8 +1094,11 @@ TIER_FRAMES = ("TIER/questdb", "TIER/parquet", "TIER/postgres")
 # stamped with the orchestrator's design-defaults ledger 1 (#2701, 2026-10-29): row 57 rules D04-G1–G7, G11 and
 # G12 (approved as proposed), row 58 the vacuum (D04-G8) and row 59 Stop job (D04-G10).
 LEDGER_DATE = "2026-10-29"
-LEDGER_ROWS: dict[int, int] = {8: 58, 10: 59}
-LEDGER_ROW_DEFAULT = 57
+LEDGER_ROWS: dict[int, int] = {
+    **{g: 57 for g in (1, 2, 3, 4, 5, 6, 7, 11, 12)},
+    8: 58,
+    10: 59,
+}  # every ruled gap -> its ledger row; a gap not listed here (D04-G9, an unknown number) is unruled and FAILs
 CAPTION = "PROPOSED — D04-G{n}, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row {row})"
 CAP_RE = r"PROPOSED — D04-G(\d+), RULED \(orchestrator, 2026-10-29, #2701 ledger 1 row (\d+)\)"
 # any stamp a caption may carry: the ledger form with any row, or the pre-ledger form (the ledger gate reads both)
@@ -1106,7 +1109,11 @@ CAP_ANY_RE = (
 
 
 def ledger_row(n: int) -> int:
-    return LEDGER_ROWS.get(n, LEDGER_ROW_DEFAULT)
+    if n not in LEDGER_ROWS:
+        raise SystemExit(
+            f"ledger: D04-G{n} is not in LEDGER_ROWS (an unruled gap carries no ledger stamp)"
+        )
+    return LEDGER_ROWS[n]
 
 
 def ledger_gate(spec: str) -> list[str]:
@@ -1114,7 +1121,11 @@ def ledger_gate(spec: str) -> list[str]:
     bad: list[str] = []
     for m in re.finditer(CAP_ANY_RE, spec):
         n = int(m.group(1))
-        if m.group(3):
+        if n not in LEDGER_ROWS:
+            bad.append(
+                f"ledger: D04-G{n} is not a ruled gap (no row in the ledger map): {m.group(0)!r}"
+            )
+        elif m.group(3):
             bad.append(f"ledger: D04-G{n} caption keeps the pre-ledger stamp ({m.group(0)!r})")
         elif int(m.group(2)) != ledger_row(n):
             bad.append(
@@ -6110,6 +6121,12 @@ MUTATIONS: list[Mutation] = [
         _append("PURGE/refused-before", CT, "the close ✕ no longer available after the refusal"),
         "R-14 refused-before: exit gated ('no longer available' in 'the close ✕ no longer availa')",
     ),
+    # L01: the ledger gate (ledger 1, M2/M3): a caption citing a row that is not its gap's
+    (
+        "L01 ledger: the D04-G3 caption of a Size row cites row 58 (the vacuum's), not row 57",
+        lambda s: _first(s, cap(3), cap(3).replace("row 57", "row 58")),
+        "ledger: D04-G3 caption reads row 58, the ledger's is row 57",
+    ),
 ]
 # Valid twins: each must raise nothing (a captioned inset line, the gap's own G-row, a negated mention).
 VALID: list[tuple[str, Callable[[str], str]]] = [
@@ -6404,6 +6421,7 @@ def numbers_of(
     n["mutations_text5"] = sum(d.startswith("Q") for d, _, _ in MUTATIONS)
     n["mutations_contract"] = sum(d.startswith("V") for d, _, _ in MUTATIONS)
     n["mutations_boards"] = sum(d.startswith("B") for d, _, _ in MUTATIONS)
+    n["mutations_ledger"] = sum(d.startswith("L") for d, _, _ in MUTATIONS)
     n["valid_twins"] = len(VALID)
     n["pins"] = pin_counts(RULED_PIN_TXT)
     n["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
@@ -6460,7 +6478,7 @@ def numbers_of(
     n["context"] = {
         "http_codes": [202, 403, 404, 409, 422, 503],
         "provenance_dates": ["2026-09-25", "2026-10-21", "2026-10-25", LEDGER_DATE],
-        "ledger1_rows": sorted({LEDGER_ROW_DEFAULT, *LEDGER_ROWS.values()}),
+        "ledger1_rows": sorted(set(LEDGER_ROWS.values())),
         "typed": [
             f"{facts['import_days_max']} days",
             f"{lo} characters",
@@ -7096,8 +7114,10 @@ RULED_PIN_TXT = r"""
    `docs/design/E16/img/E16-D04-04-states-health.png` (2664 × 4248)
   - `05 maintenance-jobs` — board id `0605c48b-7da1-80e2-8008-dd12785d0d5f` —
    `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` (1920 × 1256) — redrawn at r8 (ledger 1
-   row 58: the `JOB/confirm-vacuum` caption names Owner-only and the `recorder` class; the D04-G8
-   insets carry the RULED stamp)
+   row 58: the `JOB/confirm-vacuum` caption names Owner-only and the `recorder` class; two of its
+   four D04-G8 insets carry the RULED stamp — the confirm-vacuum and outcomes captions; the
+   strip-running and strip-refused-409 captions keep the pre-ledger caption until the next boards
+   touch)
   - `06 purge` — board id `8151935f-ff84-80bf-8008-dca2eae0fd19` —
    `docs/design/E16/img/E16-D04-06-purge.png` (1920 × 2231) — redrawn from r7 (M-2:
    `PURGE/refused-before` added as the seventh frame)
@@ -8238,33 +8258,34 @@ RULED_PIN_TXT = r"""
    box shifted by spaces alone, onto the Postgres card and off the Parquet card, and a `~` written
    before a marked number) and the purge-contract re-pin's ⟦audit:mutations_contract⟧ form (the
    dialog's `before` field removed) and the boards lens round 1's ⟦audit:mutations_boards⟧ form
-   (`PURGE/refused-before`'s close ✕ read dead after the refusal) — and each must make `--check`
-   fail with **one** FAIL, its own message; no two share a message, ⟦audit:valid_twins⟧ valid twins
-   (a captioned inset, the gap's own G-row, a negated mention, the exit Cancel, "Esc closes the
-   dialog", the ruled order reworded four ways, a sibling PENDING by name, the typed field starting
-   empty, trailing spaces) raise no gate FAIL and nothing once re-pinned (until then R-23 alone
-   refuses each, as it edits a unit), the unmutated file passes and the file is byte-identical
-   afterwards; `--mutate N` exits 1 when the gate caught the mutation, 2 when it slipped. **Two
-   layers (the gate re-check 3: whole-document default-deny).** The vocabulary gates above are the
-   first line: each reads its ruled sentence through its words, their synonyms and the negators
-   that govern them. R-23 is the backstop and pins **every unit** of this file in the tool's
-   committed `RULED_PIN_TXT`: a unit is a Markdown block — a heading, or a run of consecutive
-   non-blank lines (each paragraph, list block and table block, the deck's table among them) — and
-   the fenced sketch whole, its lines verbatim (its columns are content; every other unit's
-   whitespace is normalised); a soft-wrapped line belongs to its block. A unit is keyed by its
-   region (the heading path, plus the heading's occurrence) and its place in the region, and read
-   with its exact text: ⟦audit:pins.total⟧ units (headings ⟦audit:pins.heading⟧, paragraphs
-   ⟦audit:pins.paragraph⟧, tables ⟦audit:pins.table⟧, the sketch ⟦audit:pins.sketch⟧). A changed,
-   moved, duplicated or missing unit, a unit the pins do not hold, a new or repeated heading and a
-   duplicate location FAIL naming the location, so a new or edited unit anywhere fails until
-   `--repin-ruled` rewrites the table, a deliberate act read in the diff; `--check` never re-pins.
-   **Left unpinned, by name (the exemption list, the tool's `PIN_EXEMPT`):** ⟦audit:pins.exempt⟧
-   class — the `audit:` markers and the number printed before each, §12's among them
-   (⟦audit:pins.masked⟧ spans, each read as its key): `--check` re-derives each key's value and
-   reads the number before the marker. Nothing else is exempt: §12's R-rows, §15's matrix and the
-   caption carriers have no exact gate that reads them whole, so they stay pinned. An R-23 FAIL is
-   reported only when no other gate FAILs, else counted beside it on a NOTE line, so one wrong form
-   yields one FAIL.
+   (`PURGE/refused-before`'s close ✕ read dead after the refusal) and the ledger gate's
+   ⟦audit:mutations_ledger⟧ form (a caption citing a row that is not its gap's) — and each must
+   make `--check` fail with **one** FAIL, its own message; no two share a message,
+   ⟦audit:valid_twins⟧ valid twins (a captioned inset, the gap's own G-row, a negated mention, the
+   exit Cancel, "Esc closes the dialog", the ruled order reworded four ways, a sibling PENDING by
+   name, the typed field starting empty, trailing spaces) raise no gate FAIL and nothing once
+   re-pinned (until then R-23 alone refuses each, as it edits a unit), the unmutated file passes
+   and the file is byte-identical afterwards; `--mutate N` exits 1 when the gate caught the
+   mutation, 2 when it slipped. **Two layers (the gate re-check 3: whole-document default-deny).**
+   The vocabulary gates above are the first line: each reads its ruled sentence through its words,
+   their synonyms and the negators that govern them. R-23 is the backstop and pins **every unit**
+   of this file in the tool's committed `RULED_PIN_TXT`: a unit is a Markdown block — a heading, or
+   a run of consecutive non-blank lines (each paragraph, list block and table block, the deck's
+   table among them) — and the fenced sketch whole, its lines verbatim (its columns are content;
+   every other unit's whitespace is normalised); a soft-wrapped line belongs to its block. A unit
+   is keyed by its region (the heading path, plus the heading's occurrence) and its place in the
+   region, and read with its exact text: ⟦audit:pins.total⟧ units (headings ⟦audit:pins.heading⟧,
+   paragraphs ⟦audit:pins.paragraph⟧, tables ⟦audit:pins.table⟧, the sketch ⟦audit:pins.sketch⟧). A
+   changed, moved, duplicated or missing unit, a unit the pins do not hold, a new or repeated
+   heading and a duplicate location FAIL naming the location, so a new or edited unit anywhere
+   fails until `--repin-ruled` rewrites the table, a deliberate act read in the diff; `--check`
+   never re-pins. **Left unpinned, by name (the exemption list, the tool's `PIN_EXEMPT`):**
+   ⟦audit:pins.exempt⟧ class — the `audit:` markers and the number printed before each, §12's among
+   them (⟦audit:pins.masked⟧ spans, each read as its key): `--check` re-derives each key's value
+   and reads the number before the marker. Nothing else is exempt: §12's R-rows, §15's matrix and
+   the caption carriers have no exact gate that reads them whole, so they stay pinned. An R-23 FAIL
+   is reported only when no other gate FAILs, else counted beside it on a NOTE line, so one wrong
+   form yields one FAIL.
 @ §12#1 ¶5 ‖ table
   | Rule | The ruled sentence the gate reads (source) | Tables read | Mutations |
   | ---- |
