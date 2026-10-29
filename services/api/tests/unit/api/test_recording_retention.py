@@ -27,6 +27,9 @@ from candleviewer.recorder.retention import RunReport
 
 _PATH = "/recording/retention-policies"
 _T = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
+#: The codes each role holds here (22 `x-permissions`): the PUT is Owner-only (`admin:write`).
+_OWNER = ("recording:read", "recording:write", "admin:write")
+_MANAGER = ("recording:read", "recording:write")
 
 
 class _Store:
@@ -144,7 +147,7 @@ async def test_get_lists_the_set() -> None:
 
 
 async def test_put_replaces_the_set_after_writing_the_change_with_before_and_after() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     assert env.store is not None
     env.store.seed("trades", 30)
     new = [_item(days=60), _item("orderbook_delta", 3, action="drop", symbol="ETHUSDT")]
@@ -162,7 +165,7 @@ async def test_put_replaces_the_set_after_writing_the_change_with_before_and_aft
 
 
 async def test_an_audit_that_cannot_be_written_stores_nothing() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     env.audit_down = True
     resp = await env.put([_item()])
     assert (resp.status_code, resp.json()["code"]) == (503, "audit_unavailable")
@@ -177,7 +180,7 @@ _REFUSED |= {"derived-outlives-trades": [_item(action="drop", days=30)]}
 
 @pytest.mark.parametrize("items", list(_REFUSED.values()), ids=list(_REFUSED))
 async def test_a_set_the_store_cannot_hold_is_refused(items: list[dict[str, Any]]) -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     resp = await env.put(items)
     assert (resp.status_code, resp.json()["code"]) == (422, "retention_invalid_policy")
     assert env.log == []
@@ -189,14 +192,14 @@ _INVALID += [{"items": "all"}, {"items": [], "extra": 1}, {"items": [_item(strea
 
 @pytest.mark.parametrize("body", _INVALID)
 async def test_an_invalid_body_or_unknown_field_is_422_validation_failed(body: Any) -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     resp = await env.http.put(_PATH, json=body)
     assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
     assert env.log == []
 
 
 async def test_a_key_replays_its_answer_and_refuses_another_body() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     key = str(uuid.uuid4())
     first = await env.put([_item()], key)
     again = await env.put([_item()], key)
@@ -214,7 +217,7 @@ async def _settle(jobs: AdminJobStore) -> list[Job]:
 
 
 async def test_apply_now_starts_exactly_one_sweep() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     assert (await env.put([_item()], apply_now="true")).status_code == 200
     done = await _settle(env.jobs)
     assert [(j.kind, j.status) for j in done] == [(JOB_KIND, "succeeded")]
@@ -222,7 +225,7 @@ async def test_apply_now_starts_exactly_one_sweep() -> None:
 
 
 async def test_apply_now_while_a_sweep_runs_is_409_and_stores_nothing() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     held = asyncio.Event()
 
     async def work(progress: Any) -> dict[str, object]:
@@ -240,7 +243,7 @@ async def test_apply_now_while_a_sweep_runs_is_409_and_stores_nothing() -> None:
 
 
 async def test_apply_now_with_retention_off_is_409_and_stores_nothing() -> None:
-    env = _Env("recording:write", enabled=False)
+    env = _Env(*_OWNER, enabled=False)
     resp = await env.put([_item()], apply_now="true")
     assert (resp.status_code, resp.json()["code"]) == (409, "conflict")
     assert env.log == [] and not env.jobs._jobs
@@ -248,7 +251,7 @@ async def test_apply_now_with_retention_off_is_409_and_stores_nothing() -> None:
 
 
 async def test_a_refused_audit_leaves_no_sweep_running() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     env.audit_down = True
     assert (await env.put([_item()], apply_now="true")).status_code == 503
     assert [j.status for j in await _settle(env.jobs)] == ["cancelled"]
@@ -265,13 +268,51 @@ async def test_no_session_401_and_no_permission_403_audited() -> None:
     assert (await _Env("marketdata:read").http.get(_PATH)).status_code == 403
 
 
-async def test_a_manager_with_the_write_permission_replaces_the_set() -> None:
-    assert (await _Env("recording:write", owner=False).put([_item()])).status_code == 200
+async def test_a_manager_with_a_live_step_up_is_the_audited_403_and_the_set_is_unchanged() -> None:
+    """AC-03 (the E16 threat model, R-T1): the set is Owner-only. A Manager with a live `recorder`
+    window gets the standard 403, one `rbac.denied` record, and the stored set stays as it was;
+    the refusal comes before the body and the step-up, so no challenge is restated."""
+    env = _Env(*_MANAGER, owner=False)
+    assert env.store is not None
+    env.store.seed("trades", 30)
+    kept = await env.store.list_policies()
+    resp = await env.put([_item(days=60)], key=str(uuid.uuid4()), apply_now="true")
+    assert (resp.status_code, resp.json()["code"]) == (403, "forbidden")
+    assert resp.headers["content-type"] == "application/problem+json"
+    assert resp.json()["required_permissions"] == ["admin:write"]
+    assert [a for a, _ in env.audit] == ["rbac.denied"]
+    assert env.audit[0][1]["reason"] == "missing_permission:admin:write:none"
+    assert env.audit[0][1]["actor_user_id"] == env.caller.user_id
+    assert env.store.replaced == 0 and await env.store.list_policies() == kept
+    assert env.restated == [] and not env.jobs._jobs and env.sweeper.runs == 0
+
+
+async def test_the_body_the_manager_sends_is_one_the_owner_stores() -> None:
+    """The AC-03 body passes the validator, so the 403 above is the role, not the body."""
+    env = _Env(*_OWNER)
+    resp = await env.put([_item(days=60)], key=str(uuid.uuid4()), apply_now="true")
+    assert resp.status_code == 200
+    assert env.store is not None and env.store.replaced == 1
+
+
+async def test_a_managers_refusal_is_the_same_problem_body_as_a_viewers() -> None:
+    manager = await _Env(*_MANAGER, owner=False).put([_item()])
+    viewer = await _Env("recording:read", owner=False).put([_item()])
+    assert manager.status_code == viewer.status_code == 403
+    assert manager.content == viewer.content
+    assert manager.headers["content-type"] == viewer.headers["content-type"]
+
+
+async def test_the_owner_replaces_the_set_with_the_record_written_first() -> None:
+    env = _Env(*_OWNER)
+    resp = await env.put([_item(days=45)])
+    assert resp.status_code == 200 and env.log == ["retention.change", "replace"]
+    assert env.audit[0][1]["after_state"]["items"][0]["retain_days"] == 45
 
 
 @pytest.mark.parametrize("method", ["GET", "PUT"])
 async def test_no_store_is_503(method: str) -> None:
-    env = _Env("recording:read", "recording:write")
+    env = _Env(*_OWNER)
     env.store = None
     resp = await env.http.request(method, _PATH, json={"items": _whole([])})
     assert (resp.status_code, resp.json()["code"]) == (503, "store_unavailable")
@@ -287,7 +328,7 @@ async def _spin() -> None:
 
 
 async def test_two_overlapping_puts_are_audited_in_the_order_they_are_stored() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     assert env.store is not None
     env.store.seed("trades", 30)
     env.store.hold = asyncio.Event()
@@ -304,7 +345,7 @@ async def test_two_overlapping_puts_are_audited_in_the_order_they_are_stored() -
 
 
 async def test_a_replace_that_fails_after_the_record_writes_a_failure_record_and_raises() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     assert env.store is not None
     env.store.fail = RuntimeError("replace failed")
     with pytest.raises(RuntimeError, match="replace failed"):
@@ -318,7 +359,7 @@ async def test_a_replace_that_fails_after_the_record_writes_a_failure_record_and
 
 
 async def test_a_body_declared_over_the_cap_is_refused_before_it_is_read() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     read: list[bool] = []
 
     async def body() -> Any:
@@ -333,7 +374,7 @@ async def test_a_body_declared_over_the_cap_is_refused_before_it_is_read() -> No
 
 
 async def test_a_body_that_streams_past_the_cap_is_422() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     big = b'{"items": [], "note": "' + b"x" * (300 * 1024) + b'"}'
     resp = await env.http.put(_PATH, content=big)
     assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
@@ -341,14 +382,14 @@ async def test_a_body_that_streams_past_the_cap_is_422() -> None:
 
 
 async def test_an_apply_now_that_is_not_true_or_false_is_422_and_stores_nothing() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     resp = await env.put([_item()], apply_now="maybe")
     assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
     assert env.log == [] and not env.jobs._jobs
 
 
 async def test_apply_now_without_a_sweeper_is_503_and_stores_nothing() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     env.sweeper_up = False
     resp = await env.put([_item()], apply_now="true")
     assert (resp.status_code, resp.json()["code"]) == (503, "store_unavailable")
@@ -358,7 +399,7 @@ async def test_apply_now_without_a_sweeper_is_503_and_stores_nothing() -> None:
 
 @pytest.mark.parametrize("locked", [False, True])
 async def test_the_sweep_result_says_when_the_volume_lock_was_held(locked: bool) -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     env.sweeper.locked = locked
     assert (await env.put([_item()], apply_now="true")).status_code == 200
     (job,) = await _settle(env.jobs)
@@ -368,13 +409,13 @@ async def test_the_sweep_result_says_when_the_volume_lock_was_held(locked: bool)
 async def test_a_set_that_omits_a_streams_default_row_is_refused_and_stores_nothing() -> None:
     streams = get_args(retention.Stream)
     for left_out in (streams[0], streams[-1], "klines"):
-        env = _Env("recording:write")
+        env = _Env(*_OWNER)
         items = [_item(s, 30) for s in streams if s != left_out]
         resp = await env.put(items, whole=False)
         assert (resp.status_code, resp.json()["code"]) == (422, "retention_invalid_policy")
         assert env.log == [] and env.store is not None and env.store.replaced == 0
     # a symbol row does not stand in for the default row
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     items = [_item(s, 30) for s in streams if s != "klines"] + [
         _item("klines", 30, symbol="ETHUSDT")
     ]
@@ -384,7 +425,7 @@ async def test_a_set_that_omits_a_streams_default_row_is_refused_and_stores_noth
 
 
 async def test_two_overlapping_puts_with_one_key_store_once_and_record_once() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     assert env.store is not None
     env.store.hold = asyncio.Event()
     key = str(uuid.uuid4())
@@ -415,21 +456,21 @@ async def _put_chunked(env: _Env, pad: int) -> httpx.Response:
 
 
 async def test_a_valid_chunked_body_over_the_cap_is_refused() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     resp = await _put_chunked(env, 40 * 1024 * 7)  # 280 KiB of padding: the cap is 256 KiB
     assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
     assert env.log == []
 
 
 async def test_a_valid_chunked_body_under_the_cap_is_stored() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     resp = await _put_chunked(env, 40 * 1024 * 2)  # 80 KiB of padding
     assert resp.status_code == 200
     assert env.log == ["retention.change", "replace"]
 
 
 async def test_a_body_of_more_than_1000_items_is_refused() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     many = [_item(symbol=f"A{n:04d}USDT") for n in range(1001)]
     resp = await env.http.put(_PATH, json={"items": many})
     assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
@@ -445,7 +486,7 @@ async def test_a_body_of_more_than_1000_items_is_refused() -> None:
     ids=["missing-field", "unknown-field", "bad-stream"],
 )
 async def test_an_unelevated_callers_invalid_set_is_the_422_never_a_challenge(body: Any) -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     env.elevated = False
     r = await env.http.put(_PATH, json=body)
     assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
@@ -453,7 +494,7 @@ async def test_an_unelevated_callers_invalid_set_is_the_422_never_a_challenge(bo
 
 
 async def test_an_unelevated_callers_refused_set_is_the_q5_422_never_a_challenge() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     env.elevated = False
     r = await env.put([_item(action="pin")])
     assert (r.status_code, r.json()["code"]) == (422, "retention_invalid_policy")
@@ -469,7 +510,7 @@ async def test_an_unelevated_viewer_is_the_audited_403_never_a_challenge() -> No
 
 
 async def test_an_unelevated_callers_valid_set_is_challenged_restating_its_size() -> None:
-    env = _Env("recording:write")
+    env = _Env(*_OWNER)
     env.elevated = False
     r = await env.put([_item(symbol="BTCUSDT")], key=str(uuid.uuid4()), apply_now="true")
     assert (r.status_code, r.json()["code"]) == (403, "step_up_required")
@@ -484,7 +525,7 @@ async def test_an_unelevated_callers_valid_set_is_challenged_restating_its_size(
 async def test_a_kept_answer_is_read_back_only_behind_a_live_window() -> None:
     """The replay comes after the gate: once the window ends, the same key and body get the
     challenge, never the stored answer, and nothing is stored again."""
-    env, key = _Env("recording:write"), str(uuid.uuid4())
+    env, key = _Env(*_OWNER), str(uuid.uuid4())
     first = await env.put([_item(days=40)], key=key)
     assert first.status_code == 200 and env.store is not None and env.store.replaced == 1
     env.elevated = False
@@ -497,6 +538,6 @@ async def test_a_kept_answer_is_read_back_only_behind_a_live_window() -> None:
 
 
 async def test_a_set_wired_without_its_step_up_fails_closed_and_stores_nothing() -> None:
-    env = _Env("recording:write", gated=False)
+    env = _Env(*_OWNER, gated=False)
     r = await env.put([])
     assert r.status_code == 503 and env.store is not None and env.store.replaced == 0

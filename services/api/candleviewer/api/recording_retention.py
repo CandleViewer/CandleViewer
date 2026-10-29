@@ -1,6 +1,6 @@
 """`listRetentionPolicies` and `setRetentionPolicies` (E16-T08, #492): read with `recording:read`;
-replace with `recording:write` behind the `recorder` step-up (04 row 9), which the handler demands
-(`HANDLER_GATED_ROUTES`, #2304 slice 3c).
+replace Owner-only (`admin:write`, the E16 threat model's R-T1 class, 04 row 9c) behind the
+`recorder` step-up, which the handler demands (`HANDLER_GATED_ROUTES`, #2304 slice 3c).
 
 The PUT is checked in order: session (401), permission (403, audited), `Idempotency-Key` and
 `apply_now` (422), body (422 `validation_failed`, unknown fields too), the Q5 mapping and the
@@ -65,6 +65,9 @@ from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS, canonical_
 from candleviewer.ws._generated.error_codes import ErrorCode
 
 _PATH = "/recording/retention-policies"
+#: The PUT's permission, as `x-rbac` in 22 declares it: held by the Owner role only (the E16
+#: threat model's R-T1 class); any other caller is 403 `forbidden`, audited as `rbac.denied`.
+_SET_PERMISSION = Permission.ADMIN_WRITE
 _MAX_BODY = 256 * 1024
 _LENGTH = re.compile(r"[0-9]{1,19}")  # a usable Content-Length: ASCII digits only
 _UNHELD = "The store holds no field for this yet."
@@ -184,7 +187,7 @@ def make_recording_retention_router(
 
     @router.put(_PATH)
     async def set_retention_policies(request: Request) -> Response:
-        p = await common.caller(principal_resolver, audit, request, Permission.RECORDING_WRITE)
+        p = await common.caller(principal_resolver, audit, request, _SET_PERMISSION)
         try:
             key = idempotency_key(request, "setRetentionPolicies")
         except ValueError:

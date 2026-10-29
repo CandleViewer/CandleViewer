@@ -1,8 +1,9 @@
 """#492 S4 provider contract: `listRetentionPolicies` and `setRetentionPolicies` through the real
 `create_app()` (the RBAC pack's world, so the real step-up guard). Bodies validate against the
 schema 22 declares for their status; every status the routes answer is declared; the examples
-validate. The PUT always needs the `recorder` step-up, path-gated (`403 step_up_required`); with
-it the Owner and a Manager replace the set, while a Viewer gets 403 and an `rbac.denied` record."""
+validate. The PUT always needs the `recorder` step-up (`403 step_up_required`) and is Owner-only
+(`admin:write`, the E16 threat model's R-T1 class): with the step-up the Owner replaces the set,
+while a Manager or a Viewer gets 403 and an `rbac.denied` record and the set is unchanged."""
 
 from __future__ import annotations
 
@@ -73,17 +74,29 @@ def test_a_put_without_the_recorder_step_up_is_refused_before_the_handler(
     assert store.replaced == 0
 
 
-@pytest.mark.parametrize("actor", ["owner", "manager_with_grant"])
-def test_with_the_step_up_the_owner_and_a_manager_replace_the_set(
-    world: World, store: _Store, actor: str
-) -> None:
-    resp = _put(world, actor, [_item(days=60)])
+def test_with_the_step_up_the_owner_replaces_the_set(world: World, store: _Store) -> None:
+    resp = _put(world, "owner", [_item(days=60)])
     assert resp.status_code == 200 and store.replaced == 1
     validate_example(_OK.format("put"), resp.json())
     listed = world.client.get(_PATH, headers=bearer("viewer"))
     assert listed.status_code == 200 and listed.json() == resp.json()
     validate_example(_OK.format("get"), listed.json())
     assert [r["action"] for r in world.audit.records] == ["retention.change"]
+
+
+@pytest.mark.parametrize("actor", ["manager_with_grant", "manager_without_grant"])
+def test_a_manager_with_the_step_up_gets_403_an_rbac_denied_record_and_the_set_unchanged(
+    world: World, store: _Store, actor: str
+) -> None:
+    """AC-03 of the E16 threat model (R-T1), through the real app and its step-up guard."""
+    kept = list(store.rows)
+    resp = _put(world, actor, [_item(days=60)])
+    assert (resp.status_code, resp.json()["code"]) == (403, "forbidden")
+    validate_example(
+        "/components/responses/Forbidden/content/application~1problem+json/schema", resp.json()
+    )
+    assert [r["action"] for r in world.audit.records] == ["rbac.denied"]
+    assert store.replaced == 0 and store.rows == kept
 
 
 def test_a_viewer_with_the_step_up_gets_403_and_an_rbac_denied_record(
