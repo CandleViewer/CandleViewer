@@ -21,7 +21,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer import oms_stream_wiring as wiring
-from candleviewer.account_health_wiring import StreamedAccountsUnread
+from candleviewer.account_health_wiring import TRACKING_REFRESH_S, StreamedAccountsUnread
 from candleviewer.accounts.service import AccountHealthFeed
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import ClockDriftError
@@ -870,6 +870,14 @@ def test_max_future_skew_has_one_owner() -> None:
     assert MAX_FUTURE_SKEW_US == MAX_FUTURE_SKEW // timedelta(microseconds=1) == 5_000_000
     source = inspect.getsource(stream_consumer)
     assert "5_000_000" not in source and "MAX_FUTURE_SKEW // timedelta" in source
+
+
+def test_the_consumers_refresh_is_account_healths_tracking_refresh() -> None:
+    """24 Sec.8.12 "Its ports": the consumer reads the streamed accounts again on each of account
+    health's tracking refreshes, so its own period is that one, pinned equal (two owners, one
+    value), and the runtime's build keeps it."""
+    assert stream_consumer.REFRESH_S == TRACKING_REFRESH_S
+    assert World().build().consumer._refresh_s == TRACKING_REFRESH_S
 
 
 def test_refuse_live_without_position_rows() -> None:
