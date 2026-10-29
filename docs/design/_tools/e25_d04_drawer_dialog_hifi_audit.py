@@ -648,6 +648,7 @@ FETCH_POINT = (
     "`GET /rules?mode=armed` is (re)issued on the Apply press and the variant is decided from "
     "that response alone"
 )
+CF2_UNTIL = "200 with ≥ 1 armed → CF-2 until D02-G6 adds a detector filter"  # M-1: no filter yet
 UNKNOWN_LEG = "before any value is shown"  # AP-5: the re-read precedes any value (M-4)
 FORBIDDEN_LEG = "Not sent — your access changed. Only the owner can change detector settings."
 ADMIN_LINK = "only for a session holding `admin:read` and `audit:read`"  # the audit link (M-2)
@@ -727,6 +728,12 @@ def table_gates(spec: str, fl: dict[str, Any], problems: list[str]) -> dict[str,
             problems.append(f"confirmation {cf} lacks {lost}")
     if FETCH_POINT not in spec:
         problems.append("confirmation: the fetch point (re-issued on the Apply press) is lost")
+    # M-1: with no detector filter on listRules a 200 with armed rules is CF-2, in §4.4 and HO-4
+    if spec.count(CF2_UNTIL) < 2 or "→ CF-1;" in spec:
+        problems.append("confirmation: a 200 with armed rules must go to CF-2 until D02-G6")
+    # m-1: the list is paged; a failed page is CF-2
+    if spec.count("failed page → CF-2") < 2:
+        problems.append("confirmation: the paged list's failed page is not sent to CF-2")
     # the audit link: offered only with admin:read + audit:read in the §4.1 anatomy, dropped
     # otherwise (rule 5 step 1)
     if ADMIN_LINK not in section(spec, "### 4.1 ", "\n### 4.2"):
@@ -954,6 +961,16 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
         "the admin link locked, not dropped",
         "| omitted, not locked — the plain sentence (`14` rule 5 step 1)",
         "| T2 — the plain sentence (`14` rule 5 step 1)",
+    ),
+    (
+        "a 200 with armed rules goes to CF-1 before D02-G6",
+        "the variant is decided from that response alone: every page of the paged list is read",
+        "the variant is decided from that response alone: 200 with ≥ 1 armed → CF-1; every page of the paged list is read",
+    ),
+    (
+        "a failed page is not sent to CF-2",
+        "timeout or failed page → CF-2 — ",
+        "timeout → CF-2 — ",
     ),
     ("a registration claim is wrong", "unregistered (E05)", "registered"),
 )
