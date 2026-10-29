@@ -298,17 +298,20 @@ class _Row:
 _DISABLED, _UNMINTED = UserDisabled("disabled"), OSError("session store unavailable")
 _ROWS: dict[str, _Row] = {
     "login_wrong_password": _Row(_wrong_password, "auth.login_failed", 401),
-    "login_disabled": _Row(partial(_account, status=UserStatus.DISABLED), "auth.login_failed", 403),
+    "login_disabled": _Row(partial(_account, status=UserStatus.DISABLED), "auth.login_failed", 401),
     "login_locked": _Row(
         lambda s, mp: _account(s, mp, locked_until=s.clock.now + timedelta(hours=1)),
         "auth.account_locked",
-        423,
+        401,
+    ),
+    "login_without_mfa_required": _Row(
+        partial(_account, mfa_required=False), "auth.login_failed", 401
     ),
     "login_password_step": _Row(_account, "auth.login", 200),
     "verify_wrong_code": _Row(_wrong_second_factor, "auth.mfa_failed", 401),
     "verify_disabled": _Row(_disabled_at_the_mint, "auth.login_failed", 401),
     "verify_unminted": _Row(_unminted_at_the_mint, "auth.mfa_failed", 500),
-    "sign_in_disabled": _Row(_enrolment_only_disabled, "auth.login_failed", 403),
+    "sign_in_disabled": _Row(_enrolment_only_disabled, "auth.login_failed", 401),
     "recovery_exhausted": _Row(_exhausted, "auth.recovery_codes_exhausted", 401),
     "recovery_wrong_code": _Row(partial(_recovery, code=_WRONG_CODE), "auth.mfa_failed", 401),
     "recovery_not_required": _Row(

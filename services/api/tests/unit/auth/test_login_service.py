@@ -8,7 +8,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
+from candleviewer.auth.errors import (
+    AccountDisabled,
+    AccountLocked,
+    InvalidCredentials,
+    MfaNotRequired,
+)
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, EnrolmentOnlyLogin, LoginService
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, MfaMethodKind, UserStatus
@@ -116,11 +121,10 @@ async def test_lockout_after_five_failures_refuses_even_correct_password() -> No
                 source_ip="10.0.0.1",
             )
 
-    with pytest.raises(AccountLocked) as exc:
+    with pytest.raises(AccountLocked):
         await service.login(
             LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1"
         )
-    assert exc.value.retry_after_s > 0
 
 
 @pytest.mark.asyncio
@@ -379,7 +383,7 @@ async def test_user_not_required_to_use_mfa_still_fails_closed(
     password_hash = await hasher.hash(PASSWORD)
     repo.add(make_user(password_hash=password_hash, mfa_required=False, mfa_methods=methods))
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(MfaNotRequired):
         await _service(repo).login(
             LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1"
         )

@@ -99,7 +99,7 @@ def test_obs_credential_stuffing_counts_every_failed_login_and_the_lock_once(
     fails = stack.scraped("auth_login_failures_total", method="password")
     codes = [stack.client.post("/auth/login", json=wrong).status_code for _ in range(tries)]
     ghost = stack.client.post("/auth/login", json={"identifier": "ghost", "password": "x"})
-    assert codes == [401] * LOCKOUT_THRESHOLD + [423] and ghost.status_code == 401
+    assert codes == [401] * tries and ghost.status_code == 401  # one answer, the lock's too
     assert _rows(stack, "auth.login_failed") == [(None, "failure", "info")] * tries  # uniform
     assert _rows(stack, "auth.account_locked") == [(None, "denied", "warning")]
     # #2319: one per `auth.login_failed` row; the attempt the lock refuses is no failed login

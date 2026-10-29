@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-// E09-S01 (#1605): SCR-001 six states + SCR-004. API mocked at the network layer.
+// E09-S01 (#1605): SCR-001's states + SCR-004. API mocked at the network layer.
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => ({
   status,
@@ -53,16 +53,18 @@ test("submitting: fields locked while the request is pending", async ({ page }) 
   await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
 });
 
-test("disabled account", async ({ page }) => {
-  await page.route("**/api/v1/auth/login", (r) => r.fulfill(json({}, 403)));
+test("disabled or locked account: the one failure string (SR-014)", async ({ page }) => {
+  await page.route("**/api/v1/auth/login", (r) =>
+    r.fulfill(json({ code: "unauthenticated" }, 401)),
+  );
   await page.goto("/login");
   await fill(page);
-  await expect(page.getByRole("alert")).toHaveText("Account disabled - contact the owner");
+  await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
 });
 
-test("locked: remaining time shown, submit disabled", async ({ page }) => {
+test("rate-limited: remaining time shown, submit disabled", async ({ page }) => {
   await page.route("**/api/v1/auth/login", (r) =>
-    r.fulfill(json({}, 423, { "Retry-After": "900" })),
+    r.fulfill(json({}, 429, { "Retry-After": "900" })),
   );
   await page.goto("/login");
   await fill(page);

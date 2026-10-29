@@ -23,6 +23,7 @@ from candleviewer.auth.errors import (
     AccountLocked,
     InvalidCredentials,
     MfaChallengeInvalid,
+    MfaNotRequired,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
     UserDisabled,
@@ -255,20 +256,34 @@ def test_invalid_credentials_returns_401_problem_json() -> None:
     client = TestClient(_app(InvalidCredentials("Username or password is incorrect")))
     response = client.post("/auth/login", json={"identifier": "basiltt", "password": "x"})
     assert response.status_code == 401
-    assert response.json()["detail"] == "Username or password is incorrect"
+    assert response.json() == {
+        "type": "https://candleviewer.local/errors/unauthenticated",
+        "title": "Invalid credentials",
+        "status": 401,
+        "code": "unauthenticated",
+        "detail": "Username or password is incorrect",
+    }
 
 
-def test_account_disabled_returns_403() -> None:
-    client = TestClient(_app(AccountDisabled("Account disabled - contact the owner")))
-    response = client.post("/auth/login", json={"identifier": "basiltt", "password": "x"})
-    assert response.status_code == 403
+#: Every refusal the login service raises, its message deliberately unlike the others' (#4961).
+_SIGN_IN_REFUSALS = [
+    InvalidCredentials("any message at all"),
+    AccountDisabled("Account disabled - contact the owner"),
+    AccountLocked(),
+    MfaNotRequired(),
+]
 
 
-def test_account_locked_returns_423_with_retry_after_header() -> None:
-    client = TestClient(_app(AccountLocked(600)))
-    response = client.post("/auth/login", json={"identifier": "basiltt", "password": "x"})
-    assert response.status_code == 423
-    assert response.headers["Retry-After"] == "600"
+@pytest.mark.parametrize("refusal", _SIGN_IN_REFUSALS, ids=lambda e: type(e).__name__)
+def test_every_refused_sign_in_gets_the_one_401_answer(refusal: Exception) -> None:
+    """SR-014: the same status, body bytes and headers whatever the cause; the router never
+    echoes an error's own message."""
+    body = {"identifier": "basiltt", "password": "x"}
+    one = TestClient(_app(InvalidCredentials("Username or password is incorrect")))
+    expected = one.post("/auth/login", json=body)
+    response = TestClient(_app(refusal)).post("/auth/login", json=body)
+    assert (response.status_code, response.content) == (401, expected.content)
+    assert dict(response.headers) == dict(expected.headers)
 
 
 def test_inactive_auth_service_returns_503() -> None:
@@ -292,14 +307,14 @@ def test_account_locked_emits_auth_account_locked_audit_action_with_warning_seve
     app = FastAPI()
     app.include_router(
         make_auth_router(
-            _FakeAuthService(AccountLocked(600)), audit_service=audit_service, csrf=_CSRF_CODEC
+            _FakeAuthService(AccountLocked()), audit_service=audit_service, csrf=_CSRF_CODEC
         )
     )
     client = TestClient(app)
 
     response = client.post("/auth/login", json={"identifier": "basiltt", "password": "x"})
 
-    assert response.status_code == 423
+    assert response.status_code == 401  # the one answer; the record keeps the cause
     assert len(audit_service.writer.calls) == 1
     call = audit_service.writer.calls[0]
     assert call["action"] == "auth.account_locked"

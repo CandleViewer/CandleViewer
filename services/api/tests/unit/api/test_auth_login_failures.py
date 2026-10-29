@@ -145,6 +145,7 @@ async def _login_service(*, per_address: int = 10_000) -> LoginService:
         "basiltt": {},
         "gone": {"status": UserStatus.DISABLED},
         "locked": {"locked_until": _NOW + timedelta(hours=1)},
+        "nomfa": {"mfa_required": False},  # C-12.2 forbids the state; sign-in fails closed
     }
     for name, extra in states.items():
         repo.add(make_user(username=name, email=f"{name}@x.test", password_hash=pw, **extra))
@@ -164,9 +165,10 @@ async def test_each_refused_password_login_counts_once_and_matches_its_audit_row
             await _login(client, "basiltt", "wrong-password"),  # wrong password
             await _login(client, "nobody", "wrong-password"),  # unknown identifier
             await _login(client, "gone", _RIGHT_PW),  # disabled, after a correct password
+            await _login(client, "nomfa", _RIGHT_PW),  # no `mfa_required`, after a correct one
         ]
-    assert codes == [401, 401, 403]
-    assert _moved(before) == {"password": 3} and len(audit.writer.of("auth.login_failed")) == 3
+    assert codes == [401] * 4  # the one answer of every failed sign-in (#4961)
+    assert _moved(before) == {"password": 4} and len(audit.writer.of("auth.login_failed")) == 4
 
 
 async def test_a_login_refused_by_the_per_address_throttle_counts_as_a_password_failure() -> None:
@@ -181,8 +183,8 @@ async def test_a_login_refused_by_the_per_address_throttle_counts_as_a_password_
 async def test_attempts_refused_while_locked_and_successful_logins_do_not_count() -> None:
     audit, before = AuditService(), _failures()
     async with _client(await _login_service(), _Mfa(None), audit) as client:
-        assert await _login(client, "locked", _RIGHT_PW) == 423
-        assert await _login(client, "locked", "wrong-password") == 423
+        assert await _login(client, "locked", _RIGHT_PW) == 401
+        assert await _login(client, "locked", "wrong-password") == 401
         assert await _login(client, "basiltt", _RIGHT_PW) == 200  # correct: the MFA challenge
     assert _moved(before) == {} and len(audit.writer.of("auth.account_locked")) == 2
 

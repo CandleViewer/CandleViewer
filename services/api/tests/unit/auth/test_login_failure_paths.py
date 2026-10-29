@@ -20,7 +20,12 @@ import pytest
 from argon2 import PasswordHasher, extract_parameters
 from prometheus_client import REGISTRY
 
-from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
+from candleviewer.auth.errors import (
+    AccountDisabled,
+    AccountLocked,
+    InvalidCredentials,
+    MfaNotRequired,
+)
 from candleviewer.auth.failure_hold import FAILURE_MINIMUM_LOWEST
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, DUMMY_PASSWORD_HASH, Hasher
 from candleviewer.auth.login_service import (
@@ -469,3 +474,38 @@ async def test_login_cancellation_during_the_wait_propagates(real_hash: str) -> 
         await attempt
     assert attempt.cancelled()
     assert ("record_login_failure",) == events[-2][:1]  # the write was already done
+
+
+# --- #4961 (SR-014): every account state at sign-in has the wrong password's timing class ------
+
+#: Each account state the service tells apart: (`make_user` overrides, identifier, verify verdict).
+_ACCOUNT_STATES: dict[str, tuple[dict[str, Any], str, bool]] = {
+    "unknown_identifier": ({}, "ghost", False),
+    "wrong_password": ({}, "basiltt", False),
+    "disabled_right_password": ({"status": UserStatus.DISABLED}, "basiltt", True),
+    "disabled_wrong_password": ({"status": UserStatus.DISABLED}, "basiltt", False),
+    "locked_right_password": ({"locked_until": _NOW + timedelta(minutes=5)}, "basiltt", True),
+    "locked_wrong_password": ({"locked_until": _NOW + timedelta(minutes=5)}, "basiltt", False),
+    "without_mfa_required": ({"mfa_required": False}, "basiltt", True),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_ACCOUNT_STATES))
+async def test_login_every_account_state_verifies_once_then_waits_out_the_same_floor(
+    real_hash: str, name: str
+) -> None:
+    """One Argon2id verify at the stored hash's cost (the placeholder's for an unknown
+    identifier), then the hold as its last step, ending at the floor: the same steps a wrong
+    password takes, counted on the spies rather than timed on a wall clock."""
+    update, identifier, verdict = _ACCOUNT_STATES[name]
+    user = make_user(password_hash=real_hash, **update)
+    service, _, events, time = _timed_world(real_hash, verdict=verdict, user=user, work_s=0.01)
+
+    with pytest.raises((InvalidCredentials, AccountDisabled, AccountLocked, MfaNotRequired)):
+        await service.login(
+            LoginRequest(identifier=identifier, password="a-guess"), source_ip="10.0.0.1"
+        )
+
+    assert [e for e in events if e[0] == "verify"] == [("verify", extract_parameters(real_hash))]
+    assert events[-1] == ("sleep", pytest.approx(_FLOOR_S - 0.01))
+    assert time.now == pytest.approx(_FLOOR_S)

@@ -10,16 +10,15 @@
   and the same steps by construction: an unknown identifier is checked as a
   placeholder record (`_ABSENT_USER`, the nil UUID and the dummy hash) through
   the one lock check, verify call and failure block a wrong password takes;
-- disabled account -> `AccountDisabled`, but only ever raised *after* a
-  correct password (ticket's documented trade-off);
-- five consecutive failures -> `AccountLocked` for 15 minutes, persisted so
-  a process restart does not clear it;
+- disabled account -> `AccountDisabled`, only ever raised *after* a correct password;
+- five consecutive failures -> `AccountLocked` for 15 minutes, persisted across restarts;
+- a user without `mfa_required` (C-12.2 forbids it) -> `MfaNotRequired`, after the password;
 - a per-IP throttle independent of the per-account one (ticket "Scope /
   Deliverables": "one attacker cannot lock every account");
-- every failed sign-in (`InvalidCredentials`, `AccountLocked`, `AccountDisabled`)
-  returns no sooner than `LOGIN_FAILURE_FLOOR` after the attempt started (#4648), held by
-  the `FailureHold` the second factor and step-up share (#4664); a minimum time below the
-  setting's lowest value is refused at construction;
+- every failed sign-in (each of the four errors above) returns no sooner than
+  `LOGIN_FAILURE_FLOOR` after the attempt started (#4648), held by the `FailureHold` the second
+  factor and step-up share (#4664), and the router answers each the same (SR-014, #4961); a
+  minimum time below the setting's lowest value is refused at construction;
 - sign-in verification runs for at most `LOGIN_VERIFY_CONCURRENCY` attempts at a time; an
   attempt beyond that is refused at once with `SignInBusy` and a retry-after (#4663).
 
@@ -49,6 +48,7 @@ from candleviewer.auth.errors import (
     AccountDisabled,
     AccountLocked,
     InvalidCredentials,
+    MfaNotRequired,
     SignInBusy,
 )
 from candleviewer.auth.failure_hold import FAILURE_MINIMUM, FailureHold, MonotonicClock, Sleep
@@ -160,11 +160,11 @@ class LoginService:
         """Verify credentials and return the MFA challenge for step 2, or, for a user
         with `mfa_required` and no confirmed method, `EnrolmentOnlyLogin` (#2295, Q6).
 
-        Raises `InvalidCredentials`, `AccountDisabled`, or `AccountLocked`, all
-        before either outcome. A user without `mfa_required` and without a method
-        still raises `NotImplementedError` (see the note at that branch).
+        Raises `InvalidCredentials`, `AccountDisabled`, `AccountLocked` or `MfaNotRequired`
+        (a user without `mfa_required`, see the note at that branch), all before either
+        outcome; the router gives each of them the same answer (SR-014, #4961).
 
-        #4648: each of those three refusals returns no sooner than the failure floor after
+        #4648: each of those four refusals returns no sooner than the failure floor after
         the attempt started (`FailureHold.hold`); a successful outcome is never held.
 
         #4663: raises `SignInBusy` at once, before the identifier is looked up or any password
@@ -174,7 +174,7 @@ class LoginService:
         started = self._failure_hold.start()
         try:
             return await self._check_credentials(request, source_ip=source_ip)
-        except (InvalidCredentials, AccountLocked, AccountDisabled):
+        except (InvalidCredentials, AccountLocked, AccountDisabled, MfaNotRequired):
             # Every failure write has already happened inside the check; only the response
             # waits. A cancellation during the wait propagates (nothing here catches it).
             await self._failure_hold.hold(started)
@@ -224,8 +224,7 @@ class LoginService:
             # repeated attempts from one address are refused by the throttle above and take
             # no verification place.
             self._per_ip_throttle.record_failure(source_ip)
-            remaining = int((user.locked_until - self._clock()).total_seconds())
-            raise AccountLocked(max(remaining, 1))
+            raise AccountLocked()
 
         password_ok = await self._hasher.verify(user.password_hash, request.password)
         if not (known and password_ok):
@@ -233,8 +232,8 @@ class LoginService:
             await self._on_failure(user)
             raise InvalidCredentials("Username or password is incorrect")
 
-        # Password verified. Only now may the disabled state be revealed
-        # (ticket's documented trade-off).
+        # Password verified. A disabled user is refused only now, after the one verify every
+        # attempt takes; the router answers it as a wrong password (SR-014, #4961).
         if user.status is UserStatus.DISABLED:
             raise AccountDisabled("Account disabled - contact the owner")
 
@@ -254,11 +253,9 @@ class LoginService:
         if not user.mfa_required:
             # A password-only full session is undecided (#2295 Q6), and C-12.2
             # forbids such a user (#965 refuses `mfa_required: false`). Fail
-            # closed: never fabricate a session shape for it.
-            raise NotImplementedError(
-                "password-only sign-in is not specified; this user is not required "
-                "to use MFA (C-12.2 forbids that state)"
-            )
+            # closed: never fabricate a session shape for it, and answer it as a wrong password
+            # (SR-014, #4961), held to the same floor.
+            raise MfaNotRequired()
 
         mfa_token = self._mfa_token_factory()
         if self._mfa_repository is not None:

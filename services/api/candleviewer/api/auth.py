@@ -12,6 +12,11 @@ to import `candleviewer.audit`; `auth` itself is not (see
 `auth/login_service.py`'s module docstring) — that boundary is exactly why
 the audit calls live in this router.
 
+**Sign-in failures (SR-014, #4961):** every sign-in the login service or the enrolment-only mint
+refuses gets `22`'s one `401` `unauthenticated` (`_sign_in_refused`), whatever the account's
+state, with the same body and headers; the audit record keeps the cause. Only the `429` of a full
+verification capacity differs, decided before the identifier is read.
+
 **Audit lane (ADR-0037 Q2, #2914):** a row written after its decision (a refused
 or locked sign-in, the password step that passed, a failed second factor, a refused
 mint, the recovery's and the confirm's refusal rows, the recovery's `unplanned`
@@ -105,6 +110,7 @@ from candleviewer.auth.errors import (
     MfaCodeInvalid,
     MfaCodeReused,
     MfaEnrollmentNotFound,
+    MfaNotRequired,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
     SignInBusy,
@@ -307,6 +313,14 @@ def _problem(
     return response
 
 
+def _sign_in_refused() -> JSONResponse:
+    """The contract's one `401` `unauthenticated` for every refused sign-in (`22` `authLogin`,
+    SR-014, #4961): the same status, body and headers whatever the account's state, built from
+    constants alone, never from an error's own message. The audit record keeps the cause."""
+    detail = "Username or password is incorrect"
+    return _problem(401, "Invalid credentials", detail, code="unauthenticated")
+
+
 def _client_ip(request: Request) -> str | None:
     """Peer address for `audit_log.actor_ip` (an `inet` column): `None`, never
     a placeholder string, when unknown (QA #1658: "unknown" broke the real sink).
@@ -482,7 +496,7 @@ def make_auth_router(
     ) -> None:
         """#2911: record a disabled user's refused mint. Not write-ahead (the refusal is
         already decided and nothing was minted): an outcome row through the lane (`_audit_outcome`),
-        and the caller's refusal (403 at sign-in, 401 at the MFA step or the confirm) stands.
+        and the caller's refusal (each operation's 401, at sign-in the one answer) stands.
         *session_id* and *after_state* void a session a write-ahead record announced (#2295)."""
         await _audit_outcome(
             "auth.login_failed",
@@ -572,12 +586,13 @@ def make_auth_router(
         except UserDisabled:
             # #2911: disabled (or deleted) since the password check; nothing was minted. The
             # records written ahead are followed by the refusal, counted and audited like login's
-            # refusal of a disabled account (SR-125), then login's 403 for it: never a 500. Its
-            # row voids the session that `auth.session_created` announced (C-2.9).
+            # refusal of a disabled account (SR-125), then the one answer of every failed sign-in
+            # (SR-014, #4961): never a 500. Its row voids the session that `auth.session_created`
+            # announced (C-2.9).
             auth_login_failures_total.labels(method="password").inc()
             voided = {"voids_session_created": str(session_id)}
             await _audit_refusal(request, user_id, session_id=session_id, after_state=voided)
-            return _problem(403, "Account disabled", "Account disabled - contact the owner")
+            return _sign_in_refused()
         # U34 (RR-15): an Owner's password-only session is to page; no rule yet (#2746).
         role = normalise_role(user.get("roles") or ())
         auth_enrolment_only_sessions_total.labels(role=role).inc()
@@ -622,8 +637,10 @@ def make_auth_router(
         try:
             # SR-015: keyed on the audited address, so each client behind the configured
             # trusted proxy has its own bucket instead of sharing the proxy's (#2275).
+            # SR-014 (#4961): each refusal below but the `429` gets the one answer
+            # (`_sign_in_refused`); only its audit row tells the causes apart.
             result = await auth_service.login.login(body, source_ip=audit_ip or "unknown")
-        except InvalidCredentials as exc:
+        except InvalidCredentials:
             auth_login_failures_total.labels(method="password").inc()  # SR-125
             await _audit_outcome(
                 "auth.login_failed",
@@ -631,8 +648,8 @@ def make_auth_router(
                 actor_ip=audit_ip,
                 outcome=AuditOutcome.FAILURE,
             )
-            return _problem(401, "Invalid credentials", str(exc))
-        except AccountDisabled as exc:
+            return _sign_in_refused()
+        except AccountDisabled:
             auth_login_failures_total.labels(method="password").inc()
             await _audit_outcome(
                 "auth.login_failed",
@@ -640,8 +657,8 @@ def make_auth_router(
                 actor_ip=audit_ip,
                 outcome=AuditOutcome.DENIED,
             )
-            return _problem(403, "Account disabled", str(exc))
-        except AccountLocked as exc:
+            return _sign_in_refused()
+        except AccountLocked:
             await _audit_outcome(
                 "auth.account_locked",
                 actor_label=_redact_identifier(body.identifier),
@@ -649,9 +666,20 @@ def make_auth_router(
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
             )
-            response = _problem(423, "Account locked", str(exc))
-            response.headers["Retry-After"] = str(exc.retry_after_s)
-            return response
+            return _sign_in_refused()
+        except MfaNotRequired:
+            # C-12.2 forbids the state (#965 refuses it): sign-in fails closed and mints nothing,
+            # counted and audited like a disabled account's refusal, with its cause (C-2.9).
+            auth_login_failures_total.labels(method="password").inc()
+            await _audit_outcome(
+                "auth.login_failed",
+                actor_label=_redact_identifier(body.identifier),
+                actor_ip=audit_ip,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason="mfa_not_required",
+            )
+            return _sign_in_refused()
         except SignInBusy as exc:
             # #4663: refused before the identifier was looked up or the password checked, so
             # only the attempt itself is recorded; counted by `LoginService`.
@@ -669,14 +697,6 @@ def make_auth_router(
                 code="rate_limited",
                 retry_after_s=exc.retry_after_s,
             )
-        except NotImplementedError:
-            # CodeQL py/stack-trace-exposure: never forward an exception's
-            # message (which may embed internal detail such as source
-            # locations) into an HTTP response body; this branch only ever
-            # fires for the deliberate, out-of-scope stub in
-            # `LoginService.login` (see its docstring), so a fixed,
-            # generic detail is all a caller needs.
-            return _problem(501, "Not implemented", "this login path is not yet available")
 
         if isinstance(result, EnrolmentOnlyLogin):
             return await _enrolment_only_sign_in(request, body.identifier, result.user_id)

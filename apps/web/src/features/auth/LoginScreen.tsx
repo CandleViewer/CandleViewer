@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import { formatRemaining, login } from "./authApi";
 
-type State = "idle" | "submitting" | "invalid" | "disabled" | "locked" | "unreachable";
+type State = "idle" | "submitting" | "invalid" | "rate_limited" | "unreachable";
 
-const MESSAGES: Record<"invalid" | "disabled" | "unreachable", string> = {
+/** Every failed sign-in renders the one `invalid` string, whatever the cause (SR-014, #4961). */
+const MESSAGES: Record<"invalid" | "unreachable", string> = {
   invalid: "Username or password is incorrect",
-  disabled: "Account disabled - contact the owner",
   unreachable: "Cannot reach the server. Check your connection and try again.",
 };
 
@@ -17,7 +17,7 @@ const REASONS: Readonly<Record<string, string>> = {
   unlock_attempts: "Signed out after too many unlock attempts.",
 };
 
-/** SCR-001 Login (R-001): idle / submitting / invalid / disabled / locked / server-unreachable. */
+/** SCR-001 Login (R-001): idle / submitting / invalid / rate-limited / server-unreachable. */
 export function LoginScreen(): JSX.Element {
   const [state, setState] = useState<State>("idle");
   const [identifier, setIdentifier] = useState("");
@@ -33,7 +33,7 @@ export function LoginScreen(): JSX.Element {
   });
 
   useEffect(() => {
-    if (state !== "locked") return;
+    if (state !== "rate_limited") return;
     const timer = setInterval(() => {
       setRemaining((r) => {
         if (r <= 1) {
@@ -48,7 +48,7 @@ export function LoginScreen(): JSX.Element {
   }, [state]);
 
   useEffect(() => {
-    if (state === "invalid" || state === "disabled" || state === "unreachable" || fieldError) {
+    if (state === "invalid" || state === "unreachable" || fieldError) {
       summary.current?.focus();
     }
   }, [state, fieldError]);
@@ -59,7 +59,7 @@ export function LoginScreen(): JSX.Element {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (state === "submitting" || state === "locked") return;
+    if (state === "submitting" || state === "rate_limited") return;
     if (identifier.trim() === "") return setFieldError("Enter your username.");
     if (password === "") return setFieldError("Enter your password.");
     setFieldError(null);
@@ -71,19 +71,16 @@ export function LoginScreen(): JSX.Element {
       setState("idle");
     } else if (out.kind === "authenticated") {
       window.location.assign("/terminal");
-    } else if (out.kind === "locked") {
+    } else if (out.kind === "rate_limited") {
       setRemaining(out.retryAfterS);
-      setState("locked");
+      setState("rate_limited");
     } else setState(out.kind);
   }
 
   const busy = state === "submitting";
-  const locked = state === "locked";
+  const rateLimited = state === "rate_limited";
   const message =
-    fieldError ??
-    (state === "invalid" || state === "disabled" || state === "unreachable"
-      ? MESSAGES[state]
-      : null);
+    fieldError ?? (state === "invalid" || state === "unreachable" ? MESSAGES[state] : null);
 
   if (mfaToken !== null) {
     return (
@@ -101,7 +98,7 @@ export function LoginScreen(): JSX.Element {
         <div ref={summary} tabIndex={-1} role="alert" id="login-error">
           {message ?? reason}
         </div>
-        {locked ? (
+        {rateLimited ? (
           <p role="status" aria-live="polite">
             Too many attempts. Try again in {formatRemaining(remaining)}.
           </p>
@@ -128,7 +125,7 @@ export function LoginScreen(): JSX.Element {
         <button type="button" aria-pressed={reveal} onClick={() => setReveal((r) => !r)}>
           {reveal ? "Hide password" : "Show password"}
         </button>
-        <button type="submit" disabled={busy || locked}>
+        <button type="submit" disabled={busy || rateLimited}>
           {busy ? "Signing in..." : "Sign in"}
         </button>
       </form>
