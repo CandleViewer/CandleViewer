@@ -8,9 +8,11 @@ That is below the reference class of `docs/plan/06-performance-and-load-standard
 on #220 (issue comment of 2026-10-29 08:40Z, made under the owner's 07:05Z delegation). A budget
 **met** here is conservative evidence that it holds on the reference class. A budget **missed** here
 is **inconclusive**: it is recorded as such and re-measured on reference hardware, and the owner's
-attended run becomes a post-GA confirmation line. The same ruling dropped the Tauri / WebView2 arm
-(ADR-0011 is decided on criterion 5), so ADR-0011 criteria 1-4 read "not measured, decided on
-criterion 5".
+attended run becomes a post-GA confirmation line. The same ruling dropped the Tauri / WebView2 arm,
+because ADR-0011 is decided on criterion 5. The evidence for criterion 5 is the E10-K01 spike
+(`docs/plan/spikes/E10-K01.md`, appended to ADR-0011): two of the eight shell responsibilities, GPU
+flag control and Playwright drivability, would need real redesign under Tauri. ADR-0011 criteria
+1-4 therefore read "not measured, decided on criterion 5".
 
 **The `admissibleForAdrEvidence` flag.** In the raw reports this flag is the harness's
 repetition-count rule only (`bench/matrix/matrix-lib.mjs`, `summariseCell`). It is `true` for 3 or
@@ -62,16 +64,16 @@ Chromium column is report 2, with B7 from report 5. Budgets are the p95 gates in
 `docs/plan/26-chart-engine-design.md` §13. The Chromium arm renders with SwiftShader (software GL,
 the K01 pinned flags), not the real GPU: it is the shell-versus-engine baseline (README).
 
-| Scenario                                            | Budget                         | Electron (tuned) | Verdict | Chromium (K01) | Verdict |
-| --------------------------------------------------- | ------------------------------ | ---------------- | ------- | -------------- | ------- |
-| B1: 100k candles, continuous pan                    | p95 ≤ 12 ms                    | 0.20             | met     | 1.10           | met     |
-| B2: 100k candles, zoom sweep                        | p95 ≤ 14 ms                    | 0.20             | met     | 1.10           | met     |
-| B3: footprint, 2,500 cells with text                | p95 ≤ 16 ms                    | 0.30             | met     | 1.00           | met     |
-| B4: heatmap, 100 ms columns, panning                | p95 ≤ 10 ms                    | 0.60             | met     | 1.40           | met     |
-| B5: combined scene                                  | p95 ≤ 16.7 ms                  | 0.50             | met     | 3.50           | met     |
-| B7: live update storm                               | frame p95 ≤ 16.7 ms            | not recorded     | n/a     | not recorded   | n/a     |
-| B9: cold init to first frame (median of 3, not p95) | ≤ 900 ms                       | 7.00             | met     | 4.70           | met     |
-| B10: 30-min soak, frame p95 (1 run)                 | p95 ≤ 16.6 ms (06 §2 budget 1) | 2.60             | met     | 4.70           | met     |
+| Scenario                                            | Budget                         | Electron (tuned) | Verdict | Chromium (K01) | Verdict                        |
+| --------------------------------------------------- | ------------------------------ | ---------------- | ------- | -------------- | ------------------------------ |
+| B1: 100k candles, continuous pan                    | p95 ≤ 12 ms                    | 0.20             | met     | 1.10           | met                            |
+| B2: 100k candles, zoom sweep                        | p95 ≤ 14 ms                    | 0.20             | met     | 1.10           | met                            |
+| B3: footprint, 2,500 cells with text                | p95 ≤ 16 ms                    | 0.30             | met     | 1.00           | met                            |
+| B4: heatmap, 100 ms columns, panning                | p95 ≤ 10 ms                    | 0.60             | met     | 1.40           | met                            |
+| B5: combined scene                                  | p95 ≤ 16.7 ms                  | 0.50             | met     | 3.50           | met                            |
+| B7: live update storm                               | frame p95 ≤ 16.7 ms            | not recorded     | n/a     | not recorded   | n/a                            |
+| B9: cold init to first frame (median of 3, not p95) | ≤ 900 ms                       | 7.00             | met     | 4.70           | met                            |
+| B10: 30-min soak, frame p95 (1 run)                 | p95 ≤ 16.6 ms (06 §2 budget 1) | 2.60             | met     | 4.70           | met (soak stalled once, 632 s) |
 
 Per-repetition p95 (ms):
 
@@ -168,14 +170,14 @@ value.
 
 ## B10: 30-minute soak
 
-| Figure                            | Electron (report 1)                                                              | Chromium (report 2)                                      | Budget                                                                  | Verdict (E / C)                           |
-| --------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------- |
-| frames measured                   | 19,740                                                                           | 19,740                                                   | -                                                                       | -                                         |
-| frame p95                         | 2.60 ms (per minute 1.8-3.1)                                                     | 4.70 ms (per minute 2.9-5.9)                             | ≤ 16.6 ms (06 §2 budget 1)                                              | met / met                                 |
-| frames over 33 ms                 | 2 (minutes 7 and 14), max 59.3 ms                                                | 47 across 18 of 30 minutes, plus 1 frame of 632,481.8 ms | none per runtime (ADR-0011 criterion 2 compares WebView2 with Electron) | observation                               |
-| peak resident memory, soak window | 1,003 MB                                                                         | not attributable                                         | peak ≤ 600 MB (26 §13)                                                  | missed (inconclusive on this class) / n/a |
-| growth over the soak              | start to end +15.0 % (747 to 859 MB); first to last third +3.7 % (955 to 990 MB) | not attributable                                         | no monotonic growth beyond 5 % per 30 min (26 §13)                      | missed (inconclusive on this class) / n/a |
-| `texSubImage2D` median per minute | under 0.1 ms in all 30 minutes                                                   | under 0.1 ms in all 30 minutes                           | ADR-0011 criterion 3 (moot)                                             | n/a                                       |
+| Figure                            | Electron (report 1)                                                              | Chromium (report 2)                                                           | Budget                                                                  | Verdict (E / C)                               |
+| --------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------- |
+| frames measured                   | 19,740                                                                           | 19,740                                                                        | -                                                                       | -                                             |
+| frame p95                         | 2.60 ms (per minute 1.8-3.1)                                                     | 4.70 ms (per minute 2.9-5.9)                                                  | ≤ 16.6 ms (06 §2 budget 1)                                              | met / met (Chromium soak stalled once, 632 s) |
+| frames over 33 ms                 | 2 (minute buckets 7 and 14), max 59.3 ms                                         | 47 across 18 of 30 minute buckets, one of them the 632 s stall (632,481.8 ms) | none per runtime (ADR-0011 criterion 2 compares WebView2 with Electron) | observation                                   |
+| peak resident memory, soak window | 1,003 MB                                                                         | not attributable                                                              | peak ≤ 600 MB (26 §13)                                                  | missed (inconclusive on this class) / n/a     |
+| growth over the soak              | start to end +15.0 % (747 to 859 MB); first to last third +3.7 % (955 to 990 MB) | not attributable                                                              | no monotonic growth beyond 5 % per 30 min (26 §13)                      | missed (inconclusive on this class) / n/a     |
+| `texSubImage2D` median per minute | under 0.1 ms in all 30 minutes                                                   | under 0.1 ms in all 30 minutes                                                | ADR-0011 criterion 3 (moot)                                             | n/a                                           |
 
 **Electron memory.** The source is the `app.getAppMetrics()` working-set sum over every Electron
 process, sampled every 15 s, with the soak window taken as the last 120 samples. The start and end
@@ -201,9 +203,12 @@ down to hardware.
 `headless_shell` or `chrome-headless-shell`. This host had 8 unrelated `chrome` processes (about
 518 MB) running throughout, so the Chromium `peakMb` (1,837) cannot be attributed to the run.
 
-**Outliers.** Both Electron outliers (soak minutes 7 and 14) fall before the co-tenant window of
-anomaly 1 (minutes 17-28), which has none. The Chromium soak was stretched by the 632.5 s frame
-(anomaly 3), so its outliers cannot be cleanly attributed to the runtime.
+**Outliers.** Minute buckets are the harness's 0-based `soak[].bucket` index, so bucket 7 is the
+eighth minute of the soak. Both Electron outliers (buckets 7 and 14) fall before the co-tenant
+window of anomaly 1 (buckets 17-28), which has none. The Chromium count of 47 already includes the
+632.5 s frame: `frame-stats.mjs` counts every frame over 33 ms, and the bucket sum equals the
+cell's `outliers33`. That stall stretched the Chromium soak (anomaly 3), so its outliers cannot be
+cleanly attributed to the runtime.
 
 ## Noise-band sanity gate (A/B/A)
 
@@ -280,8 +285,8 @@ There was no WSL VM and no Docker, so the dev stack was down.
 1. **A co-tenant CPU spike during the Electron soak.** From 09:18:41Z until 09:29:53Z at the
    latest, another session's `git grep` ran a pathological regex on about 6 cores. Its 50 s
    timeout did not stop the native `git.exe`. It was not ours, so it was left running. It overlaps
-   soak minutes 17-28. Those minutes have no outliers, and the per-minute p95 stays between 1.8 and
-   3.1 ms.
+   soak minute buckets 17-28 (0-based). Those buckets have no outliers, and the per-minute p95
+   stays between 1.8 and 3.1 ms.
 2. **Chromium attempt 1 stalled in B7.**
    - Attempt 1 started at 09:38:31Z. B1-B5 completed, but B7 never did.
    - The renderer, which hosts the page and its B7 worker, used 0.00 CPU-s over 30 s while the
@@ -313,7 +318,8 @@ There was no WSL VM and no Docker, so the dev stack was down.
 ## Not run or not measured
 
 - **The Tauri / WebView2 arm.** The ruling dropped it, so ADR-0011 criteria 1-4 are not measured
-  and are decided on criterion 5 (E06-T03, #222). That is why they read NO-DATA in
+  and are decided on criterion 5. The evidence is E10-K01 (`docs/plan/spikes/E10-K01.md`), and
+  E06-T03 (#222) records the amendment. That is why criteria 1-4 read NO-DATA in
   `adr-0011-table.md` and why its verdict line reads "INCOMPLETE (no-data in >=1 criterion)".
 - **The co-tenancy variant of B5 (dev stack up) and the shell memory comparison.** The dev stack
   (WSL, Docker, QuestDB, Postgres) was not running on this host and was not started, because it is
