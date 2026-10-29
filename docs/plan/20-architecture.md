@@ -600,13 +600,13 @@ recovery does not).
 
 **Budget model.** Each account has one `AccountRateBudget` owned by the OMS:
 
-| Bucket     | Capacity                                      | Refill                   | Who may draw                                                                                  |
-| ---------- | --------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------- |
-| `critical` | 40 % of the UID limit (default 4 req/s of 10) | continuous, token bucket | Native SL attachment, reduce-only closes, cancel-all / kill-switch, `set_trading_stop` repair |
-| `entry`    | 40 % (4 req/s)                                | continuous               | New entries and fan-out children, amends                                                      |
-| `poll`     | 20 % (2 req/s)                                | continuous               | Reconciliation polls, wallet/position/fee refresh, admin reads                                |
+| Bucket     | Capacity                                        | Refill                   | Who may draw                                                                                  |
+| ---------- | ----------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------- |
+| `critical` | the C-12.7 reserve of the UID limit             | continuous, token bucket | Native SL attachment, reduce-only closes, cancel-all / kill-switch, `set_trading_stop` repair |
+| `entry`    | part of the rest (E34-T02 sets the split, #859) | continuous               | New entries and fan-out children, amends                                                      |
+| `poll`     | the rest                                        | continuous               | Reconciliation polls, wallet/position/fee refresh, admin reads                                |
 
-`critical` is the **reserved headroom**: `entry` and `poll` may never borrow from it, `critical` may borrow from either when they are idle. This is what makes P4 survivable — an account that has burned its whole entry budget can still attach or repair a stop. Capacity is derived from `capabilities.order_rate_per_uid_per_s` and is re-derived at runtime from Bybit's `X-Bapi-Limit-Status` response header (the observed remaining count wins over the configured default; a drop to 0 shrinks the configured capacity for 60 s — adaptive downshift).
+`critical` is the **reserved headroom**, the stop / cancel reserve that `CONSTITUTION.md` C-12.7 defines (its size is C-12.7's, stated nowhere else): `entry` and `poll` may never borrow from it, `critical` may borrow from either when they are idle. **Entry retries run in the `entry` bucket, never `critical`**: a retried entry, a deferred child's drain and a `10006` retry within the lane's wait each draw `entry`, so no number of entry retries during a fan-out can drain the reserve that stops and cancels need (E28 F-16; the governor enforces it, E34-T02, #859). This is what makes P4 survivable — an account that has burned its whole entry budget can still attach or repair a stop. Capacity is derived from `capabilities.order_rate_per_uid_per_s` and is re-derived at runtime from Bybit's `X-Bapi-Limit-Status` response header (the observed remaining count wins over the configured default; a drop to 0 shrinks the configured capacity for 60 s — adaptive downshift).
 
 **Fan-out admission control.** `TradeGroupFanout` does _not_ start placing and then discover exhaustion mid-loop. Before any child is submitted:
 
