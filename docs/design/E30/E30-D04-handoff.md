@@ -7,7 +7,7 @@ Per `docs/plan/16-design-system-brief.md` §11.4 and §13.3 item 8 (`02` §4.2):
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `02 cmp-100-101-inputs` id `34afef7e-59c7-8006-8008-dcba18769716` — `docs/design/E30/img/E30-D04-02-cmp-100-101-inputs.png` (1920 × 1609)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `02 cmp-100-101-inputs` id `de0f65fe-8f9a-802e-8008-dce32856d00a` — `docs/design/E30/img/E30-D04-02-cmp-100-101-inputs.png` (1920 × 1609)
 - [x] **Variants × States matrix** — Table 1, drawn (spec §4: 7 `CMP-100/<state>` frames on board 02)
 - [x] **Keyboard table** — Table 2 (spec §4): `↑` / `↓` one tick, `Shift` ×10, `PageUp` / `PageDown` ×10, `Home` / `End`; `Alt+B` / `Alt+A` / `Alt+M` snap; `Enter` nothing; T2 keys re-show the reason; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="spinbutton"` named "Price" + the unit; the rounding caption a polite region (once per blur)
@@ -26,7 +26,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `02 cmp-100-101-inputs` id `34afef7e-59c7-8006-8008-dcba18769716` — `docs/design/E30/img/E30-D04-02-cmp-100-101-inputs.png` (1920 × 1609)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `02 cmp-100-101-inputs` id `de0f65fe-8f9a-802e-8008-dce32856d00a` — `docs/design/E30/img/E30-D04-02-cmp-100-101-inputs.png` (1920 × 1609)
 - [x] **Variants × States matrix** — Table 1, drawn (spec §5: 9 `CMP-101/<state>` frames on board 02)
 - [x] **Keyboard table** — Table 2 (spec §5): `↑` / `↓` one lot, `Shift` ×10; `←` / `→`, `Home` / `End` on the unit radiogroup; `1`..`4` while the ticket region has focus; `Enter` nothing; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="spinbutton"` named "Size" + the unit; the unit switch `role="radiogroup"` with the formula as `aria-describedby`
@@ -45,7 +45,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `03 cmp-102-103-231-side-type-tif` id `34afef7e-59c7-8006-8008-dcba51d5fa87` — `docs/design/E30/img/E30-D04-03-cmp-102-103-231-side-type-tif.png` (1920 × 1800)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `03 cmp-102-103-231-side-type-tif` id `de0f65fe-8f9a-802e-8008-dce3599b2719` — `docs/design/E30/img/E30-D04-03-cmp-102-103-231-side-type-tif.png` (1920 × 1815)
 - [x] **Variants × States matrix** — Table 1, drawn (spec §6: 6 `CMP-102/<state>` frames on board 03)
 - [x] **Keyboard table** — Table 2 (spec §6): `←` / `→`, `Home` / `End` on the roving stop; `B` / `S` while the ticket region has focus and no text field is active; T2 arrows stage nothing; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="radiogroup"` named "Side"; `role="radio"` halves "Buy / Long", "Sell / Short"
@@ -64,7 +64,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `03 cmp-102-103-231-side-type-tif` id `34afef7e-59c7-8006-8008-dcba51d5fa87` — `docs/design/E30/img/E30-D04-03-cmp-102-103-231-side-type-tif.png` (1920 × 1800)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `03 cmp-102-103-231-side-type-tif` id `de0f65fe-8f9a-802e-8008-dce3599b2719` — `docs/design/E30/img/E30-D04-03-cmp-102-103-231-side-type-tif.png` (1920 × 1815)
 - [x] **Variants × States matrix** — Table 1, drawn (spec §7: 7 `CMP-103/<state>` frames on board 03)
 - [x] **Keyboard table** — Table 2 (spec §7): `←` / `→`, `Home` / `End`; `Enter` / `Space` selects (manual activation, PROPOSED); on an emulated tab `Enter` re-shows its line; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="tablist"` named "Order type"; `role="tab"` + `aria-selected`; the "(emulated)" tag in the name
@@ -83,7 +83,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `09 cmp-107-order-ticket` id `34afef7e-59c7-8006-8008-dcbb2a1926cc` — `docs/design/E30/img/E30-D04-09-cmp-107-order-ticket.png` (2040 × 2062)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `09 cmp-107-order-ticket` id `de0f65fe-8f9a-802e-8008-dce3b0ef0ced` — `docs/design/E30/img/E30-D04-09-cmp-107-order-ticket.png` (2040 × 2111)
 - [x] **Variants × States matrix** — Table 1, drawn (spec §9: 40 `CMP-107/<state>` frames on board 09)
 - [x] **Keyboard table** — Table 2 (spec §9): D02 §13: `Ctrl+Enter` submit, `Esc` clear, `Ctrl+Shift+T` arm, `B` / `S`, `1`..`4`, `R`, `Alt+B` / `Alt+A` / `Alt+M`; the panel by `Ctrl+\` and the skip link; with blocking errors `Ctrl+Enter` inserts the summary and focuses it; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="region"` named `env.name`; one `<form>`, a `<fieldset>` per section; the submit a native `<button>` named `submit.name`, `aria-busy` while submitting
@@ -102,7 +102,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `05 cmp-119-158-bracket-notice` id `34afef7e-59c7-8006-8008-dcbaa2ea699f` — `docs/design/E30/img/E30-D04-05-cmp-119-158-bracket-notice.png` (1920 × 1265)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `05 cmp-119-158-bracket-notice` id `de0f65fe-8f9a-802e-8008-dce3862362ce` — `docs/design/E30/img/E30-D04-05-cmp-119-158-bracket-notice.png` (1920 × 1295)
 - [x] **Variants × States matrix** — Table 1, drawn (spec §10: 10 `CMP-119/<state>` frames on board 05)
 - [x] **Keyboard table** — Table 2 (spec §10): the fields as CMP-100; `←` / `→` on the unit radiogroup; `Space` on the TP checkbox; `R` toggles reduce-only (refused with `v.reduce_only.no_position` without a position); no key invented
 - [x] **Accessible name / role table** — Table 3: `<fieldset>` "Protective orders"; the stop `role="spinbutton"` named "Stop-loss (required)" with the source and holder as `aria-describedby`; CMP-158 `role="note"` inside
@@ -197,7 +197,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `05 cmp-119-158-bracket-notice` id `34afef7e-59c7-8006-8008-dcbaa2ea699f` — `docs/design/E30/img/E30-D04-05-cmp-119-158-bracket-notice.png` (1920 × 1265)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `05 cmp-119-158-bracket-notice` id `de0f65fe-8f9a-802e-8008-dce3862362ce` — `docs/design/E30/img/E30-D04-05-cmp-119-158-bracket-notice.png` (1920 × 1295)
 - [x] **Variants × States matrix** — Table 1, drawn (spec §15: 2 `CMP-158/<state>` frames on board 05)
 - [x] **Keyboard table** — Table 2 (spec §15): not focusable; reading order; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="note"`; not a live region; the glyph `aria-hidden`
@@ -235,7 +235,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `03 cmp-102-103-231-side-type-tif` id `34afef7e-59c7-8006-8008-dcba51d5fa87` — `docs/design/E30/img/E30-D04-03-cmp-102-103-231-side-type-tif.png` (1920 × 1800)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `03 cmp-102-103-231-side-type-tif` id `de0f65fe-8f9a-802e-8008-dce3599b2719` — `docs/design/E30/img/E30-D04-03-cmp-102-103-231-side-type-tif.png` (1920 × 1815)
 - [x] **Variants × States matrix** — Table 1, drawn (spec §17: 5 `CMP-231/<state>` frames on board 03)
 - [x] **Keyboard table** — Table 2 (spec §17): `Alt+↓` / `Enter` / `Space` open; `↑` / `↓` / `Home` / `End`; type-ahead; `Enter` selects; `Esc` closes; an unavailable option is focusable and `Enter` selects nothing; no key invented
 - [x] **Accessible name / role table** — Table 3: the APG listbox / combobox (Radix Select); each option's description holds the acronym's expansion and, when unavailable, the reason
