@@ -1,0 +1,227 @@
+"""The inbound budget is charged before a frame is decoded (`23-ws-protocol.md` §3.6, §8.5; #4924).
+
+Every frame, of any kind and on either subprotocol, is charged once against the connection's
+inbound rate before any decode work: a frame the rate refuses is never handed to a decoder or to
+the depth check, its `err` `client_rate_limited` has no `id` (the frame is never read), and the
+second refusal closes `4429`, as the rate refused frames before. From the first `auth_ok` a frame
+that opens with `t: "pong"` takes from the `pong` budget first; a frame that does not open so is
+charged as any frame. A JSON frame's depth is checked on the value the C decoder returns, so no
+Python loop walks the frame's text; what the decoder accepts is unchanged (SR-184)."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from types import SimpleNamespace
+from typing import Any, Final
+
+import msgpack
+import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+import candleviewer.ws.gateway as gateway
+from candleviewer.ws.codec import decode_client_frame
+from candleviewer.ws.gateway import _REFUSED, _Connection
+from candleviewer.ws.lifecycle import PONG_BUDGET_BURST, RATE_PER_SECOND
+from candleviewer.ws.limits import (
+    MAX_INBOUND_FRAME_BYTES,
+    MAX_JSON_CONTAINERS,
+    MAX_JSON_DEPTH,
+    json_depth_exceeds,
+    json_nests_deeper,
+)
+from tests.unit.ws.test_inbound_frame_limits import _bye, _connection, _decode, _Handed
+from tests.unit.ws.test_lifecycle_socket import JSON, MSGPACK
+
+_ENCODINGS: Final = pytest.mark.parametrize(
+    "encoding", [JSON[0], MSGPACK[0]], ids=["json", "msgpack"]
+)
+
+
+@pytest.fixture
+def handed(monkeypatch: pytest.MonkeyPatch) -> _Handed:
+    """Spies on the gateway module's own references to the two decoders and the depth check."""
+    seen = _Handed()
+    loads, walk = json.loads, gateway.json_nests_deeper
+
+    def spy_loads(raw: str) -> Any:
+        seen.decoded.append(("json", len(raw)))
+        return loads(raw)
+
+    def spy_unpack(raw: bytes, **budget: int) -> Any:
+        seen.decoded.append(("msgpack", len(raw)))
+        return decode_client_frame(raw, **budget)
+
+    def spy_walk(value: object, limit: int) -> bool:
+        seen.walked.append(value)
+        return walk(value, limit)
+
+    monkeypatch.setattr(gateway, "json", SimpleNamespace(loads=spy_loads, dumps=json.dumps))
+    monkeypatch.setattr(gateway, "decode_client_frame", spy_unpack)
+    monkeypatch.setattr(gateway, "json_nests_deeper", spy_walk)
+    return seen
+
+
+def _wire(encoding: str, frame: dict[str, Any]) -> str | bytes:
+    if encoding == MSGPACK[0]:
+        packed: bytes = msgpack.packb(frame)
+        return packed
+    return json.dumps(frame)
+
+
+def _queued(conn: _Connection) -> list[Any]:
+    """Every frame `conn` queued so far, in order (the writer is not running)."""
+    items: list[Any] = []
+    while not conn.outbound.empty():
+        items.append(conn.outbound.get_nowait())
+    return items
+
+
+def _spent(conn: _Connection, encoding: str) -> None:
+    """Spend the second's frames of `conn`'s inbound rate, every one admitted."""
+    for n in range(RATE_PER_SECOND):
+        assert _decode(conn, _wire(encoding, {"t": "ping", "id": f"p{n}"}))["t"] == "ping"
+
+
+@_ENCODINGS
+@pytest.mark.parametrize("authed", [False, True], ids=["before-auth_ok", "after-auth_ok"])
+def test_charge_a_frame_past_the_rate_is_refused_before_any_decode_work(
+    handed: _Handed, encoding: str, authed: bool
+) -> None:
+    conn = _connection(encoding, authed=authed)
+    _spent(conn, encoding)
+    _queued(conn)
+    handed.clear()
+    assert _decode(conn, _wire(encoding, {"t": "ping", "id": "over"})) is _REFUSED
+    assert handed.nothing  # neither decoder nor the depth check saw it
+    (err,) = _queued(conn)
+    assert (err["t"], err["p"]["code"], "id" in err) == ("err", "client_rate_limited", False)
+    assert not conn.closing
+
+
+@_ENCODINGS
+def test_charge_the_second_refusal_closes_4429_unread(handed: _Handed, encoding: str) -> None:
+    conn = _connection(encoding, authed=True)
+    _spent(conn, encoding)
+    handed.clear()
+    for n in range(2):
+        assert _decode(conn, _wire(encoding, {"t": "sub", "id": f"s{n}", "p": {}})) is _REFUSED
+    assert handed.nothing
+    assert _bye(conn) == ("client_rate_limited", 4429)
+    assert conn.bye_frame is not None and conn.bye_frame["p"]["retry_after_ms"] == 1000
+
+
+def test_charge_a_frame_at_the_cap_past_the_rate_is_never_decoded(handed: _Handed) -> None:
+    """The heaviest frame the cap allows costs no decode once the rate is spent."""
+    conn = _connection(JSON[0], authed=True)
+    _spent(conn, JSON[0])
+    handed.clear()
+    head, tail = '{"t":"ping","id":"x","p":{"a":[', "]}}"
+    lists = ",".join(["[]"] * (MAX_JSON_CONTAINERS - 3))
+    frame = head + lists + ",0" * ((MAX_INBOUND_FRAME_BYTES - len(head + lists + tail)) // 2) + tail
+    assert MAX_INBOUND_FRAME_BYTES - 2 <= len(frame) <= MAX_INBOUND_FRAME_BYTES
+    assert _decode(conn, frame) is _REFUSED
+    assert handed.nothing
+
+
+@_ENCODINGS
+def test_charge_a_leading_pong_after_auth_ok_takes_its_own_budget_not_the_rate(
+    encoding: str,
+) -> None:
+    conn = _connection(encoding, authed=True)
+    _spent(conn, encoding)
+    for n in range(PONG_BUDGET_BURST):
+        assert _decode(conn, _wire(encoding, {"t": "pong", "id": f"q{n}"}))["t"] == "pong"
+    assert _decode(conn, _wire(encoding, {"t": "pong", "id": "past"})) is _REFUSED
+
+
+def test_charge_a_pong_whose_t_is_not_its_first_member_counts_as_any_frame() -> None:
+    conn = _connection(JSON[0], authed=True)
+    _spent(conn, JSON[0])
+    assert _decode(conn, json.dumps({"id": "q", "t": "pong"})) is _REFUSED
+
+
+def test_charge_before_auth_ok_a_leading_pong_counts_as_any_frame() -> None:
+    conn = _connection(JSON[0])
+    _spent(conn, JSON[0])
+    assert _decode(conn, json.dumps({"t": "pong", "id": "q"})) is _REFUSED
+
+
+# -- the JSON decoder: what it accepts is unchanged ---------------------------------------------
+
+#: Text the standard library reads that RFC 8259 does not define or a double cannot hold. Each still
+#: decodes as `json.loads` reads it; the option checks refuse what no option takes (#415 AC-09).
+_READ_AS_BEFORE: Final = {
+    "nan": '{"t":"ping","id":"p","p":{"x":NaN}}',
+    "infinity": '{"t":"ping","id":"p","p":{"x":Infinity}}',
+    "lone-surrogate": '{"t":"ping","id":"\\ud800"}',
+    "integer-past-64-bits": '{"t":"ping","id":"p","p":{"x":18446744073709551616}}',
+    "integer-past-a-double": '{"t":"ping","id":"p","p":{"x":1' + "0" * 400 + "}}",
+    "duplicate-key": '{"t":"ping","id":"a","id":"b"}',
+}
+
+
+@pytest.mark.parametrize("text", list(_READ_AS_BEFORE.values()), ids=list(_READ_AS_BEFORE))
+def test_json_decode_reads_what_json_loads_reads(text: str) -> None:
+    frame = _decode(_connection(JSON[0], authed=True), text)
+    assert repr(frame) == repr(json.loads(text))  # `repr`: NaN is not equal to itself
+
+
+class _Walked(Exception):
+    """Raised when something iterates an `_Unwalkable`."""
+
+
+class _Unwalkable(str):
+    """JSON text that no Python loop can walk: `for ch in text` raises. Sizing it, counting its `[`
+    and `{`, matching a pattern on it and the C decoder do not iterate it."""
+
+    def __iter__(self) -> Iterator[str]:
+        raise _Walked
+
+
+@pytest.mark.parametrize("openers", [3, MAX_JSON_DEPTH + 1, MAX_JSON_CONTAINERS])
+@pytest.mark.parametrize("authed", [False, True], ids=["before-auth_ok", "after-auth_ok"])
+def test_decode_never_walks_a_frames_text_in_python(openers: int, authed: bool) -> None:
+    text = '{"t":"ping","id":"p","p":{"a":[' + ",".join(["[]"] * (openers - 3)) + "]}}"
+    assert _decode(_connection(JSON[0], authed=authed), _Unwalkable(text))["t"] == "ping"
+
+
+# -- the depth check on the decoded value ---------------------------------------------------------
+
+_JSON_VALUES: Final = st.recursive(
+    st.none() | st.booleans() | st.integers() | st.text(alphabet='[]{}"\\ab', max_size=4),
+    lambda inner: (
+        st.lists(inner, max_size=3) | st.dictionaries(st.text(max_size=2), inner, max_size=3)
+    ),
+    max_leaves=60,
+)
+
+
+@settings(max_examples=300, deadline=None, derandomize=True)
+@given(value=_JSON_VALUES, limit=st.integers(0, 8))
+def test_json_nests_deeper_agrees_with_the_text_scan(value: Any, limit: int) -> None:
+    assert json_nests_deeper(value, limit) == json_depth_exceeds(json.dumps(value), limit)
+
+
+@pytest.mark.parametrize(("depth", "over"), [(MAX_JSON_DEPTH, False), (MAX_JSON_DEPTH + 1, True)])
+def test_json_nests_deeper_at_the_limit_and_one_past_it(depth: int, over: bool) -> None:
+    value: Any = 0
+    for n in range(depth):
+        value = [value] if n % 2 else {"k": value}
+    assert json_nests_deeper(value, MAX_JSON_DEPTH) is over
+
+
+def test_json_nests_deeper_a_scalar_has_no_depth() -> None:
+    assert not json_nests_deeper("[[[", 0)
+    assert json_nests_deeper([], 0)
+
+
+@pytest.mark.parametrize(
+    ("lists", "malformed"), [(MAX_JSON_DEPTH - 1, False), (MAX_JSON_DEPTH, True)]
+)
+def test_decode_after_auth_ok_depth_counts_the_envelope(lists: int, malformed: bool) -> None:
+    """The envelope is depth 1, so `lists` nested lists in `p` reach depth `lists + 1`."""
+    text = '{"t":"ping","p":' + "[" * lists + "]" * lists + "}"
+    frame = _decode(_connection(JSON[0], authed=True), text)
+    assert (frame == []) is malformed

@@ -7,8 +7,12 @@ Single home for every bound the gateway enforces. Overflow policy:
 - Until the first `auth_ok`, a frame > `MAX_PREAUTH_FRAME_BYTES` -> close `1009` (checked the
   same way, so it is never scanned or decoded), and a MessagePack frame past the smaller value
   budget `ws/codec.py` sets for that window -> `frame_malformed`.
+- Every inbound frame is charged against the connection's inbound rate (§8.5) before it is
+  decoded, so a refused frame is never decoded; from the first `auth_ok` a frame that opens with
+  `t: "pong"` takes from its own `pong` budget first.
 - JSON text frame with > `MAX_JSON_CONTAINERS` `[` and `{` characters -> `frame_malformed` (a
-  protocol violation); it is never depth-scanned or decoded.
+  protocol violation); it is never decoded. One within it is decoded (the cap bounds the C
+  decoder's nesting), and a value nested deeper than `MAX_JSON_DEPTH` -> `frame_malformed` too.
 - From the first `auth_ok`, a `pong` > `MAX_PONG_BYTES` -> `bye protocol_violation` + close `1002`
   (§8.5); one whose first member is `t: "pong"` is never decoded.
 - `sub` with > `MAX_TOPICS_PER_SUB` topics -> the whole frame is refused with
@@ -43,6 +47,8 @@ Single home for every bound the gateway enforces. Overflow policy:
 
 from __future__ import annotations
 
+from typing import Any
+
 MAX_INBOUND_FRAME_BYTES = 256 * 1024
 #: §13.1 `envelope.id` `maxLength`, in characters. A request `id` that is not a string within it
 #: is dropped before the frame is handled, so no reply echoes it (#2572).
@@ -52,7 +58,8 @@ ENVELOPE_ID_MAX_LEN = 64
 SUB_ID_MAX_LEN = 64
 #: SR-184: max container nesting of an inbound frame. The deepest legitimate
 #: client frame (`sub`/`ctl` envelope -> p -> options -> list -> object) is ~6
-#: levels in ws-schema.json; 32 leaves headroom. Checked BEFORE `json.loads`.
+#: levels in ws-schema.json; 32 leaves headroom. A JSON frame is checked on its decoded value
+#: (`json_nests_deeper`); the container cap below bounds the depth the decoder can reach.
 MAX_JSON_DEPTH = 32
 #: SR-040: max size, in encoded bytes, of an inbound frame until the first `auth_ok`, the `hello`
 #: included. The largest conforming frame there, with each enum list naming every member once,
@@ -68,7 +75,7 @@ MAX_PONG_BYTES = 256
 #: SR-184: max `[` plus `{` characters in an inbound JSON text frame. The count ignores strings,
 #: so it can only over-count. The widest conforming frame, a `sub` of 50 topics with every option
 #: the schema defines and every list full, has about 400: this is about 2.5x that. Checked BEFORE
-#: the depth scan and `json.loads`.
+#: the decode and the depth check.
 MAX_JSON_CONTAINERS = 1024
 #: §13.5 `maxItems` of `sub.topics` and `unsub.topics`, and `welcome.limits.max_topics_per_request`.
 MAX_TOPICS_PER_SUB = 50
@@ -250,4 +257,29 @@ def json_depth_exceeds(text: str, limit: int) -> bool:
                 return True
         elif ch in "]}":
             depth -= 1
+    return False
+
+
+#: The containers a decoded JSON value holds (`json_nests_deeper`): `json.loads` builds exact lists
+#: and dicts, so a type lookup finds them (much faster than `isinstance` on every element).
+_JSON_CONTAINERS: frozenset[type] = frozenset({list, dict})
+
+
+def json_nests_deeper(value: object, limit: int) -> bool:
+    """True if a decoded JSON `value` nests lists and objects deeper than `limit`: the depth
+    `json_depth_exceeds` reads from the text, where a top-level container is depth 1.
+
+    Iterative, a level at a time, so no input can exhaust the stack; it reads each element once
+    and stops at the first level past `limit`."""
+    level: list[Any] = [value] if type(value) in _JSON_CONTAINERS else []
+    depth = 0
+    while level:
+        depth += 1
+        if depth > limit:
+            return True
+        below: list[Any] = []
+        for node in level:
+            items = node.values() if type(node) is dict else node
+            below += [item for item in items if type(item) in _JSON_CONTAINERS]
+        level = below
     return False

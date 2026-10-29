@@ -57,12 +57,15 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   on it ends the connection `internal_error` (as a writer fault does, if no close took); and
   teardown cancels it first.
 - **Inbound limits**: size checked before decoding (`1009`), 8 KiB until the first `auth_ok`;
-  30/s and 300/min (`client_rate_limited`, then `4429`). From the first `auth_ok` a `pong` is
-  counted only once its `PongBudget` is spent, and one over `MAX_PONG_BYTES` closes
-  `protocol_violation` (§8.5), never decoded when `t: "pong"` leads it. An envelope `id` that is
-  not a string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped before the frame is
-  handled, so no reply echoes it (§13.1, #2572). Fair scheduling between connections: the reader
-  yields to the loop after each frame it handles, and `handle_sub` within a long `sub`.
+  30/s and 300/min (`client_rate_limited`, then `4429`), charged once per frame of every kind
+  before the frame is decoded, so a refused frame is never decoded and its `err` has no `id`.
+  From the first `auth_ok` a frame that opens with `t: "pong"` is counted only once its
+  `PongBudget` is spent, and one over `MAX_PONG_BYTES` closes `protocol_violation` (§8.5), never
+  decoded. JSON decodes through the C decoder, its depth checked on the decoded value (SR-184).
+  An envelope `id` that is not a string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped
+  before the frame is handled, so no reply echoes it (§13.1, #2572). Fair scheduling between
+  connections: the reader yields to the loop after each frame it handles, and `handle_sub` within
+  a long `sub`.
 - Every server-initiated close after `accept` goes through `_Connection.close_with`, which
   queues `bye` ahead of the close frame (requirement S11), except the handler's own fault `bye`
   and 1011, which the handler counts itself. Token expiry and revocation seal the close:
@@ -174,7 +177,7 @@ from candleviewer.ws.limits import (
     MAX_PONG_BYTES,
     MAX_PREAUTH_FRAME_BYTES,
     MAX_UNAUTHENTICATED_SOCKETS,
-    json_depth_exceeds,
+    json_nests_deeper,
 )
 from candleviewer.ws.metrics import (
     FANOUT_SECONDS,
@@ -401,6 +404,9 @@ _CLOSE = object()  # writer sentinel: the next queue item is the close code
 #: already queued: the reader stops. Not `None`: `null` (JSON) and nil (msgpack) decode to `None`,
 #: and a frame that does is a non-object strike like any other malformed frame (#2905).
 _OVERSIZE = object()
+#: `_Connection.decode`'s answer for a frame the inbound rate refused before it was decoded: its
+#: strike is already counted (`err`, or the close), and there is nothing to dispatch.
+_REFUSED = object()
 _WRITER_DONE: Final = "cv-ws-writer-done"  # cancel msg: writer finished, stop reading
 
 
@@ -1070,7 +1076,8 @@ class _Connection:
     # -- inbound ------------------------------------------------------------
 
     def decode(self, msg: Mapping[str, Any], max_frame_bytes: int) -> Any:
-        """One ASGI receive message -> decoded frame; `_OVERSIZE` after an oversize close.
+        """One ASGI receive message -> decoded frame; `_OVERSIZE` after an oversize close,
+        `_REFUSED` when the inbound rate refused it (`charge`), undecoded.
 
         Until the first `auth_ok` (which sets `user_id`), the frame before `hello` included, the
         size cap is the smaller `MAX_PREAUTH_FRAME_BYTES` (SR-040) and a MessagePack frame is
@@ -1091,7 +1098,11 @@ class _Connection:
         the reader stops (§8.5): one whose first member is `t: "pong"` (`_leads_with_pong`) is
         never decoded, any other once decoded. A frame over the bound that opens with `t: "pong"`
         closes the same way even if the rest would not parse or repeats `t`: no `frame_malformed`
-        strike."""
+        strike.
+
+        Every other frame is charged once, before any decode work (`charge`): from the first
+        `auth_ok` one that opens with `t: "pong"` against the `pong` budget first, any other kind,
+        `ping` included, against the inbound rate."""
         binary = msg.get("bytes")
         raw: str | bytes = binary if binary is not None else (msg.get("text") or "")
         cap, values = max_frame_bytes, MAX_MSGPACK_VALUES
@@ -1105,15 +1116,38 @@ class _Connection:
         if size > cap:
             self.close_with("frame_too_big")
             return _OVERSIZE
-        pong_bound = self.user_id is not None and size > MAX_PONG_BYTES
-        if pong_bound and _leads_with_pong(raw, msgpack=self.msgpack):
+        authed = self.user_id is not None
+        pong = authed and _leads_with_pong(raw, msgpack=self.msgpack)
+        pong_bound = authed and size > MAX_PONG_BYTES
+        if pong_bound and pong:
             self.close_with("protocol_violation")
             return _OVERSIZE
+        if not self.charge(pong=pong):
+            return _REFUSED
         frame = self._parse(raw, values)
         if pong_bound and isinstance(frame, dict) and frame.get("t") == "pong":
             self.close_with("protocol_violation")  # its `t` comes later, or is written otherwise
             return _OVERSIZE
         return frame
+
+    def charge(self, *, pong: bool) -> bool:
+        """Charge one inbound frame before it is decoded (§8.5); False when it is refused.
+
+        A `pong` (`decode` has read its leading `t` from the first `auth_ok`) takes from its own
+        budget first; past it, and for every other frame, the inbound rate counts it. A refusal
+        is the rate's strike: the first an `err` `client_rate_limited` with no `id` (the frame is
+        never read), the next the `4429` close, which the close's metric and audit row record."""
+        now = self.clock()
+        if pong and self.pongs.allow(now):
+            return True
+        if self.rate.allow(now):
+            return True
+        self.rate_strikes += 1
+        if self.rate_strikes > 1:
+            self.close_with("client_rate_limited", retry_after_ms=1000)
+        else:
+            self.push(build_ws_error("client_rate_limited", id=None))
+        return False
 
     def _parse(self, raw: str | bytes, values: int) -> Any:
         """`decode`'s parse of a frame within its size caps: the decoded value, `[]` if refused."""
@@ -1124,10 +1158,11 @@ class _Connection:
                 return []  # a binary frame on cv.v1.json: a violation, never decoded
             openers = raw.count("[") + raw.count("{")  # not string-aware: it can only over-count
             if openers > MAX_JSON_CONTAINERS:
-                return []  # SR-184: too many containers -> protocol violation, never scanned
-            if json_depth_exceeds(raw, MAX_JSON_DEPTH):
-                return []  # SR-184: too deep -> protocol violation, never decoded
-            return json.loads(raw)
+                return []  # SR-184: too many containers -> protocol violation, never decoded
+            value = json.loads(raw)  # the C decoder; its nesting is bounded by the cap above
+            if openers > MAX_JSON_DEPTH and json_nests_deeper(value, MAX_JSON_DEPTH):
+                return []  # SR-184: too deep -> protocol violation (fewer openers cannot nest so)
+            return value
         except (ValueError, RecursionError):  # MsgpackFrameError is a ValueError
             return []  # malformed: handled as a non-object frame (a violation)
 
@@ -1841,15 +1876,7 @@ def make_ws_router(
             del frame["id"]  # #2572: never echoed, on any reply; the frame is still handled
         kind = frame.get("t") if isinstance(frame, dict) else None
         fid = frame.get("id") if isinstance(frame, dict) else None
-        exempt = kind == "pong" and conn.user_id is not None  # §8.5: from the first `auth_ok`
-        exempt = exempt and conn.pongs.allow(conn.clock())  # and within its own `pong` budget
-        if not exempt and not conn.rate.allow(conn.clock()):
-            conn.rate_strikes += 1
-            if conn.rate_strikes > 1:
-                conn.close_with("client_rate_limited", retry_after_ms=1000)
-            else:
-                conn.push(build_ws_error("client_rate_limited", id=_str_or_none(fid)))
-            return
+        # §8.5: the frame was charged against the inbound rate before it was decoded (`charge`).
         if not conn.lifecycle.can(ConnEvent.HELLO) and kind == "hello":
             conn.violation(fid, "protocol_violation")
         elif conn.lifecycle.can(ConnEvent.HELLO):
@@ -1922,7 +1949,8 @@ def make_ws_router(
             frame = conn.decode(msg, max_frame_bytes)
             if frame is _OVERSIZE:
                 return
-            await dispatch(conn, frame)
+            if frame is not _REFUSED:  # a refused frame's strike is already counted
+                await dispatch(conn, frame)
             if not conn.closing:  # fair scheduling between connections: one frame per turn, as
                 await asyncio.sleep(0)  # `receive` returns at once while frames are queued
 
