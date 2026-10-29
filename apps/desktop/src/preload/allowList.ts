@@ -14,7 +14,16 @@ export const ALLOWED_IPC_CHANNELS: readonly string[] = [
   "cv:updates:check",
   // E10-S04: append one schema-checked crash entry to the local log; validated in preload and main.
   "cv:crashLog:append",
+  // E10-S04 (F15): relaunch with the GPU allowed again, after a GPU-process crash; no arguments.
+  "cv:gpu:retry",
 ];
+
+/**
+ * Main-to-renderer event channels (SR-111), disjoint from ALLOWED_IPC_CHANNELS: main sends each
+ * only to a window on the shell page and handles none, and the preload subscribes only through its
+ * guarded helper. E10-S04 (F15): a GPU-process crash.
+ */
+export const ALLOWED_IPC_EVENTS: readonly string[] = ["cv:gpu:crashed"];
 
 export function isChannelAllowed(
   channel: string,

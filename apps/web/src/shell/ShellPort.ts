@@ -17,7 +17,7 @@
  *   | Deep links                                      | `deepLinks.*`, `caps.deepLinks` |
  *   | Tray                                             | `tray.*`, `caps.tray` |
  *   | OS notifications                                | `notifications.*`, `caps.osNotifications` |
- *   | GPU info / flags                                | `gpu.info`, `caps.gpuInfo` |
+ *   | GPU info / flags, GPU-process crash (F15)       | `gpu.info`, `gpu.onCrashed`, `gpu.retry`, `caps.gpuInfo` |
  *   | Crash log                                        | `crashLog.append`, `caps.crashLog` |
  *   | Playwright-drivability                          | not a runtime capability — verified by `apps/desktop/e2e` |
  *
@@ -69,6 +69,26 @@ export interface GpuInfo {
   readonly hardwareAccelerated: boolean;
   /** True if the WebGL2 context reports the extensions the chart engine needs. */
   readonly webgl2CapabilityParity: boolean;
+}
+
+/** Why the desktop shell's GPU process went: Electron's reason, or "unknown" (F15). */
+export type GpuCrashReason =
+  | "clean-exit"
+  | "abnormal-exit"
+  | "killed"
+  | "crashed"
+  | "oom"
+  | "launch-failed"
+  | "integrity-failure"
+  | "memory-eviction"
+  | "unknown";
+
+/** A GPU-process crash in the desktop shell (F15): no exit code or other platform text. */
+export interface GpuCrash {
+  readonly crashedAtMs: number;
+  /** GPU-process restarts this session, this one included. */
+  readonly restartCount: number;
+  readonly reason: GpuCrashReason;
 }
 
 export interface DeepLinkPayload {
@@ -132,5 +152,9 @@ export interface ShellPort {
 
   readonly gpu: {
     info(): Promise<GpuInfo>;
+    /** Each GPU-process crash in the desktop shell; a no-op subscription in a browser tab. */
+    onCrashed(handler: (crash: GpuCrash) => void): () => void;
+    /** Relaunches the desktop app with the GPU allowed again; refused in a browser tab. */
+    retry(): Promise<void>;
   };
 }

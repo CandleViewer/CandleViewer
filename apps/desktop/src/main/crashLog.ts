@@ -111,9 +111,13 @@ type Audit = (event: string, detail: Record<string, string>) => void;
 /**
  * At most CRASH_LOG_AUDIT_BURST lines per event and detail per window, so a flooding renderer
  * cannot turn refusals into unbounded audit writes; the first audit after a window with
- * suppressed lines first writes one `crash-log-audit-suppressed` line carrying the count.
+ * suppressed lines first writes one `suppressedEvent` line carrying the count.
  */
-function rateLimitedAudit(audit: NonNullable<CrashLogOptions["audit"]>, now: () => number): Audit {
+export function rateLimitedAudit(
+  audit: NonNullable<CrashLogOptions["audit"]>,
+  now: () => number,
+  suppressedEvent = "crash-log-audit-suppressed",
+): Audit {
   const windows = new Map<string, { start: number; written: number; suppressed: number }>();
   return (event, detail) => {
     const key = `${event}\u0000${JSON.stringify(detail)}`;
@@ -121,7 +125,7 @@ function rateLimitedAudit(audit: NonNullable<CrashLogOptions["audit"]>, now: () 
     let window = windows.get(key);
     if (window === undefined || at - window.start >= CRASH_LOG_AUDIT_WINDOW_MS) {
       if (window !== undefined && window.suppressed > 0) {
-        audit("crash-log-audit-suppressed", { event, ...detail, suppressed: window.suppressed });
+        audit(suppressedEvent, { event, ...detail, suppressed: window.suppressed });
       }
       window = { start: at, written: 0, suppressed: 0 };
       windows.set(key, window);

@@ -1,6 +1,7 @@
 import type {
   CrashEntry,
   DeepLinkPayload,
+  GpuCrash,
   GpuInfo,
   ShellCapabilities,
   ShellPort,
@@ -30,6 +31,8 @@ export interface CvBridge {
   readonly notificationsShow: (title: string, body: string) => Promise<void>;
   readonly crashLogAppend: (entry: CrashEntry) => Promise<void>;
   readonly gpuInfo: () => Promise<GpuInfo>;
+  readonly gpuRetry: () => Promise<void>;
+  readonly onGpuCrashed: (handler: (crash: GpuCrash) => void) => () => void;
   readonly onDeepLink: (handler: (payload: DeepLinkPayload) => void) => () => void;
 }
 
@@ -96,6 +99,8 @@ export function createElectronShellAdapter(): ShellPort {
     },
     gpu: {
       info: () => requireBridge().gpuInfo(),
+      onCrashed: (handler) => requireBridge().onGpuCrashed(handler),
+      retry: () => requireBridge().gpuRetry(),
     },
   };
 }

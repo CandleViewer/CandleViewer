@@ -1,6 +1,8 @@
 export type {
   CrashEntry,
   DeepLinkPayload,
+  GpuCrash,
+  GpuCrashReason,
   GpuInfo,
   ShellCapabilities,
   ShellPort,
