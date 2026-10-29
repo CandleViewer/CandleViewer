@@ -32,7 +32,7 @@ from candleviewer.rules.ir.accounts import (
     holds_account_key,
     redact_account_ids,
 )
-from candleviewer.rules.ir.canonical import IrValueError
+from candleviewer.rules.ir.canonical import METADATA_KEYS, IrValueError
 from candleviewer.rules.issues import Issue, RuleCompileError
 from candleviewer.rules.lifecycle import MODES, LifecycleError, RuleLifecycle, mode_of
 from candleviewer.rules.limits import (
@@ -282,17 +282,24 @@ def quarantine_path(ir: dict[str, Any]) -> str | None:
     return None
 
 
+#: The keys an export keeps: the export strips by an allow-list of IR keys, every field of the
+#: `Rule` model but those the server sets on a stored version (its id, its revision and its
+#: authorship), so any other key a stored document holds is dropped by construction. `ir_version`
+#: stays: it is the schema an import validates against.
+_SERVER_SET: Final = frozenset({"rule_id", "version"}) | METADATA_KEYS
+_IR_KEYS: Final = frozenset(Rule.model_fields) - _SERVER_SET
+
+
 def _exported(ir: Any) -> Any:
-    """`ir` in the form an export carries (E35-X02 j): a copy without any account reference at any
-    depth, with demo its only environment, disarmed, and without its author, armer or id. Any stored
-    IR, a quarantined one's too (G-15); the stored IR itself is never changed."""
+    """`ir` in the form an export carries (E35-X02 j): a copy holding only `_IR_KEYS`, without any
+    account reference at any depth, with demo its only environment, and disarmed. Any stored IR, a
+    quarantined one's too (G-15); the stored IR itself is never changed."""
     out = redact_account_ids(copy.deepcopy(ir))
     if isinstance(out, dict):
+        out = {k: v for k, v in out.items() if k in _IR_KEYS}
         scope = out.get("scope")
         out["scope"] = {**(scope if isinstance(scope, dict) else {}), "environments": ["demo"]}
         out.update(mode="disabled", enabled=False)
-        for k in ("created_by", "armed_by", "id"):
-            out.pop(k, None)
     return out
 
 
@@ -464,9 +471,11 @@ class RulesManager:
         return {"format": "cv-rule-bundle/1", "ir": _exported(ver.ir)}
 
     async def import_rule(self, bundle: dict[str, Any], actor: Actor) -> dict[str, Any]:
-        """Always lands disabled, on demo. Every account id anywhere in the bundle must be granted
-        to the importer, else the bundle is refused, audited with the count refused (never the ids)
-        and nothing is stored; each one is then kept as written, never remapped (G-10). A bundle
+        """Always lands disabled, on demo, at version 1: a version the bundle carries is discarded,
+        never trusted, and its rule id and authorship are the server's to set; its `ir_version` is
+        validated as carried. Every account id anywhere in the bundle must be granted to the
+        importer, else the bundle is refused, audited with the count refused (never the ids) and
+        nothing is stored; each one is then kept as written, never remapped (G-10). A bundle
         naming no account lands naming none, so it applies to every account its owner is granted."""
         self.check_document(bundle.get("ir", {}))  # the bounds, before the copy and walks below
         ir = copy.deepcopy(bundle.get("ir", {}))
@@ -480,7 +489,7 @@ class RulesManager:
             raise RuleError(403, "forbidden", "The bundle references an account you cannot access.")
         scope = dict(ir.get("scope", {}))
         scope["environments"] = ["demo"]
-        ir.update(scope=scope)
+        ir.update(scope=scope, version=1)
         return await self.create(ir, actor, notes="imported")
 
     async def verify_system_rules(self) -> list[str]:

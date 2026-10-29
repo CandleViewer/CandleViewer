@@ -5,7 +5,8 @@ the walker reads every value an account key holds wherever an action's params ta
 an import keeps each account reference the importer is granted, as written, and refuses a bundle
 naming any other. G-14: a rule's name conflicts only with a rule its caller owns or may read. G-15:
 a quarantined rule's view carries its stored IR only in the form an export carries it. The conflict
-response carries only the version and the time.
+response carries only the version and the time. The export strips by an allow-list of IR keys, and
+an import lands at version 1.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
+from candleviewer.rules.ir import ir_hash
 from candleviewer.rules.ir.accounts import collect_account_ids, redact_account_ids
 from candleviewer.rules.ir.models import Rule, RuleScope
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
@@ -357,3 +359,93 @@ async def test_no_known_account_id_reaches_an_export_or_an_export_json_property(
     assert all(("export_json" in v) is quarantined for v in views)
     blob = json.dumps([await m.export_rule(rid, OWNER), views])
     assert not [a for a in KNOWN if a in blob]
+
+
+# ----- the export strips by an allow-list of IR keys; an import lands at version 1 ----------
+#: The `Rule` fields the server sets on every stored version: its id, its revision and its
+#: authorship. Every other field of the model is an IR key, `ir_version` among them.
+SERVER_SET = frozenset({"rule_id", "version", "created_by", "created_at", "updated_at"})
+IR_KEYS = frozenset(Rule.model_fields) - SERVER_SET
+
+
+def _meaning(ir: dict[str, Any]) -> dict[str, Any]:
+    """What a rule says, less its accounts and its environments: its trigger, conditions, actions,
+    limits and the rest of its scope."""
+    parts = ("trigger", "conditions", "actions", "limits", "scope")
+    out: dict[str, Any] = redact_account_ids({k: ir[k] for k in parts})
+    del out["scope"]["environments"]
+    return out
+
+
+async def test_an_export_round_trips_to_a_disabled_demo_rule_at_version_one() -> None:
+    """Another user's import of an export lands disabled, on demo, at version 1 (hashed as
+    stored) under a new rule id, and says what the source says but for its accounts."""
+    m, _ = _mgr()
+    owner_a = _manager(USER_A, A, B)
+    scope = {"level": "account", "account_ids": [str(A)], "symbols": ["BTCUSDT"],
+             "applies_to": "open_positions", "environments": ["demo", "live"],
+             "exclude_algo_children": False}  # fmt: skip
+    src = _ir(name="src", scope=scope, limits={"cooldown_ms": 5000, "max_fires_per_hour": 7})
+    src["conditions"]["left"]["account_id"] = str(B)
+    src["actions"][0]["params"]["target_account_id"] = str(A)
+    rid = (await m.create(src, owner_a))["id"]
+    for edit in (1, 2):
+        await m.update(rid, {**src, "description": f"edit {edit}"}, edit, owner_a)
+    out = await m.import_rule(await m.export_rule(rid, owner_a), _manager(USER_B, C))
+    source, landed = await _stored(m, rid), await _stored(m, out["id"])
+    assert (source["version"], out["id"] != rid, landed["rule_id"]) == (3, True, out["id"])
+    assert (out["mode"], landed["mode"], landed["enabled"]) == ("disabled", "disabled", False)
+    assert landed["scope"]["environments"] == ["demo"] and _meaning(landed) == _meaning(source)
+    versions = await m.versions(out["id"])
+    assert [v["version"] for v in versions] == [landed["version"]] == [1]
+    assert versions[0]["ir_hash"] == ir_hash(landed)
+
+
+@pytest.mark.parametrize("carried", [{}, {"version": 0}, {"version": "3"}, {"rule_id": "r-1"}])
+async def test_an_import_ignores_the_rule_id_version_and_authorship_a_bundle_carries(
+    carried: dict[str, Any],
+) -> None:
+    """A bundle carrying a rule id, a version or authorship (its source's, or any other value)
+    imports cleanly with each ignored: the rule lands under a new rule id at version 1, hashed as
+    stored, authored by the importer at the server's time, and the source is untouched."""
+    now = [SAVED_US]
+    m = RulesManager(InMemoryRuleStore(), default_registry(), now_us=lambda: now[0])
+    owner_a = _manager(USER_A, A)
+    rid = (await m.create(_ir(name="src"), owner_a))["id"]
+    await m.update(rid, _ir("2", name="src"), 1, owner_a)
+    source = await _stored(m, rid)  # its rule id, version 2 and authorship, all carried below
+    now[0] += 1
+    bundle = {"format": "cv-rule-bundle/1", "ir": source | carried}
+    out = await m.import_rule(bundle, _manager(USER_B, A))
+    landed, versions = await _stored(m, out["id"]), await m.versions(out["id"])
+    assert out["id"] != rid and landed["rule_id"] == out["id"]
+    assert [v["version"] for v in versions] == [landed["version"]] == [1]
+    assert versions[0]["ir_hash"] == ir_hash(landed)
+    authored = (landed["created_by"], landed["created_at"], landed["updated_at"])
+    assert authored == (USER_B, now[0], now[0]) and await _stored(m, rid) == source
+
+
+async def test_an_exported_bundle_holds_only_ir_keys() -> None:
+    """The export strips by an allow-list of IR keys, built from the IR model's own fields less
+    the ones the server sets, so a field the server adds to a stored version is never exported;
+    `ir_version`, the schema an import validates against, stays. export_json takes the same form."""
+    m, _ = _mgr()
+    rid = (await m.create(_ir(name="src"), OWNER))["id"]
+    await m.update(rid, _ir("2", name="src"), 1, OWNER)
+    row = await m._s.get(rid)
+    assert row is not None
+    row.versions[-1].ir["etag"] = '"2"'  # a field a later server stores beside the IR's own
+    bundle = await m.export_rule(rid, OWNER)
+    assert set(bundle["ir"]) == IR_KEYS and bundle["ir"]["ir_version"] == 1
+    assert (await m.get(rid, OWNER))["export_json"] == bundle["ir"]
+
+
+async def test_an_import_validates_the_ir_version_a_bundle_carries() -> None:
+    """`ir_version` is read as the bundle carries it, never supplied: a version the server does not
+    read is refused 422 at its path (AC-RA-08) and nothing is stored."""
+    m, _ = _mgr()
+    bundle = {"format": "cv-rule-bundle/1", "ir": _ir(name="imp", ir_version=2)}
+    with pytest.raises(RuleError) as refused:
+        await m.import_rule(bundle, OWNER)
+    assert (refused.value.status, refused.value.extra.get("path")) == (422, "/ir_version")
+    assert await m._s.all() == []
