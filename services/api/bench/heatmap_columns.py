@@ -48,7 +48,10 @@ from candleviewer.orderflow.heatmap import (
     _Entry,
 )
 from candleviewer.ws.binary import decode, encode, encode_b64
-from candleviewer.ws.sequencing import SnapshotBody, render
+from candleviewer.ws.outbound import json_payload
+from candleviewer.ws.permissions import Subscription
+from candleviewer.ws.sequencing import SnapshotBody, SnapshotCache, TopicEmitter, render
+from candleviewer.ws.topics import effective_options, parse_topic
 from candleviewer.ws_wiring import heatmap_part
 
 SYMBOL = "BTCUSDT"
@@ -83,6 +86,21 @@ class Report:
     render_plain_ms_p95: float = 0.0
     render_plain_ms_max: float = 0.0
     hold_ms: float = 0.0
+    #: The gateway's whole snapshot emission (render, chunking, encoding, queueing) per loop turn,
+    #: at the G-03 bound, binary and structured: in one turn (as before #605's slicing) and in
+    #: `SNAPSHOT_TURN_S` slices; p95 and max of the turns, and the turns it took.
+    emit_binary_one_turn_ms: float = 0.0
+    emit_binary_sliced_p95_ms: float = 0.0
+    emit_binary_sliced_max_ms: float = 0.0
+    emit_binary_turns: int = 0
+    emit_structured_one_turn_ms: float = 0.0
+    emit_structured_sliced_p95_ms: float = 0.0
+    emit_structured_sliced_max_ms: float = 0.0
+    emit_structured_turns: int = 0
+    emit_structured_columns: int = 0
+    #: The same turns' CPU (`time.thread_time`), which a loaded host's preemption does not inflate.
+    emit_binary_sliced_cpu_max_ms: float = 0.0
+    emit_structured_sliced_cpu_max_ms: float = 0.0
     reseed_turns: int = 0
     reseed_turn_p95_ms: float = 0.0
     reseed_turn_max_ms: float = 0.0
@@ -243,6 +261,76 @@ class _RenderSub:
     replay_session_id: str | None = None
 
 
+def _emit_turns(
+    topic: HeatmapTopic, lease: Any, encoding: str, sliced: bool
+) -> tuple[list[float], list[float]]:
+    """Every loop turn's CPU of one `snap` of `lease`'s spec through the gateway's emitter, ms;
+    the frames go to a queue that encodes as the pipeline does (`json_payload`)."""
+
+    async def run_one() -> tuple[list[float], list[float]]:
+        parsed = parse_topic(f"heatmap.{SYMBOL}")
+        opts = {"encoding": encoding, "window_seconds": 900}
+        sub = Subscription("s1", parsed, opts, effective_options(parsed, opts))
+        sub.heatmap_lease = lease
+        done = asyncio.Event()
+
+        def push(frame: dict[str, Any]) -> None:
+            json_payload(frame)  # the queue encodes at push
+            if frame.get("s") is not None:
+                done.set()
+
+        def push_encoded(frame: dict[str, Any], payload: str | bytes, _r: float | None) -> None:
+            if frame.get("s") is not None:
+                done.set()
+
+        emitter = TopicEmitter(push, connection_id="bench", wall_ms=lambda: T0,
+                               clock=time.monotonic, source=cast(Any, topic),
+                               cache=SnapshotCache())  # fmt: skip
+        if sliced:
+            emitter.push_encoded, emitter.encode_payload = push_encoded, json_payload
+            emitter.wire = "json"
+        else:
+            emitter.turn_s = 1e9
+        turns: list[float] = []
+        cpu: list[float] = []
+        step = emitter._continue
+
+        def timed(job: Any) -> None:
+            began, began_cpu = time.perf_counter(), time.thread_time()
+            step(job)
+            turns.append((time.perf_counter() - began) * 1000)
+            cpu.append((time.thread_time() - began_cpu) * 1000)
+
+        emitter._continue = timed  # type: ignore[method-assign]  # the bench times each slice
+        began, began_cpu = time.perf_counter(), time.thread_time()
+        emitter.snapshot(sub, "initial")
+        turns.insert(0, (time.perf_counter() - began) * 1000)
+        cpu.insert(0, (time.thread_time() - began_cpu) * 1000)
+        await asyncio.wait_for(done.wait(), 120)
+        return turns, cpu
+
+    return asyncio.run(run_one())
+
+
+def emit_scenario(report: Report, topic: HeatmapTopic, lease: Any) -> Report:
+    for encoding in ("binary", "structured"):
+        one, _ = _emit_turns(topic, lease, encoding, sliced=False)
+        turns, cpu = _emit_turns(topic, lease, encoding, sliced=True)
+        setattr(report, f"emit_{encoding}_sliced_cpu_max_ms", max(cpu))
+        p95 = statistics.quantiles(turns, n=100)[94] if len(turns) > 1 else turns[0]
+        setattr(report, f"emit_{encoding}_one_turn_ms", max(one))
+        setattr(report, f"emit_{encoding}_sliced_p95_ms", p95)
+        setattr(report, f"emit_{encoding}_sliced_max_ms", max(turns))
+        setattr(report, f"emit_{encoding}_turns", len(turns))
+    opts = {"encoding": "structured", "window_seconds": 900}
+    parsed = parse_topic(f"heatmap.{SYMBOL}")
+    sub = Subscription("s2", parsed, opts, effective_options(parsed, opts))
+    sub.heatmap_lease = lease
+    body = topic.build(cast(Any, sub))
+    report.emit_structured_columns = len(body.structured["columns"]) if body else 0
+    return report
+
+
 def snapshot_and_seed(report: Report, seed: int) -> Report:
     """Fable M-1: `build()` for a binary `sub` at the default budget (8 MiB, 2 000 frames) over a
     full ring of 2 000 cached 512-row columns, the CVWB encode of its parts (what the gateway's
@@ -287,6 +375,8 @@ def snapshot_and_seed(report: Report, seed: int) -> Report:
             runs.append((time.perf_counter() - began) * 1000)
         setattr(report, f"render_{name}_ms_p95", statistics.quantiles(runs, n=100)[94])
         setattr(report, f"render_{name}_ms_max", max(runs))
+    t2 = time.perf_counter()
+    emit_scenario(report, topic, lease)
     t2 = time.perf_counter()
     topic.hold("b", HeatmapSpec(SYMBOL, price_grouping=2, time_bucket_ms=COLUMN_MS))
     t3 = time.perf_counter()
