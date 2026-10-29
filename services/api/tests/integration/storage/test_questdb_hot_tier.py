@@ -534,3 +534,44 @@ async def test_bar_writer_row_lands_on_real_questdb(
         assert [(int(r["index"]), r["source"]) for r in got] == [(3, "tape"), (4, KLINE_SOURCE)]
     finally:
         await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_heatmap_cells_round_trip_the_0007_columns_on_real_questdb(
+    questdb_container: tuple[str, int, int],
+) -> None:
+    """E21-T02 (#605, 21 §4.12): `QuestDbHeatmapStore` rows reach `heatmap_cells` through ILP
+    with the 0007 columns typed as the DDL declares them (BOOLEAN, INT, DOUBLE) and read back
+    as written; the empty level is no row (24 §6.5)."""
+    from candleviewer.storage.questdb.heatmap_store import QuestDbHeatmapStore
+
+    host, pg_port, ilp_port = questdb_container
+    conn = await _connect(host, pg_port)
+    try:
+        await run_migrations(_AsyncpgExecutor(conn), DDL_DIR)
+        writer = IlpWriter(_AsyncpgTcpIlpTransport(host, ilp_port), ALL_SCHEMAS)
+        await writer.start()
+        store = QuestDbHeatmapStore(writer)
+        await store.write_column(
+            "BTCUSDT", _T0, [(63118.0, 1.5, 0.0), (63118.1, 0.0, 0.0), (63118.2, 0.0, 2.25)],
+            estimated=True, samples=3, off_window_bid_qty=4.5, off_window_ask_qty=0.0,
+        )  # fmt: skip
+        await writer.flush("heatmap_cells")
+        await writer.stop()
+        await wait_for_row_count(conn, "heatmap_cells", 2)
+        rows = await conn.fetch(
+            "SELECT price, bid_size, ask_size, estimated, samples, off_window_bid_qty,"
+            " off_window_ask_qty FROM heatmap_cells ORDER BY price"
+        )
+        assert [tuple(r.values()) for r in rows] == [
+            (63118.0, 1.5, 0.0, True, 3, 4.5, 0.0),
+            (63118.2, 0.0, 2.25, True, 3, 4.5, 0.0),
+        ]
+        types = {
+            str(r["column"]): str(r["type"])
+            for r in await conn.fetch("SELECT \"column\", type FROM table_columns('heatmap_cells')")
+        }
+        assert (types["estimated"], types["samples"]) == ("BOOLEAN", "INT")
+        assert types["off_window_bid_qty"] == types["off_window_ask_qty"] == "DOUBLE"
+    finally:
+        await conn.close()
