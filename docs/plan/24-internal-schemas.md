@@ -6248,7 +6248,7 @@ This number follows `main`'s last entry, §19.52; an entry that lands first take
 
 ### 19.53 2026-10-29 — §8.12: the wallet row's clock, the stand-in reconciliation's signals and the disable hold's windows, as built (E29-T05, #848)
 
-This number follows §19.52 (#4905), which merges first; an entry that lands first takes it, and this one moves to the next free number.
+This number follows `main`'s last entry, §19.52; an entry that lands first takes it, and this one moves to the next free number.
 
 - §8.12, the `wallet` row (E29-T05's closing slice, S9; as built since S8a): a wallet row is refused when it is dated more than 5 s (`MAX_FUTURE_SKEW`) ahead of the exchange-synced clock (`ExchangeWallClock`: the host's time plus the clock guard's measured offset), not ahead of the host clock, and the refusal is logged and counted (`wallet_ahead`).
 - §8.12 "Reconciliation until E29-T06": the refusal's signals by their shipped names, the log `stream_resync_refused`, the count `oms_stream_outcomes_total{stage="consumer",outcome="reconciliation_unavailable"}` and the page "an account's reconciliation request was refused", once per episode, where `oms_reconciliation_unavailable` named none of them.
