@@ -3,7 +3,8 @@
 - **Companion to:** [`e27-key-custody.md`](e27-key-custody.md) (E27-D01, issue #732), "the report"; RQ-, H-, W-,
   F-, RA-, CP-, CD-, AD- and OQ- ids refer to it, as do the `path:line` pin and shorthand (report front matter), and a
   bare "§n" is a section of this file.
-- **Status:** not yet run. Every duration below is an allocation inside a 45-minute session, not an observation; no
+- **Status:** not yet run, and running it is an optional post-GA line, not a gate: the report is the research of
+  record (#2701 ledger 1, 2026-10-29; rows 18 / 61 / 106). Every duration below is an allocation inside a 45-minute session, not an observation; no
   participant, timing, count or quote exists. Synthesised findings, never a participant's real key practice, are
   appended to the report as a dated addendum (§8).
 - **Ready to run: partly.** The interview (part A) and the comprehension probes (part C) can run on paper today. The
