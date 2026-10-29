@@ -28,7 +28,7 @@ gates, each FAIL led by its code:
   mock line; the Safety frame shows CD-6; `native_stop_mandatory` is "not reachable from this UI".
 - [SCAN] no UUID, credential-shaped run, key-id shape, address or 7+ digit number (only the
   cited comment ids), and account names only from the fixture set.
-- [CITES] the pinned cites occur and hold at the base; every `14:n` / `22:n` cite is in range;
+- [CITES] the pinned cites occur and hold at the base; every `14:n` / `22:n` / `MX:n` cite is in range;
   every section 12 pin is its screen's sign-off checklist line; each of the six `14` entries
   carries exactly one E28-D02 pointer line. Line cites read `14` at the base: this PR's six
   pointer lines are dropped before a line is resolved.
@@ -239,8 +239,14 @@ PINS: dict[str, str] = {
     "`14:2708`": "single server call",
     "`14:2709`": "denying a symbol with an open position is refused",
     "`ADR40:441-445`": "capped by profile: 5x",
-    "`MX:1500-1513`": "not_mounted",
-    "`MX:1528-1533`": "not_mounted",
+    "`MX:569-580`": "GET /exchange-accounts/{accountId}/default-profile: | PUT /exchange-accounts/{accountId}/default-profile:",
+    "`MX:624-653`": "GET /exchange-accounts/{accountId}/profiles: | DELETE /exchange-accounts/{accountId}/profiles/{profileId}:",
+    "`MX:636-641`": "GET /exchange-accounts/{accountId}/profiles/{profileId}:",
+    "`MX:1489-1506`": "GET /trade-group-definitions: | POST /trade-group-definitions: | GET /trade-group-definitions/{definitionId}:",
+    "`MX:1507-1520`": "PUT /trade-group-definitions/{definitionId}: | DELETE /trade-group-definitions/{definitionId}: | state: not_mounted",
+    "`MX:1507-1540`": "PUT /trade-group-definitions/{definitionId}: | POST /trade-groups/preview: | state: not_mounted",
+    "`MX:1535-1540`": "POST /trade-groups/preview: | state: not_mounted",
+    "`MX:1535`": "POST /trade-groups/preview:",
 }
 
 
@@ -772,11 +778,17 @@ def gate_cites(ctx: Ctx, r: Result) -> None:
             continue
         a = int(m.group(2))
         b = int(m.group(3) or a)
-        held = text in " ".join(lines[m.group(1)][a - 1 : b])
-        if cite not in ctx.spec or not held:
+        window = " ".join(" ".join(ln.split()) for ln in lines[m.group(1)][a - 1 : b])
+        held = all(part in window for part in text.split(" | "))
+        if (cite not in ctx.spec and m.group(1) != "MX") or not held:
             r.fail("CITES", f"pinned cite {cite} is missing from the spec or no longer holds")
+    in_spec = set(re.findall(r"`MX:\d+(?:-\d+)?`", ctx.spec))
+    pinned = {c for c in PINS if c.startswith("`MX:")}
+    if in_spec != pinned:
+        diff = ", ".join(sorted(in_spec ^ pinned))
+        r.fail("CITES", f"the MX cites in the spec and the MX pins differ: {diff}")
     cites = 0
-    for m in re.finditer(r"`(14|22):(\d+)(?:-(\d+))?`", ctx.spec):
+    for m in re.finditer(r"`(14|22|MX):(\d+)(?:-(\d+))?`", ctx.spec):
         cites += 1
         if int(m.group(3) or m.group(2)) > len(lines[m.group(1)]):
             r.fail("CITES", f"{m.group(0)} is past the end of {m.group(1)}")
@@ -865,6 +877,7 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
         ),
     ),
     ("CITES", sub("`22:3620-3622`", "`22:3399-3401`", 0)),
+    ("CITES", sub("`MX:1535-1540`", "`MX:1528-1533`", 0)),
 )
 
 
@@ -919,7 +932,7 @@ def main(argv: list[str]) -> int:
                 print(f"FAIL {line}")
             verdict = "ok" if not st else "FAILED"
             print(
-                f"self-test: {verdict} — {len(MUTATIONS)} mutations, one per gate, each one new "
+                f"self-test: {verdict} — {len(MUTATIONS)} mutations, every gate covered, each one new "
                 "FAIL; restored result identical; files on disk unchanged"
             )
     failed = bool(res.fails or st)
