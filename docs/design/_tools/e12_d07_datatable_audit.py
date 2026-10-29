@@ -18,7 +18,7 @@ E33-D06 tools (the same modes, the anchored values, the default-deny pins and th
    the base (G-CITE); every "verbatim" copy string occurs on its cited line (G-QUOTE); every Old
    fragment of the hand-off's A-rows occurs verbatim on its cited line (G-AROW).
 3. **Gates.** One FAIL line per gate: G-RULED (the ruling's paragraphs verbatim in the RULED
-   section), G-PENDING (BQ-13 and D07-Q1 marked owner approval pending), G-BOARDS (at most ten
+   section), G-PENDING (BQ-13 and D07-Q1 carry the later RULED stamp), G-BOARDS (at most ten
    boards, at most three light twins, every board PENDING, P&F and Heikin-Ashi on no board),
    G-COLUMNS (the mode columns equal `22`'s `BarType` without `pnf` and `heikin_ashi`; each cell
    marked tier + field / derived or "—"; every named field exists in `22`'s `Bar` and `23`'s
@@ -27,8 +27,9 @@ E33-D06 tools (the same modes, the anchored values, the default-deny pins and th
    G-HEUR (every finding marked `(heuristic)`), G-WALK (at most ten walkthrough items), G-OWNER
    (G-ledger owners are tickets or spec owners, never an agent), G-DRYRUN (the dry-run roles of
    the spec and the hand-off agree), G-UNMERGED (no path into an unmerged sibling), G-URL (no URL,
-   host or local path), G-UNTOUCHED (only this ticket's four files differ from the base), G-BUDGET
-   (600 spec lines, 150 hand-off lines) and G-MUTLIST (the spec's §16 equals this tool's list).
+   host or local path), G-UNTOUCHED (only this ticket's four files differ from the merge base
+   with origin/main), G-BUDGET (600 spec lines, 150 hand-off lines) and G-MUTLIST (the spec's §16
+   equals this tool's list).
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of both documents
    (each heading, table row by its lead cell and prose line, by heading path and occurrence, with
    a line-shape tag per region) in `e12_d07_ruled_pins.txt`. Anchored values are cut out of the
@@ -100,7 +101,11 @@ THEMES: dict[str, tuple[str, ...]] = {
 
 RULING_ID = "6487163429"
 BQ_LIST_ID = "6486938979"
-OWNER_PENDING = "PROPOSED — owner approval pending (#2701)"
+# BQ-13 was PROPOSED in the ruling of record and ruled later (the round-1 review on #4955).
+BQ13_RULED = (
+    "RULED (orchestrator, 2026-10-29 13:58Z, the round-1 review record on #4955, under the owner"
+    " directive of 07:05Z, #2701 comment 6490317249)"
+)
 # The ruling of record, its bold marks dropped (comment 6487163429, 2026-10-29 03:34Z).
 RULED: tuple[str, ...] = (
     (
@@ -195,7 +200,10 @@ def base_lines(rel: str) -> tuple[str, ...]:
 
 
 def changed_paths() -> tuple[str, ...]:
-    tracked = git("diff", "--name-only", BASE).split()
+    # G-UNTOUCHED compares with the merge base on origin/main, not BASE: the cites stay at BASE,
+    # but on a rebased head, the merge tree or main after the merge, only this PR's own diff counts.
+    fork = git("merge-base", "HEAD", "origin/main").strip()
+    tracked = git("diff", "--name-only", fork).split()
     untracked = git("ls-files", "--others", "--exclude-standard").split()
     return tuple(sorted(set(tracked) | set(untracked)))
 
@@ -584,12 +592,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-9",
-        "cut the owner-pending mark from BQ-13's line",
+        "cut the RULED stamp from BQ-13's line",
         "G-PENDING",
         "spec",
         "## The questions",
-        "PROPOSED — owner approval pending (#2701); the alternative",
-        "PROPOSED; the alternative",
+        "RULED (orchestrator, 2026-10-29 13:58Z,",
+        "RULED (orchestrator,",
     ),
     Mutation(
         "M-10",
@@ -864,12 +872,12 @@ def g_pending(t: Texts) -> list[Finding]:
     out: list[Finding] = []
     s, e, region = section(t.spec, "## The questions")
     built = [ln for ln in t.spec.split("\n")[s:e] if ln.startswith("**Where each is built.**")]
-    if not built or not re.search(r"\*\*BQ-13\*\*[^*]*" + re.escape(OWNER_PENDING), built[0]):
-        out.append(("G-PENDING", "BQ-13 is not marked " + OWNER_PENDING, "spec", region))
+    if not built or not re.search(r"\*\*BQ-13\*\*[^*]*" + re.escape(BQ13_RULED), built[0]):
+        out.append(("G-PENDING", "BQ-13 is not marked " + BQ13_RULED, "spec", region))
     s, e, region = section(t.spec, "### 17.3")
     q1 = [ln for ln in t.spec.split("\n")[s:e] if "D07-Q1" in ln]
-    if not q1 or OWNER_PENDING not in q1[0]:
-        out.append(("G-PENDING", "D07-Q1 is not marked " + OWNER_PENDING, "spec", region))
+    if not q1 or BQ13_RULED not in q1[0]:
+        out.append(("G-PENDING", "D07-Q1 is not marked " + BQ13_RULED, "spec", region))
     return out
 
 
