@@ -14,6 +14,12 @@ past a 2 000 ms cluster window (SR-E22-01, 400 `invalid_time_range`); `limit` at
 public-trade stream demand with a grace period, so the tape fills lazily with no
 other consumer. RBAC (C-12.4) mirrors `api/ticker.py`: fail-closed 501/401/403.
 Deeper history is E16.
+
+The route has no rate limit of its own, and a page runs both tapes over up to 1 000 prints on
+the event loop, so pages are memoised (`PageCache`): per symbol, option set and side, keyed on
+the hot tape's head print `(ts_event, trade_id)` (plus the tick size and the threshold config),
+in an LRU of at most `PAGE_CACHE_MAX` entries. A repeated read of an unchanged tape is a lookup;
+any new print moves the head and misses.
 """
 
 from __future__ import annotations
@@ -22,10 +28,11 @@ import base64
 import binascii
 import inspect
 import json
-from collections.abc import Callable
+from collections import OrderedDict
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal, Protocol
+from typing import Any, Final, Literal, Protocol
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -34,7 +41,7 @@ from candleviewer.api.ticker import _iso, _Principal, _problem, _Resolver
 from candleviewer.exchange.base.models import TradeEvent
 from candleviewer.orderflow import limits as L
 from candleviewer.orderflow.bigtrade_metrics import bigtrade_range_rejected_total
-from candleviewer.orderflow.bigtrade_models import BigTradeConfig
+from candleviewer.orderflow.bigtrade_models import BigTradeConfig, Mode
 from candleviewer.orderflow.bigtrade_tape import Options, TapeItem, tape_page
 
 _REQUIRED_PERMISSION = "marketdata:read"
@@ -50,6 +57,39 @@ class TradeReader(Protocol):
 
 
 DEMAND_CONSUMER = "rest-tape"
+#: Memoised pages per router (module docstring): 64 keys of at most 1 000 items each.
+PAGE_CACHE_MAX: Final = 64
+
+#: `(symbol, options, side, tick size, config, head print)`; the head is None on an empty tape.
+PageKey = tuple[str, Options, str | None, Decimal, BigTradeConfig, tuple[int, str] | None]
+Page = tuple[tuple[TapeItem, ...], Decimal, Mode]
+
+
+class PageCache:
+    """A bounded LRU of `tape_page` results (module docstring); the event loop's only."""
+
+    def __init__(self, maxsize: int = PAGE_CACHE_MAX) -> None:
+        self._max = maxsize
+        self._pages: OrderedDict[PageKey, Page] = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self._pages)
+
+    def get(self, key: PageKey) -> Page | None:
+        page = self._pages.get(key)
+        if page is not None:
+            self._pages.move_to_end(key)
+        return page
+
+    def put(self, key: PageKey, page: Page) -> None:
+        self._pages[key] = page
+        self._pages.move_to_end(key)
+        while len(self._pages) > self._max:
+            self._pages.popitem(last=False)
+
+
+def _head(events: Sequence[TradeEvent]) -> tuple[int, str] | None:
+    return (events[-1].ts_event, events[-1].trade_id) if events else None
 
 
 def serialize_trade(item: TapeItem) -> dict[str, object]:
@@ -114,10 +154,13 @@ def make_trades_router(
     principal_resolver: _Resolver | None = None,
     min_size_floor: Callable[[str], Decimal | None] = lambda _symbol: None,
     config: Callable[[str], BigTradeConfig] = lambda _symbol: BigTradeConfig(),
+    pages: PageCache | None = None,
 ) -> APIRouter:
     """`min_size_floor` is the instrument's `MIN_SIZE_FLOOR` (SR-E22-03; `None` while the catalogue
-    does not list it, which refuses any `min_size`); `config` the symbol's threshold config."""
+    does not list it, which refuses any `min_size`); `config` the symbol's threshold config;
+    `pages` the memo of built pages (a new one per router when None)."""
     router = APIRouter(tags=["market-data"])
+    cache = PageCache() if pages is None else pages
 
     @router.get("/market/trades")
     async def get_trades(
@@ -169,9 +212,14 @@ def make_trades_router(
         reader.acquire(DEMAND_CONSUMER, symbol)
         reader.release(DEMAND_CONSUMER, symbol)
         options = Options(floor, cluster_window_ms, cluster_tolerance_ticks)
-        items, threshold, mode = tape_page(
-            reader.recent(symbol), symbol, tick, config(symbol), options, side=side
-        )
+        events, cfg = reader.recent(symbol), config(symbol)
+        key: PageKey = (symbol, options, side, tick, cfg, _head(events))
+        built = cache.get(key)
+        if built is None:
+            found, threshold, mode = tape_page(events, symbol, tick, cfg, options, side=side)
+            built = (tuple(found), threshold, mode)
+            cache.put(key, built)
+        items, threshold, mode = built
         rows = [
             i
             for i in reversed(items)
@@ -207,4 +255,12 @@ def _window_refusal(start: int | None, end: int | None, cluster_window_ms: int) 
     return None
 
 
-__all__ = ["TradeReader", "make_trades_router", "serialize_trade"]
+__all__ = [
+    "PAGE_CACHE_MAX",
+    "Page",
+    "PageCache",
+    "PageKey",
+    "TradeReader",
+    "make_trades_router",
+    "serialize_trade",
+]

@@ -9,12 +9,15 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
+from candleviewer.api import trades as trades_api
 from candleviewer.api._generated.openapi_models import Page, PublicTrade, TradesPageMeta
-from candleviewer.api.trades import make_trades_router
+from candleviewer.api.trades import PAGE_CACHE_MAX, PageCache, make_trades_router
+from candleviewer.api.trades import Page as TapePage
 from candleviewer.exchange.base.models import TradeEvent
 from candleviewer.ingestion.ticker_stream import uuid7
 from candleviewer.orderflow.bigtrade_metrics import bigtrade_range_rejected_total
 from candleviewer.orderflow.bigtrade_models import BigTradeConfig
+from candleviewer.orderflow.bigtrade_tape import Options, tape_page
 
 
 def _ev(i: int, side: str, qty: str) -> TradeEvent:
@@ -292,3 +295,56 @@ def test_get_trades_reads_the_floor_per_request_and_names_it_in_the_detail() -> 
     assert r.status_code == 400 and r.json()["code"] == "invalid_min_size"
     assert "(0.003)" in r.json()["detail"]
 
+
+class _Growing(Reader):
+    def __init__(self) -> None:
+        super().__init__()
+        self.events = [_ev(1, "buy", "0.1"), _ev(2, "sell", "2")]
+
+    def recent(self, symbol: str) -> list[TradeEvent]:
+        return list(self.events)
+
+
+def test_get_trades_memoises_a_page_until_the_tape_head_moves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repeat read of an unchanged tape is a lookup; another option set or side, or a new print
+    (the head moves), builds again (E22 security lens: no per-route rate limit)."""
+    built: list[object] = []
+    real = tape_page
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        built.append(args[4])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(trades_api, "tape_page", counting)
+    reader, pages = _Growing(), PageCache()
+    app = FastAPI()
+    app.include_router(
+        make_trades_router(lambda: reader, principal_resolver=Resolver(_OK), pages=pages)
+    )
+    c = TestClient(app)
+    first = c.get("/market/trades", params={"symbol": "BTCUSDT"}).json()
+    assert c.get("/market/trades", params={"symbol": "BTCUSDT"}).json() == first  # a hit
+    assert len(built) == 1 and len(pages) == 1
+    c.get("/market/trades", params={"symbol": "BTCUSDT", "side": "buy"})
+    c.get("/market/trades", params={"symbol": "BTCUSDT", "cluster_window_ms": 10})
+    assert len(built) == 3 and len(pages) == 3
+    reader.events.append(_ev(3, "buy", "5"))
+    after = c.get("/market/trades", params={"symbol": "BTCUSDT"}).json()
+    assert len(built) == 4 and [i["id"] for i in after["items"]] == ["t3", "t2", "t1"]
+
+
+def test_page_cache_is_a_bounded_lru() -> None:
+    pages = PageCache()
+    page: TapePage = ((), Decimal(1), "notional")
+    keys: list[Any] = [
+        ("BTCUSDT", Options(None, n, 0), None, Decimal("0.1"), BigTradeConfig(), None)
+        for n in range(PAGE_CACHE_MAX + 1)
+    ]
+    for key in keys[:PAGE_CACHE_MAX]:
+        pages.put(key, page)
+    assert pages.get(keys[0]) is page  # now the most recent: keys[1] is the oldest
+    pages.put(keys[PAGE_CACHE_MAX], page)
+    assert len(pages) == PAGE_CACHE_MAX
+    assert pages.get(keys[1]) is None and pages.get(keys[0]) is page
