@@ -44,6 +44,7 @@ E08-T09 PR 2b (#4708) serves the frozen `runScanner`: 93, frozen 89.
 #898 B3b2 serves the frozen `updateExchangeAccount`: 92, frozen 88.
 #4706 (E08-T07) serves the four frozen `/watchlists*` operations: 88, frozen 84.
 #898's closing B3 PR serves the frozen `deleteExchangeAccount` and `revokeApiKey`: 86, frozen 82.
+E09-S03-F1's contract PR (#4743) adds the contract-first `authLock`: 87.
 Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that
@@ -75,7 +76,7 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 86
+PENDING_BASELINE = 87
 FROZEN_BASELINE = 82
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")

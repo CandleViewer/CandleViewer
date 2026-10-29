@@ -238,6 +238,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "POST /auth/lock": {
+      "reason": "contract-first operation (E09-S03-F1 contract PR); the E09-S03-F1 implementation PR serves it",
+      "ticket": "#4743"
+    },
     "POST /chart-templates": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"

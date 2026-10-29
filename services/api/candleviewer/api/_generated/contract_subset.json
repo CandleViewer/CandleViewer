@@ -3887,6 +3887,22 @@
         }
       }
     },
+    "/auth/lock": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "refreshCookie": []
+          }
+        ],
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
     "/auth/login": {
       "post": {
         "security": [],

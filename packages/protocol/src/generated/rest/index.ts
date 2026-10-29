@@ -1507,6 +1507,48 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/auth/lock": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Idle-lock the calling session at once (CMP-098 "Lock now")
+     * @description Locks the calling session at once, exactly as if its idle deadline fell due now (see
+     *     "Idle lock"): `session.idle_deadline` becomes the moment of the lock, which every later
+     *     `401 session_idle_locked` gives as `idle_locked_at`, and B16 records the lock as it
+     *     records any deadline that fell due (`IDLE_DEADLINE` into `auth.idle_locked`, which
+     *     writes `auth.idle_locked`). The body is the same `SessionInfo` as `GET /auth/session`,
+     *     with `session.locked: true` and `step_up_expires_at: null`: as at any lock, every step-up
+     *     grant and pending challenge of the session is void from that moment. Lock records no
+     *     activity and never moves `expires_at`; only `POST /auth/unlock` lifts the lock (SCR-005).
+     *
+     *     The session is identified as in "Idle lock": an access token inside its lifetime, else
+     *     the `cv_refresh` cookie, which gets the SR-042 `Origin` check and the SR-041 CSRF check
+     *     of `POST /auth/refresh`, as a cookie-identified `POST /auth/logout` does. Self only: any
+     *     query parameter is refused with `422` (SR-026).
+     *
+     *     * A session that is already idle-locked answers `200` with its `SessionInfo` and changes
+     *       nothing: the lock keeps its moment, and no `auth.session_locked` is written.
+     *     * A revoked session, or one past its absolute lifetime, answers `401 session_revoked`,
+     *       with `revoked_reason` as `POST /auth/unlock` gives it: the client signs in again
+     *       (SCR-001). An access token or cookie of a session that a refresh rotated away, or one
+     *       this server never issued, gets the uniform `401 unauthenticated`.
+     *
+     *     Audited write-ahead as `auth.session_locked`, the record of this request (C-2.9): if the
+     *     audit sink is down the answer is `503` and the session is not locked.
+     */
+    post: operations["authLock"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/auth/login": {
     parameters: {
       query?: never;
@@ -10976,7 +11018,7 @@ export interface components {
       id: string;
       /**
        * Format: date-time
-       * @description When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked.
+       * @description When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it forward, `POST /auth/lock` brings it to the moment of the lock, and `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked.
        */
       idle_deadline: string;
       /** @description Idle timeout of this session in seconds (per user, 5 to 60 minutes). */
@@ -14442,6 +14484,47 @@ export interface operations {
         };
         content?: never;
       };
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  authLock: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Locked, or already locked; only `POST /auth/unlock` lifts the lock. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionInfo"];
+        };
+      };
+      /** @description `session_revoked` (the session was revoked, or is past its absolute lifetime: sign in again) or `unauthenticated` (no access token inside its lifetime and no current `cv_refresh` cookie, or a credential of a session that a refresh rotated away or that this server never issued). */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      403: components["responses"]["CsrfTokenInvalid"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
