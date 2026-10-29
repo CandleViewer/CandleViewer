@@ -9,7 +9,7 @@ Bids are read from the end of their arrays (descending), asks from the start.
 from __future__ import annotations
 
 from bisect import bisect_left
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
 
 from candleviewer.book.errors import BookInvariantError, BookPayloadError
@@ -130,6 +130,13 @@ class BookState:
             BookLevel(price=a.price[i], qty=a.qty[i], price_ticks=a.ticks[i]) for i in range(na)
         )
         return bids, asks
+
+    def walk(self, *, bids: bool) -> Iterator[tuple[int, Decimal]]:
+        """One side's `(price_ticks, qty)`, best first, without building a level (E21-T01)."""
+        side = self._bids if bids else self._asks
+        order = range(len(side) - 1, -1, -1) if bids else range(len(side))
+        ticks, qty = side.ticks, side.qty
+        return ((ticks[i], qty[i]) for i in order)
 
     def snapshot(self) -> tuple[tuple[BookLevel, ...], tuple[BookLevel, ...]]:
         return self.top(max(len(self._bids), len(self._asks)))
