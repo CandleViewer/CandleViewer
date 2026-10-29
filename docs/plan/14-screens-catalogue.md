@@ -2621,7 +2621,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 | Label [ sub_003 ]   Environment ( ) Demo  (o) Live        |
 | API key    [........................]                     |
 | API secret [........................]  (never displayed)  |
-| IP whitelist: 100.64.1.5  [ + add ]                       |
+| IP whitelist: 203.0.113.x [ + add ]                       |
 | [ Test connection ]                                        |
 |   read ok - trade ok - withdrawal DISABLED ok - uid 12345 |
 | ! Bybit restricts new keys for 48 h after creation.       |
