@@ -103,7 +103,7 @@ class _Ring:
         arrays = (self.bid, self.ask, self.ts, self.est, self.row_bucket)
         return sum(int(a.nbytes) for a in arrays)
 
-    def claim(self, lo: int) -> None:
+    def assign_rows(self, lo: int) -> None:
         """Make rows own buckets `lo .. lo + rows`; a row that changes bucket is wiped."""
         buckets = np.arange(lo, lo + self.rows, dtype=np.int64)
         rows = buckets % self.rows
@@ -205,7 +205,7 @@ class LiquidityTracker:
         step, rows = c.bucket_ticks, c.buckets
         mid_bucket = (mid2 // 2) // step
         lo = mid_bucket - rows // 2
-        self._ring.claim(lo)
+        self._ring.assign_rows(lo)
         col = self._ring.push(ts_us, False)
         bid_col = np.zeros(rows, dtype=np.float32)
         ask_col = np.zeros(rows, dtype=np.float32)
