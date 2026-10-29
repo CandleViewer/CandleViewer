@@ -2191,6 +2191,8 @@ Every order we ever intend to place gets a row **before** the network call, with
 | `is_paper`            | boolean        | no   | `false`    | Paper-matcher orders never hit the network                        |
 | `lifecycle_state`     | enum           | yes  | NULL       | `order_lifecycle_state`: the B1 chart state verbatim (`0034`)     |
 | `provenance`          | text           | no   | `'placed'` | placed / reconciliation / recorded_stop (22 `OrderProvenance`)    |
+| `origin`              | text           | yes  | NULL       | 24 §8.1 `origin`; `rule` for a rule's order (`0058`)              |
+| `origin_ref`          | text           | yes  | NULL       | With `origin`: the rule's id for `rule` (`0058`)                  |
 
 ```sql
 CREATE TABLE orders (
@@ -2287,6 +2289,17 @@ CREATE INDEX ix_orders_open      ON orders (exchange_account_id, symbol)
 ```sql
 ALTER TABLE orders ADD COLUMN provenance text NOT NULL DEFAULT 'placed';
 ALTER TABLE orders ADD CONSTRAINT ord_provenance CHECK (provenance IN ('placed','reconciliation','recorded_stop'));
+```
+
+**Origin (E35-S03, #863; revision `0058`).** `origin` and `origin_ref` are `24-internal-schemas.md` §8.1's `Order.origin` and `origin_ref`: where the order's intent came from. The OMS writes both at insert from the server-only `SubmitContext.origin` (24 §8.4 "Rule-originated orders"), never from a request, and no writer updates them. A rule action's order, an entry or a reduce-only order alike, is `origin = 'rule'` with `origin_ref` the rule's id, as canonical lower-case UUID text; a writer that names no origin (`placeOrder`, and every other path today) leaves both NULL, and no row is backfilled. The order lane reads the stored `origin`, never memory, to choose the rate lane, so a send a restart resumes keeps it: a `rule` row rides `entry`, a reduce-only one included, never the `critical` reserve (24 §8.7, C-12.7). A rule's resting entries are found through their group (`origin_rule_id`, `ix_tg_rule`, §3.3.2); `origin_ref` names the rule on its groupless reduce-only orders. The columns land with E35-T11 in revision `0058`, after `0056` and `0057`, each CHECK NULL-safe and added `NOT VALID`, then validated (C-5.6); this contract adds no migration.
+
+```sql
+ALTER TABLE orders ADD COLUMN origin text;
+ALTER TABLE orders ADD COLUMN origin_ref text;
+ALTER TABLE orders ADD CONSTRAINT ord_origin CHECK (origin IS NULL OR origin IN ('ticket','chart','dom','hotkey','rule','algo_child','api')) NOT VALID;
+ALTER TABLE orders ADD CONSTRAINT ord_origin_ref CHECK (CASE WHEN origin IS NULL THEN origin_ref IS NULL WHEN origin = 'rule' THEN (origin_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') IS TRUE ELSE true END) NOT VALID;
+ALTER TABLE orders VALIDATE CONSTRAINT ord_origin;
+ALTER TABLE orders VALIDATE CONSTRAINT ord_origin_ref;
 ```
 
 #### 3.3.5 `order_events` — append-only audit of the order lifecycle
@@ -2923,6 +2936,8 @@ Retention: `rule_runs` + `rule_events` for **non-matched** runs are aggressively
 **Implementation note (E35-T02, revision `0013_rules`).** `scope_account_id` and `rule_runs.scope_account_id` are created without their FKs until `exchange_accounts` (E27) exists; that ticket adds the constraints. `rule_runs.trade_group_id` got its FK (`rule_runs_trade_group_id_fkey`, `NOT VALID` and then validated) with `trade_groups` in revision `0039_trade_groups` (E28-T01, which persists trade groups per the F-25 ruling on #905). `trg_re_append` calls `rule_events_forbid_mutation()` (a sibling of `forbid_mutation()` in the DDL above): UPDATE is always refused, DELETE only as the FK cascade of an already-deleted parent run, so no role (owner or app) can directly delete an event. `trg_rr_evidence` (`rule_runs_guard_evidence()`) refuses deleting matched/error runs younger than 24 months. Error runs are deliberately never pruned by the 7-day job (evidence, low volume). The 24-month Parquet archive of matched runs is not due until 2028 and is tracked as a follow-up (recorded on #868).
 
 To avoid writing 345 k rows/day of nothing, the engine only persists a `rule_runs` row when `matched = true`, when `status='error'`, or when the rule is in `simulate` mode with explicit "record all evaluations" enabled (per-rule flag `rules.settings.record_all` in `settings`). Non-persisted evaluations are counted in Prometheus only.
+
+**Written ahead by the action executor (E35-S03, #863; the ruling of 2026-10-29).** For an armed rule's fire, the executor writes the fire's `rule_runs` row (`status` `running`, `mode`, `matched`, `input_snapshot`) before its first action, under the id the fire was minted with (`24-internal-schemas.md` §11.9 "The fire key"), so a rule-originated group's `trade_groups.origin_rule_run_id` (§3.3.2) always names a row that exists. For each action it writes a `rule_events` `action_start` row, with the action's audit record (`rules.fired`), before the OMS call or the action's handler, then `action_ok` or `action_fail` with the `ActionResult` in `payload` (24 §11.5, §11.9). It writes through `SqlAlchemyRulesRepository.record_run`, extended to take the caller's id and to append events, behind a rules port the composition root binds. A write that fails, or does not land within its bound, stops the fire before that action is sent (the E35 threat model's RE-R1, AC-14). This is the minimal write-ahead E35-S03 owns; E35-S06 (#865) keeps the rest of the log: `condition_eval` and suppression rows, snapshot completeness, the read routes, the WS publish and the export. No column or constraint changes.
 
 ### 3.5 Alerts & deliveries
 
@@ -5191,6 +5206,8 @@ Env switching has **no** hotkey by design (digest 23: must be a deliberate click
 | `engine.fallback_lightweight_charts`                                     | boolean | `false` | Spike-failure fallback path                   | `all_roles`  |
 | `rules.graph_editor`                                                     | boolean | `true`  | Node-graph editor                             | `all_roles`  |
 | `rules.form_editor`                                                      | boolean | `true`  | Form editor                                   | `all_roles`  |
+| `rules.enabled`                                                          | boolean | `true`  | `is_killswitch=true`; rule master switch      | `all_roles`  |
+| `rules.oms_actions`                                                      | boolean | `false` | Rule actions reach the OMS; owner @basiltt    | `all_roles`  |
 | `algo.twap` / `algo.chase` / `algo.iceberg` / `algo.scaled` / `algo.oco` | boolean | `false` | Emulated algos, enabled per release           | `all_roles`  |
 | `recorder.auto_record`                                                   | boolean | `true`  | Chart/position auto-record                    | `owner_only` |
 | `storage.cold_tier`                                                      | boolean | `true`  | Parquet/DuckDB routing                        | `owner_only` |
@@ -5203,6 +5220,8 @@ Env switching has **no** hotkey by design (digest 23: must be a deliberate click
 `trading.oms_enabled` (E29-T04 slice 3, C-4.13) gates new admissions on `placeOrder`, and an `amendOrder` that increases exposure (#913 slice 4 ruling Q10), and of those only the ones that open or increase exposure: an order whose body says `reduce_only` passes it, since a rollout flag gates no protective path (C-4.14, C-2.6), though the order-entry gate still takes that order (`24-internal-schemas.md` §8.10). A replay, a create a restart resumes and a cancel never meet it, and while it is off a new order that opens or increases exposure is `403 trading_disabled` with no `reason` (`22-api-openapi.yaml`). The route is mounted whatever the flag says. It is read process-wide, by a view that takes no principal, so an override written for it changes nothing, as for `desktop.backend_connection`. That view, and the one the live precondition reads `trading.live_enabled` through, is off while unread: until its first read it answers off, and off again whenever a read fails, until one answers; the OMS startup sweep waits for that first read (`20-architecture.md` §6.2). A write reaches the process that makes it at once, through the writer's hook (else on its own poll), and every other process sharing the database within `FLAG_POLL_S` (5 s) plus one read, the views' poll. Its default stays `false`; the insert-only `ensure` of a demo process seeds it `true`, and that of a live or testnet process `false`, so an Owner's later write sticks. `feature_flags` holds one row per key, so where processes of two environments share a database the first `ensure` decides; a live order still needs both live preconditions (`20-architecture.md` §6.2).
 
 `trading.trade_groups` (E28-T05, C-4.13) gates the trade-group definition writes and the preview (`22-api-openapi.yaml`) once they are mounted: while it is off they answer `403 trading_disabled` with no `reason`, as `placeOrder` does while `trading.oms_enabled` is off. No read meets it. It is read process-wide, with no principal, by a view like `trading.oms_enabled`'s, which is off while unread, so an override written for it changes nothing. Its default stays `false`; the `ensure` of a demo process seeds it `true`, from the release that brings the preview's audited refusals before planning (E28-T05 S3c), and that of a live or testnet process `false`. `ensure` is insert-only, so the seed reaches only a database with no row for the flag: one that ran an earlier release holds `false` until an Owner writes it, and an Owner's write sticks. A rollout flag, it is never a kill switch or the live gate (C-4.14); its removal ticket is #4798.
+
+`rules.enabled` and `rules.oms_actions` (E35-S03, #863; `24-internal-schemas.md` §16.2): `rules.enabled` is the permanent master switch of rule actions, kill-switch class, and its restrictive value is off: while it is off or cannot be read, every rule action is blocked (`blocked_by = rules_disabled`). `rules.oms_actions` is the default-off rollout flag (C-4.13) that binds the OMS sink: it is read at each dispatch through a process-wide view that is off while unread, as `trading.oms_enabled` is, so while it is off no rule action reaches the OMS; its removal is tied to the ruling that opens live rule actions. Neither switch can turn off a check (C-4.14). `admin/flags/catalogue.py` registers each, with its test, in the slice that first reads it (`rules.enabled` E35-T10, `rules.oms_actions` E35-T11); until then no process defines either, and the catalogue is this table less these two rows.
 
 ### 10.8 Demo/dev fixtures (never in production)
 

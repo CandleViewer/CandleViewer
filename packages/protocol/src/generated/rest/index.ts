@@ -10748,7 +10748,8 @@ export interface components {
         | "feedback_loop"
         | "native_stop_violation"
         | "high_frequency"
-        | "stop_loosening";
+        | "stop_loosening"
+        | "action_unavailable";
       message?: string;
       path?: string;
       /** @enum {string} */

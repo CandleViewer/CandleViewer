@@ -4028,6 +4028,7 @@ class RuleValidationIssue(BaseModel):
             "native_stop_violation",
             "high_frequency",
             "stop_loosening",
+            "action_unavailable",
         ]
         | None
     ) = None
