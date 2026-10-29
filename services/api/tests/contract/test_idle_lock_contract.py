@@ -424,10 +424,12 @@ def test_lock_contract_is_a_self_write_with_no_body(spec: dict[str, Any]) -> Non
 
 
 def test_lock_contract_locks_as_if_the_idle_deadline_fell_due(spec: dict[str, Any]) -> None:
-    # The idle-deadline path, so B16 needs no new event or transition.
+    # L2 (c), 13:40Z: B16 gets nothing at lock time and records the lock on its next read of the
+    # row (INV-B16-e), through its existing transition.
     description = _flat(_op(spec, "post", _LOCK)["description"])
     assert "exactly as if its idle deadline fell due now" in description
-    assert "B16 takes the same `IDLE_DEADLINE` transition into `auth.idle_locked`" in description
+    assert "nothing is sent to B16 at lock time, as for extend (28 B16.7)" in description
+    assert "B16 records the lock on its next read of the row, as if the idle" in description
     auth = default_registry().get("session")["states"]["auth"]["states"]
     assert auth["active"]["on"]["IDLE_DEADLINE"] == {"target": "#session.auth.idle_locked"}
     assert "audit_idle_locked" in auth["idle_locked"]["entry"]
@@ -491,14 +493,14 @@ def test_lock_answers_session_revoked_when_revoked_or_expired(spec: dict[str, An
     assert only in _idle_lock_section(spec)
 
 
-def test_lock_is_recorded_ahead_and_by_b16_never_by_a_request(spec: dict[str, Any]) -> None:
-    # BQ-1 (C-2.9, 28 B16.7): `auth.session_locked` ahead of the lock and B16's own
-    # `auth.idle_locked`, never a B16 `REQUEST`; 24 is pinned by the test after this one.
+def test_lock_is_recorded_ahead_and_by_b16_at_its_next_read(spec: dict[str, Any]) -> None:
+    # BQ-1, L2 (c): `auth.session_locked` is the lock's record (C-2.9); B16's later
+    # `auth.idle_locked` carries the lock moment. 24 is pinned by the test after this one.
     op = _op(spec, "post", _LOCK)
     assert op["responses"]["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
     description = _flat(op["description"])
-    assert "The lock is recorded by `auth.session_locked`, written ahead (C-2.9)" in description
-    assert "and by B16's own `auth.idle_locked`; the route sends B16 no `REQUEST`" in description
+    assert "The lock's record is `auth.session_locked`, written ahead (C-2.9)" in description
+    assert "carries the lock moment, not the time of that read." in description
     assert "the answer is `503` and the session is not locked." in description
 
 
@@ -509,7 +511,7 @@ def test_24_lists_the_lock_record_until_the_implementation_registers_it() -> Non
     assert "`auth.session_locked` (not registered yet, E09-S03-F1)" in vocabulary
     assert "auth.session_locked" not in AUDIT_ACTIONS
     assert "There is one record per lock" in vocabulary
-    assert "nothing sends B16 a `REQUEST`" in vocabulary
+    assert "nothing is sent to B16 at lock time" in vocabulary
     title = r"^### 19\.\d+ .* the `auth\.session_locked` action \(E09-S03-F1, #4743\)$"
     found = re.search(title, internal, re.MULTILINE)
     assert found is not None

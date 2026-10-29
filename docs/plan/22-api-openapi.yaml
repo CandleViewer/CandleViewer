@@ -1781,14 +1781,16 @@ paths:
       summary: Idle-lock the calling session at once (CMP-098 "Lock now")
       description: |
         Locks the calling session at once, exactly as if its idle deadline fell due now (see
-        "Idle lock"): B16 takes the same `IDLE_DEADLINE` transition into `auth.idle_locked`. The
-        deadline itself does not move: `session.idle_deadline`, and the `idle_locked_at` of a
-        later `401 session_idle_locked`, still give `last_seen_at + idle_timeout_s`. The lock
-        moment is the `auth.session_locked` audit row's time. The body is the same `SessionInfo`
-        as `GET /auth/session`, with `session.locked: true` and `step_up_expires_at: null`: as at
-        any lock, every step-up grant and pending challenge of the session is void from that
-        moment. Lock records no activity and never moves `expires_at`; only `POST /auth/unlock`
-        lifts the lock (SCR-005).
+        "Idle lock"): the lock is stored and answered `200`, and nothing is sent to B16 at lock
+        time, as for extend (28 B16.7). B16 records the lock on its next read of the row, as if
+        the idle deadline fell due (`IDLE_DEADLINE` into `auth.idle_locked`). The deadline itself
+        does not move: `session.idle_deadline`, and the `idle_locked_at` of a later
+        `401 session_idle_locked`, still give `last_seen_at + idle_timeout_s`. The lock moment is
+        the `auth.session_locked` audit row's time. The body is the same `SessionInfo` as
+        `GET /auth/session`, with `session.locked: true` and `step_up_expires_at: null`: as at any
+        lock, every step-up grant and pending challenge of the session is void from that moment.
+        Lock records no activity and never moves `expires_at`; only `POST /auth/unlock` lifts the
+        lock (SCR-005).
 
         The session is identified as in "Idle lock": an access token inside its lifetime, else
         the `cv_refresh` cookie, which gets the SR-042 `Origin` check and the SR-041 CSRF check
@@ -1805,9 +1807,9 @@ paths:
           (SCR-001). An access token or cookie of a session that a refresh rotated away, or one
           this server never issued, gets the uniform `401 unauthenticated`.
 
-        The lock is recorded by `auth.session_locked`, written ahead (C-2.9), and by B16's own
-        `auth.idle_locked`; the route sends B16 no `REQUEST` (28 B16.7). If the audit sink is down
-        the answer is `503` and the session is not locked.
+        The lock's record is `auth.session_locked`, written ahead (C-2.9): if the audit sink is
+        down the answer is `503` and the session is not locked. B16's own `auth.idle_locked`,
+        written at its next read of the row, carries the lock moment, not the time of that read.
       security:
         - bearerAuth: []
         - refreshCookie: []
