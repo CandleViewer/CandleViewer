@@ -12350,7 +12350,7 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhEoFp8",
     "node_id": "I_kwDOUZDkl88AAAABbC8zgA",
     "number": 4998,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E35-T08": {
     "blockedby_done": [
@@ -12360,7 +12360,7 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhEoFr0",
     "node_id": "I_kwDOUZDkl88AAAABbC85rg",
     "number": 4999,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E35-T09": {
     "blockedby_done": [
@@ -12370,7 +12370,7 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhEoFuM",
     "node_id": "I_kwDOUZDkl88AAAABbC8_tQ",
     "number": 5000,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E35-T10": {
     "blockedby_done": [
@@ -12380,7 +12380,7 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhEoFwI",
     "node_id": "I_kwDOUZDkl88AAAABbC9F1Q",
     "number": 5002,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E35-T11": {
     "blockedby_done": [
@@ -12391,7 +12391,7 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhEoFyA",
     "node_id": "I_kwDOUZDkl88AAAABbC9LnA",
     "number": 5003,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E35-T12": {
     "blockedby_done": [
@@ -12401,7 +12401,7 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhEoFzY",
     "node_id": "I_kwDOUZDkl88AAAABbC9Rlw",
     "number": 5004,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E35-T13": {
     "blockedby_done": [
@@ -12412,7 +12412,7 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhEoF1w",
     "node_id": "I_kwDOUZDkl88AAAABbC9XtA",
     "number": 5005,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E35-T14": {
     "blockedby_done": [
@@ -12422,7 +12422,7 @@
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhEoF3g",
     "node_id": "I_kwDOUZDkl88AAAABbC9d3Q",
     "number": 5006,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E35-X01": {
     "blockedby_done": [
@@ -17177,15 +17177,34 @@
     "subissue_done": true
   },
   "E50-T61": {
+    "blockedby_done": [
+      "E50-T10",
+      "E50-T49"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhEoRM0",
     "node_id": "I_kwDOUZDkl88AAAABYMohug",
-    "number": 3776
+    "number": 3776,
+    "subissue_done": true
   },
   "E50-T62": {
+    "blockedby_done": [
+      "E50-T61"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6zQQ",
     "node_id": "I_kwDOUZDkl88AAAABYPYJtQ",
-    "number": 3793
+    "number": 3793,
+    "subissue_done": true
   },
   "E50-T63": {
+    "blockedby_done": [
+      "E50-T62"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6sjo",
     "node_id": "I_kwDOUZDkl88AAAABYQLM9g",
-    "number": 3801
+    "number": 3801,
+    "subissue_done": true
   }
 }
