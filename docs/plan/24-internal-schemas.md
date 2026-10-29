@@ -422,8 +422,8 @@ class BestQuoteEvent(MarketEvent):         # E21-T01: the top of the live book, 
 class BookDesyncEvent(MarketEvent):        # E21-T01: one per resync incident
     depth: int                             # the active tier's depth, 200 | 500 (20 §3.2)
     prev_update_id: int                    # last u applied
-    got_update_id: int | None              # the u that broke the sequence; None when the cause is not a sequence (crossed, negative qty, reconnect)
-    resync_count: int                      # resyncs in the breaker's current 60 s window
+    got_update_id: int | None              # the u that broke the sequence; None when the cause is not a sequence break (crossed, negative qty, reconnect), or the resetting snapshot's u on a server reset
+    resync_count: int                      # the engine's lifetime resyncs, as BookStatus.resync_count
     reason: str                            # a resync reason of 20 §3.2 (`sequence_gap`, `rejected_frame`, ...)
 ```
 

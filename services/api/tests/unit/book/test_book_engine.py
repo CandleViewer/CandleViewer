@@ -185,3 +185,19 @@ async def test_consumer_stall_gets_invalidated_marker_not_skipped_delta() -> Non
     await e.publish_current("resync")  # consumer resyncs from a fresh snapshot
     fresh = [sub.get_nowait() for _ in range(sub.qsize())][-1]
     assert isinstance(fresh, BookSnapshot) and fresh.update_id == 13
+
+
+async def test_desync_event_resync_count_is_the_lifetime_count_as_book_status() -> None:
+    """F4: `BookDesyncEvent.resync_count` is the engine's lifetime count, the one `BookStatus`
+    carries, not the breaker window's length (which forgets incidents past 60 s)."""
+    h = _Harness()
+    e = h.engine()
+    e.incidents = True
+    await e.start()
+    for u, t in ((10, 0), (20, 120_000_000)):  # the second incident is past the breaker window
+        h.t = t
+        await e.on_event(snap(u, [lvl(99, 1)], [lvl(101, 1)]))
+        await e.on_event(delta(u + 3, u + 2))
+    events = [o for o in h.out if isinstance(o, BookDesyncEvent)]
+    status = [o for o in h.out if isinstance(o, BookStatus)][-1]
+    assert [ev.resync_count for ev in events] == [1, 2] == [1, status.resync_count]

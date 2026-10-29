@@ -114,8 +114,10 @@ class BookEngine:
             await self._edge("SNAPSHOT")
 
     def _unchanged(self, ev: BookSnapshot) -> bool:
-        """E21-T01: a snapshot at the live `u` holding exactly the live levels. The venue re-sends
-        its depth-1 snapshot unchanged every 3 s; a changed one (or a new `u`) stays a reset."""
+        """E21-T01: a snapshot at the live `u` holding exactly the full live book. It fires only for
+        the depth-1 keepalive on a depth-1 stream, which the venue re-sends unchanged every 3 s; on
+        the 200 and 500 tiers a depth-1 frame never matches the full book. A changed snapshot (or a
+        new `u`) stays a reset."""
         book = self.book
         if book is None or ev.update_id != self.last_u:
             return False
@@ -277,7 +279,7 @@ class BookEngine:
                 depth=self.depth,
                 prev_update_id=prev,
                 got_update_id=got,
-                resync_count=len(self._resync_times),
+                resync_count=self.resync_count,  # lifetime, as `BookStatus` carries it
                 reason=reason,
             )
         )

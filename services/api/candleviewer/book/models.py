@@ -54,7 +54,9 @@ class BestQuoteEvent(MarketEvent):
 
 class BookDesyncEvent(MarketEvent):
     """24 §2.8 (E21-T01): one per resync incident, on `{env}.health.{symbol}.book_desync`.
-    `got_update_id` is the `u` that broke the sequence, `None` when the cause is no sequence."""
+    `got_update_id` is the `u` that broke the sequence: `None` when the cause is not a sequence
+    break, or the resetting snapshot's `u` on a server reset. `resync_count` is the engine's
+    lifetime count, as `BookStatus` carries it."""
 
     depth: int
     prev_update_id: int
