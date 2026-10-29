@@ -2010,7 +2010,7 @@ export interface TradesSymbol {
     tick_direction?: "PlusTick" | "ZeroPlusTick" | "MinusTick" | "ZeroMinusTick";
   }[];
   /**
-   * Prints filtered out by `min_size` since the previous frame; never silent.
+   * Prints filtered out by `min_size` since the previous frame, plus any shed when more items than the option set's pending bound waited for one frame (§6.1); never silent.
    */
   dropped?: number;
   /**

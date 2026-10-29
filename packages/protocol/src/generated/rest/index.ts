@@ -3708,9 +3708,12 @@ export interface paths {
      *     on the flagged prints and on cluster membership:
      *     - `min_size` is a raw size floor: a print whose own `size` is below it is dropped before
      *       clustering. It is never the big-trade threshold. Absent means no extra filter; a supplied
-     *       value must be at least `MIN_SIZE_FLOOR`, per instrument max(`lot_size`, one tick-notional)
-     *       (SR-E22-03, `docs/security/threat-models/E22-big-trades.md`). A value below the floor,
-     *       negative or not finite is 400 `invalid_min_size`.
+     *       value must be at least `MIN_SIZE_FLOOR`, per instrument max(`min_order_qty`, the minimum
+     *       order notional at the reference price) (SR-E22-03,
+     *       `docs/security/threat-models/E22-big-trades.md`), ruled by the orchestrator 2026-10-28
+     *       pending the owner's security pass (the term 'one tick-notional' was undefined). A value
+     *       below the floor, negative or not finite is 400 `invalid_min_size`, whose `detail` names
+     *       the floor in force.
      *     - `cluster_window_ms` is 0–5000 here (SR-E22-04 caps WS at 2000) and 0, the default,
      *       means no clustering. A clustered item takes its first print's `id`, `ts` and `price`,
      *       the cluster's total `size` and its member count as `cluster_size`.
@@ -3728,7 +3731,8 @@ export interface paths {
      *
      *     **Errors as built.** A malformed `symbol`, `from`, `to`, `min_size` or `cursor` is 400.
      *     A parameter outside its schema here (`limit`, `side`, `cluster_window_ms`,
-     *     `cluster_tolerance_ticks`, a `cursor` over 512 characters) is 422 `validation_failed`,
+     *     `cluster_tolerance_ticks`, a `cursor` over 512 characters, a `min_size` over 32) is 422
+     *     `validation_failed`,
      *     whose `errors[]` entries name the field (`field`, as `query.cluster_window_ms`, with the
      *     failed `rule`). This diverges from WS, where an out-of-range `cluster_window_ms` is
      *     `invalid_options`, by intent: each surface keeps its own refusal shape (23 §6.1).
@@ -17918,7 +17922,7 @@ export interface operations {
         from?: components["parameters"]["From"];
         /** @description Page size. */
         limit?: components["parameters"]["Limit"];
-        /** @description Raw size floor in base units: prints whose own size is below it are dropped before clustering. Absent means no extra filter; a supplied value must be at least the per-instrument `MIN_SIZE_FLOOR` (400 `invalid_min_size` otherwise, SR-E22-03). Not the big-trade threshold. */
+        /** @description Raw size floor in base units: prints whose own size is below it are dropped before clustering. Absent means no extra filter; a supplied value must be at least the per-instrument `MIN_SIZE_FLOOR`, max(`min_order_qty`, the minimum order notional at the reference price) (400 `invalid_min_size` otherwise, SR-E22-03). Not the big-trade threshold. At most 32 characters. */
         min_size?: components["schemas"]["Decimal"];
         side?: "buy" | "sell";
         symbol: components["parameters"]["SymbolQuery"];

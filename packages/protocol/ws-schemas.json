@@ -698,7 +698,8 @@
           "type": "array"
         },
         "min_size": {
-          "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+          "maxLength": 32
         },
         "paused": {
           "description": "Client-side pause; the server stops emitting but keeps state.",
@@ -3123,10 +3124,12 @@
               "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
             },
             "min_notional_usd": {
-              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+              "maxLength": 32
             },
             "min_size": {
-              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+              "maxLength": 32
             },
             "min_stack": {
               "maximum": 10,
@@ -3950,7 +3953,7 @@
           "type": "integer"
         },
         "dropped": {
-          "description": "Prints filtered out by `min_size` since the previous frame; never silent.",
+          "description": "Prints filtered out by `min_size` since the previous frame, plus any shed when more items than the option set's pending bound waited for one frame (§6.1); never silent.",
           "minimum": 0,
           "type": "integer"
         },

@@ -769,7 +769,8 @@
               "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
             },
             "min_size": {
-              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+              "maxLength": 32
             },
             "cluster_window_ms": {
               "type": "integer",
@@ -894,7 +895,8 @@
               "type": "boolean"
             },
             "min_notional_usd": {
-              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+              "maxLength": 32
             }
           },
           "additionalProperties": false
@@ -1095,7 +1097,8 @@
           "description": "indicators.* only (§6.1); a change triggers `resnapshot: true`."
         },
         "min_size": {
-          "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+          "maxLength": 32
         },
         "time_bucket_ms": {
           "enum": [100, 250, 500, 1000, 5000],
@@ -1374,7 +1377,7 @@
         "dropped": {
           "type": "integer",
           "minimum": 0,
-          "description": "Prints filtered out by `min_size` since the previous frame; never silent."
+          "description": "Prints filtered out by `min_size` since the previous frame, plus any shed when more items than the option set's pending bound waited for one frame (§6.1); never silent."
         },
         "big_trade_threshold": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
