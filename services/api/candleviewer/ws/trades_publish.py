@@ -83,7 +83,13 @@ FAMILY: Final = "trades"
 WINDOW_S: Final = 0.1
 #: §6.1: "Last 200 prints".
 SNAPSHOT_ITEMS: Final = 200
-#: Prints a symbol keeps for a new option tape: the ingestion hot tape's depth.
+#: Prints a symbol keeps for a new option tape: the ingestion hot tape's depth. Memory envelope:
+#: a `TapePrint` (slots: the event, a bool, an interned direction) plus its deque slot measures
+#: ~65 B, so 1 000 of them are ~64 KiB per held symbol and `MAX_SYMBOLS` (1 024) of them ~64 MiB.
+#: The `TradeEvent`s (~1.8 KiB each) are the objects the ingestion hot tape already holds: the bus
+#: hands the stream's own events over and both deques keep the newest 1 000 of one stream, so
+#: they add nothing but a short lag. `MAX_SYMBOLS` stays above the catalogue (~600) rather than at
+#: it: a catalogue that grows past a lower cap would refuse a listed symbol.
 RECENT_PRINTS: Final = 1000
 #: A cluster closes on the reader's clock this long after its deadline, so a print that lands late
 #: still joins it as it does on REST (print time).
