@@ -2528,8 +2528,9 @@ def create_app(
             definitions, readiness, _LazyAuditEmitter(ctx.audit), profiles_resolver, auth=ctx.auth
         )
     )
-    # E28-T05 S2c (#909): the definition create, behind `trading.trade_groups` (the preview stays
-    # refused until S3c builds the gate `preview_ready`), over this environment's catalogue.
+    # E28-T05 S2c, S2d (#909): the definition writes (create, replace, delete), behind
+    # `trading.trade_groups` (the preview stays refused until S3c builds the gate
+    # `preview_ready`), over this environment's catalogue.
     app.state.trade_groups_gate = TradeGroupsGate(feature_flags.trade_groups)
     app.include_router(make_trade_group_definition_writes_router(
         definition_writes(profiles, definitions, readiness, ctx),

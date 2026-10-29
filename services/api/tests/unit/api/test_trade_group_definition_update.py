@@ -254,6 +254,54 @@ def test_a_replace_and_a_delete_replay_to_their_own_principal_alone(world: World
     assert (theirs.status_code, "idempotency-replayed" in theirs.headers) == (200, False)
 
 
+def test_a_kept_answer_replays_to_its_own_path_alone(world: World) -> None:
+    """SR-E28-17: the fingerprint holds the path, so a key sent for another definition is a reuse
+    (409), never a kept answer for a write that was not made; nothing is challenged or written."""
+    put, gone = str(uuid4()), str(uuid4())
+    assert world.put(idempotency_key=put).status_code == 200
+    assert world.delete(PAIR, idempotency_key=gone).status_code == 204
+    other = [world.put(key=PAIR, idempotency_key=put), world.delete(CORE3, idempotency_key=gone)]
+    assert {(r.status_code, r.json()["code"]) for r in other} == {(409, "idempotency_key_reuse")}
+    assert world.texts == [REPLACE.format(CORE3), DELETE.format(PAIR)]  # no more was asked
+    assert (world.commits, world.deleted) == (2, {PAIR})
+    assert world.client.get(f"{PATH}/{CORE3}").status_code == 200  # Core3 was never deleted
+
+
+def test_the_flag_refuses_a_replace_and_a_delete_before_the_definition_is_read(
+    world: World,
+) -> None:
+    """21 Sec.10.7, as the create's: off, a replace or a delete of an id nobody holds is `403
+    trading_disabled` with no `reason`, not the read's 404, and the store is not read."""
+    world.flag, read = False, world.reads
+    answers = [world.put(key=MISSING), world.delete(MISSING)]
+    assert {(r.status_code, r.json()["code"]) for r in answers} == {(403, "trading_disabled")}
+    assert ["reason" in r.json() for r in answers] == [False, False]
+    assert (world.reads, world.texts, world.commits) == (read, [], 0)
+
+
+def test_a_replayed_write_restates_itself_in_the_step_up_text(world: World) -> None:
+    """PF-S02, SR-E28-17: a kept answer is served behind the step-up its write took, and what the
+    Owner confirms is that write: a replace by its id and its body's members, a delete by its id,
+    a create by its environment and members, never a name."""
+    put, gone, made = str(uuid4()), str(uuid4()), {"idempotency-key": str(uuid4())}
+    fresh = create.payload(A, C, name="Fresh")  # Core3 holds the name Core3
+
+    def writes() -> list[Any]:
+        return [
+            world.put(idempotency_key=put), world.delete(PAIR, idempotency_key=gone),
+            world.client.post(PATH, json=fresh, headers=made),
+        ]  # fmt: skip
+
+    firsts = writes()
+    asked = len(world.texts)
+    replays = writes()
+    assert [r.status_code for r in firsts] == [r.status_code for r in replays] == [200, 204, 201]
+    assert [r.headers["idempotency-replayed"] for r in replays] == ["true"] * 3
+    created = "Create a demo trade-group definition of 2 members"
+    assert world.texts[asked:] == [REPLACE.format(CORE3), DELETE.format(PAIR), created]
+    assert len(world.audited) == 3  # a replay writes nothing
+
+
 @pytest.mark.parametrize("fault", [AuditUnavailable("down"), TimeoutError()])
 def test_an_unwritable_record_changes_nothing(world: World, fault: Exception) -> None:
     """C-2.9: unwritten, `.updated` and `.deleted` leave Core3 as it was."""
