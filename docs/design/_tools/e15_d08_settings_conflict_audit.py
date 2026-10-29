@@ -256,8 +256,8 @@ DEFICIENCIES = ("protanopia", "deuteranopia", "tritanopia")
 # doc | line at the base | text the line must hold. Every `KEY:line` cite in the spec must have a
 # row here (a FAIL otherwise); the rows the spec does not cite feed the reconciliation below.
 CITED_TABLE = """
-04 | 1139 | | `workspaces:write`                                 |
-04 | 1180 | Save/load own layouts, templates, drawings, hotkeys
+04 | 1173 | | `workspaces:write`                                 |
+04 | 1214 | Save/load own layouts, templates, drawings, hotkeys
 05 | 85 | **Reserved, non-remappable keys**
 05 | 96 | **Focus is never silently stolen**
 05 | 97 | matching "cancel is always safe"
@@ -269,50 +269,50 @@ CITED_TABLE = """
 11 | 2865 | containing no secrets and no account bindings
 11 | 5101 | #### US-SET-003 — Destructive-action confirm policy
 14 | 233 | Escape does **not** dismiss
-14 | 514 | `Ctrl+S` save; `Ctrl+Shift+S` save as
-14 | 515 | unsaved changes (`*` on the tab, prompt on navigation)
-14 | 516 | save conflict → "This workspace changed elsewhere. [Keep mine] [Load theirs]"
-14 | 613 | ### SCR-025 — Workspace settings modal
-14 | 615 | default account scope, density (compact/cosy/comfortable), theme override
-14 | 617 | the last workspace cannot be deleted ("You need at least one workspace.")
-14 | 618 | **Stories:** US-WS-020.
-14 | 619 | grouped fieldsets for defaults (symbol, interval, environment binding)
-14 | 621 | CMP-001 Button, CMP-004 Toggle, CMP-019 Icon (`lock`), CMP-040 FormField
-14 | 622 | - **Stories:** US-LAY-002, US-LAY-003.
-14 | 624 | [ ] 'this workspace is pinned to LIVE' warning drawn
-14 | 662 | ### SCR-029 — Unsaved-changes / layout-conflict dialog
-14 | 664 | the conflict variant adds a side-by-side summary of differences
-14 | 665 | CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-079 RbacGate.
-14 | 667 | the three choices are explicit buttons with verbs
-14 | 668 | within 300 ms of the conflicting write being detected
-14 | 669 | `layout.conflict_detected`, `layout.conflict_resolved` with `{choice}` (analytics)
-14 | 671 | [ ] Esc maps to Cancel, never to Discard
+14 | 517 | `Ctrl+S` save; `Ctrl+Shift+S` save as
+14 | 518 | unsaved changes (`*` on the tab, prompt on navigation)
+14 | 519 | save conflict → "This workspace changed elsewhere. [Keep mine] [Load theirs]"
+14 | 618 | ### SCR-025 — Workspace settings modal
+14 | 620 | default account scope, density (compact/cosy/comfortable), theme override
+14 | 622 | the last workspace cannot be deleted ("You need at least one workspace.")
+14 | 623 | **Stories:** US-WS-020.
+14 | 624 | grouped fieldsets for defaults (symbol, interval, environment binding)
+14 | 626 | CMP-001 Button, CMP-004 Toggle, CMP-019 Icon (`lock`), CMP-040 FormField
+14 | 627 | - **Stories:** US-LAY-002, US-LAY-003.
+14 | 629 | [ ] 'this workspace is pinned to LIVE' warning drawn
+14 | 671 | ### SCR-029 — Unsaved-changes / layout-conflict dialog
+14 | 673 | the conflict variant adds a side-by-side summary of differences
+14 | 674 | CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-079 RbacGate.
+14 | 676 | the three choices are explicit buttons with verbs
+14 | 677 | within 300 ms of the conflicting write being detected
+14 | 678 | `layout.conflict_detected`, `layout.conflict_resolved` with `{choice}` (analytics)
+14 | 680 | [ ] Esc maps to Cancel, never to Discard
 15 | 48 | ### CMP-001 Button
 15 | 79 | ### CMP-004 Toggle (Switch)
 15 | 83 | only the track dims; the label and the knob stay at full opacity
 15 | 85 | `color.action.primary.default` (on track), `color.text.tertiary` (off track)
-15 | 225 | ### CMP-019 Icon
-15 | 243 | ### CMP-021 Link
-15 | 301 | ### CMP-027 ErrorState / InlineError
-15 | 304 | an error summary's "Can't submit — 2 problems"
-15 | 306 | an error summary keeps `role="alert"` and its host moves focus to its heading
-15 | 419 | ### CMP-039 FocusRing
-15 | 433 | ### CMP-040 FormField
-15 | 436 | `help?` · `error?` · `disabledReason?`
-15 | 441 | Default, WithError, WithHelp, Required, Optional, Inline, ReadOnly, DisabledWithReason.
-15 | 463 | ### CMP-043 Dialog (Modal)
-15 | 466 | at most 420 / 560 / 960 px wide
-15 | 468 | an `alertdialog` focuses Cancel
-15 | 473 | ### CMP-044 ConfirmDialog
-15 | 476 | `confirmDelayMs?` (default 400
-15 | 477 | typed (Confirm natively disabled until the summary has loaded
-15 | 479 | Confirm a CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`)
-15 | 483 | ### CMP-045 Toast / Notification
-15 | 671 | ### CMP-065 FormSection
-15 | 674 | (`docs/design/E09/E09-D09.md` §2.2: one notice for the section)
-15 | 678 | Default, Collapsible, WithErrors, DisabledWithReason.
-15 | 811 | ### CMP-079 RbacGate
-15 | 2514 | ### CMP-212 ToastHost
+15 | 232 | ### CMP-019 Icon
+15 | 251 | ### CMP-021 Link
+15 | 314 | ### CMP-027 ErrorState / InlineError
+15 | 317 | an error summary's "Can't submit — 2 problems"
+15 | 319 | an error summary keeps `role="alert"` and its host moves focus to its heading
+15 | 444 | ### CMP-039 FocusRing
+15 | 459 | ### CMP-040 FormField
+15 | 462 | `help?` · `error?` · `disabledReason?`
+15 | 467 | Default, WithError, WithHelp, Required, Optional, Inline, ReadOnly, DisabledWithReason.
+15 | 492 | ### CMP-043 Dialog (Modal)
+15 | 495 | at most 420 / 560 / 960 px wide
+15 | 497 | an `alertdialog` focuses Cancel
+15 | 503 | ### CMP-044 ConfirmDialog
+15 | 506 | `confirmDelayMs?` (default 400
+15 | 507 | typed (Confirm natively disabled until the summary has loaded
+15 | 509 | Confirm a CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`)
+15 | 514 | ### CMP-045 Toast / Notification
+15 | 714 | ### CMP-065 FormSection
+15 | 717 | (`docs/design/E09/E09-D09.md` §2.2: one notice for the section)
+15 | 721 | Default, Collapsible, WithErrors, DisabledWithReason.
+15 | 862 | ### CMP-079 RbacGate
+15 | 2577 | ### CMP-212 ToastHost
 16 | 109 | Two supported density modes, selectable globally
 16 | 111 | Default surfaces
 16 | 114 | **Comfortable** (default for admin/onboarding/settings)
@@ -320,27 +320,27 @@ CITED_TABLE = """
 16 | 136 | light is generated by re-pointing the same alias tokens
 16 | 137 | Theme selection persists per-user (not per-workspace)
 16 | 138 | so a switch is a CSS custom-property swap with no remount
-21 | 4857 | **`viewer` holds no write permission.**
-22 | 664 | - code: version_conflict
-22 | 8549 | `limit_reached` (32 live workspaces)
-22 | 8597 | `ETag`: the workspace token versions its metadata only
-22 | 8612 | operationId: updateWorkspace
-22 | 8629 | `412 version_conflict` (stale or unparseable `If-Match`, nothing
-22 | 8658 | operationId: deleteWorkspace
-22 | 8663 | workspace is `409 conflict` with `errors[0].rule = last_workspace`
-22 | 8749 | `limit_reached` (32 live layouts)
-22 | 8863 | operationId: updateLayout
-22 | 8872 | `If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`
-22 | 12700 | operationId: exportWorkspace
-22 | 19658 | WorkspaceIconToken:
-22 | 19667 | WorkspaceInput:
-22 | 19677 | `name` is at most 40 characters as sent (rule
-22 | 19729 | Concurrency token (also the `ETag`) for the workspace metadata only
-22 | 19936 | Panes have no id of their own
-22 | 20042 | of the whole layout aggregate, panes included
-22 | 20472 | density: { type: string, enum: [compact, comfortable, spacious] }
-22 | 20513 | default_environment: { $ref:
-23 | 818 | ### 6.2 Private topics
+21 | 5045 | **`viewer` holds no write permission.**
+22 | 671 | - code: version_conflict
+22 | 9094 | `limit_reached` (32 live workspaces)
+22 | 9142 | `ETag`: the workspace token versions its metadata only
+22 | 9157 | operationId: updateWorkspace
+22 | 9174 | `412 version_conflict` (stale or unparseable `If-Match`, nothing
+22 | 9203 | operationId: deleteWorkspace
+22 | 9208 | workspace is `409 conflict` with `errors[0].rule = last_workspace`
+22 | 9294 | `limit_reached` (32 live layouts)
+22 | 9408 | operationId: updateLayout
+22 | 9417 | `If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`
+22 | 13612 | operationId: exportWorkspace
+22 | 20879 | WorkspaceIconToken:
+22 | 20888 | WorkspaceInput:
+22 | 20898 | `name` is at most 40 characters as sent (rule
+22 | 20950 | Concurrency token (also the `ETag`) for the workspace metadata only
+22 | 21160 | Panes have no id of their own
+22 | 21266 | of the whole layout aggregate, panes included
+22 | 21696 | density: { type: string, enum: [compact, comfortable, spacious] }
+22 | 21737 | default_environment: { $ref:
+23 | 839 | ### 6.2 Private topics
 BL | 239 | grouped fieldsets (identity, defaults, appearance, startup, danger zone)
 BL | 783 | switches workspaces or closes the app
 D01 | 225 | **5.2 Unsaved changes (SCR-029): explicit save, never silent loss
@@ -418,7 +418,7 @@ D09 | 238 | ### 9.3 Keys on a T2 control
 D09 | 263 | "Read-only — {rbac sentence, first letter lower-cased}"
 D09 | 264 | | `glyph.name`
 E16D03 | 49 | typed confirmation and its value
-E16D03 | 364 | | D03-A4 |
+E16D03 | 382 | | D03-A4 |
 D03 | 140 | **The tab strip.** A manual-activation `tablist`
 D03 | 580 | | V-1 | `[Save]`
 D03 | 602 | | `ws.tab.dirty.name`
@@ -429,7 +429,7 @@ FL | 54 | This flow replaces `14` SCR-020's "prompt on navigation"
 FL | 56 | ## F-LAY-3 — Apply a preset over a dirty layout
 FL | 85 | §3.8.1 keeps no history, so Undo is the client's
 FL | 171 | `exportWorkspace` is specified but not yet served
-README | 46 | - **Penpot reference** to the ticket's page
+README | 47 | - **Penpot reference** to the ticket's page
 S3 | 80 | 21. **The field box**
 S3 | 103 | 23. **Validation, never T2**
 S3 | 113 | On submit the host's error summary
@@ -450,12 +450,12 @@ S4 | 756 | **H24 — The confirm: its look, the typed rule
 S4 | 848 | **H32 — Where a confirm opens, and its Tab order.**
 S4 | 881 | **H34 — A toast raised by a modal's own action.**
 S4 | 904 | **H36 — A dialog with unsaved changes.**
-S4 | 1642 | block gap `space.stack.md`; at most 420 / 560 / 960 px wide
-S4 | 1645 | `Cancel` (`secondary`) first, the primary or danger action last
-S4 | 1707 | SCR-072's "partial failure with retry"
-S4 | 1720 | what the confirm does, the dialog's description: SCR-072's
-S4 | 1722 | CMP-040 + CMP-007; its label names the token
-S4 | 1760 | a Confirm gated mid-dialog speaks once, assertively
+S4 | 1650 | block gap `space.stack.md`; at most 420 / 560 / 960 px wide
+S4 | 1653 | `Cancel` (`secondary`) first, the primary or danger action last
+S4 | 1715 | SCR-072's "partial failure with retry"
+S4 | 1728 | what the confirm does, the dialog's description: SCR-072's
+S4 | 1730 | CMP-040 + CMP-007; its label names the token
+S4 | 1768 | a Confirm gated mid-dialog speaks once, assertively
 """
 # The fixture (spec header): the names and the summary cases. The saved time and the conflicting
 # re-read's time are parsed from E15-D02 (`D02:433`, `D02:439`); the rest is this spec's own.
@@ -590,7 +590,7 @@ SCR-029/keep-mine-confirm | overwrite-confirm | time=conflict;size=sm
 SCR-029/save-as-t2 | conflict-t2 | keys=layout.limit.count
 SCR-029/leg-lost | conflict-t2 | keys=rbac.permission
 """
-# kinds | the footer's labels in order (D08-D16; `S4:1645`: Cancel first, the primary or danger
+# kinds | the footer's labels in order (D08-D16; `S4:1653`: Cancel first, the primary or danger
 # action last). A kind not listed draws no footer.
 FOOTER_TABLE = """
 form, form-dirty, invalid, busy, refusal | Cancel · Save
@@ -950,11 +950,11 @@ D02 | 569 | SCR-029/unsaved, SCR-029/revert, SCR-029/conflict, SCR-029/conflict-
 D02 | 569 | SCR-029/save-as-t2, SCR-029/viewer-unsaved
 D02 | 574 | SCR-029/conflict-refreshed
 D02 | 505 | SCR-025/delete-confirm, SCR-025/delete-last
-14 | 617 | SCR-025/delete-confirm, SCR-025/delete-last
-14 | 624 | SCR-025/default, SCR-025/planned-defaults, SCR-025/discard-prompt
-14 | 624 | SCR-025/delete-confirm, SCR-025/delete-last
-14 | 664 | SCR-029/unsaved, SCR-029/conflict
-14 | 671 | SCR-029/unsaved, SCR-029/conflict
+14 | 622 | SCR-025/delete-confirm, SCR-025/delete-last
+14 | 629 | SCR-025/default, SCR-025/planned-defaults, SCR-025/discard-prompt
+14 | 629 | SCR-025/delete-confirm, SCR-025/delete-last
+14 | 673 | SCR-029/unsaved, SCR-029/conflict
+14 | 680 | SCR-029/unsaved, SCR-029/conflict
 """
 COPY_KEY_RE = (
     r"^(?:e15\.[a-z0-9_.]+|rbac\.[a-z_]+|notice\.[a-z_]+|workspace\.limit\.[a-z_]+"
@@ -2479,7 +2479,7 @@ EXIT_PROSE_ALLOWED: tuple[tuple[str, str], ...] = (
             "As an `alertdialog` it has no close button, a press on its scrim does nothing, "
             "and the page under it is inert, while the TopBar with its environment badge, the"
             " banner band and the StatusBar stay outside the inert subtree and unscrimmed "
-            "(`15:468`"
+            "(`15:497`"
         ),
     ),
     (
@@ -2494,7 +2494,7 @@ EXIT_PROSE_ALLOWED: tuple[tuple[str, str], ...] = (
         "§3",
         (
             "**Save layout in flight (BQ-10 RULED: `Esc` while Save is in flight).** Save "
-            "layout sends `updateLayout` for Layout 1 with `If-Match` (`22:8863–8873`) and "
+            "layout sends `updateLayout` for Layout 1 with `If-Match` (`22:9408–9418`) and "
             "turns `loading` — `aria-busy`, its label width locked, a second press ignored "
             "(`15:48–57`)"
         ),
@@ -2542,7 +2542,7 @@ EXIT_PROSE_ALLOWED: tuple[tuple[str, str], ...] = (
         "§6",
         (
             "A press on the scrim is Cancel on SCR-025, a `dialog`, and does nothing on every"
-            " `alertdialog` (`15:468`)."
+            " `alertdialog` (`15:497`)."
         ),
     ),
     (
