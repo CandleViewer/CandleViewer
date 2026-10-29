@@ -18,9 +18,13 @@ from tests.contract.ws.test_ws_rebuild_budget import _until_pong
 
 #: 160 `book` topics, four depths on each of 40 symbols, by symbol: their snapshots stay pending
 #: (the rig serves `bars` only), so a start sends no `snap`.
-_BOOKS = [f"book.S{i // 4:02d}USDT.{(1, 50, 200, 500)[i % 4]}" for i in range(160)]
-#: (fake time, topics, `unsub` them after): 160, 320, then 399 starts, the last 79 on 20 symbols.
-_ROUNDS = ((0.0, _BOOKS, True), (1.0, _BOOKS, True), (2.0, _BOOKS[:79], False))
+_BOOKS = [
+    f"{('book.S%02dUSDT.1', 'book.S%02dUSDT.50', 'trades.S%02dUSDT')[i % 3] % (i // 3)}"
+    for i in range(120)
+]
+#: (fake time, topics, `unsub` them after): 120, 240, then 399 starts, the last 39 on 13 symbols.
+#: None is a depth of 200 or more, which the connection's deep-book cap (4) would count.
+_ROUNDS = ((0.0, _BOOKS, True), (1.0, _BOOKS, True), (2.0, _BOOKS, True), (3.0, _BOOKS[:39], False))
 
 
 def _refused(cause: str) -> float:
@@ -105,7 +109,7 @@ def test_contract_bars_a_start_past_the_connection_budget_is_refused_and_takes_n
         for t, topics, unsub in _ROUNDS:
             rig.w.clock.now = t  # one round a second: under 30 frames a second (§8.5)
             _start(c, topics, unsub=unsub)
-        assert c.sub(CH)["p"]["results"][0]["ok"]  # the 400th, on a 21st symbol
+        assert c.sub(CH)["p"]["results"][0]["ok"]  # the 400th, on a 41st symbol
         c.next_of("snap")
         (refused,) = c.sub(five)["p"]["results"]
         assert _until_pong(c) == []

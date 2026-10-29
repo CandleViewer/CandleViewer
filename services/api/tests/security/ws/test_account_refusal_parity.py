@@ -349,6 +349,7 @@ def test_x02_ac_05_every_collaborator_of_the_subscription_services_is_known_to_t
     known |= {"indicators"}  # E13-T02 (#426): read only to hold an `indicators.*` topic's instances
     known |= {"trades"}  # E22-T02 (#654): read only to lease a live `trades.*` topic, authorised
     known |= {"account_closed"}  # #898 B3b2 (§9.5): read only for an account the grant admits
+    known |= {"depth_500", "max_deep_book_subs"}  # #604: plain settings, no collaborator
     assert {f.name for f in fields(permissions.SubscriptionServices)} == known, (
         "a new collaborator of the subscription services: wire it into `spies` and the arms, so "
         "that a `sub` that reads it is seen, then add it here"

@@ -39,14 +39,17 @@ from candleviewer.book.snapshot_source import BookSnapshotSource
 from candleviewer.book.ws_topic import BookTopic
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy, StreamInvalidated, TopicPattern
-
-# nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
-from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
+from candleviewer.exchange.bybit.orderbook import (  # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31  # noqa: E501
+    book_topic,
+    parse_book_frame,
+)
 from candleviewer.orderbook_wiring import BookStream
 
 ROOT = Path(__file__).resolve().parents[3]
-# nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
-CAPTURE = ROOT / "packages/fixtures/bybit/2026-10-05/ws/orderbook_BTCUSDT.jsonl"
+CAPTURE = (
+    ROOT
+    / "packages/fixtures/bybit/2026-10-05/ws/orderbook_BTCUSDT.jsonl"  # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31  # noqa: E501
+)
 SYMBOL = "BTCUSDT"
 TICK, QTY_STEP = Decimal("0.1"), Decimal("0.001")
 CADENCE_S = 0.1  # the depth-200 stream's cadence
