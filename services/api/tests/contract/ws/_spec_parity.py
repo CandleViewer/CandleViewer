@@ -269,6 +269,7 @@ CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {}
 SECTION_3_6_ROWS: Final = {
     "Max inbound JSON nesting depth": "limits.MAX_JSON_DEPTH",
     "Max inbound JSON containers": "limits.MAX_JSON_CONTAINERS",
+    "Max inbound MessagePack containers": "limits.MAX_JSON_CONTAINERS",  # either encoding
     "Max inbound JSON values": "codec.MAX_MSGPACK_VALUES",
     "Inbound frame weight": "limits.INBOUND_WEIGHT_BYTES limits.INBOUND_WEIGHT_VALUES",
 }
