@@ -149,3 +149,16 @@ def test_the_save_routes_take_exactly_the_members_22_names() -> None:
 
     assert set(CREATE_MEMBERS) == set(_SCHEMAS["RuleInput"]["properties"])
     assert set(UPDATE_MEMBERS) == set(_SCHEMAS["RuleUpdateInput"]["properties"])
+
+
+def test_a_refusal_answers_with_the_reasons_message_and_bounds_22_states() -> None:
+    """G-12: the refusal's `errors[].rule` reasons, its fixed message and its bounds (the members
+    named, a member's name) are the ones 22 states (`RuleInput`, example `memberOutsideIr`)."""
+    from candleviewer.rules.manager import BODY_REFUSALS, MAX_BODY_REFUSALS
+
+    example = _REFUSED["application/problem+json"]["examples"]["memberOutsideIr"]["value"]
+    described = " ".join(_SCHEMAS["RuleInput"]["description"].split())
+    assert set(BODY_REFUSALS) == set(REASONS)
+    assert [e["message"] for e in example["errors"]] == [BODY_REFUSALS["accounts_outside_scope"]]
+    assert f"(at most {MAX_BODY_REFUSALS})" in described
+    assert "an ASCII identifier of at most 64 characters, else `$`" in described

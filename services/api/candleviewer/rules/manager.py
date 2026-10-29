@@ -173,7 +173,7 @@ def _owner_field(owner: str) -> dict[str, str]:
 
 #: Why a save body member is refused (G-12, #4835), with the message its refusal shows.
 BODY_REFUSALS: Final = {
-    "accounts_outside_scope": "A rule names its accounts only in ir.scope.account_ids.",
+    "accounts_outside_scope": "A rule's accounts go in ir.scope.account_ids, never outside ir.",
     "unknown_field": "A rule save does not take this field.",
 }
 #: The most members one body refusal names: a problem's `errors` stay bounded.
