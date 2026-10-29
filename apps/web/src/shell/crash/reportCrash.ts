@@ -36,6 +36,10 @@ export interface CrashReporter {
   diagnostics(meta: DiagnosticsMeta): DiagnosticsPayload;
   entries(): readonly CrashEntry[];
   counts(): CrashCounts;
+  /** Settles once the crash-log appends in flight now have, failed ones too. */
+  settled(): Promise<void>;
+  /** How many crash-log appends are in flight: a settled one leaves the count. */
+  pending(): number;
 }
 
 const clip = (text: string): string => redactText(text).slice(0, 2048);
@@ -102,6 +106,7 @@ export function createCrashReporter(deps: CrashReporterDeps = {}): CrashReporter
   });
   // one error object seen twice (a boundary, then the window `error` event) is one crash with one id
   const seen = new WeakMap<object, string>();
+  const inFlight = new Set<Promise<void>>();
 
   const report = (error: unknown, boundary: CrashBoundary, component?: string): string => {
     const key = typeof error === "object" && error !== null ? error : null;
@@ -135,7 +140,9 @@ export function createCrashReporter(deps: CrashReporterDeps = {}): CrashReporter
     counts.set(boundary, (counts.get(boundary) ?? 0) + 1);
     if (port?.capabilities.crashLog) {
       try {
-        void port.crashLog.append(entry).catch(() => undefined);
+        const append = port.crashLog.append(entry).catch(() => undefined);
+        inFlight.add(append);
+        void append.then(() => inFlight.delete(append));
       } catch {
         // a crash report never throws; the in-memory entry stands
       }
@@ -160,7 +167,11 @@ export function createCrashReporter(deps: CrashReporterDeps = {}): CrashReporter
     return { ...redacted, settings: redactSettings(settings) };
   };
 
-  return { report, diagnostics, entries: () => [...log], counts: countsOf };
+  const settled = async (): Promise<void> => {
+    await Promise.all(inFlight);
+  };
+  const pending = (): number => inFlight.size;
+  return { report, diagnostics, entries: () => [...log], counts: countsOf, settled, pending };
 }
 
 let active = createCrashReporter();
@@ -169,6 +180,11 @@ let activeMeta = { version: "unknown", buildHash: "unknown" };
 /** Reports one crash through the installed reporter and returns its correlation id. Never throws. */
 export function reportCrash(error: unknown, boundary: CrashBoundary, component?: string): string {
   return active.report(error, boundary, component);
+}
+
+/** The installed reporter's appends in flight, settled: a GPU retry's relaunch (`app.exit(0)`) drops one still open. */
+export function crashLogSettled(): Promise<void> {
+  return active.settled();
 }
 
 /** The copy-diagnostics payload: version, build hash, correlation ids, recent log lines and settings, redacted. */

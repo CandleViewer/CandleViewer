@@ -16,7 +16,8 @@
  *  - the WS latency indicator (budget #3), at most once a second;
  *  - the SCR-153 degraded facts (E10-S04 #306), folded from every `system` frame,
  *    with row 9's 10 s hand-over to R5 timed here (E17-D02 §6);
- *  - SCR-159's reachability, the liveness probe's verdict (`liveness.ts`).
+ *  - SCR-159's reachability, the liveness probe's verdict (`liveness.ts`), and the desktop
+ *    shell's last GPU-process crash while its page shows (`gpuCrash.ts`).
  */
 import type { generated } from "@candleviewer/protocol";
 import {
@@ -24,9 +25,11 @@ import {
   PRIVATE_HANDOVER_MS,
   handOverPrivateReconnect,
   reduceDegraded,
+  setGpuFallback,
   type DegradedFacts,
 } from "../../features/system-states/degradedIssues.js";
 import { toLatencyIndicator, type LatencyIndicator } from "../../lib/telemetry/latencyIndicator.js";
+import type { GpuCrash } from "../ShellPort.js";
 import { REACHABLE, type Reachability } from "./reachability.js";
 
 export type Me = generated.rest.components["schemas"]["Me"];
@@ -78,6 +81,8 @@ export interface ShellState {
   readonly everLive: boolean;
   /** SCR-159: reachable until a liveness probe goes unanswered (never `navigator.onLine` alone). */
   readonly reachability: Reachability;
+  /** SCR-159's GPU page (F15, desktop only): the last crash, until the user keeps software rendering. */
+  readonly gpuCrash: GpuCrash | null;
 }
 
 const INITIAL_BOOTSTRAP: BootstrapPhase = { kind: "loading" };
@@ -97,6 +102,7 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
   degraded: INITIAL_DEGRADED_FACTS,
   everLive: false,
   reachability: REACHABLE,
+  gpuCrash: null,
 });
 
 let state: ShellState = INITIAL_SHELL_STATE;
@@ -147,6 +153,16 @@ export function applySystemUpdate(update: SystemUpdate): void {
 export function clearDegraded(): void {
   clearHandover();
   setShellState({ degraded: INITIAL_DEGRADED_FACTS });
+}
+
+/** A GPU-process crash: SCR-159's page shows, and an earlier answer's GPU row yields to it. */
+export function applyGpuCrash(crash: GpuCrash): void {
+  setShellState({ gpuCrash: crash, degraded: setGpuFallback(state.degraded, false) });
+}
+
+/** "Keep software rendering": the page goes; SCR-153's GPU row holds for the session (BQ-9.3). */
+export function keepSoftwareRendering(): void {
+  setShellState({ gpuCrash: null, degraded: setGpuFallback(state.degraded, true) });
 }
 
 /** Test-only reset to the initial, unauthenticated shell state. */

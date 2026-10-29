@@ -37,7 +37,7 @@ export const ShellBannerSlot: ShellSlot = ShellBanner;
 
 export const ShellConnectionSlot: ShellSlot = ConnectionStatusSlot;
 
-/** #306 slice 9: SCR-159's offline and tailnet-unreachable pages over the canvas. */
+/** #306 slice 9: SCR-159's offline, tailnet-unreachable and (desktop) GPU pages over the canvas. */
 export const ShellCanvasOverlaySlot: ShellSlot = OfflineOverlay;
 
 /** CMP-211's three actions, in Tab order (E39-D03 §5): FLATTEN ALL… → CANCEL ALL… → FREEZE…. */

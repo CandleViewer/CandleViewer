@@ -3,10 +3,14 @@ import {
   useLayoutEffect,
   useReducer,
   useRef,
+  useState,
   type CSSProperties,
   type JSX,
 } from "react";
+import { retryGpuNow } from "../../shell/bootstrap/gpuCrash";
 import { probeLivenessNow } from "../../shell/bootstrap/liveness";
+import { getShellState, keepSoftwareRendering } from "../../shell/bootstrap/store";
+import type { GpuCrash } from "../../shell/ShellPort";
 import { useShellSelector } from "../../shell/useShellSelector";
 import {
   announce,
@@ -15,8 +19,9 @@ import {
   lastWrittenAt,
   REGION_BUDGET_MS,
 } from "../app-shell/announcer";
+import { formatUtcClock } from "../app-shell/clock";
 import { takeHandedBack } from "./bootOffline";
-import { OFFLINE_COPY, SCR159_COPY, TAILNET_CHECKS } from "./copy";
+import { GPU_COPY, OFFLINE_COPY, SCR159_COPY, TAILNET_CHECKS } from "./copy";
 import { OfflinePage } from "./OfflinePage";
 
 const ENTERED = "offline:entered:";
@@ -32,6 +37,19 @@ const PANE: CSSProperties = {
   pointerEvents: "auto",
   background: "var(--color-surface-app)",
 };
+const LIST: CSSProperties = { margin: 0, paddingInlineStart: "var(--space-inset-lg)" };
+
+type Cause = "offline" | "tailnet_unreachable" | "gpu";
+
+const gpuSentence = (crash: GpuCrash): string =>
+  GPU_COPY.sentence(formatUtcClock(crash.crashedAtMs));
+
+/** What a page says on entry; the GPU page's from the latest crash, `null` once it is answered. */
+function entryCopy(cause: Cause): { heading: string; sentence: string } | null {
+  if (cause !== "gpu") return OFFLINE_COPY[cause];
+  const crash = getShellState().gpuCrash;
+  return crash === null ? null : { heading: GPU_COPY.heading, sentence: gpuSentence(crash) };
+}
 
 /**
  * SCR-159's in-canvas states (#306 slice 9; E10-D03 §9.2, board 10): the shell's canvas overlay
@@ -50,21 +68,33 @@ const PANE: CSSProperties = {
  * heading and sentence, focus staying. On recovery focus returns to what had it before the page
  * when the page held it (`main` when that is gone, inert or another episode's), the alert is
  * cleared, and, once the socket is live, the recovery is said politely.
+ * In the desktop app a GPU-process crash shows the GPU page the same way (slice 9c), under the
+ * server's pages when both hold, until it is answered: Retry now relaunches with the GPU, from a
+ * click only; Keep software rendering hands the condition to SCR-153's GPU row for the session.
+ * Only a server's page or R-902's resume has a recovery to say; the GPU page's end says nothing.
  * Not here: the cached read-only view with its age (none exists yet), the per-variant glyphs (not
  * in the icon registry; §9.2's template glyph instead).
  */
 export function OfflineOverlay(): JSX.Element | null {
   const reachability = useShellSelector((s) => s.reachability);
   const live = useShellSelector((s) => s.connection.kind === "live");
-  const { cause, probing, retryAtMs } = reachability;
-  const shown = cause === "offline" || cause === "tailnet_unreachable";
+  const crash = useShellSelector((s) => s.gpuCrash);
+  const { probing, retryAtMs } = reachability;
+  const net =
+    reachability.cause === "offline" || reachability.cause === "tailnet_unreachable"
+      ? reachability.cause
+      : null;
+  const cause: Cause | null = net ?? (crash === null ? null : "gpu"); // the server's page first
+  const shown = cause !== null;
   const pane = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const spoken = useRef(false); // this episode's page was said
+  const lost = useRef(false); // a server's page or R-902's resume: its recovery is said
   const ownWrite = useRef(Number.NaN); // when this overlay last wrote the assertive region
   const returnTo = useRef<HTMLElement | null>(null); // what had focus before the page
   const handedBack = useRef<boolean | null>(null); // R-902's hand-back, taken once per mount
   const [, tick] = useReducer((n: number) => n + 1, 0);
+  const [retrying, setRetrying] = useState(false);
 
   useLayoutEffect(() => {
     const node = pane.current;
@@ -89,11 +119,21 @@ export function OfflineOverlay(): JSX.Element | null {
   }, [shown]);
 
   useEffect(() => {
-    if (cause !== "offline" && cause !== "tailnet_unreachable") return undefined;
+    if (cause === null) return undefined;
     const enter = (): void => {
-      const copy = OFFLINE_COPY[cause];
+      const copy = entryCopy(cause);
+      if (copy === null) return; // the crash was answered meanwhile
       const first = !spoken.current;
       spoken.current = true;
+      if (cause !== "gpu") {
+        // a server outage that begins under a GPU page already said is an episode of its own
+        if (!first && !lost.current) {
+          forget(ENTERED + cause);
+          forget(RECOVERED);
+        }
+        lost.current = true;
+      }
+      if (cause === "gpu" && !first) forget(ENTERED + cause); // back from a server page: said again
       if (first) forget(RECOVERED);
       const text = first ? copy.sentence : `${copy.heading}. ${copy.sentence}`;
       if (announce("assertive", text, ENTERED + cause))
@@ -129,32 +169,69 @@ export function OfflineOverlay(): JSX.Element | null {
   useEffect(
     () => () => {
       spoken.current = false;
+      lost.current = false;
     },
     [],
   );
 
+  const ticking = net !== null;
+  useEffect(() => {
+    if (!ticking) return undefined;
+    const id = setInterval(tick, 1000); // the countdown's clock: this page re-renders, nothing else
+    return () => clearInterval(id);
+  }, [ticking]);
+
   useEffect(() => {
     if (!shown) return undefined;
-    const id = setInterval(tick, 1000); // the countdown's clock: this page re-renders, nothing else
-    return () => {
-      clearInterval(id);
-      clearAnnouncements(ENTERED); // recovery or unmount: no stale alert, and the next one is said
-    };
+    return () => clearAnnouncements(ENTERED); // recovery or unmount: no stale alert, next one said
   }, [shown]);
 
   useEffect(() => {
     handedBack.current ??= takeHandedBack(); // kept, so StrictMode's rehearsal does not lose it
-    if (handedBack.current) spoken.current = true; // R-902's resume: said as a recovery, once live
+    if (handedBack.current) lost.current = true; // R-902's resume: said as a recovery, once live
   }, []);
 
   useEffect(() => {
-    if (shown || !spoken.current || !live) return;
-    spoken.current = false;
-    announce("polite", SCR159_COPY.recovered, RECOVERED);
-  }, [shown, live]);
+    if (net === null && lost.current && live) {
+      lost.current = false;
+      announce("polite", SCR159_COPY.recovered, RECOVERED);
+    }
+    if (!shown && !lost.current) spoken.current = false; // the episode is over
+  }, [net, shown, live]);
 
-  if (cause !== "offline" && cause !== "tailnet_unreachable") return null;
-  const copy = OFFLINE_COPY[cause];
+  const retryGpu = (): void => {
+    setRetrying(true);
+    // A refusal (no crash this session, or a retry in the last 60 s) says nothing new.
+    void retryGpuNow()
+      .catch(() => undefined)
+      .finally(() => setRetrying(false));
+  };
+
+  if (net === null) {
+    if (crash === null) return null;
+    return (
+      <div ref={pane} style={PANE}>
+        <OfflinePage
+          heading={GPU_COPY.heading}
+          sentence={gpuSentence(crash)}
+          headingRef={heading}
+          retryInS={null}
+          busy={retrying}
+          onRetry={retryGpu}
+          primary
+          secondary={{ label: GPU_COPY.keep, onClick: keepSoftwareRendering }}
+        >
+          <ul style={LIST}>
+            {GPU_COPY.limits.map((limit) => (
+              <li key={limit}>{limit}</li>
+            ))}
+          </ul>
+          <p style={{ margin: 0 }}>{GPU_COPY.restarts(crash.restartCount)}</p>
+        </OfflinePage>
+      </div>
+    );
+  }
+  const copy = OFFLINE_COPY[net];
   const retryInS =
     probing || retryAtMs === null ? null : Math.max(1, Math.ceil((retryAtMs - Date.now()) / 1000));
   return (
@@ -168,8 +245,8 @@ export function OfflineOverlay(): JSX.Element | null {
         onRetry={probeLivenessNow}
         fallback
       >
-        {cause === "tailnet_unreachable" ? (
-          <ol style={{ margin: 0, paddingInlineStart: "var(--space-inset-lg)" }}>
+        {net === "tailnet_unreachable" ? (
+          <ol style={LIST}>
             {TAILNET_CHECKS.map((check) => (
               <li key={check}>{check}</li>
             ))}
