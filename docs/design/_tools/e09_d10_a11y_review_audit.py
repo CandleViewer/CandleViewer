@@ -135,7 +135,8 @@ OWNER_PENDING = "owner approval pending (#2701)"
 MAX_WALK = 10  # RULED BQ-34: the owner walkthrough, at most ten items
 REPORT_WIDTH = 100  # the self-test report: ASCII, at most 100 characters a line
 # the ruling's own figures (BQ-15 confirmed: the warning at least 20 s; the 20-hour exemption)
-RULED_VALUES = {"RULED:wcag.warn": "20", "RULED:wcag.long": "20"}
+# the ruling figures; reset.window: Q-7 as RULED (orchestrator, 2026-10-29 15:20Z), the default
+RULED_VALUES = {"RULED:wcag.warn": "20", "RULED:wcag.long": "20", "RULED:reset.window": "24"}
 # the version line (spec **Start.**): every merged input's sha, in order
 VERSION_SHAS = (
     "e74121321e",
@@ -211,6 +212,8 @@ IMG_STRINGS = (
     "Incorrect code. 2 attempts left.",
     "Save your recovery codes",
     "I've saved these somewhere I can find them later.",
+    "Forgot password? Ask the owner.",
+    "Confirmation requires a fresh step-up (SCR-006)",
 )
 
 # CITE values: key -> (cite id, line, pattern whose group 1 is the value)
@@ -2587,24 +2590,38 @@ def g_inventory(t: Texts) -> list[Finding]:
 VERDICTS = ("compliant", "at risk", "non-compliant", "N/A")
 
 
+def f_ids(cell: str) -> list[str]:
+    """The F-rows a cell names, `F-a..F-b` ranges expanded."""
+    out = re.findall(r"F-\d+", cell)
+    for a, b in re.findall(r"F-(\d+)\.\.F-(\d+)", cell):
+        out += [f"F-{k}" for k in range(int(a), int(b) + 1)]
+    return out
+
+
+def heavy(t: Texts) -> set[str]:
+    """The Blocking and Major F-rows (R-3: each makes its verdict non-compliant)."""
+    return {r[0] for r in ided(t.spec, FROW_HEAD, "F") if len(r) > 2 and r[2] in SEVERITY[:2]}
+
+
 def g_clause(t: Texts) -> list[Finding]:
     """R-3: a compliant clause names no F-row; an at-risk clause names an F-row, or a C-row with
-    its A-row; a non-compliant clause names a Blocking or Major F-row; N/A states its reason."""
+    its A-row, and no Blocking or Major F-row; a non-compliant clause names a Blocking or Major
+    F-row; N/A states its reason. The same never-at-risk rule binds §4's criteria and the map."""
     sec = spec_sec(t, CLAUSE_HEAD)
     sev = {r[0]: r[2] for r in ided(t.spec, FROW_HEAD, "F") if len(r) > 2}
+    big = heavy(t)
     bad: list[Finding] = []
     for r in [r for r in rows_of(t.spec, CLAUSE_HEAD) if r and r[0].startswith("`")]:
         if len(r) < 5:
             continue
         v, f = r[3], r[4]
-        frows = re.findall(r"F-\d+", f)
-        if ".." in f:
-            a, b = (int(x) for x in re.findall(r"F-(\d+)\.\.F-(\d+)", f)[0])
-            frows += [f"F-{k}" for k in range(a, b + 1)]
+        frows = f_ids(f)
         if v not in VERDICTS:
             bad.append(F("G-CLAUSE", f"{r[0]}: verdict {v!r}", "spec", sec))
         elif v == "compliant" and frows:
             bad.append(F("G-CLAUSE", f"{r[0]}: compliant with {frows[0]}", "spec", sec))
+        elif v == "at risk" and set(frows) & big:
+            bad.append(F("G-CLAUSE", f"{r[0]}: at risk with a Blocker or Major", "spec", sec))
         elif v == "at risk" and not (
             frows or (re.search(r"C-\d+", f) and re.search(r"A-\d+", f)) or re.search(r"Q-\d+", f)
         ):
@@ -2615,6 +2632,15 @@ def g_clause(t: Texts) -> list[Finding]:
             )
         elif v == "N/A" and len(r[2].split()) < 3:
             bad.append(F("G-CLAUSE", f"{r[0]}: N/A without its reason", "spec", sec))
+    wsec = spec_sec(t, WCAG_HEAD)
+    for r in rows_of(t.spec, WCAG_HEAD):
+        sc_row = len(r) == 4 and re.fullmatch(r"\d\.\d\.\d+", r[0])
+        if sc_row and r[2] == "at risk" and set(f_ids(r[3])) & big:
+            bad.append(F("G-CLAUSE", f"SC {r[0]}: at risk with a Blocker or Major", "spec", wsec))
+    msec = spec_sec(t, MAP_HEAD)
+    for r in map_rows(t.spec):
+        if len(r) == MAP_COLS and r[8].startswith("at risk") and set(f_ids(r[8])) & big:
+            bad.append(F("G-CLAUSE", f"{r[0]}: at risk with a Blocker or Major", "spec", msec))
     return bad
 
 
@@ -2906,6 +2932,8 @@ def g_live(t: Texts) -> list[Finding]:
     sec = spec_sec(t, LIVE_HEAD)
     body = section(t.spec, LIVE_HEAD)
     bad = [F("G-LIVE", f"§7 lacks {n[:40]!r}", "spec", sec) for n in LIVE_NEEDS if n not in body]
+    if "(D09:145)" not in body or ":145" not in " ".join(row_by_id(t.spec, FROW_HEAD, "F-23")):
+        bad.append(F("G-LIVE", "the SCR-154 alert (D09:145) is not in §7 and F-23", "spec", sec))
     for k in range(19, 25):
         r = row_by_id(t.spec, FROW_HEAD, f"F-{k}")
         if len(r) < 4 or r[2] != "Minor" or r[3] != "`6.2b`":
@@ -3373,9 +3401,58 @@ def g_grows(t: Texts) -> list[Finding]:
     return bad
 
 
+Q7_NEEDS = (
+    "RULED (orchestrator, 2026-10-29 15:20Z",
+    "a fresh password re-authentication (`X-Reauth-Password`)",
+    "never a code from the removed authenticator",
+    "the account locks until the owner resets again",
+    "the reset and the re-enrolment are audited",
+    "G-8",
+    "C-39",
+)
+
+
 def g_qrows(t: Texts) -> list[Finding]:
-    """S-13: the open questions and the heuristic rows, owned, the questions due at once."""
-    return g_rows(t, QROW_HEAD, "Q", "G-QROWS", 4) + g_rows(t, HROW_HEAD, "H", "G-QROWS", 0)
+    """S-13: the open questions and the heuristic rows, owned, the questions due at once; Q-7 as
+    RULED (the owner reset: password, then enrolment under a fresh password re-authentication,
+    never a code from the removed authenticator), its contract half G-8 to the `22` owner and the
+    frame's step-up C-39."""
+    bad = g_rows(t, QROW_HEAD, "Q", "G-QROWS", 4) + g_rows(t, HROW_HEAD, "H", "G-QROWS", 0)
+    q7 = " | ".join(row_by_id(t.spec, QROW_HEAD, "Q-7"))
+    sec = spec_sec(t, QROW_HEAD)
+    bad += [F("G-QROWS", f"Q-7 lacks {n[:40]!r}", "spec", sec) for n in Q7_NEEDS if n not in q7]
+    g8 = " | ".join(row_by_id(t.spec, GROW_HEAD, "G-8"))
+    if "the `22` owner" not in g8 or "Q-7" not in g8:
+        bad.append(F("G-QROWS", "G-8 is not Q-7's contract half to the `22` owner", "spec", sec))
+    if "Q-7" not in " | ".join(row_by_id(t.spec, CROW_HEAD, "C-39")):
+        bad.append(F("G-QROWS", "C-39 does not read the frame by Q-7", "spec", sec))
+    return bad
+
+
+V1_ABSENT = re.compile(r"\btrust(?:ed)?[- ](?:device|box|checkbox)\b|\bhelp link\b", re.IGNORECASE)
+
+
+def g_v1absent(t: Texts) -> list[Finding]:
+    """#194's RULED absences (BQ-14, BQ-15, BQ-18): the trusted-device box and the help link are
+    absent in v1, so no map row, target or question carries them (F-44, C-37, C-38); `3.1.4` rests
+    on no "Disable two-factor" (F-17)."""
+    bad: list[Finding] = []
+    fsec = spec_sec(t, FROW_HEAD)
+    r = row_by_id(t.spec, FROW_HEAD, "F-44")
+    if len(r) < 5 or not r[4].endswith("· absent in v1 (#194 BQ-15)"):
+        bad.append(F("G-V1ABSENT", "F-44's replacement is not 'absent in v1'", "spec", fsec))
+    for head in (MAP_HEAD, TARGET_HEAD, QROW_HEAD):
+        if V1_ABSENT.search(section(t.spec, head)):
+            msg = f"§{sec_id(head)} carries a control #194 rules absent in v1"
+            bad.append(F("G-V1ABSENT", msg, "spec", spec_sec(t, head)))
+    for cid, bq in (("C-37", "#194 BQ-15"), ("C-38", "#194 BQ-14")):
+        if bq not in " | ".join(row_by_id(t.spec, CROW_HEAD, cid)):
+            bad.append(F("G-V1ABSENT", f"{cid} lacks {bq}", "spec", spec_sec(t, CROW_HEAD)))
+    row = next((x for x in rows_of(t.spec, CLAUSE_HEAD) if x and x[0] == "`3.1.4`"), [])
+    if len(row) < 3 or re.search(r"disable two.factor", row[2], re.IGNORECASE):
+        msg = "`3.1.4` rests on the control absent by plan in v1"
+        bad.append(F("G-V1ABSENT", msg, "spec", spec_sec(t, CLAUSE_HEAD)))
+    return bad
 
 
 def a_rows(spec: str) -> dict[str, list[str]]:
@@ -3926,6 +4003,7 @@ MEASURED_GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_contrast,
     g_cvd,
     g_rbac,
+    g_v1absent,
     g_frows,
     g_assert,
     g_pass2,
@@ -4005,6 +4083,7 @@ def coded(*parts: str) -> str:
 
 
 S11 = "1.1 What this review fixes"
+
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-1",
@@ -4392,6 +4471,58 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-PASS2",
         "AC5: each dry-run step fixed",
         spec=row_edit(METHOD_HEAD, "SR-23", 2, to("nothing changed")),
+    ),
+    Mutation(
+        "M-67",
+        "G-LIVE",
+        "BQ-16: the SCR-154 alert at risk (B-1)",
+        spec=row_edit(MAP_HEAD, "T-78", 8, to("compliant")),
+    ),
+    Mutation(
+        "M-68",
+        "G-V1ABSENT",
+        "#194 BQ-15: absent in v1",
+        spec=sub_in(FROW_HEAD, "· absent in v1 (#194 BQ-15)", "· a checkbox at the rule"),
+    ),
+    Mutation(
+        "M-69",
+        "G-V1ABSENT",
+        "#194 BQ-14: no link",
+        spec=say_in(TARGET_HEAD, "SCR-001's help link is measured at design QA."),
+    ),
+    Mutation(
+        "M-70",
+        "G-V1ABSENT",
+        "#194 BQ-18: absent by plan in v1",
+        spec=row_edit(CLAUSE_HEAD, "`3.1.4`", 2, appended("; disable two-factor confirms")),
+    ),
+    Mutation(
+        "M-71",
+        "G-CLAUSE",
+        "R-3: a Major is non-compliant",
+        spec=row_edit(CLAUSE_HEAD, "`3.4.3`", 3, to("at risk")),
+    ),
+    Mutation(
+        "M-72",
+        "G-CLAUSE",
+        "R-3: §4 alike",
+        spec=row_edit(WCAG_HEAD, "4.1.3", 2, to("at risk")),
+    ),
+    Mutation(
+        "M-73",
+        "G-CLAUSE",
+        "R-3: the map alike",
+        spec=row_edit(MAP_HEAD, "T-2", 8, to("at risk (F-3, F-46)")),
+    ),
+    Mutation(
+        "M-74",
+        "G-QROWS",
+        "Q-7 RULED: password re-auth",
+        spec=sub_in(
+            QROW_HEAD,
+            "a fresh password re-authentication (`X-Reauth-Password`)",
+            "a fresh step-up (SCR-006)",
+        ),
     ),
 )
 # X-n: paraphrases of a ruled behaviour, applied AFTER a simulated re-pin (the pins accept them),
