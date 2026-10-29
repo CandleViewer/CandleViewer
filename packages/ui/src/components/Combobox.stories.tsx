@@ -2,11 +2,13 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState, type JSX, type ReactNode } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { Icon } from "../icons/Icon.js";
-import { Combobox, type ComboboxOption } from "./Combobox.js";
+import { Combobox, type ComboboxOption, type ComboboxProps } from "./Combobox.js";
 import { FormField } from "./FormField.js";
 import { RbacGate } from "./RbacGate.js";
 
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"].map((s) => ({ value: s, label: s }));
+/** 25 illustrative symbols: more than the list's ten rows. */
+const MANY = [...Array(25).keys()].map((i) => `S${String(i + 1).padStart(2, "0")}USDT`);
 /** The host's sentences: SCR-102's no-results line (`14` SCR-102) and E08-D05's failed instrument list. */
 const noMatch = (query: string): string => `No USDT perpetual matches '${query.trim()}'.`;
 const FAILED = "Couldn't load the instrument list.";
@@ -19,10 +21,18 @@ type HostProps = {
   readonly initial?: string;
   /** Local options other than the four symbols (a gated option, a long label). */
   readonly options?: readonly ComboboxOption[];
+  /** CMP-160's tuning of the settle and the fade (E08-D05 A-D05-6). */
+  readonly tuning?: Pick<ComboboxProps, "settleMs" | "animated">;
 };
 
 /** A host that owns the text, as every consumer does: local symbols, or its own search. */
-function Host({ search, prefix, initial = "", options = SYMBOLS }: HostProps): JSX.Element {
+function Host({
+  search,
+  prefix,
+  initial = "",
+  options = SYMBOLS,
+  tuning = {},
+}: HostProps): JSX.Element {
   const [value, setValue] = useState(initial);
   const source =
     search === undefined
@@ -32,6 +42,7 @@ function Host({ search, prefix, initial = "", options = SYMBOLS }: HostProps): J
     <FormField label="Symbol">
       <Combobox
         {...source}
+        {...tuning}
         value={value}
         onChange={setValue}
         placeholder="Search symbols"
@@ -215,5 +226,35 @@ export const LongLabel: Story = {
   play: async ({ canvasElement }) => {
     await userEvent.type(input(canvasElement), "long");
     await waitFor(() => expect(list()).toBeVisible(), { timeout: 3000 });
+  },
+};
+
+/** Paging (E08-D05 A-D05-6): PageDown / PageUp move the active option by the visible rows, within the list. */
+export const Paging: Story = {
+  render: () => <Host options={MANY.map((s) => ({ value: s, label: s }))} />,
+  play: async ({ canvasElement }) => {
+    const field = input(canvasElement);
+    field.focus();
+    await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
+    await waitFor(() => expect(list()).toBeVisible());
+    const path: string[] = [];
+    for (const key of ["PageDown", "PageDown", "PageDown", "PageUp", "PageUp", "PageUp"]) {
+      await userEvent.keyboard(`{${key}}`);
+      const id = field.getAttribute("aria-activedescendant") ?? "";
+      path.push(document.getElementById(id)?.textContent ?? "");
+    }
+    // Ten rows show, so a page is ten: no wrap at the end, and never back to the text at the top.
+    await expect(path.join(" ")).toBe("S10USDT S20USDT S25USDT S15USDT S05USDT S01USDT");
+  },
+};
+
+/** CMP-160's tuning (E08-D05 A-D05-6): a 300 ms settle, and no fade (#4703 G-rows 2 and 3). */
+export const SettleUnanimated: Story = {
+  render: () => <Host tuning={{ settleMs: 300, animated: false }} />,
+  play: async ({ canvasElement }) => {
+    await userEvent.type(input(canvasElement), "eth");
+    await waitFor(() => expect(list()).toBeVisible(), { timeout: 3000 });
+    await expect(list().closest(".cv-combobox__popup")).toHaveAttribute("data-animated", "false");
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent("1 result");
   },
 };

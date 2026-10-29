@@ -1,15 +1,18 @@
 // @vitest-environment jsdom
 import { act, useRef, useState, type JSX } from "react";
-import { expect, fn, userEvent, within } from "storybook/test";
-import { describe, it } from "vitest";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
+import { afterEach, describe, it, vi } from "vitest";
 import {
   Button,
   Dialog,
   Menu,
+  formatRbacReason,
   type MenuActionItem,
+  type MenuAnchor,
   type MenuButtonProps,
   type MenuItem,
 } from "../src/components/index.js";
+import { seriousViolations } from "./axe.js";
 import { mount } from "./theme/mount.js";
 
 const page = within(document.body);
@@ -973,5 +976,118 @@ describe("Menu (CMP-041) context menu", () => {
       );
     });
     expect(passed).toBe(true);
+  });
+});
+
+describe("Menu (CMP-041) host-opened (E08-D05 A-D05-13)", () => {
+  const RECORD = formatRbacReason("rbac.owner_only", { verb: "start recording" });
+  let openAt: (anchor: MenuAnchor) => void = noop;
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** SCR-102's shape: focus stays in the input; the host opens the menu at what it names. */
+  function Hosted({ onSelect = noop }: { onSelect?: () => void }): JSX.Element {
+    const [shown, setShown] = useState<{ anchor: MenuAnchor; open: boolean } | null>(null);
+    openAt = (anchor) => setShown({ anchor, open: true });
+    const items: MenuItem[] = [
+      { id: "open", label: "Open in Chart 1", onSelect },
+      { id: "record", label: "Record this symbol…", disabledReason: RECORD, onSelect },
+    ];
+    return (
+      <div>
+        <input aria-label="Search symbols" />
+        <div>ETHUSDT</div>
+        <Button>After</Button>
+        {shown === null ? null : (
+          <Menu
+            anchor={shown.anchor}
+            open={shown.open}
+            onOpenChange={(next) => setShown({ ...shown, open: next })}
+            aria-label="Actions for ETHUSDT"
+            items={items}
+          />
+        )}
+      </div>
+    );
+  }
+  const input = (): HTMLElement => page.getByRole("textbox", { name: "Search symbols" });
+  const option = (): HTMLElement => page.getByText("ETHUSDT");
+
+  it("no trigger: it opens when the host says; focus returns where it was at each opening", async () => {
+    let during: Element | null = null;
+    const onSelect = fn(() => {
+      during = document.activeElement;
+    });
+    await mount(<Hosted onSelect={onSelect} />);
+    act(() => input().focus());
+    await act(async () => openAt(option()));
+    expect(page.getByRole("menu", { name: "Actions for ETHUSDT" })).toBeVisible();
+    expect(page.queryByRole("button", { name: "Actions for ETHUSDT" })).toBeNull();
+    expect(focused()).toBe("Open in Chart 1");
+    await press("{Escape}");
+    expect(input()).toHaveFocus();
+    expect(page.queryByRole("menu", { name: "Actions for ETHUSDT" })).toBeNull();
+    const after = page.getByRole("button", { name: "After" });
+    act(() => after.focus());
+    await act(async () => openAt(option()));
+    await press("{Enter}");
+    expect([onSelect.mock.calls.length, during, document.activeElement]).toEqual([1, after, after]);
+  });
+
+  it("positioned below the anchor's start: an element (the active option), or a rect (the pointer)", async () => {
+    // jsdom's viewport is 0 × 0, which would flip and shift every placement: give it a window's room.
+    vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(1024);
+    vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(768);
+    await mount(<Hosted />);
+    // jsdom lays nothing out: the option's box, as a host would measure it.
+    const box = {
+      x: 40,
+      y: 100,
+      width: 200,
+      height: 24,
+      top: 100,
+      left: 40,
+      right: 240,
+      bottom: 124,
+    };
+    vi.spyOn(option(), "getBoundingClientRect").mockReturnValue(box as DOMRect);
+    await act(async () => openAt(option()));
+    const menu = page.getByRole("menu", { name: "Actions for ETHUSDT" });
+    await waitFor(() => expect([menu.style.left, menu.style.top]).toEqual(["40px", "124px"]));
+    await press("{Escape}");
+    await act(async () => openAt({ x: 300, y: 200, width: 0, height: 0 }));
+    await waitFor(() => expect([menu.style.left, menu.style.top]).toEqual(["300px", "200px"]));
+  });
+
+  it("a T2 item: reached by the arrows, aria-disabled, described by its reason; inert, re-said per press", async () => {
+    const onSelect = fn();
+    await mount(<Hosted onSelect={onSelect} />);
+    act(() => input().focus());
+    await act(async () => openAt(option()));
+    await press("{ArrowDown}");
+    const record = page.getByRole("menuitem", { name: "Record this symbol…" });
+    expect([document.activeElement, record.getAttribute("aria-disabled")]).toEqual([
+      record,
+      "true",
+    ]);
+    expect(record).toHaveAccessibleDescription(RECORD);
+    await press("{Enter} ");
+    expect([onSelect.mock.calls.length, document.activeElement]).toEqual([0, record]);
+    expect(page.getByRole("status")).toHaveTextContent(RECORD);
+    expect(await seriousViolations(document.body)).toEqual([]);
+    await press("{Escape}"); // the press re-rendered the open menu: its origin is still the input
+    expect(input()).toHaveFocus();
+  });
+
+  it("type: a host-opened menu is controlled and named; an anchor is never a trigger's", () => {
+    const el = document.createElement("div");
+    // @ts-expect-error the host opens it: `open` is required
+    const uncontrolled = <Menu anchor={el} aria-label="x" items={[]} />;
+    // @ts-expect-error no trigger names it: `aria-label` is required
+    const unnamed = <Menu anchor={el} open items={[]} />;
+    // @ts-expect-error an anchor excludes a trigger
+    const both = <Menu anchor={el} open aria-label="x" trigger={<Button>x</Button>} items={[]} />;
+    expect([uncontrolled, unnamed, both]).toHaveLength(3);
   });
 });

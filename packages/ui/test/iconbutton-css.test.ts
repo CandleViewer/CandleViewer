@@ -29,6 +29,17 @@ describe("iconbutton.css contract", () => {
     expect(CSS).not.toMatch(/data-size/);
   });
 
+  it("A-D05-15 holds as built: a control step and a row step are one height in each density", () => {
+    // A `size.control.*` step raised toward `16` §3's 40–44 px would grow the `⋯` past SCR-102's one-row bar.
+    const tokens = JSON.parse(
+      readFileSync(resolve(import.meta.dirname, "../tokens/primitives.tokens.json"), "utf-8"),
+    ) as Record<string, { $value: string }>; // DTCG: flat dotted names, string values
+    const steps = (kind: string): (string | undefined)[] =>
+      ["compact", "comfortable"].map((density) => tokens[`size.${kind}.${density}`]?.$value);
+    expect(steps("control")).toEqual(steps("row"));
+    expect(steps("row")).toEqual(["24", "32"]); // the `⋯`: 24 × 24 compact, 32 × 32 comfortable
+  });
+
   it("gated: glyph text.primary on every variant, out-specifying them, outline kept off the plate", () => {
     const gated = find(normal, ".cv-icon-button[data-gated][data-variant]", "color");
     expect(gated?.body).toContain("color: var(--color-text-primary)");

@@ -27,6 +27,11 @@
   opacity: 0;
 }
 
+/* A host that is not animated (E08-D05's CMP-160): the popup appears at its first placement, a cut. */
+.cv-combobox__popup[data-animated="false"] {
+  transition: none;
+}
+
 /* Ten rows at most, then the list scrolls; never taller than the room on its side, one row at least. */
 .cv-combobox__list {
   max-height: max(

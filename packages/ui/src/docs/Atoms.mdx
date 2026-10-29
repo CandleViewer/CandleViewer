@@ -438,22 +438,27 @@ Flap-collapse (reconnect attempts within 5 s read as one "Connection unstable") 
 owns the connection state; the callout announces each state entry it is given once.
 
 
-### EmptyState (CMP-026, a static block; its CTA and link follow APG Button and APG Link)
+### EmptyState (CMP-026, a static block; its actions and link follow APG Button and APG Link)
 
 | Keys            | Action                                                                                              |
 | --------------- | --------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab | Moves to the CTA, then the link. The sentence form (no `cta`) has no button; with neither, no stop. |
-| Enter, Space    | Activates the CTA. Enter follows the link.                                                          |
+| Tab / Shift+Tab | Moves to each action, then the link. The sentence form (no `actions`) has no button; else, no stop. |
+| Enter, Space    | Activates the focused action; a T2 one says its reason again, politely. Enter follows the link.     |
 
 | Element | Role                              | Name      | Notes                                                                              |
 | ------- | --------------------------------- | --------- | ---------------------------------------------------------------------------------- |
-| Heading | heading, level `headingLevel` (3) | the fact  | No live region: the host's own region says a filter emptied a table, once.         |
-| CTA     | button (CMP-001 `primary`)        | its label | A gated CTA is never drawn: the sentence form puts the host's reason in its place. |
-| Link    | link (CMP-021)                    | its label | One secondary link, after the CTA.                                                 |
+| Heading | heading, level `headingLevel` (3) | the fact  | Not a live region; while an action is gated, a polite status says each press once. |
+| Actions | button (CMP-001)                  | its label | One or two, in order; a T2 action is drawn with its reason (below).                |
+| Link    | link (CMP-021)                    | its label | One secondary link, after the actions.                                             |
 | Glyph   | none                              | none      | The variant's registry glyph (`filtered-empty`: `search`), `aria-hidden`.          |
 
-`variant="error"` renders CMP-027's panel with `live="polite"` (E05-D02 H13): `title` its heading, `description`
-its message, `cta` its Retry.
+`actions` holds one or two (`cta` is a deprecated alias): the first `primary` and the second `secondary` unless
+`variant` says. A T2 action (`disabledReason`) is drawn: `aria-disabled`, described by its reason, which shows under
+it, and the action keeps its node when the gate comes or goes. A sole gated action is the sentence form instead: the
+host's reason as the `description`, no button (E09-D09 §8). `variant="error"` renders CMP-027's panel, `live="polite"`
+by default (E05-D02 H13) or `"assertive"` for `role="alert"` (E08-D05 A-D05-5): `title` its heading, `description` its
+message, `cta` its secondary Retry. With `actions` or `reference`, the panel holds the glyph and the words, and the
+block adds the actions and a selectable "Ref …" line (a problem's `instance`) outside the live region.
 
 ### ErrorState / InlineError (CMP-027, an alert or status region; Disclosure for the details)
 

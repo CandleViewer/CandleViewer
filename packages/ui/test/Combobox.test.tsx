@@ -454,8 +454,99 @@ describe("Combobox states and the settled query", () => {
   });
 });
 
-// One test: the runner unmounts a story as the next one starts, before `mount` empties the page.
-it("runs each catalogued story's play function", async () => {
+describe("Combobox host hooks (E08-D05 A-D05-6)", () => {
+  const S = (n: number): string => `S${String(n).padStart(2, "0")}USDT`;
+  const MANY: ComboboxOption[] = Array.from({ length: 25 }, (_, i) => ({
+    value: S(i + 1),
+    label: S(i + 1),
+  }));
+
+  it.each([
+    [
+      "the whole rows that fit the list (118 px over 24 px rows: 4.9, so 4)",
+      true,
+      [4, 8, 12, 16, 20, 24, 25, 25],
+      21,
+    ],
+    ["10 when nothing is laid out", false, [10, 20, 25, 25], 15],
+  ])(
+    "PageDown / PageUp move by a page, %s, within the list: no wrap, never back to the text",
+    async (_s, laidOut, downs, firstUp) => {
+      await mount(<Host options={MANY} />);
+      expect(await press("PageDown")).toBe(true); // a closed list: the key is the page's
+      expect(aria("expanded")).toEqual(["false"]);
+      await press("ArrowDown", { altKey: true }); // open, nothing active
+      expect(document.querySelector(".cv-combobox__popup")).not.toHaveAttribute("data-animated");
+      expect([await press("PageUp"), activeLabel()]).toEqual([false, null]); // the text stays
+      expect([await press("PageDown", { altKey: true }), activeLabel()]).toEqual([true, null]);
+      // jsdom lays nothing out: the page reads only these two heights.
+      const measured = [
+        [listbox(), 118],
+        [document.querySelector(".cv-select__row"), 24],
+      ] as const;
+      for (const [node, height] of laidOut ? measured : [])
+        if (node !== null)
+          vi.spyOn(node, "getBoundingClientRect").mockReturnValue({ height } as DOMRect);
+      const path: (string | null)[] = [];
+      while (path.length < downs.length) {
+        expect(await press("PageDown")).toBe(false);
+        path.push(activeLabel());
+      }
+      expect(path).toEqual(downs.map(S));
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalled(); // a key move scrolls its row in
+      expect(await press("PageUp")).toBe(false);
+      expect(activeLabel()).toBe(S(firstUp));
+      for (let i = 0; i < 6; i += 1) await press("PageUp");
+      expect([activeLabel(), ...aria("expanded")]).toEqual([S(1), "true"]); // never the text
+    },
+  );
+
+  it("settleMs sets the rest before the list opens and the count is said (CMP-160 passes 300)", async () => {
+    vi.useFakeTimers();
+    await mount(<Host options={OPTIONS} settleMs={300} />);
+    await type("eth");
+    await wait(299);
+    expect([...aria("expanded"), status().textContent]).toEqual(["false", ""]);
+    await wait(1);
+    expect([...aria("expanded"), status().textContent]).toEqual(["true", "1 result"]);
+  });
+
+  it("a key a native listener prevented before the host's turn is still the combobox's", async () => {
+    await mount(<Host options={OPTIONS} onKeyDown={noop} />);
+    input().addEventListener("keydown", (event) => event.preventDefault());
+    await press("ArrowDown");
+    expect([...aria("expanded"), activeLabel()]).toEqual(["true", "BTCUSDT"]);
+  });
+
+  it("onKeyDown runs first with the active option; its preventDefault skips the combobox's own handling", async () => {
+    const seen: string[] = [];
+    const spy = vi.fn();
+    const onKeyDown: ComboboxProps["onKeyDown"] = (event, active) => {
+      seen.push(`${event.key}:${active?.label ?? ""}`);
+      if (["Enter", "Escape", "F10"].includes(event.key)) event.preventDefault();
+    };
+    await mount(<Host options={OPTIONS} spy={spy} onKeyDown={onKeyDown} />);
+    expect(await press("ArrowDown")).toBe(false); // left to the combobox: it opens on BTCUSDT
+    for (const [key, shiftKey] of [
+      ["F10", true],
+      ["Enter", true],
+      ["Enter", false],
+      ["Escape", false],
+    ] as const)
+      expect(await press(key, { shiftKey })).toBe(false);
+    expect(seen.join(" ")).toBe(
+      "ArrowDown: F10:BTCUSDT Enter:BTCUSDT Enter:BTCUSDT Escape:BTCUSDT",
+    );
+    // Nothing chosen, nothing closed: the host took Enter and Esc.
+    expect([spy.mock.calls, ...aria("expanded"), activeLabel()]).toEqual([[], "true", "BTCUSDT"]);
+    await press("Enter", { isComposing: true }); // an IME composition is never the host's
+    expect(seen).toHaveLength(5);
+  });
+});
+
+// One test: the runner unmounts a story as the next one starts, before `mount` empties the page. Each play waits
+// its real settle, so the loop has its own budget: 14 stories took 5.1 s on a loaded runner, past the 5 s default.
+it("runs each catalogued story's play function", { timeout: 20_000 }, async () => {
   for (const [name, Story] of Object.entries(composeStories(stories))) {
     const canvasElement = document.body.appendChild(document.createElement("div"));
     await expect(Story.run({ canvasElement }), name).resolves.toBeUndefined();

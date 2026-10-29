@@ -82,6 +82,8 @@ export type { DrawerCloseReason, DrawerProps, DrawerSide } from "./Drawer.js";
 
 export { EmptyState } from "./EmptyState.js";
 export type {
+  EmptyStateAction,
+  EmptyStateActions,
   EmptyStateCta,
   EmptyStateEmptyProps,
   EmptyStateErrorProps,
@@ -167,8 +169,11 @@ export type { MaskedValueProps, MaskedValueState } from "./MaskedValue.js";
 
 export { Menu } from "./Menu.js";
 export type {
+  AnchoredMenuProps,
   ContextMenuProps,
   MenuActionItem,
+  MenuAnchor,
+  MenuAnchorRect,
   MenuButtonProps,
   MenuGroup,
   MenuItem,

@@ -50,6 +50,34 @@ describe("emptystate.css contract", () => {
     expect(css.all).not.toMatch(/status-danger/);
   });
 
+  it("a T2 action (A-D05-5, 2a): a column, its reason a caption in text.secondary under the button", () => {
+    expect(find(css.normal, ".cv-empty-state__action", "flex-direction")).toContain(
+      "flex-direction: column",
+    );
+    const reason = find(css.normal, ".cv-empty-state__reason", "font");
+    expect(reason).toContain("--type-ui-caption-font-size");
+    expect(reason).toContain("color: var(--color-text-secondary)");
+    expect(find(css.normal, ".cv-empty-state__actions[data-gated]", "align-items")).toContain(
+      "align-items: flex-start",
+    );
+  });
+
+  it("the error's Ref: type.num.sm in text.secondary, selectable; CMP-027's words sit in the block unpadded", () => {
+    const ref = find(css.normal, ".cv-empty-state__ref", "font");
+    expect(ref).toContain("--type-num-sm-font-size");
+    expect(ref).toContain("color: var(--color-text-secondary)");
+    expect(ref).toContain("user-select: text");
+    const words = find(
+      css.normal,
+      '.cv-empty-state > .cv-error-state[data-form="panel"]',
+      "padding",
+    );
+    expect(words).toContain("padding: 0");
+    for (const sel of [".cv-empty-state__reason", ".cv-empty-state__ref"]) {
+      expect(find(css.forced, sel, "color")).toContain("color: CanvasText");
+    }
+  });
+
   it("wraps and never truncates", () => {
     expect(css.all).toContain("overflow-wrap: anywhere");
     expect(css.all).not.toMatch(/text-overflow|line-clamp/);

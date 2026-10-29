@@ -49,6 +49,12 @@ describe("combobox.css contract (CMP-048)", () => {
     }
   });
 
+  it("animated=false: the popup appears at once (E08-D05 'not animated', #4703 G-row 2)", () => {
+    expect(find(normal, '.cv-combobox__popup[data-animated="false"]', "transition")).toContain(
+      "transition: none",
+    );
+  });
+
   it("forced colours: the popup on Canvas with a CanvasText edge, adjust none; status CanvasText", () => {
     const popup = find(forced, ".cv-combobox__popup", "background");
     expect(popup).toContain("border-color: CanvasText");
