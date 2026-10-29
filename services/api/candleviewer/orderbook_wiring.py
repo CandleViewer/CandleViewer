@@ -84,7 +84,7 @@ WRITE_QUEUE_MAXSIZE = 8192
 SNAPSHOT_TIMEOUT_S = 10.0
 #: E21-T01: a warming tier not LIVE this long after its change started is dropped (F2).
 WARMUP_DEADLINE_S = 3 * SNAPSHOT_TIMEOUT_S
-#: #604 (Fable delta, Medium): after an abandoned warm-up the symbol's next warm-up to that depth
+#: E21-T01: after an abandoned warm-up the symbol's next warm-up to that depth
 #: waits this long, doubling per abandonment up to the cap, so a venue that never serves the
 #: 500 snapshot costs one unsubscribe + subscribe per 10 min, not per 30 s. The abandoned tier
 #: going LIVE, a change of the symbol's 500 demand set, or forgetting the symbol resets it.
@@ -325,7 +325,11 @@ class BookStream:
         return frozenset(c for c, d in self._wants.get(symbol, {}).items() if d >= DEEP_TIER)
 
     def _demand_changed(self, symbol: str, before: frozenset[str]) -> None:
-        """#604: a change of the symbol's 500 demand set is a fresh start: no re-warm backoff."""
+        """#604: a change of the symbol's 500 demand set is a fresh start: no re-warm backoff.
+
+        A client toggling `book.X.500` resets it, but each toggle costs at least the WS
+        upstream grace plus a warm-up (about a minute per symbol) and stays inside the
+        deep-book cap and the `sub` rebuild budget."""
         if self._deep_demand(symbol) != before:
             self._rewarm.pop(symbol, None)
 

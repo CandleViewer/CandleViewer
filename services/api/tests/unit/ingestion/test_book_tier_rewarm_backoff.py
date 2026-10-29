@@ -1,4 +1,4 @@
-"""#604 (Fable security delta, Medium): a 500 tier the venue never snapshots is not re-warmed
+"""#604 (E21-T01): a 500 tier the venue never snapshots is not re-warmed
 every `WARMUP_DEADLINE_S` forever. Each abandonment counts
 `ingest_book_tier_warmup_abandoned_total{symbol}` and pushes the next re-warm out (30 s doubling
 to 10 min); the abandoned tier's LIVE, a change of the 500 demand set or forgetting the symbol
@@ -113,7 +113,7 @@ async def test_a_forgotten_symbol_drops_its_backoff() -> None:
 
 
 async def test_the_live_active_tier_does_not_inherit_the_abandoned_tiers_backoff() -> None:
-    """Item 3: the abandoned tier's snapshot timeouts grew the symbol's resync backoff; once it
+    """The abandoned tier's snapshot timeouts grew the symbol's resync backoff; once it
     is dropped, a gap on the LIVE active tier resubscribes at once, not after that cooldown."""
     r = await live_200_wanting_500()
     await run_cycles(r, 6)
