@@ -42,16 +42,24 @@ declare global {
   }
 }
 
+/**
+ * Auto-update is off until the release is signed (E10-T02, SR-115): main's
+ * `isAutoUpdateEnabled()` is a constant `false`, and the hardening gate fails
+ * any renderer bundle that says otherwise. Its reason is E10-D03 §9.1's
+ * pre-signing sentence (Q11, the owner's PROPOSED copy).
+ */
 export const ELECTRON_CAPABILITIES: ShellCapabilities = Object.freeze({
   floatingWindows: true,
   tray: true,
-  autoUpdate: true,
+  autoUpdate: false,
   keychain: true,
   osNotifications: true,
   gpuInfo: true,
   deepLinks: true,
   crashLog: true,
-  reason: Object.freeze({}),
+  reason: Object.freeze({
+    autoUpdate: "Updates are installed from the release page until signed auto-updates ship.",
+  }),
 });
 
 function requireBridge(): CvBridge {

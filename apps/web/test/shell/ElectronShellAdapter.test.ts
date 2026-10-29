@@ -35,10 +35,14 @@ describe("createElectronShellAdapter", () => {
     vi.restoreAllMocks();
   });
 
-  it("reports every capability as available (no false positives on the desktop shell)", () => {
+  it("reports auto-update off until the release is signed (SR-115), with its reason; the rest on", () => {
     const adapter = createElectronShellAdapter();
     expect(adapter.capabilities).toEqual(ELECTRON_CAPABILITIES);
-    expect(Object.keys(adapter.capabilities.reason)).toHaveLength(0);
+    const { reason, ...flags } = adapter.capabilities;
+    expect(Object.keys(flags).filter((key) => !flags[key as keyof typeof flags])).toEqual([
+      "autoUpdate",
+    ]);
+    expect(reason).toEqual({ autoUpdate: expect.stringMatching(/\S/) }); // hidden with a reason
   });
 
   it("forwards every method call to the matching named window.cv function, not a generic channel", async () => {

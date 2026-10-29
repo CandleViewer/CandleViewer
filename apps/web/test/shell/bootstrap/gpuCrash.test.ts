@@ -2,12 +2,37 @@
 // record on #306, BQ-9.1 to 9.4): the store, its analytics, the browser, the shell's start and stop.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CvBridge } from "../../../src/shell/ElectronShellAdapter.js";
-import type { GpuCrash } from "../../../src/shell/ShellPort.js";
-import { hostGpu, retryGpuNow, watchGpu } from "../../../src/shell/bootstrap/gpuCrash.js";
+import type * as ElectronAdapterModule from "../../../src/shell/ElectronShellAdapter.js";
+import type { GpuCrash, ShellPort } from "../../../src/shell/ShellPort.js";
+import { retryGpuNow, watchGpu } from "../../../src/shell/bootstrap/gpuCrash.js";
 import { getShellState, resetShellState } from "../../../src/shell/bootstrap/store.js";
 import { THEME_ANALYTICS_EVENT } from "../../../src/shell/bootstrap/themeStore.js";
 import { startShell } from "../../../src/shell/startShell.js";
 import { FakePort } from "../../lib/ws/support/fakePort";
+
+// The Electron adapters made and their GPU calls, in order: the shell port's pick where the preload ran.
+const viaAdapter = vi.hoisted((): string[] => []);
+vi.mock("../../../src/shell/ElectronShellAdapter.js", async (importOriginal) => {
+  const real = await importOriginal<typeof ElectronAdapterModule>();
+  const createElectronShellAdapter = (): ShellPort => {
+    const port = real.createElectronShellAdapter();
+    const { onCrashed, retry } = port.gpu;
+    viaAdapter.push("created");
+    const gpu: ShellPort["gpu"] = {
+      ...port.gpu,
+      onCrashed: (handler) => {
+        viaAdapter.push("onCrashed");
+        return onCrashed(handler);
+      },
+      retry: () => {
+        viaAdapter.push("retry");
+        return retry();
+      },
+    };
+    return { ...port, gpu };
+  };
+  return { ...real, createElectronShellAdapter };
+});
 
 const CRASH: GpuCrash = { crashedAtMs: 1_000, restartCount: 1, reason: "crashed" };
 const listeners = new Set<(crash: GpuCrash) => void>();
@@ -31,6 +56,7 @@ const started = () =>
 beforeEach(() => {
   resetShellState();
   events.length = 0;
+  viaAdapter.length = 0;
   gpuRetry.mockClear();
   window.addEventListener(THEME_ANALYTICS_EVENT, listen);
   vi.stubGlobal(
@@ -62,7 +88,7 @@ describe("SCR-159's GPU crashes, from the shell's start to its stop", () => {
       { name: "shell.gpu_unavailable", reason: "crashed" },
       { name: "shell.gpu_unavailable", reason: "oom" },
     ]);
-    await retryGpuNow(); // the preload's own function: no Electron adapter in the renderer
+    await retryGpuNow(); // the preload's own function, through the Electron adapter
     expect(gpuRetry).toHaveBeenCalledTimes(1);
     shell.stop();
     expect(listeners.size).toBe(0);
@@ -71,11 +97,29 @@ describe("SCR-159's GPU crashes, from the shell's start to its stop", () => {
 
   it("in a tab: nothing reports a crash and Retry is refused, so no page ever shows", async () => {
     const shell = started();
-    const handler = vi.fn();
-    hostGpu().onCrashed(handler)();
     await expect(retryGpuNow()).rejects.toThrow("not available in a browser tab");
-    expect([handler.mock.calls, getShellState().gpuCrash, events]).toEqual([[], null, []]);
+    expect([viaAdapter, getShellState().gpuCrash, events]).toEqual([[], null, []]); // the tab's port
     shell.stop();
+  });
+
+  it("reads the desktop's GPU through the Electron adapter, the shell port where the preload ran", async () => {
+    desktop({ onGpuCrashed, gpuRetry });
+    const shell = started();
+    await retryGpuNow();
+    expect([viaAdapter, gpuRetry.mock.calls.length]).toEqual([
+      ["created", "onCrashed", "retry"],
+      1,
+    ]);
+    shell.stop();
+  });
+
+  it("watches the port it is given, not the shell's: a test's fake, though the preload ran", async () => {
+    desktop({ onGpuCrashed, gpuRetry });
+    const retry = vi.fn(async () => undefined);
+    const stop = watchGpu({ onCrashed: () => () => undefined, retry });
+    await retryGpuNow();
+    stop();
+    expect([retry.mock.calls.length, viaAdapter, gpuRetry.mock.calls.length]).toEqual([1, [], 0]);
   });
 
   it("never stops the shell's start: a bridge without the GPU event leaves the page off", async () => {

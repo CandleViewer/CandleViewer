@@ -1,11 +1,12 @@
 /**
  * E10-S04 (#306) slice 9c: SCR-159's GPU-unavailable state, the desktop app's only (F15; the ruling
  * of record on #306, BQ-9.1 to 9.4). Each `cv:gpu:crashed` the preload forwards lands in the shell
- * store for the page and is reported once as `shell.gpu_unavailable`, by its reason class only. In a
- * tab nothing reports a crash: the browser adapter's `onCrashed` is a no-op, its retry refused.
+ * store for the page and is reported once as `shell.gpu_unavailable`, by its reason class only. The
+ * host's GPU is the shell port's: the Electron adapter where the preload ran. In a tab nothing
+ * reports a crash: the browser adapter's `onCrashed` is a no-op, its retry refused.
  */
-import { createBrowserShellAdapter } from "../BrowserShellAdapter.js";
 import { crashLogSettled } from "../crash/reportCrash.js";
+import { createShellPort } from "../createShellPort.js";
 import type { GpuCrash, GpuCrashReason, ShellPort } from "../ShellPort.js";
 import { applyGpuCrash } from "./store.js";
 import { THEME_ANALYTICS_EVENT } from "./themeStore.js";
@@ -44,19 +45,8 @@ function checked(payload: unknown): GpuCrash | undefined {
     : undefined;
 }
 
-/**
- * The host's GPU surface: the preload's own functions where it ran, read from `window.cv` so the
- * renderer bundle never carries the Electron adapter's capabilities (SR-115's gate, as
- * `startShell`'s crash log); else a tab's.
- */
-export function hostGpu(): GpuPort {
-  const bridge = typeof window === "undefined" ? undefined : window.cv;
-  if (bridge === undefined) return createBrowserShellAdapter().gpu;
-  return { onCrashed: (handler) => bridge.onGpuCrashed(handler), retry: () => bridge.gpuRetry() };
-}
-
 /** Feeds the host's GPU crashes to the store; returns the unsubscribe. It never stops a start. */
-export function watchGpu(gpu: GpuPort = hostGpu()): () => void {
+export function watchGpu(gpu: GpuPort = createShellPort().gpu): () => void {
   let unsubscribe = (): void => undefined;
   try {
     unsubscribe = gpu.onCrashed((payload: unknown) => {

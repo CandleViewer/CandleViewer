@@ -61,8 +61,7 @@ let stopActive: (() => void) | null = null;
 export function startShell(options: StartShellOptions): { stop(): void; ready: Promise<void> } {
   stopActive?.();
   // E10-S04: one crash reporter per shell, catching what no boundary does (window `error`, unhandled rejections)
-  // The in-memory crash log for now: the Electron file log needs its IPC channel (a later slice), and importing the
-  // Electron adapter here would pull its capabilities into the renderer bundle (SR-115's gate).
+  // The in-memory crash log for now: wiring the Electron file log through the shell port is a later slice.
   const uninstallCrash = installCrashReporter({
     port: createBrowserShellAdapter(),
     version: CLIENT_VERSION,
