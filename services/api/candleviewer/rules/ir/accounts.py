@@ -12,16 +12,33 @@ from typing import Any
 
 from pydantic import BaseModel
 
-ACCOUNT_KEY = re.compile(r"^(?:.*_)?account_?ids?$", re.IGNORECASE)
+#: Matched against the whole key, line breaks included (22 `RuleInput`, #4835).
+ACCOUNT_KEY = re.compile(r"(?:.*_)?account_?ids?", re.IGNORECASE | re.DOTALL)
 
 
 def is_account_key(key: object) -> bool:
-    return isinstance(key, str) and ACCOUNT_KEY.match(key) is not None
+    return isinstance(key, str) and ACCOUNT_KEY.fullmatch(key) is not None
 
 
 def model_account_fields(*models: type[BaseModel]) -> set[str]:
     """Every field name on the given pydantic models that names an account reference."""
     return {name for m in models for name in m.model_fields if is_account_key(name)}
+
+
+def holds_account_key(doc: Any) -> bool:
+    """Whether ``doc`` holds an account-reference key at any depth, whatever its value (an empty
+    list names accounts too): a save body names no account outside ``ir`` (#4835). Iterative, so
+    no depth exhausts the stack."""
+    todo = [doc]
+    while todo:
+        cur = todo.pop()
+        if isinstance(cur, dict):
+            if any(is_account_key(k) for k in cur):
+                return True
+            todo.extend(cur.values())
+        elif isinstance(cur, list | tuple):
+            todo.extend(cur)
+    return False
 
 
 def collect_account_ids(doc: Any) -> tuple[str, ...]:

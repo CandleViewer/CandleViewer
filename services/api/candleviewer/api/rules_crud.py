@@ -6,30 +6,43 @@ Thin HTTP adapter over `rules.manager.RulesManager` (`22-api-openapi.yaml`
 fresh step-up) or `None` (401). `rules:read` gates reads, `rules:write` gates writes;
 live arming additionally needs `rules:arm_live` + a fresh one-shot step-up, enforced by the
 manager's synchronous arming check (statecharts record, code enforces - C-2.21). Bodies are read
-through `api/rule_body.py` (413 `payload_too_large`) before anything parses them.
+through `api/rule_body.py` (413 `payload_too_large`) before anything parses them, and a save body
+holds only the members `22` names, with no account outside `ir` (G-12).
 """
 
 from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
+from candleviewer.api._generated.openapi_models import RuleInput, RuleUpdateInput
 from candleviewer.api.rule_body import read_object
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir.models import RuleScope
-from candleviewer.rules.manager import Actor, RuleError, RulesManager
+from candleviewer.rules.manager import Actor, RuleError, RuleRefusalUnrecorded, RulesManager
 from candleviewer.rules.scope import ScopeResolver
 
 _READ = "rules:read"
 _WRITE = "rules:write"
+
+
+def _members(model: type[BaseModel]) -> frozenset[str]:
+    """The body members a generated contract model names, by their JSON names."""
+    return frozenset(field.alias or name for name, field in model.model_fields.items())
+
+
+#: The members `22` names in each save body (`RuleInput`, `RuleUpdateInput`), read from the
+#: generated contract models: a save body naming any other is refused (G-12, #4835).
+CREATE_MEMBERS: Final = _members(RuleInput)
+UPDATE_MEMBERS: Final = _members(RuleUpdateInput)
 
 
 def _problem(status: int, code: str, title: str, detail: str, **extra: Any) -> JSONResponse:
@@ -53,6 +66,15 @@ def _from_error(exc: RuleError) -> JSONResponse:
     extra = dict(exc.extra)
     title = str(extra.pop("title", exc.code.replace("_", " ").capitalize()))
     return _problem(exc.status, exc.code, title, exc.message, **extra)
+
+
+def _unrecorded(lost: RuleRefusalUnrecorded) -> JSONResponse:
+    """A save refusal whose record the writer could not take (`AuditUnavailable`) or did not take
+    in time is `503 audit_unavailable`, as the scope check answers its own (C-2.9): nothing is
+    stored. Any other cause is a defect and propagates, never a retryable 503."""
+    if not isinstance(lost.__cause__, AuditUnavailable | TimeoutError):
+        raise lost
+    return _problem(503, "audit_unavailable", "Unavailable", "the refusal could not be recorded")
 
 
 def _doc(body: dict[str, Any]) -> dict[str, Any] | None:
@@ -172,22 +194,24 @@ def make_rules_crud_router(
         body = await _body(request)
         if isinstance(body, JSONResponse):
             return body
-        doc = _doc(body) if body is not None else None
-        if body is None or doc is None:
+        if body is None:
             return _bad("body needs an 'ir' object")
-        if (refused := _unstorable(body, "note")) is not None:
-            return refused
         try:
-            mgr.check_document(doc)  # the bounds first: the scope check below reads the scope
-        except RuleError as exc:
-            return _from_error(exc)
-        denied = await _scope_check(actor, doc.get("scope"), arming=False)
-        if denied is not None:
-            return denied
-        try:
+            # The body's members first, so a refused one is audited whatever else the body lacks
+            # (G-12), then its shape and the bounds: the scope check below reads the scope.
+            await mgr.check_save_body(body, CREATE_MEMBERS, "create", actor)
+            if (doc := _doc(body)) is None:
+                return _bad("body needs an 'ir' object")
+            if (refused := _unstorable(body, "note")) is not None:
+                return refused
+            mgr.check_document(doc)
+            if (denied := await _scope_check(actor, doc.get("scope"), arming=False)) is not None:
+                return denied
             return JSONResponse(await mgr.create(doc, actor, str(body.get("note", ""))), 201)
         except RuleError as exc:
             return _from_error(exc)
+        except RuleRefusalUnrecorded as lost:
+            return _unrecorded(lost)
 
     @router.get("/rules/{ruleId}")
     async def get_rule(ruleId: UUID, request: Request) -> Response:
@@ -209,20 +233,23 @@ def make_rules_crud_router(
         body = await _body(request)
         if isinstance(body, JSONResponse):
             return body
-        doc = _doc(body) if body is not None else None
-        raw = request.headers.get("if-match", "").strip().strip('"')
-        if raw == "" and body is not None:
-            raw = str(body.get("expected_version", ""))
-        if body is None or doc is None:
+        if body is None:
             return _bad("body needs an 'ir' object")
-        if not raw.isdigit():
-            return _bad("send the version you edited in If-Match (or expected_version)")
-        if (refused := _unstorable(body, "note")) is not None:
-            return refused
+        raw = request.headers.get("if-match", "").strip().strip('"')
+        if raw == "":
+            raw = str(body.get("expected_version", ""))
         try:
-            # The stored rule first (owner, every version's accounts), then the bounds, then the
-            # submitted scope.
+            # The stored rule first (owner, every version's accounts), then the body's members
+            # (a refused one is audited whatever else the body lacks), then its shape, the version
+            # edited and the bounds, then the submitted scope.
             await mgr.require_visible(str(ruleId), actor, "update")
+            await mgr.check_save_body(body, UPDATE_MEMBERS, "update", actor, str(ruleId))
+            if (doc := _doc(body)) is None:
+                return _bad("body needs an 'ir' object")
+            if not raw.isdigit():
+                return _bad("send the version you edited in If-Match (or expected_version)")
+            if (refused := _unstorable(body, "note")) is not None:
+                return refused
             mgr.check_document(doc)
             denied = await _scope_check(actor, doc.get("scope"), arming=False)
             if denied is not None:
@@ -230,6 +257,8 @@ def make_rules_crud_router(
             out = await mgr.update(str(ruleId), doc, int(raw), actor, str(body.get("note", "")))
         except RuleError as exc:
             return _from_error(exc)
+        except RuleRefusalUnrecorded as lost:
+            return _unrecorded(lost)
         return JSONResponse(out)
 
     @router.delete("/rules/{ruleId}")

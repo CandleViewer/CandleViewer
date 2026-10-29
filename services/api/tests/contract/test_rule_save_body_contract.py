@@ -120,24 +120,54 @@ def test_a_refused_member_is_named_with_one_of_the_two_reasons_22_names() -> Non
 
 
 def test_a_saved_version_echoes_exactly_the_accounts_its_save_sent() -> None:
-    """Each body holds every member its schema requires and is validated before it is sent."""
+    """Each body holds every member its schema requires and is validated before it is sent; its
+    top-level `scope` is then set apart from `ir.scope.level`, which 22 says a save ignores and
+    never stores: the rule and its version hold the IR's level."""
     client = owner_client()
 
-    def stored(rid: str) -> list[str]:
+    def stored(rid: str) -> tuple[list[str], str]:
         items = client.get(f"/rules/{rid}/versions").json()["items"]
         newest = max(items, key=lambda v: v["version"])["id"]
-        version = client.get(f"/rules/{rid}/versions/{newest}").json()
-        return list(version["ir"]["scope"]["account_ids"])
+        scope = client.get(f"/rules/{rid}/versions/{newest}").json()["ir"]["scope"]
+        return list(scope["account_ids"]), scope["level"]
 
     sent = [str(B), str(A)]
     body = save_body("RuleInput", "echo", rule_ir(level="account", account_ids=sent))
+    body["scope"] = "global"
     created = client.post("/rules", json=body)
     assert created.status_code == 201, created.text
     rid = created.json()["id"]
-    assert stored(rid) == sent
+    assert stored(rid) == (sent, "account") and created.json()["scope"] == "account"
     edited = save_body(
         "RuleUpdateInput", "echo", rule_ir("2", level="account", account_ids=[str(A)])
     )
+    edited["scope"] = "symbol"
     saved = client.put(f"/rules/{rid}", json=edited, headers={"If-Match": "1"})
     assert saved.status_code == 200, saved.text
-    assert stored(rid) == [str(A)]
+    assert stored(rid) == ([str(A)], "account")
+
+
+def test_the_save_routes_take_exactly_the_members_22_names() -> None:
+    """G-12: the save routes read the members they take from 22's two body schemas."""
+    from candleviewer.api.rules_crud import CREATE_MEMBERS, UPDATE_MEMBERS
+
+    assert set(CREATE_MEMBERS) == set(_SCHEMAS["RuleInput"]["properties"])
+    assert set(UPDATE_MEMBERS) == set(_SCHEMAS["RuleUpdateInput"]["properties"])
+
+
+def test_a_refusal_answers_with_the_reasons_message_and_bounds_22_states() -> None:
+    """G-12: the refusal's `errors[].rule` reasons, its fixed message, its counted `detail` and its
+    bounds (the members named, a member's name) are the ones 22 states (`RuleInput`, example
+    `memberOutsideIr`): the example's member, sent, is answered as the example shows it."""
+    from candleviewer.rules.manager import BODY_REFUSALS, MAX_BODY_REFUSALS
+
+    example = _REFUSED["application/problem+json"]["examples"]["memberOutsideIr"]["value"]
+    described = " ".join(_SCHEMAS["RuleInput"]["description"].split())
+    assert set(BODY_REFUSALS) == set(REASONS)
+    body = save_body("RuleInput", "refused", rule_ir(level="account", account_ids=[str(A)]))
+    sent = body | {"bindings": {"exchange_account_ids": [str(A)]}}
+    refused = owner_client().post("/rules", json=sent).json()
+    assert (refused["status"], refused["code"]) == (example["status"], example["code"])
+    assert (refused["detail"], refused["errors"]) == (example["detail"], example["errors"])
+    assert f"(at most {MAX_BODY_REFUSALS})" in described
+    assert "an ASCII identifier of at most 64 characters, else `$`" in described
