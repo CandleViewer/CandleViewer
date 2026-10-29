@@ -41,16 +41,16 @@ Bybit connection security (E08 model); recorder policy (E16 model).
 
 Rows marked **O** (§3) rate a control that is specified but not built, or built without a verifying test.
 
-| Surface                                    | State on `main` at `d52336de`                                                                                                                                    |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `book.{symbol}.{depth}` topic, book engine | Served; depth tiers 1/50/200/500 (`ws/topics.py` `DEPTHS`); `TieredBook` atomic tier change (`book/tiers.py`)                                                    |
-| `heatmap.{symbol}` topic                   | Registered with its option bounds; no producer: `ws_wiring.PENDING_ADAPTERS` maps `heatmap` to #2197, so a `sub` stays `snapshot_pending` until E21-T02 lands it |
-| `GET /market/orderbook`                    | Mounted (`api/orderbook.py`); RBAC matrix row executed                                                                                                           |
-| `GET /market/heatmap`                      | Specified in `22-api-openapi.yaml`; not mounted (RBAC matrix row `not_mounted`); E21-T03                                                                         |
-| `PATCH /settings`, `POST /settings/arm`    | Specified; not mounted (RBAC matrix rows `not_mounted`)                                                                                                          |
-| Outbound byte budget and ladder            | Built behind `CV_WS_BACKPRESSURE_ENABLED`, **off by default**; with it off the bound is a 1 024-frame push bound with no byte budget (`23-ws-protocol.md` §8.4)  |
-| Web WS client (shared worker)              | Built (E17-T04, #413): `apps/web/src/lib/ws/`; heatmap decode in `packages/protocol/src/runtime/`                                                                |
-| Render worker heatmap layer, SCR-050/051   | Not built (E21-T05, E21-S01..S09)                                                                                                                                |
+| Surface                                    | State on `main` at `d52336de`                                                                                                                                                                     |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `book.{symbol}.{depth}` topic, book engine | Served; depth tiers 1/50/200/500 (`ws/topics.py` `DEPTHS`); `TieredBook` atomic tier change (`book/tiers.py`)                                                                                     |
+| `heatmap.{symbol}` topic                   | Registered with its option bounds; no producer: `ws_wiring.PENDING_ADAPTERS` maps `heatmap` to #2197, so a `sub` stays `snapshot_pending` until E21-T02 lands it                                  |
+| `GET /market/orderbook`                    | Mounted (`api/orderbook.py`); RBAC matrix row executed                                                                                                                                            |
+| `GET /market/heatmap`                      | Specified in `22-api-openapi.yaml`; not mounted (RBAC matrix row `not_mounted`); E21-T03                                                                                                          |
+| `PATCH /settings`, `POST /settings/arm`    | Specified; not mounted (RBAC matrix rows `not_mounted`)                                                                                                                                           |
+| Outbound byte budget and ladder            | Built behind `CV_WS_BACKPRESSURE_ENABLED`, **on by default since #4883** (off stays selectable); with it off the bound is a 1 024-frame push bound with no byte budget (`23-ws-protocol.md` §8.4) |
+| Web WS client (shared worker)              | Built (E17-T04, #413): `apps/web/src/lib/ws/`; heatmap decode in `packages/protocol/src/runtime/`                                                                                                 |
+| Render worker heatmap layer, SCR-050/051   | Not built (E21-T05, E21-S01..S09)                                                                                                                                                                 |
 
 Observation for the coordinator: `Settings.max_ws_topics_per_conn = 64` (`settings.py`) is read by nothing; the cap in
 force is `ws/limits.py` `MAX_SUBSCRIPTIONS = 200`. It is not a control and this model cites only the latter.

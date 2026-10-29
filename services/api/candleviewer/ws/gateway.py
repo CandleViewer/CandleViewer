@@ -80,7 +80,7 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   While latency telemetry is on, that frame also carries a span id `sp` (23 §3.1): its bytes
   are observed without it, and once it is sent the writer logs a debug `ws frame span` record.
 
-- **Backpressure flag** (E17-T03, `CV_WS_BACKPRESSURE_ENABLED`, default on pending #568):
+- **Backpressure flag** (E17-T03, `CV_WS_BACKPRESSURE_ENABLED`, default on since #4883):
   `ws/pipeline.py` replaces the outbound queue. Frames are encoded once at push (where a
   stamped frame's encode is timed and sized), onto two lanes inside one 8 MiB / 2 000-frame
   budget, which the §8.4 ladder holds from the first `auth_ok` (drop, `backpressure`
@@ -1306,8 +1306,8 @@ def make_ws_router(
     `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline (`ws/pipeline.py`,
     `23-ws-protocol.md` §8.4): its budget binds both lanes, and a close flushes under its
     deadline. `None`, today's path, keeps the `OUTBOUND_QUEUE_MAX` push bound. A config also
-    makes the `welcome` advertise `features.coalescing` (§4.2); the default flips once the owner
-    rules on E17-Q03 profile B (#568; chaos scenarios 2 and 3 pass, #410; §8.4 Rollout). Without
+    makes the `welcome` advertise `features.coalescing` (§4.2); the default is on since #4883
+    (the owner ruling of 2026-10-29 on E17-Q03, #568; chaos scenarios 2 and 3 pass, #410). Without
     a config the `welcome` says `coalescing: false`.
 
     #415: flag off, a close flushes within `close_flush_s` (loop clock), then a writer parked on a

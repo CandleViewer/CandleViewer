@@ -1837,9 +1837,9 @@ def create_app(
         machines=machine_states,
         feeds=(ws_ticker, ws_revisions, ws_trades, ws_book),
     )
-    # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, on by default (pending #568's
-    # ruling). Without a config the gateway keeps its 1 024-frame push bound: the flag swaps the
-    # bound, never removes it.
+    # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, on by default since #4883 (the
+    # owner ruling of 2026-10-29). Without a config the gateway keeps its 1 024-frame push
+    # bound: the flag swaps the bound, never removes it.
     ws_backpressure = (
         BackpressureConfig.from_settings(resolved) if resolved.ws_backpressure_enabled else None
     )
