@@ -78,17 +78,22 @@ PONG_BUDGET_PER_S: Final = 4
 #: §8.5: the most of them at once, so `pong`s that arrive together still fit (two seconds' worth).
 PONG_BUDGET_BURST: Final = 8
 #: §8.5 (#4924, an orchestrator contract decision of 2026-10-29): the per-user decode budget. A
-#: frame's tokens past the first (its bytes and values terms, and a MessagePack frame's debit) are
-#: drawn from one bucket shared by every socket of its user, as well as from its socket's rate.
+#: frame's tokens past the first (its bytes and values terms) are drawn from one bucket shared by
+#: every socket of its user, as well as from its socket's rate.
 #: Sizing: every socket a user may hold (`MAX_CONNECTIONS_PER_USER`, 8) reconnecting at once and
 #: re-subscribing its whole set (`MAX_SUBSCRIPTIONS` / `MAX_TOPICS_PER_SUB` = 4 `sub`s) with the
 #: widest schema-valid `sub` (about 53 KiB and 10 559 values: 1 + 1 + 2 tokens, so 3 past the
-#: first) draws 8 x 4 x 3 = 96, the burst. `hello`, `auth` and every other frame of one token draw
-#: nothing. The refill sets the sustained rate of the costliest frames across all of a user's
-#: sockets: 12 a second is three frames at the value bound a second, or one at the frame cap.
+#: first) draws 8 x 4 x 3 = 96; the burst holds two such reconnects, 192, so a second one within
+#: §9.2's backoff is not refused. `hello`, `auth` and every other frame of one token draw nothing.
+#: The refill sets the sustained rate of the costliest frames across all of a user's sockets:
+#: 12 a second is three frames at the value bound a second, or one at the frame cap.
 WIDEST_SUB_EXTRA_TOKENS: Final = 3
+RECONNECTS_IN_BURST: Final = 2
 DECODE_BUDGET_BURST: Final = (
-    MAX_CONNECTIONS_PER_USER * (MAX_SUBSCRIPTIONS // MAX_TOPICS_PER_SUB) * WIDEST_SUB_EXTRA_TOKENS
+    RECONNECTS_IN_BURST
+    * MAX_CONNECTIONS_PER_USER
+    * (MAX_SUBSCRIPTIONS // MAX_TOPICS_PER_SUB)
+    * WIDEST_SUB_EXTRA_TOKENS
 )
 DECODE_BUDGET_PER_S: Final = 12
 #: §13 `epochMs` (#415, E17-R-10): the largest epoch-ms value a client field may carry, 2**53 - 1,
@@ -407,14 +412,15 @@ class InboundRateLimiter:
         self._minute += weight
         return True
 
-    def debit(self, tokens: int) -> None:
-        """Add `tokens` to the frame `allow` admitted last, after its decode (§8.5, #4924): later
-        frames are refused until both windows have room again. It adds no stamp, so the bound on
-        the stamps holds; with none (nothing admitted yet) there is nothing to add to."""
+    def refund(self, tokens: int) -> None:
+        """Give back `tokens` of the frame `allow` admitted last, after its decode (§8.5, #4924: a
+        MessagePack frame charged for more values than it held). Its stamp keeps one token at
+        least, so the bound on the stamps holds; with none there is nothing to give back."""
         if tokens > 0 and self._stamps:
             at, weight = self._stamps[-1]
-            self._stamps[-1] = (at, weight + tokens)
-            self._minute += tokens
+            back = min(tokens, weight - 1)
+            self._stamps[-1] = (at, weight - back)
+            self._minute -= back
 
 
 class PongBudget:
@@ -442,9 +448,9 @@ class PongBudget:
 class DecodeBudget:
     """§8.5 (#4924): one user's decode budget, a token bucket on the connections' clock of `burst`
     tokens refilled at `per_second`, shared by every socket of the user. A frame may take tokens
-    only while the bucket holds at least that many; a MessagePack frame's post-decode `debit` may
-    take it below zero, and then no frame that draws on it is admitted until the refill covers the
-    debt. Bounded: two numbers, whatever the clients send."""
+    only while the bucket holds at least that many; a MessagePack frame charged for more values
+    than it held gets the difference back after its decode (`refund`). Bounded: two numbers,
+    whatever the clients send."""
 
     def __init__(
         self, burst: int = DECODE_BUDGET_BURST, per_second: float = DECODE_BUDGET_PER_S
@@ -468,10 +474,9 @@ class DecodeBudget:
         """Take `tokens` at the time of the last `can`, which found them (no await between)."""
         self._level -= tokens
 
-    def debit(self, now: float, tokens: int) -> None:
-        """Take `tokens` after a decode, even below zero."""
-        self._refill(now)
-        self._level -= tokens
+    def refund(self, tokens: int) -> None:
+        """Give back `tokens` a frame took and did not need, never past the burst."""
+        self._level = min(self._burst, self._level + tokens)
 
 
 class ConnectRateLimiter:

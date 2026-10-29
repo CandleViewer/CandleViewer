@@ -55,7 +55,16 @@ from tests.unit.ws.test_inbound_frame_limits import (
     _Handed,
     _widest_sub,
 )
-from tests.unit.ws.test_lifecycle_socket import JSON, MSGPACK, _auth, _hello, _recv, _send, _World
+from tests.unit.ws.test_lifecycle_socket import (
+    JSON,
+    MSGPACK,
+    _auth,
+    _hello,
+    _recv,
+    _recv_type,
+    _send,
+    _World,
+)
 
 _ENCODINGS: Final = pytest.mark.parametrize(
     "encoding", [JSON[0], MSGPACK[0]], ids=["json", "msgpack"]
@@ -407,10 +416,11 @@ def _msgpack_at_bound(id: str) -> bytes:
     return packed
 
 
-@pytest.mark.parametrize("encoding", [JSON[0], MSGPACK[0]], ids=["json-charged", "msgpack-debited"])
+@pytest.mark.parametrize("encoding", [JSON[0], MSGPACK[0]], ids=["json-counted", "msgpack-sized"])
 def test_charge_a_frame_at_the_value_bound_takes_five_tokens_however_small(encoding: str) -> None:
-    """JSON: 1 + 0 + 4 before decode. MessagePack: 1 before decode, 4 debited right after it. So
-    six fit the second's 30 and the seventh is refused before it is decoded."""
+    """JSON: 1 + 0 + 4 before decode, by its over-count. MessagePack: the same, by its size (every
+    value takes a byte), and no refund, as it holds the bound. So six fit the second's 30 and the
+    seventh is refused before it is decoded."""
     conn = _connection(encoding, authed=True)
     build = _compact_at_bound if encoding == JSON[0] else _msgpack_at_bound
     answers = [_decode(conn, build(f"v{n}")) for n in range(7)]
@@ -418,13 +428,12 @@ def test_charge_a_frame_at_the_value_bound_takes_five_tokens_however_small(encod
     assert all(a["t"] == "ping" for a in answers[:6])
 
 
-def test_inbound_rate_limiter_debit_adds_to_the_last_frame_admitted() -> None:
+def test_inbound_rate_limiter_refund_gives_back_to_the_last_frame_admitted() -> None:
     limiter = InboundRateLimiter()
-    limiter.debit(5)  # nothing admitted yet: nothing to add to
-    assert limiter.allow(0.0, 1)
-    limiter.debit(28)  # 29 of 30
-    assert limiter.allow(0.0, 1) and not limiter.allow(0.0, 1)
-    assert limiter.allow(1.0, 30)  # the second has passed; the minute holds 60 of 300
+    limiter.refund(5)  # nothing admitted yet: nothing to give back
+    assert limiter.allow(0.0, 30) and not limiter.allow(0.0, 1)
+    limiter.refund(40)  # the frame keeps one token
+    assert limiter.allow(0.0, 29) and not limiter.allow(0.0, 1)
 
 
 @_ENCODINGS
@@ -452,13 +461,15 @@ def test_charge_a_small_frame_led_by_t_pong_that_decodes_to_another_kind_is_char
 # -- the per-user decode budget (#4924): tokens past the first, shared by a user's sockets -------
 
 
-def test_decode_budget_holds_its_burst_refills_and_carries_a_debt() -> None:
+def test_decode_budget_holds_its_burst_refills_and_takes_refunds() -> None:
     budget = DecodeBudget(burst=10, per_second=2)
     assert budget.can(0.0, 10) and not budget.can(0.0, 11)
     budget.take(10)
     assert not budget.can(0.0, 1) and budget.can(0.5, 1)  # half a second: one token back
-    budget.debit(0.5, 5)  # 1 - 5: in debt
-    assert not budget.can(2.0, 0) and budget.can(2.5, 0)  # out of debt once refilled to 0
+    budget.refund(4)  # 1 + 4
+    assert budget.can(0.5, 5) and not budget.can(0.5, 6)
+    budget.refund(100)  # never past the burst
+    assert budget.can(0.5, 10) and not budget.can(0.5, 11)
 
 
 def test_decode_budget_burst_is_every_socket_re_subscribing_with_the_widest_subs() -> None:
@@ -466,7 +477,7 @@ def test_decode_budget_burst_is_every_socket_re_subscribing_with_the_widest_subs
     extra = inbound_frame_weight(len(sub.encode()), json_values_over_count(sub)) - 1
     assert extra == WIDEST_SUB_EXTRA_TOKENS
     subs = MAX_SUBSCRIPTIONS // MAX_TOPICS_PER_SUB
-    assert DECODE_BUDGET_BURST == MAX_CONNECTIONS_PER_USER * subs * extra == 96
+    assert DECODE_BUDGET_BURST == 2 * MAX_CONNECTIONS_PER_USER * subs * extra == 192
 
 
 def test_hub_shares_one_budget_per_user_and_drops_it_with_the_last_socket() -> None:
@@ -503,37 +514,45 @@ def test_charge_a_frame_past_one_token_is_refused_when_the_users_budget_is_spent
     assert _decode(second, json.dumps({"t": "ping", "id": "s"}))["t"] == "ping"
 
 
-def test_charge_a_msgpack_frame_that_may_owe_a_debit_waits_for_the_budget_out_of_debt() -> None:
-    budget = DecodeBudget(burst=4, per_second=1)
-    conn = _connection(MSGPACK[0], authed=True)
-    conn.decode_budget = budget
-    assert _decode(conn, _msgpack_at_bound("a"))["t"] == "ping"  # 0 before, 4 debited: 0 left
-    assert _decode(conn, _msgpack_at_bound("b"))["t"] == "ping"  # 0 >= 0: admitted, -4 after
-    assert _decode(conn, _msgpack_at_bound("c")) is _REFUSED  # in debt
-    small = msgpack.packb({"t": "ping", "id": "s"})
-    assert _decode(conn, small)["t"] == "ping"  # under 4 KiB: its socket's rate only
-
-
-def test_gateway_every_socket_of_a_user_re_subscribing_with_the_widest_subs_is_never_refused() -> (
+def test_charge_a_msgpack_frame_takes_its_size_bound_before_decode_and_the_rest_back_after() -> (
     None
 ):
+    """A MessagePack frame is charged before decode as if every byte were a value, up to one past
+    the bound (here 20 KiB: 4 value tokens), then given back what its values did not need (a few
+    values: all 4)."""
+    roomy = DecodeBudget(burst=4, per_second=0)
+    conn = _connection(MSGPACK[0], authed=True)
+    conn.decode_budget = roomy
+    text = msgpack.packb({"t": "ping", "id": "a", "p": {"pad": "x" * 20_480}})
+    assert _decode(conn, text)["t"] == "ping"
+    assert roomy.can(0.0, 4)  # all four given back
+    assert conn.rate.allow(0.0, 29)  # and the frame kept one token of the second's 30
+    short = DecodeBudget(burst=3, per_second=0)
+    other = _connection(MSGPACK[0], authed=True)
+    other.decode_budget = short
+    assert _decode(other, text) is _REFUSED  # the bound is charged before its values are known
+
+
+def test_gateway_two_reconnects_of_every_socket_with_the_widest_subs_are_never_refused() -> None:
     """All eight sockets a user may hold reconnect at the same instant and re-subscribe their whole
-    sets with the widest `sub`s: every one is served, and the shared budget is spent exactly, so
-    one more such `sub` on any of them is refused."""
+    sets with the widest `sub`s, then do it again a moment later with eight new sockets (each
+    closing the oldest idle one, so the user keeps a live socket): all are served, and the shared
+    budget is spent all but the moment's refill, so one more such `sub` on any socket is refused."""
     sub = _widest_sub()
     w = _World()
     with contextlib.ExitStack() as stack:
-        sockets = [
-            stack.enter_context(w.client.websocket_connect("/ws", subprotocols=JSON))
-            for _ in range(MAX_CONNECTIONS_PER_USER)
-        ]
         stack.enter_context(w.client)
-        for ws in sockets:
-            assert _hello(ws)["t"] == "welcome"
-            assert _auth(ws)["t"] == "auth_ok"
-        for ws in sockets:
-            for n in range(MAX_SUBSCRIPTIONS // MAX_TOPICS_PER_SUB):
-                _send(ws, {**sub, "id": f"s{n}"})
-                assert _recv(ws)["t"] == "sub_ok"
+        for wave in range(2):
+            w.clock.now = wave * 0.001  # the second wave's sockets are the newer: 0.012 refilled
+            sockets = []
+            for _ in range(MAX_CONNECTIONS_PER_USER):
+                ws = stack.enter_context(w.client.websocket_connect("/ws", subprotocols=JSON))
+                assert _hello(ws)["t"] == "welcome"
+                assert _auth(ws)["t"] == "auth_ok"
+                sockets.append(ws)
+            for ws in sockets:
+                for n in range(MAX_SUBSCRIPTIONS // MAX_TOPICS_PER_SUB):
+                    _send(ws, {**sub, "id": f"s{wave}{n}"})
+                    assert _recv_type(ws, "sub_ok")["id"] == f"s{wave}{n}"
         _send(sockets[0], {**sub, "id": "more"})
-        assert _recv(sockets[0])["p"]["code"] == "client_rate_limited"
+        assert _recv_type(sockets[0], "err")["p"]["code"] == "client_rate_limited"

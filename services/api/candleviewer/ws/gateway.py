@@ -1149,13 +1149,13 @@ class _Connection:
         if pong_bound and pong:
             self.close_with("protocol_violation")
             return _OVERSIZE
-        # #4924: a JSON frame's values, over-counted on its text once, here, and up to one past
-        # the bound only (`_parse` refuses the rest); a MessagePack frame's after its decode.
+        # #4924: a frame's values, bounded above before decode, and only up to one past the value
+        # bound (`_parse` refuses the rest): a JSON frame's over-counted on its text, once, here;
+        # a MessagePack frame's by its size, as every value takes at least one byte.
         counted = json_values_over_count(raw) if isinstance(raw, str) and not self.msgpack else 0
-        weight = inbound_frame_weight(size, min(counted, MAX_MSGPACK_VALUES + 1))
-        # #4924: the tokens past the first also draw on the user's decode budget; so does any
-        # MessagePack frame that could hold a value debit, which then needs the budget out of debt.
-        shared = weight > 1 or (self.msgpack and size >= INBOUND_WEIGHT_VALUES)
+        bound = min(size if self.msgpack else counted, MAX_MSGPACK_VALUES + 1)
+        weight = inbound_frame_weight(size, bound)
+        shared = weight > 1  # the tokens past the first also draw on the user's decode budget
         charged_as = self.charge(pong=pong, weight=weight, shared=shared)
         if charged_as is None:
             return _REFUSED
@@ -1168,11 +1168,12 @@ class _Connection:
             # It opened with `t: "pong"` and is another kind: the rate counts it as any frame.
             if self.charge(pong=False, weight=weight, shared=shared) is None:
                 return _REFUSED
-        if decoded:  # MessagePack: the values it held, debited now that they are known
-            owed = decoded[0] // INBOUND_WEIGHT_VALUES
-            self.rate.debit(owed)
-            if self.decode_budget is not None and owed:
-                self.decode_budget.debit(self.clock(), owed)
+        if decoded:  # MessagePack: its values now known, what its size took past them comes back
+            refund = bound // INBOUND_WEIGHT_VALUES - decoded[0] // INBOUND_WEIGHT_VALUES
+            if refund > 0:
+                self.rate.refund(refund)
+                if self.decode_budget is not None:
+                    self.decode_budget.refund(refund)
         return frame
 
     def charge(self, *, pong: bool, weight: int, shared: bool = False) -> str | None:

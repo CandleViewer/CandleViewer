@@ -265,11 +265,11 @@ def json_depth_exceeds(text: str, limit: int) -> bool:
 #: §8.5 (#4924, an orchestrator contract decision of 2026-10-29): an inbound frame takes one token
 #: of the inbound rate, plus one per full 32 KiB of its encoded bytes, plus one per full 4 096
 #: values (`INBOUND_WEIGHT_VALUES`). A JSON frame's values are its pre-decode over-count
-#: (`json_values_over_count`), charged with the rest before it is decoded; a MessagePack frame's
-#: are the values its decoder charged, debited right after decode (the C unpacker reads no value
-#: before its header is checked, so its count is known only then). A frame at
-#: `MAX_INBOUND_FRAME_BYTES` takes 9 for its bytes; one at the value bound 4 more; one at the
-#: pre-auth cap, or any `pong`, takes 1.
+#: (`json_values_over_count`); a MessagePack frame's are bounded by its size, as every value
+#: takes at least one byte. Either is charged with the rest before the frame is decoded, counted
+#: up to one past the value bound; a MessagePack frame gets back, after its decode, what the size
+#: took past the values its decoder charged. A frame at `MAX_INBOUND_FRAME_BYTES` takes 9 for its
+#: bytes; one at the value bound 4 more; a `pong` takes 1.
 INBOUND_WEIGHT_BYTES = 32 * 1024
 INBOUND_WEIGHT_VALUES = 4096
 
