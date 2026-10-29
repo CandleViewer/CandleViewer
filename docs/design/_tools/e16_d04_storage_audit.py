@@ -24,8 +24,9 @@ RbacGate; a disabled control: disabled, greyed / grayed, dimmed, faded, inert, u
 cannot be pressed or used, aria-disabled, opacity.disabled; a page banner: banner, callout, toast, alert, page error,
 top of the page / screen; a stalled bar; a pre-filled field: pre-filled, auto-filled, pre-populated, defaulted); a
 negator exempts a match only within four words before it in the same clause; an item without a subject reads the
-write named earlier in its unit; every PROPOSED carrier carries its own caption "PROPOSED — D04-Gn, owner approval
-pending (#2701)" with its n, and no unit presents a PROPOSED item as shipped; every exit a frame lists is
+write named earlier in its unit; every PROPOSED carrier carries its own caption "PROPOSED — D04-Gn, RULED
+(orchestrator, 2026-10-29, #2701 ledger 1 row N)" with its n and the gap's ledger row (LEDGER_ROWS; a wrong row or
+the pre-ledger "owner approval pending" form FAILs), and no unit presents a PROPOSED item as shipped; every exit a frame lists is
 present and T1; every number any unit types is a `--json` value with its unit (R-17's register: the fixture,
 the facts, the layout, the counts and the typed context); (7) the counts the spec, the boards and the PR body quote;
 (8) R-23, the backstop behind the vocabularies (the orchestrator's gate re-checks 2 and 3: whole-document
@@ -1089,9 +1090,50 @@ UNIT_NUM = r"\d[\d,]*(?:\.\d+)?\s?(?:GB|TB|MB)\b"
 DATE_RE = r"\b\d{4}-\d{2}-\d{2}\b"
 STATE_WORD = r"\b(?:healthy|degraded|warning|down|not deployed|not_deployed)\b"
 TIER_FRAMES = ("TIER/questdb", "TIER/parquet", "TIER/postgres")
-# The ruled caption every PROPOSED carrier repeats (the deck's `storage.proposed.caption`; BQ-11 / 13 / 18 / 22).
-CAPTION = "PROPOSED — D04-G{n}, owner approval pending (#2701)"
-CAP_RE = r"PROPOSED — D04-G(\d+), owner approval pending \(#2701\)"
+# The ruled caption every PROPOSED carrier repeats (the deck's `storage.proposed.caption`; BQ-11 / 13 / 18 / 22),
+# stamped with the orchestrator's design-defaults ledger 1 (#2701, 2026-10-29): row 57 rules D04-G1–G7, G11 and
+# G12 (approved as proposed), row 58 the vacuum (D04-G8) and row 59 Stop job (D04-G10).
+LEDGER_DATE = "2026-10-29"
+LEDGER_ROWS: dict[int, int] = {
+    **{g: 57 for g in (1, 2, 3, 4, 5, 6, 7, 11, 12)},
+    8: 58,
+    10: 59,
+}  # every ruled gap -> its ledger row; a gap not listed here (D04-G9, an unknown number) is unruled and FAILs
+CAPTION = "PROPOSED — D04-G{n}, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row {row})"
+CAP_RE = r"PROPOSED — D04-G(\d+), RULED \(orchestrator, 2026-10-29, #2701 ledger 1 row (\d+)\)"
+# any stamp a caption may carry: the ledger form with any row, or the pre-ledger form (the ledger gate reads both)
+CAP_ANY_RE = (
+    r"PROPOSED — D04-G(\d+), (?:RULED \(orchestrator, 2026-10-29, #2701 ledger 1 row (\d+)\)"
+    r"|(owner approval pending \(#2701\)))"
+)
+
+
+def ledger_row(n: int) -> int:
+    if n not in LEDGER_ROWS:
+        raise SystemExit(
+            f"ledger: D04-G{n} is not in LEDGER_ROWS (an unruled gap carries no ledger stamp)"
+        )
+    return LEDGER_ROWS[n]
+
+
+def ledger_gate(spec: str) -> list[str]:
+    """Every caption's ledger row is its gap's; no caption keeps the pre-ledger stamp."""
+    bad: list[str] = []
+    for m in re.finditer(CAP_ANY_RE, spec):
+        n = int(m.group(1))
+        if n not in LEDGER_ROWS:
+            bad.append(
+                f"ledger: D04-G{n} is not a ruled gap (no row in the ledger map): {m.group(0)!r}"
+            )
+        elif m.group(3):
+            bad.append(f"ledger: D04-G{n} caption keeps the pre-ledger stamp ({m.group(0)!r})")
+        elif int(m.group(2)) != ledger_row(n):
+            bad.append(
+                f"ledger: D04-G{n} caption reads row {m.group(2)}, the ledger's is row {ledger_row(n)}"
+            )
+    return bad
+
+
 # BQ-14 RULED: the sentence the disk-full frame carries.
 BQ14 = "a server refusal shows in the CMP-044 result as T4, never as a disabled control"
 # Vocabularies, case-insensitive, per ruled sentence. A negator governs a match only when it stands within four
@@ -1617,6 +1659,9 @@ DECK_KEYS = frozenset(
 NUM_EXEMPT: tuple[str | re.Pattern[str], ...] = (
     re.compile(r"[\d,.:-]+\s*<!-- audit:.*?--!?>", re.DOTALL),
     re.compile(r"<!--.*?--!?>", re.DOTALL),
+    # the ledger stamp and a ledger-row cite, whole, before `#\d+` strips their issue (the ledger gate reads the row)
+    r"RULED \(orchestrator, 2026-10-29, #2701 ledger 1 row \d+\)",
+    r"\b[Ll]edger 1 rows? (?:\d+(?:[–-]\d+)?|N\b|\{row\})",
     r"`[^`]*`",
     r"\b\d\d:\d{3,5}(?:–\d+)?\b",
     r"\bBQ-\d+(?:\s*/\s*\d+)*",
@@ -3751,7 +3796,7 @@ def _dot(frame: str, col: int, text: str) -> Callable[[str], str]:
 
 
 def cap(n: int) -> str:
-    return CAPTION.format(n=n)
+    return CAPTION.format(n=n, row=ledger_row(n))
 
 
 STOP_ITEM = f"Stop job per job line, {cap(10)}: today a started job runs to its end"
@@ -6076,6 +6121,12 @@ MUTATIONS: list[Mutation] = [
         _append("PURGE/refused-before", CT, "the close ✕ no longer available after the refusal"),
         "R-14 refused-before: exit gated ('no longer available' in 'the close ✕ no longer availa')",
     ),
+    # L01: the ledger gate (ledger 1, M2/M3): a caption citing a row that is not its gap's
+    (
+        "L01 ledger: the D04-G3 caption of a Size row cites row 58 (the vacuum's), not row 57",
+        lambda s: _first(s, cap(3), cap(3).replace("row 57", "row 58")),
+        "ledger: D04-G3 caption reads row 58, the ledger's is row 57",
+    ),
 ]
 # Valid twins: each must raise nothing (a captioned inset line, the gap's own G-row, a negated mention).
 VALID: list[tuple[str, Callable[[str], str]]] = [
@@ -6370,6 +6421,7 @@ def numbers_of(
     n["mutations_text5"] = sum(d.startswith("Q") for d, _, _ in MUTATIONS)
     n["mutations_contract"] = sum(d.startswith("V") for d, _, _ in MUTATIONS)
     n["mutations_boards"] = sum(d.startswith("B") for d, _, _ in MUTATIONS)
+    n["mutations_ledger"] = sum(d.startswith("L") for d, _, _ in MUTATIONS)
     n["valid_twins"] = len(VALID)
     n["pins"] = pin_counts(RULED_PIN_TXT)
     n["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
@@ -6422,10 +6474,11 @@ def numbers_of(
     lo, hi = facts["reason_bounds"]
     lay = LAYOUT
     # R-17's register beyond the fixture: the figures the prose types with their units, the HTTP codes, the dates
-    # the provenance cites (the owner's decision, the shared-sentence ruling, this ticket's ruling)
+    # the provenance cites (the owner's decision, the shared-sentence ruling, this ticket's ruling, ledger 1) and the ledger's rows
     n["context"] = {
         "http_codes": [202, 403, 404, 409, 422, 503],
-        "provenance_dates": ["2026-09-25", "2026-10-21", "2026-10-25"],
+        "provenance_dates": ["2026-09-25", "2026-10-21", "2026-10-25", LEDGER_DATE],
+        "ledger1_rows": sorted(set(LEDGER_ROWS.values())),
         "typed": [
             f"{facts['import_days_max']} days",
             f"{lo} characters",
@@ -6539,6 +6592,7 @@ def run(
     numbers, matrix, missing, fails = numbers_of(spec, facts, fx, themes, registered)
     bad = gates([SPEC, *extra], spec, facts, fx, t, numbers)
     bad += matrix_gate(spec, matrix)
+    bad += ledger_gate(spec)
     if check:
         flat = flatten(numbers)
         seen: set[str] = set()
@@ -6740,10 +6794,11 @@ RULED_PIN_TXT = r"""
    (agent-delivery adaptations, owner decision 2026-09-25): the owner's `approved` comment or the
    merge stands in for the ticket's design sign-off (§18). **Every decision not already binding is
    PROPOSED**; RULED items name their source (the BQ table; the orchestrator's ruling on #372,
-   issue comment 6397016433, 2026-10-25); every finding is `(heuristic)`; no participant, timing or
-   quote is invented (§17). **Method:** a desk spec over the merged E16-D02 (SCR-140, the host
-   page) and E16-D03 (the destructive-change pattern and the SCR-141 / SCR-142 boundary), and the
-   merged E09-D09 / E30-D02 / E30-D04 patterns; every number here carries an `audit:` marker that
+   issue comment 6397016433, 2026-10-25; the design-defaults ledger 1 on #2701, 2026-10-29, §0);
+   every finding is `(heuristic)`; no participant, timing or quote is invented (§17). **Method:** a
+   desk spec over the merged E16-D02 (SCR-140, the host page) and E16-D03 (the destructive-change
+   pattern and the SCR-141 / SCR-142 boundary), and the merged E09-D09 / E30-D02 / E30-D04
+   patterns; every number here carries an `audit:` marker that
    `docs/design/_tools/e16_d04_storage_audit.py --check` re-derives from the `22` `getStorageUsage`
    example, and `--self-test` proves §12's gates with ⟦audit:mutations⟧ mutations.
 @ header#1 ¶3 ‖ paragraph
@@ -6877,7 +6932,7 @@ RULED_PIN_TXT = r"""
 @ BQ#1 ¶2 ‖ table
   | # | Question | Built here | Status |
   | ----- | ------------------------------------------------------------------- |
-   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | ------ |
   | BQ-1 | the deliverable path and companions | `docs/design/E16/E16-D04.md` +
    `docs/design/_tools/e16_d04_storage_audit.py` + one `14` pointer line; the ticket's web template
@@ -6906,11 +6961,12 @@ RULED_PIN_TXT = r"""
    drawn as a cited re-use with the typed field empty; no second shape | RULED |
   | BQ-10 | the confirm pattern for compact / vacuum | CMP-044 **standard** — compaction and
    vacuum are non-destructive ("Nothing is deleted."): no typed field, no step-up unless the server
-   answers 403; purge keeps E16-D02 §6.5's typed dialog with the `recorder_purge` step-up | RULED |
+   answers 403 (the vacuum's `recorder` class, ledger 1 row 58, applies when its route is built);
+   purge keeps E16-D02 §6.5's typed dialog with the `recorder_purge` step-up | RULED |
   | BQ-11 | vacuum's existence and class | wholly PROPOSED (D04-G8); **never a frame's default**:
-   it appears only as a captioned inset "PROPOSED — D04-G8, owner approval pending (#2701)" on
-   boards 01, 02 and 05; `recording:write` and no step-up proposed; the owner may require the
-   `recorder_purge` class (D04-Q1) | RULED |
+   it appears only as a captioned inset "PROPOSED — D04-G8, RULED (orchestrator, 2026-10-29, #2701
+   ledger 1 row 58)" on boards 01, 02 and 05; Owner-only with the `recorder` step-up class when it
+   is ever built (ledger 1 row 58; D04-Q1 answered) | RULED |
   | BQ-12 | the import confirm | no dialog: the card form + one consequence line is the confirm
    (additive, resumable); the CMP-044 standard alternative is D04-Q3 | RULED |
   | BQ-13 | cancel | drawn only as a captioned PROPOSED carrier on the jobs strip (D04-G10 `POST
@@ -6962,9 +7018,9 @@ RULED_PIN_TXT = r"""
    `IMPORT/<state>`; exports go to `docs/design/E16/img/E16-D04-NN-<slug>.png` at 1:1 via
    `docs/design/_tools/penpot_export.py`. Every board with a PROPOSED decision carries the stamp,
    every RULED item its source; every PROPOSED control, column or action is a captioned inset or a
-   captioned second row ("PROPOSED — D04-Gn, owner approval pending (#2701)"), never a frame's
-   default (BQ-11 / BQ-13 / BQ-18 / BQ-22 RULED). Nothing from E16-D02's boards
-   (`docs/design/E16/img/E16-D02-05-scr-140-disk-warning.png`,
+   captioned second row ("PROPOSED — D04-Gn, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row
+   N)"), never a frame's default (BQ-11 / BQ-13 / BQ-18 / BQ-22 RULED). Nothing from E16-D02's
+   boards (`docs/design/E16/img/E16-D02-05-scr-140-disk-warning.png`,
    `E16-D02-19-scr-140-purge-confirm.png`) is redrawn: they are cited by name and path.
    ⟦audit:boards⟧ boards, ⟦audit:light_twins⟧ light board, ⟦audit:frames_total⟧ frames
    (⟦audit:frames_scr⟧ SCR-142 · ⟦audit:frames_tier⟧ TIER · ⟦audit:frames_job⟧ JOB ·
@@ -7056,9 +7112,12 @@ RULED_PIN_TXT = r"""
    `docs/design/E16/img/E16-D04-03-states-disk.png` (2664 × 4316)
   - `04 states-health` — board id `3dabf49b-b27a-8036-8008-dc88678c7444` —
    `docs/design/E16/img/E16-D04-04-states-health.png` (2664 × 4248)
-  - `05 maintenance-jobs` — board id `8151935f-ff84-80bf-8008-dca2ccbf658c` —
-   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` (1920 × 1256) — redrawn from r7 (M-1: the
-   `JOB/confirm-vacuum` caption names `recorder_purge`)
+  - `05 maintenance-jobs` — board id `0605c48b-7da1-80e2-8008-dd12785d0d5f` —
+   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` (1920 × 1256) — redrawn at r8 (ledger 1
+   row 58: the `JOB/confirm-vacuum` caption names Owner-only and the `recorder` class; two of its
+   four D04-G8 insets carry the RULED stamp — the confirm-vacuum and outcomes captions; the
+   strip-running and strip-refused-409 captions keep the pre-ledger caption until the next boards
+   touch)
   - `06 purge` — board id `8151935f-ff84-80bf-8008-dca2eae0fd19` —
    `docs/design/E16/img/E16-D04-06-purge.png` (1920 × 2231) — redrawn from r7 (M-2:
    `PURGE/refused-before` added as the seventh frame)
@@ -7106,10 +7165,59 @@ RULED_PIN_TXT = r"""
   - **Section 6 leftovers (the r5 boards' QA):** `recorder` → `recorder_purge` in the §6 prose
   ("Purge keeps E16-D02 §6.5's typed dialog with the … step-up (§7)") and in the
    `JOB/confirm-vacuum`
-  row (PROPOSED — D04-G8, owner approval pending (#2701); "unless the owner assigns the … class
+  row (PROPOSED — D04-G8, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 58); "unless the
+   owner assigns the … class
   (D04-Q1)"): the purge's class is `recorder_purge` (`22` :15035, :15040), and D04-Q1's question
    names
-  the purge's class, as the §6 action table and BQ-11 already do.
+  the purge's class, as the §6 action table and BQ-11 already do. Superseded for the PROPOSED
+   D04-G8 vacuum's own class by
+  ledger 1 row 58 (the next subsection): `recorder`, Owner-only.
+@ §0 › Ledger 1 (2026-10-29, #2#1 ¶1 ‖ heading
+  ### Ledger 1 (2026-10-29, #2701)
+@ §0 › Ledger 1 (2026-10-29, #2#1 ¶2 ‖ paragraph
+  The orchestrator's design-defaults ledger 1 (#2701, 2026-10-29) rules every PROPOSED / "owner
+   approval
+  pending (#2701)" item of this spec: row 57 (D04-G1–G7, G11, G12 — APPROVED as proposed), row 58
+   (the PROPOSED D04-G8 vacuum — BQ-11) and row 59 (D04-G10, Stop job — APPROVED as proposed). This
+   post-merge touch (#372 is
+  Done) applies it to the text and the tool; no board is redrawn for a stamp (ledger 1: no
+   redraws); only board 05 is redrawn, for row 58.
+@ §0 › Ledger 1 (2026-10-29, #2#1 ¶3 ‖ list
+  - **Stamps (old → new):** every caption and stamp "PROPOSED — D04-Gn, owner approval pending
+   (#2701)" now
+  reads "PROPOSED — D04-Gn, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row N)", N the gap's
+   row (57;
+  58 for G8; 59 for G10): the BQ-11 row, §0's board rules, the sketch's footnotes, every frame
+   row, §11's
+  carrier row, R-12, the deck (`storage.proposed.caption` with its `{row}`, `storage.ingestion`)
+   and the
+  round-2 note above. "PROPOSED — D04-Gn" stays: it names the contract gap, still open until the
+   gap's
+  contract-first PR (§13), not an owner question. The tool's caption pin, its `CAP_RE`, its number
+   register
+  (the ledger's date and rows) and its R-23 table move with the text (`--repin-ruled`); a caption
+   whose row
+  disagrees with its gap, or a leftover "owner approval pending" caption, is a FAIL. The drawn
+   boards carry
+  the pre-ledger wording.
+  - **Row 58 — the PROPOSED D04-G8 vacuum's class (old → new):** round 2 (above) had the
+   `JOB/confirm-vacuum` row and board 05's
+  producer caption name `recorder_purge` as the class the owner might assign (D04-Q1). Ledger 1
+   row 58
+  rules: Vacuum Postgres (a PROPOSED inset, D04-G8, no route yet) is **Owner-only with the
+   `recorder`
+  step-up class when it is ever built**, and the inset's caption says so. BQ-10, BQ-11, the §6
+   action
+  table, the `JOB/confirm-vacuum` row, D04-G8, D04-CG2 and D04-Q1 (answered) now say `recorder`;
+   the purge
+  keeps `recorder_purge` (`22` :15040, contract truth, unrelated). Board script r8 (sha256
+  `376a9211292be78ea3974e7f7b2e531c1dd0b533a9c9b7cac318b66282264556`) is a declared patch of r7
+   touching board 05 only: the
+  `JOB/confirm-vacuum` producer caption names Owner-only and the `recorder` class, and board 05's
+   two
+  D04-G8 inset captions carry the RULED stamp; board 05 is redrawn at r8 (register row above: its
+   id and size), the only
+  other change being the r8 label; every other board is the r7 draw, unchanged.
 @ §1#1 ¶1 ‖ heading
   ## 1. Purpose, locked inputs, the rules stated once, the classification
 @ §1 › §1.1#1 ¶1 ‖ heading
@@ -7332,10 +7440,10 @@ RULED_PIN_TXT = r"""
   | (h) Import archives  Symbol [BTCUSDT ▾]  From [2026-01-01] To [2026-01-31]  [Import archives]|
   |     Archive-derived · trades only · no book data                                            |
   +---------------------------------------------------------------------------------------------+
-  ¹ PROPOSED — D04-G1, owner approval pending (#2701); the shipped fallback beside it: all tiers 1.45 GB/day, all tiers 2028-03-27
-  ² PROPOSED — D04-G3, owner approval pending (#2701): a captioned second row per tier
-  ³ PROPOSED — D04-G5, owner approval pending (#2701): a captioned second row
-  ⁴ PROPOSED — D04-G8, owner approval pending (#2701): a captioned inset
+  ¹ PROPOSED — D04-G1, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57); the shipped fallback beside it: all tiers 1.45 GB/day, all tiers 2028-03-27
+  ² PROPOSED — D04-G3, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57): a captioned second row per tier
+  ³ PROPOSED — D04-G5, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57): a captioned second row
+  ⁴ PROPOSED — D04-G8, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 58): a captioned inset
   ```
 @ §2#1 ¶4 ‖ table
   | Region | Content |
@@ -7380,7 +7488,7 @@ RULED_PIN_TXT = r"""
    |
    ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
-   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | ----- | ----- |
   | `SCR-142/healthy` | `level` 0 (budget 59.4 %), every `components[].state` healthy, no pending
    migration (D04-G7 absent) | stamp Sampled 10:31:03 UTC (every 60 s) · meter Recording budget:
@@ -7391,8 +7499,9 @@ RULED_PIN_TXT = r"""
    ÷ 1.45 GB/day ≈ 422 days" · the scale "80 % warning · 90 % auto-record pauses · 95 % recording
    stops (open positions keep writing)" · three tier cards (§4) · the per-symbol table, the
    maintenance card and the import card at rest | Compact Parquet…, Purge data…, Import archives
-   enabled (T1) · Vacuum Postgres… only as the inset PROPOSED — D04-G8, owner approval pending
-   (#2701) · links to SCR-140, SCR-141 and SCR-143 enabled (T1) | T1 | 01 |
+   enabled (T1) · Vacuum Postgres… only as the inset PROPOSED — D04-G8, RULED (orchestrator,
+   2026-10-29, #2701 ledger 1 row 58) · links to SCR-140, SCR-141 and SCR-143 enabled (T1) | T1 |
+   01 |
   | `SCR-142/healthy-200-zoom` | the same report at ⟦audit:layout.zoom_pct⟧ % zoom and the in-app
    text scale (1280 × 800) | the two meters stacked, full width · the three tier cards stacked one
    per row · every table one row element per record (CMP-049 reflow, `15` :528) · the import card's
@@ -7501,62 +7610,68 @@ RULED_PIN_TXT = r"""
   | Frame | Producer | Shows | Controls (class per §1.3) | Class | Board |
   | ------------------------ |
    -------------------------------------------------------------------------------- |
-   ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
-   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | ----- | ----- |
   | `TIER/questdb` | `tiers[].tier` questdb; `components[]` questdb healthy | Size 640.0 GB ·
-   Share of budget 32.0 % · Retention 7 d · Growth/day — (PROPOSED — D04-G1, owner approval pending
-   (#2701), shipped fallback beside it: all tiers 1.45 GB/day) · Projected full — (PROPOSED —
-   D04-G1, owner approval pending (#2701), shipped fallback beside it: all tiers 2028-03-27) ·
-   Health healthy, the text word with the ✓ glyph (ComponentState) · Ingestion "Ingest 18,400
-   msg/s, backlog 0 rows" from the WS topic, lag — (PROPOSED — D04-G4, owner approval pending
-   (#2701)) · Rows by table — (PROPOSED — D04-G3, owner approval pending (#2701)), the per-table
+   Share of budget 32.0 % · Retention 7 d · Growth/day — (PROPOSED — D04-G1, RULED (orchestrator,
+   2026-10-29, #2701 ledger 1 row 57), shipped fallback beside it: all tiers 1.45 GB/day) ·
+   Projected full — (PROPOSED — D04-G1, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57),
+   shipped fallback beside it: all tiers 2028-03-27) · Health healthy, the text word with the ✓
+   glyph (ComponentState) · Ingestion "Ingest 18,400 msg/s, backlog 0 rows" from the WS topic, lag
+   — (PROPOSED — D04-G4, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57)) · Rows by table —
+   (PROPOSED — D04-G3, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57)), the per-table
    CMP-049 as a captioned second row · no Last compaction row on the hot tier (compaction is a
    Parquet operation) | Purge data… (T1, opens E16-D02 §6.5) · no console link (SR-048) · no backup
    control (`21` §8 is SCR-143 / E42's) | T1 | 02 |
   | `TIER/parquet` | `tiers[].tier` parquet; `components[]` parquet_store healthy | Size 548.0 GB
-   · Share of budget 27.4 % · Retention 30 d · Growth/day — (PROPOSED — D04-G1, owner approval
-   pending (#2701), shipped fallback beside it: all tiers 1.45 GB/day) · Projected full — (PROPOSED
-   — D04-G1, owner approval pending (#2701), shipped fallback beside it: all tiers 2028-03-27) ·
-   Health healthy, the text word with the ✓ glyph · Last compaction — (PROPOSED — D04-G6, owner
-   approval pending (#2701), shipped fallback beside it: the schedule "weekly, Sundays 03:00 UTC",
-   `21` :4410) · Rows by table — (PROPOSED — D04-G3, owner approval pending (#2701)) | Compact
-   Parquet… (T1) · Purge data… (T1, opens E16-D02 §6.5) · no console link · no backup control | T1
-   | 02 |
+   · Share of budget 27.4 % · Retention 30 d · Growth/day — (PROPOSED — D04-G1, RULED
+   (orchestrator, 2026-10-29, #2701 ledger 1 row 57), shipped fallback beside it: all tiers 1.45
+   GB/day) · Projected full — (PROPOSED — D04-G1, RULED (orchestrator, 2026-10-29, #2701 ledger 1
+   row 57), shipped fallback beside it: all tiers 2028-03-27) · Health healthy, the text word with
+   the ✓ glyph · Last compaction — (PROPOSED — D04-G6, RULED (orchestrator, 2026-10-29, #2701
+   ledger 1 row 57), shipped fallback beside it: the schedule "weekly, Sundays 03:00 UTC", `21`
+   :4410) · Rows by table — (PROPOSED — D04-G3, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row
+   57)) | Compact Parquet… (T1) · Purge data… (T1, opens E16-D02 §6.5) · no console link · no
+   backup control | T1 | 02 |
   | `TIER/postgres` | `tiers[].tier` postgres (`retention_days` null); `components[]` postgres
    healthy | Size 16.0 GB · Share of budget not counted (the meter divides questdb + parquet only,
-   `22` :5424) · Retention — · Growth/day — (PROPOSED — D04-G1, owner approval pending (#2701),
-   shipped fallback beside it: all tiers 1.45 GB/day) · Projected full — (PROPOSED — D04-G1, owner
-   approval pending (#2701), shipped fallback beside it: all tiers 2028-03-27) · Health healthy,
-   the text word with the ✓ glyph · Last vacuum — (PROPOSED — D04-G6, owner approval pending
-   (#2701)) · Migration — (the shipped fallback: the release version from `HealthReport.version`,
-   not a schema version) · a captioned second row PROPOSED — D04-G7, owner approval pending
-   (#2701): Migration 0008, 0 pending · Rows by table — (PROPOSED — D04-G3, owner approval pending
-   (#2701)) | Vacuum Postgres… only as the inset PROPOSED — D04-G8, owner approval pending (#2701)
-   · no purge entry on this card: purge deletes QuestDB and Parquet data only (`22` :15035–15057) ·
-   no console link · no backup control | T1 | 02 |
+   `22` :5424) · Retention — · Growth/day — (PROPOSED — D04-G1, RULED (orchestrator, 2026-10-29,
+   #2701 ledger 1 row 57), shipped fallback beside it: all tiers 1.45 GB/day) · Projected full —
+   (PROPOSED — D04-G1, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57), shipped fallback
+   beside it: all tiers 2028-03-27) · Health healthy, the text word with the ✓ glyph · Last vacuum
+   — (PROPOSED — D04-G6, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57)) · Migration —
+   (the shipped fallback: the release version from `HealthReport.version`, not a schema version) ·
+   a captioned second row PROPOSED — D04-G7, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row
+   57): Migration 0008, 0 pending · Rows by table — (PROPOSED — D04-G3, RULED (orchestrator,
+   2026-10-29, #2701 ledger 1 row 57)) | Vacuum Postgres… only as the inset PROPOSED — D04-G8,
+   RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 58) · no purge entry on this card: purge
+   deletes QuestDB and Parquet data only (`22` :15035–15057) · no console link · no backup control
+   | T1 | 02 |
   | `TIER/tables-questdb` | PROPOSED `tiers[].tables[]` (D04-G3); the shipped frame carries no
-   table | a captioned second row "PROPOSED — D04-G3, owner approval pending (#2701)": CMP-049
-   table variant, columns Table / Rows / Size / Oldest / Newest, one row per `21` §4.1–4.13 table
-   name (trades, orderbook_deltas, orderbook_snapshots, tickers, klines, liquidations,
-   open_interest, funding_rates, bars_<type>, footprint_cells, profiles, orderflow_metrics,
-   heatmap_cells, engine_metrics), every Size cell with a unit, Rows as a count, Oldest / Newest as
-   UTC timestamps as text · the shipped fallback beside it: "Row counts by table are not produced
-   yet" | none (a read) | T1 | 02 |
+   table | a captioned second row "PROPOSED — D04-G3, RULED (orchestrator, 2026-10-29, #2701 ledger
+   1 row 57)": CMP-049 table variant, columns Table / Rows / Size / Oldest / Newest, one row per
+   `21` §4.1–4.13 table name (trades, orderbook_deltas, orderbook_snapshots, tickers, klines,
+   liquidations, open_interest, funding_rates, bars_<type>, footprint_cells, profiles,
+   orderflow_metrics, heatmap_cells, engine_metrics), every Size cell with a unit, Rows as a count,
+   Oldest / Newest as UTC timestamps as text · the shipped fallback beside it: "Row counts by table
+   are not produced yet" | none (a read) | T1 | 02 |
   | `TIER/per-symbol` | `symbols[]` (shipped) | CMP-049 table variant: Symbol / Size / Growth/day
    / Share of budget / Pinned, rows BTCUSDT 812.3 GB 780 MB/day 40.6 % pinned and ETHUSDT 1.2 GB
    520 MB/day 0.1 % — · the attribution line "813.6 GB of 1,188.0 GB attributed to symbols (68.5
-   %)" (D04-CG3) · Oldest / Newest — (PROPOSED — D04-G2, owner approval pending (#2701)), as a
-   captioned second row · the sparkline only as one inset PROPOSED — D04-G2, owner approval pending
-   (#2701) on this board (`history_bytes[]`, BQ-22 RULED), with its DOM-mirror table (CMP-024, `15`
-   :276) | Purge… in the row's detail popover (T1, opens E16-D02 §6.5 with the symbol preselected,
-   the typed field empty; D04-D3) · Manage pin → SCR-140 (T1) | T1 | 02 |
+   %)" (D04-CG3) · Oldest / Newest — (PROPOSED — D04-G2, RULED (orchestrator, 2026-10-29, #2701
+   ledger 1 row 57)), as a captioned second row · the sparkline only as one inset PROPOSED —
+   D04-G2, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57) on this board
+   (`history_bytes[]`, BQ-22 RULED), with its DOM-mirror table (CMP-024, `15` :276) | Purge… in the
+   row's detail popover (T1, opens E16-D02 §6.5 with the symbol preselected, the typed field empty;
+   D04-D3) · Manage pin → SCR-140 (T1) | T1 | 02 |
   | `TIER/query-performance` | PROPOSED `slow_queries[]` (D04-G5); nothing shipped | a captioned
-   second row "PROPOSED — D04-G5, owner approval pending (#2701)": CMP-049 table variant, columns
-   Tier / Statement kind / p95 / Count (1 h), p95 in ms, the statement kind a closed word (replay
-   scan, footprint build, coverage read), never SQL text · the shipped fallback beside it: "Slowest
-   queries are not produced yet" · no console link (SR-048 `04` :873) | none (a read) | T1 | 02 |
+   second row "PROPOSED — D04-G5, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57)": CMP-049
+   table variant, columns Tier / Statement kind / p95 / Count (1 h), p95 in ms, the statement kind
+   a closed word (replay scan, footprint build, coverage read), never SQL text · the shipped
+   fallback beside it: "Slowest queries are not produced yet" · no console link (SR-048 `04` :873)
+   | none (a read) | T1 | 02 |
 @ §5#1 ¶1 ‖ heading
   ## 5. Page states (boards 03 and 04; 11 frames; class per §1.3)
 @ §5#1 ¶2 ‖ paragraph
@@ -7574,7 +7689,7 @@ RULED_PIN_TXT = r"""
    |
    -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
-   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | ------ | ------ |
   | `SCR-142/low-disk-warning` | `level` 1 (budget 80.5 %: the `14` :2748 figure scaled to this
    cap, 1,610.0 GB of 2,000.0 GB) | stamp Sampled 10:31:03 UTC (every 60 s) · the budget meter at
@@ -7614,13 +7729,14 @@ RULED_PIN_TXT = r"""
    jobs strip read as for the target (unchanged reads) · a running job still shows its progress
    (status) | every write T2 (the view-as leg first, E09-D09 §2.1 step 3): Compact Parquet…, Purge
    data…, Import archives, the per-symbol Purge… in the row's detail popover, Stop job on the jobs
-   strip (PROPOSED — D04-G10, owner approval pending (#2701)) and the Vacuum Postgres… inset
-   (PROPOSED — D04-G8, owner approval pending (#2701)) each keep the full label with the lock glyph
-   leading it, `aria-disabled`, `aria-describedby` → that node, the reason key `rbac.view_as`
-   "Read-only while viewing as {user}.", fill `color.surface.raised` + `color.border.default`
-   hairline, label `color.text.tertiary`, reason `color.text.secondary`, never
-   `color.text.disabled` nor `opacity.disabled` · Enter / Space re-show the reason once, politely ·
-   links to SCR-140, SCR-141 and SCR-143 enabled (T1) | T2 | 03, 10 |
+   strip (PROPOSED — D04-G10, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 59)) and the
+   Vacuum Postgres… inset (PROPOSED — D04-G8, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row
+   58)) each keep the full label with the lock glyph leading it, `aria-disabled`,
+   `aria-describedby` → that node, the reason key `rbac.view_as` "Read-only while viewing as
+   {user}.", fill `color.surface.raised` + `color.border.default` hairline, label
+   `color.text.tertiary`, reason `color.text.secondary`, never `color.text.disabled` nor
+   `opacity.disabled` · Enter / Space re-show the reason once, politely · links to SCR-140, SCR-141
+   and SCR-143 enabled (T1) | T2 | 03, 10 |
   | `SCR-142/tier-unreachable-questdb` | `HealthReport.components[]` questdb `state` down,
    `last_good_at` 10:24:03 UTC; the other two healthy; `level` 0 | stamp Sampled 10:31:03 UTC
    (every 60 s) · the QuestDB card keeps its shell with CMP-027 inline "QuestDB unreachable since
@@ -7633,18 +7749,19 @@ RULED_PIN_TXT = r"""
    rows, `21` :4323) for two samples; `ingest_rate_msgs_per_sec` 18,400 (`22` :11019); `level` 0 |
    stamp Sampled 10:31:03 UTC (every 60 s) · CMP-028 warning "Ingestion backlog 25,000 rows —
    writes are behind the feed" · the QuestDB card's Ingestion row "Ingest 18,400 msg/s, backlog
-   25,000 rows, lag —" with the lag cell captioned PROPOSED — D04-G4, owner approval pending
-   (#2701), the card tone warning and the word "warning" · the threshold stated beside the banner,
-   5 batches (PROPOSED — D04-G4, owner approval pending (#2701), D04-Q4) | every write enabled (T1)
-   | status | 04 |
+   25,000 rows, lag —" with the lag cell captioned PROPOSED — D04-G4, RULED (orchestrator,
+   2026-10-29, #2701 ledger 1 row 57), the card tone warning and the word "warning" · the threshold
+   stated beside the banner, 5 batches (PROPOSED — D04-G4, RULED (orchestrator, 2026-10-29, #2701
+   ledger 1 row 57), D04-Q4) | every write enabled (T1) | status | 04 |
   | `SCR-142/migration-pending` | PROPOSED `pending_migrations` 1, `schema_version` 0008,
    `target_version` 0009 (D04-G7; the shipped frame has no banner); `level` 0 | stamp Sampled
-   10:31:03 UTC (every 60 s) · CMP-028 warning banner captioned PROPOSED — D04-G7, owner approval
-   pending (#2701): "Migration pending · 1 pending · 0008 → 0009 — applied with the next release" ·
-   the Postgres card's Migration row as a captioned second row PROPOSED — D04-G7, owner approval
-   pending (#2701): "0008, 1 pending" · the shipped fallback beside it: `HealthReport.version` and
-   `git_sha` as the release words | no Apply control: migrations run with the release (`22`
-   :11103), a deferred capability drawn absent (A1) · every write enabled (T1) | status | 04 |
+   10:31:03 UTC (every 60 s) · CMP-028 warning banner captioned PROPOSED — D04-G7, RULED
+   (orchestrator, 2026-10-29, #2701 ledger 1 row 57): "Migration pending · 1 pending · 0008 → 0009
+   — applied with the next release" · the Postgres card's Migration row as a captioned second row
+   PROPOSED — D04-G7, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57): "0008, 1 pending" ·
+   the shipped fallback beside it: `HealthReport.version` and `git_sha` as the release words | no
+   Apply control: migrations run with the release (`22` :11103), a deferred capability drawn absent
+   (A1) · every write enabled (T1) | status | 04 |
   | `SCR-142/stale-sample` | no new report for more than 2 × 60 s (the socket up or down); the
    last report 10:31:03 UTC; `level` 0 | stamp Sampled 10:31:03 UTC, stale (3 min old) with the
    clock glyph (CMP-239 `stale`, `color.data-confidence.stale.indicator`) · every figure keeps
@@ -7706,8 +7823,8 @@ RULED_PIN_TXT = r"""
   | Vacuum Postgres | PROPOSED `POST /admin/db/vacuum` + `Job.kind` `db_vacuum` (D04-G8): the
    whole action is PROPOSED, captioned on every carrier | no | CMP-044 standard: "Vacuum Postgres?"
    · "Reclaims space from deleted rows. Nothing is deleted. Queries may be slower while it runs." ·
-   the audited line · Cancel / Vacuum | none proposed; the owner may require `recorder_purge`
-   (D04-Q1) | "Vacuum running · {pct} %" | PROPOSED (D04-G10) | `new` keys
+   the audited line · Cancel / Vacuum | `recorder`, Owner-only, when the route is built (ledger 1
+   row 58; D04-Q1 answered) | "Vacuum running · {pct} %" | PROPOSED (D04-G10) | `new` keys
    `storage.vacuum.{succeeded, failed, cancelled, unknown}` mirroring the compact lines |
   | Purge data | `purgeRecordedData` (`22` :15032); `Job.kind` `retention_purge` (:22013) | **yes,
    irreversible** | E16-D02 §6.5's typed dialog, reused whole (§7) | `recorder_purge` class,
@@ -7723,9 +7840,9 @@ RULED_PIN_TXT = r"""
   | ----------------------- |
    ----------------------------------------------------------------------------------------------------------------
    |
-   ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
-   ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | ------- | ----- |
   | `JOB/confirm-compact` | Compact Parquet… pressed | CMP-044 standard (BQ-10 RULED): title
    "Compact Parquet partitions?" · body "Merges small files into partitions of at most 512 MiB.
@@ -7733,20 +7850,21 @@ RULED_PIN_TXT = r"""
    "This action is audited." · no typed field, no step-up sentence (D04-CG2) | exits Cancel, Esc
    and the close ✕ (T1) · Compact (CMP-001 primary, T1) | T1 | 05 |
   | `JOB/confirm-vacuum` | the Vacuum Postgres… inset pressed (the whole action is PROPOSED
-   D04-G8; nothing is shipped) | captioned PROPOSED — D04-G8, owner approval pending (#2701):
-   CMP-044 standard, title "Vacuum Postgres?" · body "Reclaims space from deleted rows. Nothing is
-   deleted. Queries may be slower while it runs." · "This action is audited." · no typed field, no
-   step-up sentence unless the owner assigns the `recorder_purge` class (D04-Q1) | exits Cancel,
-   Esc and the close ✕ (T1) · Vacuum (CMP-001 primary, T1), PROPOSED — D04-G8, owner approval
-   pending (#2701) | T1 | 05 |
+   D04-G8; nothing is shipped) | captioned PROPOSED — D04-G8, RULED (orchestrator, 2026-10-29,
+   #2701 ledger 1 row 58): CMP-044 standard, title "Vacuum Postgres?" · body "Reclaims space from
+   deleted rows. Nothing is deleted. Queries may be slower while it runs." · "This action is
+   audited." · no typed field; no step-up sentence drawn (no route yet); when built, Owner-only
+   with the `recorder` step-up class (ledger 1 row 58; D04-Q1 answered) | exits Cancel, Esc and the
+   close ✕ (T1) · Vacuum (CMP-001 primary, T1), PROPOSED — D04-G8, RULED (orchestrator, 2026-10-29,
+   #2701 ledger 1 row 58) | T1 | 05 |
   | `JOB/strip-running` | this client's `202` → `Job.status` running for a compaction
    (`progress_pct` 42) and an import (38) | one `role="status"` region (polite), 2 s polling, the
    text swapped in place · "Compaction running · 42 %" + CMP-023 (`aria-valuetext` equal to the
    text) · "Import running · 38 %" + CMP-023 · one announcement at start and one per terminal
    state, never per tick (CMP-023 A11y `15` :267) | Compact Parquet… busy: CMP-001 `loading`,
    `aria-busy`, focusable, a press opens nothing (E16-D02 §6.6 :422; no lock) · Stop job per job
-   line, PROPOSED — D04-G10, owner approval pending (#2701): today a started job runs to its end ·
-   the other writes enabled (T1) | busy | 05 |
+   line, PROPOSED — D04-G10, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 59): today a
+   started job runs to its end · the other writes enabled (T1) | busy | 05 |
   | `JOB/strip-refused-409` | a second Compact Parquet… press while one runs, or after a reload
    with no job id: the server's `409 job_running` | CMP-027 inline under the control: "A compaction
    is already running." with the code job_running in parentheses, polite once · the page state
@@ -7757,11 +7875,11 @@ RULED_PIN_TXT = r"""
    "Compacted at 10:42 UTC" · compact failed "Compaction failed (`<code>`); nothing was deleted." ·
    compact cancelled "Compaction cancelled; nothing was deleted." (E16-D02's elided "…cancelled."
    completed here: D04-A8) · compact unknown "Compaction status is no longer available on the
-   server." · vacuum (PROPOSED — D04-G8, owner approval pending (#2701)) succeeded "Vacuumed at
-   {HH:MM} UTC", failed "Vacuum failed (`<code>`); nothing was deleted.", cancelled and unknown as
-   `new` keys mirroring the compact lines · each polite, once, with no banner: the words on
-   `color.status.success.subtle` / `color.status.danger.subtle` inside the card | none (outcomes) |
-   outcome | 05 |
+   server." · vacuum (PROPOSED — D04-G8, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 58))
+   succeeded "Vacuumed at {HH:MM} UTC", failed "Vacuum failed (`<code>`); nothing was deleted.",
+   cancelled and unknown as `new` keys mirroring the compact lines · each polite, once, with no
+   banner: the words on `color.status.success.subtle` / `color.status.danger.subtle` inside the
+   card | none (outcomes) | outcome | 05 |
 @ §7#1 ¶1 ‖ heading
   ## 7. Purge (board 06; 7 frames) — E16-D02 §6.5 reused whole
 @ §7#1 ¶2 ‖ paragraph
@@ -7857,10 +7975,10 @@ RULED_PIN_TXT = r"""
   | `PURGE/outcomes` | `Job.status` terminal, or `404 job_unknown` | insets reused from E16-D02
    §3.2 (:200–202, :204): failed, `role="alert"` once, "Purge of ETHUSDT failed (`<code>`). Some
    data may already be deleted: check ETHUSDT's size and gaps." · cancelled (the cancel itself
-   PROPOSED — D04-G10, owner approval pending (#2701)) "Purge of ETHUSDT was cancelled. Data
-   deleted before the cancel is gone." · unknown "The purge's status is no longer available on the
-   server. Check ETHUSDT's size and gaps." · succeeded "Purged 1.2 GB of ETHUSDT data" from
-   `Job.result` | none (outcomes) | outcome | 06 |
+   PROPOSED — D04-G10, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 59)) "Purge of ETHUSDT
+   was cancelled. Data deleted before the cancel is gone." · unknown "The purge's status is no
+   longer available on the server. Check ETHUSDT's size and gaps." · succeeded "Purged 1.2 GB of
+   ETHUSDT data" from `Job.result` | none (outcomes) | outcome | 06 |
 @ §8#1 ¶1 ‖ heading
   ## 8. Import (board 07; 6 frames; US-REC-007 :4210–4226)
 @ §8#1 ¶2 ‖ paragraph
@@ -7890,9 +8008,9 @@ RULED_PIN_TXT = r"""
   | --------------------------- |
    ----------------------------------------------------------------------------------------------------------------------------------------
    |
-   ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
-   ----------------------------------------------------------------------------------------------------------
+   -----------------------------------------------------------------------------------------------------------------------------------
    | ------------- | ------ |
   | `IMPORT/form` | the import card at rest (`importTradeArchive`, `22` :14978) | Symbol (CMP-009)
    BTCUSDT · From / To (CMP-047 range) 2026-01-01 → 2026-01-31, inclusive UTC dates, at most 366
@@ -7909,38 +8027,41 @@ RULED_PIN_TXT = r"""
    the overall CMP-023 "12 of 31 days · 38 %" (`aria-valuetext` equal to the text;
    `Job.progress_pct` with the requested range, the shipped running state) · the per-file CMP-049
    table (table variant, no row control, columns Day / Status / Reason / Rows) only as an inset
-   PROPOSED — D04-G11, owner approval pending (#2701): `files[]` streamed while the job runs ·
-   "Import started" announced once | Import archives busy (`aria-busy`, no lock) · Stop job,
-   PROPOSED — D04-G10, owner approval pending (#2701) | busy | 07 |
+   PROPOSED — D04-G11, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57): `files[]` streamed
+   while the job runs · "Import started" announced once | Import archives busy (`aria-busy`, no
+   lock) · Stop job, PROPOSED — D04-G10, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 59) |
+   busy | 07 |
   | `IMPORT/running-with-skips` | day 14 (2026-01-14) fails its checksum: the file is skipped
    (`checksum_mismatch`, the code word of `22` :11809) and the import continues | the overall bar
    keeps moving: "30 of 31 days · 96 %" (`aria-valuetext` equal; `Job.progress_pct` with the
    requested range, the shipped running state) · the strip reads "Import running · 96 %" · the page
    keeps its healthy chrome: no page banner, no `role="alert"` (AC 3) · an inset PROPOSED —
-   D04-G11, owner approval pending (#2701) beside the bar: the per-file table streamed from
-   `files[]` while the job runs, columns Day / Status / Reason / Rows, 29 done, 1 skipped, 1
-   downloading, the 2026-01-14 row "skipped ⚠ / checksum_mismatch / Checksum did not match; the
-   file was skipped. / —" on `color.status.warning.subtle`, done rows "done ✓ / 95,040,000 rows",
-   and the counter "1 skipped" after the bar's text | Import archives busy (`aria-busy`) · Stop
-   job, PROPOSED — D04-G10, owner approval pending (#2701) | busy | 07, 10 |
+   D04-G11, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57) beside the bar: the per-file
+   table streamed from `files[]` while the job runs, columns Day / Status / Reason / Rows, 29 done,
+   1 skipped, 1 downloading, the 2026-01-14 row "skipped ⚠ / checksum_mismatch / Checksum did not
+   match; the file was skipped. / —" on `color.status.warning.subtle`, done rows "done ✓ /
+   95,040,000 rows", and the counter "1 skipped" after the bar's text | Import archives busy
+   (`aria-busy`) · Stop job, PROPOSED — D04-G10, RULED (orchestrator, 2026-10-29, #2701 ledger 1
+   row 59) | busy | 07, 10 |
   | `IMPORT/summary` | `Job.status` succeeded; `result` (PROPOSED `ArchiveImportResult`, D04-G11)
    | the shipped outcome line "Import finished: BTCUSDT, 2026-01-01 → 2026-01-31" (polite, once) ·
    the CMP-011 tag "Archive-derived · trades only · no book data" on the summary and, PROPOSED —
-   D04-G12, owner approval pending (#2701), on every imported range the coverage chart draws
-   (E16-D05's chip is the consumer) · an inset PROPOSED — D04-G11, owner approval pending (#2701)
-   from `result`: the counts "Imported 29 days of BTCUSDT trades · 1 file skipped · 1 file failed ·
-   660,000 overlapping rows discarded", the overlap report "660,000 rows inside recorded windows
-   were discarded — recorded data wins." (`22` :14983, never "duplicates removed"), the per-file
-   table complete with the 2026-01-31 row "error ✗ / download_failed / The file could not be
-   downloaded; run the import again to retry it. / —" | Import archives enabled again (T1); "Run it
-   again to resume: finished days are skipped." | outcome | 07 |
+   D04-G12, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57), on every imported range the
+   coverage chart draws (E16-D05's chip is the consumer) · an inset PROPOSED — D04-G11, RULED
+   (orchestrator, 2026-10-29, #2701 ledger 1 row 57) from `result`: the counts "Imported 29 days of
+   BTCUSDT trades · 1 file skipped · 1 file failed · 660,000 overlapping rows discarded", the
+   overlap report "660,000 rows inside recorded windows were discarded — recorded data wins." (`22`
+   :14983, never "duplicates removed"), the per-file table complete with the 2026-01-31 row "error
+   ✗ / download_failed / The file could not be downloaded; run the import again to retry it. / —" |
+   Import archives enabled again (T1); "Run it again to resume: finished days are skipped." |
+   outcome | 07 |
   | `IMPORT/failed` | `Job.status` failed, `error` a stable code (download_failed after the retry
    budget), or `404 job_unknown` | inside the import card only: "Import failed (download_failed).
    Finished days are kept; run it again to resume." on `color.status.danger.subtle`, `role="alert"`
-   once · never a page banner · the per-file table, an inset PROPOSED — D04-G11, owner approval
-   pending (#2701), keeps its rows · unknown: "The import's status is no longer available on the
-   server. Run it again: finished days are skipped." | Import archives enabled again (T1) | outcome
-   | 07 |
+   once · never a page banner · the per-file table, an inset PROPOSED — D04-G11, RULED
+   (orchestrator, 2026-10-29, #2701 ledger 1 row 57), keeps its rows · unknown: "The import's
+   status is no longer available on the server. Run it again: finished days are skipped." | Import
+   archives enabled again (T1) | outcome | 07 |
 @ §9#1 ¶1 ‖ heading
   ## 9. Roles and the view-as leg (E16-D02 §7 :444–455 adapted)
 @ §9#1 ¶2 ‖ table
@@ -8027,7 +8148,8 @@ RULED_PIN_TXT = r"""
    glyph `size.icon.sm` in `color.status.success.strong` / `warning.strong` / `danger.strong` |
   | a PROPOSED carrier | the same card or row with a dashed `color.border.default` outline (absent
    from the contract, never a side — E25-D01 §9.5) and the caption `type.ui.caption`
-   `color.text.secondary` "PROPOSED — D04-Gn, owner approval pending (#2701)" |
+   `color.text.secondary` "PROPOSED — D04-Gn, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row
+   N)" (N the gap's ledger row: 57; 58 for G8; 59 for G10) |
   | the jobs strip | one line `type.ui.body` `color.text.primary`; CMP-023 `progress` under it;
    `space.stack.xs` |
   | the per-file table (CMP-049, the PROPOSED D04-G11 inset) | header `color.surface.hover`
@@ -8048,14 +8170,15 @@ RULED_PIN_TXT = r"""
 @ §11#1 ¶3 ‖ table
   | Frame | Producer | Shows | Controls (class per §1.3) | Class | Board |
   | ------------------ | ------------------ |
-   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | -------------------------------------------------------------------------------------- | -----
    | ----- |
   | `SCR-142/redlines` | the healthy report | the tokens above annotated on a tier card, a meter,
-   the jobs strip, the per-file table (an inset, PROPOSED — D04-G11, owner approval pending
-   (#2701)), the T2 control (the lock + the full label + the notice on `color.surface.raised`) and
-   the validity control (`opacity.disabled` + `validity-reason`) · the token audit counts | as
-   annotated (the T2 and validity specimens are the §5 and §7 frames' controls, cited) | T1 | 09 |
+   the jobs strip, the per-file table (an inset, PROPOSED — D04-G11, RULED (orchestrator,
+   2026-10-29, #2701 ledger 1 row 57)), the T2 control (the lock + the full label + the notice on
+   `color.surface.raised`) and the validity control (`opacity.disabled` + `validity-reason`) · the
+   token audit counts | as annotated (the T2 and validity specimens are the §5 and §7 frames'
+   controls, cited) | T1 | 09 |
 @ §12#1 ¶1 ‖ heading
   ## 12. Producibility, the contract gaps and the frame gates (the Test plan)
 @ §12#1 ¶2 ‖ paragraph
@@ -8135,37 +8258,38 @@ RULED_PIN_TXT = r"""
    box shifted by spaces alone, onto the Postgres card and off the Parquet card, and a `~` written
    before a marked number) and the purge-contract re-pin's ⟦audit:mutations_contract⟧ form (the
    dialog's `before` field removed) and the boards lens round 1's ⟦audit:mutations_boards⟧ form
-   (`PURGE/refused-before`'s close ✕ read dead after the refusal) — and each must make `--check`
-   fail with **one** FAIL, its own message; no two share a message, ⟦audit:valid_twins⟧ valid twins
-   (a captioned inset, the gap's own G-row, a negated mention, the exit Cancel, "Esc closes the
-   dialog", the ruled order reworded four ways, a sibling PENDING by name, the typed field starting
-   empty, trailing spaces) raise no gate FAIL and nothing once re-pinned (until then R-23 alone
-   refuses each, as it edits a unit), the unmutated file passes and the file is byte-identical
-   afterwards; `--mutate N` exits 1 when the gate caught the mutation, 2 when it slipped. **Two
-   layers (the gate re-check 3: whole-document default-deny).** The vocabulary gates above are the
-   first line: each reads its ruled sentence through its words, their synonyms and the negators
-   that govern them. R-23 is the backstop and pins **every unit** of this file in the tool's
-   committed `RULED_PIN_TXT`: a unit is a Markdown block — a heading, or a run of consecutive
-   non-blank lines (each paragraph, list block and table block, the deck's table among them) — and
-   the fenced sketch whole, its lines verbatim (its columns are content; every other unit's
-   whitespace is normalised); a soft-wrapped line belongs to its block. A unit is keyed by its
-   region (the heading path, plus the heading's occurrence) and its place in the region, and read
-   with its exact text: ⟦audit:pins.total⟧ units (headings ⟦audit:pins.heading⟧, paragraphs
-   ⟦audit:pins.paragraph⟧, tables ⟦audit:pins.table⟧, the sketch ⟦audit:pins.sketch⟧). A changed,
-   moved, duplicated or missing unit, a unit the pins do not hold, a new or repeated heading and a
-   duplicate location FAIL naming the location, so a new or edited unit anywhere fails until
-   `--repin-ruled` rewrites the table, a deliberate act read in the diff; `--check` never re-pins.
-   **Left unpinned, by name (the exemption list, the tool's `PIN_EXEMPT`):** ⟦audit:pins.exempt⟧
-   class — the `audit:` markers and the number printed before each, §12's among them
-   (⟦audit:pins.masked⟧ spans, each read as its key): `--check` re-derives each key's value and
-   reads the number before the marker. Nothing else is exempt: §12's R-rows, §15's matrix and the
-   caption carriers have no exact gate that reads them whole, so they stay pinned. An R-23 FAIL is
-   reported only when no other gate FAILs, else counted beside it on a NOTE line, so one wrong form
-   yields one FAIL.
+   (`PURGE/refused-before`'s close ✕ read dead after the refusal) and the ledger gate's
+   ⟦audit:mutations_ledger⟧ form (a caption citing a row that is not its gap's) — and each must
+   make `--check` fail with **one** FAIL, its own message; no two share a message,
+   ⟦audit:valid_twins⟧ valid twins (a captioned inset, the gap's own G-row, a negated mention, the
+   exit Cancel, "Esc closes the dialog", the ruled order reworded four ways, a sibling PENDING by
+   name, the typed field starting empty, trailing spaces) raise no gate FAIL and nothing once
+   re-pinned (until then R-23 alone refuses each, as it edits a unit), the unmutated file passes
+   and the file is byte-identical afterwards; `--mutate N` exits 1 when the gate caught the
+   mutation, 2 when it slipped. **Two layers (the gate re-check 3: whole-document default-deny).**
+   The vocabulary gates above are the first line: each reads its ruled sentence through its words,
+   their synonyms and the negators that govern them. R-23 is the backstop and pins **every unit**
+   of this file in the tool's committed `RULED_PIN_TXT`: a unit is a Markdown block — a heading, or
+   a run of consecutive non-blank lines (each paragraph, list block and table block, the deck's
+   table among them) — and the fenced sketch whole, its lines verbatim (its columns are content;
+   every other unit's whitespace is normalised); a soft-wrapped line belongs to its block. A unit
+   is keyed by its region (the heading path, plus the heading's occurrence) and its place in the
+   region, and read with its exact text: ⟦audit:pins.total⟧ units (headings ⟦audit:pins.heading⟧,
+   paragraphs ⟦audit:pins.paragraph⟧, tables ⟦audit:pins.table⟧, the sketch ⟦audit:pins.sketch⟧). A
+   changed, moved, duplicated or missing unit, a unit the pins do not hold, a new or repeated
+   heading and a duplicate location FAIL naming the location, so a new or edited unit anywhere
+   fails until `--repin-ruled` rewrites the table, a deliberate act read in the diff; `--check`
+   never re-pins. **Left unpinned, by name (the exemption list, the tool's `PIN_EXEMPT`):**
+   ⟦audit:pins.exempt⟧ class — the `audit:` markers and the number printed before each, §12's among
+   them (⟦audit:pins.masked⟧ spans, each read as its key): `--check` re-derives each key's value
+   and reads the number before the marker. Nothing else is exempt: §12's R-rows, §15's matrix and
+   the caption carriers have no exact gate that reads them whole, so they stay pinned. An R-23 FAIL
+   is reported only when no other gate FAILs, else counted beside it on a NOTE line, so one wrong
+   form yields one FAIL.
 @ §12#1 ¶5 ‖ table
   | Rule | The ruled sentence the gate reads (source) | Tables read | Mutations |
   | ---- |
-   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | --------------------------------------------------------- |
    ------------------------------------------ |
   | R-1 | every tier card's Size cell carries a number with a unit; its Growth/day and Projected
@@ -8220,12 +8344,13 @@ RULED_PIN_TXT = r"""
    queries and p95 (G5), per-tier growth (G1), lag (G4), the sparkline, CMP-024, a trend line and
    the ranges (G2), the migration values (G7), last vacuum or compaction (G6), the per-file rows
    and the skip counter (G11), the archive ranges (G12), and any D04-Gn named — carries its own
-   caption "PROPOSED — D04-Gn, owner approval pending (#2701)" with its n in the same item; no unit
-   anywhere (a prose sentence, a non-frame table row read across its cells, the deck, the sketch, a
-   Producer cell) presents a PROPOSED item as shipped by any of its names (Vacuum Postgres…, Stop
-   job, End job, a Rows column, p95, the sparkline, CMP-024, Last vacuum, Migration 0008, the
-   per-file table) unless its row or clause carries that caption or names the gap absent, or a
-   negator governs it (the gap's own A / C / CG / D / G / Q rows and the BQ table exempt); the
+   caption "PROPOSED — D04-Gn, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row N)" with its n,
+   and N the gap's ledger row (57 for G1–G7, G11 and G12; 58 for G8; 59 for G10), in the same item;
+   no unit anywhere (a prose sentence, a non-frame table row read across its cells, the deck, the
+   sketch, a Producer cell) presents a PROPOSED item as shipped by any of its names (Vacuum
+   Postgres…, Stop job, End job, a Rows column, p95, the sparkline, CMP-024, Last vacuum, Migration
+   0008, the per-file table) unless its row or clause carries that caption or names the gap absent,
+   or a negator governs it (the gap's own A / C / CG / D / G / Q rows and the BQ table exempt); the
    deck's strings and the sketch carry the full caption, never a short "PROPOSED Dn" (BQ-11 / 13 /
    18 / 22 RULED; A2) | every frame table, every unit | ⟦audit:mutations_by_rule.r12⟧ |
   | R-13 | the view-as frame is T2 with `rbac.view_as`, one notice in any wording, the lock and
@@ -8372,8 +8497,8 @@ RULED_PIN_TXT = r"""
   | D04-G7 | `schema_version`, `target_version`, `pending_migrations: int` on `HealthReport` or
    `StorageUsage`; the banner "{n} pending · {schema_version} → {target_version}". Shared sentence.
    |
-  | D04-G8 | `POST /admin/db/vacuum` (Postgres only; `recording:write` proposed, `admin:write` the
-   alternative; no step-up proposed — D04-Q1) + `Job.kind` `db_vacuum`. Shared sentence. |
+  | D04-G8 | `POST /admin/db/vacuum` (Postgres only; Owner-only with the `recorder` step-up class
+   — ledger 1 row 58, D04-Q1 answered) + `Job.kind` `db_vacuum`. Shared sentence. |
   | D04-G9 | `Job.kind` `parquet_compaction` for `compactRecorder`'s job (today the kind is
    unnamed). Shared sentence. |
   | D04-G10 | `POST /admin/jobs/{jobId}/cancel` → `202`; `409 job_not_cancellable`; until then
@@ -8391,16 +8516,18 @@ RULED_PIN_TXT = r"""
   | D04-CG1 | `HealthReport.components[].name` is a free string; `postgres`, `questdb`,
    `parquet_store` are the example's names (`22` :11014–11026), not an enum — the three tier cards
    bind to them by name and show "not reported" for a missing one |
-  | D04-CG2 | `22` puts a step-up class on purge only (:15040); compact, import and the PROPOSED
-   vacuum carry none, so no step-up sentence is drawn on their confirms |
+  | D04-CG2 | `22` puts a step-up class on purge only (:15040); compact and import carry none, and
+   the PROPOSED vacuum's `recorder` class (ledger 1 row 58) has no route yet, so no step-up
+   sentence is drawn on their confirms |
   | D04-CG3 | the `22` example's `symbols[]` sum to 813.6 GB against 1,188.0 GB of QuestDB +
    Parquet: the per-symbol table states "{sum} of {budget used} attributed to symbols"; the example
    is not corrected |
   | D04-CG4 | jobs live in the API process (at most 256, lost at a restart, `22` :380,
    :12114–12117): the strip's "unknown" outcome and the reload case (`409 job_running` with no job
    id) are designed for |
-  | D04-Q1 | does the owner want the `recorder_purge` step-up class on the PROPOSED vacuum (a `22`
-   change)? Default proposed: none (non-destructive) |
+  | D04-Q1 | does the owner want a step-up class on the PROPOSED vacuum (a `22` change)? Default
+   proposed: none (non-destructive) — answered by ledger 1 row 58: Owner-only with the `recorder`
+   step-up class when it is ever built |
   | D04-Q2 | a section of `/admin/recorder` (built) or its own `/admin/storage` route? One line
    changes if the owner prefers the route |
   | D04-Q3 | should the import get a CMP-044 standard confirm instead of the card form? Default:
@@ -8436,9 +8563,10 @@ RULED_PIN_TXT = r"""
    `{pct}` 59.4 %; `{d}` 422 (the autostop runway) or 560 (the full date); `{date}` 2028-03-27;
    `{growth}` 1.45 GB/day; `{symbol}` ETHUSDT; `{user}` alex; `{n}` / `{done}` 31 / 12; `{k}` 1;
    `{rows}` 660,000; `{code}` the server's stable code; `{server_time}` 2026-09-14 10:31:03 UTC;
-   `{verb}` Compaction · Import · Purge of {symbol} · Vacuum (PROPOSED, D04-G8). The fixture
-   strings beside a template are the boards' words. Every `rbac.*` string ≤ 60 characters, names no
-   data; no jargon in a user-facing string (the tool gates).
+   `{verb}` Compaction · Import · Purge of {symbol} · Vacuum (PROPOSED, D04-G8); `{row}` 57
+   (D04-G1–G7, G11, G12) · 58 (G8) · 59 (G10), the gap's row in ledger 1. The fixture strings
+   beside a template are the boards' words. Every `rbac.*` string ≤ 60 characters, names no data;
+   no jargon in a user-facing string (the tool gates).
 @ §14#1 ¶3 ‖ table
   | Key | String | Source | Frames |
   | -------------------------------- |
@@ -8507,12 +8635,14 @@ RULED_PIN_TXT = r"""
   | `storage.tier.retry` | "Retry" | E16-D02 §3.1 :191 | `SCR-142/tier-unreachable-questdb`,
    `SCR-142/unavailable` |
   | `storage.ingestion` | "Ingest {rate} msg/s, backlog {rows} rows, lag —" · "Ingest 18,400
-   msg/s, backlog 25,000 rows, lag — (PROPOSED — D04-G4, owner approval pending (#2701))" | `new`
-   (`23` :4060–4061; the lag PROPOSED, D04-G4) | `TIER/questdb`, `SCR-142/lag-warning` |
+   msg/s, backlog 25,000 rows, lag — (PROPOSED — D04-G4, RULED (orchestrator, 2026-10-29, #2701
+   ledger 1 row 57))" | `new` (`23` :4060–4061; the lag PROPOSED, D04-G4) | `TIER/questdb`,
+   `SCR-142/lag-warning` |
   | `storage.lag.banner` | "Ingestion backlog {rows} rows — writes are behind the feed" ·
    "Ingestion backlog 25,000 rows — writes are behind the feed" | `new` | `SCR-142/lag-warning` |
-  | `storage.proposed.caption` | "PROPOSED — D04-G{n}, owner approval pending (#2701)" | `new`
-   (the orchestrator's ruling) | every PROPOSED carrier |
+  | `storage.proposed.caption` | "PROPOSED — D04-G{n}, RULED (orchestrator, 2026-10-29, #2701
+   ledger 1 row {row})" | `new` (the orchestrator's ruling; ledger 1 rows 57–59) | every PROPOSED
+   carrier |
   | `storage.proposed.rows` | "Row counts by table are not produced yet" | `new` (D04-G3's
    fallback) | `TIER/tables-questdb` |
   | `storage.proposed.queries` | "Slowest queries are not produced yet" | `new` (D04-G5's
