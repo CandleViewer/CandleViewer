@@ -92,10 +92,18 @@ def test_the_order_list_renders_its_filters_its_keyset_and_newest_first() -> Non
     assert "orders.intent IN ('entry')" in sql
     assert "trade_group_legs.trade_group_id = " in sql
     assert "orders.created_ts >= " in sql and "orders.created_ts < " in sql
-    assert re.search(r"\(orders\.created_ts, orders\.id\) < \(\$\d+::TIMESTAMP WITH TIME ZONE", sql)
+    # the keyset as scalar predicates, an index condition on `ix_orders_recent` (#4997)
     assert re.search(
-        r"ORDER BY orders.created_ts DESC, orders.id DESC \s+LIMIT \$\d+::INTEGER$", sql
+        r"orders\.created_ts <= \$\d+::TIMESTAMP WITH TIME ZONE AND \(orders\.created_ts < ", sql
     )
+    assert "OR orders.id < $" in sql and "tuple" not in sql.lower()
+    # per account (LATERAL over the settled accounts), each scan limited, then merged and limited
+    assert "FROM (VALUES ($" in sql and "JOIN LATERAL (SELECT orders.id AS id" in sql
+    assert "orders.exchange_account_id = scoped_accounts.account_id" in sql
+    assert re.search(
+        r"ORDER BY orders.created_ts DESC, orders.id DESC \s+LIMIT \$\d+::INTEGER\) AS page", sql
+    )
+    assert re.search(r"ORDER BY page.created_ts DESC, page.id DESC \s+LIMIT \$\d+::INTEGER$", sql)
 
 
 def test_open_only_alone_is_the_non_terminal_set_held_and_untracked_included() -> None:
@@ -110,8 +118,10 @@ def test_open_only_alone_is_the_non_terminal_set_held_and_untracked_included() -
 def test_the_fill_list_takes_its_group_from_its_leg_else_its_orders() -> None:
     sql = _sql(_STATEMENTS["executions_statement"])
     assert "coalesce(executions.trade_group_leg_id, filled_order.trade_group_leg_id)" in sql
-    assert re.search(r"\(executions\.exec_ts, executions\.id\) < \(", sql)
-    assert "ORDER BY executions.exec_ts DESC, executions.id DESC" in sql
+    assert "executions.exec_ts <= $" in sql and "OR executions.id < $" in sql
+    assert "executions.exchange_account_id = scoped_accounts.account_id" in sql
+    assert "ORDER BY page.exec_ts DESC, page.id DESC" in sql
+    assert "ORDER BY executions.exec_ts DESC, executions.id DESC" in sql  # each account's scan
 
 
 def test_open_positions_render_the_partial_index_predicate() -> None:
@@ -215,3 +225,21 @@ async def test_an_order_or_position_outside_the_scope_names_only_its_holder() ->
     store, _ = _store(_Result([_position_row()]))
     found = await store.position(_GRANT, POSITION, environment="demo")
     assert isinstance(found, PositionRow) and found.id == POSITION
+
+
+async def test_an_over_long_event_chain_is_flagged_never_silently_cut() -> None:
+    """#4997: one event past `MAX_EVENT_PAGE` is read so the reader knows the chain goes on."""
+    from candleviewer.storage.repositories.orders import MAX_EVENT_PAGE
+
+    chain = [_event_row(id=n, seq=n) | {"order_link_id": "L"} for n in range(MAX_EVENT_PAGE + 1)]
+    store, rel = _store(_Result([_scoped_row()]), _Result(chain), _Result([]))
+    found = await store.order(_GRANT, ORDER, environment="demo", events=True)
+    assert isinstance(found, OrderDetail) and found.more_events
+    assert len(found.events) == MAX_EVENT_PAGE
+    assert (
+        "LIMIT $" in _sql(rel.statements[1])
+        and MAX_EVENT_PAGE + 1 in rel.statements[1].compile().params.values()
+    )
+    store, _ = _store(_Result([_scoped_row()]), _Result(chain[:3]), _Result([]))
+    found = await store.order(_GRANT, ORDER, environment="demo", events=True)
+    assert isinstance(found, OrderDetail) and not found.more_events

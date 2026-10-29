@@ -14,11 +14,13 @@ from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from starlette.datastructures import QueryParams
 
 from candleviewer.api.oms_read_params import next_cursor, order_query
 from candleviewer.api.order_diagnostics import RecordRefused, exchange_calls
 from candleviewer.storage.repositories.exchange_payload import redact_exchange_payload
 from candleviewer.storage.repositories.oms_reads import Keyset
+from candleviewer.storage.repositories.orders import MAX_EVENT_PAGE
 from tests.unit.api.oms_reads_world import (
     ACCOUNT_A,
     ACCOUNT_B,
@@ -459,3 +461,63 @@ def test_a_cursor_names_its_last_row_and_reads_back_its_place() -> None:
     assert read_after(again, "listOrders", ACCOUNT_A, 1000) == last
     assert Decimal("0.300") == Decimal(order(1, ACCOUNT_A).leaves_qty)
     assert position(1, ACCOUNT_A).size == Decimal("0.200")
+
+
+# -- the lens's folds (#4997) -------------------------------------------------------------------
+
+
+async def test_scope_is_enforced_server_side_a_forged_cursor_position_reaches_no_foreign_row() -> (
+    None
+):
+    """The cursor is no security boundary: its digest is unkeyed, so a caller can forge any
+    position under its own binding; one pointing at B's row still reads only A's (scope in SQL)."""
+    world = World()
+    b1 = next(o for o, _ in world.store.orders if o.exchange_account_id == ACCOUNT_B)
+    listing = order_query(QueryParams("limit=1"))
+    me = world.principals.tokens["manager"].snapshot.user_id  # type: ignore[union-attr]
+    forged = next_cursor(
+        listing, "listOrders", me, Keyset(b1.created_ts, b1.id), int(NOW.timestamp())
+    )
+    answer = await _get(world, "/orders", "manager", limit="1", cursor=forged)
+    assert answer.status_code == 200 and accounts_of(answer.json()) <= {str(ACCOUNT_A)}
+
+
+async def test_diagnostics_of_an_over_long_chain_fail_closed() -> None:
+    world = World()
+    a1 = world.store.orders[0][0]
+    world.store.events[a1.id] = [event(n, a1.id, {}) for n in range(1, MAX_EVENT_PAGE + 2)]
+    answer = await _diagnostics(world)
+    assert (answer.status_code, answer.json()["code"]) == (503, "store_unavailable")
+    assert world.audit.emitted == []  # nothing served, nothing viewed
+
+
+@pytest.mark.parametrize("member", ["event_id", "at"])
+async def test_a_stored_record_naming_a_computed_member_is_never_served(member: str) -> None:
+    world = World()
+    a1 = world.store.orders[0][0]
+    record = {**RECORD, member: 99 if member == "event_id" else "2020-01-01T00:00:00Z"}
+    world.store.events[a1.id] = [event(1, a1.id, {"record": record})]
+    answer = await _diagnostics(world)
+    assert (answer.status_code, answer.json()["code"]) == (503, "store_unavailable")
+
+
+async def test_get_order_reads_its_version_before_its_row() -> None:
+    """#4997: the `ETag` is never fresher than the body: the version is read first."""
+    world = World()
+    a1 = world.store.orders[0][0]
+    world.versions = _Versions(world.store.calls)
+    answer = await _get(world, f"/orders/{a1.id}")
+    assert answer.headers["etag"] == f'"{a1.id}:3"'
+    assert world.store.calls == ["version", "order"]
+
+
+class _Versions(dict[Any, int]):
+    """B1's versions as the route reads them, each read noted in the store's call log."""
+
+    def __init__(self, calls: list[str]) -> None:
+        super().__init__()
+        self.calls = calls
+
+    def get(self, key: Any, default: Any = None) -> int:  # type: ignore[override]
+        self.calls.append("version")
+        return 3

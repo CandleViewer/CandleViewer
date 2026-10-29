@@ -38,6 +38,7 @@ from candleviewer.storage.repositories.oms_reads import (
     PositionQuery,
 )
 from candleviewer.storage.repositories.orders import (
+    MAX_EVENT_PAGE,
     OrderEventRow,
     OrderRow,
     OutOfScope,
@@ -232,7 +233,8 @@ class Store:
             found = ScopedOrder(row, group, None, None, True)
             chain = tuple(self.events.get(order_id, ())) if events else ()
             fills = tuple(ListedExecution(x, g) for x, g in self.fills if x.order_id == order_id)
-            return OrderDetail(found, chain, fills)
+            more = len(chain) > MAX_EVENT_PAGE
+            return OrderDetail(found, chain[:MAX_EVENT_PAGE], fills, more)
         return OutOfScope(None)
 
     async def _fills(

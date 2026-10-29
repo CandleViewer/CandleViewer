@@ -18,6 +18,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.dialects.postgresql import psycopg as pg_psycopg
 
 from candleviewer.oms.reads import aggregate_positions
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
@@ -29,7 +30,11 @@ from candleviewer.storage.repositories.oms_reads import (
     PositionOutOfScope,
     PositionQuery,
 )
-from candleviewer.storage.repositories.oms_reads_sqlalchemy import SqlAlchemyOmsReads
+from candleviewer.storage.repositories.oms_reads_sqlalchemy import (
+    SqlAlchemyOmsReads,
+    executions_statement,
+    orders_statement,
+)
 from candleviewer.storage.repositories.orders import AccountsOutOfScope, OutOfScope
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from tests.integration.storage import test_trade_groups_store_pg as tg
@@ -40,6 +45,7 @@ from tests.integration.storage.test_trade_group_definitions_store_pg import (
     bootstrapped,
     pg_dsn,
 )
+from tests.integration.storage.test_trade_group_definitions_store_pg import B as BULK_1
 from tests.integration.storage.test_trade_group_definitions_store_pg import C as B
 from tests.integration.storage.test_trade_groups_store_pg import rel
 
@@ -98,7 +104,7 @@ def world(pg_dsn: str) -> Iterator[dict[str, object]]:
     tg._sql(pg_dsn, _POSITION, uuid4(), B, "Sell", Decimal("0.004"), Decimal("64000"))
     tg._sql(pg_dsn, _POSITION, uuid4(), LIVE, "Buy", Decimal(7), Decimal(1))
     yield {"manager": manager, "viewer": viewer, "a1": a1, "a2": a2, "a3": a3, "b1": b1,
-           "live": live}  # fmt: skip
+           "live": live, "dsn": pg_dsn}  # fmt: skip
 
 
 @pytest.fixture
@@ -232,12 +238,11 @@ async def test_reads_at_a_thousand_orders_answer_within_150_ms_at_p95(
     )  # fmt: skip
     tg._sql(pg_dsn, "ANALYZE orders")
     timings: dict[str, list[float]] = {"orders": [], "positions": []}
-    for scope in (OwnerScope(OWNER), _grant(world)):
+    for scope, named in ((OwnerScope(OWNER), (A, B)), (_grant(world), (A,))):
+        query = OrderQuery(open_only=True, accounts=named)  # not the EXPLAIN test's bulk accounts
         for _ in range(20):
             started = time.perf_counter()
-            await store.orders(
-                scope, OrderQuery(open_only=True), environment="demo", after=None, limit=101
-            )
+            await store.orders(scope, query, environment="demo", after=None, limit=101)
             timings["orders"].append(time.perf_counter() - started)
             started = time.perf_counter()
             await store.positions(scope, PositionQuery(), environment="demo")
@@ -246,3 +251,117 @@ async def test_reads_at_a_thousand_orders_answer_within_150_ms_at_p95(
         p95 = sorted(seconds)[int(len(seconds) * 0.95) - 1]
         print(f"{name} p95 {p95 * 1000:.1f} ms")  # the PR's evidence (`-s`)
         assert p95 < 0.150, name
+
+
+async def test_scope_is_enforced_server_side_a_forged_keyset_reaches_no_foreign_row(
+    store: SqlAlchemyOmsReads, world: dict[str, object]
+) -> None:
+    """The cursor is no security boundary (its digest is unkeyed): a page started at B's row's
+    position under a grant on A reads A's rows alone, as the scope is held in SQL (#4997)."""
+    b1 = world["b1"]
+    assert isinstance(b1, UUID)
+    [(created,)] = tg._sql(store_dsn(world), "SELECT created_ts FROM orders WHERE id = %s", b1)
+    forged = Keyset(created + timedelta(seconds=1), b1)
+    found = await store.orders(
+        _grant(world), OrderQuery(), environment="demo", after=forged, limit=500
+    )
+    assert found and {listed.order.exchange_account_id for listed in found} == {A}
+
+
+def store_dsn(world: dict[str, object]) -> str:
+    dsn = world["dsn"]
+    assert isinstance(dsn, str)
+    return dsn
+
+
+BULK_2 = UUID("e28f0000-0000-4000-8000-0000000000d4")  # another seeded demo account
+_BULK = 150_000  # rows per account and table: 600,000 in all
+_BULK_ORDERS = (
+    "INSERT INTO orders (id, exchange_account_id, order_link_id, symbol, side, intent, order_type,"
+    " qty, price, state, created_ts) SELECT gen_random_uuid(), a.id, "
+    "'ext-' || md5(a.id::text || n), 'BTCUSDT', 'Buy', 'entry', 'Limit', 0.5, 63000, "
+    "CASE WHEN n %% 3 = 0 THEN 'accepted' ELSE 'filled' END::order_state, "
+    "%s + n * interval '1 second' FROM unnest(%s::uuid[]) AS a(id), "
+    "generate_series(1, %s) AS n"
+)
+_BULK_FILLS = (
+    "INSERT INTO executions (id, exchange_account_id, exec_id, symbol, side, exec_qty, exec_price,"
+    " exec_value, exec_type, is_maker, exec_ts) SELECT gen_random_uuid(), a.id, 'B' || n, "
+    "'BTCUSDT', 'Buy', 0.1, 63000, 6300, 'Trade', false, %s + n * interval '1 second' "
+    "FROM unnest(%s::uuid[]) AS a(id), generate_series(1, %s) AS n"
+)
+
+
+def _plan(dsn: str, stmt: object) -> tuple[list[dict[str, object]], str]:
+    """`stmt`'s executed plan (`EXPLAIN ANALYZE`): its nodes, and its text for the PR."""
+    compiled = stmt.compile(  # type: ignore[attr-defined]
+        dialect=pg_psycopg.dialect(), compile_kwargs={"render_postcompile": True}
+    )
+    with tg._conn(dsn) as c:
+        [(plan,)] = c.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + str(compiled), compiled.params)
+        text = c.execute(
+            "EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) " + str(compiled),
+            compiled.params,
+        ).fetchall()
+    nodes: list[dict[str, object]] = []
+    pending = [plan[0]["Plan"]]
+    while pending:
+        node = pending.pop()
+        nodes.append(node)
+        pending += node.get("Plans", [])
+    return nodes, "\n".join(row[0] for row in text)
+
+
+def _assert_indexed(nodes: list[dict[str, object]], index: str, accounts: int, limit: int) -> None:
+    """Index scans of `index` only, each stopping near `limit` rows a loop; no sort of more than
+    one page per account."""
+    tables = {"orders", "executions"}
+    assert not [
+        n for n in nodes if n["Node Type"] == "Seq Scan" and n.get("Relation Name") in tables
+    ]
+    scans = [n for n in nodes if n.get("Index Name") == index]
+    assert scans and all(n["Node Type"] in ("Index Scan", "Index Only Scan") for n in scans)
+    assert all(int(n["Actual Rows"]) <= limit + 2 for n in scans)  # type: ignore[call-overload]
+    for sort in (n for n in nodes if n["Node Type"] == "Sort"):
+        [child] = sort["Plans"]  # type: ignore[misc]
+        fed = int(child["Actual Rows"]) * int(child["Actual Loops"])
+        assert fed <= accounts * limit, sort
+
+
+async def test_pages_read_their_index_in_order_and_never_sort_every_row(
+    pg_dsn: str, world: dict[str, object]
+) -> None:
+    """#4997: at 150,000 orders and 150,000 fills on each of two accounts, a single-account page,
+    a two-account page and a page deep in the history each read `ix_orders_recent` /
+    `ix_exec_acct_time` from the cursor's place, per account, and sort at most a page per
+    account; never a sequential scan or a sort of every matching row."""
+    bulk, start = [BULK_1, BULK_2], T0 + timedelta(days=30)
+    tg._sql(pg_dsn, _BULK_ORDERS, start, bulk, _BULK)
+    tg._sql(pg_dsn, _BULK_FILLS, start, bulk, _BULK)
+    tg._sql(pg_dsn, "ANALYZE orders")
+    tg._sql(pg_dsn, "ANALYZE executions")
+    manager = world["manager"]
+    assert isinstance(manager, UUID)
+    tg._sql(
+        pg_dsn, "INSERT INTO user_account_access (user_id, exchange_account_id, can_view) "
+        "VALUES (%s, %s, true)", manager, BULK_1,
+    )  # fmt: skip
+    deep = Keyset(start + timedelta(seconds=1_000), uuid4())  # 149,000 rows down each account
+    limit, owner, grant = 101, OwnerScope(OWNER), GrantScope(manager, frozenset({BULK_1}))
+    cases = [
+        ("grant, one account", grant, [BULK_1], None),
+        ("owner, two accounts", owner, bulk, None),
+        ("owner, two accounts, deep", owner, bulk, deep),
+    ]
+    for name, scope, accounts, after in cases:
+        for index, stmt in (
+            ("ix_orders_recent", orders_statement(
+                scope, OrderQuery(accounts=tuple(accounts)), "demo", accounts, after, limit
+            )),
+            ("ix_exec_acct_time", executions_statement(
+                scope, ExecutionQuery(accounts=tuple(accounts)), "demo", accounts, after, limit
+            )),
+        ):  # fmt: skip
+            nodes, text = _plan(pg_dsn, stmt)
+            print(f"\n--- {name}: {index}\n{text}")  # the PR's evidence (`-s`)
+            _assert_indexed(nodes, index, len(accounts), limit)
