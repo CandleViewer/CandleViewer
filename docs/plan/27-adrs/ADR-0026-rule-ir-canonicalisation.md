@@ -1,8 +1,8 @@
 # ADR-0026 — Rule IR canonicalisation and round-trip fuzz strategy
 
-- Status: **proposed** (owner approval pending)
+- Status: **accepted** (ratified 2026-10-29 by main-orchestrator under the owner's delegation, #2701 ledger 2 (comment 6493096777), row 39; the owner may revoke there)
 - Date: 2026-10-03
-- Deciders: Owner (`@basiltt`) — owner approval pending.
+- Deciders: Owner (`@basiltt`) — ratified 2026-10-29 under the owner's delegation (see Status).
 - Numbering note: the ticket text says "ADR-0016 / ADR-0025"; both are taken, so this is the next free
   number, 0026 (delivery adaptations).
 - Amended: 2026-10-23, §4 (the top-level strip the code does) and §5 (the editor's display-only hash mirror,

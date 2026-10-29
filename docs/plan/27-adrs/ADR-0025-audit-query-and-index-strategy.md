@@ -1,9 +1,10 @@
 # ADR-0025 — Audit query and index strategy
 
-- Status: **proposed** (measured in CI on 10 M rows; owner approval pending). Gap: the ticket names no
+- Status: **accepted** (ratified 2026-10-29 by main-orchestrator under the owner's delegation, #2701 ledger 2
+  (comment 6493096777), row 39; the owner may revoke there; measured in CI on 10 M rows). Gap: the ticket names no
   write-latency budget, so the Q2 result (below) cannot be declared "meeting budget".
 - Date: 2026-10-02
-- Deciders: Owner (`@basiltt`) — owner approval pending.
+- Deciders: Owner (`@basiltt`) — ratified 2026-10-29 under the owner's delegation (see Status).
 - Numbering note: the ticket text says "ADR-0021"; ADR-0021..0024 are already taken, so this is the next
   free number, 0025 (per the delivery adaptations).
 - Related: E42-K01 (this spike), E42-T02 (consumer), `docs/plan/21-database-schema.md` §3.10.1,

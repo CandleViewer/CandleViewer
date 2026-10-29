@@ -1,6 +1,6 @@
 # ADR-0030: Defect burn-down by root cause
 
-- Status: Proposed (owner approval pending)
+- Status: Accepted (ratified 2026-10-29 by main-orchestrator under the owner's delegation, #2701 ledger 2 (comment 6493096777), row 39; the owner may revoke there)
 - Date: 2026-10-05
 - Ticket: E49-K01 (#1334); evidence: `docs/plan/backlog/artifacts/e49-root-cause-clusters.md`
 - Related: ADR-0017 (board DoD gates), `docs/plan/02-definition-of-ready-done.md` §5.2, §6.2

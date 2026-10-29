@@ -1,10 +1,9 @@
 # ADR-0040 — Per-trade profile overrides and profile-change propagation to open tickets (E28-K01)
 
-- Status: **proposed** (2026-10-25). The recommended decision and its evidence are below. The owner's and the
-  Architect's sign-off of the decision table and of the items under "Owner sign-off items" is tracked on #2701;
-  E28-K01 (#968) is Done only after it, while this record and its prototype merge without it (the orchestrator's note
-  1 on #968). Until the sign-off, E28-S05 (#1144) may build against this record but must not ship a route that serves
-  an override.
+- Status: **accepted** (proposed 2026-10-25; ratified 2026-10-29 by main-orchestrator under the owner's delegation,
+  #2701 ledger 2 (comment 6493096777), row 33; the owner may revoke there). The decision table and the items under
+  "Owner sign-off items" are accepted as proposed, so E28-K01's spike closes (#968) and this record no longer holds
+  back E28-S05's (#1144) override route.
 - Date: 2026-10-25
 - Deciders: Owner (`@basiltt`) and Architect, on #2701; the Security engineer through the `security-review` label
   (C-10.2) and E28-X01's model. Author: hpe-worker-2 for main-orchestrator.
@@ -496,7 +495,8 @@ button's accessible name states why it is disabled. This record designs no contr
 
 ## Owner sign-off items (#2701)
 
-The status stays `proposed` until the owner and the Architect sign off, on #2701, on:
+The status stayed `proposed` until the owner and the Architect signed off, on #2701, on the items below; ratified as
+proposed 2026-10-29 (#2701 ledger 2 (comment 6493096777), row 33):
 
 1. the decision table and the comparator R (Decision 1);
 2. the net risk ceiling for every _B_: the remaining daily-loss headroom minus the committed risk (one ledger of
