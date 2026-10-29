@@ -31,7 +31,7 @@ from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.orders import MAX_ORDER_BODY_BYTES, make_orders_router
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
-from candleviewer.domain.order_entry import OrderEntryRefusal
+from candleviewer.domain.order_entry import REFUSAL_REASONS, OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment, GroupId
 from candleviewer.observability.correlation import CORRELATION_HEADER, CorrelationMiddleware
 from candleviewer.observability.metrics import Metrics
@@ -697,6 +697,47 @@ async def test_a_refused_order_is_audited_before_the_403() -> None:
     assert record.request_id == TRACE  # the id `CorrelationMiddleware` bound for the request
     world.audit.fail = True
     assert (await post(world, "manager")).status_code == 503
+
+
+@pytest.mark.parametrize("reason", sorted(REFUSAL_REASONS))
+async def test_each_gate_reason_is_one_record_then_its_403_and_nothing_reaches_the_oms(
+    reason: RefusalReason,
+) -> None:
+    """#2780 (C-2.9, C-2.21): every member of the closed `RefusalReason` set is one
+    `account.disabled_by_policy` record carrying that reason and only codes in its detail, then
+    `403 trading_disabled` with the same reason; no order is submitted and no task is run."""
+    world = World()
+    refusal = OrderEntryRefusal(reason, "Order entry is refused for this account.")
+    world.oms.route.switches.refuses = OrderEntryRefused(refusal)
+    answer = await post(world)
+    assert (answer.status_code, answer.json()["code"], answer.json()["reason"]) == (
+        403, "trading_disabled", reason,
+    )  # fmt: skip
+    (record,) = world.audit.written
+    assert (record.action, record.reason, record.outcome, record.severity) == (
+        "account.disabled_by_policy", reason, "denied", "warning",
+    )  # fmt: skip
+    assert (record.object_kind, record.object_id) == ("exchange_account", ACCOUNT)
+    assert record.detail == {"step": "switches", "code": "trading_disabled", "environment": "demo"}
+    assert (world.oms.submission.submitted, world.oms.tasks) == ([], [])
+
+
+async def test_a_gate_refusal_whose_record_cannot_land_is_still_refused_and_binds_no_key() -> None:
+    """#2780 "The refusal audit cannot be skipped": the audit writer unavailable, the gate's
+    refusal is `503 audit_unavailable` (fail closed, never admitted), nothing reaches the OMS and
+    the key stays unbound, so the same key is a first request once the writer is back."""
+    world = World()
+    world.audit.fail = True
+    world.oms.route.switches.refuses = OrderEntryRefused(GATE)
+    refused = await post(world)
+    assert (refused.status_code, refused.json()["code"]) == (503, "audit_unavailable")
+    assert "reason" not in refused.json()
+    assert world.audit.written == [] and world.rejected("audit_unavailable") == 1
+    assert (world.oms.submission.submitted, world.oms.tasks) == ([], [])
+    world.audit.fail, world.oms.route.switches.refuses = False, None
+    admitted = await post(world)
+    assert admitted.status_code == 202 and "idempotency-replayed" not in admitted.headers
+    assert len(world.oms.submission.submitted) == 1
 
 
 @pytest.mark.parametrize("who", ["viewer", "view_only", "outside"])
