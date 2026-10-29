@@ -17,6 +17,7 @@ the server serves it or a row here says how it is refused.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -24,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Final, cast
 
 import pytest
@@ -763,3 +765,46 @@ def test_contract_e12_q04_expected_cases_are_the_tests() -> None:
         if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
     }
     assert sorted(listed ^ defined) == []
+
+
+def _report_plugin() -> Any:
+    """`conftest.py`, loaded apart from pytest's own copy, so that its report hook can be called."""
+    path = _CASE_LIST.with_name("conftest.py")
+    spec = importlib.util.spec_from_file_location("e12_q04_report", path)
+    assert spec is not None and spec.loader is not None
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+    return plugin
+
+
+class _Reporter:
+    """The part of the terminal reporter the hook uses: outcomes in, lines out."""
+
+    def __init__(self, passed: list[str]) -> None:
+        self.stats = {"passed": [SimpleNamespace(nodeid=nodeid) for nodeid in passed]}
+        self.lines: list[str] = []
+
+    def section(self, title: str) -> None:
+        self.lines.append(title)
+
+    def write_line(self, line: str) -> None:
+        self.lines.append(line)
+
+
+def test_contract_e12_q04_report_prints_only_when_a_case_ran(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run that collected the E12-Q04 cases and ran none (a lane whose markers deselect them)
+    prints nothing; once one ran, the matrix lists every case, the others as `NOT RUN`."""
+    for name in ("CV_CONFORMANCE_REPORT_DIR", "GITHUB_STEP_SUMMARY"):
+        monkeypatch.delenv(name, raising=False)
+    plugin = _report_plugin()
+    config = SimpleNamespace(stash=pytest.Stash())
+    config.stash[plugin._COLLECTED] = set(plugin.expected_cases())
+    first, *others = plugin.expected_cases()
+    deselected = _Reporter(["tests/contract/test_market_tickers_contract.py::test_x"])
+    ran = _Reporter([f"{first}[a-case]"])
+    for reporter in (deselected, ran):
+        plugin.pytest_terminal_summary(reporter, config)
+    statuses = [line[:8].strip() for line in ran.lines[1:] if not line.startswith("::")]
+    assert (deselected.lines, statuses) == ([], ["PASSED"] + ["NOT RUN"] * len(others))
