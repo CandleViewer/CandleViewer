@@ -48,6 +48,13 @@ once and a resting count equal to the row's count sentence (`ladder.placing`'s k
 pre-send row any "held by Bybit" / "held at Bybit" not immediately followed by " once placed" is a
 FAIL — the registered `sl.holder` string is never modified (orchestrator, text round 1 M-2).
 
+The text approval's carries (orchestrator, 2026-10-24): `ladder.stop.line.mixed`'s two counts equal
+the per-child clauses' resting and placing… / queued rows; the custodian scan is case-insensitive
+and also runs on every not-yet-confirmed clause of a mixed row; every Σ line (sections 2, 4.2,
+4.3, 5.2) and every figure a section 3 row restates equal the tool's. Each has one self-test
+mutation, caught exactly once. E32-D03 and E32-D05 are read for the class word's glyph only, at
+their merge commits (`git show <sha>:path`, local and offline).
+
 Usage: python3 -I docs/design/_tools/e32_d04_ladder_builder_audit.py [--json] [--check]
        [--self-test] [--extra F ...]
 """
@@ -58,6 +65,7 @@ import copy
 import importlib
 import json
 import re
+import subprocess
 import sys
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -70,6 +78,13 @@ PLAN = ROOT / "docs" / "plan"
 DESIGN = ROOT / "docs" / "design"
 SPEC = DESIGN / "E32" / "E32-D04.md"
 UPSTREAM = DESIGN / "E32" / "E32-D02.md"
+# E32-D03 / E32-D05 are read at their merge commits (#4421, #4417), not at `main`: their boards
+# PRs (#4453, #4440) moved the cited lines, and the spec cites the text "at those merge commits".
+SIBLING_PINS = {
+    "E32-D02": "27bd8e885cf07d9ed47fdbf23880c65fdf60d5a8",  # its merge commit; G-rows cited by line
+    "E32-D03": "edca4c31ade27fcf2ed22f1f7ab2164cb4b28829",
+    "E32-D05": "e8f8558aaf9f931d960bfc987c6d92306ee29045",
+}
 PRIM, DARK, LIGHT, HC = (
     "primitives.tokens.json",
     "semantic-dark.tokens.json",
@@ -109,7 +124,10 @@ PRESENT_MARKER = r"stop [\d,]+\.\d(?: ·)? held by Bybit \(exchange\)"
 # On a pre-send row every custodian mention is the state-true marker: "held by|at Bybit" not
 # immediately followed by " once placed" FAILs, the "(exchange) once placed" variant included
 # (the registered `sl.holder` string is never modified; orchestrator, text round 1 M-2).
-PRE_SEND_HELD = r"held (?:by|at) Bybit(?! once placed)"
+PRE_SEND_HELD = r"held (?:by|at) Bybit(?! once placed)"  # matched case-insensitively
+# The pinned stop line on a mixed row (`ladder.stop.line.mixed`): its two counts are the per-child
+# clauses' resting and not-yet-confirmed (placing… / queued) rows (orchestrator, text approval).
+MIXED_LINE = r"held by Bybit \(exchange\) on (\d+) resting · once placed on (\d+)"
 # The state-table rows that open no position (no stop marker required): the empty modal, the
 # refused generator, the read-only panel and the reduce-only scale-out (`sl.reduce_only`).
 NON_OPENING = ("empty", "no viable ladder", "viewer-read-only", "preview · reduce-only")
@@ -233,70 +251,70 @@ BINDINGS = (
 # doc | line at the base | text the line must hold, unique in the file; a `14` / `15` line below
 # the pointer line may sit one lower (the shift is counted, never assumed).
 CITED_TABLE = """
-14 | 1509 | **Type:** Modal. Split size across N orders
-14 | 1525 | `POST /api/v1/orders` (backend places N children and tracks them as one algo)
-14 | 1526 | ("Child 5 is below the minimum — reduce the order count")
-14 | 1527 | placing (per-child progress) · partial placement failure with retry.
-14 | 1528 | CMP-130 SlippageEstimateChip, CMP-228 PreviewTile.
-14 | 1531 | Preview recomputes locally within one frame
-14 | 1532 | `algo.scaled_created` with `{symbol, side, levels, totalQty
-14 | 1533 | (flat / linear / exponential / custom) drawn
-14 | 1534 | recommendations PROPOSED pending the owner's sessions: the preview as a real table
+14 | 1525 | **Type:** Modal. Split size across N orders
+14 | 1541 | `POST /api/v1/orders` (backend places N children and tracks them as one algo)
+14 | 1542 | ("Child 5 is below the minimum — reduce the order count")
+14 | 1543 | placing (per-child progress) · partial placement failure with retry.
+14 | 1544 | CMP-130 SlippageEstimateChip, CMP-228 PreviewTile.
+14 | 1547 | Preview recomputes locally within one frame
+14 | 1548 | `algo.scaled_created` with `{symbol, side, levels, totalQty
+14 | 1549 | (flat / linear / exponential / custom) drawn
+14 | 1550 | recommendations PROPOSED pending the owner's sessions: the preview as a real table
 15 | 139 | ### CMP-010 Slider
 15 | 144 | `role="slider"`, `aria-valuenow/min/max/text`
-15 | 224 | ### CMP-019 Icon
-15 | 261 | ### CMP-023 Progress Bar
-15 | 512 | ### CMP-049 Table (base data table)
-15 | 515 | `virtualized?: boolean` (default true above 50 rows)
-15 | 799 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
-15 | 1310 | ### CMP-118 AlgoProgressCard (emulated TWAP/Iceberg/Chase/Scaled)
-15 | 1335 | ### CMP-119 BracketEditor (SL/TP attach widget)
-15 | 1468 | ### CMP-130 SlippageEstimateChip
-15 | 1788 | ### CMP-158 SafetyInvariantNotice
-15 | 2652 | ### CMP-228 PreviewTile
-15 | 2654 | the live miniature preview inside settings dialogs
-22 | 6091 | /trade-groups:
-22 | 6125 | summary: Place one ticket across N accounts (fan-out) with per-leg overrides
-22 | 6139 | `403 risk_limit_breached` with one `errors[]` entry per offending leg, audited, before
-22 | 6170 | Fan-out is scheduled against a **per-UID** rate budget
-22 | 6376 | /trade-groups/{tradeGroupId}/amend:
-22 | 6441 | operationId: cancelTradeGroup
-22 | 12542 | /trade-groups/preview:
-22 | 12556 | who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
-22 | 14232 | name: X-Arm-Token
-22 | 16997 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600 }
-22 | 17138 | max_concurrent_orders: { type: ["integer", "null"], minimum: 1, maximum: 500 }
-22 | 17142 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600, default: 30 }
-22 | 17990 | levels: { type: integer, minimum: 2, maximum: 50 }
-22 | 17993 | distribution: { type: string, enum: [equal, linear, geometric] }
-22 | 17997 | description: ">1 weights size toward `to_price`.",
-22 | 18268 | CreateTradeGroupRequest:
-22 | 18312 | ResolvedLegParams:
-22 | 18346 | TradeGroupLeg:
-22 | 18397 | LegError:
-22 | 18414 | retryable: { type: boolean }
-22 | 21128 | TradeGroupPreview:
-22 | 21159 | rate_budget_exhausted,
-23 | 3144 | ### 14.8 `TickerUpdate`
-23 | 3310 | ### 15.1 `OrderUpdate`
-23 | 3720 | ### 15.5 `TradeGroupUpdate`
+15 | 232 | ### CMP-019 Icon
+15 | 272 | ### CMP-023 Progress Bar
+15 | 554 | ### CMP-049 Table (base data table)
+15 | 557 | `virtualized?: boolean` (default true above 50 rows)
+15 | 849 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
+15 | 1362 | ### CMP-118 AlgoProgressCard (emulated TWAP/Iceberg/Chase/Scaled)
+15 | 1387 | ### CMP-119 BracketEditor (SL/TP attach widget)
+15 | 1522 | ### CMP-130 SlippageEstimateChip
+15 | 1846 | ### CMP-158 SafetyInvariantNotice
+15 | 2717 | ### CMP-228 PreviewTile
+15 | 2719 | the live miniature preview inside settings dialogs
+22 | 6802 | /trade-groups:
+22 | 6843 | summary: Place one ticket across N accounts (fan-out) with per-leg overrides
+22 | 6859 | `403 risk_limit_breached` with one `errors[]` entry per offending leg: its `field`
+22 | 6893 | Fan-out is scheduled against a **per-UID** rate budget
+22 | 7117 | /trade-groups/{tradeGroupId}/amend:
+22 | 7182 | operationId: cancelTradeGroup
+22 | 13653 | /trade-groups/preview:
+22 | 13667 | who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
+22 | 15420 | name: X-Arm-Token
+22 | 18389 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600 }
+22 | 18530 | max_concurrent_orders: { type: ["integer", "null"], minimum: 1, maximum: 500 }
+22 | 18534 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600, default: 30 }
+22 | 19440 | levels: { type: integer, minimum: 2, maximum: 50 }
+22 | 19443 | distribution: { type: string, enum: [equal, linear, geometric] }
+22 | 19447 | description: ">1 weights size toward `to_price`.",
+22 | 19765 | CreateTradeGroupRequest:
+22 | 19809 | ResolvedLegParams:
+22 | 19843 | TradeGroupLeg:
+22 | 19894 | LegError:
+22 | 19911 | retryable: { type: boolean }
+22 | 22956 | TradeGroupPreview:
+22 | 23013 | rate_budget_exhausted,
+23 | 3189 | ### 14.8 `TickerUpdate`
+23 | 3367 | ### 15.1 `OrderUpdate`
+23 | 3777 | ### 15.5 `TradeGroupUpdate`
 24 | 135 | `mode="conservative"` rounds a buy limit _down_ and a sell limit _up_
-24 | 2057 | ### 8.7 Rate budgeting
-24 | 2088 | submission fails fast with `RATE_BUDGET_EXCEEDED`
-24 | 2091 | ### 8.8 Safety invariant — native stop-loss
-24 | 2458 | | `risk_caps.max_orders_per_minute`
-24 | 2532 | **9.3.1 Stop resolution.**
-24 | 2538 | ### 9.4 Fan-out algorithm
-24 | 2578 | 4. **Rate budget is checked across all UIDs before the first send.**
-24 | 2861 | ### 10.6 Scaled (laddered) orders
-24 | 2868 | distribution: Literal["equal","linear","geometric","custom"] = "equal"
-24 | 2874 | batch_size: int = 10
-24 | 2877 | duplicate prices after rounding are **merged**
-24 | 2879 | Submission uses Bybit's batch endpoint (1
-24 | 4826 | ### 15.5 Audited action vocabulary (closed set)
-28 | 1914 | ## B2 — TradeGroup
-28 | 2183 | ### B2.2 States
-28 | 2198 | ### B2.3 Events and transitions
+24 | 2086 | ### 8.7 Rate budgeting
+24 | 2117 | submission fails fast with `RATE_BUDGET_EXCEEDED`
+24 | 2124 | ### 8.8 Safety invariant — native stop-loss
+24 | 2511 | | `risk_caps.max_orders_per_minute`
+24 | 2615 | **9.3.1 Stop resolution.**
+24 | 2661 | ### 9.4 Fan-out algorithm
+24 | 2701 | 4. **Rate budget is checked across all UIDs before the first send.**
+24 | 2984 | ### 10.6 Scaled (laddered) orders
+24 | 2991 | distribution: Literal["equal","linear","geometric","custom"] = "equal"
+24 | 2997 | batch_size: int = 10
+24 | 3000 | duplicate prices after rounding are **merged**
+24 | 3002 | Submission uses Bybit's batch endpoint (1
+24 | 5007 | ### 15.5 Audited action vocabulary (closed set)
+28 | 2005 | ## B2 — TradeGroup
+28 | 2274 | ### B2.2 States
+28 | 2289 | ### B2.3 Events and transitions
 11 | 3261 | #### US-ALGO-004 — Scaled entry orders · Should
 11 | 3271 | and I can retry only the failed leg
 11 | 3399 | #### US-ALGO-009 — DCA / scale-in safety ladders · Should
@@ -307,13 +325,19 @@ CITED_TABLE = """
 16 | 113 | | **Compact** (default for trading surfaces)
 16 | 114 | | **Comfortable** (default for admin/onboarding/settings)
 16 | 125 | 1. Density changes spacing-token resolution only
-23 | 4348 | `oms.account_stale`
+23 | 4420 | `oms.account_stale`
 E32-D02 | 285 | Account stale (`oms.account_stale`
 E32-D02 | 369 | `ladder.cancel.confirm` · `ladder.cancelled`
 E32-D02 | 466 | stale refuses order entry, never a tighten
+E32-D02 | 810 | | G-20 |
 E32-D02 | 811 | so the server cannot preview a DCA ladder
 E32-D02 | 835 | SCR-065 7, 14 (DCA, risk cap)
 E30-D04 | 219 | `frozen.reason` "Trading frozen by the owner — new orders off." (PROPOSED
+E33-D03 | 363 | "Emulated" · name "Emulated — run by CandleViewer, not Bybit"
+E32-D03 | 46 | | BQ-14 | the class word
+E32-D03 | 413 | `cls.emulated`
+E32-D05 | 45 | | BQ-12 | the word for protection layers
+E32-D05 | 403 | | `e32.class.emulated`
 """
 POINTER = "E32-D04.md](../design/E32/E32-D04.md)"
 DOC_NAMES = (
@@ -717,6 +741,32 @@ def derived_gate(
     return bad
 
 
+def has(value: str, text: str) -> bool:
+    """`value` in `text` as a whole figure: no digit, comma or point glued to either end."""
+    return re.search(rf"(?<![\d.,]){re.escape(value)}(?!\d)", text) is not None
+
+
+def sigma_line(sec: str, block: str, key: str, f: dict[str, object]) -> list[str]:
+    """A spec Σ line against the fixture's totals (and its custody split where it names one)."""
+    sigma = next((ln for ln in block.splitlines() if ln.strip().startswith("| Σ")), "")
+    if not sigma:
+        return [f"spec section {sec} {key}: no Σ line found"]
+    totals = cast(dict[str, str], f["totals"])
+    split = cast(dict[str, str], f["split"])
+    want = [(k, totals[k]) for k in ("total_qty", "total_notional", "avg_entry")]
+    want += [("worst_case_usdt", totals["worst_case_usdt"])]
+    want += [("worst_case_pct_equity", f"({totals['worst_case_pct_equity']} %")]
+    if "first order alone" in sigma:
+        want.append(("first_leg_risk_usdt", f"first order alone {totals['first_leg_risk_usdt']}"))
+    if "→ Bybit" in sigma:
+        want.append(("split", f"{split['resting']} → Bybit · {split['queued']} → queue"))
+    return [
+        f"spec section {sec} {key}: the Σ line lacks the tool's {k} {v!r}"
+        for k, v in want
+        if not has(v, sigma)
+    ]
+
+
 def spec_tables(
     spec: str, fx: dict[str, dict[str, object]], dca_fx: dict[str, object]
 ) -> list[str]:
@@ -747,7 +797,16 @@ def spec_tables(
             exp = want(key, int(cells[0]), keys)
             if cells[: len(exp)] != exp:
                 bad.append(f"spec section {sec} {key} level {cells[0]}: {cells[: len(exp)]}")
-    s52 = table_rows(sub("\n### 5.2", "\n### 5.3"))
+    sigmas = [(sec, block, key) for sec, block, key, _ in blocks]
+    s52_block = sub("\n### 5.2", "\n### 5.3")
+    s52_sigma = next((ln for ln in s52_block.splitlines() if ln.startswith("| Σ")), "")
+    sigmas += [
+        ("5.2", f"| Σ{part}", key)
+        for part, key in zip(s52_sigma.split("| Σ")[1:], ("skew_1", "anatomy"), strict=False)
+    ]
+    for sec, block, key in sigmas:
+        bad += sigma_line(sec, block, key, fx[key])
+    s52 = table_rows(s52_block)
     if not s52:
         bad.append("spec section 5.2: no table rows found")
     for cells in s52:
@@ -770,6 +829,104 @@ def spec_tables(
     for k in ("total_qty", "total_notional", "avg_entry", "risk_full", "risk_first_leg"):
         if str(dca_fx[k]) not in sigma:
             bad.append(f"spec section 5.5: the Σ line lacks the tool's {k} {dca_fx[k]}")
+    return bad
+
+
+# ---- section 3's restated figures: each named frame quotes its fixture's numbers -------------
+def frame_figures(
+    fx: dict[str, dict[str, object]], dca_fx: dict[str, object], side: dict[str, dict[str, str]]
+) -> dict[str, list[tuple[str, str]]]:
+    """The figures each section 3 row restates, from the tool (label, value)."""
+
+    def scaled(key: str, *facets: str) -> list[tuple[str, str]]:
+        f = fx[key]
+        totals = cast(dict[str, str], f["totals"])
+        rws = cast(list[dict[str, str]], f["rows"])
+        out: list[tuple[str, str]] = [("stop", f"stop {f['stop']}")]
+        if "totals" in facets:
+            out += [(k, totals[k]) for k in ("total_notional", "avg_entry", "worst_case_usdt")]
+            out.append(("worst_case_pct_equity", f"({totals['worst_case_pct_equity']} %"))
+        if "first" in facets:
+            out.append(("first_leg_risk_usdt", totals["first_leg_risk_usdt"]))
+        if "worst" in facets:
+            out.append(("worst_case_usdt", totals["worst_case_usdt"]))
+        if "remainder" in facets:
+            out.append(("remainder", f"+{f['remainder']}"))
+        if "qtys" in facets:
+            out.append(("qty column", " / ".join(r["qty"] for r in rws)))
+        if "rows" in facets:
+            out.append(("price / qty rows", " · ".join(f"{r['price']} / {r['qty']}" for r in rws)))
+        if "merged" in facets:
+            out += [("merged row", f"{r['price']} / {r['qty']}") for r in rws if "merged_from" in r]
+        if "above" in facets:
+            above = cast(list[str], f["above_mark"])
+            out.append(("above-mark prices", ", ".join(rws[int(a) - 1]["price"] for a in above)))
+        if "requests" in facets:
+            out.append(("requests line", cast(str, f["requests_line"])))
+        if "filled" in facets:
+            out.append(("filled cum. qty", f"({rws[1]['cum_qty']} BTC"))
+        return out
+
+    lv = cast(list[dict[str, str]], dca_fx["levels"])
+    dca_rows: list[tuple[str, str]] = [
+        ("stop", f"stop {dca_fx['shared_stop']}"),
+        ("dca price / qty", " · ".join(f"{x['price']} / {x['qty']}" for x in lv)),
+        ("dca cum. qty", " · ".join(x["cum_qty"] for x in lv)),
+        ("dca avg", " · ".join(x["avg_entry"] for x in lv)),
+        ("dca risk", " · ".join(x["risk_cum"] for x in lv)),
+        ("dca total_notional", cast(str, dca_fx["total_notional"])),
+        ("dca risk_full_pct", f"({dca_fx['risk_full_pct']} %"),
+    ]
+    refusal, budget = side["refusal"], side["budget"]
+    cap_rows: list[tuple[str, str]] = [
+        ("stop", f"stop {dca_fx['shared_stop']}"),
+        ("dca risk_full", cast(str, dca_fx["risk_full"])),
+        ("headroom", cast(str, dca_fx["headroom"])),
+        ("dca over_by", f"over by {dca_fx['over_by']}"),
+        ("scaled worst_case", refusal["worst_case"]),
+        ("scaled over_by", f"over by {refusal['over_by']}"),
+        ("scaled stop", f"stop {fx['anatomy']['stop']}"),
+    ]
+    budget_rows: list[tuple[str, str]] = [
+        ("stop", f"stop {fx['rows_50']['stop']}"),
+        ("requests now", f"{budget['requests_now']} batch requests now"),
+        ("per-minute figure", f"{budget['levels']} of {budget['minute_budget']} orders a minute"),
+    ]
+    return {
+        "preview": scaled("anatomy", "requests"),
+        "preview · 3 rows": scaled("rows_3", "totals", "remainder", "qtys", "requests"),
+        "preview · 10 rows": scaled("rows_10", "totals", "remainder", "requests"),
+        "preview · 50 rows": scaled("rows_50", "requests"),
+        "preview · DCA": dca_rows,
+        "preview · level dropped": scaled("dropped", "totals", "first", "rows", "remainder"),
+        "preview · levels merged": scaled("merged", "totals", "first", "merged", "remainder"),
+        "preview · crosses the mark": scaled("crosses", "totals", "first", "above"),
+        "preview · LIVE arm": scaled("anatomy", "worst"),
+        "risk-cap refusal": cap_rows,
+        "over-budget refusal": budget_rows,
+        "cancelled": scaled("anatomy", "filled"),
+    }
+
+
+def restated_gate(
+    spec: str,
+    fx: dict[str, dict[str, object]],
+    dca_fx: dict[str, object],
+    side: dict[str, dict[str, str]],
+) -> list[str]:
+    """Every figure a section 3 row restates equals the tool's (orchestrator, text approval)."""
+    bad: list[str] = []
+    found = {m.group(1): m.group(0) for m in re.finditer(FRAME_ROW, section(spec, 3, 4), MULTI)}
+    for name, figures in frame_figures(fx, dca_fx, side).items():
+        row = found.get(name, "")
+        if not row:
+            bad.append(f"spec section 3 `{name}`: the row is missing")
+            continue
+        bad += [
+            f"spec section 3 `{name}`: lacks the tool's {label} {value!r}"
+            for label, value in figures
+            if not has(value, row)
+        ]
     return bad
 
 
@@ -836,7 +993,7 @@ def clause_counts(row: str, n: int, clauses: list[re.Match[str]]) -> list[str]:
     """Rows 1…N covered once; the resting (queued, failed) counts equal the row's count sentence."""
     bad: list[str] = []
     covered: list[int] = []
-    size: dict[str, int] = {"resting": 0, "queued": 0, "failed": 0}
+    size: dict[str, int] = {"resting": 0, "queued": 0, "failed": 0, "placing": 0}
     for m in clauses:
         a, b = int(m.group(1)), int(m.group(2))
         covered += range(a, b + 1)
@@ -865,6 +1022,14 @@ def clause_counts(row: str, n: int, clauses: list[re.Match[str]]) -> list[str]:
             bad.append(f"{said!r}: the count is not the ladder's {n} levels")
         if other and size[other[0]] != other[1]:
             bad.append(f"{said!r}: {other[1]} {other[0]} vs {size[other[0]]} per-child rows")
+    pending = size["placing"] + size["queued"]
+    for mixed in re.finditer(MIXED_LINE, row):
+        held, later = int(mixed.group(1)), int(mixed.group(2))
+        if (held, later) != (size["resting"], pending):
+            bad.append(
+                f"`ladder.stop.line.mixed` {mixed.group(0)!r}: {held} / {later} vs"
+                f" {size['resting']} resting / {pending} placing or queued per-child rows"
+            )
     return bad
 
 
@@ -884,8 +1049,11 @@ def child_clauses(row: str, n: int) -> list[str]:
         elif re.search(r"placing|queued", where):
             if PRE_SEND not in rest:
                 bad.append(f"{span}: a not-yet-confirmed child without {PRE_SEND!r}")
-            if CUSTODIAN in rest:
-                bad.append(f"{span}: present-tense custodian on a not-yet-confirmed child")
+            for h in re.finditer(PRE_SEND_HELD, rest, re.IGNORECASE):
+                bad.append(
+                    f"{span}: present-tense custodian on a not-yet-confirmed child"
+                    f" ({rest[h.start() : h.end() + 14]!r})"
+                )
         elif "failed" in where and "not sent" not in where + rest:
             bad.append(f"{span}: a failed child without 'not sent'")
     return bad
@@ -926,7 +1094,7 @@ def frame_gates(spec: str) -> list[str]:
                 if re.search(PRESENT_MARKER, row):
                     bad.append(f"{tag}: present-tense stop marker on a pre-send row")
         if name not in POST_CONFIRM:
-            for h in re.finditer(PRE_SEND_HELD, row):
+            for h in re.finditer(PRE_SEND_HELD, row, re.IGNORECASE):
                 bad.append(
                     f"{tag}: a custodian string on a pre-send row not followed by ' once placed'"
                     f" ({row[h.start() : h.end() + 14]!r})"
@@ -1002,6 +1170,14 @@ def flatten(d: object, prefix: str = "") -> dict[str, object]:
 def read_texts() -> dict[str, str]:
     t = {k: p.read_text(encoding="utf-8") for k, p in DOCS.items()}
     t["E32-D02"] = UPSTREAM.read_text(encoding="utf-8")
+    for sibling, sha in SIBLING_PINS.items():  # the class word's glyph only (D04-A10, D04-A11)
+        t[sibling] = subprocess.run(
+            ["git", "-C", str(ROOT), "show", f"{sha}:docs/design/E32/{sibling}.md"],
+            capture_output=True,
+            check=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout
     for name in ("E30/E30-D02", "E30/E30-D04", "E09/E09-D09", "E33/E33-D03"):
         t[name.split("/")[1]] = (DESIGN / f"{name}.md").read_text(encoding="utf-8")
     return t
@@ -1036,15 +1212,70 @@ def self_test_derived(
     return failures
 
 
+def caught_once(problems: list[str], needle: str) -> bool:
+    return sum(needle in p for p in problems) == 1
+
+
+def self_test_carries(
+    spec: str,
+    fx: dict[str, dict[str, object]],
+    dca_fx: dict[str, object],
+    side: dict[str, dict[str, str]],
+) -> list[str]:
+    """The text-approval carries: each planted fault is caught exactly once."""
+    failures: list[str] = []
+    s3 = section(spec, 3, 4)
+    frames = {m.group(1): m.group(0) for m in re.finditer(FRAME_ROW, s3, MULTI)}
+    placing, preview = frames.get("placing", ""), frames.get("preview", "")
+    mixed = re.search(MIXED_LINE, placing)
+    clause = next((m for m in re.finditer(CHILD_CLAUSE, placing) if "placing" in m.group(3)), None)
+    if mixed is None or clause is None or PRE_SEND not in preview:
+        return ["the `placing` / `preview` rows lack the text the carry mutations plant into"]
+    total = int(mixed.group(1)) + int(mixed.group(2))
+    moved = mixed.group(0).replace(
+        f"on {mixed.group(1)} resting · once placed on {mixed.group(2)}",
+        f"on {total} resting · once placed on 0",
+    )
+    if not caught_once(
+        frame_gates(spec.replace(placing, placing.replace(mixed.group(0), moved))),
+        "`ladder.stop.line.mixed`",
+    ):
+        failures.append("the mixed stop line's counts moved was not caught exactly once")
+    capital = preview.replace(PRE_SEND, f"{PRE_SEND}; Held by Bybit (exchange)", 1)
+    if not caught_once(frame_gates(spec.replace(preview, capital)), "'Held by Bybit"):
+        failures.append("a capitalised custodian on a pre-send row was not caught exactly once")
+    now = clause.group(0).replace(PRE_SEND, f"{PRE_SEND}, held at Bybit now", 1)
+    planted = spec.replace(placing, placing.replace(clause.group(0), now))
+    if not caught_once(frame_gates(planted), "'held at Bybit"):
+        failures.append("held at Bybit now on the placing… clause was not caught exactly once")
+    s42 = spec[spec.index("\n### 4.2") : spec.index("\n### 4.3")]
+    block = s42[s42.index("3 rows —") : s42.index("10 rows —")]
+    sigma = next(ln for ln in block.splitlines() if ln.startswith("| Σ"))
+    worst = cast(dict[str, str], fx["rows_3"]["totals"])["worst_case_usdt"]
+    bumped = spec.replace(sigma, sigma.replace(worst, bump(worst), 1), 1)
+    if not caught_once(spec_tables(bumped, fx, dca_fx), "the Σ line lacks"):
+        failures.append("a changed figure on section 4.2's Σ line was not caught exactly once")
+    merged = frames.get("preview · levels merged", "")
+    worst = cast(dict[str, str], fx["merged"]["totals"])["worst_case_usdt"]
+    if worst not in merged:
+        return [*failures, "the `preview · levels merged` row lacks its worst case to mutate"]
+    restated = spec.replace(merged, merged.replace(worst, bump(worst), 1))
+    if not caught_once(restated_gate(restated, fx, dca_fx, side), "lacks the tool's"):
+        failures.append("a changed restated figure on section 3 was not caught exactly once")
+    return failures
+
+
 def self_test(
     spec: str,
     texts: dict[str, str],
     lm: ModuleType,
     fx: dict[str, dict[str, object]],
     dca_fx: dict[str, object],
+    side: dict[str, dict[str, str]],
 ) -> list[str]:
     """Plant one fault per gate in a copy and expect it caught; a silent gate is a FAIL here."""
     failures: list[str] = self_test_derived(spec, lm, fx, dca_fx)
+    failures += self_test_carries(spec, fx, dca_fx, side)
     doc, line_s, want = cites()[0]
     lines = texts[doc].split("\n")
     idx = int(line_s) - 1
@@ -1184,6 +1415,7 @@ def main(argv: list[str]) -> int:
         "over_by": money(anatomy_worst - headroom),
         "breached": anatomy_worst > headroom,
     }
+    side = {"refusal": {k: str(v) for k, v in scaled_refusal.items()}, "budget": budget}
     out.append(
         "\n## 3-4. pairs.mjs status is per row above; the ladder arithmetic (the merged tool's):"
     )
@@ -1213,6 +1445,7 @@ def main(argv: list[str]) -> int:
         bad += deck_gates(spec, texts)
         bad += frame_gates(spec)
         bad += spec_tables(spec, fixtures, dca_fx)
+        bad += restated_gate(spec, fixtures, dca_fx, side)
         bad += file_gates([SPEC, *extra], texts)
     ok = (
         "OK — E32-D02's four tables re-derive byte-equal; the tool's own derived columns equal the"
@@ -1221,7 +1454,8 @@ def main(argv: list[str]) -> int:
         " class word, the CMP-158 sentence and 14's sub-minimum line verbatim; no retired word in"
         " UI"
         " copy; every T2 reason within 60 characters, no digit; every position-opening row carries"
-        " its stop in the state-true tense, per child on the mixed rows (C-2.6); every request and"
+        " its stop in the state-true tense, per child on the mixed rows (C-2.6); every Σ line and"
+        " every section 3 restated figure equal to the tool's; every request and"
         " cap figure (provisional); every DCA-fixture row stamped G-21; no private text; every C /"
         " CMP / SCR id exists; every cited text found once"
     )
@@ -1246,7 +1480,7 @@ def main(argv: list[str]) -> int:
     numbers["reason_keys_proposed"] = sum(
         not r.startswith("rbac.") and r not in REGISTERED_REASONS for r in reasons
     )
-    numbers["checklist_items"] = count(r"^\| 14:1533 ", spec)
+    numbers["checklist_items"] = count(r"^\| 14:1537 ", spec)
     numbers["missing_tokens"] = len(missing)
     numbers["banned_copy_words"] = len(BANNED_COPY)
     numbers["rows"] = ROWS
@@ -1285,14 +1519,17 @@ def main(argv: list[str]) -> int:
         clean = not any(b.startswith("marker") for b in bad)
         out.append("markers: " + ("clean" if clean else "MISMATCH"))
     if "--self-test" in argv and spec:
-        failed = self_test(spec, texts, lm, fixtures, dca_fx)
+        failed = self_test(spec, texts, lm, fixtures, dca_fx, side)
         bad += [f"self-test: {f}" for f in failed]
         out.append(
             "self-test: clean (moved → WARN, gone → FAIL, ambiguous → FAIL, stop marker removed →"
             " FAIL, present tense pre-send → FAIL, placing clause present tense → FAIL, placing"
             " clause marker removed → FAIL, derived scaled cell → FAIL, derived DCA cell → FAIL,"
             " spec DCA cell → FAIL, (exchange) once placed pre-send → FAIL, held at Bybit now"
-            " pre-send → FAIL, placing clause deleted → FAIL, ladder.placing k off by one → FAIL)"
+            " pre-send → FAIL, placing clause deleted → FAIL, ladder.placing k off by one → FAIL,"
+            " mixed stop line counts → FAIL once, Held by Bybit pre-send → FAIL once, held at"
+            " Bybit now on the placing clause → FAIL once, section 4.2 Σ figure → FAIL once,"
+            " section 3 restated figure → FAIL once)"
             if not failed
             else "self-test: FAILED " + "; ".join(failed)
         )
