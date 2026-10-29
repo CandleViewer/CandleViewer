@@ -350,17 +350,65 @@ FORBIDDEN_BRIDGE_KEYS = frozenset(
 CHANNEL_RE = re.compile(r"[\"'](cv:[A-Za-z0-9:_.-]+)[\"']")
 # SR-111: allowList.js's two tables, the invoke channels and the main-to-renderer events. Main
 # sends exactly the events and handles none; the preload subscribes to them only, through its one
-# guarded helper, and invokes none.
+# guarded helper, and invokes none. The tables are read with the file's comments blanked
+# (JS_COMMENT_RE), so each holds exactly its literal members.
 TABLE_RE = re.compile(r"(ALLOWED_IPC_CHANNELS|ALLOWED_IPC_EVENTS)\s*=\s*\[([^\]]*)\]")
+# A comment (group 1), or a string or template literal kept whole, so that a `//` or `/*` in one
+# opens no comment. A line comment ends at any line terminator: LF, CR, LS or PS.
+JS_COMMENT_RE = re.compile(
+    r"(//[^\n\r\u2028\u2029]*|/\*.*?(?:\*/|\Z))"
+    r"|\"(?:\\.|[^\"\\\n\r])*\"|'(?:\\.|[^'\\\n\r])*'|`(?:\\.|[^`\\])*`",
+    re.DOTALL,
+)
 EVENT_GUARD_RE = re.compile(
     r"isChannelAllowed\(\s*channel\s*,\s*ALLOWED_IPC_EVENTS\s*\)"
 )
-# SR-111, an allow-list: the preload may touch `ipcRenderer.invoke`, and `on(` and
-# `removeListener(` only as the calls of the one guarded subscribe helper (check_subscriptions).
-IPC_MEMBER_RE = re.compile(r"ipcRenderer\s*\.\s*([A-Za-z_$][\w$]*)(\s*\()?")
+# SR-111, an allow-list: each `ipcRenderer` token is the import binding (IMPORT_RE) or a direct
+# `invoke(`, `on(` or `removeListener(` call on it (group 1), the last two only in the one guarded
+# subscribe helper (check_subscriptions). Any other use fails: another member, optional chaining,
+# a bracket read, an alias, a destructuring or a re-binding. Group 2 names the member, if any.
+IPC_TOKEN_RE = re.compile(
+    r"(?<![\w$])ipcRenderer(?![\w$])(\s*\.\s*(?:invoke|on|removeListener)\s*\()?"
+    r"(\s*\??\.\s*[A-Za-z_$][\w$]*)?"
+)
+# The import binding: a plain `ipcRenderer` in a `{ ... } = require("electron")` destructuring.
+IMPORT_RE = re.compile(
+    r"\b(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*require\(\s*[\"']electron[\"']\s*\)"
+)
 UNSUBSCRIBE_RE = re.compile(r"ipcRenderer\s*\.\s*removeListener\s*\(\s*([^,)]+)")
 # Named function declarations only: a helper written as an arrow or a method is not traced.
 FUNCTION_RE = re.compile(r"function\s+[A-Za-z_$][\w$]*\s*\(([^)]*)\)\s*\{")
+_OPENER = {")": "(", "]": "[", "}": "{"}
+
+
+def _blank(js: str, strings: bool = False) -> str:
+    """`js` with each comment, and with `strings` each string or template literal too, turned
+    into spaces (newlines kept), so an offset into the result is an offset into `js`."""
+    return JS_COMMENT_RE.sub(
+        lambda m: re.sub(r"[^\n]", " ", m[0]) if m[1] or strings else m[0], js
+    )
+
+
+def _members(code: str, start: int, end: int) -> tuple[list[tuple[int, int]], bool]:
+    """The spans of the members of the object literal body code[start:end], split at the
+    commas outside brackets, and whether its brackets balance (not when `end` is -1, for a
+    literal that never closes); `code` has its comments and string literals blanked."""
+    if end < 0:
+        return [], False
+    spans: list[tuple[int, int]] = []
+    stack: list[str] = []
+    for i in range(start, end):
+        c = code[i]
+        if c in "([{":
+            stack.append(c)
+        elif c in _OPENER:
+            if not stack or stack.pop() != _OPENER[c]:
+                return spans, False
+        elif c == "," and not stack:
+            spans.append((start, i))
+            start = i + 1
+    spans.append((start, end))
+    return [(a, z) for a, z in spans if code[a:z].strip()], not stack
 
 
 def _block_end(js: str, opened: int) -> int:
@@ -497,10 +545,13 @@ def check_preload(preload_js: str, allow_list_js: str, main_js: str) -> list[Vio
     tables are closed and disjoint; one guarded subscribe helper."""
     vs: list[Violation] = []
     subject = "preload bundle"
-    exposed = re.findall(
-        r"exposeInMainWorld\(\s*[\"']([^\"']+)[\"']\s*,\s*([A-Za-z_$][\w$]*)",
-        preload_js,
+    pre = _blank(preload_js)
+    calls = list(
+        re.finditer(
+            r"exposeInMainWorld\(\s*[\"']([^\"']+)[\"']\s*,\s*([A-Za-z_$][\w$]*)", pre
+        )
     )
+    exposed = [(m[1], m[2]) for m in calls]
     if [n for n, _ in exposed] != ["cv"]:
         vs.append(
             Violation(
@@ -512,23 +563,32 @@ def check_preload(preload_js: str, allow_list_js: str, main_js: str) -> list[Vio
     for _, ident in exposed:
         if ident == "ipcRenderer":
             vs.append(Violation("SR-111", subject, "exposes ipcRenderer directly"))
-    tables = {
-        m[1]: set(CHANNEL_RE.findall(m[2])) for m in TABLE_RE.finditer(allow_list_js)
-    }
+    allow = _blank(allow_list_js)
+    tables = {m[1]: set(CHANNEL_RE.findall(m[2])) for m in TABLE_RE.finditer(allow)}
     events = tables.get("ALLOWED_IPC_EVENTS", set())
-    if both := tables.get("ALLOWED_IPC_CHANNELS", set()) & events:
+    table = tables.get("ALLOWED_IPC_CHANNELS", set())
+    if both := table & events:
         msg = f"channels in both the invoke and the event table: {sorted(both)}"
         vs.append(Violation("SR-111", "preload allow-list", msg))
-    for m in IPC_MEMBER_RE.finditer(preload_js):
-        if m[1] != "invoke" and not (m[2] and m[1] in ("on", "removeListener")):
-            msg = f"uses a non-invoke ipcRenderer method: {m[1]}"
+    bindings = {
+        m.start(1) + s.start(1)
+        for m in IMPORT_RE.finditer(pre)
+        for s in re.finditer(r"(?:^|,)\s*(ipcRenderer)\s*(?=,|$)", m[1])
+    }
+    for m in IPC_TOKEN_RE.finditer(pre):
+        if not m[1] and m.start() not in bindings:
+            use = "ipcRenderer" + re.sub(r"\s", "", m[2] or "")
+            msg = (
+                f"{use}: neither the import binding nor a direct invoke, on or "
+                "removeListener call"
+            )
             vs.append(Violation("SR-111", subject, msg))
-    vs += check_subscriptions(preload_js, subject)
-    for m in re.finditer(r"ipcRenderer\s*\.\s*invoke\s*\(\s*([^,)]+)", preload_js):
+    vs += check_subscriptions(pre, subject)
+    for m in re.finditer(r"ipcRenderer\s*\.\s*invoke\s*\(\s*([^,)]+)", pre):
         arg = m.group(1).strip()
         if arg == "channel":
             # the single guarded helper; it must re-check the allow-list first
-            if "isChannelAllowed" not in preload_js:
+            if "isChannelAllowed" not in pre:
                 vs.append(
                     Violation(
                         "SR-111", subject, "dynamic channel without allow-list check"
@@ -543,15 +603,46 @@ def check_preload(preload_js: str, allow_list_js: str, main_js: str) -> list[Vio
         elif arg[1:-1] in events:
             msg = f"invoke() on event channel '{arg}'"
             vs.append(Violation("SR-111", subject, msg))
-    cv_obj = re.search(r"Object\.freeze\(\{(.*?)\}\)", preload_js, re.DOTALL)
-    if cv_obj:
-        for key in re.findall(r"(?:^|[,{\s])([A-Za-z_$][\w$]*)\s*:", cv_obj.group(1)):
-            if key in FORBIDDEN_BRIDGE_KEYS:
-                vs.append(
-                    Violation("SR-111", subject, f"bridge exposes generic key '{key}'")
-                )
-    table = set(CHANNEL_RE.findall(allow_list_js)) - events
-    used = set(CHANNEL_RE.findall(preload_js)) - table - events
+    # The key ban examines each exposed object where it is bound (esbuild: `var cv =
+    # Object.freeze({`), member by member up to the `}` that closes it (a member's block body
+    # ends in `});`): every member is `name: value`, and no name is a generic key. The name is
+    # bound once and used only where it is exposed; a literal whose brackets do not balance as
+    # read here, or that never closes, fails closed.
+    code = _blank(preload_js, strings=True)
+    exposed_at = {m.start(2) for m in calls}
+    for _, ident in exposed:
+        name = re.escape(ident)
+        decl = rf"\b(?:var|let|const)\s+({name})\s*=\s*"
+        bridges = list(re.finditer(decl + r"Object\.freeze\(\s*\{", code))
+        uses = {m.start() for m in re.finditer(rf"(?<![\w$.]){name}(?![\w$])", code)}
+        if not bridges:
+            msg = (
+                "bridge must be bound as var|let|const <name> = Object.freeze({ "
+                f"(exposed: {ident})"
+            )
+            vs.append(Violation("SR-111", subject, msg))
+        elif uses - exposed_at - {bridges[0].start(1)}:
+            msg = (
+                f"bridge name '{ident}' is bound or used outside its frozen literal "
+                "and its exposeInMainWorld call"
+            )
+            vs.append(Violation("SR-111", subject, msg))
+        for b in bridges:
+            end = _block_end(code, b.end() - 1)
+            members, balanced = _members(code, b.end(), end)
+            if not balanced or not code[end + 1 :].lstrip().startswith(")"):
+                msg = f"bridge '{ident}' is unread: its brackets do not balance"
+                vs.append(Violation("SR-111", subject, msg))
+            for a, z in members:
+                key = re.match(r"\s*([A-Za-z_$][\w$]*)\s*:", code[a:z])
+                if key is None:
+                    text = " ".join(pre[a:z].split())[:40]
+                    msg = f"bridge member '{text}' is not written as name: value"
+                    vs.append(Violation("SR-111", subject, msg))
+                elif key[1] in FORBIDDEN_BRIDGE_KEYS:
+                    msg = f"bridge exposes generic key '{key[1]}'"
+                    vs.append(Violation("SR-111", subject, msg))
+    used = set(CHANNEL_RE.findall(pre)) - table - events
     if used:
         vs.append(
             Violation(
