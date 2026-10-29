@@ -2,12 +2,15 @@
 
 Stdlib only, offline (`python3 -I -B`). It reads the spec from the working tree, and every cited
 file and the token JSON AS TEXT at the pinned base with `git show`. Seven gates, each FAIL led by
-its code, at most one FAIL per table row:
+its code, at most one G1 FAIL per table row:
 
-- [G1-TABLE] section 2 holds M-1 to M-11 in order, every cell filled; each Recipe cell names an
-  E05-D03 section 2 row id that exists at the base, or "a cut"; a cut's timing cell is the instant
-  triple and its reduce cell "identical (a cut)"; a recipe's timing and reduce cells name its rows.
-- [G2-TOKEN] every dotted token name in the spec exists in the token JSON at the base; no easing
+- [G1-TABLE] section 2 holds M-1 to M-11 in order, every cell filled, no Carrier or reduce cell a
+  dash; each row's Recipe is the ruled one (RULED_RECIPE: its E05-D03 row ids and whether it is a
+  cut), the ids exist in E05-D03 section 2 at the base; a cut's timing cell is the instant triple
+  and its reduce cell "identical (a cut)"; a recipe's timing and reduce cells name its rows, the
+  reduce cell as that row's reduce cell.
+- [G2-TOKEN] every dotted name in backticks exists in the token JSON at the base (one state key
+  excepted); no easing
   token and no duration other than `motion.duration.instant` is restated in the table (E05-D03 is
   the one definition); every Stagger cell is `motion.duration.instant` (nothing staggers).
 - [G3-QUOTES] Q-1 to Q-5 of section 3 stand byte for byte in `E27.json`:416 at the base (Q-5
@@ -17,13 +20,14 @@ its code, at most one FAIL per table row:
 - [G5-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base;
   each pinned cite still carries its words; E05-D03 at the base equals the BQ list's pin
   `bca5f0f1d` whenever that commit is readable (recorded in the numbers either way).
-- [G6-HYGIENE] no local path, host, closing keyword, "approval pending", or a word or substring
-  on the lane's public-text list.
+- [G6-HYGIENE] no local path, host, closing keyword or pending-approval wording in the spec, and
+  no word or substring on the lane's public-text list or a host name in the spec or this tool.
 - [G7-BOARDS] section 7: seven dark boards, no twins, names and exports in the ruled pattern,
   every board PENDING until PR 2.
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL, 0 WARN is the bar);
-`--self-test` applies one mutation per gate (MUTATIONS) to an in-memory copy of the spec and passes
+`--self-test` applies one mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory copy
+of the spec and passes
 only when each adds exactly one new FAIL with its gate's code, a re-run on the unmutated text
 reproduces the base result and no file on disk changed.
 
@@ -91,6 +95,20 @@ BANNED_ROT13 = (
 )
 BANNED = codecs.decode(BANNED_ROT13, "rot13").split()
 BOARDS = 7
+NOT_TOKENS = {"keys.kek_unavailable"}  # a state key (D02's T2 reason), not a design token
+DASHES = {"—", "-", "–", "n/a", "N/A"}
+# M-row -> (its E05-D03 section 2 row ids, whether it is a cut), as R817 BQ-01..BQ-11 rule them
+RULED_RECIPE: dict[str, tuple[frozenset[str], bool]] = {
+    "M-1": (frozenset({"7"}), True),
+    "M-2": (frozenset({"2a"}), True),
+    **{f"M-{i}": (frozenset(), True) for i in (3, 4, 5, 6, 7, 9)},
+    "M-8": (frozenset({"2a"}), False),
+    "M-10": (frozenset({"2b"}), False),
+    "M-11": (frozenset({"6", "7"}), False),
+}
+HOST = re.compile(
+    r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|dev|app|cloud)\b", re.IGNORECASE
+)
 
 
 def git_show(rev: str, rel: str) -> str:
@@ -123,6 +141,7 @@ class Ctx(NamedTuple):
     """The texts the gates read; the self-test swaps `spec` for a mutated copy."""
 
     spec: str
+    tool: str
     base: dict[str, str]
     tokens: frozenset[str]
     prev_e05: str
@@ -142,7 +161,8 @@ def load_ctx() -> Ctx:
     base = {k: git_show(BASE, p) for k, p in KEYS.items()}
     tokens = frozenset(token_names([git_show(BASE, p) for p in TOKEN_FILES]))
     prev = git_show(PREV_PIN, KEYS["E05-D03"])
-    return Ctx(SPEC.read_text(encoding="utf-8"), base, tokens, prev)
+    tool = Path(__file__).read_text(encoding="utf-8")
+    return Ctx(SPEC.read_text(encoding="utf-8"), tool, base, tokens, prev)
 
 
 def section(spec: str, num: int) -> str:
@@ -200,7 +220,11 @@ def recipe_ids(cell: str) -> list[str]:
 def row_problem(row: dict[str, str], known: set[str]) -> str:
     if len(row) != len(COLS) or not all(row.get(c) for c in COLS):
         return "a cell is missing or empty"
+    if row["carrier"] in DASHES or row["reduce"] in DASHES:
+        return "the Carrier or the motion-reduce cell is a dash"
     ids, cut = recipe_ids(row["recipe"]), "a cut" in row["recipe"]
+    if row["m"] in RULED_RECIPE and RULED_RECIPE[row["m"]] != (frozenset(ids), cut):
+        return f"Recipe {row['recipe']!r} is not the ruled one {RULED_RECIPE[row['m']]}"
     if not ids and not cut:
         return f"Recipe {row['recipe']!r} names neither an E05-D03 row nor a cut"
     if unknown := [i for i in ids if i not in known]:
@@ -212,6 +236,8 @@ def row_problem(row: dict[str, str], known: set[str]) -> str:
     for col in ("timing", "reduce"):
         if sorted(recipe_ids(row[col])) != sorted(ids):
             return f"the {col} cell names rows {recipe_ids(row[col])}, the Recipe {ids}"
+    if ids and not re.search(r"'s reduce cells?$", row["reduce"]):
+        return "a recipe row's reduce cell does not name that row's reduce cell"
     if not CITE.search(row["source"]):
         return "the Source cell holds no cite"
     return ""
@@ -233,8 +259,7 @@ TOKEN = re.compile(r"`([a-z]+(?:\.[a-z0-9_]+)+)`")
 
 
 def gate_token(ctx: Ctx, r: Result) -> None:
-    groups = {t.split(".")[0] for t in ctx.tokens}
-    named = {t for t in TOKEN.findall(ctx.spec) if t.split(".")[0] in groups}
+    named = set(TOKEN.findall(ctx.spec)) - NOT_TOKENS
     if missing := sorted(named - ctx.tokens):
         r.fail("G2-TOKEN", f"token names not in the token JSON at the base: {missing}")
     for row in table(ctx.spec):
@@ -312,16 +337,21 @@ def gate_cite(ctx: Ctx, r: Result) -> None:
 
 # --- G6, G7: hygiene and boards ---------------------------------------------------------------
 def gate_hygiene(ctx: Ctx, r: Result) -> None:
-    for word in BANNED:
-        mixed = word[:1].isupper() and not word.isupper()  # a mixed-case word matches its case
-        hay, needle = (ctx.spec, word) if mixed else (ctx.spec.lower(), word.lower())
-        if needle in hay:
-            r.fail("G6-HYGIENE", f"a word or substring from the lane's public-text list: {word!r}")
+    for name, text in (("the spec", ctx.spec), ("the tool", ctx.tool)):
+        for word in BANNED:
+            mixed = word[:1].isupper() and not word.isupper()  # a mixed-case word matches its case
+            hay, needle = (text, word) if mixed else (text.lower(), word.lower())
+            if needle in hay:
+                r.fail(
+                    "G6-HYGIENE", f"{name}: a word or substring from the public-text list: {word!r}"
+                )
+        if host := HOST.search(text):
+            r.fail("G6-HYGIENE", f"{name}: a host name {host.group(0)!r}")
     for pat, what in (
-        (r"/home/|/tmp/|[A-Z]:\\\\", "a local path"),
+        (r"/home/|/tmp/|/mnt/|[A-Z]:\\", "a local path"),
         (r"https?://", "a host"),
         (r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #\d", "a closing keyword"),
-        (r"approval pending", "approval pending"),
+        (r"approval (?:pending|needed|required)|pending (?:owner )?approval", "approval pending"),
     ):
         if re.search(pat, ctx.spec, re.IGNORECASE):
             r.fail("G6-HYGIENE", what)
@@ -391,6 +421,36 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
 )
 
 
+def retarget(m: str, row_id: str) -> Callable[[Ctx], Ctx]:
+    """Move row `m` onto E05-D03 row `row_id` consistently in its Recipe, timing and reduce cells."""
+
+    def fn(ctx: Ctx) -> Ctx:
+        out = []
+        for line in ctx.spec.splitlines(keepends=True):
+            cells = line.split("|")
+            if len(cells) > 8 and cells[1].strip() == m:
+                cells[4], cells[5] = f" row {row_id} ", f" per row {row_id} "
+                cells[7] = f" row {row_id}'s reduce cell "
+                line = "|".join(cells)
+            out.append(line)
+        return ctx._replace(spec="".join(out))
+
+    return fn
+
+
+# Probes (lens round 1): edits a weaker gate let through; each must add one FAIL.
+PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
+    ("G1-TABLE", retarget("M-7", "2a")),
+    ("G1-TABLE", retarget("M-5", "3")),
+    ("G1-TABLE", regex(r"^(\| M-4 +(?:\|[^|]+){6}\| )[^|]+", r"\1— ")),
+    ("G2-TOKEN", sub("`type.num.base`", "`typo.num.base`")),
+    (
+        "G6-HYGIENE",
+        sub("authorised\n  in advance", "authorised in advance (relay" + ".example" + ".com)"),
+    ),
+)
+
+
 def digests() -> dict[str, str]:
     return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in (SPEC, Path(__file__))}
 
@@ -400,7 +460,7 @@ def self_test(ctx: Ctx, base: Result) -> list[str]:
     before, spec_sha = digests(), hashlib.sha256(ctx.spec.encode()).hexdigest()
     covered = {code for code, _ in MUTATIONS}
     bad += [f"self-test: gate {g} has no mutation" for g, _ in GATE_FNS if g not in covered]
-    for code, fn in MUTATIONS:
+    for code, fn in (*MUTATIONS, *PROBES):
         mutated = fn(ctx)
         if mutated.spec == ctx.spec:
             bad.append(f"self-test {code}: the mutation did not apply")
@@ -452,7 +512,7 @@ def main(argv: list[str]) -> int:
             out += [f"FAIL {line}" for line in st]
             out.append(
                 f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations (one per "
-                "gate), each one new FAIL; a re-run reproduces the base result; files on disk "
+                f"gate) and {len(PROBES)} probes, each one new FAIL; a re-run reproduces the base result; files on disk "
                 "unchanged"
             )
         print("\n".join(out))
