@@ -24,25 +24,26 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
 ## §B Who applies what
 
-| A                                      | Target                             | Applied by                               |
-| -------------------------------------- | ---------------------------------- | ---------------------------------------- |
-| D07-A1, D07-A4, D07-A5, D07-A7, D07-A8 | E11-D04 §5.1, §5.2, §6.3, §13      | E11-D04's owner                          |
-| D07-A2, D07-A3, D07-A6                 | `14` SCR-030's E12 matrix, SCR-045 | `14`'s owner, at the owner's sign-off PR |
+| A                                              | Target                               | Applied by                               |
+| ---------------------------------------------- | ------------------------------------ | ---------------------------------------- |
+| D07-A1, D07-A4, D07-A5, D07-A7, D07-A8, D07-A9 | E11-D04 §3 D3, §5.1, §5.2, §6.3, §13 | E11-D04's owner                          |
+| D07-A2, D07-A3, D07-A6                         | `14` SCR-030's E12 matrix, SCR-045   | `14`'s owner, at the owner's sign-off PR |
 
 ## §C Copy-ready rows (PROPOSED)
 
 Old is a verbatim fragment of the cited line at `83f18fd4c` (the tool checks it); New replaces it, or follows it where the row says "insert after".
 
-| A      | Target                   | Field (`file`:line)                           | Old                                                                                                        | New                                                                                                        |
-| ------ | ------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| D07-A1 | E11-D04 §13              | `chart.data_table_opened` (D04E11:403)        | `interval` (`bar_type` + `param`),                                                                         | insert after: `bar_type` (the `22` `BarType` value), `param` (string),                                     |
-| D07-A2 | `14` SCR-030 forming-bar | Screen reader (`14`:734)                      | SCR-045 state column "Forming"                                                                             | SCR-045 `state` word `forming` (E12-D07 §6)                                                                |
-| D07-A3 | `14` SCR-030 closed-bar  | Screen reader (`14`:735)                      | SCR-045 state "Closed" or "Closed, corrected"                                                              | SCR-045 `state` word `corrected` for a live amend, a closed bar otherwise unmarked (E12-D07 §6)            |
-| D07-A4 | E11-D04 §5.1             | close time, Source (D04E11:187)               | `Bar.close_t`                                                                                              | `Bar.close_time` / `close_t_ms`                                                                            |
-| D07-A5 | E11-D04 §6.3             | Rows (D04E11:260)                             | `aria-rowcount` = loaded bars + 1                                                                          | `aria-rowcount` = loaded bars + separator rows + 1 (E12-D07 §7.2)                                          |
-| D07-A6 | `14` SCR-030 E12 matrix  | intro (`14`:727)                              | the SCR-045 separator rows, its "Closed, corrected" state and its rebuild caption named below are proposed | the SCR-045 separator rows, its `corrected` state and its rebuild caption are specified in E12-D07 §6–§7   |
-| D07-A7 | E11-D04 §5.2             | the `state` budget, measured set (D04E11:196) | delta 8, state 8)                                                                                          | delta 8, state 9) — `corrected` fits; the `state` row of §5.1 (D04E11:183) reads 9 (E12-D07 §5, D07-C12)   |
-| D07-A8 | E11-D04 §5.1             | close time, Tier (D04E11:187)                 | extended (E12-D07)                                                                                         | auto on the non-time sets, 12 characters for `hh:mm:ss.mmm`; the width cell 8 → 12 (E12-D07 §3.1, D07-C15) |
+| A      | Target                   | Field (`file`:line)                           | Old                                                                                                        | New                                                                                                                                  |
+| ------ | ------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| D07-A1 | E11-D04 §13              | `chart.data_table_opened` (D04E11:403)        | `interval` (`bar_type` + `param`),                                                                         | insert after: `bar_type` (the `22` `BarType` value), `param` (string),                                                               |
+| D07-A2 | `14` SCR-030 forming-bar | Screen reader (`14`:734)                      | SCR-045 state column "Forming"                                                                             | SCR-045 `state` word `forming` (E12-D07 §6)                                                                                          |
+| D07-A3 | `14` SCR-030 closed-bar  | Screen reader (`14`:735)                      | SCR-045 state "Closed" or "Closed, corrected"                                                              | SCR-045 `state` word `corrected` for a live amend, a closed bar otherwise unmarked (E12-D07 §6)                                      |
+| D07-A4 | E11-D04 §5.1             | close time, Source (D04E11:187)               | `Bar.close_t`                                                                                              | `Bar.close_time` / `close_t_ms`                                                                                                      |
+| D07-A5 | E11-D04 §6.3             | Rows (D04E11:260)                             | `aria-rowcount` = loaded bars + 1                                                                          | `aria-rowcount` = loaded bars + separator rows + 1 (E12-D07 §7.2)                                                                    |
+| D07-A6 | `14` SCR-030 E12 matrix  | intro (`14`:727)                              | the SCR-045 separator rows, its "Closed, corrected" state and its rebuild caption named below are proposed | the SCR-045 separator rows, its `corrected` state and its rebuild caption are specified in E12-D07 §6–§7                             |
+| D07-A7 | E11-D04 §5.2             | the `state` budget, measured set (D04E11:196) | delta 8, state 8)                                                                                          | delta 8, state 9) — `corrected` fits; the `state` row of §5.1 (D04E11:183) reads 9 (E12-D07 §5, D07-C12)                             |
+| D07-A8 | E11-D04 §5.1             | close time, Tier (D04E11:187)                 | extended (E12-D07)                                                                                         | auto on the non-time sets, 12 characters for `hh:mm:ss.mmm`; the width cell 8 → 12 (E12-D07 §3.1, D07-C15)                           |
+| D07-A9 | E11-D04 §3 D3            | Columns, CVD (D04E11:116)                     | with **CVD rejoining automatically when the table is ≥ 708 CSS px wide** (its "auto" default)              | insert after: ; on SCR-045's per-mode sets CVD stays extended in every bar mode, which overrides this rejoin (E12-D07 §3.1, D07-C16) |
 
 ## §D Storybook story lists (each story per theme and density, `15`:41)
 
@@ -89,7 +90,7 @@ An item marked (not found) had no pointer when the role ran; its fold is named a
 
 ## §H The board plan for PR 2 (a Penpot lane)
 
-The boards of spec §0; frames named `SCR-045/<mode-or-state> · <theme>`. Data: the recorded fixture paths E12-D06 used, verified at the base by PR 2 before it cites them. Each board's frames:
+The boards of spec §0; frames named `SCR-045/<mode-or-state> · <theme>`. Data (RULED P-6): a seeded synthetic stream (seed 242), not recorded; only the tick size (0.1) and qty step (0.001) come from the recorded instrument fixture (spec §0). **Synthetic boards: all ten, 01–10**, each declaring it on its face. Two-panel frames (RULED P-5): `captions/rebuild-and-cache` and both `separators/time-axis`. Each board's frames:
 
 | Board | Frames                                                                                           |
 | ----- | ------------------------------------------------------------------------------------------------ |
