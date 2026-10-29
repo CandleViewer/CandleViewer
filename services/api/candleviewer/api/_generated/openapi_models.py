@@ -205,7 +205,7 @@ class Problem(BaseModel):
     action_summary: Annotated[
         str | None,
         Field(
-            description="`step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example \"Release kill switch, scope global\"). It comes from a fixed per-route template. Request values appear in it only as validated enum values (bare) or as identifiers and server-resolved labels (quoted, each bounded by its own schema's `maxLength` or `format`), never as free text such as a `reason`, and never as key material, a password, a token, a TOTP or recovery code or any field the redaction deny-list names (C-12.6). A label alone never identifies an account or a rule, because labels can be renamed and need not be unique: each account named in it is followed by its `environment` and `exchange_uid` and each rule by the environments its scope includes, rendered bare (for example \"Release kill switch, accounts 'demo-1' (demo, UID 1001234)\" or \"Arm rule 'Break-even' (live)\"); an account's `environment` and `exchange_uid` never change after it is registered. Naming a rule this way is provisional: two rules can share a label and environments, and `rules:write` can rename a rule and change its scope, bindings and active version without a step-up, so the route slice of #2304 decides, before any rule template ships, whether a rule is also named by its bound accounts and whether the grant that arms it is also bound to its active version. Before a label is quoted, an apostrophe or a backslash in it is preceded by a backslash, and every character outside printable ASCII (U+0020 to U+007E) is written as `\\u{`, its code point in upper-case hex zero-padded to four digits, and `}` (U+000A becomes `\\u{000A}`, U+202E becomes `\\u{202E}` and U+1F600 becomes `\\u{1F600}`). That covers line breaks and other control characters, bidi embedding, override and isolate marks and look-alike quotation marks, so the quotes bound the label: the label `demo-1' (demo)` is quoted as `'demo-1\\' (demo)'`. The step-up dialog shows it verbatim as its accessible description; a client never composes its own.\n"
+            description="`step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example \"Release kill switch, scope global\"). It comes from a fixed per-route template. Request values appear in it only as validated enum values (bare) or as identifiers and server-resolved labels (quoted, each bounded by its own schema's `maxLength` or `format`), never as free text such as a `reason`, and never as key material, a password, a token, a TOTP or recovery code or any field the redaction deny-list names (C-12.6). A label alone never identifies an account or a rule, because labels can be renamed and need not be unique: each account named in it is followed by its `environment` and `exchange_uid` and each rule by the environments its scope includes, rendered bare (for example \"Release kill switch, accounts 'demo-1' (demo, UID 1001234)\" or \"Arm rule 'Break-even' (live)\"); an account's `environment` and `exchange_uid` never change after it is registered. Naming a rule this way is provisional: two rules can share a label and environments, and `rules:write` can rename a rule and change its scope and its active version without a step-up, so the route slice of #2304 decides, before any rule template ships, whether a rule is also named by its bound accounts and whether the grant that arms it is also bound to its active version. Before a label is quoted, an apostrophe or a backslash in it is preceded by a backslash, and every character outside printable ASCII (U+0020 to U+007E) is written as `\\u{`, its code point in upper-case hex zero-padded to four digits, and `}` (U+000A becomes `\\u{000A}`, U+202E becomes `\\u{202E}` and U+1F600 becomes `\\u{1F600}`). That covers line breaks and other control characters, bidi embedding, override and isolate marks and look-alike quotation marks, so the quotes bound the label: the label `demo-1' (demo)` is quoted as `'demo-1\\' (demo)'`. The step-up dialog shows it verbatim as its accessible description; a client never composes its own.\n"
         ),
     ] = None
     target: Annotated[
@@ -3964,7 +3964,12 @@ class Rule(BaseModel):
     tags: list[str] | None = None
     active_version_id: UUID | None = None
     version: JsonInt | None = None
-    bindings: RuleBindings | None = None
+    bindings: Annotated[
+        RuleBindings | None,
+        Field(
+            description="Never emitted: the accounts a rule applies to are its IR's `scope.account_ids`, and a later contract delta removes this member."
+        ),
+    ] = None
     last_run_at: AwareDatetime | None = None
     last_run_status: Literal["running", "ok", "error", "aborted", "throttled"] | None = None
     fire_count_24h: JsonInt | None = None
@@ -7912,13 +7917,13 @@ class RuleIr(BaseModel):
         ),
     ]
     actions: Annotated[list[RuleAction], Field(max_length=10, min_length=1)]
-    scope: RuleIrScope | None = None
+    scope: RuleIrScope
     limits: RuleLimits | None = None
     variables: Annotated[
         dict[str, RuleMetricRef | RuleOperand1 | RuleArithmeticNode] | None,
         Field(description="Named intermediate expressions, evaluated before `conditions`."),
     ] = None
-    __null_refused = field_validator("scope", "limits", "variables", mode="before")(_refuse_null)
+    __null_refused = field_validator("limits", "variables", mode="before")(_refuse_null)
 
 
 class AlertConditionIr(BaseModel):
@@ -7943,15 +7948,20 @@ class RuleInput(BaseModel):
         extra="forbid",
     )
     name: Annotated[str, Field(max_length=120, min_length=1)]
-    description: Annotated[str | None, Field(max_length=1000)] = None
-    scope: Literal["global", "account", "symbol", "position", "trade_group"]
-    editor: Literal["form", "graph"] = "form"
-    tags: list[Tag] | None = None
+    description: Annotated[str | None, Field(description="Not stored yet.", max_length=1000)] = None
+    scope: Annotated[
+        Literal["global", "account", "symbol", "position", "trade_group"],
+        Field(
+            description="The rule's level, until a later contract delta drops it: a save stores `ir.scope.level` and does not read this member beside it, so a value that differs is ignored, not stored."
+        ),
+    ]
+    editor: Annotated[Literal["form", "graph"], Field(description="Not stored yet.")] = "form"
+    tags: Annotated[list[Tag] | None, Field(description="Not stored yet.")] = None
     ir: RuleIr
     graph_layout: Annotated[
         dict[str, Any] | None,
         Field(
-            description="Node/edge coordinates for the node-graph editor. Ignored by the engine."
+            description="Node/edge coordinates for the node-graph editor. Ignored by the engine; not stored yet."
         ),
     ] = None
     note: Annotated[str | None, Field(max_length=280)] = None
@@ -7963,15 +7973,20 @@ class RuleUpdateInput(BaseModel):
         extra="forbid",
     )
     name: Annotated[str, Field(max_length=120, min_length=1)]
-    description: Annotated[str | None, Field(max_length=1000)] = None
-    scope: Literal["global", "account", "symbol", "position", "trade_group"]
-    editor: Literal["form", "graph"] = "form"
-    tags: list[Tag] | None = None
+    description: Annotated[str | None, Field(description="Not stored yet.", max_length=1000)] = None
+    scope: Annotated[
+        Literal["global", "account", "symbol", "position", "trade_group"],
+        Field(
+            description="The rule's level, until a later contract delta drops it: a save stores `ir.scope.level` and does not read this member beside it, so a value that differs is ignored, not stored."
+        ),
+    ]
+    editor: Annotated[Literal["form", "graph"], Field(description="Not stored yet.")] = "form"
+    tags: Annotated[list[Tag] | None, Field(description="Not stored yet.")] = None
     ir: RuleIr
     graph_layout: Annotated[
         dict[str, Any] | None,
         Field(
-            description="Node/edge coordinates for the node-graph editor. Ignored by the engine."
+            description="Node/edge coordinates for the node-graph editor. Ignored by the engine; not stored yet."
         ),
     ] = None
     note: Annotated[str | None, Field(max_length=280)] = None

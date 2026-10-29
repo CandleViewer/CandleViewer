@@ -5042,7 +5042,7 @@ export interface paths {
      * Create a rule
      * @description A rule is stored as an **IR** (intermediate representation) — the single executable form
      *     produced by *both* editors (form/condition-list and node-graph), per owner decision #11.
-     *     `editor` records which editor last authored it, purely so the UI can reopen it in the
+     *     `editor` names the editor that last authored it, purely so the UI can reopen it in the
      *     right surface; it never changes execution. `graph_layout` holds node coordinates for the
      *     node editor and is ignored by the engine.
      *
@@ -5069,11 +5069,14 @@ export interface paths {
      *     "Not available — rules never loosen a stop." `validateRule` and `compileRule` report the
      *     same issue, and an imported rule is refused with it.
      *
-     *     **One place for a rule's accounts (E35, #4835).** The body names a rule's accounts only
-     *     in `ir.scope.account_ids`, and the version a save stores echoes exactly them. A body
-     *     member `RuleInput` does not name, or an account key in a member outside `ir`, is
-     *     refused with an audited `422 rule_ir_invalid` naming the member, and nothing is stored
-     *     (`RuleInput`).
+     *     **A rule's accounts and the members a save takes (E35, #4835).** No member outside `ir`
+     *     names an account: the body sends the rule's accounts in `ir.scope.account_ids`, and the
+     *     version a save stores echoes exactly them (inside `ir`, `RuleMetricRef.account_id` may
+     *     also name one, `RuleIr`). A member outside `ir` holding an account key is refused with
+     *     `errors[].rule` `accounts_outside_scope`, and any other member that `RuleInput` does not
+     *     name with `unknown_field`: an audited `422 rule_ir_invalid` naming each member in
+     *     `field`, and nothing is stored. A save does not store `description`, `editor`, `tags` or
+     *     `graph_layout` yet (`RuleInput`).
      */
     post: operations["createRule"];
     delete?: never;
@@ -9619,7 +9622,7 @@ export interface components {
     Problem: {
       /** @description `step_up_required` only: the step-up class the refused request needs, one of the `action_class` values of `POST /auth/step-up`. */
       action_class?: string;
-      /** @description `step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example "Release kill switch, scope global"). It comes from a fixed per-route template. Request values appear in it only as validated enum values (bare) or as identifiers and server-resolved labels (quoted, each bounded by its own schema's `maxLength` or `format`), never as free text such as a `reason`, and never as key material, a password, a token, a TOTP or recovery code or any field the redaction deny-list names (C-12.6). A label alone never identifies an account or a rule, because labels can be renamed and need not be unique: each account named in it is followed by its `environment` and `exchange_uid` and each rule by the environments its scope includes, rendered bare (for example "Release kill switch, accounts 'demo-1' (demo, UID 1001234)" or "Arm rule 'Break-even' (live)"); an account's `environment` and `exchange_uid` never change after it is registered. Naming a rule this way is provisional: two rules can share a label and environments, and `rules:write` can rename a rule and change its scope, bindings and active version without a step-up, so the route slice of #2304 decides, before any rule template ships, whether a rule is also named by its bound accounts and whether the grant that arms it is also bound to its active version. Before a label is quoted, an apostrophe or a backslash in it is preceded by a backslash, and every character outside printable ASCII (U+0020 to U+007E) is written as `\u{`, its code point in upper-case hex zero-padded to four digits, and `}` (U+000A becomes `\u{000A}`, U+202E becomes `\u{202E}` and U+1F600 becomes `\u{1F600}`). That covers line breaks and other control characters, bidi embedding, override and isolate marks and look-alike quotation marks, so the quotes bound the label: the label `demo-1' (demo)` is quoted as `'demo-1\' (demo)'`. The step-up dialog shows it verbatim as its accessible description; a client never composes its own. */
+      /** @description `step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example "Release kill switch, scope global"). It comes from a fixed per-route template. Request values appear in it only as validated enum values (bare) or as identifiers and server-resolved labels (quoted, each bounded by its own schema's `maxLength` or `format`), never as free text such as a `reason`, and never as key material, a password, a token, a TOTP or recovery code or any field the redaction deny-list names (C-12.6). A label alone never identifies an account or a rule, because labels can be renamed and need not be unique: each account named in it is followed by its `environment` and `exchange_uid` and each rule by the environments its scope includes, rendered bare (for example "Release kill switch, accounts 'demo-1' (demo, UID 1001234)" or "Arm rule 'Break-even' (live)"); an account's `environment` and `exchange_uid` never change after it is registered. Naming a rule this way is provisional: two rules can share a label and environments, and `rules:write` can rename a rule and change its scope and its active version without a step-up, so the route slice of #2304 decides, before any rule template ships, whether a rule is also named by its bound accounts and whether the grant that arms it is also bound to its active version. Before a label is quoted, an apostrophe or a backslash in it is preceded by a backslash, and every character outside printable ASCII (U+0020 to U+007E) is written as `\u{`, its code point in upper-case hex zero-padded to four digits, and `}` (U+000A becomes `\u{000A}`, U+202E becomes `\u{202E}` and U+1F600 becomes `\u{1F600}`). That covers line breaks and other control characters, bidi embedding, override and isolate marks and look-alike quotation marks, so the quotes bound the label: the label `demo-1' (demo)` is quoted as `'demo-1\' (demo)'`. The step-up dialog shows it verbatim as its accessible description; a client never composes its own. */
       action_summary?: string;
       /**
        * Format: date-time
@@ -10141,6 +10144,7 @@ export interface components {
     Rule: {
       /** Format: uuid */
       active_version_id?: string | null;
+      /** @description Never emitted: the accounts a rule applies to are its IR's `scope.account_ids`, and a later contract delta removes this member. */
       bindings?: components["schemas"]["RuleBindings"];
       /** Format: date-time */
       created_at?: string;
@@ -10304,35 +10308,50 @@ export interface components {
     };
     /**
      * @description The body of `createRule`; `updateRule` takes `RuleUpdateInput`, these members and
-     *     `expected_version`. A rule names its accounts in one place, `ir.scope.account_ids`
-     *     (`RuleIrScope`), never in a member outside `ir`. A body member this schema does not
-     *     name, or a member outside `ir` that holds an account key at any depth (`account_id`,
-     *     `account_ids`, or either with a prefix such as `exchange_account_ids`), is refused for
-     *     every role, the Owner included, with `422 rule_ir_invalid`, whose `errors` name each
-     *     such member in `field`. The refusal is audited (`rules.scope_denied`) and nothing is
-     *     stored.
+     *     `expected_version`. No member outside `ir` names an account: a save sends the rule's
+     *     accounts in `ir.scope.account_ids` (`RuleIrScope`), and inside `ir`
+     *     `RuleMetricRef.account_id` may also name one (`RuleIr`).
+     *
+     *     A member outside `ir` whose name, or any key at any depth inside it, is an account key
+     *     is refused with `errors[].rule` `accounts_outside_scope`, whether this schema names the
+     *     member or not. An account key is `account_id` or `account_ids`, compared
+     *     case-insensitively and with or without the underscore, alone or after a prefix that
+     *     ends in `_`: `accountId` and `exchange_account_ids` are account keys. Any other member
+     *     this schema does not name is refused with `errors[].rule` `unknown_field`. Both bind
+     *     every role, the Owner included: `422 rule_ir_invalid` with one `errors` entry per
+     *     refused member (at most 20), whose `field` is the member's name when that is an ASCII
+     *     identifier of at most 64 characters, else `$`, and whose `message` is fixed
+     *     (`RuleIrInvalid` example `memberOutsideIr`). The refusal is audited
+     *     (`rules.scope_denied`) and nothing is stored.
+     *
+     *     Outside `ir`, a save stores `name` and keeps `note` as the version's note; it does not
+     *     store `description`, `editor`, `tags` or `graph_layout` yet.
      */
     RuleInput: {
+      /** @description Not stored yet. */
       description?: string;
       /**
+       * @description Not stored yet.
        * @default form
        * @enum {string}
        */
       editor: "form" | "graph";
-      /** @description Node/edge coordinates for the node-graph editor. Ignored by the engine. */
+      /** @description Node/edge coordinates for the node-graph editor. Ignored by the engine; not stored yet. */
       graph_layout?: {
         [key: string]: unknown;
       };
       ir: components["schemas"]["RuleIr"];
       name: string;
       note?: string;
+      /** @description The rule's level, until a later contract delta drops it: a save stores `ir.scope.level` and does not read this member beside it, so a value that differs is ignored, not stored. */
       scope: components["schemas"]["RuleScope"];
+      /** @description Not stored yet. */
       tags?: string[];
     };
     /**
      * @description The single executable representation produced by **both** the form editor and the
      *     node-graph editor (owner decision #11). Round-tripping is lossless because
-     *     `graph_layout` (cosmetic node coordinates) is stored on the rule, outside the IR,
+     *     `graph_layout` (cosmetic node coordinates) belongs on the rule, outside the IR,
      *     so compiling either editor's model yields a byte-identical IR and therefore an
      *     identical `ir_hash`.
      *
@@ -10340,8 +10359,10 @@ export interface components {
      *     (`id`, `name`, `mode`, `editor`, `version`) live on `Rule` / `RuleInput`
      *     and in the `rules` table - they are deliberately not duplicated here, so an IR can
      *     be validated, hashed and compared without carrying database identity. The rule's
-     *     scope is part of the IR (`scope`, `RuleIrScope`), and `Rule.scope` is its level only:
-     *     `scope.account_ids` is the one place a rule names its accounts.
+     *     scope is part of the IR (`scope`, `RuleIrScope`, required), and `Rule.scope` is its
+     *     level only. A save sends the rule's accounts in `scope.account_ids` and names none
+     *     outside the IR (`RuleInput`); inside it, `RuleMetricRef.account_id` may also name an
+     *     account, and every account a saved IR names is checked against the saver's grants.
      *
      *     `x-cv-limit-caps` names the hard cap of each capped `limits` field (SR-104); a rule
      *     saved above one is refused (`createRule`). The server takes the caps from
@@ -10354,7 +10375,7 @@ export interface components {
       /** @enum {integer} */
       ir_version: 1;
       limits?: components["schemas"]["RuleLimits"];
-      scope?: components["schemas"]["RuleIrScope"];
+      scope: components["schemas"]["RuleIrScope"];
       trigger: components["schemas"]["RuleTrigger"];
       /** @description Named intermediate expressions, evaluated before `conditions`. */
       variables?: {
@@ -10363,10 +10384,10 @@ export interface components {
     };
     /**
      * @description The rule's scope, as the server stores it in the IR (24-internal-schemas.md section
-     *     11.2, `RuleScope`). `account_ids` is the one place a rule names its accounts: a save
-     *     sends them there and nowhere else (`RuleInput`), and the version it stores echoes
-     *     exactly them. An empty list means every account the rule's owner holds a grant on when
-     *     the rule fires.
+     *     11.2, `RuleScope`). A save sends the rule's accounts in `account_ids` and in no member
+     *     outside `ir` (`RuleInput`), and the version it stores echoes exactly them; inside `ir`,
+     *     `RuleMetricRef.account_id` may also name one (`RuleIr`). An empty list means every
+     *     account the rule's owner holds a grant on when the rule fires.
      */
     RuleIrScope: {
       /** @default [] */
@@ -10530,22 +10551,26 @@ export interface components {
      *     `expected_version`.
      */
     RuleUpdateInput: {
+      /** @description Not stored yet. */
       description?: string;
       /**
+       * @description Not stored yet.
        * @default form
        * @enum {string}
        */
       editor: "form" | "graph";
       /** @description The rule version the client edited, read only when `If-Match` is absent. */
       expected_version?: number;
-      /** @description Node/edge coordinates for the node-graph editor. Ignored by the engine. */
+      /** @description Node/edge coordinates for the node-graph editor. Ignored by the engine; not stored yet. */
       graph_layout?: {
         [key: string]: unknown;
       };
       ir: components["schemas"]["RuleIr"];
       name: string;
       note?: string;
+      /** @description The rule's level, until a later contract delta drops it: a save stores `ir.scope.level` and does not read this member beside it, so a value that differs is ignored, not stored. */
       scope: components["schemas"]["RuleScope"];
+      /** @description Not stored yet. */
       tags?: string[];
     };
     RuleValidationIssue: {

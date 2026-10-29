@@ -1,10 +1,10 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { generated } from "../src/index.js";
 
-// #4835 (E36-X01 G-12): the client's reading of the closed `/rules` save bodies (C-6.2). A rule
-// names its accounts in one place, `ir.scope.account_ids`, and no member outside `ir` carries
-// one. The expectTypeOf checks bind under `pnpm typecheck` (tsconfig.json includes test/), not
-// the vitest run; the runtime expect only keeps the sample value in use.
+// #4835 (E36-X01 G-12): the client's reading of the closed `/rules` save bodies (C-6.2). No member
+// outside `ir` names an account: a rule's accounts travel in `ir.scope.account_ids`, and `ir`
+// requires `scope`. The expectTypeOf checks bind under `pnpm typecheck` (tsconfig.json includes
+// test/), not the vitest run; the runtime expect only keeps the sample value in use.
 type Schemas = generated.rest.components["schemas"];
 type Create = Schemas["RuleInput"];
 type Update = Schemas["RuleUpdateInput"];
@@ -13,6 +13,7 @@ type Operations = generated.rest.operations;
 type Body<Op extends keyof Operations> = NonNullable<
   Operations[Op]["requestBody"]
 >["content"]["application/json"];
+type AccountNamed<T> = Extract<Lowercase<keyof T & string>, `${string}account${string}`>;
 
 const scope = {
   level: "account",
@@ -24,11 +25,13 @@ const scope = {
 } satisfies Scope;
 
 describe("rule save bodies (consumer side, 22-api-openapi /rules)", () => {
-  it("names a rule's accounts only in ir.scope.account_ids", () => {
+  it("names no account outside ir and the rule's accounts in the required ir.scope", () => {
     expect(scope.account_ids).toHaveLength(1);
     expectTypeOf<Create>().not.toHaveProperty("bindings");
     expectTypeOf<Update>().not.toHaveProperty("bindings");
-    expectTypeOf<NonNullable<Create["ir"]["scope"]>>().toEqualTypeOf<Scope>();
+    expectTypeOf<AccountNamed<Create>>().toBeNever();
+    expectTypeOf<AccountNamed<Update>>().toBeNever();
+    expectTypeOf<Create["ir"]["scope"]>().toEqualTypeOf<Scope>();
     expectTypeOf<Scope["account_ids"]>().toEqualTypeOf<string[]>();
   });
 
