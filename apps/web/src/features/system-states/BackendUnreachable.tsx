@@ -23,6 +23,15 @@ import { OfflinePage } from "./OfflinePage";
 type Check = keyof typeof CHECK_GLYPHS;
 const GLYPH = { passed: "check", failed: "close", unknown: "minus" } as const;
 
+/** R-902 is its own frame, outside the shell that paints `color.surface.app` (#4927's a11y gate). */
+const PAGE: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  overflowY: "auto",
+  background: "var(--color-surface-app)",
+  color: "var(--color-text-primary)",
+};
+
 const MARK: CSSProperties = {
   margin: 0,
   padding: "var(--space-inset-lg) var(--space-inset-lg) 0",
@@ -129,7 +138,7 @@ export function BackendUnreachable(): JSX.Element {
 
   const retryInS = counting ? Math.max(1, Math.ceil((nextAtMs - Date.now()) / 1000)) : null;
   return (
-    <ScreenRoot>
+    <ScreenRoot style={PAGE}>
       <p style={MARK}>{SCR159_COPY.wordmark}</p>
       <OfflinePage
         heading={copy.heading}

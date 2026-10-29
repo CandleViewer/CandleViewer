@@ -219,6 +219,18 @@ describe("R-902: when a boot is backend-unreachable", () => {
 });
 
 describe("R-902 /offline: the full-screen takeover", () => {
+  it("paints the app surface behind its own token text, so the pair holds in every theme", () => {
+    // R-902 renders outside the shell, whose frame paints `color.surface.app`: unpainted, the
+    // page's `color.text.*` (light in the dark theme) sat on the browser's white (the a11y gate's
+    // color-contrast, #4927). Each theme's text/surface pair is the design system's token audit.
+    openOffline();
+    const page = screen.getByRole("main");
+    expect(page.style.background).toBe("var(--color-surface-app)");
+    expect(page.style.color).toBe("var(--color-text-primary)");
+    expect(page.style.position).toBe("fixed");
+    expect(page.style.inset).toBe("0");
+  });
+
   it("renders the wordmark, the heading (focused), the sentence, the checklist and the version", async () => {
     divertFromPositions();
     openOffline();

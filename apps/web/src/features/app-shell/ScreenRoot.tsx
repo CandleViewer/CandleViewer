@@ -1,4 +1,4 @@
-import { createContext, useContext, type JSX, type ReactNode } from "react";
+import { createContext, useContext, type CSSProperties, type JSX, type ReactNode } from "react";
 
 const InShell = createContext(false);
 
@@ -12,6 +12,17 @@ export function InShellProvider({ children }: { readonly children: ReactNode }):
  * states): a plain `div` inside the shell, whose `main` already holds it, and its own `main`
  * on public and error routes, so every page has exactly one `main`.
  */
-export function ScreenRoot({ children }: { readonly children: ReactNode }): JSX.Element {
-  return useContext(InShell) ? <div>{children}</div> : <main>{children}</main>;
+export function ScreenRoot({
+  children,
+  style,
+}: {
+  readonly children: ReactNode;
+  /** A page that is its own frame (R-902) paints its surface here; the shell paints its own. */
+  readonly style?: CSSProperties;
+}): JSX.Element {
+  return useContext(InShell) ? (
+    <div style={style}>{children}</div>
+  ) : (
+    <main style={style}>{children}</main>
+  );
 }
