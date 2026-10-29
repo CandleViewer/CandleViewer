@@ -92,6 +92,12 @@ MIN_THROTTLE_MS = 50
 #: SR-E12-07 (§6.1): `bars.*` subscriptions per connection, live and replay; the next one gets
 #: `subscription_limit`. With `history` <= 1 000 this bounds one socket's snapshot amplification.
 MAX_BARS_SUBSCRIPTIONS = 16
+#: E21-T01 (§6.1, §16.2, BQ-2): distinct (symbol, depth >= 200) `book` subscriptions per connection,
+#: live and replay counted together; the next is refused `subscription_limit`. The default of the
+#: `ws.max_deep_book_subs` setting (`CV_WS_MAX_DEEP_BOOK_SUBS`), which may lower it only.
+MAX_DEEP_BOOK_SUBSCRIPTIONS = 4
+#: The depth from which a `book` subscription counts against that cap.
+DEEP_BOOK_MIN_DEPTH = 200
 #: SR-E12-07 (§8.4, flag on): the share, in percent of each limit of a connection's outbound
 #: budget, that its queued `bars.*` frames may hold, so `book` and `trades` are not starved.
 BARS_SHARE_PCT = 50

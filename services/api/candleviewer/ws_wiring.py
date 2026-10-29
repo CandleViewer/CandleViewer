@@ -8,7 +8,8 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   `(symbol, family)` on the ingestion streams' existing `acquire`/`release` interface. Families
   with no ingestion stream yet are a logged no-op; a refused symbol never fails the socket.
 * **Snapshots** (E17-S03 port): `SnapshotRouter` dispatches per topic family to the owning
-  module's adapter: `book_snapshot_source` (#2196), `BarsSnapshotSource` (#2195), the accounts
+  module's adapter: the book module's `book` topic (`book_topic`, #604, over the #2196 snapshot
+  source; its deltas run on `WsRuntime`), `BarsSnapshotSource` (#2195), the accounts
   module's `wallet` topic (`wallet_topic`, #837), which the account health runtime attaches to
   and publishes its deltas on, and the ingestion module's `ticker` topic (`ticker_topic`, #4707),
   whose deltas `WsRuntime` runs with the `InstrumentRevisions` bridge (23 §7.4). Until order-flow
@@ -49,10 +50,16 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot, scoped_account_ids
 from candleviewer.book.resync import BookEngine
 from candleviewer.book.snapshot_source import BookSnapshotSource, Record
+from candleviewer.book.ws_topic import BookTopic
 from candleviewer.bus import Bus, QueuePolicy, TopicPattern
 from candleviewer.bus import Subscription as BusSubscription
 from candleviewer.bus.models import WILDCARD
 from candleviewer.domain.events import InstrumentUpdatedEvent
+from candleviewer.ingestion.metrics import (
+    book_publish_latency_ms,
+    book_subscriptions_active,
+    symbol_label,
+)
 from candleviewer.ingestion.ticker_topic import TickerTopic
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
@@ -60,7 +67,7 @@ from candleviewer.recorder.ws_topic import RecorderTopic
 from candleviewer.rules.manager import Actor, RuleRow, rule_visible
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws import permissions as ws_permissions
-from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
+from candleviewer.ws.binary import BOOK_DELTA, BOOK_SNAPSHOT, Frame
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
 from candleviewer.ws.machines import MachineStateRegistry
@@ -123,7 +130,10 @@ class IngestionUpstreamSink:
         if stream is None:
             return
         try:
-            stream.acquire(self._consumer(key), key[0])
+            if key[1] == "book" and isinstance(stream, BookStream):  # E21-T01: per (symbol, depth)
+                stream.acquire_depth(self._consumer(key), key[0], int(key[2][0]))
+            else:
+                stream.acquire(self._consumer(key), key[0])
         except Exception:
             # A refused/unlisted symbol leaves the subscription pending, never the socket faulted.
             logger().warning("ws upstream open refused", symbol=key[0], family=key[1])
@@ -253,6 +263,37 @@ def book_snapshot_source(ctx: AppContext) -> BookSnapshotSource[SnapshotBody]:
         return None if inst is None else (inst.tick_size, inst.qty_step)
 
     return BookSnapshotSource(engine, steps, book_snapshot_body, stale=stale)
+
+
+def book_delta_part(records: tuple[Record, ...], price_scale: int, qty_scale: int) -> Frame:
+    """A book window's CVWB kind-2 twin, at its snapshot's scales (§3.4)."""
+    return Frame(BOOK_DELTA, records, price_scale=price_scale, qty_scale=qty_scale)
+
+
+def _observe_publish(symbol: str, depth: int, ms: float) -> None:
+    book_publish_latency_ms.labels(symbol=symbol_label(symbol), depth=str(depth)).observe(ms)
+
+
+def _set_active(depth: int, n: int) -> None:
+    book_subscriptions_active.labels(depth=str(depth)).set(n)
+
+
+def book_topic(ctx: AppContext, hub: SequencingHub) -> BookTopic[SnapshotBody]:
+    """E21-T01 (#604): the `book` family's adapter, which the book module owns: snapshots are the
+    window each (symbol, depth) holds over the #2196 source, and its deltas go out through `hub`
+    in the publisher's own window per depth (23 §6.1, §8.2). `WsRuntime` starts and stops it."""
+    return BookTopic(
+        book_snapshot_source(ctx),
+        hub.subscriptions,
+        hub.publish,
+        hub.upstream_desync,
+        hub.flush_pending,
+        book_delta_part,
+        bus=ctx.bus.bus,
+        env=ctx.settings.environment.value,
+        publish_latency=_observe_publish,
+        active=_set_active,
+    )
 
 
 def series_stale(
@@ -613,7 +654,8 @@ class WsRuntime:
     """Lifespan owner of the gateway's background work and its planned shutdown. It also starts
     and stops `recorder_status`, the 1 Hz recording status (E16-T08), once the app sets it, and its
     `feeds`, the publishers the gateway's topics need (E08-T08: the `ticker` topic and the
-    instrument revisions), stopped first so no frame starts after the notice."""
+    instrument revisions; E21-T01: the `book` topic), stopped first so no frame starts after the
+    notice."""
 
     def __init__(
         self,

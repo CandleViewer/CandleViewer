@@ -718,6 +718,13 @@ class Settings(BaseSettings):
     # `bye client_rate_limited` + 4429 before `auth_ok`. Default = `ws.lifecycle` constant of the
     # same name, upper-cased.
     ws_max_auths_per_user_per_min: int = Field(default=20, ge=1, le=20)
+    # E21-T01 (23 §6.1, §16.2, BQ-2): distinct (symbol, depth >= 200) `book` subscriptions per
+    # connection (`ws.max_deep_book_subs`). Default = `ws.limits.MAX_DEEP_BOOK_SUBSCRIPTIONS`; it
+    # may be lowered, never raised (the cap is the deep book's DoS control, E21 threat model).
+    ws_max_deep_book_subs: int = Field(default=4, ge=1, le=4)
+    # E21-T01 (BQ-1, C-4.13: off by default): `book.{symbol}.500` is offered and moves the symbol's
+    # tier to 500; off, such a `sub` is `invalid_topic_format`. Never gates a safety invariant.
+    heatmap_depth_500: bool = False
     ws_shutdown_grace_ms: int = Field(default=5000, ge=0, le=60_000)
     ws_shutdown_expected_downtime_ms: int = Field(default=20_000, ge=0, le=600_000)
     # #2565: the api container's SIGTERM -> SIGKILL budget (`CV_API_STOP_BUDGET_S`; the compose

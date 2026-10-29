@@ -523,7 +523,7 @@ from candleviewer.ws_wiring import (
     WsEvents,
     WsRuntime,
     alerts_topic,
-    book_snapshot_source,
+    book_topic,
     default_snapshot_router,
     ingestion_streams,
     loop_call_later,
@@ -1782,6 +1782,9 @@ def create_app(
         floor=functools.partial(_catalogue_min_size_floor, ctx),
     )
     snapshot_adapters["trades"] = ws_trades
+    # E21-T01 (#604): the book module's `book` topics, snapped from the window each holds over the
+    # live book and published in the publisher's own window per depth; the runtime's, as above.
+    ws_book = book_topic(ctx, ws_sequencing)
     ws_revisions = InstrumentRevisions(
         ctx.bus.bus, resolved.environment.value, ws_sequencing.instrument_revision
     )
@@ -1796,10 +1799,12 @@ def create_app(
         indicators=indicators,
         trades=ws_trades,
         snapshots=default_snapshot_router(
-            {"machines": machine_states, "book": book_snapshot_source(ctx), **snapshot_adapters}
+            {"machines": machine_states, "book": ws_book, **snapshot_adapters}
         ),
         sequencing=ws_sequencing,
         bars_off=not resolved.bars_enabled,
+        max_deep_book_subs=resolved.ws_max_deep_book_subs,  # E21-T01 (23 §16.2)
+        depth_500=resolved.heatmap_depth_500,
         machines=machine_states,
         # E17-T06: a span id (`sp`, 23 §3.1) on each sampled frame while latency telemetry is on.
         span_ids=new_span_id if resolved.telemetry_enabled else None,
@@ -1827,7 +1832,7 @@ def create_app(
         ws_upstream,
         resolved,
         machines=machine_states,
-        feeds=(ws_ticker, ws_revisions, ws_trades),
+        feeds=(ws_ticker, ws_revisions, ws_trades, ws_book),
     )
     # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, off by default. Without a config
     # the gateway keeps its 1 024-frame push bound: the flag swaps the bound, never removes it.
@@ -3840,6 +3845,7 @@ def wire_public_ws(
             writer=_BookWriter(),
             supervisor=B14BookSupervisor(feed=machine_feed),
             tick_size=_tick_size,  # #3806: a tick-size change under a LIVE book resyncs it
+            depth_500=ctx.settings.heatmap_depth_500,  # E21-T01: a 500 demand moves the tier
         )
     )
     ctx.ingestion.attach_tickers(

@@ -13,13 +13,19 @@ from pydantic import ValidationError
 
 from candleviewer.settings import Settings
 from candleviewer.ws.lifecycle import MAX_AUTHS_PER_USER_PER_MIN, MAX_CONNECTIONS_PER_USER
-from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, SERVER_WS_MAX_SIZE
+from candleviewer.ws.limits import (
+    MAX_DEEP_BOOK_SUBSCRIPTIONS,
+    MAX_INBOUND_FRAME_BYTES,
+    SERVER_WS_MAX_SIZE,
+)
 
 #: Each capped setting and the protocol value it may not pass.
 _CEILING = {
     "ws_max_inbound_frame_bytes": MAX_INBOUND_FRAME_BYTES,
     "ws_max_connections_per_user": MAX_CONNECTIONS_PER_USER,
     "ws_max_auths_per_user_per_min": MAX_AUTHS_PER_USER_PER_MIN,
+    # E21-T01 (BQ-2): the deep-book cap, the deep book's DoS control.
+    "ws_max_deep_book_subs": MAX_DEEP_BOOK_SUBSCRIPTIONS,
 }
 
 
