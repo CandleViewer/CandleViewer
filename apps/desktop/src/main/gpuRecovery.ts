@@ -1,10 +1,11 @@
 /**
  * GPU-process crash recovery in main (F15, E10-S04): each GPU `child-process-gone` becomes one
  * `cv:gpu:crashed` payload; `cv:gpu:retry` relaunches the app only after a crash this session, at
- * most once per GPU_RETRY_INTERVAL_MS across relaunches, and audits a refusal by reason only.
+ * most once per GPU_RETRY_INTERVAL_MS across relaunches, and audits a refusal by reason only. The
+ * last crash stays readable for `cv:gpu:info` (#4951): a page that subscribed after it missed it.
  */
 import { rateLimitedAudit } from "./crashLog.js";
-import { toGpuCrashReason, type GpuCrash } from "./gpuCrash.js";
+import { toGpuCrashReason, type GpuCrash, type GpuLastCrash } from "./gpuCrash.js";
 
 export const GPU_RETRY_INTERVAL_MS = 60_000;
 /** Main adds this value-less token to a GPU relaunch's argv once; it only makes retry stricter. */
@@ -33,6 +34,8 @@ export interface GpuRecovery {
   childProcessGone(details: { type: string; reason: string }): GpuCrash | undefined;
   /** `cv:gpu:retry`, after the sender check: relaunches, or throws GpuRetryRefusedError. */
   readonly retry: () => void;
+  /** `cv:gpu:info`'s `lastCrash`: this session's last GPU crash, or null before one. */
+  readonly lastCrash: () => GpuLastCrash | null;
 }
 
 export function createGpuRecovery(options: GpuRecoveryOptions): GpuRecovery {
@@ -44,6 +47,8 @@ export function createGpuRecovery(options: GpuRecoveryOptions): GpuRecovery {
   let restartCount = 0;
   // A launch a retry relaunched counts as a retry accepted at start, so the bound spans relaunches.
   let acceptedAt: number | undefined = relaunched ? now() : undefined;
+  let last: GpuCrash | undefined;
+  let retried = false; // a retry was accepted after `last`
 
   const refusalOf = (at: number): string | undefined =>
     restartCount === 0
@@ -60,7 +65,9 @@ export function createGpuRecovery(options: GpuRecoveryOptions): GpuRecovery {
       restartCount += 1;
       const reason = toGpuCrashReason(details.reason);
       audit("gpu-process-gone", { reason, restartCount });
-      return { crashedAtMs: now(), restartCount, reason };
+      last = { crashedAtMs: now(), restartCount, reason };
+      retried = false;
+      return last;
     },
     retry: () => {
       const at = now();
@@ -70,8 +77,10 @@ export function createGpuRecovery(options: GpuRecoveryOptions): GpuRecovery {
         throw new GpuRetryRefusedError();
       }
       acceptedAt = at;
+      retried = true;
       audit("gpu-retry-accepted", { restartCount });
       options.relaunch(relaunched ? [...argv] : [...argv, GPU_RELAUNCH_MARKER]);
     },
+    lastCrash: () => (last === undefined ? null : { ...last, retried }),
   };
 }

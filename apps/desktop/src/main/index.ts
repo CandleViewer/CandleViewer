@@ -14,11 +14,11 @@ import {
 } from "./appProtocol.js";
 import { resolveDevServerUrl, type DevServerUrl } from "./devServer.js";
 import { logStartup, logAuditEvent } from "./logger.js";
-import { applyGpuFlags, probeGpu } from "./gpu.js";
+import { applyGpuFlags, probeGpu, type GpuProbeResult } from "./gpu.js";
 import { getKekHandle } from "./keychain.js";
 import { checkForUpdate } from "./updateChannel.js";
 import { createCrashLog, type CrashLog } from "./crashLog.js";
-import type { GpuCrash } from "./gpuCrash.js";
+import type { GpuCrash, GpuLastCrash } from "./gpuCrash.js";
 import { createGpuRecovery } from "./gpuRecovery.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -373,7 +373,7 @@ function fromShellPageWithArg<T>(
 
 /** Registers the fixed set of ipcMain handlers backing the preload bridge (SR-111). */
 function installIpcHandlers(devServerUrl: DevServerUrl | undefined, crashLog: CrashLog): void {
-  ipcMain.handle("cv:gpu:info", fromShellPage(devServerUrl, probeGpu));
+  ipcMain.handle("cv:gpu:info", fromShellPage(devServerUrl, gpuInfo));
   // No arguments: fromShellPage never hands the renderer's to the reply (F15, E10-S04).
   ipcMain.handle("cv:gpu:retry", fromShellPage(devServerUrl, gpuRecovery.retry));
   ipcMain.handle("cv:keychain:getKekHandle", fromShellPage(devServerUrl, getKekHandle));
@@ -382,6 +382,15 @@ function installIpcHandlers(devServerUrl: DevServerUrl | undefined, crashLog: Cr
     "cv:crashLog:append",
     fromShellPageWithArg(devServerUrl, (entry) => crashLog.append(entry)),
   );
+}
+
+/**
+ * `cv:gpu:info`: the GPU probe, then this session's last GPU crash (#4951), so a page that
+ * subscribed to `cv:gpu:crashed` after a crash still shows it.
+ */
+async function gpuInfo(): Promise<GpuProbeResult & { readonly lastCrash: GpuLastCrash | null }> {
+  const probe = await probeGpu();
+  return { ...probe, lastCrash: gpuRecovery.lastCrash() };
 }
 
 /**

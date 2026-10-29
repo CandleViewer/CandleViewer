@@ -106,6 +106,8 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
 });
 
 let state: ShellState = INITIAL_SHELL_STATE;
+/** The restart count of the newest GPU crash taken, if any: main's push and pull of one are one. */
+let newestGpuCrash: number | undefined;
 /** Row 9's 10 s hand-over, armed when its episode starts and cleared when the episode ends. */
 let handover: ReturnType<typeof setTimeout> | null = null;
 
@@ -155,9 +157,22 @@ export function clearDegraded(): void {
   setShellState({ degraded: INITIAL_DEGRADED_FACTS });
 }
 
-/** A GPU-process crash: SCR-159's page shows, and an earlier answer's GPU row yields to it. */
-export function applyGpuCrash(crash: GpuCrash): void {
+/**
+ * A GPU-process crash: SCR-159's page shows, and an earlier answer's GPU row yields to it. True for
+ * a crash new to the store. One it took already (#4951: main pushes it and answers it on subscribe)
+ * changes nothing, unless its page is gone: the user kept software rendering, and the row holds
+ * again (a stopped shell drops it with its other facts).
+ */
+export function applyGpuCrash(crash: GpuCrash): boolean {
+  if (newestGpuCrash !== undefined && crash.restartCount <= newestGpuCrash) {
+    if (state.gpuCrash === null && state.degraded.asserted.gpuFallback === undefined) {
+      keepSoftwareRendering();
+    }
+    return false;
+  }
+  newestGpuCrash = crash.restartCount;
   setShellState({ gpuCrash: crash, degraded: setGpuFallback(state.degraded, false) });
+  return true;
 }
 
 /** "Keep software rendering": the page goes; SCR-153's GPU row holds for the session (BQ-9.3). */
@@ -168,6 +183,7 @@ export function keepSoftwareRendering(): void {
 /** Test-only reset to the initial, unauthenticated shell state. */
 export function resetShellState(): void {
   clearHandover();
+  newestGpuCrash = undefined;
   state = INITIAL_SHELL_STATE;
   for (const listener of listeners) listener();
 }
