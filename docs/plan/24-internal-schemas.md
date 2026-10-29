@@ -420,7 +420,7 @@ class BestQuoteEvent(MarketEvent):         # E21-T01: the top of the live book, 
     mid: Px                                # (bid + ask) / 2, not rounded to the tick
 
 class BookDesyncEvent(MarketEvent):        # E21-T01: one per resync incident
-    depth: int                             # the tier's depth, 1 | 50 | 200 | 500
+    depth: int                             # the active tier's depth, 200 | 500 (20 §3.2)
     prev_update_id: int                    # last u applied
     got_update_id: int | None              # the u that broke the sequence; None when the cause is not a sequence (crossed, negative qty, reconnect)
     resync_count: int                      # resyncs in the breaker's current 60 s window
