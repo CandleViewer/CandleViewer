@@ -385,6 +385,9 @@ O1–O5 are `26` §16's. U1–U9 are new; each has an owner and a resolution pat
 - B7's SwiftShader stall (U5) is why B7 left the per-PR set: its first per-PR run hung until the harness
   budget expired. If a stall ever reaches the nightly Electron run, the job goes red: a failure to run
   surfaced by design, not a regression, and the job is not required.
+- The page can also post every cell and then never send `/done` (seen on SwiftShader at context teardown,
+  after the last cell): the driver then finishes 30 s after the last requested cell (`DONE_GRACE_MS`,
+  `bench/matrix/matrix-lib.mjs`) instead of waiting out its budget. The driver script hash is unchanged.
 - Repetitions and median-of-p95 are the harness's rules (E06-K01), inherited, not restated. No fixture or flag
   is fetched at run time; the fixture is generated from the committed seed.
 - **Baselines** move only by a reviewed PR with a rationale, from a CI artefact of `main` on the same runner

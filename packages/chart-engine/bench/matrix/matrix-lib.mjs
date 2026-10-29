@@ -7,6 +7,19 @@ export const MATRIX_SCENARIOS = Object.freeze(["B1", "B2", "B3", "B4", "B5", "B7
 export const RUNTIMES = Object.freeze(["chromium", "electron", "tauri"]);
 export const REPORT_SCHEMA = "cv-matrix-report/1";
 
+/**
+ * How long the driver waits for the page's `/done` once every requested cell has arrived. On the
+ * hosted runner's SwiftShader the page posted every cell and then never sent `/done` (the context
+ * teardown after the last cell), so the run sat until its budget and wrote a "timeout" report.
+ */
+export const DONE_GRACE_MS = 30_000;
+
+/** True once `results` holds a cell for every requested scenario. */
+export function cellsComplete(results, scenarios) {
+  const got = new Set(results.filter((r) => r && r.kind === "cell").map((r) => r.scenario));
+  return scenarios.length > 0 && scenarios.every((s) => got.has(s));
+}
+
 /** ADR-0011 decision criteria thresholds (binding text in the ADR). */
 export const ADR_0011 = Object.freeze({
   /** criterion 1: B5 p95 in WebView2 within 10 % of Electron. */
