@@ -47,7 +47,6 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.redact import redact
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.models import SessionRecord, UserStatus
-from candleviewer.auth.session_service import MIN_IDLE_TIMEOUT_S
 from candleviewer.auth.step_up import READONLY_WINDOW
 from candleviewer.storage.backup_artefacts import ArtefactMissing, ArtefactUnreadable
 from tests.unit.admin._admin_fakes import principal
@@ -419,11 +418,52 @@ async def test_a_rotation_or_an_event_before_the_issue_does_not_end_the_link(bef
     assert [r["outcome"] for r in fx.served()] == [SUCCESS]
 
 
-def test_no_lifted_grant_event_hides_inside_a_live_link() -> None:
-    """SR-BK10A-02 (a) from the rows: a lock comes `MIN_IDLE_TIMEOUT_S` after the issue's touch
-    and a read-only window lasts `READONLY_WINDOW`; a link lives `LINK_TTL`, no longer, so at its
-    fetch the rows still show either, unless it began during the issue itself."""
-    assert LINK_TTL <= timedelta(seconds=MIN_IDLE_TIMEOUT_S) and LINK_TTL <= READONLY_WINDOW
+async def _unlocked(fx: Fx, sid: UUID, lock: str) -> None:
+    """*sid* locked (by request, or by its deadline), then unlocked by the session store's one
+    unlock write, so the row looks as it did before the lock, but for `unlocked_at` (#4743)."""
+    if lock == "lock_now":
+        fx.rewrite(sid, locked_at=NOW)
+    else:
+        fx.rewrite(sid, last_seen_at=NOW - timedelta(seconds=900))
+    row = fx.sessions.sessions[str(sid)]
+    assert row.is_idle_locked(now=NOW)
+    lifted = await fx.sessions.lift_idle_lock(str(sid), now=NOW + SECOND)
+    assert lifted is not None and not lifted.is_idle_locked(now=NOW + SECOND)
+
+
+@pytest.mark.parametrize("on", ["issuer", "successor"])
+@pytest.mark.parametrize("lock", ["lock_now", "deadline"])
+async def test_a_link_ends_at_any_unlock_of_its_session_chain(lock: str, on: str) -> None:
+    """SR-BK10A-02 (a), #4743: download links end at any unlock of the session chain, whichever
+    lock it lifted, on the issuing session or a successor its rotations made."""
+    fx = await _fx()
+    token, link = await fx.issue()
+    if on == "successor":
+        await _rotate(fx)
+    await _unlocked(fx, SID if on == "issuer" else SUCCESSOR, lock)
+    with pytest.raises(LinkEnded) as ended:
+        await fx.fetch(token)
+    assert ended.value.reason == "session_ended"
+    assert fx.served() == [_served(link, FAILURE, "session_ended")] and fx.spent(token)
+
+
+@pytest.mark.parametrize(
+    ("unlocked_at", "served"), [(NOW - SECOND, True), (NOW, False)], ids=["earlier", "same_instant"]
+)
+async def test_an_unlock_ends_a_link_issued_at_or_before_it(
+    unlocked_at: datetime, served: bool
+) -> None:
+    """The bound is the link's own issue: an unlock that came earlier leaves it live, one at the
+    same instant ends it (fail closed)."""
+    fx = await _fx()
+    fx.rewrite(SID, unlocked_at=unlocked_at)
+    token, link = await fx.issue()
+    assert link.issued_at == NOW
+    if served:
+        assert (await fx.fetch(token)).backup_id == BID
+    else:
+        with pytest.raises(LinkEnded):
+            await fx.fetch(token)
 
 
 @pytest.mark.parametrize(
