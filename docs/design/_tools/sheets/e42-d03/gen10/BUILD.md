@@ -28,12 +28,15 @@ A checkout rebuilds the ten boards from committed files plus one recorded input:
   `main` or in this PR holds. The harvest that re-ran them (`harvest.json`, committed as the record `cap10.py` reads)
   and its runner scripts drive those generators, so the runners are not committed. 90 and 91 would regenerate with
   the CMP-015 `State` prop (drift 5 below), which `cap10.py`'s `substitute()` removes.
-- **Proof (review fold, 2026-10-29):** in a fresh detached worktree, with only committed files plus the ten source
-  sheets, the ten scripts regenerate `v4/` byte-identical to the committed sheets and the ten `.md` files
-  byte-identical (`git status` clean but the untracked `cap10/`), and `gen10/tools/v4check.py` expands every packed
-  sheet to its `cap10/` sheet, sha256 matching, validator exit 0. The same run at cf47ac05b (before this fold)
-  reproduced that commit's `v4/` byte for byte. `gen10/tools/asdrawn.py` proves the committed `v4/` equals the sheets
-  the boards were drawn from (cf47ac05b) section for section but the two carries (Carries below).
+- **Proof (review fold, 2026-10-29):** in a fresh detached worktree of the fold's kit commit (no `gen10/pin/`, no
+  `spec/`), with only committed files plus the ten source sheets, the ten scripts regenerate `v4/` and the ten `.md`
+  files byte-identical to the committed ones (`git status`: nothing modified; untracked only the `cap10/` and
+  `gen10/v4check/` outputs); `gen10/tools/v4check.py` expands every packed sheet to its `cap10/` sheet, sha256
+  matching, validator exit 0 (warnings 1, 3, 3, 27, 29, 52, 0, 34, 27, 3); `gen10/tools/asdrawn.py` exits 0. The pin
+  fallbacks were also run with the pin's own revision made unreachable: the PR twin and the blob id each return the
+  md5-checked bytes. The same rebuild at cf47ac05b (before this fold, the pins read with `git show`) reproduced that
+  commit's `v4/` byte for byte. `asdrawn.py` proves the committed `v4/` equals the sheets the boards were drawn from
+  (cf47ac05b) section for section but the two carries (Review fold below).
 
 ## Method
 
