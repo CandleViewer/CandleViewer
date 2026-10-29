@@ -5,6 +5,57 @@ import tseslint from "typescript-eslint";
 import globals from "globals";
 import baseConfig from "@candleviewer/config/eslint";
 
+// C-2.16 network ban, shared by src/** and the worker override below (no I/O anywhere here).
+const NETWORK_GLOBALS = [
+  { name: "fetch", message: "C-2.16: packages/chart-engine must not call fetch (no I/O)." },
+  {
+    name: "XMLHttpRequest",
+    message: "C-2.16: packages/chart-engine must not use XMLHttpRequest (no I/O).",
+  },
+  {
+    name: "WebSocket",
+    message: "C-2.16: packages/chart-engine must not open a WebSocket (no I/O).",
+  },
+];
+
+// C-2.16 DOM ban for src/core and src/layers: every browser global (`globals.browser`) that is
+// neither an ES built-in nor a Node global, plus `navigator`, which Node also defines. The
+// package tsconfig.core.json carries no DOM lib either (only tsconfig.dom.json, for src/api and
+// src/host, does), so a DOM type there fails `tsc` as well (E11-T01).
+const NODE_OR_ES = new Set([...Object.keys(globals.node), ...Object.keys(globals.es2021)]);
+const DOM_GLOBALS = [
+  ...Object.keys(globals.browser).filter((name) => !NODE_OR_ES.has(name)),
+  "navigator",
+  "Navigator",
+].map((name) => ({
+  name,
+  message: "C-2.16: no DOM globals in src/core or src/layers (DOM glue is the host adapter's).",
+}));
+
+// C-2.16 exchange-knowledge ban on symbol names and string literals (E11-T01), and the network
+// globals reached through a global object, which `no-restricted-globals` does not see.
+const C216_SYNTAX = [
+  {
+    selector: "Identifier[name=/bybit/i]",
+    message: "C-2.16: packages/chart-engine must have no Bybit/exchange knowledge (symbol name).",
+  },
+  {
+    // Static import/export paths are no-restricted-imports' (one report each); a dynamic
+    // `import("…bybit…")` is caught here.
+    selector:
+      "Literal[value=/bybit/i]:not(ImportDeclaration > Literal, ExportNamedDeclaration > Literal," +
+      " ExportAllDeclaration > Literal), TemplateElement[value.raw=/bybit/i]",
+    message:
+      "C-2.16: packages/chart-engine must have no Bybit/exchange knowledge (string literal).",
+  },
+  {
+    selector:
+      "MemberExpression[object.name=/^(globalThis|self|window)$/]" +
+      "[property.name=/^(fetch|XMLHttpRequest|WebSocket)$/]",
+    message: "C-2.16: packages/chart-engine must not do network I/O (fetch/XHR/WebSocket).",
+  },
+];
+
 /** @type {import("eslint").Linter.Config[]} */
 export default tseslint.config(
   ...baseConfig,
@@ -16,6 +67,9 @@ export default tseslint.config(
     files: ["**/*.ts"],
     languageOptions: {
       parserOptions: {
+        // The project service lints the text it is given (stdin, editors), not the file on disk.
+        // tsconfig.json is solution-style: each file resolves to tsconfig.core.json (no DOM lib)
+        // or tsconfig.dom.json (src/index.ts, src/api, src/host, test/api).
         projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
@@ -54,7 +108,20 @@ export default tseslint.config(
           ],
           patterns: [
             {
+              group: ["react/*", "react-dom/*"],
+              message: "C-2.16: packages/chart-engine must not depend on React.",
+            },
+            {
+              group: ["**/apps/**", "@candleviewer/web", "@candleviewer/web/*"],
+              message: "C-2.16 / C-3.5: packages/chart-engine must never import an app (apps/*).",
+            },
+            {
               group: ["**/exchange/**", "**/bybit/**"],
+              message: "C-2.16: packages/chart-engine must have no Bybit/exchange knowledge.",
+            },
+            {
+              regex: "bybit",
+              caseSensitive: false,
               message: "C-2.16: packages/chart-engine must have no Bybit/exchange knowledge.",
             },
             {
@@ -68,10 +135,11 @@ export default tseslint.config(
       ],
       "no-restricted-globals": [
         "error",
-        { name: "fetch", message: "C-2.16: packages/chart-engine must not call fetch." },
+        ...NETWORK_GLOBALS,
         { name: "document", message: "C-2.16: no DOM globals in src/core or src/layers." },
         { name: "window", message: "C-2.16: no DOM globals in src/core or src/layers." },
       ],
+      "no-restricted-syntax": ["error", ...C216_SYNTAX],
     },
   },
   {
@@ -110,6 +178,13 @@ export default tseslint.config(
     rules: { "@typescript-eslint/no-require-imports": "off" },
   },
   {
+    // C-2.16: core and layers touch no DOM at all, not just `document` / `window` (E11-T01).
+    files: ["src/core/**/*.ts", "src/layers/**/*.ts"],
+    rules: {
+      "no-restricted-globals": ["error", ...NETWORK_GLOBALS, ...DOM_GLOBALS],
+    },
+  },
+  {
     // E14-X03 (#549; DR6, SR-E14-01): no inline comment lifts a rule in the drawing layer, C-2.16's
     // DOM ban among them. tools/ci/no-inline-suppression-paths.json lists the same path.
     files: ["src/layers/drawings/**/*.{ts,mts,cts}"],
@@ -119,8 +194,8 @@ export default tseslint.config(
     files: ["src/worker/**/*.ts"],
     rules: {
       // The worker glue is the one place OffscreenCanvas/postMessage globals
-      // are expected; core/layers stay DOM-free (C-2.16).
-      "no-restricted-globals": "off",
+      // are expected; core/layers stay DOM-free (C-2.16). The network ban still holds here.
+      "no-restricted-globals": ["error", ...NETWORK_GLOBALS],
     },
   },
 );

@@ -4,10 +4,15 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     index: "src/index.ts",
+    compat: "src/compat.ts",
     bench: "bench/harness.ts",
   },
   format: ["esm"],
-  dts: true,
+  // tsconfig.json is solution-style; build against the no-DOM program (C-2.16 guard for
+  // core/layers). The public types name `HTMLElement`, so the declaration build gets the DOM lib,
+  // as tsconfig.dom.json does.
+  tsconfig: "tsconfig.core.json",
+  dts: { compilerOptions: { lib: ["ES2022", "DOM"] } },
   sourcemap: true,
   clean: true,
   target: "es2022",

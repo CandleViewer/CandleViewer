@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { createEngine } from "@candleviewer/chart-engine";
+import { createEngine } from "@candleviewer/chart-engine/compat";
 import { AppearanceScreen, LEGEND_VIEWS } from "../../src/features/appearance/AppearanceScreen";
 import { registerEngine } from "../../src/features/appearance/engineRegistry";
 

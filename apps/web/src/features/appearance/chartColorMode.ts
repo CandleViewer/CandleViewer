@@ -1,4 +1,4 @@
-import type { EngineHandle, EngineTheme } from "@candleviewer/chart-engine";
+import type { EngineHandle, EngineTheme } from "@candleviewer/chart-engine/compat";
 import {
   applyChartColorMode,
   type ChartConvention,
