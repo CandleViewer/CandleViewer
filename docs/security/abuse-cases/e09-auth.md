@@ -77,6 +77,8 @@ Each control was disabled on a scratch worktree or in place, the named case fail
 | `grant_ended` ignores `unlocked_at` (#4743)                            | `test_a_link_ends_at_any_unlock_of_its_session_chain` (all four cases)                 |
 | `lift_idle_lock` does not stamp `unlocked_at` (#4743)                  | the lift's offline pin and its Postgres case                                           |
 | `grant_ended`'s bound made strict (#4743)                              | `test_an_unlock_ends_a_link_issued_at_or_before_it[same_instant]`                      |
+| B16's `auth.idle_locked` takes its read time as the moment (#4743)     | `test_b16s_next_read_records_the_lock_at_its_own_moment` (both); router; deployed      |
+| B16's `auth.idle_locked` takes the deadline for a lock by request      | `test_b16s_next_read_records_the_lock_at_its_own_moment[request]`                      |
 
 AC-AUD-01/02 attack the real `cv_app`, so their controls are the shipped files that give it its
 rights. Each was changed on a scratch copy of `0003_audit_log` or `pg_bootstrap.sql`, except the last

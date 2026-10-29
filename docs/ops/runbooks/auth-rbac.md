@@ -64,13 +64,13 @@ API process and after a restart the session answers `401 session_idle_locked` to
 the four operations allowed while locked; its `idle_deadline` and `last_seen_at` do not move. Only
 `POST /auth/unlock` with the password lifts it, clearing `locked_at` and stamping `unlocked_at`; a
 refresh carries the lock to the new session, and extend is refused. Each lock writes one
-`auth.session_locked` row ahead of the lock (query it as in step 1 below, with
-`action=auth.session_locked`) and B16's own `auth.idle_locked`; a call on a session that is already
-locked writes nothing. A `503` from the lock means its record could not be written, and the session
-is not locked. If B16's step fails after the lock committed, the answer is still `200`,
-`auth.lock.chart_failed` is logged and the session's chart records the lock on its next use, as for
-`auth.unlock.chart_failed`. Backup download links end at any unlock of the session chain. Nobody can
-lock another user's session with this route: to end one, revoke it.
+`auth.session_locked` row ahead of the lock, its time the lock moment (query it as in step 1 below,
+with `action=auth.session_locked`); a call on a session that is already locked writes nothing. A
+`503` from the lock means its record could not be written, and the session is not locked. The lock
+sends the session's B16 chart nothing: B16 writes its own `auth.idle_locked` when it next reads the
+row (an unlock or a step-up does), with the lock moment (`idle_locked_at_us`, from `locked_at`) in its
+state, so that row's own time can be later than the lock. Backup download links end at any unlock of
+the session chain. Nobody can lock another user's session with this route: to end one, revoke it.
 
 Preconditions: you know the user. Do not ask the user to retry during the lock window: a locked
 account refuses even a correct password, at login, at a step-up and at the idle-lock unlock, where
