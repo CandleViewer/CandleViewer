@@ -118,13 +118,12 @@ Added manual step: M8 grep the API and web logs from one full login, MFA and ref
 
 ## CSRF position
 
-CSRF protection currently relies on SameSite=Strict cookies, the Origin allow-list on cookie refresh, and bearer-header auth on state-changing routes (`test_ac_csrf_01`, `_02`, `_04`). There is **no double-submit CSRF token**; that is deferred to #2090 and the SR-152 "CSRF token absent/invalid" negative test is blocked by it.
+Every unsafe request needs the SR-041 double-submit token, except the five pre-session POSTs that run before any session exists (`/auth/login`, `/auth/mfa/verify`, `/auth/mfa/recovery`, `/invites/{inviteToken}` and `/invites/{inviteToken}/confirm`): the `__Host-cv_csrf` cookie and an equal `X-CSRF-Token` header, bound to the session (#2238, which closed #2090 on 2026-10-13). Its tests cover the SR-152 "CSRF absent/invalid" negative test: `tests/security/auth/test_csrf_double_submit.py::test_missing_header_is_refused_and_audited`, `::test_header_not_equal_to_cookie_is_refused`, `::test_token_of_another_session_is_refused_even_when_header_equals_cookie`, `::test_every_unsafe_method_without_token_is_refused` and `::test_no_bearer_exemption_and_no_cookie_only_bypass` (a bearer header exempts nothing); the exemption is exact (`::test_pre_session_routes_are_exempt`, `::test_exemption_is_exact_not_a_prefix`). Three controls add to the token and never replace it. The SR-042 `Origin` check refuses an unlisted `Origin` or a cross-site fetch on every unsafe request, the pre-session POSTs included (`::test_sr042_cross_origin_requests_are_refused_including_login`). On the cookie-identified routes, `/auth/refresh` and a `/auth/logout` or `/auth/unlock` identified by `cv_refresh`, it also refuses a request with no `Origin`: `tests/security/auth/test_csrf_cookie_abuse.py::test_ac_csrf_01_cookie_refresh_without_or_foreign_origin_refused`, `::test_ac_csrf_02_empty_allowlist_refuses_every_origin`, `::test_ac_csrf_04_cookie_logout_needs_origin_and_bound_token_revoke_needs_bearer` and `tests/unit/api/idle_lock/test_unlock.py::test_cookie_unlock_without_an_allowed_origin_is_refused_before_any_check`. Every other authenticated state-changing route takes the access token in a bearer header, which a cross-site page cannot send. Cookies are `SameSite=Strict` (SR-012), except that C-12.9 as amended by #3949 lets a response to the desktop shell's origin `app://candleviewer` set `SameSite=None`; there the token and the `Origin` check carry the defence.
 
 ## C. Gaps and deferrals (each cites an open issue unless marked untracked)
 
 - Server-side E2E clock for step-up and session expiry: #2086.
 - Session screens RTL/axe/Playwright, SCR-002/003/005/112 cases: #1640.
-- CSRF double-submit token and its negative test: #2090.
 - Rules-manager grant isolation test: #2094; owner check shape: #2096.
 - k6 Argon2 timing header: #2097.
 - Password change during a live step-up: #2099.
