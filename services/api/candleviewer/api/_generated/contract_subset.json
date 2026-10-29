@@ -36,6 +36,13 @@
         "schema": {
           "type": "integer"
         }
+      },
+      "WatchlistETag": {
+        "description": "`W/\"<id>:<version>\"` of the watchlist answered (E08-T07). Send it as `If-Match` on `updateWatchlist`: the server compares the id and the version it names, so the weak tag matches. `listWatchlists` carries no `ETag`: a client builds the tag of a list item from its `id` and `version`.\n",
+        "schema": {
+          "pattern": "^W/\"[0-9a-f-]{36}:[1-9][0-9]*\"$",
+          "type": "string"
+        }
       }
     },
     "parameters": {
@@ -183,6 +190,33 @@
           }
         },
         "description": "State conflict."
+      },
+      "CsrfTokenInvalid": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "missing": {
+                "value": {
+                  "code": "csrf_token_invalid",
+                  "detail": "X-CSRF-Token header is missing.",
+                  "instance": "urn:cv:req:0193f2bb-2223",
+                  "status": 403,
+                  "title": "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session",
+                  "type": "https://candleviewer.local/errors/csrf_token_invalid"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`) up to a per-session / per-source budget; beyond it the response is identical but carries `Retry-After` and writes no audit record. `detail` never echoes token or cookie values; clients re-read the cookie and retry once. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead, from every operation outside its allow-list (see `Forbidden` and the Enrolment-only session section of `info.description`); that refusal is not retryable.",
+        "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        }
       },
       "Forbidden": {
         "content": {
@@ -693,6 +727,35 @@
           }
         },
         "description": "Semantically invalid request. The `nativeStop` and `riskCap` examples predate the registry statuses (#2088): the order routes answer `validation_failed` with `400` and `risk_limit_breached` with `403`.\n"
+      },
+      "WatchlistSaveUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "instrumentCacheUnavailable": {
+                "summary": "No instrument catalogue to judge the list's symbols by",
+                "value": {
+                  "code": "instrument_cache_unavailable",
+                  "detail": "The instrument catalogue is not loaded; nothing was saved.",
+                  "instance": "urn:cv:req:0193f2bc-6a03-7c3e-9a11-2f8e4b1c9e04",
+                  "retry_after_seconds": 2,
+                  "status": 503,
+                  "title": "Instrument cache is stale and could not be refreshed in time to check the exchange's limits",
+                  "type": "https://candleviewer.local/errors/instrument_cache_unavailable"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A watchlist write, a create, a replace or a delete (`createWatchlist`, `updateWatchlist`, `deleteWatchlist`), that could not be checked or recorded, so nothing changed (E08-T07): `instrument_cache_unavailable` while the instrument catalogue is not loaded and a symbol the list does not hold yet must be judged (a create or a replace); `audit_unavailable` when the write-ahead audit record could not be written (C-2.9); `store_unavailable` as on every route. Each is retryable after `Retry-After`.\n",
+        "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        }
       }
     },
     "schemas": {
@@ -3095,6 +3158,100 @@
           }
         ],
         "description": "The `403 trading_disabled` problem the order-entry gate returns when it refuses a submission or amend that opens or increases exposure, before any OMS work (C-2.21): the problem body plus the gate's `reason`. `detail` is human text and never carries an id or a secret. The gate runs after authentication, RBAC and account-scope resolution, so an account outside the caller's scope never reaches it: an id route answers it as a missing id (`404`), and a request that names it in its body is refused with `403 account_scope_denied` (SR-E29-13). Cancels, flatten and quantity-reducing or stop-tightening amends never pass through the gate. Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never gated; \"trigger re-armed\" means an exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated.\n"
+      },
+      "Watchlist": {
+        "additionalProperties": false,
+        "description": "One of the caller's lists as stored: the members of `WatchlistInput`, under the same rules, and the server's own. Every member is always answered (`columns` empty when none is chosen). Closed on purpose: a list's members are exactly these.\n",
+        "properties": {
+          "columns": {
+            "items": {
+              "maxLength": 32,
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/Symbol"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "description": "Server-assigned: 1 on create, one more on each replace. `updateWatchlist` takes it back through `If-Match` (`WatchlistETag`), never in the body.\n",
+            "minimum": 1,
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "symbols",
+          "columns",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "WatchlistInput": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "description": "Column ids shown for this watchlist, in order: the ids of E08-D07 §4.1 (`last`, `chg_24h_pct`, `open_interest_value`, ...). Ids are stored strings and a reader skips one it does not know (E08-D07 D8), so the set is open: at most 32, each a lowercase snake_case id of at most 32 characters, none twice (`422 validation_failed` on `columns`, rule `duplicate_column`). Left out or `null`, on a create and on a replace alike, the list takes E08-D07 §4.1's default columns (`symbol`, `last`, `chg_24h_pct`, `turnover_24h`, `funding_rate`, `next_funding`, `oi_chg_24h_pct`, `spread_bps`, `rec`): a replace without `columns` resets them, as a full replace does.\n",
+            "items": {
+              "maxLength": 32,
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "type": [
+              "array",
+              "null"
+            ],
+            "uniqueItems": true
+          },
+          "name": {
+            "description": "Trimmed of leading and trailing white space before it is checked and stored: E08-D07 §4.3 and DJ compare names trimmed and case-insensitively; the 1–80 characters count the trimmed name, so a name blank once trimmed is `422 validation_failed`. A name holding a control or format character (Unicode Cc or Cf) is `422 validation_failed`, as an account-profile name is. Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`).\n",
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "symbols": {
+            "description": "The list, in order: each a trading USDT linear perpetual of the instrument catalogue, none twice (`422 validation_failed`: `too_many_symbols`, `unknown_symbol`, `duplicate_symbol`).\n",
+            "items": {
+              "$ref": "#/components/schemas/Symbol"
+            },
+            "maxItems": 200,
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "symbols"
+        ],
+        "type": "object"
       },
       "Workspace": {
         "description": "Response object. Readers must ignore unknown properties (C-6.3).",
@@ -6918,6 +7075,41 @@
     },
     "/watchlists": {
       "get": {
+        "description": "The caller's own lists, each with its `version` (E08-T07). Another user's lists are never listed, whatever the caller's role.\n",
+        "operationId": "listWatchlists",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/Watchlist"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Watchlists."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "List own watchlists",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:read"
@@ -6926,6 +7118,62 @@
         }
       },
       "post": {
+        "description": "Creates one of the caller's lists at `version` 1 (E08-T07). A `name` that another of the caller's lists already uses, case-insensitively (as Postgres `lower()` folds it), is `409 conflict` with `errors[0].rule = name_taken` and `field` `name`. A list that breaks a rule of `WatchlistInput` is `422 validation_failed` naming the field and the rule: `too_many_symbols` (over 200), `unknown_symbol` (not a trading USDT linear perpetual of the instrument catalogue) or `duplicate_symbol` (a symbol twice in one list), each on `symbols`. Either way nothing is written. A body over 64 KiB is `413 payload_too_large`, and while the instrument catalogue is not loaded a list that holds a symbol is `503 instrument_cache_unavailable` (`WatchlistSaveUnavailable`). A list with no symbols needs no catalogue, so it is never `503 instrument_cache_unavailable`. When several refusals apply, the first in this order answers: `413`, then `422` for the rules that need no catalogue (`name`, `columns`, `too_many_symbols`, `duplicate_symbol`), then `503 instrument_cache_unavailable`, then `422` for `unknown_symbol`, then `409`. Audited write-ahead as `watchlist.created`.\n",
+        "operationId": "createWatchlist",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchlistInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Watchlist"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/WatchlistETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CsrfTokenInvalid"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/WatchlistSaveUnavailable"
+          }
+        },
+        "summary": "Create a watchlist",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:write"
@@ -6936,6 +7184,34 @@
     },
     "/watchlists/{watchlistId}": {
       "delete": {
+        "description": "Deletes one of the caller's lists; the row is removed, and its history is the audit trail (`watchlist.deleted`, written ahead). Another user's list id is `404`, as an id that does not exist, never `403` (E08-T07).\n",
+        "operationId": "deleteWatchlist",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CsrfTokenInvalid"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/WatchlistSaveUnavailable"
+          }
+        },
+        "summary": "Delete a watchlist",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:write"
@@ -6943,7 +7219,111 @@
           "scope": "self"
         }
       },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "watchlistId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
       "put": {
+        "description": "Replaces the whole list and stores it as its next `version` (E08-T07). `If-Match` is required: a stale write is never applied silently. Without it the answer is `428 precondition_required`; with a tag that does not name the list's current version the answer is `412 version_conflict`, whose `ETag` header names the current version. Either way nothing changes: reload, then edit again. The name and list rules are those of `createWatchlist` (`409 conflict` / `name_taken`, `422 validation_failed`, `503 instrument_cache_unavailable`), and a body over 64 KiB is `413 payload_too_large`. A replace whose symbols are all already on the stored list (a rename, a reorder, a removal, a change of columns) needs no catalogue, so it is never `503 instrument_cache_unavailable`: only a symbol the list does not hold yet is judged. Another user's list id is `404`, as an id that does not exist, never `403`. When several refusals apply, the first in this order answers: `413`, then `404` (so a missing or stale tag never tells another user's list apart from no list), then `428` or `412`, then `422` for the rules that need no catalogue (`name`, `columns`, `too_many_symbols`, `duplicate_symbol`), then `503 instrument_cache_unavailable`, then `422` for `unknown_symbol`, then `409`. Audited write-ahead as `watchlist.updated`.\n",
+        "operationId": "updateWatchlist",
+        "parameters": [
+          {
+            "description": "The `ETag` of the list as last read (`WatchlistETag`). The server compares the id and the version it names; any other value (`*`, a list of tags, another list's tag, an unparseable value) is `412 version_conflict`, never a match.\n",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchlistInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Watchlist"
+                }
+              }
+            },
+            "description": "Replaced.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/WatchlistETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CsrfTokenInvalid"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`If-Match` does not name the list's current version (`version_conflict`). Nothing changed; the `ETag` header names the current version.\n",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/WatchlistETag"
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The replace carried no `If-Match` (`precondition_required`). Nothing changed; read the list, then send its `ETag` back.\n"
+          },
+          "503": {
+            "$ref": "#/components/responses/WatchlistSaveUnavailable"
+          }
+        },
+        "summary": "Replace a watchlist",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:write"

@@ -207,6 +207,7 @@ from candleviewer.api.view_as_guard import make_view_as_guard, view_as_unstamped
 from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
 from candleviewer.api.view_as_subject import TargetNamedAsActor, ViewAsUnstamped, acting_user
+from candleviewer.api.watchlists import make_watchlists_router
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
 from candleviewer.audit_lane_wiring import lane_key_loader
 from candleviewer.auth.csrf import CsrfCodec
@@ -466,6 +467,7 @@ from candleviewer.storage.repositories.users_sqlalchemy import (
     SqlAlchemyUserAdminStore,
     SqlAlchemyUserRepository,
 )
+from candleviewer.storage.repositories.watchlists_sqlalchemy import SqlAlchemyWatchlistStore
 from candleviewer.storage.repositories.workspaces_sqlalchemy import SqlAlchemyWorkspaceRepository
 from candleviewer.storage.retention.alert_tasks import AlertDeliveriesPurgeTask, AlertGaugeTask
 from candleviewer.storage.retention.drawings_tasks import DrawingsMetrics, DrawingsPurgeTask
@@ -3262,6 +3264,29 @@ def create_app(
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
             scanner=app.state.scanner_service,
+        )
+    )
+    # E08-T07 (#4706): owner-scoped /watchlists (`scope: self`), each symbol judged against the
+    # instrument catalogue's snapshot (503 while none is attached). Postgres on the real backend
+    # only: the fake backend answers 503 without any I/O.
+    app.state.watchlists_repository = (
+        SqlAlchemyWatchlistStore(
+            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "watchlists")
+        )
+        if resolved.storage_backend == "real"
+        else None
+    )
+    app.include_router(
+        make_watchlists_router(
+            lambda: app.state.watchlists_repository,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
+            lambda: (
+                None if ctx.ingestion.instruments is None else ctx.ingestion.instruments.snapshot()
+            ),
+            conflicts=metrics_facade.counter(
+                "watchlist_write_conflicts_total", "Stale If-Match 412s of /watchlists replaces."
+            ).child(),
         )
     )
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).

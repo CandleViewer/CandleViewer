@@ -2328,6 +2328,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E13",
         max_series=2,
     ),
+    # E08-T07: registered by `create_app()` for the /watchlists router; one series, never per user
+    # or list.
+    _s(
+        "watchlist_write_conflicts_total",
+        "counter",
+        "requests",
+        (),
+        "Stale If-Match 412s of /watchlists replaces: the list moved on since the client read it "
+        "(E08-T07).",
+        "dashboard only",
+        _P,
+        "E08",
+        max_series=1,
+    ),
     _s(
         "cv_outbox_depth",
         "gauge",
@@ -4536,7 +4550,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "AuditSinkRefusing (any; ticket, page pending #2701)",
         _L,
         "E09",
-        max_series=40,
+        max_series=41,
         exported=True,
     ),
     _s(

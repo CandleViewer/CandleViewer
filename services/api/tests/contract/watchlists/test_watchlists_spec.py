@@ -103,6 +103,10 @@ def test_the_name_is_trimmed_before_it_is_checked_and_stored() -> None:
     words = _words(_SCHEMAS["WatchlistInput"]["properties"]["name"]["description"])
     assert words.startswith("Trimmed of leading and trailing white space before it is checked")
     assert "so a name blank once trimmed is `422 validation_failed`" in words
+    assert (
+        "A name holding a control or format character (Unicode Cc or Cf) is "
+        "`422 validation_failed`, as an account-profile name is." in words
+    )
 
 
 @pytest.mark.parametrize(("path", "method"), _WRITES)

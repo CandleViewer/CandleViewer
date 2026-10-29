@@ -5678,7 +5678,7 @@ class WatchlistInput(BaseModel):
     name: Annotated[
         str,
         Field(
-            description="Trimmed of leading and trailing white space before it is checked and stored: E08-D07 §4.3 and DJ compare names trimmed and case-insensitively; the 1–80 characters count the trimmed name, so a name blank once trimmed is `422 validation_failed`. Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`).\n",
+            description="Trimmed of leading and trailing white space before it is checked and stored: E08-D07 §4.3 and DJ compare names trimmed and case-insensitively; the 1–80 characters count the trimmed name, so a name blank once trimmed is `422 validation_failed`. A name holding a control or format character (Unicode Cc or Cf) is `422 validation_failed`, as an account-profile name is. Unique among the owner's lists, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`).\n",
             max_length=80,
             min_length=1,
         ),

@@ -69,7 +69,7 @@ jobs:
     # Not on a pull request (#3881, see the header); the merge group and a merge train run it.
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 19
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
