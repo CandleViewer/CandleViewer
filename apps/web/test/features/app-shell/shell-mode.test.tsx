@@ -12,15 +12,20 @@ import {
   type ShellModeInputs,
 } from "../../../src/features/app-shell/shellMode";
 import { useShellMode } from "../../../src/features/app-shell/useShellMode";
+import { GPU_COPY } from "../../../src/features/system-states/copy";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
 import { toLatencyIndicator } from "../../../src/lib/telemetry/latencyIndicator.js";
 import { buildRoutes } from "../../../src/routes/tree";
+import { watchGpu } from "../../../src/shell/bootstrap/gpuCrash.js";
 import {
+  getShellState,
   resetShellState,
   setShellState,
   type ConnectionState,
   type Me,
 } from "../../../src/shell/bootstrap/store.js";
+import type { CvBridge } from "../../../src/shell/ElectronShellAdapter.js";
+import type { GpuCrash } from "../../../src/shell/ShellPort.js";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
   "axe-core",
@@ -409,6 +414,47 @@ describe("the shell matrix: every reachable state × role (S9)", () => {
       } finally {
         seen?.disconnect();
         clock.mockRestore();
+      }
+    },
+  );
+});
+
+/**
+ * #4951: a GPU crash before the shell subscribed (at boot, or during a reload) is never pushed to
+ * it; the desktop bridge answers it as cv:gpu:info's lastCrash, read once on subscribe.
+ */
+describe("the shell matrix: a GPU crash before the shell subscribed (desktop)", () => {
+  const CRASH: GpuCrash = { crashedAtMs: Date.UTC(2026, 9, 29, 9), restartCount: 1, reason: "oom" };
+  let push: (crash: GpuCrash) => void = () => undefined;
+  const bridge = {
+    gpuInfo: async () => ({ vendor: "v", renderer: "r", lastCrash: { ...CRASH, retried: false } }),
+    gpuRetry: async () => undefined,
+    onGpuCrashed: (handler: (crash: GpuCrash) => void) => {
+      push = handler;
+      return () => undefined;
+    },
+  };
+  beforeEach(() => {
+    resetMeClaims();
+    Object.defineProperty(window, "cv", {
+      configurable: true,
+      value: bridge as unknown as CvBridge,
+    });
+  });
+  afterEach(() => void Reflect.deleteProperty(window, "cv"));
+
+  it.each(MATRIX_ROLES)(
+    "crash before subscribe × %s: SCR-159's GPU page once, the chrome stays, axe-clean",
+    async (role) => {
+      const unwatch = watchGpu(); // the shell's start, after the crash
+      try {
+        await vi.waitFor(() => expect(getShellState().gpuCrash).toEqual(CRASH));
+        await shellMatrixCase("normal", role, {}); // the chrome and axe, under the GPU page
+        act(() => push(CRASH)); // main's push of the same crash, late
+        const gpu = { level: 1, name: GPU_COPY.heading } as const;
+        expect(within(overlay()).getAllByRole("heading", gpu)).toHaveLength(1);
+      } finally {
+        unwatch();
       }
     },
   );

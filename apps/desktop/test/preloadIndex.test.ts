@@ -4,6 +4,13 @@ const invokeMock = vi.fn().mockResolvedValue("ok");
 const onMock = vi.fn();
 const removeListenerMock = vi.fn();
 const exposeInMainWorldMock = vi.fn();
+/** What main's cv:gpu:info answers besides lastCrash (gpu.ts's probe). */
+const INFO = {
+  vendor: "v",
+  renderer: "r",
+  hardwareAccelerated: true,
+  webgl2CapabilityParity: true,
+};
 
 vi.mock("electron", () => ({
   contextBridge: { exposeInMainWorld: exposeInMainWorldMock },
@@ -41,6 +48,7 @@ describe("preload bridge", () => {
     const preload = await import("../src/preload/index");
     void preload;
     const [, cv] = exposeInMainWorldMock.mock.calls[0] as [string, Record<string, () => unknown>];
+    invokeMock.mockResolvedValueOnce({ ...INFO, lastCrash: null });
     await cv["gpuInfo"]?.();
     expect(invokeMock).toHaveBeenCalledWith("cv:gpu:info");
   });
@@ -100,6 +108,37 @@ describe("preload bridge", () => {
   const CRASH = { crashedAtMs: 1, restartCount: 1, reason: "crashed" };
   const IPC_EVENT = { sender: { invoke: invokeMock } };
 
+  /** window.cv.gpuInfo, once main has answered cv:gpu:info with `answer`. */
+  async function gpuInfoAnswering(answer: unknown): Promise<unknown> {
+    await import("../src/preload/index");
+    const [, cv] = exposeInMainWorldMock.mock.calls[0] as [string, Record<string, Pull>];
+    invokeMock.mockResolvedValueOnce(answer);
+    return cv["gpuInfo"]?.();
+  }
+
+  it("gpuInfo() hands over main's answer, its lastCrash null or a fresh, frozen copy (#4951)", async () => {
+    await expect(gpuInfoAnswering({ ...INFO, lastCrash: null })).resolves.toEqual({
+      ...INFO,
+      lastCrash: null,
+    });
+    const lastCrash = { ...CRASH, retried: false };
+    const info = (await gpuInfoAnswering({ ...INFO, lastCrash })) as { lastCrash: unknown };
+    expect(info).toEqual({ ...INFO, lastCrash });
+    expect(info.lastCrash).not.toBe(lastCrash);
+    expect(Object.isFrozen(info.lastCrash)).toBe(true);
+  });
+
+  it.each([
+    ["no lastCrash", INFO],
+    ["a lastCrash without retried", { ...INFO, lastCrash: CRASH }],
+    ["a string retried", { ...INFO, lastCrash: { ...CRASH, retried: "no" } }],
+    ["a negative count", { ...INFO, lastCrash: { ...CRASH, restartCount: -1, retried: false } }],
+    ["platform text", { ...INFO, lastCrash: { ...CRASH, reason: "C:\\gpu.dll", retried: true } }],
+    ["no object at all", "ok"],
+  ])("gpuInfo() refuses an answer with %s", async (_label, answer) => {
+    await expect(gpuInfoAnswering(answer)).rejects.toThrow("GPU info refused");
+  });
+
   it("onGpuCrashed() hands its listener a copy of the payload, never the IPC event", async () => {
     const { listener, channel, forward } = await subscribeGpuCrashes();
     expect([onMock.mock.calls.length, channel]).toEqual([1, "cv:gpu:crashed"]);
@@ -129,5 +168,6 @@ describe("preload bridge", () => {
 });
 
 type Append = (entry: unknown) => Promise<unknown>;
+type Pull = () => Promise<unknown>;
 type Subscribe = (listener: unknown) => () => void;
 type Forward = (event: unknown, payload: unknown) => void;
