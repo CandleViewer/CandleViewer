@@ -37,7 +37,7 @@ import contextlib
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Final, Protocol
@@ -205,6 +205,15 @@ class SnapshotRouter:
             return source.build(sub)
         except NotImplementedError:
             return None
+
+    def build_steps(self, sub: Subscription) -> Generator[None, None, SnapshotBody | None]:
+        """`build`, in the family adapter's own steps when it offers them (#605)."""
+        source = self._source(sub)
+        steps = getattr(source, "build_steps", None)
+        if steps is None:
+            return self.build(sub)
+        built: SnapshotBody | None = yield from steps(sub)
+        return built
 
     def generation(self, sub: Subscription) -> int:
         source = self._source(sub)

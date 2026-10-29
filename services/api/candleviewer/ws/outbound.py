@@ -158,12 +158,18 @@ def data_key(frame: Mapping[str, Any]) -> Key | None:
 
 
 def encode(
-    frame: Mapping[str, Any], dumps: FrameEncoder = json_payload, *, received: float | None = None
+    frame: Mapping[str, Any],
+    dumps: FrameEncoder = json_payload,
+    *,
+    received: float | None = None,
+    payload: str | bytes | None = None,
 ) -> Queued:
     """Serialise `frame` once with the connection's `dumps`, exactly as the writer sends it, and
     classify it for the lanes; a sampled frame that carries `sp` comes back as a `Spanned`. Raises
-    what `dumps` raises."""
-    payload = dumps(frame)
+    what `dumps` raises. A `payload` given is `frame` already encoded with `dumps` (a snapshot's
+    chunks, encoded across loop turns, #605): it is classified only."""
+    if payload is None:
+        payload = dumps(frame)
     ch, kind, meta = frame.get("ch"), frame.get("t"), frame.get("meta")
     family = ch.split(".", 1)[0] if isinstance(ch, str) else None
     key = data_key(frame)

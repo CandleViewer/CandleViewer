@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any
@@ -92,9 +92,12 @@ class _OwnerCache(SnapshotCache):
     """Hands `snapshot` a rendering whose owner mapping names server keys: only `SnapshotBody`
     refuses them, so this reaches the merge."""
 
-    def get(self, sub: Subscription, source: SnapshotSource, max_part_bytes: int) -> Rendered:
+    def fetch(
+        self, sub: Subscription, source: SnapshotSource, max_part_bytes: int
+    ) -> Generator[None, None, Rendered | None]:
         owner = {"reason": "owner", "source": "owner", "previous_seq": 99, "history_bars": 3}
         return Rendered(EMPTY, (), False, MappingProxyType(owner))
+        yield  # the emitter reads the cache in steps (#605): a generator with none
 
 
 def test_snapshot_meta_merge_lets_the_server_keys_win() -> None:

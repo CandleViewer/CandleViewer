@@ -26,17 +26,19 @@ int per upstream symbol; heatmap snapshots are capped at `HEATMAP_SNAPSHOT_MAX_C
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import secrets
 import time
 import uuid
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
+import msgpack
 import structlog
 
 from candleviewer.auth.generated_permissions import Scope
@@ -56,6 +58,7 @@ from candleviewer.ws.binary import (
     FrameEncodeError,
     encode_b64,
 )
+from candleviewer.ws.codec import encode_server_frame
 from candleviewer.ws.errors import build_ws_error
 
 # Re-exported: `pipeline`, `bars_publish` and the tests read the outbound cap from here.
@@ -136,6 +139,14 @@ SP_ROOM: Final = "f" * (2 * SPAN_ID_BYTES)
 _WIDEST: Final = 2**64
 _LONGEST_REASON: Final = max(SNAP_REASONS, key=len)
 SNAPSHOT_CACHE_MAX: Final = 4096
+#: #605 (M-1): CPU one loop turn spends on a snapshot (render, chunking, encoding) before the rest
+#: waits for the next turn (`TopicEmitter.snapshot`), so a turn stays inside budget #6 (20 ms).
+SNAPSHOT_TURN_S: Final = 0.005
+#: A snapshot of at least this many payload bytes, on a connection that queues encoded frames, is
+#: encoded a frame per step before it is queued; a smaller one is left to the queue's encoder.
+PREPARE_MIN_BYTES: Final = 64 * 1024
+#: The queue's frame encoding (`cv.v1.json` or `cv.v1.msgpack`).
+Wire = Literal["json", "msgpack"]
 #: §16.1 S5: causal order across private topics for one account event.
 PRIVATE_CAUSAL_ORDER: Final[tuple[str, ...]] = ("executions", "orders", "positions", "trade_groups")
 _CAUSAL_RANK: Final = {fam: i for i, fam in enumerate(PRIVATE_CAUSAL_ORDER)}
@@ -311,7 +322,9 @@ class SnapshotSource(Protocol):
     """Owning modules (book engine, bar builder, order-flow engines, ticker cache, OMS) behind one
     port. `generation` changes whenever the topic's state changes, which keys the shared cache.
     `continuity` proves a `snapshot: false` attach (§7.6): state covering `from_ts_ms` is held and
-    no resync occurred since."""
+    no resync occurred since. A source may also offer `build_steps(sub)`, `build` as a generator
+    that yields between pieces of work, so a large build is spread across loop turns (#605,
+    `TopicEmitter`); the cache uses it when present."""
 
     def build(self, sub: Subscription) -> SnapshotBody | None:
         """`None` while the state is not trustworthy (e.g. book rebuilding after a desync)."""
@@ -381,6 +394,31 @@ def _heatmap_held(body: SnapshotBody) -> tuple[tuple[int, ...], dict[str, Any]]:
 
 
 def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Rendered:
+    """`render_steps` run to its end, in one call."""
+    return _finish(render_steps(sub, body, max_part_bytes))
+
+
+def _at_once[T](build: Callable[[Subscription], T], sub: Subscription) -> Generator[None, None, T]:
+    """A one-call `build` as build steps: no step."""
+    return build(sub)
+    yield  # pragma: no cover - makes this a generator
+
+
+def _finish[T](steps: Generator[None, None, T]) -> T:
+    """Run `steps` to its end and return its value."""
+    while True:
+        try:
+            next(steps)
+        except StopIteration as done:
+            return done.value  # type: ignore[no-any-return]  # StopIteration.value is untyped
+
+
+def render_steps(
+    sub: Subscription, body: SnapshotBody, max_part_bytes: int
+) -> Generator[None, None, Rendered]:
+    """One snapshot's render for `sub`, yielding after each CVWB chunk it encodes, so a caller can
+    spread a large one across loop turns (`TopicEmitter`, `SNAPSHOT_TURN_S`); the same result as
+    one call, whatever the slicing."""
     fam = sub.topic.family.family
     complete: tuple[int, ...] = ()
     root: dict[str, Any] | None = None
@@ -402,8 +440,11 @@ def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Render
         scaled = replace(part, flags=part.flags | flags, price_scale=ps, qty_scale=qs)
         frames.extend(split_frame(scaled, max_part_bytes))
     last = len(frames) - 1
-    out = tuple(_chunk(f, i == last, flags, ps, qs) for i, f in enumerate(frames))
-    return Rendered(None, out, body.stale, body.meta, complete, root)
+    chunks: list[str] = []
+    for i, f in enumerate(frames):
+        chunks.append(_chunk(f, i == last, flags, ps, qs))
+        yield
+    return Rendered(None, tuple(chunks), body.stale, body.meta, complete, root)
 
 
 def _chunk(frame: Frame, last: bool, flags: int, ps: int, qs: int) -> str:
@@ -507,6 +548,130 @@ def split_structured(payload: Mapping[str, Any], budget: int) -> list[dict[str, 
     return chunks
 
 
+@dataclass(slots=True)
+class _Chunk:
+    """One structured snapshot chunk: its payload, each list item's compact JSON as the writer's
+    encoder writes it (None when one is a value JSON cannot carry: a NaN or an infinity), and the
+    payload's JSON length as `_dumps` counts it."""
+
+    payload: dict[str, Any]
+    texts: dict[str, list[str]] | None
+    size: int
+
+
+def _split_steps(payload: Mapping[str, Any], budget: int) -> Generator[None, None, list[_Chunk]]:
+    """`split_structured`, yielding after each item it sizes, and keeping each item's text: the
+    same chunks, item for item (one JSON encode per item replaces the whole payload's, so a large
+    one is cut into loop turns)."""
+    whole = dict(payload)
+    lists = [k for k, v in whole.items() if isinstance(v, list)]
+    base = {k: ([] if k in lists else v) for k, v in whole.items()}
+    base_size = len(_dumps(base))
+    texts: dict[str, list[str]] = {k: [] for k in lists}
+    strict = True
+    for key in lists:
+        for item in whole[key]:
+            try:
+                text = _STRICT_ENCODER.encode(item)
+            except ValueError:  # NaN or an infinity: sized as before, left to the queue's encoder
+                text, strict = _dumps(item), False
+            texts[key].append(text)
+            yield
+    keep = texts if strict else None
+    size = base_size + sum(sum(map(len, t)) + max(len(t) - 1, 0) for t in texts.values())
+    if size <= budget:
+        return [_Chunk(whole, keep, size)]
+    cut: list[tuple[dict[str, Any], dict[str, list[str]]]] = []
+    used = budget + 1  # the first item starts a chunk
+    for key in lists:
+        for item, text in zip(whole[key], texts[key], strict=True):
+            item_size = len(text) + 1  # item + comma
+            if base_size + item_size > budget:
+                raise FrameEncodeError("one structured item exceeds the frame budget")
+            if used + item_size > budget:
+                cut.append(({**base, **{k: [] for k in lists}}, {k: [] for k in lists}))
+                used = base_size
+            cut[-1][0][key].append(item)
+            cut[-1][1][key].append(text)
+            used += item_size
+    if not cut:  # pragma: no cover - a payload over the budget holds at least one item
+        cut.append(({**base, **{k: [] for k in lists}}, {k: [] for k in lists}))
+    return [
+        _Chunk(
+            held,
+            held_texts if strict else None,
+            base_size + sum(sum(map(len, t)) + max(len(t) - 1, 0) for t in held_texts.values()),
+        )
+        for held, held_texts in cut
+    ]
+
+
+#: A placeholder for a frame's `p` while its envelope is encoded, then replaced by the chunk.
+_PLACEHOLDER: Final = "\x00cv-snapshot-chunk\x00"
+_PLACEHOLDER_JSON: Final = json.dumps(_PLACEHOLDER)
+_PLACEHOLDER_PACKED: Final = msgpack.packb(_PLACEHOLDER, use_bin_type=True)
+
+
+def assemble_chunk(frame: Mapping[str, Any], chunk: _Chunk, wire: Wire) -> str | bytes:
+    """`assemble_steps` run to its end."""
+    return _finish(assemble_steps(frame, chunk, wire))
+
+
+def assemble_steps(
+    frame: Mapping[str, Any], chunk: _Chunk, wire: Wire
+) -> Generator[None, None, str | bytes]:
+    """`frame`, whose `p` is `chunk`'s payload, encoded as the queue's encoder encodes it
+    (`outbound.json_payload` for `cv.v1.json`, `pipeline.msgpack_payload` for `cv.v1.msgpack`),
+    from its items' kept texts: the envelope once, around the chunk. The same bytes; it requires
+    `chunk.texts` (every value finite). It yields after each item it packs (`cv.v1.msgpack`)."""
+    texts = chunk.texts
+    if texts is None:
+        raise ValueError("a chunk with a value JSON cannot carry is not assembled")
+    payload = chunk.payload
+    if wire == "json":  # one join of every piece: the chunk's bytes are copied once
+        envelope = _STRICT_ENCODER.encode({**frame, "p": _PLACEHOLDER})
+        at = envelope.index(_PLACEHOLDER_JSON)
+        text: list[str] = [envelope[:at], "{"]
+        for i, (k, v) in enumerate(payload.items()):
+            text += ("," if i else "", _STRICT_ENCODER.encode(k), ":")
+            if k in texts:
+                text.append("[")
+                for j, item in enumerate(texts[k]):
+                    text += ("," if j else "", item)
+                text.append("]")
+            else:
+                text.append(_STRICT_ENCODER.encode(v))
+        text += ("}", envelope[at + len(_PLACEHOLDER_JSON) :])
+        return "".join(text)
+    packer = msgpack.Packer(use_bin_type=True)
+    envelope_packed = encode_server_frame({**frame, "p": _PLACEHOLDER})
+    at_b = envelope_packed.index(_PLACEHOLDER_PACKED)
+    parts = [envelope_packed[:at_b], packer.pack_map_header(len(payload))]
+    for k, v in payload.items():
+        parts.append(packer.pack(k))
+        if k in texts:
+            parts.append(packer.pack_array_header(len(v)))
+            for item in v:
+                parts.append(packer.pack(item))
+                yield
+        else:
+            _STRICT_ENCODER.encode(v)  # a scalar JSON could not carry is refused, as the queue's
+            parts.append(packer.pack(v))
+    parts.append(envelope_packed[at_b + len(_PLACEHOLDER_PACKED) :])
+    return b"".join(parts)
+
+
+@dataclass(slots=True)
+class _SnapJob:
+    """A snapshot under way (`TopicEmitter.snapshot`): its steps, the request it serves and the
+    loop callback of its next slice."""
+
+    sub: Subscription
+    steps: Generator[None, None, bool]
+    key: tuple[Any, ...]
+    handle: asyncio.Handle | None = None
+
+
 # -- shared snapshot cache -----------------------------------------------------------------------
 
 
@@ -536,9 +701,19 @@ class SnapshotCache:
         source: SnapshotSource,
         max_part_bytes: int,
     ) -> Rendered | None:
+        return _finish(self.fetch(sub, source, max_part_bytes))
+
+    def fetch(
+        self,
+        sub: Subscription,
+        source: SnapshotSource,
+        max_part_bytes: int,
+    ) -> Generator[None, None, Rendered | None]:
+        """`get`, yielding inside its render (`render_steps`): a hit is no step at all, and a
+        render is entered in the cache only once it is whole."""
         fam = sub.topic.family
         if fam.private:
-            rendered = self._build(sub, source, max_part_bytes)
+            rendered = yield from self._build(sub, source, max_part_bytes)
         else:
             # `paused` gates deltas, not the rendered state (#2517): it never splits the cache.
             identity = tuple(
@@ -550,7 +725,7 @@ class SnapshotCache:
             if hit is not None and hit[0] == gen:
                 rendered = hit[1]
             else:
-                rendered = self._build(sub, source, max_part_bytes)
+                rendered = yield from self._build(sub, source, max_part_bytes)
                 if rendered is None:
                     return None
                 self._entries.pop(key, None)
@@ -563,14 +738,37 @@ class SnapshotCache:
 
     def _build(
         self, sub: Subscription, source: SnapshotSource, max_part_bytes: int
-    ) -> Rendered | None:
+    ) -> Generator[None, None, Rendered | None]:
         fam = sub.topic.family.family
-        start = time.perf_counter()
-        body = source.build(sub)
+        spent = 0.0
+        build_steps = getattr(source, "build_steps", None)
+        building: Generator[None, None, SnapshotBody | None] = (
+            build_steps(sub) if build_steps is not None else _at_once(source.build, sub)
+        )
+        while True:  # a source that builds in steps (#605) yields between them
+            began = time.perf_counter()
+            try:
+                next(building)
+            except StopIteration as done:
+                body: SnapshotBody | None = done.value
+                break
+            finally:
+                spent += time.perf_counter() - began
+            yield
         if body is None:
             return None
-        rendered = render(sub, body, max_part_bytes)
-        cv_ws_snapshot_build_seconds.labels(topic=fam).observe(time.perf_counter() - start)
+        steps = render_steps(sub, body, max_part_bytes)
+        while True:  # the render's own time only, never the turns it waited for
+            began = time.perf_counter()
+            try:
+                next(steps)
+            except StopIteration as done:
+                rendered: Rendered = done.value
+                break
+            finally:
+                spent += time.perf_counter() - began
+            yield
+        cv_ws_snapshot_build_seconds.labels(topic=fam).observe(spent)
         self.builds += 1
         return rendered
 
@@ -661,6 +859,14 @@ class TopicEmitter:
         self.cache = cache if cache is not None else SnapshotCache()
         self.max_frame_bytes = max_frame_bytes
         self._snap_ids = 0
+        #: #605: CPU a snapshot spends per loop turn (`SNAPSHOT_TURN_S`), and those under way.
+        self.turn_s = SNAPSHOT_TURN_S
+        self._jobs: dict[str, _SnapJob] = {}
+        #: #605: with the flag on, the pipeline's: queue a frame already encoded with
+        #: `encode_payload` in `wire` (`ConnectionPipeline.attach`). None: frames go as dicts.
+        self.push_encoded: Callable[[dict[str, Any], str | bytes, float | None], None] | None = None
+        self.encode_payload: Callable[[Mapping[str, Any]], str | bytes] | None = None
+        self.wire: Wire | None = None
         #: E17-T03: the overflow ladder's hook. A hub `flush_pending` (a source rebuild) hands it
         #: the subscriptions it named, so a `backpressure` snapshot parked as not ready is retried.
         self.on_rebuild: Callable[[list[Subscription]], None] | None = None
@@ -674,9 +880,83 @@ class TopicEmitter:
         """Emit a (possibly chunked) `snap`; False when the state cannot be built yet, or before
         the subscription's `sub_ok` is queued (#2831): it stays pending and no `d` is emitted
         until a later flush succeeds. Nothing once it has ended (§8.4 Lanes, defence in depth).
-        Once its frames are queued, `on_snapshot` is told."""
+        Once its frames are queued, `on_snapshot` is told.
+
+        #605 (M-1): a snapshot whose render, chunking and encoding take more than
+        `SNAPSHOT_TURN_S` of CPU in this call finishes in later loop turns, a slice each
+        (`_continue`), and this returns True. Its frames are all queued in its last slice, in
+        order, the last with `s` (§3.6); until then it stays `snapshot_pending`, so no `d` of it
+        precedes them (§7.1), and its `s` is the one it would have had. One that fits in the slice
+        is emitted here, as before. A new request while one is under way replaces it when the
+        state, the subscription's options or the reason changed (nothing of it was queued), and is
+        that one otherwise. Without a running loop (a synchronous caller) it finishes here."""
         if self.source is None or not sub.announced or sub.ended:
             return False
+        job = self._jobs.get(sub.sub_id)
+        if job is not None:
+            if job.sub is sub and job.key == self._job_key(sub, reason):
+                return True
+            self._drop_job(sub.sub_id)
+        steps = self._snapshot_steps(sub, reason)
+        began = time.perf_counter()
+        while True:
+            try:
+                next(steps)
+            except StopIteration as done:
+                return bool(done.value)
+            if time.perf_counter() - began >= self.turn_s:
+                break
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # no loop to come back on: finish here
+            return bool(_finish(steps))
+        job = _SnapJob(sub, steps, self._job_key(sub, reason))
+        self._jobs[sub.sub_id] = job
+        job.handle = loop.call_soon(self._continue, job)
+        return True
+
+    def _job_key(self, sub: Subscription, reason: SnapReason) -> tuple[Any, ...]:
+        source = self.source
+        gen = None if source is None else source.generation(sub)
+        options = tuple(sorted((k, repr(v)) for k, v in sub.effective.items()))
+        return (reason, gen, options)
+
+    def _drop_job(self, sub_id: str) -> None:
+        job = self._jobs.pop(sub_id, None)
+        if job is not None:
+            if job.handle is not None:
+                job.handle.cancel()
+            job.steps.close()
+
+    def _continue(self, job: _SnapJob) -> None:
+        """One loop turn's slice of a snapshot under way (`snapshot`)."""
+        sub = job.sub
+        if self._jobs.get(sub.sub_id) is not job:
+            return
+        if sub.ended:
+            self._drop_job(sub.sub_id)
+            return
+        began = time.perf_counter()
+        try:
+            while True:  # one step at least, then as many as the slice holds
+                next(job.steps)
+                if time.perf_counter() - began >= self.turn_s:
+                    break
+        except StopIteration:
+            self._jobs.pop(sub.sub_id, None)
+            return
+        except Exception as exc:  # contained: it stays pending, for the next flush (§10.1)
+            self._jobs.pop(sub.sub_id, None)
+            _log().error(
+                "ws snapshot failed",
+                connection_id=self.connection_id,
+                ch=sub.ch,
+                error=type(exc).__name__,
+            )
+            return
+        job.handle = asyncio.get_running_loop().call_soon(self._continue, job)
+
+    def _snapshot_steps(self, sub: Subscription, reason: SnapReason) -> Generator[None, None, bool]:
         previous = sub.seq
         seq = previous + 1
         # The fan-out span starts before the build; a sampled `s` is stamped on its chunk only.
@@ -696,18 +976,27 @@ class TopicEmitter:
         base["meta"] = meta
         # Sized so that no frame, `sp` included, exceeds the cap (§3.1 Room, §3.6).
         budget = b64_budget(self.max_frame_bytes, _widest(sub))
-        rendered = self.cache.get(sub, self.source, budget)
+        if self.source is None:  # pragma: no cover - `snapshot` checked it
+            return False
+        rendered = yield from self.cache.fetch(sub, self.source, budget)
         if rendered is None:
             return False
         if rendered.meta:  # the owner's keys join the server's, which win (`SERVER_META_KEYS`)
             owner = {k: v for k, v in rendered.meta.items() if k not in SERVER_META_KEYS}
             base["meta"] = {**owner, **meta}
-        frames = self._frames(base, rendered)
+        frames = yield from self._frame_steps(base, rendered)
+        stamped = received is not None and self.push_data is not None
+        sized = yield from self._prepare_steps(frames, stamped)
         sub.seq, sub.snapshot_pending = seq, False
         total = 0
-        for frame in frames:
-            total += len(_dumps(frame))
-            if received is None or self.push_data is None or frame["s"] is None:
+        for (frame, _), (size, payload) in zip(frames, sized, strict=True):
+            total += len(_dumps(frame)) if size is None else size
+            last = frame["s"] is not None
+            if payload is not None:
+                if self.push_encoded is None:  # pragma: no cover - `_prepare_steps` checked it
+                    raise RuntimeError("an encoded frame without its queue")
+                self.push_encoded(frame, payload, received if stamped and last else None)
+            elif received is None or self.push_data is None or not last:
                 self.push(frame)
             else:
                 if self.span_id is not None:  # the chunk with `s` names its fan-out span
@@ -734,23 +1023,60 @@ class TopicEmitter:
             self.on_snapshot(sub, rendered)
         return True
 
-    def _frames(self, base: dict[str, Any], rendered: Rendered) -> list[dict[str, Any]]:
+    def _frame_steps(
+        self, base: dict[str, Any], rendered: Rendered
+    ) -> Generator[None, None, list[tuple[dict[str, Any], _Chunk | None]]]:
+        """The snapshot's frames, with each structured chunk's item texts (`_split_steps`)."""
         if rendered.payload is not None:  # split per subscriber, for its own envelope
             budget = self.max_frame_bytes - _overhead(base)
-            payloads: list[Any] = split_structured(rendered.payload, budget)
+            chunks: list[_Chunk] = yield from _split_steps(rendered.payload, budget)
+            pairs: list[tuple[Any, _Chunk | None]] = [(c.payload, c) for c in chunks]
             enc = "j"
         else:
-            payloads = list(rendered.parts)
+            pairs = [(p, None) for p in rendered.parts]
             enc = "b64"
-        last = len(payloads) - 1
-        out: list[dict[str, Any]] = []
-        for i, p in enumerate(payloads):
+        last = len(pairs) - 1
+        out: list[tuple[dict[str, Any], _Chunk | None]] = []
+        for i, (p, chunk) in enumerate(pairs):
             frame = {**base, "e": enc, "p": p}
             if i != last:
                 frame["s"] = None
             if last == 0:
                 del frame["id"]  # a single-frame snap needs no chunk correlation id
-            out.append(frame)
+            out.append((frame, chunk))
+        return out
+
+    def _prepare_steps(
+        self, frames: list[tuple[dict[str, Any], _Chunk | None]], stamped: bool
+    ) -> Generator[None, None, list[tuple[int | None, str | bytes | None]]]:
+        """Each frame's JSON size (for `cv_ws_snapshot_bytes`) and, for a large snapshot on a
+        connection that queues encoded frames, its wire payload, encoded here a frame per step:
+        a structured chunk assembled from its items' texts, the same bytes as the writer's
+        encoder (`assemble_chunk`), a binary one by that encoder. A small snapshot, or one with
+        a value JSON cannot carry, is left to the queue's encoder, as before."""
+        none: list[tuple[int | None, str | bytes | None]] = [(None, None)] * len(frames)
+        encode_payload, wire = self.encode_payload, self.wire
+        if encode_payload is None or wire is None or self.push_encoded is None:
+            return none
+        weight = sum(
+            c.size if c is not None else len(f["p"]) for f, c in frames
+        )  # JSON bytes of the payloads
+        if weight < PREPARE_MIN_BYTES or any(c is not None and c.texts is None for _, c in frames):
+            return none
+        out: list[tuple[int | None, str | bytes | None]] = []
+        for frame, chunk in frames:
+            if chunk is not None:
+                size = len(_dumps({**frame, "p": 0})) - 1 + chunk.size
+            else:
+                size = len(_dumps(frame))
+            if stamped and frame["s"] is not None and self.span_id is not None:
+                frame["sp"] = self.span_id()  # the chunk with `s` names its fan-out span
+            if chunk is not None:
+                payload: str | bytes = yield from assemble_steps(frame, chunk, wire)
+            else:
+                payload = encode_payload(frame)
+            out.append((size, payload))
+            yield
         return out
 
     # -- deltas --
