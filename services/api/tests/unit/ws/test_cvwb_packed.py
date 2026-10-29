@@ -63,8 +63,6 @@ def test_a_packed_frame_with_a_new_header_encodes_as_the_frame_with_that_header(
 def test_a_packed_frame_holds_bytes_only_and_of_its_kind() -> None:
     with pytest.raises(FrameEncodeError, match="bytes only"):
         Frame(HEATMAP_COLUMN, ((1, 2),), raw=b"x" * 40)
-    with pytest.raises(FrameEncodeError, match="tail"):
-        Frame(HEATMAP_COLUMN, tail="AAAA")
     vectors = dict(vector_frames())
     wrong = replace(pack(vectors["heatmap_column"]), body_kind=BOOK_DELTA)
     with pytest.raises(FrameEncodeError, match="not of its kind"):

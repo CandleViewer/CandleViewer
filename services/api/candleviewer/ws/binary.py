@@ -18,7 +18,7 @@ import base64
 import binascii
 import itertools
 import struct
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Final
 
@@ -40,10 +40,6 @@ FLAG_PARTIAL: Final = 0b1000
 _KNOWN_FLAGS: Final = 0b1111
 
 _HEADER: Final = struct.Struct(HEADER.fmt)
-#: The header's first 9 bytes (magic, format_version, body_kind, flags, price_scale, qty_scale):
-#: three whole base64 groups, the part of a packed frame that changes per use (`encode_b64`).
-_LEAD: Final = 9
-_LEAD_STRUCT: Final = struct.Struct(HEADER.fmt[: HEADER.fmt.index("3x")])
 _STRUCTS: Final[dict[str, struct.Struct]] = {}
 
 Record = tuple[int, ...]
@@ -114,18 +110,12 @@ class Frame:
     prefix: Record | None = None
     groups: tuple[Group, ...] | None = None
     raw: bytes | None = None
-    #: A packed frame's base64 from byte 9 on (`pack`): the 9 header bytes before it (magic,
-    #: version, kind, flags, scales) are a whole number of base64 groups, so `encode_b64` writes
-    #: only those 12 characters per use, while ``ts_base_ms`` is the one ``raw`` holds.
-    tail: str | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.raw is not None and (
             self.records or self.prefix is not None or self.trailer is not None or self.groups
         ):
             raise FrameEncodeError("a packed frame holds its body as bytes only")
-        if self.tail is not None and self.raw is None:
-            raise FrameEncodeError("a base64 tail belongs to a packed frame")
 
     @property
     def format_version(self) -> int:
@@ -164,7 +154,6 @@ def pack(frame: Frame) -> Frame:
         qty_scale=frame.qty_scale,
         ts_base_ms=frame.ts_base_ms,
         raw=raw,
-        tail=base64.b64encode(raw[_LEAD:]).decode("ascii"),
     )
 
 
@@ -338,32 +327,15 @@ def encode_b64(
 ) -> str:
     """``cv.v1.json`` wrapping (section 3.2): the frame bytes as base64, sent with ``e: "b64"``.
     ``weight`` is `encode`'s. ``flags`` and the scales, when given, replace the frame's own (the
-    snapshot render's and a `d`'s per-subscription header). A packed frame (`pack`) is written
-    as its 12 header characters and its cached tail: the same text as encoding it whole."""
+    snapshot render's and a `d`'s per-subscription header). A packed frame (`pack`) is its bytes
+    with that header rewritten, never re-encoded record by record: the same text as encoding the
+    frame it was packed from with that header."""
     fl = frame.flags if flags is None else flags
     ps = frame.price_scale if price_scale is None else price_scale
     qs = frame.qty_scale if qty_scale is None else qty_scale
-    raw, tail = frame.raw, frame.tail
-    if raw is None or tail is None or _ts_base(raw) != frame.ts_base_ms:
-        same = flags is None and price_scale is None and qty_scale is None
-        target = frame if same else replace(frame, flags=fl, price_scale=ps, qty_scale=qs)
-        return base64.b64encode(encode(target, weight)).decode("ascii")
-    kind = _kind(frame.body_kind)
-    began = perf_counter() if weight else 0.0
-    if fl & ~_KNOWN_FLAGS:
-        raise FrameEncodeError(f"unknown header flag bits 0x{fl:x}")
-    if len(raw) < HEADER.size or raw[5] != kind.id:
-        raise FrameEncodeError(f"{kind.name}: a packed frame's bytes are not of its kind")
-    try:
-        lead = _LEAD_STRUCT.pack(MAGIC, kind.format_version, kind.id, fl, ps, qs)
-    except struct.error as exc:
-        raise FrameEncodeError(f"{kind.name}: value out of range for section 3.4: {exc}") from exc
-    _observed(kind, len(raw), weight, began)
-    return base64.b64encode(lead).decode("ascii") + tail
-
-
-def _ts_base(raw: bytes) -> int:
-    return int.from_bytes(raw[16:24], "little") if len(raw) >= HEADER.size else -1
+    same = flags is None and price_scale is None and qty_scale is None
+    target = frame if same else replace(frame, flags=fl, price_scale=ps, qty_scale=qs)
+    return base64.b64encode(encode(target, weight)).decode("ascii")
 
 
 def _fits(count: int, stride: int, available: int, what: str) -> None:

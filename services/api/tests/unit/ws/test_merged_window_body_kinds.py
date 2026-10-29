@@ -504,3 +504,24 @@ def test_a_trades_window_never_carries_the_prints_of_an_earlier_window() -> None
         [emission] = queue.take()
         seen.append([t["ts_ms"] - T0_MS for t in _decoded(emission.part)["trades"]])
     assert seen == [[0, 1], [2, 3], [5, 6]]
+
+
+def test_a_merged_window_of_packed_producer_parts_still_leaves_as_kind_6() -> None:
+    """Fable M-A (#605): the producer's parts are packed (`ws_wiring.heatmap_part`); a merged
+    window rebuilds each column's kind-6 frame from its structured column, never failing over to
+    structured because the part it started from was packed."""
+    from candleviewer.ws.binary import HEATMAP_COLUMN
+    from candleviewer.ws_wiring import heatmap_part
+
+    updates: list[Update] = []
+    for t_ms in (0, 500):
+        body, _, meta = _heatmap(t_ms)
+        part = heatmap_part(T0_MS + t_ms, 10_000, 100, ((1_000, 2_000), (62, 188)), 2, 3, False)
+        assert part.raw is not None and part.body_kind == HEATMAP_COLUMN
+        updates.append((body, part, meta))
+    emissions = _take("heatmap", updates)
+    assert len(emissions) == 2 and all(e.part is not None for e in emissions)
+    for emission in emissions:
+        assert emission.part is not None and emission.part.raw is None
+        [column] = emission.body["columns"]
+        assert _decoded(emission.part)["columns"][0]["t_ms"] == column["t_ms"]
