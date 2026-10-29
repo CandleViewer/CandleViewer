@@ -2646,6 +2646,7 @@ def create_app(
     inspector = build_statechart_inspector(
         store=None if persistence is None else persistence.snapshots,
         keys=None if persistence is None else hmac_keys,
+        metrics=metrics_facade,
     )
     app.include_router(
         make_statechart_router(

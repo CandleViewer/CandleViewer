@@ -4,7 +4,10 @@ Never holds, builds or queries an `Interpreter` (MUSTNOT-03, C-2.20): a machine 
 snapshot once the HMAC envelope verifies (`persistence.open_sealed`, CV-C53), a chart from the
 registry. E17-T08's grammar and check arrive as `KeyOf` and `Visible` (M21 may not import `ws`).
 A row that does not verify, or whose metadata is off the contract, is left out and named; its
-`system_events` row needs a migration, so it lands with the store.
+`system_events` row waits on the lane's choice of component (today's `se_component` CHECK has no
+`statechart`), so it lands separately. `dropped_receipts` is the process's
+`cv_machine_dropped_receipts_total` per kind (E50-T60), read through `DroppedReceipts`;
+`chain_trips` comes from the verified snapshot itself, not from `machine_events`.
 """
 
 from __future__ import annotations
@@ -40,6 +43,17 @@ class BoundScope:
 
     accounts: frozenset[UUID] = frozenset()
     user: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DroppedReceipts:
+    """`cv_machine_dropped_receipts_total` per machine kind since process start, for the
+    process's own `env` only; a kind with no series has dropped none. `read` is synchronous (an
+    in-memory registry read), so it runs off the loop. A row of another environment gets `null`:
+    this process cannot read that environment's counter."""
+
+    env: str
+    read: Callable[[], Mapping[str, int]]
 
 
 #: The caller's per-entity check: may it see a machine of this kind and bound scope?
@@ -82,7 +96,7 @@ class Machine:
 @dataclass(frozen=True, slots=True)
 class Listing:
     snapshots: SliceResult[tuple[Machine, ...]]
-    metrics: SliceResult[None]
+    metrics: SliceResult[Mapping[str, int]]
     items: tuple[Machine, ...]
     kinds: list[dict[str, Any]]
     has_more: bool
@@ -100,8 +114,11 @@ def published_state(chart: Mapping[str, Any], active: frozenset[str]) -> str:
     return state
 
 
-def _summaries(machines: Sequence[Machine]) -> list[dict[str, Any]]:
-    """`StatechartKindSummary` rows; `dropped_receipts` is `null` until a metrics source exists."""
+def _summaries(
+    machines: Sequence[Machine], dropped: Mapping[str, int] | None, dropped_env: str | None
+) -> list[dict[str, Any]]:
+    """`StatechartKindSummary` rows; `dropped_receipts` is `null` when the metrics slice failed
+    or the row's environment is not the one the process counts for."""
     groups: dict[tuple[str, str], list[Machine]] = {}
     for m in machines:
         groups.setdefault((m.row.machine_kind, m.row.environment), []).append(m)
@@ -113,7 +130,9 @@ def _summaries(machines: Sequence[Machine]) -> list[dict[str, Any]]:
             "by_state": dict(sorted(Counter(m.state for m in group).items())),
             "chain_trips": sum(m.chain_trips for m in group),
             "degraded_machines": sum(m.chain_trips > 0 for m in group),
-            "dropped_receipts": None,
+            "dropped_receipts": (
+                dropped.get(kind, 0) if dropped is not None and env == dropped_env else None
+            ),
         }
         for (kind, env), group in sorted(groups.items())
     ]
@@ -121,7 +140,8 @@ def _summaries(machines: Sequence[Machine]) -> list[dict[str, Any]]:
 
 class StatechartInspector:
     """`lock` is the committed `machine_hashes.lock` (kind -> hash). `store` stays `None` until
-    wired; a store without the HMAC keys that verify it is unwired too (CV-C53)."""
+    wired; a store without the HMAC keys that verify it is unwired too (CV-C53). `dropped` reads
+    the metric registry the `CvMetricsPlugin`s count on; `None` leaves `metrics` unavailable."""
 
     def __init__(
         self,
@@ -132,9 +152,11 @@ class StatechartInspector:
         store: SnapshotStore | None = None,
         keys: HmacKeys | None = None,
         registry: Registry | None = None,
+        dropped: DroppedReceipts | None = None,
     ) -> None:
         self._fan, self._key_of, self._lock = fan, key_of, lock
         self._store, self._keys, self._registry = store, keys, registry
+        self._dropped_receipts = dropped
 
     @cached_property
     @audit_exempt("read")
@@ -184,7 +206,9 @@ class StatechartInspector:
             ),
             key=lambda m: m.position,
         )
-        kinds = _summaries(machines)
+        dropped_env = None if self._dropped_receipts is None else self._dropped_receipts.env
+        ok = metrics.value if metrics.status == "ok" else None
+        kinds = _summaries(machines, ok, dropped_env)
         return Listing(snaps, metrics, tuple(rows[:limit]), kinds, len(rows) > limit)
 
     async def _read(self) -> tuple[Machine, ...] | Degraded[tuple[Machine, ...]]:
@@ -229,6 +253,11 @@ class StatechartInspector:
             len(deferred) if isinstance(deferred, list) else None,
         )
 
-    async def _dropped(self) -> None:
-        """No `CvMetricsPlugin` reports to a registry the API reads yet: `unavailable`."""
-        raise SourceUnavailable("metrics: no provider wired")
+    async def _dropped(self) -> Mapping[str, int]:
+        """Per kind, from the registry; a negative or non-integral count fails the slice."""
+        if self._dropped_receipts is None:
+            raise SourceUnavailable("metrics: no provider wired")
+        counts = await asyncio.to_thread(self._dropped_receipts.read)
+        if not all(type(n) is int and n >= 0 for n in counts.values()):
+            raise ValueError("dropped receipts are not counts")
+        return dict(counts)

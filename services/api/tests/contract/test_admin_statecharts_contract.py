@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel
 
+from candleviewer.admin.inspector import DroppedReceipts
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.admin_statecharts import MACHINE_KEY
 from candleviewer.statechart import Registry, export_stately, machine_hash
@@ -104,6 +105,17 @@ def test_served_responses_validate_against_the_contract() -> None:
     missing = client.get(f"/admin/statecharts/algo:{_UUID}/export", headers={"x-role": "owner"})
     problem = "/components/responses/NotFound/content/application~1problem+json/schema"
     validate_example(problem, missing.json())
+
+
+def test_the_list_with_dropped_receipts_validates_against_the_contract() -> None:
+    wired = inspector(*fleet(), dropped=DroppedReceipts("demo", lambda: {"order": 2}))
+    body = TestClient(make_app(wired)).get(_LIST, headers={"x-role": "owner"}).json()
+    validate_example(
+        f"/paths/{_LIST.replace('/', '~1')}/get/responses/200/content/application~1json/schema",
+        body,
+    )
+    assert body["metrics"]["status"] == "ok"
+    assert {k["machine_kind"]: k["dropped_receipts"] for k in body["kinds"]}["order"] == 2
 
 
 def test_security_program_row_48c_is_owner_only_admin_read() -> None:

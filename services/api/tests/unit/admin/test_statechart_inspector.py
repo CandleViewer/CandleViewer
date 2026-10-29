@@ -16,20 +16,30 @@ from uuid import UUID
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from prometheus_client import CollectorRegistry, Counter
+from prometheus_client.registry import Collector
 
 import candleviewer.statechart.factory as factory
 import candleviewer.statechart.persistence as persistence
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
-from candleviewer.admin.inspector import SEAL_FAILED, BoundScope, SnapshotRow, StatechartInspector
+from candleviewer.admin.inspector import (
+    SEAL_FAILED,
+    BoundScope,
+    DroppedReceipts,
+    SnapshotRow,
+    StatechartInspector,
+)
 from candleviewer.admin.overview.fanout import SliceFanOut
-from candleviewer.admin_wiring import build_statechart_inspector
+from candleviewer.admin_wiring import build_statechart_inspector, dropped_receipts_reader
 from candleviewer.api.admin_statecharts import machine_key, make_statechart_router, visibility
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.observability.metrics import Metrics
 from candleviewer.statechart.config import SNAPSHOT_V
 from candleviewer.statechart.persistence import MachineKey, SealedSnapshot, seal
+from candleviewer.statechart.plugins.metrics import register_machine_families
 from candleviewer.statechart.registry import Registry, export_stately, machine_hash
 from tests.unit.admin._admin_fakes import AuditSpy
 
@@ -345,3 +355,90 @@ def test_the_app_wiring_reads_only_the_sources_that_exist() -> None:
     unwired = {"status": "unavailable", "generated_at": "2026-10-17T03:00:00Z"}
     assert listed["snapshots"] == unwired | {"detail": "snapshots: no provider wired"}
     assert listed["metrics"] == unwired | {"detail": "metrics: no provider wired"}
+
+
+async def test_dropped_receipts_come_per_kind_from_the_metrics_source() -> None:
+    """A kind the source has no series for dropped none since process start: `0`, not `null`."""
+    source = DroppedReceipts("demo", lambda: {"order": 3, "book": 0})
+    found = await inspector(*fleet(), dropped=source).listing(OWNER_VIEW)
+    assert (found.metrics.status, found.metrics.value) == ("ok", {"order": 3, "book": 0})
+    dropped = {
+        f"{k['machine_kind']}@{k['environment']}": k["dropped_receipts"] for k in found.kinds
+    }
+    assert dropped["order@demo"] == 3 and dropped["book@demo"] == 0
+    assert dropped["kill_switch@demo"] == 0
+
+
+async def test_dropped_receipts_are_null_for_an_environment_the_process_does_not_count() -> None:
+    """The counter carries the process's env only: a `live` row is never given `demo`'s drops."""
+    source = DroppedReceipts("demo", lambda: {"kill_switch": 4})
+    found = await inspector(*fleet(), dropped=source).listing(OWNER_VIEW)
+    dropped = {
+        f"{k['machine_kind']}@{k['environment']}": k["dropped_receipts"] for k in found.kinds
+    }
+    assert (dropped["kill_switch@demo"], dropped["kill_switch@live"]) == (4, None)
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [lambda: {"order": -1}, lambda: {"order": 1.5}, lambda: {"order": True}],
+    ids=["negative", "fraction", "bool"],
+)
+async def test_a_dropped_receipts_value_that_is_not_a_count_fails_the_slice(
+    counts: Callable[[], Mapping[str, Any]],
+) -> None:
+    found = await inspector(*fleet(), dropped=DroppedReceipts("demo", counts)).listing(OWNER_VIEW)
+    assert (found.metrics.status, found.metrics.detail) == ("error", "source failed")
+    assert {k["dropped_receipts"] for k in found.kinds} == {None}  # never a guess
+    assert len(found.items) == len(SEEN)  # the snapshots slice is unaffected
+
+
+async def test_a_failing_metrics_source_is_named_and_never_echoed() -> None:
+    def broken() -> Mapping[str, int]:
+        raise OSError(f"{_DSN} is down")
+
+    found = await inspector(*fleet(), dropped=DroppedReceipts("demo", broken)).listing(OWNER_VIEW)
+    assert (found.metrics.status, found.metrics.detail) == ("error", "source failed")
+    assert {k["dropped_receipts"] for k in found.kinds} == {None}
+
+
+_FAMILY = "cv_machine_dropped_receipts_total"
+
+
+def test_the_reader_counts_the_plugins_series_for_the_facades_env_only() -> None:
+    metrics = Metrics("demo")
+    assert dropped_receipts_reader(metrics).env == "demo"
+    assert dropped_receipts_reader(metrics).read() == {}  # no plugin built yet: no series
+    families = register_machine_families(metrics)
+    families[_FAMILY].labels("order").inc(2)
+    families[_FAMILY].labels("book")  # bound, never incremented
+    families["cv_machine_chain_trips_total"].labels("order").inc(5)  # another family
+    assert dropped_receipts_reader(metrics).read() == {"order": 2, "book": 0}
+    registry = CollectorRegistry()  # another env's series on the registry the facade reads
+    Counter(_FAMILY, "help", ["env", "kind"], registry=registry).labels("demo", "order").inc()
+    assert dropped_receipts_reader(Metrics("live", registry=registry)).read() == {}
+
+
+def test_the_reader_never_runs_another_collector() -> None:
+    """Only the one family is collected: an unrelated exporter that raises cannot fail it."""
+
+    class Exploding(Collector):
+        def describe(self) -> list[Any]:
+            return []
+
+        def collect(self) -> list[Any]:
+            raise RuntimeError("an unrelated exporter")
+
+    metrics = Metrics("demo")
+    metrics.registry.register(Exploding())
+    register_machine_families(metrics)[_FAMILY].labels("order").inc()
+    assert dropped_receipts_reader(metrics).read() == {"order": 1}
+
+
+def test_the_app_wiring_reads_the_metrics_facade() -> None:
+    metrics = Metrics("demo")
+    register_machine_families(metrics)["cv_machine_dropped_receipts_total"].labels("order").inc()
+    wired = build_statechart_inspector(now=lambda: NOW, metrics=metrics)
+    listed = TestClient(make_app(wired)).get("/admin/statecharts", headers=_OWNER).json()
+    assert listed["metrics"] == {"status": "ok", "generated_at": "2026-10-17T03:00:00Z"}
+    assert listed["snapshots"]["detail"] == "snapshots: no provider wired"

@@ -40,7 +40,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Final
 
-from candleviewer.admin.inspector import SnapshotStore, StatechartInspector
+from candleviewer.admin.inspector import DroppedReceipts, SnapshotStore, StatechartInspector
 from candleviewer.admin.ops.incident_metrics import OpenIncidentsGauge
 from candleviewer.admin.ops.incidents import AdminIncidentsService
 from candleviewer.admin.overview.capacity import AdminCapacityService, project
@@ -56,6 +56,7 @@ from candleviewer.admin.overview.ports import (
 )
 from candleviewer.admin.overview.service import AdminOverviewService
 from candleviewer.api.admin_statecharts import machine_key
+from candleviewer.observability.metrics import ENV_LABEL, Metrics
 from candleviewer.recorder.budget import RECORDED_TIERS, DiskBudget
 from candleviewer.settings import Settings
 from candleviewer.statechart.lock import DEFAULT_LOCK_PATH, load_lock
@@ -224,19 +225,48 @@ def build_admin_read_models(
     return overview, capacity
 
 
+#: The `CvMetricsPlugin` family `dropped_receipts` reads (catalogue, E50-T60) and its sample.
+DROPPED_RECEIPTS_FAMILY: Final = "cv_machine_dropped_receipts"
+_DROPPED_RECEIPTS_SAMPLE: Final = f"{DROPPED_RECEIPTS_FAMILY}_total"
+
+
+def dropped_receipts_reader(metrics: Metrics) -> DroppedReceipts:
+    """`cv_machine_dropped_receipts_total` per `kind` on the app's one facade, its own `env`
+    only: the same series `/metrics` exports, read, never registered or incremented here. Only
+    that family's collector runs (a restricted registry), never every exporter in the process."""
+
+    def read() -> dict[str, int]:
+        counts: dict[str, int] = {}
+        only = metrics.registry.restricted_registry([_DROPPED_RECEIPTS_SAMPLE])
+        for family in only.collect():
+            if family.name != DROPPED_RECEIPTS_FAMILY:
+                continue
+            for sample in family.samples:
+                labels = sample.labels
+                if sample.name == _DROPPED_RECEIPTS_SAMPLE and labels.get(ENV_LABEL) == metrics.env:
+                    kind = labels.get("kind", "")
+                    counts[kind] = counts.get(kind, 0) + int(sample.value)
+        return counts
+
+    return DroppedReceipts(metrics.env, read)
+
+
 def build_statechart_inspector(
     *,
     now: Callable[[], datetime] = utc_now,
     store: SnapshotStore | None = None,
     keys: HmacKeys | None = None,
+    metrics: Metrics | None = None,
 ) -> StatechartInspector:
     """The E42-T07 inspector over the chart registry, the committed lock and, when the statechart
     persistence bundle is wired (E50-T63: the real backend with HMAC keys), its snapshot store and
     the keys that verify it. Without both, as until a KMS-backed key provider exists (a plan gap,
-    #2701), `snapshots` stays `unavailable` and the list empty; no metrics source exists yet, so
-    `metrics` stays `unavailable`."""
+    #2701), `snapshots` stays `unavailable` and the list empty. `metrics` is the facade the
+    `CvMetricsPlugin`s count on; without it `metrics` stays `unavailable`."""
     lock = {kind: str(entry.get("hash")) for kind, entry in load_lock(DEFAULT_LOCK_PATH).items()}
-    return StatechartInspector(SliceFanOut(now=now), machine_key, lock, store=store, keys=keys)
+    dropped = None if metrics is None else dropped_receipts_reader(metrics)
+    fan = SliceFanOut(now=now)
+    return StatechartInspector(fan, machine_key, lock, store=store, keys=keys, dropped=dropped)
 
 
 def build_admin_incidents(
