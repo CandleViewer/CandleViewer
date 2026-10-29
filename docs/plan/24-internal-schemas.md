@@ -294,22 +294,13 @@ class BookDelta(MarketEvent):
 
 **Depth/cadence (linear, research 06 §9 / 11 §2.1):** 1 @ 10 ms, 50 @ 20 ms, 200 @ 100 ms, 500 @ 200 ms. v1 subscribes **200** for the heatmap/DOM and **1** for best-bid/ask ticks. Depth `1` is snapshot-only and is re-sent every 3 s even when unchanged (keepalive) — the book engine must not treat an unchanged depth-1 resend as a book event, or the heatmap will show phantom columns.
 
-**Desync protocol (`BookEngine`):**
+**Desync protocol.** The book's health is the B14 statechart ([`28` §B14](28-statechart-catalogue.md#b14--book-health-fsm-data-path-excluded)): `init`, `snapshot_pending`, `live`, `desynced`, with the resync breaker marking a book `degraded` (20 §3.2). The delta path itself is not a statechart. Rules: the engine keeps `prev_update_id`; any gap discards the local book, emits `BookDesyncEvent` (recorded, alerted, surfaced in the UI as a "book resyncing" badge over the DOM/heatmap) and resubscribes. A **crossed book** (best bid ≥ best ask) after applying a delta is treated as desync, not clamped, as is a negative quantity. Levels are held as two sorted arrays keyed by `price_ticks` (20 §3.2).
 
-```mermaid
-stateDiagram-v2
-  [*] --> Subscribing
-  Subscribing --> Live: snapshot applied
-  Live --> Live: delta, u == prev_u + 1
-  Live --> Resyncing: gap detected (u != prev_u+1) OR negative qty OR crossed book
-  Resyncing --> Live: unsubscribe, resubscribe, fresh snapshot applied
-  Live --> Stale: no message for 3x expected cadence
-  Stale --> Resyncing: watchdog fires
-  Resyncing --> Failed: 5 consecutive resyncs in 60s
-  Failed --> Subscribing: operator/backoff retry, alert raised
-```
+**`DepthAggregator` (E21-T01).** `aggregate(bucket_ticks: int, depth: int)` is a pure function of the live `BookState`: no floats, no I/O.
 
-Rules: the engine keeps `prev_update_id`; any gap discards the local book, emits `BookDesyncEvent` (recorded, alerted, surfaced in the UI as a "book resyncing" badge over the DOM/heatmap) and resubscribes. A **crossed book** (best bid ≥ best ask) after applying a delta is treated as desync, not clamped. Levels are held in two `SortedDict`s keyed by `price_ticks`.
+- A bucket is keyed by an integer `price_ticks` multiple of `bucket_ticks`. Bids round **down** to their bucket and asks **up**, so an aggregated bid is never above and an aggregated ask never below a raw level, and a book that is not crossed never aggregates into a crossed one.
+- Each bucket's size is the `Decimal` sum of its raw levels; a bucket with no size is absent. `bucket_ticks = 1` returns the raw levels.
+- The result holds at most `depth` buckets per side, counted after bucketing, bids descending then asks ascending.
 
 ### 2.3 TickerEvent
 
@@ -413,10 +404,30 @@ Sources: live accruing rate from `tickers.{symbol}` (`fundingRate`, `nextFunding
 | Event                    | Purpose                                                     | Key fields                                                                                     |
 | ------------------------ | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `BestQuoteEvent`         | L1 top-of-book for the ticket, DOM header and spread metric | `bid, bid_qty, ask, ask_qty, spread_ticks, spread_bps, mid`                                    |
-| `BookDesyncEvent`        | Book resync incident                                        | `symbol, depth, prev_update_id, got_update_id, resync_count`                                   |
+| `BookDesyncEvent`        | Book resync incident                                        | `symbol, depth, prev_update_id, got_update_id, resync_count, reason`                           |
 | `FeedHealthEvent`        | Per-stream health, 1 Hz                                     | `stream_kind, connected, last_msg_age_ms, latency_p50_ms, latency_p99_ms, msgs_per_s, dropped` |
 | `ClockSyncEvent`         | Offset vs `GET /v5/market/time`, 60 s                       | `offset_ms, rtt_ms, drift_rate_ppm, action` (`ok`/`warn`/`block_trading`)                      |
 | `InstrumentUpdatedEvent` | Instrument metadata changed                                 | `symbol, metadata_version, changed_fields[]`                                                   |
+
+```python
+class BestQuoteEvent(MarketEvent):         # E21-T01: the top of the live book, on change of any field
+    bid: Px
+    bid_qty: Qty
+    ask: Px
+    ask_qty: Qty
+    spread_ticks: int                      # (ask - bid) / tick_size, from integer price_ticks; >= 1 on an uncrossed book
+    spread_bps: Decimal                    # (ask - bid) / mid * 10_000
+    mid: Px                                # (bid + ask) / 2, not rounded to the tick
+
+class BookDesyncEvent(MarketEvent):        # E21-T01: one per resync incident
+    depth: int                             # the active tier's depth, 200 | 500 (20 §3.2)
+    prev_update_id: int                    # last u applied
+    got_update_id: int | None              # the u that broke the sequence; None when the cause is not a sequence (crossed, negative qty, reconnect)
+    resync_count: int                      # resyncs in the breaker's current 60 s window
+    reason: str                            # a resync reason of 20 §3.2 (`sequence_gap`, `rejected_frame`, ...)
+```
+
+`BestQuoteEvent` is read from `top(1)` of the live tier, so no `orderbook.1` stream feeds it, and nothing is published while the book is not `LIVE`. Both events are in-process and carry the §1.4 envelope as §2.10's events do.
 
 `ClockSyncEvent.action == "block_trading"` when `abs(offset_ms) > 2000` (40 % of Bybit's 5000 ms default `recv_window`). Order entry is disabled system-wide until it clears; this is the pre-emptive form of Bybit error 10002 (research 11 §2.5 — WSL clocks drift badly after host sleep/resume).
 
@@ -432,8 +443,8 @@ Sources: live accruing rate from `tickers.{symbol}` (`fundingRate`, `nextFunding
 | `LiquidationEvent`       | `allLiquidation.{s}`               | ≤1 push/500 ms      | yes                                | `md.liq.{symbol}`                      |
 | `OpenInterestEvent`      | ticker / REST OI                   | 100 ms / 5 min      | yes                                | `md.oi.{symbol}`                       |
 | `FundingEvent`           | ticker / REST funding              | 100 ms / settlement | yes                                | `md.funding.{symbol}`                  |
-| `BestQuoteEvent`         | derived                            | on change           | no (derivable)                     | `md.quote.{symbol}`                    |
-| `BookDesyncEvent`        | derived                            | rare                | yes                                | `sys.md.desync`                        |
+| `BestQuoteEvent`         | derived                            | on change           | no (derivable)                     | `{env}.md.{symbol}.quote`              |
+| `BookDesyncEvent`        | derived                            | rare                | yes                                | `{env}.health.{symbol}.book_desync`    |
 | `FeedHealthEvent`        | derived                            | 1 Hz                | metrics only                       | `sys.md.health`                        |
 | `ClockSyncEvent`         | `GET /v5/market/time`              | 60 s                | metrics only                       | `sys.clock`                            |
 | `BigTradeEvent`          | derived (§2.10)                    | per flagged print   | no (derivable from trades, C-2.15) | `{env}.md.{symbol}.bigtrade`           |
