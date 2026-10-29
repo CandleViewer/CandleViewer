@@ -224,7 +224,7 @@ staging" line, or #415 waits for staging. The other drills and measurements that
    push bound, which counts frames, not bytes; there is no coalescing, send interval or byte budget. WS-D01
    and WS-D08 stay contingent on the flag and on the staged load run.
 
-   _Addendum 2026-10-28:_ the default flip of `CV_WS_BACKPRESSURE_ENABLED` is proposed in #4883 (draft), pending the owner's ruling on E17-Q03 profile B (#568); this item and the WS-D01 row of §1 describe the review's base.
+   _Addendum 2026-10-28:_ the default flip of `CV_WS_BACKPRESSURE_ENABLED` lands with #4883 under an owner ruling of 2026-10-29 (E17-Q03's run is recorded (#568); profile B's full-rate pass is a GA-host item, the R1 note on #571); WS-D01's residual Low closes with the flip. This item and the WS-D01 row of §1 describe the review's base.
 
 3. **E17-R-05 is open** (triaged privately). It needs an owner decision
    before the E17 gate.

@@ -173,6 +173,8 @@ after the warm-up, all PASS, dispatched on, off, on, off, on, off.
 The median is −0.16 % and no pair is over the 2 % line. The cost sits inside the harness's run-to-run noise:
 these runs cannot resolve it below about ±3 %, so "under 2 %" means "not measurable at this resolution".
 
+**Rollout ruling (2026-10-29).** The owner ruling of 2026-10-29 (#2701 ledger A row A15) took 23 §8.6's "E17-Q03's load run must pass" as met on this record. E17-Q03's run is recorded (#568). Profile B's full-rate shortfall is the capacity finding of the R1 note on #571 (about 1.6 gateway event loops on the bench host), not a pipeline defect, and the flag-on overhead above is within noise. So `CV_WS_BACKPRESSURE_ENABLED` defaults on with #4883, and profile B at full rate is re-homed as a GA-host measurement under E49 (release readiness). The budget is not lowered.
+
 ### Recorded deviations from the written shapes
 
 - **The 8-series cap binds below the written shapes.** `bars.*` and `footprint.*` each lease a bar series, and the

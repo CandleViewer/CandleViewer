@@ -703,14 +703,15 @@ class Settings(BaseSettings):
     # closes a frame 4 KiB above it, and `welcome` advertises the effective value (#572).
     ws_max_inbound_frame_bytes: int = Field(default=262_144, ge=1024, le=262_144)
     # E17-T03 (#412): the WS backpressure pipeline (coalescing, adaptive throttling and the §8.4
-    # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: default on, pending the owner's
-    # ruling on E17-Q03 profile B (#568); removal ticket #2900). It swaps the mechanism that
-    # bounds a connection's outbound frames and
+    # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: default on since #4883, an
+    # owner ruling of 2026-10-29 on E17-Q03 profile B (#568); removal ticket #2900). It swaps the
+    # mechanism that bounds a connection's outbound frames and
     # never removes the bound (C-2.18): off keeps today's 1 024-frame push bound, so it gates no
     # safety invariant (C-4.14). With it on, `create_app` passes a `BackpressureConfig` and every
     # frame goes through `ws/pipeline.py`; `welcome.features.coalescing` mirrors it
     # (`23-ws-protocol.md` §4.2).
-    # The default flips once the owner rules on E17-Q03 profile B (#568): chaos scenarios 2 and 3
+    # The default flipped on with #4883 (E17-Q03 recorded, #568; profile B's full-rate pass is a
+    # GA-host item, the R1 note on #571): chaos scenarios 2 and 3
     # pass (`tests/chaos/ws/SCENARIOS.md`, #410) and #571's gauges and overhead measurement have
     # landed (`23-ws-protocol.md` §8.4 Rollout, §8.6). Off stays available until #2900.
     ws_backpressure_enabled: bool = True
