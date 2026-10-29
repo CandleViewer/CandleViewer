@@ -25,6 +25,19 @@ groups:
         annotations:
           summary: "OMS holds orders in an unknown state"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-omsunknownorders"
+      - alert: OmsPositionReadingOwed
+        # E29-T05 (20 Sec.12.5, 24 Sec.8.12): a position reading owed to protection for a minute
+        # (C-2.6): not handed on, held as dated ahead of the store's clock, or evicted from that
+        # hold. The private-stream consumer's gauge, read at each scrape; at 120 s the `oms` check
+        # of /readyz is degraded too. A condition page: it resolves once the reading is handed on.
+        expr: oms_position_reading_owed_age_seconds >= 60
+        for: 0m
+        labels:
+          severity: page
+          component: oms
+        annotations:
+          summary: "A position reading has been owed to protection for a minute or more"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omspositionreadingowed"
       - alert: PostgresDown
         expr: pg_up == 0
         for: 1m

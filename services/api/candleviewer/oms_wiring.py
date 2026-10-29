@@ -9,7 +9,8 @@ table comes in as a callable, as `key_selfcheck_wiring` takes it.
 Part 2: the reads and adapters that bind the OMS's ports to the modules that own them, as `oms`
 imports no `audit`, `ws` or storage driver (C-3.1, C-3.3, ADR-0003).
 
-Part 3: the OMS runtime (`build_oms_runtime`, `OmsRuntime`), which the lifespan starts and stops.
+Part 3: the OMS runtime (`build_oms_runtime`, `OmsRuntime`), which the lifespan starts and stops,
+and which builds, starts and stops E29-T05's private-stream consumer (`oms_stream_wiring`, S8b).
 """
 
 from __future__ import annotations
@@ -129,6 +130,8 @@ from candleviewer.oms.repository import (
     IdempotencyAnchorRepository,
     OrderEventRepository,
     OrderRepository,
+    PositionRepository,
+    PositionSnapshotRepository,
     RecordedStopRepository,
     SubmissionRepository,
     WriteTimer,
@@ -136,6 +139,7 @@ from candleviewer.oms.repository import (
 from candleviewer.oms.routing import RoutedPort, TradingRouter
 from candleviewer.oms.stop_gate import ResolvingStopGate, StopVoidAudit
 from candleviewer.oms.stop_resolution import CompleteRead, StopResolver, store_timeout_for
+from candleviewer.oms.stream_consumer import StreamEvidence
 from candleviewer.oms.submit import (
     RESULT_WAIT_S,
     STORE_TIMEOUT_S,
@@ -147,8 +151,21 @@ from candleviewer.oms.submit import (
 )
 from candleviewer.oms.validator import ReadOnlyCheck, Validator
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, Lane, LaneStopped, OrderLane, Serving
+from candleviewer.oms_stream_wiring import (
+    ExchangeWallClock,
+    HealthAccounts,
+    StreamWiring,
+    SystemBroadcast,
+    TrackedAccounts,
+    build_stream_consumer,
+)
 from candleviewer.oms_streams import LaneStreams
-from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, OMS_STOP_RESERVE_S, Settings
+from candleviewer.settings import (
+    OMS_CONSUMER_STOP_S,
+    OMS_INFLIGHT_STUCK_MAX_S,
+    OMS_STOP_RESERVE_S,
+    Settings,
+)
 from candleviewer.statechart.bindings.b01_order import ALREADY_TERMINAL
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.statechart.persistence import ChainTripLatch
@@ -178,6 +195,8 @@ from candleviewer.storage.repositories.orders import (
     UnfinishedOrders,
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
+from candleviewer.storage.repositories.positions import PositionSnapshotStore, PositionStore
+from candleviewer.storage.repositories.positions_sqlalchemy import SqlAlchemyPositionStore
 from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
     RecordedStopStore,
@@ -1329,6 +1348,11 @@ class OrderStores(OrderStore, OrderEventStore, Protocol):
     """The order rows and their events, in one adapter (`SqlAlchemyOrderStore`)."""
 
 
+class PositionStores(PositionStore, PositionSnapshotStore, Protocol):
+    """The positions and their snapshots, in one adapter (`SqlAlchemyPositionStore`), over the
+    clock it is built with (E29-T05 S8b)."""
+
+
 class GroupStores(TradeGroupStore, TradeGroupReads, Protocol):
     """The trade groups: the pipeline's system port and the principal-scoped read a replay goes
     through (`TradeGroupReader`), in one adapter (`SqlAlchemyTradeGroupStore`), so a store that
@@ -1344,7 +1368,9 @@ class OmsStores:
     a route reaches them only through the OMS's own surfaces, after its RBAC check (C-12.4): the
     pipeline, its anchors and `OrderRoute`'s reads, the existence read and a replay's two, the
     order by its account and the group through the principal-scoped `TradeGroupReader`. `sweep` is
-    the startup sweep's reads, under their own statement cap (`SWEEP_STATEMENT_TIMEOUT_MS`)."""
+    the startup sweep's reads, under their own statement cap (`SWEEP_STATEMENT_TIMEOUT_MS`).
+    `positions` builds the private-stream consumer's position store over the clock it is given,
+    the exchange-synced one, which its projection reads too (E29-T05 S8b, CG14)."""
 
     orders: OrderStores
     executions: ExecutionStore
@@ -1354,6 +1380,7 @@ class OmsStores:
     groups: GroupStores
     accounts: TradingAccountReads
     sweep: UnfinishedOrders
+    positions: Callable[[Callable[[], datetime]], PositionStores]
     audit: Callable[[AuditAlarm], OwnedAudit]
     sink: Callable[[str], OwnedSink]
     #: The bytes of frames `CV_MACHINE_EVENT_WAL_PATH` holds that Postgres has not taken, read
@@ -1497,6 +1524,10 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
         groups=SqlAlchemyTradeGroupStore(pool, statement_timeout_ms=cap_ms),
         accounts=SqlAlchemyTradingAccountReads(pool, statement_timeout_ms=cap_ms),
         sweep=SqlAlchemyOrderStore(pool, statement_timeout_ms=SWEEP_STATEMENT_TIMEOUT_MS),
+        # S8b (CG14): over the exchange-synced clock its caller gives, never the raw wall clock
+        positions=lambda clock: SqlAlchemyPositionStore(
+            pool, statement_timeout_ms=cap_ms, clock=clock
+        ),
         audit=lambda alarm: build_lane_audit_writer(
             SqlAlchemyAuditRepository(pool), audit_wal, on_alarm=alarm
         ),
@@ -1607,6 +1638,8 @@ class _Parts:
     lane: Lane
     cancel_all: CancelAll
     heartbeat: LaneHeartbeat
+    #: E29-T05's private-stream consumer, built, started once `ready` (S8b).
+    stream: StreamWiring
     #: When the fencing grace since the lock was taken ends, on the runtime's `monotonic`.
     admit_after: float
 
@@ -1806,6 +1839,31 @@ def _sweep_audit(audit: OmsAudit) -> Callable[[tuple[SweptStop, ...]], Awaitable
     return write_ahead
 
 
+class StreamHealth(TrackedAccounts, Protocol):
+    """Account health as the runtime's private-stream consumer takes it (E29-T05 S8b;
+    `AccountHealthRuntime`): the feed its evidence goes to (`AccountHealthFeed`'s three calls),
+    its last good tracking read (`streamed`, read in place from the lane) and the opening of the
+    boot episode's dead-man's-switch window (`stream_started`, on the serving loop, 20 Sec.6.2)."""
+
+    @property
+    def feed(self) -> StreamEvidence: ...
+
+    def stream_started(self) -> None: ...
+
+
+async def _stream_begun(stream: StreamWiring) -> None:
+    """On the order lane, the loop that consumes: the consumer starts there (20 Sec.6.2)."""
+    stream.start()
+
+
+def _stream_stop_ended(call: asyncio.Future[None]) -> None:
+    """The consumer's stop ended on the lane: one that failed, or that the lane's own stop or death
+    cancelled, is logged by its class, its outcome retrieved, never raised."""
+    error = asyncio.CancelledError() if call.cancelled() else call.exception()
+    if error is not None:
+        _log().error("oms_stream_consumer_stop_failed", error=type(error).__name__)
+
+
 class CommandAccounts:
     """The command port's `TradingAccounts` (CR-S3C1B-02): the binding's, which pages an account
     it refuses before the refusal goes on. SR-E27-07 lets an account be deleted with orders left
@@ -1864,7 +1922,8 @@ class OmsRuntime:
     `create_app()`. A task it tracks runs the startup sweep, steps 2 to 4 on the lane, and sets
     `ready` at its end only. What `start()` cannot compose fails the runtime closed: logged by
     step (`phase`) and paged, `degraded` and never ready, while market data stays up. `run` tracks
-    the route's submits, which `stop()` drains."""
+    the route's submits, which `stop()` drains. It owns E29-T05's private-stream consumer (S8b):
+    composed with the OMS, started where `ready` is set, stopped first."""
 
     def __init__(
         self,
@@ -1882,6 +1941,8 @@ class OmsRuntime:
         persistence: Bundle | None,
         feed: MachineStatePort,
         lane_signing: LaneSigningBinder,
+        health: StreamHealth,
+        hub: SystemBroadcast,
         lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
         stores: Callable[[], OmsStores] | None = None,
         pager: Pager | None = None,
@@ -1910,6 +1971,13 @@ class OmsRuntime:
         #: dev-only account fixture's lane transport, None in production; each start calls both
         #: on the lane.
         self._lane_signing, self._lane_transport = lane_signing, lane_transport
+        #: E29-T05 S8b: account health and the gateway's hub, as the private-stream consumer takes
+        #: them (`StreamHealth`, its account notices' `broadcast_system`).
+        self._health, self._hub = health, hub
+        #: The consumer's start, sent to the lane once `ready`: None until the lane answers it, True
+        #: once it started the consumer, False once it failed; `readyz` reads all but True as not
+        #: started.
+        self._streaming: bool | None = None
         #: The process's one effective-profile cache (finding 6), `profiles_wiring`'s, which its
         #: owner closes: the pipeline reads it, and E28-T02's writes invalidate the same one.
         self.profiles = profiles
@@ -1968,11 +2036,28 @@ class OmsRuntime:
 
     @property
     def readiness(self) -> OmsState:
-        """`/readyz`'s `oms` check (20 Sec.6.2): `state`, and `degraded` too once the environment's
-        lock is lost (ruling 3), when every new submit is refused, while `state`, which the exit
-        routes read, keeps them open (C-2.6)."""
+        """What `placeOrder` admits on (24 Sec.8.4 step 3): `state`, and `degraded` too once the
+        environment's lock is lost (ruling 3), when every new submit is refused, while `state`,
+        which the exit routes read, keeps them open (C-2.6)."""
         state, parts = self.state, self._parts
         return "degraded" if parts is not None and parts.heartbeat.fenced else state
+
+    @property
+    def readyz(self) -> OmsState:
+        """`/readyz`'s `oms` check (20 Sec.6.2, 24 Sec.8.12 "Readiness"): `readiness`, and once
+        `ready`, `degraded` too while the private-stream consumer is not doing its job: it has not
+        started (the lane has not yet confirmed its start, or the start failed), it has faulted,
+        or a position reading has been owed to protection for `OWED_DEGRADED_S` or more; failing
+        closed, so the check reads `ok` only once the lane has confirmed the start. Never
+        `readiness` itself, which `placeOrder` reads (the orchestrator's Q3): one unprotected
+        position never refuses every entry. Read from a worker thread; the detail names no
+        account."""
+        state, parts = self.readiness, self._parts
+        if state != "ok" or parts is None:
+            return state
+        if self._streaming is not True or parts.stream.readiness.degraded() is not None:
+            return "degraded"
+        return state
 
     @property
     def submission(self) -> OnLane:
@@ -2016,8 +2101,9 @@ class OmsRuntime:
         return self._parts
 
     async def wait_ready(self) -> None:
-        """Until the startup sweep has set `ready` (E29-T05's consumer waits on it), on the serving
-        loop only: `ready` is an `asyncio.Event` of that loop."""
+        """Until the startup sweep has set `ready`, on the serving loop only: `ready` is an
+        `asyncio.Event` of that loop. E29-T05's consumer, on the lane, is started where `ready` is
+        set (`_stream_started`), never by a waiter here."""
         await self._ready.wait()
 
     def run[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
@@ -2098,6 +2184,7 @@ class OmsRuntime:
             return
         self._loop, self._stopping, self._failed = asyncio.get_running_loop(), False, False
         self._lane_paged = threading.Lock()  # a new lane: its death pages anew
+        self._streaming = None  # a new consumer, started once this start is ready
         lane = self._lane = self._lanes()
         tick, serving = self._serving_tick(), Serving(self._loop, self._metrics)
         # the serving loop's tick, which a new submit meets on the lane (L4, ruling of 19:19Z)
@@ -2177,25 +2264,30 @@ class OmsRuntime:
             return True
 
     async def stop(self) -> None:
-        """Clear `ready`; give the submits in flight at most `CV_OMS_DRAIN_S`; cancel what remains
-        and the startup task, their work on the lane with them, and wait for it to end there; then
-        close the stop gate (its complete reads and passes cancelled with the startup task, before
-        the machines), the facade (it unwires B1's ports), the command port, the lane's own sink,
-        the private streams its bridge still holds (#913 L1d-2b), the trading port, its loop
-        signing (whose close frees M2's lane pool), the lane's own audit writer, which the
-        signing's last record needs, the OMS's pool and the lane's heartbeat, each on its own
-        loop, isolated, within its share of what is left, and last the environment's lock
-        (SEC-S3N-01), so nothing that signs or sends outlives it; then end the
-        serving loop's tick, stop the lane, one still asking the lock included, and join its
-        thread. All of it ends by `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the
-        join's, inside the OMS module's 15 s grace (20 Sec.6.2). The shared profile cache is its
-        owner's to close. What a composition handed over before the stop began is closed here; one
-        that ends after it closes what it built itself (SEC-S3L2-05). The serving loop's watch ends
-        with the startup task."""
+        """Clear `ready`; begin the private-stream consumer's stop on the lane first and, beside
+        it, give the submits in flight at most `CV_OMS_DRAIN_S`; wait for the consumer's stop at
+        most `OMS_CONSUMER_STOP_S` from its start (E29-T05 S8b, the orchestrator's Q2 (a)), so no
+        push reaches a facade that has stopped; cancel what remains and the startup task, their
+        work on the lane with them, and wait for it to end there; then close the stop gate (its
+        complete reads and passes cancelled with the startup task, before the machines), the
+        facade (it unwires B1's ports), the command port, the lane's own sink, the private streams
+        its bridge still holds (#913 L1d-2b), the trading port, its loop signing (whose close
+        frees M2's lane pool), the lane's own audit writer, which the signing's last record needs,
+        the OMS's pool and the lane's heartbeat, each on its own loop, isolated, within its share
+        of what is left, and last the environment's lock (SEC-S3N-01), so nothing that signs or
+        sends outlives it; then end the serving loop's tick, stop the lane, one still asking the
+        lock included, and join its thread. All of it ends by `OMS_STOP_RESERVE_S` after the
+        longer of the drain and the consumer's stop, `LANE_JOIN_S` of it the join's, inside the
+        OMS module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close.
+        What a composition handed over before the stop began is closed here; one that ends after
+        it closes what it built itself (SEC-S3L2-05). The serving loop's watch ends with the
+        startup task."""
         self._ready.clear()
         with self._handoff:
             self._stopping = True
+        stream = self._stream_stop()  # first, and beside the drain (S8b)
         pending = await _drained(set(self._running), self._settings.oms_drain_s)
+        await self._stream_stopped(stream)
         startup, self._startup = self._startup, None
         watching, self._watching = self._watching, None
         pending |= {task for task in (startup, watching) if task is not None}
@@ -2218,6 +2310,37 @@ class OmsRuntime:
                 await lane.stop()
         self._failed = False
 
+    def _stream_stop(self) -> tuple[asyncio.Future[None], float] | None:
+        """S8b (20 Sec.6.2): the consumer's stop, begun on the lane, where it runs, ahead of the
+        drain: it closes every stream and ends its tasks within its own bound
+        (`stream_consumer.STOP_TIMEOUT_S`, counted `stop_timeout` past it), and a start that has
+        not landed yet starts nothing after it. The stop then waits for it at most
+        `OMS_CONSUMER_STOP_S` from here (`_stream_stopped`) and never cuts it short. None with
+        nothing composed, or a lane that refuses the call (stopped, dead or anything else),
+        logged by its class: the stop goes on, outside `_closed`'s isolation as it is."""
+        parts = self._parts
+        if parts is None:
+            return None
+        try:
+            call = parts.lane.call(parts.stream.stop())
+        except Exception as exc:
+            _log().error("oms_stream_consumer_stop_failed", error=type(exc).__name__)
+            return None
+        call.add_done_callback(_stream_stop_ended)
+        return call, asyncio.get_running_loop().time() + OMS_CONSUMER_STOP_S
+
+    async def _stream_stopped(self, stopping: tuple[asyncio.Future[None], float] | None) -> None:
+        """The consumer's stop, waited for until `OMS_CONSUMER_STOP_S` after it began: one still
+        running then is logged and holds the runtime's stop no longer, its tasks already cancelled
+        on the lane, which its own stop and the bridge's closer end there."""
+        if stopping is None:
+            return
+        call, deadline = stopping
+        left = max(0.0, deadline - asyncio.get_running_loop().time())
+        done, _ = await asyncio.wait({call}, timeout=left)
+        if not done:
+            _log().error("oms_stream_consumer_stop_overran", bound_s=OMS_CONSUMER_STOP_S)
+
     def _untick(self) -> None:
         """End the serving loop's tick, if it runs: cancelled, which its callback neither logs nor
         pages."""
@@ -2231,8 +2354,9 @@ class OmsRuntime:
         lock was taken (`ENVIRONMENT_FENCE_GRACE_S`, SEC-S3L2-01), so a previous holder whose
         session ended has fenced itself before this one sweeps or admits, then steps 2 to 4, run
         again after a backoff while the store or the audit fails them (any other error ends it
-        `degraded` after `SWEEP_MAX_FAILURES`, paged), then step 5, `ready`, never early. A
-        failure met while a stop runs ends it, cancelled, never retried."""
+        `degraded` after `SWEEP_MAX_FAILURES`, paged), then step 5, `ready`, never early, and there
+        the private-stream consumer's start (`_stream_started`). A failure met while a stop runs
+        ends it, cancelled, never retried."""
         if self._parts is None and not await self._composed_again(lane, serving, tick):
             return
         await self._waited()
@@ -2266,7 +2390,40 @@ class OmsRuntime:
             if swept and not self._stopping:  # a stop that began meanwhile clears `ready` for good
                 self._ready.set()
                 _log().info("oms_ready")
+                await self._stream_started(parts)
             return
+
+    async def _stream_started(self, parts: _Parts) -> None:
+        """S8b (20 Sec.6.2, the orchestrator's Q4), where `ready` is set: account health's boot
+        dead-man's-switch window opens (`stream_started`, here on the serving loop, the monitor's),
+        then the private-stream consumer starts on the lane, where it runs, its owed gauge read at
+        each scrape from then. No flag gates it (C-4.14). `/readyz` reads `degraded` until the lane
+        confirms the start (`readyz`). A window that cannot open, or a start the lane refuses or
+        does not answer, is logged CRITICAL by its error's class and paged, the check stays
+        `degraded`, and the consumer is stopped on the lane all the same (`_stream_unstarted`), as
+        a start the hop's bound cut may have begun there; one a stop overtook starts nothing."""
+        try:
+            self._health.stream_started()
+            await parts.lane.call(_stream_begun(parts.stream), timeout_s=HOP_TIMEOUT_S)
+        except Exception as exc:
+            if self._stopping:  # the stop's own lane: nothing to start
+                raise asyncio.CancelledError from exc
+            self._streaming = False
+            _log().critical("oms_stream_consumer_unstarted", error=type(exc).__name__)
+            _page(self._pager, "oms_stream_consumer_unstarted")
+            await self._stream_unstarted(parts)
+            return
+        self._streaming = True
+
+    async def _stream_unstarted(self, parts: _Parts) -> None:
+        """Fable Low-2: a start the hop's bound cut after the lane took it may have begun there, so
+        the consumer is stopped on the lane too (a no-op for one never begun), and no consumer
+        runs that `/readyz` reports as not started; bounded by the hop, logged by its class, never
+        raised: the runtime stays `degraded` and paged either way."""
+        try:
+            await parts.lane.call(parts.stream.stop(), timeout_s=HOP_TIMEOUT_S)
+        except Exception as exc:
+            _log().error("oms_stream_consumer_stop_failed", error=type(exc).__name__)
 
     async def _swept(self, parts: _Parts) -> bool:
         """Steps 2 to 4; False when step 3 refuses `ready`, past `MAX_MACHINES` orders (paged)."""
@@ -2368,9 +2525,10 @@ class OmsRuntime:
         `EnvironmentLocked`), the lane's own audit writer (#913 L2), its loop signing over that
         writer and its self-check, the lane's own trading port and router (#913 L1d) with the
         bridge its private streams cross (#913 L1d-2b), the lane's own sink, the command port, the
-        facade, the anchors and the pipeline; what the serving loop holds, through its bridge
-        (`Served*`). A failure once the pool exists closes what was built before it goes on, each
-        closer on its own loop."""
+        facade, the private-stream consumer over it, built and not started, a live process failing
+        closed there (E29-T05 S8b), the anchors and the pipeline; what the serving loop holds,
+        through its bridge (`Served*`). A failure once the pool exists closes what was built before
+        it goes on, each closer on its own loop."""
         self._phase = "settings"
         settings, env, metrics = self._settings, self._env, self._metrics
         ingestion = self._ingestion
@@ -2474,7 +2632,8 @@ class OmsRuntime:
             )  # fmt: skip
             announce_interim_port("risk_figures", figures, metrics=metrics)
             clock = None if ingestion.clock is None else ServedClock(ingestion.clock, serving)
-            halt = ClockHalt(ClockHealthBinding(clock), monotonic=self._monotonic, metrics=metrics)
+            clock_health = ClockHealthBinding(clock)  # the halt's and the consumer's re-sync's
+            halt = ClockHalt(clock_health, monotonic=self._monotonic, metrics=metrics)
             command_accounts = CommandAccounts(accounts, self._pager)
             resolver = StopResolver(
                 stops, CompleteRead(orders), StopVoidAudit(audit), now=self._now,
@@ -2520,6 +2679,24 @@ class OmsRuntime:
                 ("machines", lambda: lane.call(machines.stop())),
                 ("commands", lambda: lane.call(commands.aclose())),
             ]
+            self._phase = "stream"
+            # E29-T05 S8b (24 Sec.8.12): the private-stream consumer over the facade, built and not
+            # started (`_stream_started`), its stop the stop's first step (`_stream_stop`); its
+            # position store on this pool over the exchange-synced clock its projection reads too
+            # (CG14). Its stand-ins refuse a live process here, on the bindings as bound, until
+            # E29-T06 (D4; the orchestrator's Q8): the runtime fails closed, never ready.
+            wall = ExchangeWallClock(ingestion.clock_offset_snapshot_ms)
+            positions = stores.positions(wall)
+            stream = build_stream_consumer(
+                facade=machines, orders=orders, stops=stops,
+                positions=PositionRepository(positions, timer),
+                snapshots=PositionSnapshotRepository(positions, timer),
+                accounts=HealthAccounts(self._health), trading=accounts, ports=router,
+                health=self._health.feed, hub=self._hub, serving=serving, credentials=rejections,
+                audit=audit, emitter=writer, environment=settings.environment, pager=self._pager,
+                metrics=metrics, now=self._now, offset_ms=ingestion.clock_offset_snapshot_ms,
+                clock_health=clock_health, clock=wall,
+            )  # fmt: skip
             self._phase = "pipeline"
             anchors = AnchorService(
                 IdempotencyAnchorRepository(stores.anchors, timer),
@@ -2600,7 +2777,7 @@ class OmsRuntime:
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
-                admit_after,
+                stream, admit_after,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping
@@ -2638,13 +2815,16 @@ def build_oms_runtime(
     persistence: Bundle | None,
     feed: MachineStatePort,
     lane_signing: LaneSigningBinder,
+    health: StreamHealth,
+    hub: SystemBroadcast,
     lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
     `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order
     lane's own (#913 L2), never the serving loop's; `lane_signing` is M2's binder of the lane's own
     signing, and `lane_transport` the dev-only account fixture's lane transport, None in
-    production (#913 L1d)."""
+    production (#913 L1d). `health` (the account health runtime) and `hub` (the gateway's) are
+    what its private-stream consumer takes (E29-T05 S8b)."""
     if settings.storage_backend != "real":
         return None
     return OmsRuntime(
@@ -2652,5 +2832,5 @@ def build_oms_runtime(
         read_only=ctx.oms_read_only_gate, metrics=metrics, gate=gate,
         standings=standings, oms_enabled=oms_enabled, live_enabled=live_enabled,
         profiles=profiles, persistence=persistence, feed=feed, lane_signing=lane_signing,
-        lane_transport=lane_transport,
+        health=health, hub=hub, lane_transport=lane_transport,
     )  # fmt: skip

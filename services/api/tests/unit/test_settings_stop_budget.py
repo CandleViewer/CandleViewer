@@ -23,11 +23,13 @@ from pydantic import ValidationError
 
 from candleviewer import ws_wiring
 from candleviewer.app import AppContext, Supervisor
+from candleviewer.oms import stream_consumer
 from candleviewer.settings import (
     CLOSE_AUDIT_TIMEOUT_S,
     CLOSE_FLUSH_TIMEOUT_S,
     MIN_DRAIN_TIMEOUT_S,
     MIN_STOP_BUDGET_S,
+    OMS_CONSUMER_STOP_S,
     OMS_STOP_RESERVE_S,
     SHUTDOWN_TICKS_S,
     STOP_SLACK_S,
@@ -94,6 +96,22 @@ def test_a_config_whose_shutdown_could_kill_the_oms_stop_is_refused(
     except ValidationError:
         return
     assert oms_ends_s <= budget_s
+
+
+@pytest.mark.parametrize("oms_drain_s", [1.0, TEARDOWN_BUDGET_S - OMS_STOP_RESERVE_S])
+def test_the_oms_stop_counts_the_consumers_stop(oms_drain_s: float) -> None:
+    """E29-T05 S8b (20 Sec.6.2, the orchestrator's Q2 (a)): the OMS runtime's stop runs its
+    private-stream consumer's stop, `OMS_CONSUMER_STOP_S` (the consumer's own bound), beside its
+    drain, so it takes the longer of the two and then its reserve: at the drain's floor and at its
+    ceiling that stays inside the supervised OMS module's grace, the one stop the budget lets run
+    to its bound, and the check that sums the budget names the term it counts."""
+    assert OMS_CONSUMER_STOP_S == stream_consumer.STOP_TIMEOUT_S
+    settings = Settings(oms_drain_s=oms_drain_s)  # both ends accepted
+    oms_stop_s = max(settings.oms_drain_s, OMS_CONSUMER_STOP_S) + OMS_STOP_RESERVE_S
+    assert oms_stop_s <= TEARDOWN_BUDGET_S < TEARDOWN_STOP_CAP_S
+    counted = " ".join((Settings._refuse_unfittable_stop_budget.__doc__ or "").split())
+    assert "the longer of `CV_OMS_DRAIN_S` and its private-stream consumer's stop" in counted
+    assert "(`OMS_CONSUMER_STOP_S`, 2 s; E29-T05 S8b)" in counted
 
 
 def test_a_60s_grace_cannot_fit_the_default_budget_and_the_message_names_every_term() -> None:

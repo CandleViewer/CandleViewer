@@ -1,9 +1,10 @@
 """#913 slice 3E (E29-T04): the OMS runtime (`oms_wiring.OmsRuntime`, 20 Sec.6.2) on fakes. Its
 composition for the process's environment, the sink it takes, builds or refuses (rulings Q4 to Q6),
 the interim announcements, closing what a failed composition built, and one facade per process;
-its lifecycle: the startup's waits, `run`, the stop's drain, and the state `/readyz` gives; and
-the startup sweep after a crash. No I/O: in-memory stores, a fake venue, and a clock that moves only
-when the runtime sleeps on it."""
+its lifecycle: the startup's waits, `run`, the stop's drain, and the state `/readyz` gives; the
+startup sweep after a crash; and E29-T05's private-stream consumer (S8b), which it builds, starts
+once ready and stops first. No I/O: in-memory stores, a fake venue, and a clock that moves only when
+the runtime sleeps on it."""
 
 from __future__ import annotations
 
@@ -48,6 +49,7 @@ from candleviewer.exchange.base.models import (
 )
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms import stream_consumer
 from candleviewer.oms.cancel_all import CancelAllRequest
 from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.commands import OmsCommandPort
@@ -63,7 +65,9 @@ from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemory
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import NoDayFigures, PositionKey, SubmitActor
 from candleviewer.oms.repository import RecordedStopRepository
-from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LaneStopped
+from candleviewer.oms.stream_consumer import StreamConsumer
+from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LaneStopped, OrderLane
+from candleviewer.oms_stream_wiring import ExchangeWallClock, StreamWiring
 from candleviewer.oms_streams import LaneStreams
 from candleviewer.oms_wiring import (
     ENVIRONMENT_FENCE_GRACE_S,
@@ -84,7 +88,7 @@ from candleviewer.oms_wiring import (
     build_oms_runtime,
     pg_stores,
 )
-from candleviewer.settings import OMS_STOP_RESERVE_S, Settings
+from candleviewer.settings import OMS_CONSUMER_STOP_S, OMS_STOP_RESERVE_S, Settings
 from candleviewer.settings import Environment as Env
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.persistence import ChainTripLatch, DegradedLatchError, MachineKey
@@ -94,6 +98,7 @@ from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailab
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import NewOrder, ScopedOrder
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
+from candleviewer.storage.repositories.positions_sqlalchemy import SqlAlchemyPositionStore
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
 from candleviewer.storage.repositories.session_lock_sqlalchemy import SqlAlchemySessionLock
 from candleviewer.storage.repositories.trading_accounts import (
@@ -108,6 +113,10 @@ from tests.unit.oms.submit_rig import REGISTRY, Profiles, ReadOnly, context, ent
 
 T0 = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 INTERIMS = ("stop_resolver", "risk_gate", "arm_records", "atr", "kill_switch")
+#: The stand-ins the private-stream consumer binds, announced at its `stream` phase (S8b).
+STREAM_STAND_INS = (
+    "reconciliation", "execution_handovers", "protection_readings", "foreign_order_lockout",
+)  # fmt: skip
 
 
 class Port(FakeTradingPort):
@@ -458,6 +467,64 @@ class Recording(InlineLane):
 
 
 @dataclass
+class Tracked:
+    """Account health as the runtime's private-stream consumer takes it (E29-T05 S8b): its feed,
+    whose evidence it notes; its last good tracking read (`streamed`), none until a test sets one;
+    and the consumer's start, noted with the thread it ran on."""
+
+    accounts: frozenset[UUID] = frozenset()
+    evidence: list[tuple[str, UUID]] = field(default_factory=list)
+    starts: list[threading.Thread] = field(default_factory=list)
+
+    @property
+    def feed(self) -> Tracked:
+        return self
+
+    def streamed(self) -> frozenset[UUID]:
+        return self.accounts
+
+    def stream_started(self) -> None:
+        self.starts.append(threading.current_thread())
+
+    def ws_heartbeat(self, account_id: UUID) -> None:
+        self.evidence.append(("ws_heartbeat", account_id))
+
+    def ws_dropped(self, account_id: UUID) -> None:
+        self.evidence.append(("ws_dropped", account_id))
+
+    def wallet_pushed(self, account_id: UUID, snapshot: Any) -> bool:
+        self.evidence.append(("wallet_pushed", account_id))
+        return True
+
+
+class Hub:
+    """The gateway's hub, as the consumer's account notices reach it: each frame noted."""
+
+    def __init__(self) -> None:
+        self.frames: list[dict[str, Any]] = []
+
+    def broadcast_system(self, body: dict[str, Any]) -> int:
+        self.frames.append(body)
+        return 0
+
+
+class Positions:
+    """The position store on the OMS pool (S8b): no position row reaches these tests' consumer."""
+
+    async def upsert(self, state: Any) -> Any:
+        raise AssertionError("no position row reaches the runtime's tests")
+
+    async def append(self, snapshot: Any) -> Any:
+        raise AssertionError("no position row reaches the runtime's tests")
+
+    async def list_open(self, account_id: UUID) -> tuple[()]:
+        return ()
+
+    async def list_unprotected(self, account_id: UUID) -> tuple[()]:
+        return ()
+
+
+@dataclass
 class World:
     """Everything a runtime is built over, the in-memory order store its stores' tables."""
 
@@ -492,6 +559,11 @@ class World:
     binder: Binder = field(default_factory=Binder)
     #: The dev-only account fixture's lane transport factory, None in production (#913 L1d).
     lane_transport: Callable[[], Transport] | None = None
+    #: Account health and the gateway's hub, as the consumer takes them (E29-T05 S8b).
+    tracked: Tracked = field(default_factory=Tracked)
+    hub: Hub = field(default_factory=Hub)
+    #: The clock each position store the stores built was given (S8b, CG14).
+    position_clocks: list[Callable[[], datetime]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.writer.log = self.lock.log = self.venue.log = self.log
@@ -523,10 +595,14 @@ class World:
             self.probes += 1
             return self.unclaimed
 
+        def positions(clock: Callable[[], datetime]) -> Positions:
+            self.position_clocks.append(clock)
+            return Positions()
+
         return OmsStores(
             orders=store, executions=store.executions, submissions=store.submissions,
             anchors=store.anchors, stops=store.stops, groups=cast(GroupStores, None),
-            unclaimed=unclaimed,
+            unclaimed=unclaimed, positions=positions,
             accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store, audit=audit,
             sink=sink, lock=self.lock, release=release,
         )  # fmt: skip
@@ -545,7 +621,7 @@ class World:
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
             "sleep": self.clock.sleep, "lane": self.lane, "heartbeat": self.heartbeat,
             "fencing": self.fencing, "watch": self.watch, "lane_signing": self.binder,
-            "lane_transport": self.lane_transport,
+            "lane_transport": self.lane_transport, "health": self.tracked, "hub": self.hub,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
 
@@ -633,9 +709,9 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             assert parts.submission._commands._figures is figures
             assert world.log == STARTED and world.lock.wired == [False]  # before the facade
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
-    assert warned == [*INTERIMS, "machine_event_sink", "risk_figures"]  # one WARNING each
-    runtime_ports = (*INTERIMS, "machine_event_sink", "risk_figures")
-    assert [world.gauge(name) for name in runtime_ports] == [1.0] * 7
+    runtime_ports = (*INTERIMS, "machine_event_sink", "risk_figures", *STREAM_STAND_INS)
+    assert warned == list(runtime_ports)  # one WARNING each, the consumer's last (S8b)
+    assert [world.gauge(name) for name in runtime_ports] == [1.0] * 11
     assert world.log == [*STARTED, *STOPPED] and port.closed  # the lock released last
     assert not b01.ports_wired()
 
@@ -758,7 +834,9 @@ async def test_the_lane_has_its_own_sink_beside_a_bundles_and_none_on_live_with_
     sink, in demo and testnet whatever the setting says and in live while it is off, at
     `oms_lane.<name>` beside `CV_MACHINE_EVENT_WAL_PATH`, a bundle composed or not (SEC-S3L2-03),
     taking only a bundle's latch; a live process with the setting on and no bundle fails closed:
-    no sink, no order served."""
+    no sink, no order served. Until E29-T06 a live process with its sink built then fails closed
+    at the consumer's `stream` phase (E29-T05 S8b, the orchestrator's Q8), the sink never
+    started."""
     world = World()
     bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
     runtime = world.runtime(environment, live_on=live_on, bundle=bundle if with_bundle else None)
@@ -772,13 +850,17 @@ async def test_the_lane_has_its_own_sink_beside_a_bundles_and_none_on_live_with_
                 with pytest.raises(OmsNotReady):
                     _ = runtime.submission
             else:
-                assert world.log == STARTED and [sink.wal for sink in world.sinks] == [wal]
-                assert failed_closed(logs) == [] and b01.ports_wired()
+                assert [sink.wal for sink in world.sinks] == [wal]
                 # S4-S-b3: the day figures on demo and testnet, the refusing stand-in on live
                 [figures] = [e for e in logs if e.get("port") == "risk_figures"]
                 served = NoDayFigures if environment == "live" else DayRiskFigures
                 assert figures["serves"] == served.serves
                 assert world.gauge("risk_figures") == 1.0
+                if environment == "live":  # S8b: closed again, its facade with it
+                    assert failed_phases(logs) == ["stream"] and not b01.ports_wired()
+                else:
+                    assert world.log == STARTED and failed_closed(logs) == []
+                    assert b01.ports_wired()
     assert world.gauge("machine_event_sink") == (0.0 if with_bundle else 1.0)
 
 
@@ -1656,7 +1738,7 @@ async def test_a_testnet_process_fails_closed_over_the_real_adapter_that_has_no_
 
 def test_the_fake_backend_composes_no_oms_runtime() -> None:
     """20 Sec.6.2: no runtime, so `placeOrder` answers `501 not_implemented` there."""
-    names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled")
+    names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled", "health", "hub")
     unused = dict.fromkeys((*names, "profiles", "persistence", "feed", "lane_signing"))
     assert build_oms_runtime(cast(Any, None), Settings(), **cast(Any, unused)) is None
 
@@ -1670,12 +1752,14 @@ def test_the_real_backends_runtime_holds_the_lanes_binder_and_transport_it_was_h
     ctx = SimpleNamespace(exchange_bybit=Venue(), ingestion=None, oms_read_only_gate=None)
     names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled", "profiles")
     unused = dict.fromkeys((*names, "persistence", "feed"))
+    health, hub = Tracked(), Hub()  # E29-T05 S8b: the consumer's, handed over as given
     runtime = build_oms_runtime(
         cast(Any, ctx), Settings(storage_backend="real"), **cast(Any, unused),
-        lane_signing=cast(Any, binder), lane_transport=cast(Any, factory),
+        lane_signing=cast(Any, binder), lane_transport=cast(Any, factory), health=health, hub=hub,
     )  # fmt: skip
     assert isinstance(runtime, OmsRuntime)
     assert runtime._lane_signing is binder and runtime._lane_transport is factory
+    assert runtime._health is health and runtime._hub is hub
 
 
 async def test_the_state_is_starting_while_the_startup_runs_and_degraded_once_failed_closed() -> (
@@ -2898,3 +2982,603 @@ async def test_a_floor_read_that_fails_is_retried_and_the_gate_refuses_until_it_
         await until(lambda: runtime.state == "ok")
         await runtime._composed().gate.clear(key)  # read: nothing waits for the key
     assert backoffs == [1.0]
+
+
+# --- E29-T05 S8b: the private-stream consumer (20 Sec.6.2, 24 Sec.8.12) ---------------------------
+
+#: A message that must never reach a log.
+SENTINEL = "sentinel-5d1c8e"
+
+
+async def readied(world: World, runtime: OmsRuntime) -> StreamWiring:
+    """The runtime ready and its consumer started on the lane: the consumer's composition."""
+    for flag in world.flags:
+        flag.read()
+    await runtime.wait_ready()
+    stream = runtime._composed().stream
+    await until(lambda: stream.consumer._task is not None and runtime._streaming is True)
+    return stream
+
+
+def owed_age(world: World) -> float | None:
+    """`oms_position_reading_owed_age_seconds` as a scrape reads it."""
+    name = "oms_position_reading_owed_age_seconds"
+    return world.metrics.registry.get_sample_value(name, {"env": "demo"})
+
+
+async def test_runtime_starts_the_consumer_only_once_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """20 Sec.6.2 (the orchestrator's Q4): the runtime builds its consumer when it composes and
+    starts it where it sets `ready`, never before, so no push meets an order the startup sweep has
+    not hydrated; account health's boot window opens just before, on the serving loop."""
+    began: list[tuple[bool, int]] = []
+    start = StreamWiring.start
+
+    def noted(self: StreamWiring) -> None:
+        began.append((runtime._ready.is_set(), len(world.tracked.starts)))
+        start(self)
+
+    monkeypatch.setattr(StreamWiring, "start", noted)
+    world = World()
+    async with started(world.runtime()) as runtime:
+        stream = runtime._composed().stream
+        await settle()  # composed, its flags unread: not ready
+        assert (began, stream.consumer._task, world.tracked.starts) == ([], None, [])
+        await readied(world, runtime)
+        assert began == [(True, 1)] and world.tracked.starts == [threading.current_thread()]
+
+
+async def test_a_runtime_that_never_gets_ready_never_starts_the_consumer() -> None:
+    """A sweep that refuses `ready` (past `MAX_MACHINES`, step 3) starts no consumer and opens no
+    boot window, which account health's backstop then owes (20 Sec.6.2)."""
+    world = World()
+    await crashed(world)
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime(max_machines=1)) as runtime:
+        await until(lambda: runtime.state != "starting")
+        await settle()
+        assert runtime.state == "degraded" and world.tracked.starts == []
+        assert runtime._composed().stream.consumer._task is None
+
+
+class HoldsTheConsumersStop(InlineLane):
+    """The inline lane whose wait for its calls (the stop's `lane` closer) leaves out the
+    consumer's stop, which the test holds: no closer's share is spent on it, so only the
+    runtime's own bound (`OMS_CONSUMER_STOP_S`) applies to it, and the default reserve stands."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.held: set[asyncio.Future[Any]] = set()
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        name = getattr(coro, "__qualname__", "")
+        answer = super().call(coro, timeout_s=timeout_s)
+        if name == "StreamWiring.stop":
+            self.held.add(answer)
+        return answer
+
+    async def idle(self) -> None:
+        me = asyncio.current_task()
+        while pending := [t for t in self.tasks if t is not me and t not in self.held]:
+            await asyncio.wait(pending)
+
+
+async def test_runtime_stops_the_consumer_first_within_its_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """20 Sec.6.2 (the orchestrator's Q2 (a)): the stop begins the consumer's stop first, on the
+    lane, beside the drain and before any closer, so no push reaches a facade that has stopped; a
+    consumer stop not ended `OMS_CONSUMER_STOP_S` after it began holds the stop no longer, logged,
+    and the closers run within the default reserve, the lane's wait leaving the held stop out."""
+    assert OMS_CONSUMER_STOP_S == stream_consumer.STOP_TIMEOUT_S == 2.0
+    monkeypatch.setattr(oms_wiring, "OMS_CONSUMER_STOP_S", 0.0)  # its bound, spent at once
+    order, release = list[str](), asyncio.Event()
+    drained, stop_machines = oms_wiring._drained, OrderMachines.stop
+
+    async def hangs(self: StreamConsumer, timeout_s: float = 0.0) -> None:
+        order.append("consumer.stop")
+        await release.wait()
+
+    async def drain(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
+        await asyncio.sleep(0)  # the drain takes a turn of the loop
+        order.append("drained")
+        return await drained(tasks, timeout_s)
+
+    async def machines(self: OrderMachines) -> None:
+        order.append("machines.stop")
+        await stop_machines(self)
+
+    monkeypatch.setattr(StreamConsumer, "stop", hangs)
+    monkeypatch.setattr(oms_wiring, "_drained", drain)
+    monkeypatch.setattr(OrderMachines, "stop", machines)
+    world, lane = World(), HoldsTheConsumersStop()
+    with capture_logs() as logs:
+        async with started(world.runtime(lane=lambda: lane)) as runtime:
+            await readied(world, runtime)
+    release.set()
+    await settle()
+    assert [e for e in logs if e["event"] == "oms_stop_step_failed"] == []  # no closer cut short
+    assert order == ["consumer.stop", "drained", "machines.stop"]
+    overran = [e["bound_s"] for e in logs if e["event"] == "oms_stream_consumer_stop_overran"]
+    assert overran == [0.0]
+
+
+class HeldStart(InlineLane):
+    """The inline lane holding the consumer's start, unrun, until `release()`: a stop overtakes it
+    and reaches the consumer first, as a lane that took the stop's call first would."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.held: list[Coroutine[Any, Any, Any]] = []
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        if getattr(coro, "__qualname__", "") == "_stream_begun":
+            self.held.append(coro)
+            return asyncio.get_running_loop().create_future()
+        return super().call(coro, timeout_s=timeout_s)
+
+    async def release(self) -> None:
+        for coro in self.held:
+            await coro
+
+
+async def test_a_stop_racing_the_start_leaves_no_consumer_running() -> None:
+    """S8b: a stop that reaches the lane before the consumer's start, which `ready` sent there,
+    stops a consumer not yet started, and the start landing after it starts nothing: no consumer
+    runs into the facade's stop or outlives the runtime."""
+    world, lane = World(), HeldStart()
+    async with started(world.runtime(lane=lambda: lane)) as runtime:
+        for flag in world.flags:
+            flag.read()
+        await runtime.wait_ready()
+        await until(lambda: bool(lane.held))
+        stream = runtime._composed().stream
+    await lane.release()  # the start lands only now
+    assert stream.consumer._task is None and owed_age(world) == 0.0
+
+
+async def test_a_live_runtime_fails_closed_at_the_stream_phase() -> None:
+    """24 Sec.8.12 "Reconciliation until E29-T06" (D4; the orchestrator's Q8): the consumer's
+    stand-in reconciliation refuses a live process on the binding as bound, so a live runtime
+    fails closed at its `stream` phase, paged, `degraded` and never ready, and what it built is
+    closed: no live order entry runs, as on testnet already."""
+    world = World()
+    with capture_logs() as logs:
+        async with started(world.runtime("live")) as runtime:
+            assert (runtime.state, runtime._parts) == ("degraded", None)
+    assert failed_phases(logs) == ["stream"]
+    assert failed_closed(logs) == ["ReconciliationUnavailable"]
+    assert world.pager.calls == ["oms_runtime_failed_closed: stream"]
+    assert world.log == ["lock.acquire", "audit.stop", "pool.release", "lock.release"]
+    assert not b01.ports_wired()  # the facade it built, closed
+
+
+async def test_a_demo_runtime_announces_the_stream_stand_ins() -> None:
+    """24 Sec.8.12 "Its ports": the runtime announces each stand-in its consumer binds as it
+    announces `SubmissionPorts`' (a WARNING and `oms_interim_ports{port}` at 1), the lockout's
+    paging one included, at its `stream` phase."""
+    world = World()
+    with capture_logs() as logs:
+        async with started(world.runtime()):
+            pass
+    warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
+    assert warned[-4:] == list(STREAM_STAND_INS)
+    assert [world.gauge(name) for name in STREAM_STAND_INS] == [1.0] * 4
+
+
+class Off(Flag):
+    """A flag view that reads off."""
+
+    def __call__(self) -> bool:
+        return False
+
+
+async def test_no_flag_gates_the_consumer() -> None:
+    """24 Sec.8.12 (C-4.14; E29-T05's DoD item 8): `trading.oms_enabled` gates `placeOrder`'s
+    admissions only, never the consumer, which carries C-2.6's hand-offs: with it off, the
+    consumer still starts once ready."""
+    world = World(flags=(Off(), Flag()))
+    async with started(world.runtime()) as runtime:
+        stream = await readied(world, runtime)
+        assert stream.consumer._task is not None and not runtime._oms_enabled()
+
+
+async def test_readyz_oms_degraded_on_a_consumer_fault() -> None:
+    """24 Sec.8.12 "Readiness" (the orchestrator's Q3): a consumer that has faulted, its task
+    ended, makes `/readyz`'s `oms` check `degraded`, never `readiness`, which `placeOrder` reads,
+    nor `state`, which the exit routes read."""
+    world = World()
+    async with started(world.runtime()) as runtime:
+        stream = await readied(world, runtime)
+        assert _oms_state(runtime) == "ok"
+        task = stream.consumer._task
+        assert task is not None
+        task.cancel()  # not through its stop: the consumer ended unexpectedly
+        await until(task.done)
+        assert stream.consumer.fault == "the consumer task ended"
+        assert (_oms_state(runtime), runtime.readiness, runtime.state) == ("degraded", "ok", "ok")
+
+
+@pytest.mark.parametrize(("age", "check"), [(119.5, "ok"), (120.0, "degraded")])
+async def test_readyz_oms_degraded_past_the_owed_reading_threshold(age: float, check: str) -> None:
+    """20 Sec.6.2: a position reading owed to protection for 120 s or more (`OWED_DEGRADED_S`)
+    makes the check `degraded`, at 119.5 s not; `readiness` stays `ok` either way (Q3)."""
+    world = World()
+    async with started(world.runtime()) as runtime:
+        stream = await readied(world, runtime)
+        cast(Any, stream.positions).oldest_unhanded_age_s = lambda: age
+        assert (_oms_state(runtime), runtime.readiness) == (check, "ok")
+
+
+async def test_readyz_oms_degraded_when_ready_but_the_consumer_did_not_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ready runtime whose consumer's start failed on the lane is `degraded` on `/readyz`,
+    logged CRITICAL by its error's class and paged once; `readiness` stays `ok` (Q3)."""
+
+    def refused(self: StreamWiring) -> None:
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(StreamWiring, "start", refused)
+    world = World()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            for flag in world.flags:
+                flag.read()
+            await runtime.wait_ready()
+            await until(lambda: bool(world.pager.calls))
+            assert (_oms_state(runtime), runtime.readiness) == ("degraded", "ok")
+            assert runtime._streaming is False  # a failed start, told apart from one in flight
+    unstarted = [e["error"] for e in logs if e["event"] == "oms_stream_consumer_unstarted"]
+    assert unstarted == ["RuntimeError"] and world.pager.calls == ["oms_stream_consumer_unstarted"]
+    assert SENTINEL not in repr(logs)
+
+
+class NoWindow(Tracked):
+    """Account health whose boot window cannot open: its `stream_started` raises."""
+
+    def stream_started(self) -> None:
+        raise RuntimeError(SENTINEL)
+
+
+async def test_a_boot_window_that_cannot_open_pages_and_leaves_the_consumer_stopped() -> None:
+    """Sonnet Nit 7: account health's `stream_started` raising is a start that failed, not an
+    error out of the startup task: logged CRITICAL by its class and paged
+    (`oms_stream_consumer_unstarted`), `/readyz` stays `degraded`, and no consumer runs."""
+    world = World(tracked=NoWindow())
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            for flag in world.flags:
+                flag.read()
+            await runtime.wait_ready()
+            await until(lambda: bool(world.pager.calls))
+            await settle()
+            stream = runtime._composed().stream
+            assert (_oms_state(runtime), runtime._streaming) == ("degraded", False)
+            assert stream.consumer._task is None and stream.consumer._stopped
+    unstarted = [e["error"] for e in logs if e["event"] == "oms_stream_consumer_unstarted"]
+    assert unstarted == ["RuntimeError"] and world.pager.calls == ["oms_stream_consumer_unstarted"]
+    assert SENTINEL not in repr(logs)
+
+
+class LateStart(InlineLane):
+    """The inline lane whose answer to the consumer's start comes too late: the start runs there,
+    and its caller gets the hop's `TimeoutError`, as `OrderLane.call` answers a call it had begun
+    once the caller's bound has passed. It notes each call's bound by its coroutine's name."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bounds: list[tuple[str, float | None]] = []
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        name = getattr(coro, "__qualname__", "")
+        self.bounds.append((name, timeout_s))
+        begun = super().call(coro, timeout_s=timeout_s)
+        if name != "_stream_begun":
+            return begun
+        late: asyncio.Future[T] = asyncio.get_running_loop().create_future()
+        begun.add_done_callback(lambda _: late.set_exception(TimeoutError()))
+        return late
+
+
+async def test_a_start_cut_by_its_hop_after_it_began_is_stopped_on_the_lane() -> None:
+    """Fable Low-2: a start the hop's bound cut after the lane began it would leave a consumer
+    running that `/readyz` reports as not started. The failed start is paged, and the consumer
+    is stopped on the lane all the same, its owed gauge back at 0, so the fact and the readiness
+    agree. The start and that stop each cross within the hop's bound (`HOP_TIMEOUT_S`)."""
+    world, lane = World(), LateStart()
+    async with started(world.runtime(lane=lambda: lane)) as runtime:
+        for flag in world.flags:
+            flag.read()
+        await runtime.wait_ready()
+        await until(lambda: bool(world.pager.calls))
+        stream = runtime._composed().stream
+        task = stream.consumer._task
+        assert task is not None  # the late start did begin it
+        await until(task.done)
+        assert stream.consumer._stopped and runtime._streaming is False
+        consumers = [b for b in lane.bounds if b[0] in {"_stream_begun", "StreamWiring.stop"}]
+        assert consumers == [("_stream_begun", HOP_TIMEOUT_S), ("StreamWiring.stop", HOP_TIMEOUT_S)]
+        assert (_oms_state(runtime), owed_age(world)) == ("degraded", 0.0)
+    assert world.pager.calls == ["oms_stream_consumer_unstarted"]
+
+
+class RefusingConsumer(InlineLane):
+    """The inline lane, refusing the consumer's start and every stop of it with `LaneStopped`,
+    each coroutine closed unrun, as a lane that cannot take them refuses a call."""
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        if getattr(coro, "__qualname__", "") in {"_stream_begun", "StreamWiring.stop"}:
+            coro.close()
+            raise LaneStopped("the order lane is not running")
+        return super().call(coro, timeout_s=timeout_s)
+
+
+async def test_a_refused_start_whose_stop_is_refused_too_is_logged_and_never_raised() -> None:
+    """Fable Low-2's stop after a failed start, refused as well: logged by its class, never raised
+    out of the startup, so the runtime stays up, `degraded` and paged once; its own stop sends
+    the consumer's stop again, logged the same way, and goes on to release the lock."""
+    world, lane = World(), RefusingConsumer()
+    with capture_logs() as logs:
+        async with started(world.runtime(lane=lambda: lane)) as runtime:
+            for flag in world.flags:
+                flag.read()
+            await runtime.wait_ready()
+            await until(lambda: bool(world.pager.calls))
+            await settle()
+            assert (_oms_state(runtime), runtime._streaming) == ("degraded", False)
+            assert runtime._composed().stream.consumer._task is None
+    named = {"oms_stream_consumer_unstarted", "oms_stream_consumer_stop_failed"}
+    said = [(e["event"], e["error"]) for e in logs if e["event"] in named]
+    assert said == [
+        ("oms_stream_consumer_unstarted", "LaneStopped"),
+        ("oms_stream_consumer_stop_failed", "LaneStopped"),  # the failed start's, on the lane
+        ("oms_stream_consumer_stop_failed", "LaneStopped"),  # the runtime's own stop's
+    ]
+    assert world.pager.calls == ["oms_stream_consumer_unstarted"]
+    assert world.log[-1] == "lock.release"
+
+
+class GatedStart(InlineLane):
+    """The inline lane, answering the consumer's start only once the test opens `gate`: until
+    then the start's hop is in flight, its answer held, with no time involved."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.asked = False
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        if getattr(coro, "__qualname__", "") == "_stream_begun":
+            self.asked = True
+            return super().call(self._gated(coro), timeout_s=timeout_s)
+        return super().call(coro, timeout_s=timeout_s)
+
+    async def _gated[T](self, coro: Coroutine[Any, Any, T]) -> T:
+        await self.gate.wait()
+        return await coro
+
+
+async def test_readyz_oms_degraded_until_the_lane_confirms_the_consumers_start() -> None:
+    """Fail closed (the orchestrator's option 2, 2026-10-28): once `ready`, the `oms` check of
+    `/readyz` is `degraded` while the consumer has not started, from `ready` until the lane
+    confirms its start, not only once a start has failed; `readiness`, which `placeOrder` reads,
+    stays `ok` meanwhile (Q3). Once the lane answers, the check reads `ok`."""
+    world, lane = World(), GatedStart()
+    async with started(world.runtime(lane=lambda: lane)) as runtime:
+        for flag in world.flags:
+            flag.read()
+        await runtime.wait_ready()
+        await until(lambda: lane.asked)
+        assert runtime._streaming is None  # the start's hop is in flight
+        assert (_oms_state(runtime), runtime.readiness) == ("degraded", "ok")
+        lane.gate.set()
+        await until(lambda: runtime._streaming is True)
+        assert _oms_state(runtime) == "ok"
+
+
+async def test_the_owed_age_gauge_is_computed_at_scrape_time() -> None:
+    """20 Sec.12.1 (S8b): from the consumer's start `oms_position_reading_owed_age_seconds` reads
+    the projection at each scrape, so the 60 s page sees an age no `/readyz` probe asked for; once
+    the runtime has stopped it reads 0."""
+    world = World()
+    async with started(world.runtime()) as runtime:
+        stream = await readied(world, runtime)
+        cast(Any, stream.positions).oldest_unhanded_age_s = lambda: 75.0
+        assert owed_age(world) == 75.0  # a scrape alone read it
+    assert owed_age(world) == 0.0
+
+
+async def test_a_consumer_stop_that_fails_on_the_lane_is_logged_by_its_class_and_the_stop_goes_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consumer's stop raising on the lane holds nothing: the runtime logs it by its error's
+    class, never its message, and its closers run to the lock's release; the owed gauge still
+    reads 0 afterwards."""
+
+    async def fails(self: StreamConsumer, timeout_s: float = 0.0) -> None:
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(StreamConsumer, "stop", fails)
+    world = World()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            await readied(world, runtime)
+        await settle()
+    failed = [e["error"] for e in logs if e["event"] == "oms_stream_consumer_stop_failed"]
+    assert failed == ["RuntimeError"] and SENTINEL not in repr(logs)
+    assert world.log[-1] == "lock.release" and owed_age(world) == 0.0
+
+
+class RefusingStop(InlineLane):
+    """The inline lane, refusing the consumer's stop with `error`, as a stopped or dead lane
+    refuses a call (`LaneStopped`), or with anything else."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        if getattr(coro, "__qualname__", "") == "StreamWiring.stop":
+            coro.close()
+            raise self.error
+        return super().call(coro, timeout_s=timeout_s)
+
+
+@pytest.mark.parametrize(
+    "error", [LaneStopped("the order lane is not running"), RuntimeError(SENTINEL)]
+)
+async def test_a_lane_that_refuses_the_consumers_stop_is_logged_and_the_stop_goes_on(
+    error: Exception,
+) -> None:
+    """A lane that refuses the consumer's stop, stopped or dead or with any other error, never
+    stops the runtime's stop: logged by its class alone, and the closers run all the same, the
+    lock released last (Sonnet Low 5: the call sits outside `_closed`'s isolation)."""
+    world, lane = World(), RefusingStop(error)
+    with capture_logs() as logs:
+        async with started(world.runtime(lane=lambda: lane)) as runtime:
+            stream = await readied(world, runtime)
+    failed = [e["error"] for e in logs if e["event"] == "oms_stream_consumer_stop_failed"]
+    assert failed == [type(error).__name__] and world.log[-1] == "lock.release"
+    assert SENTINEL not in repr(logs)
+    await stream.stop()  # the lane refused it: this test's own, so no task outlives it
+
+
+class StopRefusesStart(HeldStart):
+    """The held start, refused `LaneStopped` once the stop sends the consumer's stop: a lane
+    that took the stop first refuses a call it has not begun."""
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        if getattr(coro, "__qualname__", "") == "StreamWiring.stop":
+            for future in self.answers:
+                future.set_exception(LaneStopped("the order lane is not running"))
+        answer = super().call(coro, timeout_s=timeout_s)
+        if self.held and len(self.answers) < len(self.held):
+            self.answers.append(answer)
+        return answer
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.answers: list[asyncio.Future[Any]] = []
+
+
+async def test_a_start_the_lane_refuses_once_the_stop_began_is_never_paged() -> None:
+    """A start the lane answers `LaneStopped` because the stop began meanwhile ends the startup
+    as cancelled: no CRITICAL, no page, and `/readyz` is no longer read (the runtime stops)."""
+    world, lane = World(), StopRefusesStart()
+    with capture_logs() as logs:
+        async with started(world.runtime(lane=lambda: lane)) as runtime:
+            for flag in world.flags:
+                flag.read()
+            await runtime.wait_ready()
+            await until(lambda: bool(lane.held))
+            startup = runtime._startup
+    assert startup is not None and startup.cancelled()
+    assert world.pager.calls == [] and runtime._streaming is None
+    assert [e for e in logs if e["event"] == "oms_stream_consumer_unstarted"] == []
+    for coro in lane.held:
+        coro.close()  # never started: the stop overtook it
+
+
+class BridgedPort(Port):
+    """The lane's port as the adapter builds it (#913 L1d-2b): it opens an account's private
+    stream through the stream source its composition gave it, the lane's bridge, noting the thread
+    it was asked on."""
+
+    bridge: LaneStreams | None = None
+    asked: list[threading.Thread]
+
+    async def subscribe_private(self, account: AccountRef) -> Any:
+        self.asked.append(threading.current_thread())
+        assert self.bridge is not None
+        return await self.bridge.open(account)
+
+
+@dataclass
+class BridgedVenue(Venue):
+    """The adapter's service whose lane port opens through the bridge it is given, its registry's
+    open noting the thread it ran on and setting `opened`."""
+
+    opened_on: list[threading.Thread] = field(default_factory=list)
+    opened: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def port(self, env: str) -> Port:
+        port = BridgedPort(environment=cast(Environment, env))
+        port.asked = []
+        return port
+
+    def lane_trading_port(self, env: str, **kwargs: Any) -> Port:
+        port = super().lane_trading_port(env, **kwargs)
+        cast(BridgedPort, port).bridge = kwargs["private_streams"]
+        return port
+
+    async def open_private_stream(
+        self, account: AccountRef, *, clock_offset_ms: Any = None
+    ) -> Stream:
+        self.opened_on.append(threading.current_thread())
+        self.opened.set()
+        return await super().open_private_stream(account, clock_offset_ms=clock_offset_ms)
+
+
+async def test_the_consumer_subscribes_on_the_lane_port_across_the_bridge() -> None:
+    """24 Sec.8.12 "Its ports" (S8b), on a real order lane: the consumer, on the lane, subscribes
+    a streamed account on its environment's port (`port_for`), the lane's own, which opens it
+    across the lane's bridge (`LaneStreams`, #913 L1d-2b) from the adapter's registry on the
+    serving loop, this test's, never on the lane; the stop closes it there. Each wait on the lane's
+    thread is the suite's bound, no time of the test's own (03 Sec.14)."""
+    venue = BridgedVenue()
+    key = UUID(STREAMED.key_ref)
+    row = TradingAccountRow(STREAMED.account_id, "demo", STREAMED.uid, False, key)
+    world = World(venue=venue, accounts=[row])
+    world.tracked.accounts = frozenset({STREAMED.account_id})
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime(lane=OrderLane)) as runtime:
+        await runtime.wait_ready()
+        await venue.opened.wait()
+        [port] = venue.ports
+    [asked] = cast(BridgedPort, port).asked
+    serving = threading.current_thread()
+    assert asked is not serving and asked.name == "oms-order-lane"
+    assert venue.opened_on == [serving]
+    [stream] = venue.streams
+    assert stream.closes == [serving]  # closed at the stop, on the serving loop
+
+
+async def test_the_position_store_takes_the_exchange_synced_clock() -> None:
+    """CG14 (E29-T05's half; 21 Sec.3.3.7): the runtime builds the position store on its own pool
+    over the exchange-synced clock, the one the projection and the consumer read, never the host's
+    raw wall clock, with which it would refuse newer pushes and let older writes win."""
+    world = World()
+    async with started(world.runtime()) as runtime:
+        stream = runtime._composed().stream
+        [clock] = world.position_clocks
+        assert isinstance(clock, ExchangeWallClock)
+        assert clock is stream.clock and stream.positions._clock is clock
+
+
+async def test_pg_stores_build_the_position_store_over_the_clock_it_is_given() -> None:
+    """CG14: `pg_stores`' position store is on the OMS pool, at the OMS statement cap, over the
+    clock its builder is given."""
+    stores = pg_stores(Settings(oms_statement_timeout_ms=3000), Metrics("demo"))
+    clock = ExchangeWallClock(lambda: None)
+    try:
+        positions = stores.positions(clock)
+        assert isinstance(positions, SqlAlchemyPositionStore)
+        assert (positions._clock, positions._timeout) == (clock, "3000")
+    finally:
+        await stores.release()

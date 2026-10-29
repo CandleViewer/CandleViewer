@@ -1,7 +1,7 @@
 """The private-stream consumer (E29-T05 #848, S4c; 24-internal-schemas.md Sec.8.12): its
-lifecycle, every status, the epoch rule, the wallet path, the position seam, and the WS-is-the-truth
-case on the real facade. A fake stream port, recording doubles and a ticked refresh: no sleeps, no
-network."""
+lifecycle, every status, the epoch rule, the wallet path, the position seam, the lag on dequeue and
+the clock's re-sync (S8b), and the WS-is-the-truth case on the real facade. A fake stream port,
+recording doubles and a ticked refresh: no sleeps, no network."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.accounts.wallet import WalletSnapshot
 from candleviewer.domain.primitives import AccountId
+from candleviewer.exchange.base.errors import AuthError
 from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import (
     AccountRef,
@@ -26,7 +27,7 @@ from candleviewer.exchange.base.models import (
     Wallet,
 )
 from candleviewer.exchange.base.ports import PrivateStream
-from candleviewer.oms import stream_consumer, stream_push
+from candleviewer.oms import positions, stream_consumer, stream_push
 from candleviewer.oms.errors import OrderRefused, ReconciliationUnavailable
 from candleviewer.oms.push_mapping import ForProtection
 from candleviewer.oms.stream_consumer import STREAM_SILENCE_S, NoPositionRows, StreamConsumer
@@ -111,14 +112,22 @@ class Rig:
     flushed: list[tuple[UUID, int]] = field(default_factory=list)  # (account, len(log) then)
     ticks: asyncio.Queue[None] = field(default_factory=asyncio.Queue)
     port: FakeTradingPort = field(default_factory=FakeTradingPort)
-    now: int = NOW_US
+    now: int = NOW_US  # the exchange-synced clock (the wallet's check)
+    host: int = NOW_US  # the host's own clock (the lag's)
     made: list[StreamConsumer] = field(default_factory=list)
+    lagged: list[tuple[str, float]] = field(default_factory=list)
+    resyncs: int = 0  # the clock's epoch: how often it has come back into sync
+    reapply_gate: asyncio.Event | None = None  # a reapply that answers once the test opens it
+    reapplied_in: list[asyncio.Task[Any] | None] = field(default_factory=list)
+    refusing: set[UUID] = field(default_factory=set)  # accounts whose key refuses a subscribe
+    read: frozenset[UUID] = field(default_factory=frozenset)  # health's tracking read in place
 
     def consumer(self, **kw: Any) -> StreamConsumer:
         ports = dict.fromkeys(("accounts", "trading", "streams", "health", "reconciliation"), self)
         ports |= dict.fromkeys(("notices", "credentials", "positions", "pushes", "counts"), self)
-        ports |= {"pager": self}
-        return StreamConsumer(**(ports | {"now_us": lambda: self.now, "sleep": self._tick} | kw))
+        ports |= dict.fromkeys(("pager", "lags", "epochs"), self)
+        clocks = {"now_us": lambda: self.now, "host_us": lambda: self.host}
+        return StreamConsumer(**(ports | clocks | {"sleep": self._tick} | kw))
 
     async def _tick(self, _seconds: float) -> None:
         await self.ticks.get()
@@ -139,10 +148,18 @@ class Rig:
             await asyncio.Event().wait()
 
     async def streamed_accounts(self) -> frozenset[UUID]:
+        """Account health's tracking read in place, as `HealthAccounts` answers it: the same set
+        until `streamed` changes or health reads again (`new_read`)."""
         await self._stall("streamed")
         if self.read_fails:
             raise ConnectionError("the read failed")
-        return frozenset(self.streamed)
+        if self.read != self.streamed:
+            self.read = frozenset(self.streamed)
+        return self.read
+
+    def new_read(self) -> None:
+        """Account health's next tracking read, listing what the last one did: a new set."""
+        self.read = frozenset(self.streamed)
 
     async def trading_account(self, account_id: AccountId) -> AccountRef:
         self.log.append(("resolve", account_id))
@@ -154,6 +171,8 @@ class Rig:
     async def subscribe(self, ref: AccountRef) -> PrivateStream:
         self.log.append(("subscribe", ref.account_id))
         await self._stall("subscribe")
+        if ref.account_id in self.refusing:  # its key closed or marked, as the adapter's registry
+            raise AuthError("the account's key may not open a private stream")
         inner = await self.port.subscribe_private(ref)
         return Spy(inner, self.closes, ref.account_id, "aclose" in self.hang)
 
@@ -187,6 +206,19 @@ class Rig:
         await self._stall("take")
         if self.take_gate is not None:
             await self.take_gate.wait()
+
+    async def reapply(self, account_id: UUID) -> None:
+        self.log.append(("reapply", account_id))
+        self.reapplied_in.append(asyncio.current_task())
+        await self._stall("reapply")
+        if self.reapply_gate is not None:
+            await self.reapply_gate.wait()
+
+    def lag(self, topic: str, seconds: float) -> None:
+        self.lagged.append((topic, seconds))
+
+    def epoch(self) -> int:
+        return self.resyncs
 
     async def handle(self, account_id: UUID, ev: PrivateEvent, r: Any) -> None:
         self.log.append(("handle", account_id))
@@ -411,6 +443,64 @@ async def test_consumer_key_rotated_with_a_refused_resolve_ends_and_the_next_ref
     rig.unresolvable.clear()
     await rig.refresh()
     assert c.accounts() == {A} and len(entries(rig, "subscribe")) == 2
+
+
+async def disabled(r: Rig) -> StreamConsumer:
+    """A consumer whose account's stream the account's disable closed (`closed`,
+    `account_disabled`), its key refusing a subscribe from then on, as the adapter's tombstone."""
+    c = await running(r)
+    r.port.push(status("closed", "account_disabled"))
+    await r.until(lambda: r.closes == [A])
+    r.refusing.add(A)
+    return c
+
+
+async def test_consumer_a_disabled_account_is_not_restarted_while_healths_read_stays(
+    rig: Rig,
+) -> None:
+    """24 Sec.8.12 (the delta's Minor 1): health's tracking read still lists an account the
+    disable just closed, so the next refresh restarts nothing: no subscribe the key would refuse,
+    no defect and no page. Once health's next read drops it, nothing of it is kept."""
+    c = await disabled(rig)
+    await rig.refresh()
+    assert entries(rig, "subscribe") == [("subscribe", A)] and c.accounts() == set()
+    assert "defect" not in rig.counts and rig.pages == [] and ("drop", A) in rig.log
+    rig.streamed = set()  # health's next read: it is disabled
+    await rig.refresh()
+    assert c._disabled == {} and entries(rig, "subscribe") == [("subscribe", A)]
+
+
+async def test_consumer_a_re_enabled_account_is_streamed_again_at_healths_next_read(
+    rig: Rig,
+) -> None:
+    """The hold is tied to health's read, never to what it lists: re-enabled within one period,
+    its key lifted, the account is listed again by health's next read, equal to the last, and the
+    refresh after it subscribes it, with no defect and no page."""
+    c = await disabled(rig)
+    await rig.refresh()
+    rig.refusing.clear()  # the re-enable lifts the key's tombstone
+    await rig.refresh()  # the same read in place: still held
+    assert c.accounts() == set()
+    rig.new_read()
+    await rig.refresh()
+    assert c.accounts() == {A} and entries(rig, "subscribe") == [("subscribe", A)] * 2
+    assert "defect" not in rig.counts and rig.pages == []
+
+
+async def test_consumer_a_refused_subscribe_not_closed_for_a_disable_still_pages(
+    rig: Rig,
+) -> None:
+    """Keyed on `closed`/`account_disabled` alone, never on a refused subscribe: a key closed for
+    its auth refusals and marked by the third, whose subscribe the next refresh meets with
+    `AuthError`, is the account's defect and pages, the read in place unchanged."""
+    c = await running(rig)
+    rig.port.push(status("closed", "auth_refused"))
+    await rig.until(lambda: rig.closes == [A])
+    rig.refusing.add(A)
+    await rig.refresh()
+    await rig.until(lambda: "defect" in rig.counts)
+    assert entries(rig, "subscribe") == [("subscribe", A)] * 2 and c.accounts() == set()
+    assert len(rig.pages) == 1 and "AuthError" in rig.pages[0]
 
 
 async def test_consumer_silence_past_the_bound_drops_closes_and_ends(rig: Rig) -> None:
@@ -678,6 +768,92 @@ async def test_consumer_an_account_leaving_the_set_forgets_its_reconciliation_ep
 async def test_consumer_stand_in_position_rows_take_a_row_and_do_nothing() -> None:
     position = cast(Position, position_event().payload)  # the event builder types it as a union
     await NoPositionRows().take(A, position, cast(ForProtection, None))
+    await NoPositionRows().reapply(A)  # it holds nothing to apply again
+
+
+async def turns() -> None:
+    """Loop turns only: work the consumer could start beside another would land here."""
+    for _ in range(50):
+        await asyncio.sleep(0)
+
+
+async def test_consumer_start_after_a_stop_starts_nothing(rig: Rig) -> None:
+    """S8b (20 Sec.6.2): a stop that overtook its start, the runtime's stop beside its start,
+    leaves no consumer running into the facade's stop: `start` refuses once stopped, and answers
+    whether it started the consumer, once."""
+    stopped = rig.consumer()
+    rig.made.append(stopped)
+    await stopped.stop()
+    assert stopped.start() is False and stopped._task is None and stopped.fault is None
+    fresh = rig.consumer()
+    rig.made.append(fresh)
+    assert fresh.start() is True and fresh.start() is False
+
+
+async def test_lag_is_observed_per_topic_from_ts_ingest(rig: Rig) -> None:
+    """24 Sec.8.12 "Its metrics" (S8b): each row's lag, on its dequeue, by its kind, from its
+    ingest on the host's own clock (`ts_ingest`): never the venue's time (`ts_event`), nor the
+    exchange-synced clock, so the venue's skew never makes it negative; a status is no row."""
+    rig.now, rig.host = NOW_US + 9_000_000, NOW_US + 250_000  # the exchange clock 9 s ahead
+    await running(rig)
+    early = wallet_event().model_copy(update={"ts_event": NOW_US - 7_000_000})
+    for item in (status("heartbeat", "evidence"), early, position_event()):
+        rig.port.push(item)
+    await rig.until(lambda: ("position", A) in rig.log)
+    assert rig.lagged == [("wallet", 0.25), ("position", 0.25)]
+
+
+async def test_clock_resync_reapplies_held_rows_inside_the_accounts_task(rig: Rig) -> None:
+    """24 Sec.8.12 "Protection readings" (S8b, the orchestrator's Q7): a row the store held as
+    dated ahead of its clock is applied again once the clock is back in sync. Each item an
+    account's task takes reads the clock's epoch, and one that moved since the account's last
+    item re-applies the account's held rows, once a move, in that account's own task."""
+    rig.streamed = {A, B}
+    c = await running(rig)
+    await rig.until(lambda: ("subscribe", B) in rig.log)
+    rig.port.push(wallet_event())
+    await rig.until(lambda: bool(entries(rig, "wallet")))
+    assert entries(rig, "reapply") == []  # no move yet
+    rig.resyncs = 1
+    for item in (wallet_event(), wallet_event(), status("heartbeat", "evidence", who=B)):
+        rig.port.push(item)
+    await rig.until(lambda: len(entries(rig, "wallet")) == 3 and len(entries(rig, "hb")) == 4)
+    assert sorted(entries(rig, "reapply")) == sorted([("reapply", A), ("reapply", B)])
+    assert sorted(map(id, rig.reapplied_in)) == sorted(id(c._tasks[a]) for a in (A, B))
+
+
+async def test_reapply_never_runs_beside_a_take_of_the_same_account(rig: Rig) -> None:
+    """The account's reapply and its next position row's take are one after the other in its own
+    task, never side by side: the projection's held rows are that task's alone."""
+    rig.reapply_gate = asyncio.Event()
+    await running(rig)
+    rig.resyncs = 1
+    rig.port.push(wallet_event())  # its epoch read starts the reapply, which waits
+    rig.port.push(position_event())
+    await rig.until(lambda: ("reapply", A) in rig.log)
+    await turns()
+    assert ("position", A) not in rig.log
+    rig.reapply_gate.set()
+    await rig.until(lambda: ("position", A) in rig.log)
+
+
+async def test_a_reapply_cut_at_its_bound_is_counted_and_the_stream_goes_on(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reapply past its bound (`REAPPLY_TIMEOUT_S`, above the projection's own deadline) is cut
+    and counted `reapply_timeout`, and the account's stream goes on: no defect and no page, its
+    rows still held for its next take; a cut reapply is not tried again until the next move."""
+    assert stream_consumer.REAPPLY_TIMEOUT_S > positions.REAPPLY_BOUND_S
+    monkeypatch.setattr(stream_consumer, "REAPPLY_TIMEOUT_S", 0.0)
+    rig.hang.add("reapply")
+    c = await running(rig)
+    rig.resyncs = 1
+    rig.port.push(wallet_event())
+    await rig.until(lambda: "reapply_timeout" in rig.counts)
+    rig.port.push(wallet_event())
+    await rig.until(lambda: len(entries(rig, "wallet")) == 2)
+    assert rig.counts == ["reapply_timeout"] and not rig.pages and c.accounts() == {A}
+    assert entries(rig, "reapply") == [("reapply", A)]
 
 
 @pytest.fixture

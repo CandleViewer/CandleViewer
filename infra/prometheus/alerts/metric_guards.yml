@@ -22,6 +22,15 @@ groups:
         annotations:
           summary: "Expected metric oms_unknown_orders is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsPositionReadingOwedAgeSeconds
+        expr: absent(oms_position_reading_owed_age_seconds)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_position_reading_owed_age_seconds is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingCvKekDegradedState
         expr: absent(cv_kek_degraded_state)
         for: 15m

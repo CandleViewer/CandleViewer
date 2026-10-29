@@ -29,8 +29,9 @@ from candleviewer.exchange.bybit.private_stream import CLOSE_TIMEOUT_S
 from candleviewer.oms import submit
 from candleviewer.oms.config import HOP_BATCH, STREAM_CLOSE_BOUND_S, STREAM_READ_BOUND_S
 from candleviewer.oms.errors import OmsNotReady
-from candleviewer.oms.stream_consumer import STREAM_SILENCE_S
+from candleviewer.oms.stream_consumer import STOP_TIMEOUT_S, STREAM_SILENCE_S
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
+from candleviewer.oms_stream_wiring import OWED_DEGRADED_S
 from candleviewer.oms_wiring import (
     ENVIRONMENT_FENCE_GRACE_S,
     ENVIRONMENT_LOCK_NAMESPACE,
@@ -62,6 +63,7 @@ from candleviewer.secrets.service import LOOP_STORE_CONNECTIONS
 from candleviewer.settings import (
     ACCOUNT_DOWN_MAX_S,
     OMS_AFTER_ANCHOR_S,
+    OMS_CONSUMER_STOP_S,
     OMS_STOP_RESERVE_S,
     TEARDOWN_BUDGET_S,
     Settings,
@@ -379,7 +381,9 @@ def test_20_starts_the_oms_after_account_health_and_sweeps_before_ready() -> Non
         "(`build_oms_runtime`, `oms_wiring.py`; its order lane is `oms_lane.py`), and "
         "`placeOrder` and slice 4's exit routes (`cancelOrder`, `amendOrder`, "
         "`cancelAllOrders`) are served over it.",
-        "The lifespan starts the runtime after the account health runtime, then E29-T05's",
+        "The lifespan starts the runtime after the account health runtime, and the runtime owns "
+        "E29-T05's private-stream consumer: it composes it, starts it where it sets `ready` and, "
+        "on shutdown, stops it first, beside its drain",
         "`placeOrder` answers `503 oms_not_ready` with `Retry-After`",
         "must fit a deploy's 60 s `/readyz` smoke window",
         "`/readyz` carries an `oms` check that gives the runtime's state and nothing else: `ok` "
@@ -1024,6 +1028,68 @@ def test_20_23_24_and_e29_carry_each_private_stream_across_the_lane_bridge() -> 
     assert "L1d-2 decides" not in row and "stays until L1d-2c" not in row
     assert "Revision 23 records #913 L1d-2b's bridge" in _words(text)
     assert [line for line in lines if "| Revision 23, #913 L1d-2b" in line]
+
+
+def test_20_says_the_runtime_owns_and_runs_the_private_stream_consumer() -> None:
+    """E29-T05 S8b (#848; the orchestrator's rulings of 2026-10-28): 20 section 6.2 as built. The
+    runtime owns the consumer (Q4): it composes it, starts it where it sets `ready` and stops it
+    first, beside its drain (Q2 (a)), inside the grace `Settings` counts; account health's boot
+    episode is owed from the consumer's start, with its backstop; the `oms` check of `/readyz`
+    takes the consumer's verdict and `readiness` never does (Q3); a live process fails closed at
+    its `stream` phase (Q8); the streamed accounts are health's last good read, read in place
+    (Q5). Each figure is read from the code that holds it."""
+    assert OMS_CONSUMER_STOP_S == STOP_TIMEOUT_S
+    assert OMS_CONSUMER_STOP_S + OMS_STOP_RESERVE_S <= TEARDOWN_BUDGET_S
+    consumer = _between(_ARCH, "**The private-stream consumer (E29-T05, #848;", "\n")
+    assert "It waits for the OMS runtime's `ready`" not in consumer  # the contract-first text
+    assert not _missing(
+        consumer,
+        "Status: as built by E29-T05's wiring slice (S8b).",
+        "a live process fails closed there until E29-T06, as its stand-in reconciliation refuses "
+        "a live start on the binding as bound",
+        "It starts where the runtime sets `ready`",
+        "`wait_ready()` stays the serving loop's, and the start crosses to the lane, where the "
+        "consumer runs; a start the lane refuses or does not answer, or whose dead-man's-switch "
+        "window cannot open (below), is logged CRITICAL and paged, and the consumer is stopped on "
+        "the lane all the same.",
+        "an account the boot pass tracks is owed its boot episode (above) once "
+        "`CV_ACCOUNT_DOWN_S` passes with no evidence from the later of its tracking and the "
+        "consumer's start",
+        "the episode is still owed once the consumer has not started within "
+        "`CV_OMS_STARTUP_WAIT_S` plus `CV_ACCOUNT_DOWN_S` of the boot pass",
+        "The accounts it streams are account health's last good tracking read, read in place "
+        "(`AccountHealthRuntime.streamed`)",
+        "On shutdown the runtime's stop stops it first, on the lane, beside the drain and before "
+        "any closer",
+        "and a start that lands after it starts nothing.",
+        f"Its stop is bounded at {STOP_TIMEOUT_S:g} s (`STOP_TIMEOUT_S`)",
+        f"The runtime waits for it at most `OMS_CONSUMER_STOP_S` ({OMS_CONSUMER_STOP_S:g} s) "
+        "from its start, logged past that and never cut short",
+        f"then `OMS_STOP_RESERVE_S`: at most {TEARDOWN_BUDGET_S:g} s, inside the grace, which "
+        "`Settings._refuse_unfittable_stop_budget` counts.",
+        "never the readiness the route's step 3 reads, so one unprotected position never refuses "
+        "every entry: once `ready`, the check is also `degraded` while the consumer has not "
+        "started, has faulted",
+        f"is {OWED_DEGRADED_S:g} s old or more (`oms_position_reading_owed_age_seconds`, §12.1, "
+        "read at each scrape from the consumer's start), a reading the 60 s page "
+        "(`OmsPositionReadingOwed`, §12.5) has already raised",
+    )
+    health = _between(_ARCH, "**Account health runtime (E27-T04, #837).**", "\n")
+    assert not _missing(
+        health,
+        "an account the boot pass tracks is owed a boot episode once `CV_ACCOUNT_DOWN_S` passes "
+        "with no evidence from the later of its tracking and the private-stream consumer's start, "
+        "or, while the consumer has not started, `CV_OMS_STARTUP_WAIT_S` plus "
+        "`CV_ACCOUNT_DOWN_S` after the boot pass",
+        "each tracking pass that works publishes its read whole, after its `track` calls "
+        "(`streamed`), never an account tracked for a replayed or owed call alone",
+        "the runtime opens the boot episode's window at the consumer's start (`stream_started`).",
+    )
+    in_place = _between(_ARCH, "- read in place:", "\n")
+    assert (
+        "account health's last good tracking read, a frozenset each pass that works replaces "
+        "whole after its `track` calls, which the consumer reads at each refresh" in in_place
+    )
 
 
 def test_e29_leaves_ruling_q7s_hop_and_the_clock_resync_after_l1d3_in_its_map_and_f20() -> None:

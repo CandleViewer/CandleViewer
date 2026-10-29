@@ -501,7 +501,10 @@ class GatewayHub:
 
     def broadcast_system(self, body: dict[str, Any]) -> int:
         """Offer one `system` frame (e.g. §12.5 `kill_switch`) to every authenticated socket: each
-        queues its §15.9 view of it, or nothing. Returns how many were offered it."""
+        queues its §15.9 view of it, or nothing. Returns how many were offered it. An
+        `account_notice`'s `exchange_account_ids` is a `list` of canonical lowercase UUID strings
+        (`str(UUID)`), never a set or a `UUID`, so the Owner's whole frame encodes as each cut does
+        (§15.9, SEC-5; the producer's check is `oms_stream_wiring.checked_notice`)."""
         conns = self._authenticated()
         for conn in conns:
             conn.push_system(body)

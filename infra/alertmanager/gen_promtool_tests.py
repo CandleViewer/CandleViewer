@@ -44,6 +44,11 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         {},
     ),
     "OmsUnknownOrders": ("oms_unknown_orders", "0 2+0x10", "0+0x12", "5m", {}),
+    # E29-T05 S8b (20 section 12.5): a position reading owed to protection for 60 s pages; one owed
+    # 59 s does not.
+    "OmsPositionReadingOwed": (
+        "oms_position_reading_owed_age_seconds", "0+0x2 60+0x10", "59+0x12", "5m", {},
+    ),
     "PostgresDown": ("pg_up", "0+0x10", "1+0x10", "5m", {}),
     "ClockDriftBlockingTrading": (
         "bybit_clock_drift_ms",
@@ -526,6 +531,8 @@ FINE: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
     ),
 }
 EXTRA: dict[str, list[tuple[str, str, bool]]] = {
+    # E29-T05 S8b: a condition page, resolved once the reading is handed on and the gauge reads 0.
+    "OmsPositionReadingOwed": [("0+0x2 75+0x4 0+0x10", "10m", False)],
     # #2496 item 3: the page rides out a gap shorter than its 15m window (the restart after a
     # break-glass run, a failed scrape) and ends once the last reading of 1 has aged out of it.
     # The gauge is a count: a second unresolved reset (2) pages the same as the first.

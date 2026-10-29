@@ -137,7 +137,7 @@ class SnapshotWrites(Protocol):
 
 
 class PositionCounts(Protocol):
-    def count(self, outcome: Outcome) -> None: ...  # sync; S8 binds a catalogue series
+    def count(self, outcome: Outcome) -> None: ...  # sync; `oms_stream_wiring.StageCounts`
 
 
 class RecordedStops(Protocol):  # the recorded stops' M14 facade, structurally; no write-ahead hook
@@ -156,7 +156,8 @@ class RecordedStops(Protocol):  # the recorded stops' M14 facade, structurally; 
 
 
 class WallClock(Protocol):
-    """The time of each record write (`at`): aware UTC, exchange-synced (S8 binds it). A naive
+    """The time of each record write (`at`): aware UTC, exchange-synced (the position store's
+    `oms_stream_wiring.ExchangeWallClock`, which the OMS runtime binds to both). A naive
     time makes the store refuse every write (`require_aware`): counted `record_failed`."""
 
     def __call__(self) -> datetime: ...
@@ -203,8 +204,9 @@ class PositionProjection:
         await self._apply(_Held(position, route), None)
 
     async def reapply(self, account_id: AccountId) -> None:
-        """Every held row of the account, oldest first, under one deadline (S8 calls it on the
-        clock's re-sync); a row it does not reach stays held."""
+        """Every held row of the account, oldest first, under one deadline (the consumer calls it
+        in the account's own task once the clock's re-sync epoch moves); a row it does not reach
+        stays held."""
         await self._reapply(account_id, MAX_REFUSED)
 
     async def after_bind(self, key: PositionKey) -> None:
@@ -225,7 +227,8 @@ class PositionProjection:
         return self._last.get(key)
 
     def oldest_unhanded_age_s(self) -> float:
-        """Readiness (S8 binds a gauge and `/readyz`): the age, in seconds, of the oldest key whose
+        """Readiness (`oms_stream_wiring.StreamReadiness`: the owed gauge at each scrape, and
+        `/readyz`): the age, in seconds, of the oldest key whose
         reading is owed: not handed on, held as future-dated, or evicted from that hold; 0.0 when
         none is."""
         for since in self._unhanded.values():

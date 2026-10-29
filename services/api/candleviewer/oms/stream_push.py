@@ -118,7 +118,8 @@ class StreamReads(Protocol):  # the order and recorded-stop stores' reads
 
 
 class FillOrders(Protocol):
-    """A fill's order, read by its exchange order id (S8 binds it); None when none was found."""
+    """A fill's order, read by its exchange order id (`oms_stream_wiring.VenueFillOrders`); None
+    when none was found."""
 
     async def order_of(self, account_id: UUID, xid: str, symbol: str) -> Order | None: ...
 

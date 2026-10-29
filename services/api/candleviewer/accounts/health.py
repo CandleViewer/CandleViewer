@@ -32,7 +32,12 @@ from pydantic import BaseModel, ConfigDict
 
 from candleviewer.accounts.models import UtcDatetime
 from candleviewer.observability import bind_context, spawn
-from candleviewer.settings import ACCOUNT_DOWN_MAX_S, ACCOUNT_HEARTBEAT_MAX_S, Settings
+from candleviewer.settings import (
+    ACCOUNT_DOWN_MAX_S,
+    ACCOUNT_HEARTBEAT_MAX_S,
+    OMS_STARTUP_WAIT_DEFAULT_S,
+    Settings,
+)
 
 
 class HealthState(StrEnum):
@@ -101,10 +106,16 @@ class HealthThresholds:
     them. A heartbeat older than 10 s must not show `healthy`, and order entry must close within
     30 s of the last WS or REST success. The caps are limits, not tuning room, and no flag may move
     them (C-4.14), so no caller can build a monitor that holds an old heartbeat `healthy` or
-    admits orders through a longer silence."""
+    admits orders through a longer silence.
+
+    `CV_OMS_STARTUP_WAIT_S` (E29-T05 S8b, 20 Sec.6.2): how much longer than `down_s` a boot
+    episode waits for the private-stream consumer's start, the backstop for an OMS that never gets
+    ready; finite and not negative, its default the setting's. It moves no state and no gate: the
+    gate reads the evidence alone."""
 
     heartbeat_s: float = ACCOUNT_HEARTBEAT_MAX_S
     down_s: float = ACCOUNT_DOWN_MAX_S
+    startup_wait_s: float = OMS_STARTUP_WAIT_DEFAULT_S
 
     def __post_init__(self) -> None:
         if not 0 < self.heartbeat_s < self.down_s:
@@ -114,10 +125,14 @@ class HealthThresholds:
                 f"health thresholds are capped at heartbeat_s <= {ACCOUNT_HEARTBEAT_MAX_S:g} and "
                 f"down_s <= {ACCOUNT_DOWN_MAX_S:g} (US-ACCT-010)"
             )
+        if not (math.isfinite(self.startup_wait_s) and self.startup_wait_s >= 0):
+            raise ValueError("health thresholds need a finite startup_wait_s of 0 or more")
 
     @classmethod
     def from_settings(cls, settings: Settings) -> HealthThresholds:
-        return cls(settings.account_heartbeat_s, settings.account_down_s)
+        return cls(
+            settings.account_heartbeat_s, settings.account_down_s, settings.oms_startup_wait_s
+        )
 
 
 class AccountHealth(BaseModel):
@@ -172,9 +187,12 @@ class DeadMansSwitch(Protocol):
     call, so a kill (SIGKILL included, which skips `drain()`) leaves its row open for the next boot
     to replay once. One with no row (its record failed or timed out, or it became owed while its
     account's previous call was in flight, so it is recorded only when its own call starts) is lost
-    to a kill, unless its account gives no evidence for `down_s` after the next boot: an account
-    tracked at boot is then owed a boot episode. Neither is a transition: a boot episode is `down`
-    to `down` with reason `never_connected`, and a replay arrives late, dated by `transition.at`,
+    to a kill, unless its account gives no evidence after the next boot: an account tracked at boot
+    is then owed a boot episode `down_s` after the later of its tracking and the private-stream
+    consumer's start (`stream_started`), or, while the consumer has not started, `startup_wait_s`
+    plus `down_s` after its tracking. Neither is a transition: a boot episode is `down` to `down`
+    with reason `never_connected`, dated when it fell due, and a replay arrives late, dated by
+    `transition.at`,
     which may be arbitrarily old, for an account that may since have been disabled or soft-deleted.
     So check the episode against the exchange's current state before acting, and return, not raise,
     for an account the policy cannot act on: a raise is retried for as long as the account stays
@@ -211,7 +229,8 @@ class _Account:
     dms_delay: float = 0.0  # the last backoff for `dms_owed`; 0 until a call for it fails
     dms_retry_at: float = -math.inf  # monotonic; no call for `dms_owed` starts before it
     dms_row: tuple[HealthTransition, int] | None = None  # the last episode recorded, and its row
-    boot_due: float | None = None  # monotonic; tracked at boot: a boot episode is owed from it
+    #: monotonic; tracked at boot: a boot episode is owed from it, unless evidence comes first
+    boot_due: float | None = None
 
     def last_success(self) -> float | None:
         return max((t for t in (self.ws_at, self.rest_at) if t is not None), default=None)
@@ -274,15 +293,34 @@ class AccountHealthMonitor:
         self._watchers: set[asyncio.Task[None]] = set()  # one per call: ends with it or abandons it
         self._stuck: set[asyncio.Task[None]] = set()  # abandoned calls: running, never awaited
         self._unwinding: dict[asyncio.Task[Any], UUID] = {}  # journal writes left to unwind
+        #: When the private-stream consumer started (monotonic): its window opened then, once
+        self._stream_started: float | None = None
 
     def track(self, account_id: UUID, *, at_boot: bool = False) -> None:
         """Start monitoring an account; it is `down` until the first success. `at_boot`: tracked by
-        the first pass after a start, so the outage may span the restart: with no evidence for
-        `down_s`, it is owed a boot episode (`down` to `down`, `never_connected`, dated then)."""
+        the first pass after a start, so the outage may span the restart: with no evidence, it is
+        owed a boot episode (`down` to `down`, `never_connected`, dated when it fell due) `down_s`
+        after the later of its tracking and the private-stream consumer's start; while the
+        consumer has not started, `startup_wait_s` plus `down_s` after its tracking, the backstop
+        for an OMS that never gets ready (20 Sec.6.2)."""
         if account_id not in self._accounts:
             acc = _Account(self._clock.now(), self._clock.monotonic())
-            acc.boot_due = acc.since + self._th.down_s if at_boot else None
+            wait = 0.0 if self._stream_started is not None else self._th.startup_wait_s
+            acc.boot_due = acc.since + wait + self._th.down_s if at_boot else None
             self._accounts[account_id] = acc
+
+    def stream_started(self) -> None:
+        """The private-stream consumer has started (E29-T05, 20 Sec.6.2): its dead-man's-switch
+        window opens now. An account tracked at boot with no evidence yet is owed its boot episode
+        `down_s` from the later of its tracking and now, in place of the backstop; one the boot
+        pass tracks later, from its own tracking. Once: a second call changes nothing. On the
+        monitor's loop, the serving loop, as the evidence is."""
+        if self._stream_started is not None:
+            return
+        now = self._stream_started = self._clock.monotonic()
+        for acc in self._accounts.values():
+            if acc.boot_due is not None:
+                acc.boot_due = max(acc.since, now) + self._th.down_s
 
     def replay(self, episode: HealthTransition, row: int) -> None:
         """Owe the hook a call for an episode left open as journal row `row`, which the call
@@ -450,16 +488,18 @@ class AccountHealthMonitor:
         return call is not None and not call.done() and call not in self._stuck
 
     def _boot_episode(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
-        """Once, for an account tracked at boot: an episode once `down_s` passed with no evidence,
-        which cancels it (so no transition moved it: dated `down_s` after its tracking)."""
-        if acc.boot_due is None or acc.last_success() is not None:
+        """Once, for an account tracked at boot: an episode once its due passed with no evidence,
+        which cancels it (`track`, `stream_started`). No transition moved it since its tracking, so
+        it is dated at its due, on the wall clock its tracking read."""
+        due = acc.boot_due
+        if due is None or acc.last_success() is not None:
             acc.boot_due = None
             return None
-        if self._clock.monotonic() < acc.boot_due:
+        if self._clock.monotonic() < due:
             return None
         acc.boot_due, down, log = None, HealthState.DOWN, structlog.get_logger(__name__)
         log.warning("account.dms_boot_episode", account_id=str(account_id))
-        at = acc.changed_at + timedelta(seconds=self._th.down_s)
+        at = acc.changed_at + timedelta(seconds=due - acc.since)
         return HealthTransition(account_id, down, down, "never_connected", at)
 
     def _commit(self, account_id: UUID, acc: _Account) -> HealthTransition | None:

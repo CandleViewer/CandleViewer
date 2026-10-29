@@ -69,6 +69,13 @@ from tests.unit.oms import submit_rig as sr
 from tests.unit.oms.order_rig import Pager
 from tests.unit.oms.test_oms_runtime import Beats, Binder, Flag, Port, Writer, started
 
+#: E29-T05 S8b: account health as the runtime's private-stream consumer takes it, streaming no
+#: account, and the gateway's hub, which no notice reaches.
+_NO_STREAMS = SimpleNamespace(
+    feed=SimpleNamespace(), streamed=frozenset, stream_started=lambda: None
+)
+_NO_FRAMES = SimpleNamespace(broadcast_system=lambda _body: 0)
+
 pytestmark = pytest.mark.integration
 __all__ = ["pg_dsn"]  # C6's database for this module
 
@@ -246,6 +253,7 @@ def _runtime(
         oms_enabled=flags[0], live_enabled=flags[1], profiles=profiles, persistence=None,
         feed=SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None)),
         lane_signing=cast(Any, Binder()),
+        health=cast(Any, _NO_STREAMS), hub=cast(Any, _NO_FRAMES),  # E29-T05 S8b: none streamed
         stores=lambda: replace(  # the lane's own writer is the world's (#913 L2)
             pg_stores(settings, metrics), accounts=InMemoryTradingAccountReads(row),
             audit=lambda _alarm: world.writer,
