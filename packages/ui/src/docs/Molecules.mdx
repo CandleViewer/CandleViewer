@@ -127,6 +127,27 @@ query; "Searching…" is shown, never said. `asyncSearch` gets an `AbortSignal`;
 newer query's. A local source without `noResultsText` keeps the list closed when nothing matches; the count
 ("0 results") is still said, so give a host sentence where an empty answer needs one.
 
+### CommandPalette (CMP-059, APG Combobox with a grouped listbox popup, inside the APG Dialog (Modal))
+
+| Keys                    | Action                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Typing                  | Filters (fuzzy, ranked, grouped); the first result becomes active; the count is said once the query settles. |
+| ↓ / ↑                   | Next / previous option, skipping group headers and wrapping; focus stays in the input.                       |
+| Home / End              | First / last option.                                                                                         |
+| PageDown / PageUp       | Ten options on, or back; no wrap.                                                                            |
+| Enter                   | Runs the active command and closes; a destructive one asks the host's confirm; a gated one says its reason.  |
+| Ctrl+Enter              | The group run (`onRunGroup`), gated and confirmed as Enter; without `onRunGroup`, nothing.                   |
+| Esc                     | Closes; focus returns to the opener (CMP-043).                                                               |
+| Tab                     | Stays in the dialog: the input and CMP-043's close button.                                                   |
+| A held Enter (repeated) | Nothing more: a command runs once, a reason is said once per press.                                          |
+
+The input is `role="combobox"` (`aria-autocomplete="list"`, `aria-controls`, `aria-activedescendant`); the listbox
+holds one `role="group"` per section, named by its header. An option's name is its label, then "confirms" on a
+destructive row; a gated option is `aria-disabled` and described by its reason; the CMP-022 hint is `aria-hidden` and
+its keys are the option's `aria-keyshortcuts`. One polite status says the count (or the no-results sentence) once per
+settled query and a re-shown reason once per press. Every string is a prop (E15's SCR-012 keys); `Ctrl+K` is the
+host's binding (#305).
+
 ### Tabs (CMP-042, APG Tabs)
 
 | Keys                                    | Action                                                                                                                                 |
@@ -321,7 +342,6 @@ reflows its host is the host's layout, not this overlay.
 The trigger is the host's (the CMP-227 chip): `trigger` renders it from the props to spread on a
 button. The static methodology (`content`) shows at once; the current values (`values`) load under
 it as CMP-015 rows, or fail as a CMP-027 inline error with Retry (`error`, `onRetry`).
-
 
 ### Table (CMP-049, table mode: the WAI-ARIA APG Table pattern)
 

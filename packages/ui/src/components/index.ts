@@ -37,6 +37,14 @@ export type {
 export { Combobox } from "./Combobox.js";
 export type { ComboboxOption, ComboboxProps } from "./Combobox.js";
 
+export { CommandPalette } from "./CommandPalette.js";
+export type {
+  CommandPaletteProps,
+  PaletteCommand,
+  PaletteScope,
+  PaletteSection,
+} from "./CommandPalette.js";
+
 export { ConfidenceDots } from "./ConfidenceDots.js";
 export type { ConfidenceDotsProps, ConfidenceLevel } from "./ConfidenceDots.js";
 

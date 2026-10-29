@@ -5,6 +5,7 @@ import type {
   ButtonProps,
   CardProps,
   CheckboxProps,
+  CommandPaletteProps,
   ConfirmDialogProps,
   DatePickerProps,
   DateRangePickerProps,
@@ -79,6 +80,7 @@ describe("@candleviewer/ui control atoms (E05-S01)", () => {
 describe("@candleviewer/ui molecules (E05-S03)", () => {
   it.each([
     ["Card", Atoms.Card],
+    ["CommandPalette", Atoms.CommandPalette],
     ["ConfirmDialog", Atoms.ConfirmDialog],
     ["DatePicker", Atoms.DatePicker],
     ["DateRangePicker", Atoms.DateRangePicker],
@@ -101,6 +103,7 @@ describe("@candleviewer/ui molecules (E05-S03)", () => {
     const props:
       | [
           CardProps,
+          CommandPaletteProps,
           ConfirmDialogProps,
           DatePickerProps,
           DateRangePickerProps,

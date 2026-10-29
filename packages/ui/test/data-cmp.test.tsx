@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Checkbox,
+  CommandPalette,
   ConfirmDialog,
   DatePicker,
   DateRangePicker,
@@ -136,6 +137,17 @@ describe("molecules carry their catalogue id", () => {
   it("CMP-043 marks exactly one root with data-cmp (in its portalled layer)", async () => {
     await mount(<Dialog open title="Go to date" onOpenChange={noop} />);
     expect(document.querySelectorAll('[data-cmp="CMP-043"]')).toHaveLength(1);
+  });
+
+  it("CMP-059 marks exactly one root with data-cmp (inside its CMP-043 layer)", async () => {
+    await mount(
+      <CommandPalette
+        open
+        onOpenChange={noop}
+        commands={[{ id: "a", label: "Alpha", group: "Action", onRun: noop }]}
+      />,
+    );
+    expect(document.querySelectorAll('[data-cmp="CMP-059"]')).toHaveLength(1);
   });
 
   it("CMP-044 marks exactly one root with data-cmp (inside its CMP-043 layer)", async () => {

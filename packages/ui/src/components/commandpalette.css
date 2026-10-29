@@ -1,0 +1,174 @@
+/*
+ * CMP-059 CommandPalette (E05-S03; D02 rest CMP-059, E10-D03 §6.1, J3, J12). The frame is CMP-043's card at
+ * 640 px; the input is CMP-007's well (fields.css); the results scroll between the input and the footer. Rows are
+ * `size.row.height` plus two `space.inset.xs` (32 px compact, 40 px comfortable); the active row sits on
+ * `color.surface.selected` with CMP-039's inset ring. Tokens only; every colour rule has a forced-colours twin.
+ */
+.cv-dialog.cv-palette {
+  width: min(40rem, calc(100vw - 2 * var(--space-inset-lg)));
+}
+
+/* 200 % zoom (conventions 49): as CMP-043, the card fills the viewport. */
+@media (max-width: 40rem), (max-height: 25rem) {
+  .cv-dialog.cv-palette {
+    width: 100%;
+  }
+}
+
+/* The input stays put; only the list scrolls. */
+.cv-palette__root {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-stack-sm);
+  min-height: 0;
+}
+
+.cv-palette__well {
+  flex: none;
+}
+
+.cv-palette__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.cv-palette__header {
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  color: var(--color-text-tertiary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-palette__row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-block-size: calc(var(--size-row-height) + 2 * var(--space-inset-xs));
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  border-radius: var(--radius-control);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.cv-palette__row[data-active] {
+  background: var(--color-surface-selected);
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * -2px);
+}
+
+.cv-palette__row[data-kind="locked"] {
+  cursor: not-allowed;
+}
+
+.cv-palette__lead {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+.cv-palette__row[data-kind="destructive"] .cv-palette__lead {
+  color: var(--color-status-warning-strong);
+}
+
+.cv-palette__row[data-kind="locked"] .cv-palette__lead,
+.cv-palette__row[data-kind="locked"] .cv-palette__label {
+  color: var(--color-text-tertiary);
+}
+
+.cv-palette__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cv-palette__line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-inset-sm);
+  min-width: 0;
+}
+
+/* Long labels wrap to two lines, then truncate; the full text stays the accessible name. */
+.cv-palette__label {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* The matched characters: weight, not colour; the mark's own fill is cleared. */
+.cv-palette__match {
+  background: none;
+  color: inherit;
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+.cv-palette__tag,
+.cv-palette__reason,
+.cv-palette__footer {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-palette__tag {
+  flex: none;
+}
+
+.cv-palette__kbd {
+  flex: none;
+}
+
+.cv-palette__empty {
+  margin: 0;
+  padding: var(--space-inset-sm);
+  color: var(--color-text-secondary);
+}
+
+.cv-palette__footer {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  margin: 0;
+}
+
+/* Forced colours (conventions 48): the active row Highlight; the gated label CanvasText with its lock and reason. */
+@media (forced-colors: active) {
+  .cv-palette__row {
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .cv-palette__row[data-active] {
+    background: Highlight;
+    color: HighlightText;
+    outline-color: HighlightText;
+  }
+
+  .cv-palette__header,
+  .cv-palette__tag,
+  .cv-palette__reason,
+  .cv-palette__footer,
+  .cv-palette__empty,
+  .cv-palette__row[data-kind="destructive"] .cv-palette__lead,
+  .cv-palette__row[data-kind="locked"] .cv-palette__lead,
+  .cv-palette__row[data-kind="locked"] .cv-palette__label {
+    color: CanvasText;
+  }
+
+  .cv-palette__row[data-active] .cv-palette__lead,
+  .cv-palette__row[data-active] .cv-palette__label,
+  .cv-palette__row[data-active] .cv-palette__tag,
+  .cv-palette__row[data-active] .cv-palette__reason {
+    color: HighlightText;
+  }
+}

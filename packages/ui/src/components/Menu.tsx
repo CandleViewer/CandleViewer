@@ -19,6 +19,7 @@ import { Kbd } from "./Kbd.js";
 import { Spinner } from "./Spinner.js";
 import { cx } from "./internal/cx.js";
 import { useLayer, useLayerPortal } from "./internal/layers.js";
+import { keyShortcuts } from "./internal/keyShortcuts.js";
 import { extendTyped, matchIndex, type Typed } from "./internal/listNav.js";
 import { tabStopAfter, tabStopBefore } from "./internal/tabbable.js";
 import {
@@ -171,29 +172,6 @@ const ROLES: Readonly<Record<MenuItemKind, string>> = {
 
 const shown = (item: MenuItem): string =>
   item.opensConfirm === true && !item.label.endsWith("…") ? `${item.label}…` : item.label;
-
-/** The keymap's display words that `aria-keyshortcuts` spells differently (UI Events key values). */
-const ARIA_KEYS: Readonly<Record<string, string>> = {
-  Ctrl: "Control",
-  Cmd: "Meta",
-  Opt: "Alt",
-  Del: "Delete",
-  Esc: "Escape",
-  Ins: "Insert",
-  PgUp: "PageUp",
-  PgDn: "PageDown",
-  Return: "Enter",
-  "↑": "ArrowUp",
-  "↓": "ArrowDown",
-  "←": "ArrowLeft",
-  "→": "ArrowRight",
-};
-
-const keyShortcuts = (keys: readonly string[] | undefined): string | undefined => {
-  const bound = (keys ?? []).map((key) => key.trim()).filter((key) => key !== "");
-  if (bound.length === 0) return undefined;
-  return bound.map((key) => (Object.hasOwn(ARIA_KEYS, key) ? ARIA_KEYS[key] : key)).join("+");
-};
 
 interface Section {
   readonly key: string;

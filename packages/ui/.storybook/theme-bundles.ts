@@ -29,6 +29,7 @@ import "../src/components/checkbox.css";
 import "../src/components/choice.css";
 import "../src/components/colorswatch.css";
 import "../src/components/combobox.css";
+import "../src/components/commandpalette.css";
 import "../src/components/confidencedots.css";
 import "../src/components/confirmdialog.css";
 import "../src/components/copybutton.css";

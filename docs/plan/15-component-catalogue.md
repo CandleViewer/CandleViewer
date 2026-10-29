@@ -656,6 +656,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.surface.overlay`, `elevation.dialog`, `radius.dialog`, 640 px wide; rows `type.ui.body` + `color.text.primary`, the active row `color.surface.selected`; group headers and the placeholder `color.text.tertiary`; the footer hint `color.text.secondary` (J3, J12). (Replaces `elevation.4`, which is a primitive.)
 - **Storybook**: Default, Grouped, NoResults, EmptyQuery, RbacDisabled, Destructive (J12).
 - **Tests**: unit, visual, axe, keyboard, fuzzy-match unit tests.
+- **As built (E05-S03)**: `packages/ui` `CommandPalette` in a CMP-043 Dialog (640 px); `commands[]` adds `disabledReason?` / `destructive?` / `shortcut?` (display keys); `sections?` are the host's empty-query groups; `onRequestConfirm(command, scope)` replaces running a destructive row (the palette stays open); `onRunGroup?` is `Ctrl+Enter` and shows the footer; ↓ / ↑ wrap, Home / End and PageUp / PageDown move the active option; an in-house fuzzy scorer (`internal/fuzzy.ts`); every string a prop with an English default for stories; the dialog keeps CMP-043's close button as a second Tab stop; no Loading story (no source names one). Stories: Default (EmptyQuery), Filtered (Grouped), NoResults, WithConfirms (Destructive), Gated (RbacDisabled), LongText.
 
 ### CMP-060 NotificationCenter (bell dropdown)
 
