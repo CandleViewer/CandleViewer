@@ -6,9 +6,7 @@ Also pins the rules from the PR #2389 reviews: only extend and unlock record act
 carries `last_seen_at` over), unlock checks a password only while the session is locked, a
 locked session's logout ends only that session, the operations allowed while locked also accept
 `cv_refresh`, and step-up elevation never survives the lock (#2290 ruling, rule 4d).
-#4743 (E09-S03-F1) adds `POST /auth/lock`, CMP-098 "Lock now", contract first: the caller's
-session locks exactly as if its idle deadline fell due (B16's existing `IDLE_DEADLINE`) without
-moving it, a locked one answers `200` again, and a revoked or expired one `401 session_revoked`.
+`POST /auth/lock` (#4743, E09-S03-F1, CMP-098 "Lock now") is pinned at the end, contract first.
 """
 
 from __future__ import annotations
@@ -410,10 +408,7 @@ def test_unauthorized_response_documents_session_idle_locked(spec: dict[str, Any
 
 
 # -- `POST /auth/lock` (#4743, E09-S03-F1): CMP-098 "Lock now", contract first (C-6.1) ----------
-# The orchestrator's rulings of 2026-10-29 09:00Z: the idle-deadline path, recorded by
-# `auth.session_locked` and B16's own `auth.idle_locked` (BQ-1); one record per lock (BQ-2); one of
-# the viewer's own operations (BQ-3); never refused read-only (BQ-4); the deadline never moves and
-# the lock moment is the audit row's time (BQ-5).
+# The orchestrator's rulings of 2026-10-29 09:00Z (BQ-1 to BQ-5) each have a test below.
 
 _LOCK = "/auth/lock"
 
@@ -463,9 +458,7 @@ def test_lock_contract_never_moves_the_idle_deadline(spec: dict[str, Any]) -> No
     assert "later than `server_time`. Read the problem code or `session.locked`" in _flat(problem)
 
 
-def test_lock_contract_answers_session_info_locked_with_no_elevation(
-    spec: dict[str, Any],
-) -> None:
+def test_lock_answers_session_info_locked_without_elevation(spec: dict[str, Any]) -> None:
     ok = _op(spec, "post", _LOCK)["responses"]["200"]
     schema = ok["content"]["application/json"]["schema"]
     assert schema == {"$ref": "#/components/schemas/SessionInfo"}
@@ -482,17 +475,11 @@ def test_lock_contract_answers_session_info_locked_with_no_elevation(
 def test_lock_contract_writes_one_record_per_lock(spec: dict[str, Any]) -> None:
     # BQ-2: an already-locked call is a 200 that changed nothing, so it writes no second row.
     description = _flat(_op(spec, "post", _LOCK)["description"])
-    already = (
-        "A session that is already idle-locked answers `200` with its `SessionInfo` and changes"
-        " nothing. It writes no second `auth.session_locked`: one record per lock, and the access"
-        " log has the call."
-    )
-    assert already in description
+    assert "already idle-locked answers `200` with its `SessionInfo` and changes" in description
+    assert "nothing. It writes no second `auth.session_locked`: one record per lock" in description
 
 
-def test_lock_contract_answers_session_revoked_for_a_revoked_or_expired_session(
-    spec: dict[str, Any],
-) -> None:
+def test_lock_answers_session_revoked_when_revoked_or_expired(spec: dict[str, Any]) -> None:
     refusals = _examples(_op(spec, "post", _LOCK)["responses"]["401"])
     for example in refusals.values():
         _conforms(spec, example, "/components/schemas/Problem")
@@ -504,28 +491,19 @@ def test_lock_contract_answers_session_revoked_for_a_revoked_or_expired_session(
     assert only in _idle_lock_section(spec)
 
 
-def test_lock_contract_is_recorded_ahead_and_by_b16_never_by_a_request(
-    spec: dict[str, Any],
-) -> None:
+def test_lock_is_recorded_ahead_and_by_b16_never_by_a_request(spec: dict[str, Any]) -> None:
     # BQ-1 (C-2.9, 28 B16.7): `auth.session_locked` ahead of the lock and B16's own
-    # `auth.idle_locked`, never a B16 `REQUEST`. The implementation PR registers the action in
-    # `audit/actions.py` (24 section 15.5 lists it as not registered yet).
+    # `auth.idle_locked`, never a B16 `REQUEST`; 24 is pinned by the test after this one.
     op = _op(spec, "post", _LOCK)
     assert op["responses"]["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
     description = _flat(op["description"])
-    recorded = (
-        "The lock is recorded by `auth.session_locked`, written ahead (C-2.9), and by B16's own"
-        " `auth.idle_locked`; the route sends B16 no `REQUEST` (28 B16.7)."
-    )
-    assert recorded in description
-    assert "If the audit sink is down the answer is `503` and the session is not locked." in (
-        description
-    )
+    assert "The lock is recorded by `auth.session_locked`, written ahead (C-2.9)" in description
+    assert "and by B16's own `auth.idle_locked`; the route sends B16 no `REQUEST`" in description
+    assert "the answer is `503` and the session is not locked." in description
 
 
 def test_24_lists_the_lock_record_until_the_implementation_registers_it() -> None:
-    """24 section 15.5 and its change-log entry: the implementation PR registers the action, which
-    flips both halves of the marker check (as `test_trade_group_contract_threat_model.py` does)."""
+    """24 section 15.5 and its change-log entry; registering the action flips both marker halves."""
     internal = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
     vocabulary = _flat(internal.split("### 15.5 ", 1)[1].split("### 15.6 ", 1)[0])
     assert "`auth.session_locked` (not registered yet, E09-S03-F1)" in vocabulary

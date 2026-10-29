@@ -234,10 +234,8 @@ async def test_held_write_refused_view_as_expired_and_changes_nothing(
     assert gate.rig.held(record) == held
 
 
-#: Contract first (C-6.1): an own operation the contract's list names before its route is served
-#: and added to `OWN_OPERATIONS` -> the ticket whose implementation PR adds it and drops it here,
-#: as `_DOCUMENTED_AHEAD` does for a step-up class. `POST /auth/lock` (#4743): the orchestrator's
-#: ruling of 2026-10-29 09:00Z puts it on the list (BQ-3).
+#: Contract first (C-6.1), as `_DOCUMENTED_AHEAD` is: an own operation 22 lists before
+#: `OWN_OPERATIONS` has it -> the ticket whose implementation PR moves it there (BQ-3).
 _OWN_AHEAD: dict[tuple[str, str], str] = {("POST", "/auth/lock"): "#4743"}
 
 
@@ -259,8 +257,7 @@ def _contract_own_operations() -> set[tuple[str, str]]:
 
 
 def test_an_own_operation_listed_ahead_is_on_the_contract_list_and_not_registered_yet() -> None:
-    """Contract first: an `_OWN_AHEAD` entry is on the contract's list and not yet in
-    `OWN_OPERATIONS`; one that has landed there fails here until it leaves `_OWN_AHEAD`."""
+    """An `_OWN_AHEAD` entry is on 22's list and not in `OWN_OPERATIONS` until it moves."""
     ahead = set(_OWN_AHEAD)
     assert ahead <= _contract_own_operations()
     assert not ahead & OWN_OPERATIONS
