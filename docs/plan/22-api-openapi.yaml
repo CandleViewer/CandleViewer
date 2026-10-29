@@ -384,6 +384,8 @@ info:
     under the key: every refusal is evaluated afresh on a retry. A stored `2xx` is answered only
     after the account and its environment are resolved, so a replay on a deleted account, or on
     one of another environment, is `404`.
+    Exception (E25-D04 BQ-04): `setDetectorConfig` stores only its `200` under the key; a `422`
+    or `503` is evaluated afresh on a retry.
 
     **Binding point (#2304).** On every operation that requires the key (parameter
     `IdempotencyKeyRequired`, which every `x-idempotency: required` operation takes) the key is
@@ -13806,8 +13808,27 @@ paths:
       tags: [market-data]
       operationId: setDetectorConfig
       summary: Update detector thresholds
-      x-rbac: { permissions: [settings:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      description: >
+        Owner-only (`admin:write`) until the configuration is scoped per user or per account: the
+        thresholds are global and feed every user's armed rules (E25-D04 BQ-04). Any other caller
+        is refused with 403, audited as `rbac.denied`. A value outside its schema range is
+        `422 validation_failed`, and a refused request stores nothing.
+        Audited as `settings.change` with `object_kind` `detector_config` (the changed keys'
+        values before and after), written before the new configuration is stored; if it cannot
+        be written the answer is `503 audit_unavailable` and nothing changes.
+        Requires `Idempotency-Key`: the same key and body are answered with the stored `200`,
+        and the same key with another body is `409 idempotency_key_reuse`. Only the `200` is
+        stored under the key; a `422` or `503` is evaluated afresh on a retry.
+        A client whose outcome is unknown re-reads the configuration with
+        `getDetectorConfig` before deciding to send again, and never restores an earlier
+        configuration blind.
+      x-rbac: { permissions: [admin:write], scope: none }
+      x-idempotency: required
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -13819,7 +13840,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DetectorConfig" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /detectors/methodology:

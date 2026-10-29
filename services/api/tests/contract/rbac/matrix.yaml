@@ -472,12 +472,13 @@ operations:
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   PUT /detectors/config:
-    permissions: ['settings:write']
-    scope: self
+    permissions: ['admin:write']
+    scope: none
     public: false
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    # Capability 9b (04-security-program §7.2 row 9b): Owner-only until the config is scoped (E25-D04 BQ-04).
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /detectors/methodology:
     permissions: ['marketdata:read']
     scope: none

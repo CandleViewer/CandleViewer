@@ -2011,7 +2011,10 @@ export interface paths {
     };
     /** Current thresholds for the estimated detectors */
     get: operations["getDetectorConfig"];
-    /** Update detector thresholds */
+    /**
+     * Update detector thresholds
+     * @description Owner-only (`admin:write`) until the configuration is scoped per user or per account: the thresholds are global and feed every user's armed rules (E25-D04 BQ-04). Any other caller is refused with 403, audited as `rbac.denied`. A value outside its schema range is `422 validation_failed`, and a refused request stores nothing. Audited as `settings.change` with `object_kind` `detector_config` (the changed keys' values before and after), written before the new configuration is stored; if it cannot be written the answer is `503 audit_unavailable` and nothing changes. Requires `Idempotency-Key`: the same key and body are answered with the stored `200`, and the same key with another body is `409 idempotency_key_reuse`. Only the `200` is stored under the key; a `422` or `503` is evaluated afresh on a retry. A client whose outcome is unknown re-reads the configuration with `getDetectorConfig` before deciding to send again, and never restores an earlier configuration blind.
+     */
     put: operations["setDetectorConfig"];
     post?: never;
     delete?: never;
@@ -15269,6 +15272,8 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -15296,7 +15301,10 @@ export interface operations {
           "application/json": components["schemas"]["DetectorConfig"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
