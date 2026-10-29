@@ -967,6 +967,159 @@ def test_generic_invoke_on_bridge_fails_sr111(tree: Tree) -> None:
     assert srs(vs) == {"SR-111"}
 
 
+# esbuild's shape of the real preload: the bridge is not the bundle's first frozen object, and a
+# member with a block body ends in `});`.
+BUNDLE_PRELOAD = GOOD_PRELOAD.replace(
+    "var cv =", "var LIMITS = Object.freeze({ message: 4096 });\nvar cv ="
+).replace(
+    '  onGpuCrashed: (listener) => subscribeAllowed("cv:gpu:crashed", (_e, p) => listener(p)),\n',
+    '  onGpuCrashed: (listener) => {\n    return subscribeAllowed("cv:gpu:crashed", (_e, p) => {\n'
+    "      listener(p);\n    });\n  },\n",
+)
+GENERIC = "invoke: (c, ...a) => invokeAllowed(c, ...a),"
+
+
+def with_members(*members: str) -> str:
+    """GOOD_PRELOAD with `members` at the top of the cv bridge."""
+    lines = "".join(f"  {m}\n" for m in members)
+    return GOOD_PRELOAD.replace("  gpuInfo:", lines + "  gpuInfo:")
+
+
+def test_a_bundle_shaped_preload_is_clean(tree: Tree) -> None:
+    assert BUNDLE_PRELOAD.count("Object.freeze") == 2
+    assert "    });\n  },\n});\n" in BUNDLE_PRELOAD
+    tree.files["desktop/preload/index.js"] = BUNDLE_PRELOAD
+    assert tree.violations() == []
+
+
+def test_the_key_ban_examines_the_cv_bridge_sr111(tree: Tree) -> None:
+    tree.files["desktop/preload/index.js"] = BUNDLE_PRELOAD.replace(
+        "  },\n});\n", "  },\n  invoke: (c, ...a) => invokeAllowed(c, ...a),\n});\n"
+    )
+    vs = tree.violations()
+    assert srs(vs) == {"SR-111"} and "'invoke'" in vs[0].message
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        'brace: () => "}",',
+        'quote: () => "it\'s",',
+        'escape: () => "a \\" b",',
+        "tpl: (x) => `{ ${x}, `,",
+        "list: () => [1, 2],",
+    ],
+    ids=["brace", "quote", "escaped-quote", "template", "array"],
+)
+def test_a_generic_key_after_any_member_is_still_reported_sr111(
+    tree: Tree, member: str
+) -> None:
+    tree.files["desktop/preload/index.js"] = with_members(member, GENERIC)
+    vs = tree.violations()
+    assert [v.message for v in vs] == ["bridge exposes generic key 'invoke'"]
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("var cv = Object.freeze(", "var cv = ("),
+        ('exposeInMainWorld("cv", cv)', 'exposeInMainWorld("cv", api)'),
+        ('exposeInMainWorld("cv", cv)', 'exposeInMainWorld("cv", Object.freeze({}))'),
+    ],
+    ids=["not-frozen", "another-binding", "inline-literal"],
+)
+def test_the_exposed_bridge_must_be_a_frozen_literal_sr111(
+    tree: Tree, old: str, new: str
+) -> None:
+    tree.files["desktop/preload/index.js"] = GOOD_PRELOAD.replace(old, new)
+    vs = tree.violations()
+    shape = "bridge must be bound as var|let|const <name> = Object.freeze({"
+    assert srs(vs) == {"SR-111"} and shape in vs[0].message
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "cv = {};",
+        "var cv = Object.freeze({});",
+        "var { cv } = globalThis;",
+        "function wrap(cv) { return cv; }",
+    ],
+    ids=["reassigned", "declared-twice", "destructured", "a-parameter"],
+)
+def test_a_second_binding_of_the_bridge_name_fails_sr111(
+    tree: Tree, binding: str
+) -> None:
+    expose = 'contextBridge.exposeInMainWorld("cv", cv);'
+    tree.files["desktop/preload/index.js"] = GOOD_PRELOAD.replace(
+        expose, f"{binding}\n{expose}"
+    )
+    vs = tree.violations()
+    assert srs(vs) == {"SR-111"} and "outside its frozen literal" in vs[0].message
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "invokeAllowed,",
+        'ping() { return invokeAllowed("cv:gpu:info"); },',
+        '["ping"]: () => 1,',
+        '"ping": () => 1,',
+        "...extra,",
+    ],
+    ids=["shorthand", "method", "computed", "quoted", "spread"],
+)
+def test_a_bridge_member_not_written_as_name_value_fails_sr111(
+    tree: Tree, member: str
+) -> None:
+    tree.files["desktop/preload/index.js"] = with_members(member)
+    vs = tree.violations()
+    assert srs(vs) == {"SR-111"} and "name: value" in vs[0].message
+
+
+@pytest.mark.parametrize(
+    "preload",
+    [
+        with_members("pat: (s) => /}/.test(s),"),
+        with_members("pat: (s) => /\\(/.test(s),"),
+        with_members("pat: (s) => /\\(]/.test(s),"),
+        with_members("tpl: (x) => `${`}`}`,"),
+        GOOD_PRELOAD.replace("\n});\ncontextBridge", "\ncontextBridge"),
+    ],
+    ids=["regex-brace", "regex-paren", "regex-mismatch", "nested-template", "unclosed"],
+)
+def test_a_bridge_whose_brackets_do_not_balance_fails_closed_sr111(
+    tree: Tree, preload: str
+) -> None:
+    tree.files["desktop/preload/index.js"] = preload
+    vs = tree.violations()
+    assert srs(vs) == {"SR-111"} and "brackets do not balance" in vs[0].message
+
+
+def test_a_line_separator_ends_a_line_comment_sr111(tree: Tree) -> None:
+    tree.files["desktop/preload/index.js"] = with_members("// a note\u2028" + GENERIC)
+    vs = tree.violations()
+    assert [v.message for v in vs] == ["bridge exposes generic key 'invoke'"]
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        '// invoke: not exposed, and ipcRenderer.send("cv:shell:run") is not used',
+        'hint: () => "Retry, or restart the app.",',
+        "meta: () => ({ on: true, send: false }),",
+        "pick: (x, on) => (x ? on : null),",
+        "other: () => globalThis.cv,",
+    ],
+    ids=["a-comment", "a-string", "a-nested-key", "a-ternary", "a-property-named-cv"],
+)
+def test_comments_strings_and_nested_keys_are_not_bridge_members(
+    tree: Tree, member: str
+) -> None:
+    tree.files["desktop/preload/index.js"] = with_members(member)
+    assert tree.violations() == []
+
+
 def test_channel_missing_from_allowlist_table_fails_sr111(tree: Tree) -> None:
     tree.files["desktop/preload/index.js"] = GOOD_PRELOAD.replace(
         'gpuInfo: () => invokeAllowed("cv:gpu:info"),',
@@ -1012,9 +1165,15 @@ GUARD = "  if (!isChannelAllowed(channel, ALLOWED_IPC_EVENTS)) throw new Error(`
 SIBLING = "function sibling(channel) {\n  return isChannelAllowed(channel, ALLOWED_IPC_EVENTS);\n}\n"
 
 
-@pytest.mark.parametrize("sibling", ["", SIBLING], ids=["no-guard", "in-a-sibling"])
-def test_a_helper_without_its_own_guard_fails_sr111(tree: Tree, sibling: str) -> None:
-    tree.files["desktop/preload/index.js"] = GOOD_PRELOAD.replace(GUARD, "").replace(
+@pytest.mark.parametrize(
+    ("guard", "sibling"),
+    [("", ""), ("", SIBLING), ("  // " + GUARD.lstrip(), "")],
+    ids=["no-guard", "in-a-sibling", "in-a-comment"],
+)
+def test_a_helper_without_its_own_guard_fails_sr111(
+    tree: Tree, guard: str, sibling: str
+) -> None:
+    tree.files["desktop/preload/index.js"] = GOOD_PRELOAD.replace(GUARD, guard).replace(
         "function subscribeAllowed(", sibling + "function subscribeAllowed("
     )
     vs = tree.violations()
@@ -1029,6 +1188,30 @@ def test_a_channel_in_both_tables_fails_sr111(tree: Tree) -> None:
 
 
 @pytest.mark.parametrize(
+    "allow",
+    [
+        (
+            "export const ALLOWED_IPC_CHANNELS = [\n"
+            '  // not "cv:shell:run" ]\n'
+            '  "cv:gpu:info",\n'
+            "];\n"
+            'export const ALLOWED_IPC_EVENTS = [/* not "cv:gpu:info" ] */ "cv:gpu:crashed"];\n'
+        ),
+        (
+            'export const ALLOWED_IPC_CHANNELS = ["cv:gpu:info"];\n'
+            'const NOTE = "a // b"; export const ALLOWED_IPC_EVENTS = ["cv:gpu:crashed"];\n'
+        ),
+    ],
+    ids=["a-comment-in-each-table", "a-slash-pair-in-a-string"],
+)
+def test_comments_do_not_change_a_channel_table_sr111(tree: Tree, allow: str) -> None:
+    # Main handles exactly the invoke table and sends exactly the event table, so a member that
+    # a comment (or a `//` taken for one) added to either table, or cut from it, fails the tree.
+    tree.files["desktop/preload/allowList.js"] = allow
+    assert tree.violations() == []
+
+
+@pytest.mark.parametrize(
     "call",
     [
         'ipcRenderer.once("cv:gpu:crashed", f)',
@@ -1037,6 +1220,13 @@ def test_a_channel_in_both_tables_fails_sr111(tree: Tree) -> None:
         'ipcRenderer.postMessage("cv:gpu:info", 1)',
         'ipcRenderer.on.call(ipcRenderer, "cv:gpu:crashed", f)',
         'ipcRenderer.invoke("cv:gpu:crashed")',
+        "ipcRenderer.invoke.bind(ipcRenderer)",
+        "const i = ipcRenderer.invoke",
+        "const { invoke } = ipcRenderer",
+        "const r = ipcRenderer",
+        'ipcRenderer?.invoke("cv:gpu:info")',
+        'ipcRenderer["invoke"]("cv:gpu:info")',
+        'const { ipcRenderer: ipc } = require("electron")',
         'ipcRenderer.addListener("cv:gpu:crashed", f)',
         'ipcRenderer.prependListener("cv:gpu:crashed", f)',
         'ipcRenderer.prependOnceListener("cv:gpu:crashed", f)',
