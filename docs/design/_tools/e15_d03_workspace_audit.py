@@ -7,7 +7,7 @@ Standalone, offline, stdlib only; it executes no repo code. It reads the token J
 
 1. **Cites.** Every `NN`:line, `D02`:line, `E10-D03`:line, `CONSTITUTION.md`:line and
    `E15-D02.md:N` "fragment" cite in the spec and the hand-off is read at the pinned base
-   (`git show 76edb9470f:<path>`): OK when the line exists (and holds the fragment, if quoted);
+   (`git show 0a1151f325:<path>`): OK when the line exists (and holds the fragment, if quoted);
    WARN when the same line reads differently at `origin/main` (drifted since the base); FAIL when
    the file or line is gone at the base, the line is blank, or a fragment is absent or ambiguous.
    `T:`n (the issue body of #319) is not in the repo and is counted, not checked.
@@ -79,7 +79,7 @@ DESIGN = ROOT / "docs" / "design"
 D02 = DESIGN / "E15" / "E15-D02.md"
 SPEC = DESIGN / "E15" / "E15-D03.md"
 HANDOFF = DESIGN / "E15" / "E15-D03-handoff.md"
-BASE = "76edb9470f"  # every cite was read here (the spec's Key)
+BASE = "0a1151f325"  # every cite was read here (the spec's Key; re-pinned from 76edb9470f)
 HEAD = "origin/main"  # drift is reported against this ref (WARN, never FAIL)
 MULTI = re.MULTILINE
 PRIM, DARK, LIGHT, HC = (
