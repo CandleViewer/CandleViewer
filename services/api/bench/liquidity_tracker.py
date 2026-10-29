@@ -23,6 +23,7 @@ import uuid
 from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -78,7 +79,7 @@ def measure(samples: int, seed: int = 7) -> list[float]:
     return out
 
 
-def _print(i: int, ts: int, tick: int, side: str) -> TradeEvent:
+def _print(i: int, ts: int, tick: int, side: Literal["buy", "sell"]) -> TradeEvent:
     return TradeEvent(
         event_id=EventId(uuid.UUID(int=i + 1)),
         ts_event=ts,
@@ -92,7 +93,7 @@ def _print(i: int, ts: int, tick: int, side: str) -> TradeEvent:
         is_block_trade=False,
         price_ticks=tick,
         notional=Decimal(1),
-        seq=i,  # type: ignore[arg-type]
+        seq=i,
     )
 
 
