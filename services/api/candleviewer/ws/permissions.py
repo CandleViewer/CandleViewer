@@ -62,12 +62,14 @@ from candleviewer.orderflow.indicators.engine import Requested, resolve_instance
 from candleviewer.ws.errors import WsError, build_ws_error, topic_error
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import (
+    DEEP_BOOK_MIN_DEPTH,
     DENIAL_AUDIT_WINDOW_S,
     DENIAL_AUDITS_PER_WINDOW,
     FANOUT_AUDIT_MAX_FAILURES,
     FANOUT_AUDIT_TIMEOUT_S,
     FANOUT_SEND_TIMEOUT_S,
     MAX_BARS_SUBSCRIPTIONS,
+    MAX_DEEP_BOOK_SUBSCRIPTIONS,
     MAX_DENIALS_LISTED,
     MAX_SUBSCRIPTIONS,
     MAX_SYMBOLS_PER_CONNECTION,
@@ -295,6 +297,10 @@ class SubscriptionServices:
     #: §6.1: the deployment runs with `bars_enabled` off, so `bars.*` is refused `unknown_topic`.
     #: Set by the app from settings (a bare `bars=None` only means "no lease to take").
     bars_off: bool = False
+    #: E21-T01 (§6.1, §16.2): the deep-book cap (`ws.max_deep_book_subs`) and whether depth 500
+    #: is offered (`heatmap_depth_500`, C-4.13, off: `book.*.500` is `invalid_topic_format`).
+    max_deep_book_subs: int = MAX_DEEP_BOOK_SUBSCRIPTIONS
+    depth_500: bool = False
     #: E17-T08: the `machines.{entity}.state` entries `sub` is authorised against (§6.4); `None`
     #: means no entity has an entry.
     machines: EntityScopes | None = None
@@ -895,6 +901,10 @@ class ConnectionAuthz:
             if refused is not None:
                 self._drop(sub)
                 return refused
+        # E21-T01: the flag-off depth 500 and the deep-book cap, before anything is held.
+        elif family == "book" and (refused := self._book_refusal(sub)) is not None:
+            self._drop(sub)
+            return refused
         # The topic has a `bar_type` segment (`bars`, `footprint`): its spec is bounded and, where a
         # builder serves it, leased. A series that only an option names (`metrics`) is not seen.
         elif sub.topic.bar_type is not None:
@@ -986,6 +996,32 @@ class ConnectionAuthz:
                 sub.ch,
                 "subscription_limit",
                 f"At most {MAX_BARS_SUBSCRIPTIONS} bars subscriptions per connection.",
+            )
+        return None
+
+    def _book_refusal(self, sub: Subscription) -> dict[str, Any] | None:
+        """E21-T01 (§6.1): depth 500 is `invalid_topic_format` while `heatmap_depth_500` is off,
+        never served at another depth; past `max_deep_book_subs` distinct deep (depth >= 200)
+        `book` subscriptions on the connection, each (symbol, depth) live and in each replay
+        session counted apart, `subscription_limit`."""
+        depth, symbol = sub.topic.depth or 0, sub.topic.symbol
+        if depth >= 500 and not self.services.depth_500:
+            return _fail(sub.ch, "invalid_topic_format", "Book depth 500 is not offered.")
+        if depth < DEEP_BOOK_MIN_DEPTH:
+            return None
+        held = {
+            (s.topic.symbol, s.topic.depth, s.replay_session_id)
+            for s in self.by_id.values()
+            if s is not sub
+            and s.topic.family.family == "book"
+            and (s.topic.depth or 0) >= DEEP_BOOK_MIN_DEPTH
+        }
+        cap = self.services.max_deep_book_subs
+        if (symbol, depth, sub.replay_session_id) not in held and len(held) >= cap:
+            return _fail(
+                sub.ch,
+                "subscription_limit",
+                f"At most {cap} deep book subscriptions (depth 200 or more) per connection.",
             )
         return None
 

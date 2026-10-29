@@ -14,7 +14,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 
 from candleviewer.book.errors import BookError, BookInvariantError
-from candleviewer.book.models import BookPhase, BookStatus
+from candleviewer.book.models import BookDesyncEvent, BookPhase, BookStatus
 from candleviewer.book.state import BookState
 from candleviewer.domain.events import uuid7
 from candleviewer.domain.primitives import EventId
@@ -25,7 +25,8 @@ BUFFER_BOUND = 1_000
 #: Security note: >5 resyncs in 60 s trips the breaker -> `degraded`.
 BREAKER_MAX, BREAKER_WINDOW_US = 5, 60_000_000
 
-Publish = Callable[[BookSnapshot | BookDelta | BookStatus], Awaitable[None]]
+Published = BookSnapshot | BookDelta | BookStatus | BookDesyncEvent
+Publish = Callable[[Published], Awaitable[None]]
 
 
 #: Receives lifecycle edges (`SUBSCRIBE`, `SNAPSHOT`, `SEQUENCE_GAP`,
@@ -42,8 +43,12 @@ class BookEngine:
         publish: Publish,
         resubscribe: Callable[[], Awaitable[None]],
         now_us: Callable[[], int],
+        incidents: bool = False,
     ) -> None:
+        """`incidents`: publish each resync incident's `BookDesyncEvent` (E21-T01: the live
+        book stream does; a replay book replays a recording and announces none)."""
         self.symbol, self.depth = symbol, depth
+        self.incidents = incidents
         self.phase = BookPhase.INIT
         self.book: BookState | None = None
         self.muted = False  # tier warm-up: build to LIVE without publishing
@@ -81,7 +86,7 @@ class BookEngine:
                     self._buffer.append(ev)
             return
         if ev.prev_update_id != self.last_u:
-            await self._desync("sequence_gap")
+            await self._desync("sequence_gap", got=ev.update_id)
             return
         try:
             self.book.apply(ev.bids, ev.asks)
@@ -96,8 +101,10 @@ class BookEngine:
             await self._publish(ev)
 
     async def _on_snapshot(self, ev: BookSnapshot) -> None:
-        if self.phase is BookPhase.LIVE:  # server reset: drop and re-snapshot
-            await self._desync("server_reset")
+        if self.phase is BookPhase.LIVE:
+            if self._unchanged(ev):  # the depth-1 keepalive resend (24 §2.2): no book event
+                return
+            await self._desync("server_reset", got=ev.update_id)  # drop and re-snapshot
             return
         if self.phase is not BookPhase.SNAPSHOT_PENDING:
             return
@@ -106,17 +113,35 @@ class BookEngine:
         if self.book is not None:  # go_live reached LIVE
             await self._edge("SNAPSHOT")
 
+    def _unchanged(self, ev: BookSnapshot) -> bool:
+        """E21-T01: a snapshot at the live `u` holding exactly the full live book. It fires only for
+        the depth-1 keepalive on a depth-1 stream, which the venue re-sends unchanged every 3 s; on
+        the 200 and 500 tiers a depth-1 frame never matches the full book. A changed snapshot (or a
+        new `u`) stays a reset."""
+        book = self.book
+        if book is None or ev.update_id != self.last_u:
+            return False
+        bids, asks = book.as_dicts()
+        return bids == {lv.price_ticks: lv.qty for lv in ev.bids} and asks == {
+            lv.price_ticks: lv.qty for lv in ev.asks
+        }
+
     async def invalidate(self, reason: str) -> None:
         """External discontinuity (frame loss / reconnect): drop and resync."""
         if self.phase is BookPhase.LIVE:
             await self._desync(reason)
 
-    async def _desync(self, reason: str) -> None:
+    async def _desync(
+        self, reason: str, *, got: int | None = None, prev: int | None = None
+    ) -> None:
+        """One resync incident: `prev` is the last `u` applied (the engine's, unless the replay
+        of a buffer had applied more) and `got` the `u` that broke the sequence, if one did."""
         was_live = self.phase is BookPhase.LIVE
         self.phase = BookPhase.DESYNCED  # enforce first (C-2.21)
         self.book = None
         self._reason = reason
         await self.go_desynced()
+        await self._incident(reason, self.last_u if prev is None else prev, got)
         await self.request_snapshot()
         # The chart knows LIVE -> desynced and (OC-08, #2204) a full pending
         # buffer -> desynced; any other failed (re)snapshot stays in its
@@ -170,7 +195,7 @@ class BookEngine:
             if d.update_id <= last_u:
                 continue
             if d.prev_update_id != last_u:
-                await self._desync("sequence_gap")
+                await self._desync("sequence_gap", got=d.update_id, prev=last_u)
                 return
             try:
                 book.apply(d.bids, d.asks)
@@ -238,6 +263,26 @@ class BookEngine:
         self.degraded = len(self._resync_times) > BREAKER_MAX
         if not self.muted:
             await self._status(self._reason)
+
+    async def _incident(self, reason: str, prev: int, got: int | None) -> None:
+        """24 §2.8: the `BookDesyncEvent` of this incident (not while muted, as the status)."""
+        if self.muted or not self.incidents:
+            return
+        now = self._now()
+        await self._publish(
+            BookDesyncEvent(
+                event_id=EventId(uuid7(now // 1000)),
+                ts_event=now,
+                ts_ingest=now,
+                source="live",
+                symbol=self.symbol,
+                depth=self.depth,
+                prev_update_id=prev,
+                got_update_id=got,
+                resync_count=self.resync_count,  # lifetime, as `BookStatus` carries it
+                reason=reason,
+            )
+        )
 
     async def _status(self, reason: str) -> None:
         now = self._now()

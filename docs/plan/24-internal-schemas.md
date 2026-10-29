@@ -422,8 +422,8 @@ class BestQuoteEvent(MarketEvent):         # E21-T01: the top of the live book, 
 class BookDesyncEvent(MarketEvent):        # E21-T01: one per resync incident
     depth: int                             # the active tier's depth, 200 | 500 (20 §3.2)
     prev_update_id: int                    # last u applied
-    got_update_id: int | None              # the u that broke the sequence; None when the cause is not a sequence (crossed, negative qty, reconnect)
-    resync_count: int                      # resyncs in the breaker's current 60 s window
+    got_update_id: int | None              # the u that broke the sequence; None when the cause is not a sequence break (crossed, negative qty, reconnect), or the resetting snapshot's u on a server reset
+    resync_count: int                      # the engine's lifetime resyncs, as BookStatus.resync_count
     reason: str                            # a resync reason of 20 §3.2 (`sequence_gap`, `rejected_frame`, ...)
 ```
 
@@ -471,7 +471,8 @@ the table's family→stream mapping is otherwise unchanged. Implemented today: `
 (snapshot + delta + `BookStatus`), `ticker`, `gap` (trade-tape `GapEvent`), feed health
 (`{env}.health.feed`), and instrument metadata changes on `{env}.instruments.{symbol}.updated`
 (`InstrumentUpdatedEvent`, published by the catalogue refresh since #1633; listed by E08-Q06,
-#283).
+#283). E21-T01 (#604) adds `BestQuoteEvent` on `{env}.md.{symbol}.quote` and `BookDesyncEvent` on
+`{env}.health.{symbol}.book_desync`, both from the book stream.
 
 **Envelope of the E08 control events (#3876, drift D1).** `BookStatus`, `GapEvent` and
 `FeedHealthEvent` carry the §1.4 envelope (C6) with `schema_version = 1` and `source = "live"`.
@@ -5254,6 +5255,8 @@ class ServerConfig(BaseModel):
     ws_queue_bytes: int = 8_388_608       # 23 §8.4 budget; lower only, floor 4 194 304
     ws_queue_frames: int = 2_000          # 23 §8.4 budget; lower only, floor 256
     ws_classify_interval_ms: int = 1_000  # 23 §8.3; 500..10 000
+    ws_max_deep_book_subs: int = 4        # 23 §16.2 deep-book cap (E21-T01); lower only, 1..4
+    heatmap_depth_500: bool = False       # C-4.13 flag (E21-T01): book.*.500 offered, tier 500
     request_timeout_s: int = 30
     cors_origins: tuple[str, ...] = ()
     trusted_proxies: tuple[str, ...] = ()
@@ -5494,6 +5497,7 @@ The owner/admin screens live **inside the web app** (no separate admin applicati
 |                             | WS max connections                                                                           | `.ws_max_connections`                                                                       | ✔                | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
 |                             | WS outbound queue bytes and frames (lower only, floored)                                     | `.ws_queue_bytes`, `.ws_queue_frames`                                                       | ✘ (boot)         | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
 |                             | WS classify interval (500..10 000 ms), backpressure flag                                     | `.ws_classify_interval_ms`, `.ws_backpressure_enabled`                                      | ✘ (boot)         | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
+|                             | WS deep-book cap (1..4, lower only), depth-500 flag                                          | `.ws_max_deep_book_subs`, `.heatmap_depth_500`                                              | ✘ (boot)         | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
 |                             | Request timeout, CORS origins, trusted proxies                                               | `.request_timeout_s`, `.cors_origins`, `.trusted_proxies`                                   | ✘ (boot)         | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
 |                             | Log level / format                                                                           | `ObservabilityConfig.log_level`, `.log_format`                                              | ✔                | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
 |                             | Metrics & tracing toggles, OTLP endpoint, slow-query threshold                               | `.metrics_enabled`, `.metrics_port`, `.tracing_enabled`, `.otlp_endpoint`, `.slow_query_ms` | ✔ (except ports) | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |

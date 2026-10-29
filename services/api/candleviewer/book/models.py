@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from enum import StrEnum
 
 from pydantic import ConfigDict
 
-from candleviewer.domain.events import DomainEvent
+from candleviewer.domain.events import DomainEvent, MarketEvent
+from candleviewer.domain.primitives import Px, Qty
 
 
 class BookPhase(StrEnum):
@@ -35,3 +37,29 @@ class BookStatus(DomainEvent):
     last_good_ts_us: int | None
     resync_count: int
     degraded: bool = False
+
+
+class BestQuoteEvent(MarketEvent):
+    """24 §2.8 (E21-T01): the top of the live tier, published on `{env}.md.{symbol}.quote` only
+    when a field changes (`book/quote.py`), so an unchanged book publishes none."""
+
+    bid: Px
+    bid_qty: Qty
+    ask: Px
+    ask_qty: Qty
+    spread_ticks: int
+    spread_bps: Decimal
+    mid: Px
+
+
+class BookDesyncEvent(MarketEvent):
+    """24 §2.8 (E21-T01): one per resync incident, on `{env}.health.{symbol}.book_desync`.
+    `got_update_id` is the `u` that broke the sequence: `None` when the cause is not a sequence
+    break, or the resetting snapshot's `u` on a server reset. `resync_count` is the engine's
+    lifetime count, as `BookStatus` carries it."""
+
+    depth: int
+    prev_update_id: int
+    got_update_id: int | None
+    resync_count: int
+    reason: str

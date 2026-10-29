@@ -25,7 +25,7 @@ RESYNC_SLO_S = 3.0
 
 
 def _resyncs(reason: str) -> float:
-    return metric(ingest_book_resyncs_total, symbol="BTCUSDT", reason=reason)
+    return metric(ingest_book_resyncs_total, symbol="BTCUSDT", reason=reason, depth="200")
 
 
 async def _live(rig: Rig, feed: Feeder) -> None:

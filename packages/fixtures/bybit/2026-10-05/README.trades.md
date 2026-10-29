@@ -11,3 +11,7 @@ overlap live; 0004-0006 fill the gap).
 tick 0.1; no credentials. NOT a live capture: replace with a recorder capture once E16 lands. Covers
 ~3 h (5 400 frames @ 2 s): snapshot, deltas incl. zero-size deletes, one deliberate `u` hole
 (frame 2700, +5) and one server-reset snapshot (`u == 1`, frame 4000).
+Depth-1 keepalive (E21-T01, #604): no `orderbook.1` capture exists, so
+`tests/unit/book/test_book_keepalive.py` derives one in memory from this file's frame 0 (the best
+bid and best ask, topic `orderbook.1.BTCUSDT`, same `u`, `seq` and times) and re-sends it 3 s
+later as Bybit's unchanged keepalive. Nothing is written here; a live capture replaces it.

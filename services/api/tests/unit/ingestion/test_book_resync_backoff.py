@@ -52,7 +52,9 @@ class Rig:
 
 
 def _backoffs() -> float:
-    return ingest_book_resyncs_total.labels(symbol="BTCUSDT", reason="backoff")._value.get()  # type: ignore[attr-defined,no-any-return]
+    return ingest_book_resyncs_total.labels(
+        symbol="BTCUSDT", reason="backoff", depth="200"
+    )._value.get()  # type: ignore[attr-defined,no-any-return]
 
 
 async def test_one_bad_frame_resyncs_immediately() -> None:

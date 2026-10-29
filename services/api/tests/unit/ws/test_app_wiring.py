@@ -26,7 +26,7 @@ from candleviewer.bars.builder_set import BarBuilderSet
 from candleviewer.bars.emit import WriterSink
 from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.series_store import SeriesStore
-from candleviewer.book.snapshot_source import BookSnapshotSource
+from candleviewer.book.ws_topic import BookTopic
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.orderflow.indicators.engine import IndicatorEngine
 from candleviewer.settings import Environment, Settings
@@ -161,7 +161,7 @@ def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_sourc
     assert source._stale("BTCUSDT", "h") is False
     monkeypatch.setattr(svc.bars._leases, "quarantined", lambda key: key == ("BTCUSDT", "h"))
     assert source._stale("BTCUSDT", "h") is True
-    assert isinstance(svc.snapshots._sources["book"], BookSnapshotSource)  # #2196's, kept
+    assert isinstance(svc.snapshots._sources["book"], BookTopic)  # #604's, over #2196's source
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -322,11 +322,11 @@ def test_create_app_reads_both_registry_spans_from_the_access_token_lifetime(
 
 
 def test_book_snapshots_come_from_the_book_module(world: tuple[TestClient, _Kill]) -> None:
-    """#2196: `book` is the book module's adapter, no longer a pending stub."""
+    """#2196, #604: `book` is the book module's adapter (its WS topic), no longer a pending stub."""
     client, _ = world
     router = client.app.state.ws_registry.services.snapshots  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
     assert "book" not in PENDING_ADAPTERS
-    assert isinstance(router._sources["book"], BookSnapshotSource)
+    assert isinstance(router._sources["book"], BookTopic)
 
 
 @pytest.mark.parametrize("ch", ["heatmap.BTCUSDT", "book.BTCUSDT.50"])  # a stub; no live book

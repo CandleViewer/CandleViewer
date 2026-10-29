@@ -60,6 +60,8 @@ ALLOWED_LABELS: Final[frozenset[str]] = frozenset(
         # `MODEL_LABELS` of its trading parser, 13, and the `PUSH_MODEL_LABELS` of its private
         # push parser, G-8b #3963); never a field name or a value.
         "model",
+        # E21-T01: a book's depth, the closed set 1 / 50 / 200 / 500 (a tier or a topic depth).
+        "depth",
     }
 )
 
@@ -134,8 +136,30 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
         "table",
     ),
     # E08-S05 book health (E08-T06: resync rate + live state for the dashboard/alerts)
-    _c("ingest_book_resyncs_total", "Book resyncs (left LIVE), by reason.", "symbol", "reason"),
+    _c(
+        "ingest_book_resyncs_total",
+        "Book resyncs (left LIVE), by reason and active tier depth.",
+        "symbol",
+        "reason",
+        "depth",
+    ),
     _g("ingest_book_live", "1 while the symbol's book is LIVE, else 0.", "symbol"),
+    # E21-T01 (BQ-6, 20 §12.1): the book engine and its WS publisher, in milliseconds.
+    _h("book_apply_latency_ms", "A book delta frame's receipt to its apply, ms.", "symbol"),
+    _h(
+        "book_publish_latency_ms",
+        "A book change's arrival at the WS publisher to the publish of its window, ms, including "
+        "its hold in the depth's conflation window.",
+        "symbol",
+        "depth",
+    ),
+    _g("book_subscriptions_active", "Live book WS subscriptions, by topic depth.", "depth"),
+    _c("book_crossed_total", "Crossed books detected (each a resync, never clamped).", "symbol"),
+    _c(
+        "ingest_book_tier_warmup_abandoned_total",
+        "Warming book tiers dropped past their warm-up deadline; each re-warm then backs off.",
+        "symbol",
+    ),
     # E08-T04 connection (E08-T06: dashboard + silent-death meta-alert)
     _g("ingest_ws_up", "1 while the public socket is open, else 0.", "socket"),
     _g("ingest_enabled", "1 when the ingestion pipeline is wired in this process."),
@@ -362,10 +386,16 @@ def _gauge(name: str) -> Gauge:
     return Gauge(name, spec.help, list(spec.labels))
 
 
+#: E21-T01: the edges of the `_ms` histograms, around budget #6's 20 ms and the 100 ms window.
+MS_BUCKETS: Final = (0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 50.0, 100.0, 150.0, 250.0, 1000.0)
+
+
 def _histogram(name: str) -> Histogram:
     spec = SPEC_BY_NAME[name]
     if spec.kind != "histogram" or spec.owner != "ingestion":  # pragma: no cover
         raise ValueError(f"{name}: not an ingestion-owned histogram")
+    if name.endswith("_ms"):
+        return Histogram(name, spec.help, list(spec.labels), buckets=MS_BUCKETS)
     return Histogram(name, spec.help, list(spec.labels))
 
 
@@ -393,6 +423,21 @@ book_writes_dropped_total = _counter("book_writes_dropped_total")
 write_behind_lost_runs_truncated_total = _counter("write_behind_lost_runs_truncated_total")
 ingest_book_resyncs_total = _counter("ingest_book_resyncs_total")
 ingest_book_live = _gauge("ingest_book_live")
+book_apply_latency_ms = _histogram("book_apply_latency_ms")
+book_publish_latency_ms = _histogram("book_publish_latency_ms")
+book_subscriptions_active = _gauge("book_subscriptions_active")
+book_crossed_total = _counter("book_crossed_total")
+ingest_book_tier_warmup_abandoned_total = _counter("ingest_book_tier_warmup_abandoned_total")
+#: E21-T01: the book series the metric catalogue lists as exported (re-exported from here).
+BOOK_EXPORTED_NAMES: Final = frozenset(
+    {
+        "book_apply_latency_ms",
+        "book_publish_latency_ms",
+        "book_subscriptions_active",
+        "book_crossed_total",
+        "ingest_book_tier_warmup_abandoned_total",
+    }
+)
 ingest_ws_up = _gauge("ingest_ws_up")
 ingest_enabled = _gauge("ingest_enabled")
 kline_backfill_pages_total = _counter("kline_backfill_pages_total")

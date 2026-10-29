@@ -69,6 +69,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "cv_ws_coalesced_updates",
         "cv_ws_queue_frames",
         "replay_budget_waiters",  # a gauge of waiting lanes, named by the #2668 plan
+        "book_subscriptions_active",  # named by the E21-T01 ruling (BQ-6, #604)
     }
 )
 
@@ -207,7 +208,7 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["ws_messages_total"].labels("publicTrade").inc()
     r["topic_staleness_seconds"].labels("orderbook.50").set(0.5)
     r["ingest_queue_depth"].labels("normalize").set(3)
-    r["book_resync_total"].labels("BTCUSDT", "gap").inc()
+    r["book_resync_total"].labels("BTCUSDT", "gap", "200").inc()
     r["engine_process_seconds"].labels("footprint").observe(0.001)
     r["bybit_rate_remaining"].labels("order").set(10)
     r["ingest_stage_seconds"].labels("parse").observe(0.002)
@@ -449,6 +450,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.bars import reader, writer  # noqa: F401 - the write and read path (#1998)
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
+    from candleviewer.ingestion.metrics import BOOK_EXPORTED_NAMES as BOOK_NAMES
     from candleviewer.net.metrics import NET_EXPORTED_NAMES
     from candleviewer.observability.audit_query_metrics import EXPORTED_NAMES as AUDIT_NAMES
     from candleviewer.orderflow.indicators.metrics import EXPORTED_NAMES as INDICATOR_NAMES
@@ -474,6 +476,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     others |= LIFECYCLE_NAMES | LANE_NAMES
     others |= REPLAY_NAMES
     others |= INDICATOR_NAMES
+    others |= BOOK_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")

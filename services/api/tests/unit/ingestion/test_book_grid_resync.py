@@ -38,7 +38,9 @@ def _frame(raw: str, topic: str | None = None, **data: Any) -> str:
 
 
 def _grid_resyncs() -> float:
-    child = ingest_book_resyncs_total.labels(symbol=symbol_label(SYMBOL), reason="grid")
+    child = ingest_book_resyncs_total.labels(
+        symbol=symbol_label(SYMBOL), reason="grid", depth="200"
+    )
     return float(child._value.get())
 
 

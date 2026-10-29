@@ -27,9 +27,14 @@ BOUND_NS = 2_000_000
 #: Held by 199 subscriptions, the frame may cost at most this many times as much as held by 40.
 CONSTANT = 1.5
 SYMBOLS = [f"S{i:02d}USDT" for i in range(90)]
-#: The 40 symbols held by 40 subscriptions, and by 199 (four `book` depths on each, and `trades`).
+#: The 40 symbols held by 40 subscriptions, and by 199 (two `book` depths, `trades`,
+#: `liquidations` and `ticker`; no depth of 200 or more, which the deep-book cap would count).
 FEW = [f"trades.{s}" for s in SYMBOLS[:40]]
-MANY = [f"book.{s}.{d}" for d in (1, 50, 200, 500) for s in SYMBOLS[:40]] + FEW[:39]
+MANY = (
+    [f"book.{s}.{d}" for d in (1, 50) for s in SYMBOLS[:40]]
+    + FEW
+    + [f"{f}.{s}" for f in ("liquidations", "ticker") for s in SYMBOLS[:40]]
+)[:199]
 OVER = {"t": "sub", "id": "over", "p": {"topics": [f"trades.{s}" for s in SYMBOLS[40:]]}}
 
 
