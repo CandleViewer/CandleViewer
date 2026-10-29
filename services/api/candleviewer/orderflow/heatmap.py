@@ -58,7 +58,7 @@ import math
 import time
 from array import array
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_EVEN, Context, Decimal
 from typing import Any, Final, Protocol
@@ -88,6 +88,13 @@ HEATMAP_SNAPSHOT_MAX_COLUMNS: Final = 2000
 #: 23 §3.4: a kind-6 frame's header (24 B) and column prefix (24 B), and one row.
 COLUMN_FRAME_BYTES: Final = 48
 ROW_BYTES: Final = 16
+#: A column's §14.5 JSON is at most this plus `STRUCTURED_ROW_BYTES` a row: its keys, `t_ms`, the
+#: two prices (decimal strings of at most 32 characters, `topics.MAX_DECIMAL_TEXT`), `samples`,
+#: the off-window totals and `complete`; a row is two sizes, each at most 23 characters (the
+#: longest `repr` of a finite non-negative float) and a comma. G-03 counts a structured
+#: subscription's columns at it: its wire bytes (23 §6.1, §16.2).
+STRUCTURED_COLUMN_BYTES: Final = 320
+STRUCTURED_ROW_BYTES: Final = 48
 #: 23 §6.1: the option defaults (`time_bucket_ms`: the server fallback, §6.1.1).
 DEFAULT_BUCKET_MS: Final = 500
 DEFAULT_DEPTH: Final = 200
@@ -189,8 +196,13 @@ class HeatmapColumn:
 
     @property
     def wire_bytes(self) -> int:
-        """Its kind-6 frame's size (23 §6.1, G-03), whatever the encoding."""
+        """Its kind-6 frame's size (23 §6.1, G-03)."""
         return COLUMN_FRAME_BYTES + ROW_BYTES * self.rows
+
+    @property
+    def json_bytes(self) -> int:
+        """A bound on its §14.5 JSON's size (G-03 for a structured subscription)."""
+        return STRUCTURED_COLUMN_BYTES + STRUCTURED_ROW_BYTES * self.rows
 
 
 def native_count(start_ms: int, end_ms: int) -> int:
@@ -563,11 +575,16 @@ def snapshot_columns(
     bucket_ms: int,
     queue_bytes: int,
     queue_frames: int,
+    structured: bool = False,
 ) -> list[HeatmapColumn]:
     """G-03 (23 §6.1): the newest columns that fit `window_seconds` of buckets, the column cap,
-    half the queue's bytes and half its frames, oldest first. The walk stops at the first bound,
-    so no column is built that the frame would drop (HM-D02)."""
-    return _bounded(ring, lambda c: c.wire_bytes, window_seconds=window_seconds,
+    half the queue's bytes and half its frames, oldest first, each column at its wire bytes in
+    the subscription's encoding (kind 6, or a bound on its §14.5 JSON). The walk stops at the
+    first bound, so no column is built that the frame would drop (HM-D02)."""
+    size: Callable[[HeatmapColumn], int] = (
+        (lambda c: c.json_bytes) if structured else (lambda c: c.wire_bytes)
+    )
+    return _bounded(ring, size, window_seconds=window_seconds,
                     bucket_ms=bucket_ms, queue_bytes=queue_bytes,
                     queue_frames=queue_frames)  # fmt: skip
 
@@ -1028,9 +1045,20 @@ class HeatmapTopic:
         )
 
     def build(self, sub: HeatmapSub) -> Any | None:
+        """`build_steps` run to its end."""
+        steps = self.build_steps(sub)
+        while True:
+            try:
+                next(steps)
+            except StopIteration as done:
+                return done.value
+
+    def build_steps(self, sub: HeatmapSub) -> Generator[None, None, Any | None]:
         """The spec's columns that G-03 allows, a slice of cached entries; kind 6 beside them on
         a binary subscription when every one is complete and fits (23 §3.4, §14.5). None (the
-        subscription stays pending, then is flushed) while the spec is not ready."""
+        subscription stays pending, then is flushed) while the spec is not ready. It yields after
+        each §14.5 column it builds, so the gateway can spread a structured snapshot across loop
+        turns (`sequencing.TopicEmitter`, #605)."""
         held = self._held(sub)
         if held is None:
             return None  # a replay one, not leased, or waiting for the steps: it stays pending
@@ -1039,28 +1067,37 @@ class HeatmapTopic:
             state.waiting = True
             return None
         spec = state.spec
-        entries = _bounded(
-            state.ring,
-            lambda e: e.column.wire_bytes,
-            window_seconds=int(sub.effective.get("window_seconds", DEFAULT_WINDOW_S)),
-            bucket_ms=spec.time_bucket_ms,
-            queue_bytes=self._queue_bytes,
-            queue_frames=self._queue_frames,
-        )
+
+        def bounded(size: Callable[[_Entry], int]) -> list[_Entry]:
+            return _bounded(
+                state.ring,
+                size,
+                window_seconds=int(sub.effective.get("window_seconds", DEFAULT_WINDOW_S)),
+                bucket_ms=spec.time_bucket_ms,
+                queue_bytes=self._queue_bytes,
+                queue_frames=self._queue_frames,
+            )
+
+        binary = sub.effective.get("encoding") == "binary"
+        entries = bounded(lambda e: e.column.wire_bytes) if binary else []
         for entry in entries:
             self._fill(entry, steps)  # a no-op but after a steps change
         parts: tuple[Any, ...] = ()
-        if sub.effective.get("encoding") == "binary" and all(e.part is not None for e in entries):
+        if binary and all(e.part is not None for e in entries):
             parts = tuple(e.part for e in entries)
+        else:  # structured: G-03 counts each column at its JSON's bound (23 §6.1)
+            entries = bounded(lambda e: e.column.json_bytes)
         # A binary snapshot sends its parts only: its structured side carries what the gateway
         # reads of it (each column's bucket and that it is complete, §8.2), not 1 024 floats a
         # column it would never send. A structured one gets every §14.5 column.
         tick = steps[0]
-        columns = (
-            [{"t_ms": e.column.ts_ms, "complete": True} for e in entries]
-            if parts
-            else [wire_column(e.column, tick) for e in entries]
-        )
+        columns: list[dict[str, Any]] = []
+        if parts:
+            columns = [{"t_ms": e.column.ts_ms, "complete": True} for e in entries]
+        else:
+            for entry in entries:
+                columns.append(wire_column(entry.column, tick))
+                yield
         structured = {
             "symbol": spec.symbol, "time_bucket_ms": spec.time_bucket_ms,
             "price_grouping": spec.price_grouping, "depth": spec.depth, "columns": columns,

@@ -915,3 +915,38 @@ async def test_a_new_spec_closes_what_is_due_before_integrating_the_others() -> 
     w.hold(HeatmapSpec(SYM, time_bucket_ms=500), consumer="c2")
     [col] = ring(w, first)
     assert col.ts_ms == T0 and w.topic._symbols[SYM].specs[first].acc.t == T0 + 150
+
+
+async def test_a_structured_snapshot_counts_its_json_bytes_at_the_byte_bound() -> None:
+    """G-03 (23 §6.1, §16.2): a structured subscriber's columns are counted at their JSON's
+    bound, so the snapshot's wire bytes stay within half the queue's bytes; a binary one's at
+    48 + 16 x rows. The bound is tight: real columns use most of it."""
+    w = World()
+    await live(w)
+    spec = HeatmapSpec(SYM, time_bucket_ms=100)
+    sub = w.hold(spec)
+    state = w.topic._symbols[SYM].specs[spec]
+    sizes = [0.1234567891234567 * (i + 1) + 7e-9 for i in range(ROWS)]  # full float reprs
+    for i in range(2_000):
+        col = replace(_col(100 * i, ROWS), bid_sizes=array("d", sizes), ask_sizes=array("d", sizes))
+        state.ring.append(H._Entry(col))
+    sub.effective = {"encoding": "structured", "window_seconds": 900}
+    body = w.topic.build(sub)
+    assert isinstance(body, SnapshotBody)
+    columns = body.structured["columns"]
+    per = H.STRUCTURED_COLUMN_BYTES + H.STRUCTURED_ROW_BYTES * ROWS
+    assert len(columns) == (QUEUE_BYTES // 2) // per
+    text = json.dumps(columns, separators=(",", ":"))
+    assert len(text) <= QUEUE_BYTES // 2
+    assert all(len(json.dumps(c, separators=(",", ":"))) > 0.7 * per for c in columns)
+    sub.effective = {"encoding": "binary", "window_seconds": 900}
+    binary = w.topic.build(sub)
+    assert isinstance(binary, SnapshotBody)
+    assert len(binary.parts) == (QUEUE_BYTES // 2) // (48 + 16 * ROWS)
+
+
+def test_snapshot_columns_counts_a_structured_column_at_its_json_bound() -> None:
+    ring = _ring(2_000, rows=ROWS)
+    got = H.snapshot_columns(ring, window_seconds=900, bucket_ms=100, queue_bytes=QUEUE_BYTES,
+                             queue_frames=10**9, structured=True)  # fmt: skip
+    assert len(got) == (QUEUE_BYTES // 2) // ring[0].json_bytes
