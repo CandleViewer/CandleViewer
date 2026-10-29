@@ -441,9 +441,12 @@ class GatewayHub:
         self._live: set[_Connection] = set()
         #: The sockets between `accept` and their first `auth_ok` (`admit_unauthenticated`).
         self._unauthenticated: set[_Connection] = set()
-        #: #4924 (§8.5): each user's decode budget, kept while the user holds a live socket and
-        #: dropped with its last (`discard`): bounded by the live sockets.
+        #: #4924 (§8.5): each user's decode budget, kept while the user holds a live socket and,
+        #: after the last one, until it has refilled to its burst (`_idle`, pruned whenever the hub
+        #: touches the map): bounded by the live users plus those whose last socket closed within
+        #: the refill time (16 s), which the per-user connect rate bounds in turn.
         self._budgets: dict[uuid.UUID, DecodeBudget] = {}
+        self._idle: set[uuid.UUID] = set()
         self._empty = asyncio.Event()
         self._empty.set()
 
@@ -473,18 +476,30 @@ class GatewayHub:
         self._live.discard(conn)
         self._unauthenticated.discard(conn)
         user = conn.user_id
-        if user is not None and not any(c.user_id == user for c in self._live):
-            self._budgets.pop(user, None)  # the user's last socket: its budget goes with it
+        if user is not None and user in self._budgets:
+            if not any(c.user_id == user for c in self._live):
+                self._idle.add(user)  # the user's last socket: the budget waits to refill
+            self._prune(conn.clock())
         if not self._live:
             self._empty.set()
 
-    def decode_budget(self, user_id: uuid.UUID) -> DecodeBudget:
+    def decode_budget(self, user_id: uuid.UUID, now: float) -> DecodeBudget:
         """The decode budget every socket of `user_id` shares (§8.5, #4924), made at its first
-        `auth_ok` and kept until its last socket ends."""
+        `auth_ok`; a socket that authenticates while it is still refilling after the user's last
+        socket closed gets the same one, at its level."""
+        self._idle.discard(user_id)
+        self._prune(now)
         budget = self._budgets.get(user_id)
         if budget is None:
             budget = self._budgets[user_id] = DecodeBudget()
         return budget
+
+    def _prune(self, now: float) -> None:
+        """Drop the budgets of users with no live socket once they have refilled to the burst:
+        one made afresh would be the same."""
+        for user in [u for u in self._idle if self._budgets[u].full(now)]:
+            self._idle.discard(user)
+            del self._budgets[user]
 
     async def wait_empty(self) -> None:
         """Return once every connection handler has finished (callers bound it)."""
@@ -1813,7 +1828,7 @@ def make_ws_router(
                 revocation_hub.unregister(conn.session_id, conn.closer)
             conn.pending_session_id = None  # registered above, and now the socket's own
         conn.session_id, conn.user_id = session_id, user_id
-        conn.decode_budget = gateway_hub.decode_budget(user_id)  # #4924: shared by its sockets
+        conn.decode_budget = gateway_hub.decode_budget(user_id, conn.clock())  # #4924: shared
         conn.authz.session_id = session_id  # E17-R-16: its audit rows name the session
         # §9.6: a context's end closes the sockets bound to it, and only those (`close_context`).
         revocation_hub.bind(session_id, conn.closer, conn.view_as_context_id)

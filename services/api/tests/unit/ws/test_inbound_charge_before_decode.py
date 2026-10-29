@@ -27,6 +27,7 @@ from candleviewer.ws.codec import MAX_MSGPACK_VALUES, decode_client_frame
 from candleviewer.ws.gateway import _REFUSED, GatewayHub, _Connection
 from candleviewer.ws.lifecycle import (
     DECODE_BUDGET_BURST,
+    DECODE_BUDGET_PER_S,
     MAX_CONNECTIONS_PER_USER,
     PONG_BUDGET_BURST,
     RATE_PER_SECOND,
@@ -480,20 +481,69 @@ def test_decode_budget_burst_is_every_socket_re_subscribing_with_the_widest_subs
     assert DECODE_BUDGET_BURST == 2 * MAX_CONNECTIONS_PER_USER * subs * extra == 192
 
 
-def test_hub_shares_one_budget_per_user_and_drops_it_with_the_last_socket() -> None:
-    hub = GatewayHub()
-    a, b, early = _connection(JSON[0]), _connection(JSON[0]), _connection(JSON[0])
-    for conn in (a, b, early):
-        hub.add(conn)
-    user = uuid.uuid4()
-    for conn in (a, b):  # what the first `auth_ok` does
-        conn.user_id, conn.decode_budget = user, hub.decode_budget(user)
+class _Now:
+    """A monotonic clock the test moves."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _socket(hub: GatewayHub, user: uuid.UUID, clock: _Now) -> _Connection:
+    """A socket of `user` on `hub`, as its first `auth_ok` leaves it."""
+    conn = _connection(JSON[0])
+    conn.clock = clock
+    hub.add(conn)
+    conn.user_id, conn.decode_budget = user, hub.decode_budget(user, clock())
+    return conn
+
+
+def test_hub_shares_one_budget_per_user_and_keeps_it_until_it_has_refilled() -> None:
+    hub, clock, user = GatewayHub(), _Now(), uuid.uuid4()
+    early = _connection(JSON[0])
+    hub.add(early)
+    a, b = _socket(hub, user, clock), _socket(hub, user, clock)
     assert a.decode_budget is b.decode_budget and early.decode_budget is None
-    assert hub.decode_budget(uuid.uuid4()) is not a.decode_budget  # another user's is its own
+    assert hub.decode_budget(uuid.uuid4(), 0.0) is not a.decode_budget  # another user's is its own
     hub.discard(a)
-    assert hub.decode_budget(user) is b.decode_budget  # kept while a socket of the user lives
+    assert hub.decode_budget(user, 0.0) is b.decode_budget  # kept while a socket of the user lives
     hub.discard(b)
-    assert hub.decode_budget(user) is not b.decode_budget  # dropped with the last one
+    assert hub.decode_budget(user, 0.0) is not b.decode_budget  # full: dropped, a new one alike
+
+
+def test_hub_a_user_who_drains_the_budget_and_reconnects_at_once_is_still_refused() -> None:
+    hub, clock, user = GatewayHub(), _Now(), uuid.uuid4()
+    sockets = [_socket(hub, user, clock) for _ in range(MAX_CONNECTIONS_PER_USER)]
+    budget = sockets[0].decode_budget
+    assert budget is not None and budget.can(0.0, DECODE_BUDGET_BURST)
+    budget.take(DECODE_BUDGET_BURST)  # drained
+    for conn in sockets:
+        hub.discard(conn)  # every socket closed
+    again = _socket(hub, user, clock)  # and one back at once
+    assert again.decode_budget is budget and not budget.can(0.0, 1)
+    hub.discard(again)
+    clock.now = DECODE_BUDGET_BURST / DECODE_BUDGET_PER_S  # 16 s: refilled
+    later = _socket(hub, user, clock)
+    assert later.decode_budget is not None and later.decode_budget.can(clock(), DECODE_BUDGET_BURST)
+
+
+def test_hub_budgets_stay_bounded_under_connect_and_close_of_many_users() -> None:
+    """Each of 5 000 users connects, drains its budget and closes, a second apart: the map holds
+    the users still refilling (16 s worth) and never more."""
+    hub, clock = GatewayHub(), _Now()
+    refill_s = DECODE_BUDGET_BURST / DECODE_BUDGET_PER_S
+    for n in range(5_000):
+        clock.now = float(n)
+        conn = _socket(hub, uuid.uuid4(), clock)
+        assert conn.decode_budget is not None
+        conn.decode_budget.take(DECODE_BUDGET_BURST)
+        hub.discard(conn)
+        assert len(hub._budgets) <= refill_s + 1
+    clock.now += refill_s
+    hub.decode_budget(uuid.uuid4(), clock())  # a touch prunes the refilled ones
+    assert len(hub._budgets) == 1
 
 
 def test_charge_a_frame_past_one_token_is_refused_when_the_users_budget_is_spent() -> None:

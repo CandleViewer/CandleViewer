@@ -86,7 +86,9 @@ PONG_BUDGET_BURST: Final = 8
 #: first) draws 8 x 4 x 3 = 96; the burst holds two such reconnects, 192, so a second one within
 #: §9.2's backoff is not refused. `hello`, `auth` and every other frame of one token draw nothing.
 #: The refill sets the sustained rate of the costliest frames across all of a user's sockets:
-#: 12 a second is three frames at the value bound a second, or one at the frame cap.
+#: 12 a second is three frames at the value bound a second, or one at the frame cap. A user's
+#: budget outlives their last socket until it has refilled to the burst (at most 192 / 12 = 16 s),
+#: so closing every socket and reconnecting gets back the same level, not a fresh one.
 WIDEST_SUB_EXTRA_TOKENS: Final = 3
 RECONNECTS_IN_BURST: Final = 2
 DECODE_BUDGET_BURST: Final = (
@@ -477,6 +479,11 @@ class DecodeBudget:
     def refund(self, tokens: int) -> None:
         """Give back `tokens` a frame took and did not need, never past the burst."""
         self._level = min(self._burst, self._level + tokens)
+
+    def full(self, now: float) -> bool:
+        """Whether the bucket has refilled to its burst at monotonic `now`."""
+        self._refill(now)
+        return self._level >= self._burst
 
 
 class ConnectRateLimiter:
