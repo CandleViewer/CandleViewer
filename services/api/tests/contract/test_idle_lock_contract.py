@@ -6,10 +6,13 @@ Also pins the rules from the PR #2389 reviews: only extend and unlock record act
 carries `last_seen_at` over), unlock checks a password only while the session is locked, a
 locked session's logout ends only that session, the operations allowed while locked also accept
 `cv_refresh`, and step-up elevation never survives the lock (#2290 ruling, rule 4d).
+`POST /auth/lock` (#4743, E09-S03-F1, CMP-098 "Lock now") is pinned at the end, contract first.
 """
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -20,12 +23,19 @@ from referencing.jsonschema import DRAFT202012
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.auth.session_service import MAX_IDLE_TIMEOUT_S, MIN_IDLE_TIMEOUT_S
+from candleviewer.statechart.registry import default_registry
+from tests.contract._admin_support import ROOT
 
 _BASE = "urn:cv:openapi"
 _SESSION_FIELDS = {"id", "issued_at", "expires_at", "idle_deadline", "idle_timeout_s", "locked"}
 _METHODS = {"get", "put", "post", "patch", "delete", "head", "options", "trace"}
-#: The operations an idle-locked session may call (#2290 ruling, rule 3a).
-_LOCKED_OK = (("post", "/auth/unlock"), ("post", "/auth/logout"), ("get", "/auth/session"))
+#: The operations an idle-locked session may call (#2290 ruling, rule 3a; `POST /auth/lock`, #4743).
+_LOCKED_OK = (
+    ("post", "/auth/unlock"),
+    ("post", "/auth/logout"),
+    ("post", "/auth/lock"),
+    ("get", "/auth/session"),
+)
 _BEARER_OR_COOKIE: list[dict[str, list[str]]] = [{"bearerAuth": []}, {"refreshCookie": []}]
 
 
@@ -171,7 +181,7 @@ def test_a_read_only_downgrade_never_refuses_extend(spec: dict[str, Any]) -> Non
     step_up = _flat(_op(spec, "post", "/auth/step-up")["description"])
     assert (
         "(`403 session_read_only` on every write except `POST /auth/logout`, "
-        "`POST /auth/session/extend` and `DELETE /auth/session/view-as`; "
+        "`POST /auth/session/extend`, `POST /auth/lock` and `DELETE /auth/session/view-as`; "
         "`POST /auth/step-up` answers it itself)"
     ) in step_up
 
@@ -264,8 +274,8 @@ def test_logout_from_a_locked_session_ends_only_the_calling_session(spec: dict[s
     # instead". Revoke-all is a write (#2290 ruling, rule 3b): with a bearer copied from a
     # locked tab, whoever is at the desk could sign the owner out of every other machine.
     allowed = (
-        "Only `POST /auth/unlock`, `POST /auth/logout` and `GET /auth/session` are allowed"
-        " while locked, and logout ends only the calling session"
+        "Only `POST /auth/unlock`, `POST /auth/logout`, `POST /auth/lock` and `GET /auth/session`"
+        " are allowed while locked, and logout ends only the calling session"
     )
     refused = "`all_sessions: true` from a locked session answers `401 session_idle_locked`"
     section = _idle_lock_section(spec)
@@ -305,6 +315,8 @@ def test_only_refresh_and_the_locked_session_operations_accept_the_refresh_cooki
         and any("refreshCookie" in r for r in op.get("security", spec["security"]))
     }
     assert accepting == {("post", "/auth/refresh"), *_LOCKED_OK}
+    scheme = _flat(spec["components"]["securitySchemes"]["refreshCookie"]["description"])
+    assert all(f"`{method.upper()} {path}`" in scheme for method, path in _LOCKED_OK)
     no_expired = "No other operation accepts the cookie, and none, unlock included, accepts an"
     assert f"{no_expired} expired access token." in _idle_lock_section(spec)
 
@@ -312,12 +324,15 @@ def test_only_refresh_and_the_locked_session_operations_accept_the_refresh_cooki
 def test_cookie_identified_writes_are_csrf_bound_to_the_cookie_session(
     spec: dict[str, Any],
 ) -> None:
-    for path in ("/auth/unlock", "/auth/logout"):  # SR-041 / SR-042, as on `/auth/refresh`
+    for path in ("/auth/unlock", "/auth/logout", "/auth/lock"):  # SR-041 / SR-042, as on refresh
         op = _op(spec, "post", path)
         assert {"$ref": "#/components/parameters/CsrfToken"} in op["parameters"]
         assert op["responses"]["403"] == {"$ref": "#/components/responses/CsrfTokenInvalid"}
     text = spec["info"]["description"]
-    bound = "for a `POST /auth/logout` or `POST /auth/unlock` identified by the `cv_refresh` cookie"
+    bound = (
+        "for a `POST /auth/logout`, `POST /auth/unlock` or `POST /auth/lock` identified by the"
+        " `cv_refresh` cookie"
+    )
     assert bound in _flat(text[text.index("### CSRF") : text.index("### Idle lock")])
 
 
@@ -390,3 +405,134 @@ def test_unauthorized_response_documents_session_idle_locked(spec: dict[str, Any
     locked = [e for e in examples.values() if e["code"] == "session_idle_locked"]
     assert len(locked) == 1 and "idle_locked_at" in locked[0]
     _conforms(spec, locked[0], "/components/schemas/Problem")
+
+
+# -- `POST /auth/lock` (#4743, E09-S03-F1): CMP-098 "Lock now", contract first (C-6.1) ----------
+# The orchestrator's rulings of 2026-10-29 09:00Z (BQ-1 to BQ-5) each have a test below.
+
+_LOCK = "/auth/lock"
+
+
+def test_lock_contract_is_a_self_write_with_no_body(spec: dict[str, Any]) -> None:
+    op = _op(spec, "post", _LOCK)
+    assert op["x-rbac"] == {"permissions": [], "scope": "self"}
+    assert op["x-idempotency"] == "ignored"  # idempotent by state: a locked session answers 200
+    assert op["parameters"] == [{"$ref": "#/components/parameters/CsrfToken"}]
+    assert "requestBody" not in op
+    assert set(op["responses"]) == {"200", "401", "403", "422", "503"}
+    assert "any query parameter is refused with `422` (SR-026)" in _flat(op["description"])
+
+
+def test_lock_contract_locks_as_if_the_idle_deadline_fell_due(spec: dict[str, Any]) -> None:
+    # L2 (c), 13:40Z: B16 gets nothing at lock time and records the lock on its next read of the
+    # row (INV-B16-e), through its existing transition.
+    description = _flat(_op(spec, "post", _LOCK)["description"])
+    assert "exactly as if its idle deadline fell due now" in description
+    assert "nothing is sent to B16 at lock time, as for extend (28 B16.7)" in description
+    assert "B16 records the lock on its next read of the row, as if the idle" in description
+    auth = default_registry().get("session")["states"]["auth"]["states"]
+    assert auth["active"]["on"]["IDLE_DEADLINE"] == {"target": "#session.auth.idle_locked"}
+    assert "audit_idle_locked" in auth["idle_locked"]["entry"]
+    section = _idle_lock_section(spec)
+    assert '`POST /auth/lock` (CMP-098 "Lock now", #4743) locks it at once' in section
+
+
+def test_lock_contract_never_moves_the_idle_deadline(spec: dict[str, Any]) -> None:
+    # BQ-5: `last_seen_at` never moves (SCR-112 would show a false time), so the deadline and a
+    # later `idle_locked_at` keep `last_seen_at + idle_timeout_s`; the audit row has the moment.
+    description = _flat(_op(spec, "post", _LOCK)["description"])
+    assert "The deadline itself does not move" in description
+    assert "still give `last_seen_at + idle_timeout_s`" in description
+    moment = "the lock moment is the `auth.session_locked` audit row's time"
+    assert "The lock moment is the `auth.session_locked` audit row's time." in description
+    section = _idle_lock_section(spec)
+    assert f"without moving it: {moment}" in section
+    # Activity stays the two operations alone: the lock moves no deadline at all.
+    assert "so only they move `session.idle_deadline`. No other operation moves it" in section
+    state = _schema(spec, "SessionState")["properties"]
+    deadline = _flat(state["idle_deadline"]["description"])
+    assert "unless `POST /auth/lock` locked the session first: lock never moves it" in deadline
+    assert "may be later than `server_time`: read `session.locked`, never this time" in deadline
+    assert "lock and unlock never move it." in state["expires_at"]["description"]
+    assert "or `POST /auth/lock` locked the session" in _flat(state["locked"]["description"])
+    problem = _schema(spec, "Problem")["properties"]["idle_locked_at"]["description"]
+    assert "unless `POST /auth/lock` locked it first" in _flat(problem)
+    assert "later than `server_time`. Read the problem code or `session.locked`" in _flat(problem)
+
+
+def test_lock_answers_session_info_locked_without_elevation(spec: dict[str, Any]) -> None:
+    ok = _op(spec, "post", _LOCK)["responses"]["200"]
+    schema = ok["content"]["application/json"]["schema"]
+    assert schema == {"$ref": "#/components/schemas/SessionInfo"}
+    locked = _examples(ok).values()
+    assert locked
+    for example in locked:
+        _conforms(spec, example, "/components/schemas/SessionInfo")
+        assert example["session"]["locked"] is True and example["step_up_expires_at"] is None
+        # Locked before its idle deadline, which the lock does not move.
+        deadline = datetime.fromisoformat(example["session"]["idle_deadline"])
+        assert datetime.fromisoformat(example["server_time"]) < deadline
+
+
+def test_lock_contract_writes_one_record_per_lock(spec: dict[str, Any]) -> None:
+    # BQ-2: an already-locked call is a 200 that changed nothing, so it writes no second row.
+    description = _flat(_op(spec, "post", _LOCK)["description"])
+    assert "already idle-locked answers `200` with its `SessionInfo` and changes" in description
+    assert "nothing. It writes no second `auth.session_locked`: one record per lock" in description
+
+
+def test_lock_answers_session_revoked_when_revoked_or_expired(spec: dict[str, Any]) -> None:
+    refusals = _examples(_op(spec, "post", _LOCK)["responses"]["401"])
+    for example in refusals.values():
+        _conforms(spec, example, "/components/schemas/Problem")
+    revoked = {e["revoked_reason"] for e in refusals.values() if e["code"] == "session_revoked"}
+    assert revoked == {"revoked", "expired"}
+    # A rotated-away or never-issued credential keeps the uniform 401, never `session_revoked`.
+    assert "unauthenticated" in {e["code"] for e in refusals.values()}
+    only = "`session_revoked` is answered only by `POST /auth/unlock` and `POST /auth/lock`"
+    assert only in _idle_lock_section(spec)
+
+
+def test_lock_is_recorded_ahead_and_by_b16_at_its_next_read(spec: dict[str, Any]) -> None:
+    # BQ-1, L2 (c): `auth.session_locked` is the lock's record (C-2.9); B16's later
+    # `auth.idle_locked` carries the lock moment. 24 is pinned by the test after this one.
+    op = _op(spec, "post", _LOCK)
+    assert op["responses"]["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
+    description = _flat(op["description"])
+    assert "The lock's record is `auth.session_locked`, written ahead (C-2.9)" in description
+    assert "carries the lock moment, not the time of that read." in description
+    assert "the answer is `503` and the session is not locked." in description
+
+
+def test_24_lists_the_lock_record_until_the_implementation_registers_it() -> None:
+    """24 section 15.5 and its change-log entry; registering the action flips both marker halves."""
+    internal = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
+    vocabulary = _flat(internal.split("### 15.5 ", 1)[1].split("### 15.6 ", 1)[0])
+    assert "`auth.session_locked` (not registered yet, E09-S03-F1)" in vocabulary
+    assert "auth.session_locked" not in AUDIT_ACTIONS
+    assert "There is one record per lock" in vocabulary
+    assert "nothing is sent to B16 at lock time" in vocabulary
+    title = r"^### 19\.\d+ .* the `auth\.session_locked` action \(E09-S03-F1, #4743\)$"
+    found = re.search(title, internal, re.MULTILINE)
+    assert found is not None
+    entry = _flat(internal[found.end() :].split("\n### ", 1)[0])
+    assert "this contract adds no column; how the lock is stored is the implementation's" in entry
+
+
+def test_lock_is_one_of_the_viewers_own_operations(spec: dict[str, Any]) -> None:
+    # BQ-3: lock acts on the viewer's own session, as the viewer, so view-as never refuses it.
+    description = _flat(_op(spec, "post", _LOCK)["description"])
+    assert "it is one of the viewer's own operations" in description
+    text = spec["info"]["description"]
+    own = text.split("**The viewer's own operations.**", 1)[1].split("None of the rules", 1)[0]
+    assert "`POST /auth/lock`" in own
+
+
+def test_a_read_only_downgrade_never_refuses_lock(spec: dict[str, Any]) -> None:
+    # BQ-4: lock acts on no data and only reduces risk, as extend acts on none.
+    description = _flat(_op(spec, "post", _LOCK)["description"])
+    assert "neither a read-only downgrade nor a view-as context refuses it" in description
+    read_only = "Nor does it refuse lock, which acts on no data either and only reduces risk."
+    assert read_only in _idle_lock_section(spec)
+    step_up = _flat(_op(spec, "post", "/auth/step-up")["description"])
+    assert "`POST /auth/session/extend`, `POST /auth/lock` and" in step_up

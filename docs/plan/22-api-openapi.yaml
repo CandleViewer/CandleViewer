@@ -114,10 +114,10 @@ info:
       refresh token.
     * **Validation.** The server requires the header to be present and equal to the cookie,
       **and** recomputes the MAC against the session id that it resolves itself (the access
-      token's `sid`; for `/auth/refresh`, and for a `POST /auth/logout` or `POST /auth/unlock`
-      identified by the `cv_refresh` cookie (see "Idle lock"), the session bound to the
-      presented `cv_refresh`). Header/cookie equality alone is never sufficient. Every
-      comparison is constant time.
+      token's `sid`; for `/auth/refresh`, and for a `POST /auth/logout`, `POST /auth/unlock` or
+      `POST /auth/lock` identified by the `cv_refresh` cookie (see "Idle lock"), the session
+      bound to the presented `cv_refresh`). Header/cookie equality alone is never sufficient.
+      Every comparison is constant time.
     * **Issue, rotate and re-issue.** `POST /auth/login` (when `status=authenticated`),
       `POST /auth/mfa/verify`, `POST /auth/mfa/recovery` and `POST /auth/mfa/enroll/confirm`
       (which rotates the session) issue a token for the new session.
@@ -204,13 +204,15 @@ info:
 
     ### Idle lock (E09-D06, #2300)
     A session with no activity passes `session.idle_deadline` (`last_seen_at + idle_timeout_s`)
-    and becomes **idle-locked**. It is locked, not revoked: WS frames keep flowing (ADR-0020
-    section 4). Only `POST /auth/unlock`, `POST /auth/logout` and `GET /auth/session` are
-    allowed while locked, and logout ends only the calling session (SCR-005 "Sign out
-    instead"): `all_sessions: true` from a locked session answers `401 session_idle_locked`
-    and revokes nothing. Whoever is at a locked terminal has not proved who they are, so they
-    must not sign the user out of other sessions (#2290 ruling, rule 3b). Every other
-    authenticated operation answers a request from a locked session with
+    and becomes **idle-locked**; `POST /auth/lock` (CMP-098 "Lock now", #4743) locks it at once,
+    exactly as if that deadline fell due, without moving it: the lock moment is the
+    `auth.session_locked` audit row's time. It is locked, not revoked: WS frames keep flowing
+    (ADR-0020 section 4). Only `POST /auth/unlock`, `POST /auth/logout`, `POST /auth/lock` and
+    `GET /auth/session` are allowed while locked, and logout ends only the calling session
+    (SCR-005 "Sign out instead"): `all_sessions: true` from a locked session answers
+    `401 session_idle_locked` and revokes nothing. Whoever is at a locked terminal has not proved
+    who they are, so they must not sign the user out of other sessions (#2290 ruling, rule 3b).
+    Every other authenticated operation answers a request from a locked session with
     `401 session_idle_locked` (problem field `idle_locked_at`) instead of `unauthenticated`,
     and changes nothing; an expired access token is still `unauthenticated`.
     `POST /auth/refresh` answers a locked session the same way instead of
@@ -219,7 +221,7 @@ info:
 
     A locked session can be unlocked or signed out. The access token is memory-only and
     lasts 12 minutes (ADR-0020 decisions 1 and 3), and refresh is refused while locked, so a long
-    lock or a reload leaves the client without one. The three operations allowed while locked
+    lock or a reload leaves the client without one. The four operations allowed while locked
     therefore accept either credential (`bearerAuth` or `refreshCookie`): an access token inside
     its lifetime identifies the session, else the `cv_refresh` cookie does, but only while it is
     that session's current refresh token. A rotated-away or never-issued cookie is
@@ -227,8 +229,8 @@ info:
     with `POST /auth/refresh`); it is counted and, within a budget, audited
     (`auth.refresh_reuse_detected` with outcome `denied` for a rotated-away cookie,
     `auth.session_fixation_attempt` for a never-issued one). A revoked or expired session
-    answers as it would to its access token. A cookie-identified
-    `POST /auth/logout` or `POST /auth/unlock` gets the SR-042 `Origin` check and the SR-041
+    answers as it would to its access token. A cookie-identified `POST /auth/logout`,
+    `POST /auth/unlock` or `POST /auth/lock` gets the SR-042 `Origin` check and the SR-041
     CSRF check of `POST /auth/refresh`; `GET /auth/session` stays a safe read. No other
     operation accepts the cookie, and none, unlock included, accepts an expired access token.
     "Sign out instead" therefore works for the whole lock and after a reload: it revokes the
@@ -258,9 +260,10 @@ info:
     `23-ws-protocol.md` section 4.3 schedule still locks on time. `GET /auth/session` is
     read-only. Extend is refused once locked; only `POST /auth/unlock` lifts a lock.
     A read-only downgrade (`POST /auth/step-up`) does not refuse extend: extend acts on no data.
-    `session_revoked` is answered only by `POST /auth/unlock`; every other operation keeps the
-    uniform `unauthenticated` for a revoked or expired session, so no other route works as a
-    session oracle.
+    Nor does it refuse lock, which acts on no data either and only reduces risk.
+    `session_revoked` is answered only by `POST /auth/unlock` and `POST /auth/lock`; every other
+    operation keeps the uniform `unauthenticated` for a revoked or expired session, so no other
+    route works as a session oracle.
 
     ### View-as session (read-only, #3085)
     An Owner can see the app as another user sees it without acting as them (SCR-124; finding
@@ -276,9 +279,9 @@ info:
 
     * **The viewer's own operations.** `POST /admin/view-as`, `GET` and
       `DELETE /auth/session/view-as`, `GET /auth/session`, `POST /auth/refresh`,
-      `POST /auth/logout`, `POST /auth/session/extend` and `POST /auth/unlock` act on the
-      viewer's own session, as the viewer, and `POST /telemetry/frontend` carries only bucket
-      counts. None of the rules below applies to them, so leaving view-as is one call that
+      `POST /auth/logout`, `POST /auth/session/extend`, `POST /auth/lock` and `POST /auth/unlock`
+      act on the viewer's own session, as the viewer, and `POST /telemetry/frontend` carries only
+      bucket counts. None of the rules below applies to them, so leaving view-as is one call that
       nothing refuses.
     * **Read-only.** Every other state-changing request, except the protective writes below,
       answers `403 view_as_read_only` and changes nothing. State-changing means the method
@@ -1769,6 +1772,124 @@ paths:
         "204": { description: "Ended, cleared, or nothing to end." }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /auth/lock:
+    post:
+      tags: [auth]
+      operationId: authLock
+      summary: Idle-lock the calling session at once (CMP-098 "Lock now")
+      description: |
+        Locks the calling session at once, exactly as if its idle deadline fell due now (see
+        "Idle lock"): the lock is stored and answered `200`, and nothing is sent to B16 at lock
+        time, as for extend (28 B16.7). B16 records the lock on its next read of the row, as if
+        the idle deadline fell due (`IDLE_DEADLINE` into `auth.idle_locked`). The deadline itself
+        does not move: `session.idle_deadline`, and the `idle_locked_at` of a later
+        `401 session_idle_locked`, still give `last_seen_at + idle_timeout_s`. The lock moment is
+        the `auth.session_locked` audit row's time. The body is the same `SessionInfo` as
+        `GET /auth/session`, with `session.locked: true` and `step_up_expires_at: null`: as at any
+        lock, every step-up grant and pending challenge of the session is void from that moment.
+        Lock records no activity and never moves `expires_at`; only `POST /auth/unlock` lifts the
+        lock (SCR-005).
+
+        The session is identified as in "Idle lock": an access token inside its lifetime, else
+        the `cv_refresh` cookie, which gets the SR-042 `Origin` check and the SR-041 CSRF check
+        of `POST /auth/refresh`, as a cookie-identified `POST /auth/logout` does. Self only: any
+        query parameter is refused with `422` (SR-026). Lock acts on the caller's own session and
+        only reduces risk, so neither a read-only downgrade nor a view-as context refuses it: it
+        is one of the viewer's own operations ("View-as session").
+
+        * A session that is already idle-locked answers `200` with its `SessionInfo` and changes
+          nothing. It writes no second `auth.session_locked`: one record per lock, and the access
+          log has the call.
+        * A revoked session, or one past its absolute lifetime, answers `401 session_revoked`,
+          with `revoked_reason` as `POST /auth/unlock` gives it: the client signs in again
+          (SCR-001). An access token or cookie of a session that a refresh rotated away, or one
+          this server never issued, gets the uniform `401 unauthenticated`.
+
+        The lock's record is `auth.session_locked`, written ahead (C-2.9): if the audit sink is
+        down the answer is `503` and the session is not locked. B16's own `auth.idle_locked`,
+        written at its next read of the row, carries the lock moment, not the time of that read.
+      security:
+        - bearerAuth: []
+        - refreshCookie: []
+      x-rbac: { permissions: [], scope: self }
+      x-idempotency: ignored
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      responses:
+        "200":
+          description: Locked, or already locked; only `POST /auth/unlock` lifts the lock.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionInfo" }
+              examples:
+                locked:
+                  summary: Locked by "Lock now" before its idle deadline, which does not move
+                  value:
+                    user:
+                      id: "11111111-2222-3333-4444-555555555555"
+                      username: "viewer.alice"
+                      email: "alice@example.com"
+                      roles: [manager]
+                      status: active
+                      mfa_enabled: true
+                      mfa_required: true
+                    permissions: [accounts:read, marketdata:read, orders:write, killswitch:write]
+                    account_scope: ["a1000000-0000-4000-8000-000000000002"]
+                    server_time: "2026-09-14T10:41:30.004Z"
+                    step_up_expires_at: null
+                    session:
+                      id: "5b1f0c3e-7d2a-4c11-9e8f-0a1b2c3d4e5f"
+                      issued_at: "2026-09-14T10:24:00Z"
+                      expires_at: "2026-09-14T20:05:00Z"
+                      idle_deadline: "2026-09-14T10:46:02Z"
+                      idle_timeout_s: 900
+                      locked: true
+        "401":
+          description: >
+            `session_revoked` (the session was revoked, or is past its absolute lifetime: sign
+            in again) or `unauthenticated` (no access token inside its lifetime and no current
+            `cv_refresh` cookie, or a credential of a session that a refresh rotated away or
+            that this server never issued).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                revoked:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/session_revoked",
+                      title: "Session revoked or past its absolute lifetime; sign in again",
+                      status: 401,
+                      detail: "Your session ended. Sign in again.",
+                      instance: "urn:cv:req:0193f2bb-1118",
+                      code: session_revoked,
+                      revoked_reason: revoked,
+                    }
+                expired:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/session_revoked",
+                      title: "Session revoked or past its absolute lifetime; sign in again",
+                      status: 401,
+                      detail: "Your session expired. Sign in again.",
+                      instance: "urn:cv:req:0193f2bb-1119",
+                      code: session_revoked,
+                      revoked_reason: expired,
+                    }
+                noCredential:
+                  summary: No live access token and no current `cv_refresh` cookie
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/unauthenticated",
+                      title: "Missing, malformed or expired access token",
+                      status: 401,
+                      detail: "Sign in to continue.",
+                      instance: "urn:cv:req:0193f2bb-111a",
+                      code: unauthenticated,
+                    }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/unlock:
@@ -12522,7 +12643,7 @@ paths:
         earlier 15). `live_enablement`, `killswitch`, `backups`, `sl_loosen`, `accounts` and
         `recorder_purge` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive
         invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on
-        every write except `POST /auth/logout`, `POST /auth/session/extend` and
+        every write except `POST /auth/logout`, `POST /auth/session/extend`, `POST /auth/lock` and
         `DELETE /auth/session/view-as`; `POST /auth/step-up` answers it itself). Endpoints that
         require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
         `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
@@ -15345,7 +15466,8 @@ components:
       description: >
         Opaque, single-use, rotated refresh token. `HttpOnly; Secure; SameSite=Strict;
         Path=/api/v1/auth`. Also identifies the session for `POST /auth/unlock`,
-        `POST /auth/logout` and `GET /auth/session` without a live access token ("Idle lock").
+        `POST /auth/logout`, `POST /auth/lock` and `GET /auth/session` without a live access
+        token ("Idle lock").
     csrfCookie:
       type: apiKey
       in: cookie
@@ -17138,7 +17260,11 @@ components:
         idle_locked_at:
           type: string
           format: date-time
-          description: "`session_idle_locked` only: when the session idle-locked (its `idle_deadline`)."
+          description: >
+            `session_idle_locked` only: the session's `idle_deadline`, which is when it idle-locked,
+            unless `POST /auth/lock` locked it first (the lock moment is then the
+            `auth.session_locked` audit row's time), so it may be later than `server_time`. Read
+            the problem code or `session.locked`, never this time, to tell that a session is locked.
         revoked_reason:
           type: string
           enum: [expired, unlock_attempts_exceeded, revoked]
@@ -17774,7 +17900,8 @@ components:
         expires_at:
           type: string
           format: date-time
-          description: End of the 12 h absolute lifetime. Refresh, extend and unlock never move it.
+          description: >
+            End of the 12 h absolute lifetime. Refresh, extend, lock and unlock never move it.
         idle_deadline:
           type: string
           format: date-time
@@ -17782,7 +17909,10 @@ components:
             When the idle lock engages unless activity is recorded first
             (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and
             `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once
-            `locked`, the moment it locked.
+            `locked`, the moment it locked, unless `POST /auth/lock` locked the session first: lock
+            never moves it, and the lock moment is the `auth.session_locked` audit row's time. So
+            after a lock by request it may be later than `server_time`: read `session.locked`,
+            never this time, to tell that the session is locked.
         idle_timeout_s:
           type: integer
           minimum: 300
@@ -17790,7 +17920,9 @@ components:
           description: Idle timeout of this session in seconds (per user, 5 to 60 minutes).
         locked:
           type: boolean
-          description: True once `idle_deadline` has passed; only `POST /auth/unlock` clears it.
+          description: >
+            True once `idle_deadline` has passed or `POST /auth/lock` locked the session; only
+            `POST /auth/unlock` clears it.
     SessionExtendResponse:
       type: object
       required: [session, server_time]

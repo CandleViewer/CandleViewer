@@ -1507,6 +1507,55 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/auth/lock": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Idle-lock the calling session at once (CMP-098 "Lock now")
+     * @description Locks the calling session at once, exactly as if its idle deadline fell due now (see
+     *     "Idle lock"): the lock is stored and answered `200`, and nothing is sent to B16 at lock
+     *     time, as for extend (28 B16.7). B16 records the lock on its next read of the row, as if
+     *     the idle deadline fell due (`IDLE_DEADLINE` into `auth.idle_locked`). The deadline itself
+     *     does not move: `session.idle_deadline`, and the `idle_locked_at` of a later
+     *     `401 session_idle_locked`, still give `last_seen_at + idle_timeout_s`. The lock moment is
+     *     the `auth.session_locked` audit row's time. The body is the same `SessionInfo` as
+     *     `GET /auth/session`, with `session.locked: true` and `step_up_expires_at: null`: as at any
+     *     lock, every step-up grant and pending challenge of the session is void from that moment.
+     *     Lock records no activity and never moves `expires_at`; only `POST /auth/unlock` lifts the
+     *     lock (SCR-005).
+     *
+     *     The session is identified as in "Idle lock": an access token inside its lifetime, else
+     *     the `cv_refresh` cookie, which gets the SR-042 `Origin` check and the SR-041 CSRF check
+     *     of `POST /auth/refresh`, as a cookie-identified `POST /auth/logout` does. Self only: any
+     *     query parameter is refused with `422` (SR-026). Lock acts on the caller's own session and
+     *     only reduces risk, so neither a read-only downgrade nor a view-as context refuses it: it
+     *     is one of the viewer's own operations ("View-as session").
+     *
+     *     * A session that is already idle-locked answers `200` with its `SessionInfo` and changes
+     *       nothing. It writes no second `auth.session_locked`: one record per lock, and the access
+     *       log has the call.
+     *     * A revoked session, or one past its absolute lifetime, answers `401 session_revoked`,
+     *       with `revoked_reason` as `POST /auth/unlock` gives it: the client signs in again
+     *       (SCR-001). An access token or cookie of a session that a refresh rotated away, or one
+     *       this server never issued, gets the uniform `401 unauthenticated`.
+     *
+     *     The lock's record is `auth.session_locked`, written ahead (C-2.9): if the audit sink is
+     *     down the answer is `503` and the session is not locked. B16's own `auth.idle_locked`,
+     *     written at its next read of the row, carries the lock moment, not the time of that read.
+     */
+    post: operations["authLock"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/auth/login": {
     parameters: {
       query?: never;
@@ -1892,7 +1941,7 @@ export interface paths {
      *     **Binding (no-grace classes).** For each no-grace class the one-shot grant is bound to the challenged request: its method, its path including any query string, and its canonical JSON body. The fingerprint is the hex SHA-256 of the method, a line feed, the raw request target (path and query string exactly as received, with no percent-decoding and no trailing-slash or parameter-order normalisation), a line feed, and the RFC 8785 (JCS) serialisation of the body as the operation validated it (empty when the operation takes no body). The server parses and validates the body once, and `action_summary`, the fingerprint and the executed action all come from that one object, so number forms, string escapes and duplicate member names cannot make them disagree; no Unicode normalisation is applied. Headers, `Idempotency-Key` included, are not part of the binding. Only that identical request can use the grant. Any other request of the class is refused with `403 step_up_required`, which is a new challenge for that request, and audited as `auth.step_up_mismatch`. The refusal does not use up the grant: it stays bound to the challenged request until that request uses it or a newer step-up for the class replaces it. The grant expires 60 seconds after the step-up, which leaves time only for the immediate re-send, and it also ends when the session turns read-only, when it idle-locks (#2301) and at logout. For a no-grace class the `200`'s `elevated_until` is that expiry, 60 seconds after the step-up, and its `step_up_expires_at` is null. A session holds at most one grant per no-grace class. Grace classes keep the unbound 5-minute window described below.
      *     **Write-ahead audit and `503` (C-2.9).** The record an answer depends on is written before the answer is sent: `auth.step_up_mismatch` before the `403` that refuses a swapped request, `auth.step_up_failed` before the `400` of a challenge that cannot be answered (while the per-session refusal budget lasts) and `auth.mfa_reset_by_owner` before an owner TOTP reset revokes anything. When the audit writer cannot take that record within 2 seconds (it is down, not started or too slow) the answer is `503 audit_unavailable` instead, whatever the refusal would have been: no challenge is issued, no failure is counted, nothing is elevated or revoked, and a grant bound to a held request is neither used nor ended, so the client sends the same request again once the audit writer recovers. An operation that gates a no-grace class lists the same `503` among its responses and answers it when the `auth.step_up_mismatch` record of its refusal cannot be written; `resetUserMfa` answers it when its own record cannot.
      *     **Holding the refused request.** The client keeps the refused request unchanged (method, path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The refusal bound no idempotency key (Idempotency, "Binding point"), so the re-send is a first submission and executes once. On cancel, at `challenge_expires_at`, on the third failure (`session_read_only`), on idle lock and at absolute session expiry the client drops the request without sending it and tells the user it was not sent. If the re-send gets no answer after a successful step-up (a network error or a timeout), the action may have executed: the client never reports it as not sent and never re-sends it on its own, and reads the affected state back to learn the outcome.
-     *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement`, `killswitch`, `backups`, `sl_loosen`, `accounts` and `recorder_purge` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write except `POST /auth/logout`, `POST /auth/session/extend` and `DELETE /auth/session/view-as`; `POST /auth/step-up` answers it itself). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
+     *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement`, `killswitch`, `backups`, `sl_loosen`, `accounts` and `recorder_purge` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write except `POST /auth/logout`, `POST /auth/session/extend`, `POST /auth/lock` and `DELETE /auth/session/view-as`; `POST /auth/step-up` answers it itself). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
      *     **Session rotation (SR-013).** A successful step-up also rotates the session, the way `POST /auth/refresh` does: the server mints a replacement session with a new id, access token and refresh token. The replacement keeps the old session's absolute expiry and idle timeout, so rotation never extends the session's lifetime; it carries over the live step-up grants, including the one just granted, and drops the pending challenge. The old session is revoked as `rotated` and linked into the session family, so its access and refresh tokens stop working at once and replaying that refresh token at `POST /auth/refresh` revokes the whole family (reuse detection). The `200` carries the new access token in `tokens` (the `TokenBundle` of `POST /auth/mfa/verify`; the refresh token travels only in the cookie, so `refresh_token` is null) and sets rotated `cv_refresh` and `__Host-cv_csrf` cookies bound to the new session (SR-041). The client continues with the returned access token. A client that loses the `200` keeps only the old tokens: its next `POST /auth/refresh` trips reuse detection, so the user must sign in again.
      */
     post: operations["authStepUp"];
@@ -9662,7 +9711,7 @@ export interface components {
       failures_remaining?: number;
       /**
        * Format: date-time
-       * @description `session_idle_locked` only: when the session idle-locked (its `idle_deadline`).
+       * @description `session_idle_locked` only: the session's `idle_deadline`, which is when it idle-locked, unless `POST /auth/lock` locked it first (the lock moment is then the `auth.session_locked` audit row's time), so it may be later than `server_time`. Read the problem code or `session.locked`, never this time, to tell that a session is locked.
        */
       idle_locked_at?: string;
       /** @description Correlation id, `urn:cv:req:{uuid}`; matches the `X-Correlation-Id` header and the audit entry. */
@@ -10966,7 +11015,7 @@ export interface components {
     SessionState: {
       /**
        * Format: date-time
-       * @description End of the 12 h absolute lifetime. Refresh, extend and unlock never move it.
+       * @description End of the 12 h absolute lifetime. Refresh, extend, lock and unlock never move it.
        */
       expires_at: string;
       /**
@@ -10976,7 +11025,7 @@ export interface components {
       id: string;
       /**
        * Format: date-time
-       * @description When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked.
+       * @description When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked, unless `POST /auth/lock` locked the session first: lock never moves it, and the lock moment is the `auth.session_locked` audit row's time. So after a lock by request it may be later than `server_time`: read `session.locked`, never this time, to tell that the session is locked.
        */
       idle_deadline: string;
       /** @description Idle timeout of this session in seconds (per user, 5 to 60 minutes). */
@@ -10986,7 +11035,7 @@ export interface components {
        * @description When this session id was issued (sign-in, or the refresh that rotated it).
        */
       issued_at: string;
-      /** @description True once `idle_deadline` has passed; only `POST /auth/unlock` clears it. */
+      /** @description True once `idle_deadline` has passed or `POST /auth/lock` locked the session; only `POST /auth/unlock` clears it. */
       locked: boolean;
     };
     SetFeatureFlagRequest: {
@@ -14442,6 +14491,47 @@ export interface operations {
         };
         content?: never;
       };
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  authLock: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Locked, or already locked; only `POST /auth/unlock` lifts the lock. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionInfo"];
+        };
+      };
+      /** @description `session_revoked` (the session was revoked, or is past its absolute lifetime: sign in again) or `unauthenticated` (no access token inside its lifetime and no current `cv_refresh` cookie, or a credential of a session that a refresh rotated away or that this server never issued). */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      403: components["responses"]["CsrfTokenInvalid"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

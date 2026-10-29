@@ -821,6 +821,8 @@ _UNPARSED_STEP_UP_TEXT: dict[str, str] = {
     "listUserSessions": "a read: the contract says listing needs no step-up (04 row 40a)",
     # The lock lift is no elevation: it takes the password only and restores no grant.
     "authUnlock": "lifts the idle lock with the password only; restores no step-up (#2290)",
+    # The lock voids the session's step-up grants, as any idle lock does, and demands none.
+    "authLock": "locks the caller's own session; voids its step-up grants, demands none (#4743)",
     "authRefresh": "rotates the session; carries the step-up penalty over, never a grant (#4051)",
     # The contract rules a step-up out in so many words, so the registry gates none of these:
     # the rule writes (`_NOT_DANGEROUS`) say none applies to a saved version (#3209).

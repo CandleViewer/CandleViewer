@@ -60,7 +60,7 @@ from tests.security.auth._stack import Stack, open_stack
 from tests.security.auth.test_invite_http_abuse import _INVITE, _invite, _owner, _redeem
 from tests.unit.api import test_order_amend_route as amend_route
 from tests.unit.api import test_order_exits_route as ex_route
-from tests.unit.api.test_view_as_gate import _contract_own_operations
+from tests.unit.api.test_view_as_gate import _OWN_AHEAD, _contract_own_operations
 
 #: Parallel attempts per race: enough to interleave on one loop, as a real burst would.
 N = 10
@@ -422,7 +422,8 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     protective = [operation for operation, _ in PROTECTIVE_WRITES.values()]
     registered = {op for op in protective if admin.app.state.protective_writes.is_registered(op)}
     assert registered == {_CANCEL_ALL, _CANCEL, _AMEND}  # their handlers decide; the next must say
-    assert _contract_own_operations() == OWN_OPERATIONS  # the contract's list, read from its prose
+    # The contract's list, read from its prose, less what it names ahead of the code (#4743).
+    assert _contract_own_operations() - set(_OWN_AHEAD) == OWN_OPERATIONS
     carved_out = {op for op in unsafe if op in OWN_OPERATIONS}
     assert carved_out == {op for op in OWN_OPERATIONS if op[0] in _UNSAFE_METHODS}, carved_out
     swept = sorted(unsafe - carved_out - registered)

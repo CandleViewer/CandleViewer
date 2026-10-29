@@ -203,10 +203,10 @@ def test_session_section_states_the_session_wide_rules() -> None:
     section = _session_section()
     own = (
         "`POST /admin/view-as`, `GET` and `DELETE /auth/session/view-as`, `GET /auth/session`, "
-        "`POST /auth/refresh`, `POST /auth/logout`, `POST /auth/session/extend` and "
-        "`POST /auth/unlock` act on the viewer's own session, as the viewer, and "
-        "`POST /telemetry/frontend` carries only bucket counts. None of the rules below applies "
-        "to them, so leaving view-as is one call that nothing refuses."
+        "`POST /auth/refresh`, `POST /auth/logout`, `POST /auth/session/extend`, "
+        "`POST /auth/lock` and `POST /auth/unlock` act on the viewer's own session, as the viewer, "
+        "and `POST /telemetry/frontend` carries only bucket counts. None of the rules below "
+        "applies to them, so leaving view-as is one call that nothing refuses."
     )
     for method, path in re.findall(r"`(GET|POST|DELETE) (/[a-z/-]+)`", own):
         assert method.lower() in SPEC["paths"][path], path

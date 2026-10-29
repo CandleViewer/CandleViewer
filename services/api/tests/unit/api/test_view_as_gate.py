@@ -234,6 +234,11 @@ async def test_held_write_refused_view_as_expired_and_changes_nothing(
     assert gate.rig.held(record) == held
 
 
+#: Contract first (C-6.1), as `_DOCUMENTED_AHEAD` is: an own operation 22 lists before
+#: `OWN_OPERATIONS` has it -> the ticket whose implementation PR moves it there (BQ-3).
+_OWN_AHEAD: dict[tuple[str, str], str] = {("POST", "/auth/lock"): "#4743"}
+
+
 def _contract_own_operations() -> set[tuple[str, str]]:
     """The own operations the contract's "View-as session" section lists, read from its prose:
     each `METHOD /path`, and a bare `METHOD` sharing the path that follows it."""
@@ -251,11 +256,19 @@ def _contract_own_operations() -> set[tuple[str, str]]:
     return found
 
 
+def test_an_own_operation_listed_ahead_is_on_the_contract_list_and_not_registered_yet() -> None:
+    """An `_OWN_AHEAD` entry is on 22's list and not in `OWN_OPERATIONS` until it moves."""
+    ahead = set(_OWN_AHEAD)
+    assert ahead <= _contract_own_operations()
+    assert not ahead & OWN_OPERATIONS
+    assert all(re.fullmatch(r"#\d+", ticket) for ticket in _OWN_AHEAD.values())
+
+
 @pytest.mark.parametrize("held", [False, True], ids=["live", "held"])
 async def test_own_ops_equal_contract_list_pass_live_and_held(held: bool) -> None:
     """Leaving view-as is one call that nothing refuses: each own operation passes, as the viewer,
     in a live context and in a held one."""
-    assert _contract_own_operations() == OWN_OPERATIONS
+    assert _contract_own_operations() - set(_OWN_AHEAD) == OWN_OPERATIONS
     gate = _Gate()
     record = await gate.rig.viewing()
     gate.rig.clock.now = _at(31) if held else _at(5)
