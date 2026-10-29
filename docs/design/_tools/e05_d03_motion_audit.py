@@ -17,6 +17,8 @@ its code:
   5 000 ms unless request-bound, the period equal to its duration token x the multiplier); MR-3 (a
   carrier on every row); row 3 carries A23's rate cap, cell cap and the 10 s stop; the MR texts and
   A23's acceptance text verbatim.
+- [G3-HS1B] HS-1b (ledger row A23a) states the region (341 x 256 px), its emphasised-area cap
+  (25 % of it, 21 824 px2) and at most 3 flash starts in any half-open 1 000 ms window.
 - [G4-FLASH] section 5's numbers recomputed unrounded from the tokens and compared at the printed
   precision (truncated, never rounded), and every verdict re-derived.
 - [G5-AROW] each A-row's pre-image stands byte for byte on its cited line of `16` / `15` at the base
@@ -121,7 +123,8 @@ RULE_TEXT = {
     "alpha stays 0.25 (PROPOSED within E08-D11's 0.15–0.35 as a _tuning_, not a gate) for the "
     "owner's later prototype run.",
 }
-AROW_SHA = "0e2ff0bd3ca5"  # sha256 prefix over every A-row's id, line, heading, pre and post
+HS1B_W, HS1B_H = 341, 256  # A23a's region; 25 % of it is WCAG 2.3.1's area bound, 21 824 px2
+AROW_SHA = "f0142b644a4c"  # sha256 prefix over every A-row's id, line, heading, pre and post
 # A-7 as R162 BQ-16 rules it (the list's ASCII arrow written as `16`'s, with `16`'s full stop)
 A7_POST = (
     "- Node-graph connection made: `fast` `opacity` fade, never a line-draw (a stroke-dash draw "
@@ -367,6 +370,21 @@ def gate_rules(ctx: Ctx, r: Result) -> None:
     r.numbers["mr1"] = n
 
 
+def gate_hs1b(ctx: Ctx, r: Result) -> None:
+    m = re.search(r"\*\*HS-1b .*?(?=\n- \*\*|\n\n)", section(ctx.spec, 4), re.DOTALL)
+    text = flat(m.group(0)) if m else ""
+    area = int(HS1B_W * HS1B_H * 0.25)
+    for need in (
+        "RULED as #2701 ledger row A23a",
+        f"{HS1B_W} × {HS1B_H} px region",
+        f"at most {area:,} px²".replace(",", " "),
+        "at most 3 flash starts in any half-open 1 000 ms window",
+    ):
+        if need not in text:
+            r.fail("G3-HS1B", f"HS-1b does not state {need!r}")
+    r.numbers["hs1b_area"] = area
+
+
 # --- G4: the value flash ----------------------------------------------------------------------
 def flash(ctx: Ctx, theme: str, surface: str, side: str) -> dict[str, float]:
     c = ctx.colours[theme]
@@ -553,6 +571,7 @@ GATE_FNS: tuple[tuple[str, Callable[[Ctx, Result], None]], ...] = (
     ("G2-PROPERTY", gate_property),
     ("G2-TOKEN", gate_token),
     ("G3-RULES", gate_rules),
+    ("G3-HS1B", gate_hs1b),
     ("G4-FLASH", gate_flash),
     ("G5-AROW", gate_arow),
     ("G5-CITE", gate_cite),
@@ -585,6 +604,7 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G2-PROPERTY", regex(r"\| `transform`( +\| `rotate\(0\)`)", r"| `rotate`\1")),
     ("G2-TOKEN", sub("scrim 0 → `opacity.scrim`", "scrim 0 → `opacity.scrims`")),
     ("G3-RULES", sub("1 200 ms × 4", "1 200 ms × 5")),
+    ("G3-HS1B", sub("at most 21 824 px² of emphasised", "at most 21 842 px² of emphasised")),
     ("G4-FLASH", regex(r"\| 9\.07( +)\|", r"| 9.08\1|")),
     ("G5-AROW", sub("T-08; SCR-015).", "T-08; SCR-014).")),
     ("G5-CITE", sub("`16`:219", "`16`:2190")),
