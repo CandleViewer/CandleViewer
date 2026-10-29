@@ -25,11 +25,12 @@ _SCR-020 workspace hosting a SCR-030 chart with the SCR-041 symbol and interval 
 - **One venue, one product.** Bybit v5 USDT linear perpetuals, in `live` and `demo` (paper trading),
   with `testnet` only for connectivity smoke tests. The environments never mix (C-2.11).
 - **Built for more venues later.** The exchange layer is an adapter behind the `exchange/base/`
-  interfaces (C-2.2): only `exchange/bybit` knows Bybit, and book, bars, order flow, OMS, recorder
-  and rules consume normalised events (C-2.3). Another exchange or trading platform is meant to
-  arrive as one more adapter under `exchange/<venue>/` with no changes elsewhere (principle P3 of
-  [`20-architecture.md`](docs/plan/20-architecture.md)). That is post-GA, not current scope: it
-  needs an amendment of the scope guardrail C-1.2 (C-16.1, C-16.2) and an ADR (C-3.4).
+  interfaces (C-2.2): only `exchange/bybit` knows Bybit, and book, bars, order flow, OMS and rules
+  consume normalised events (C-2.3); the recorder keeps the raw payloads as well. Another exchange
+  or trading platform is meant to arrive as one more adapter under `exchange/<venue>/` with no
+  changes elsewhere (principle P3 of [`20-architecture.md`](docs/plan/20-architecture.md)). That
+  is later work, not current scope: it needs an amendment of the scope guardrail C-1.2 (C-16.1,
+  C-16.2) and an ADR (C-3.4).
 - **Order flow, honestly labelled.** Bybit publishes no L3 feed, so heuristics such as iceberg or
   stop-run detection are always marked _(estimated)_ (C-2.13), and history the recorder does not
   hold is shown as a gap, never filled in (C-2.14).
@@ -40,8 +41,8 @@ _SCR-020 workspace hosting a SCR-030 chart with the SCR-041 symbol and interval 
 one is rejected on sight:
 
 - no mobile client of any kind (the API stays client-agnostic, C-1.3, but no mobile work happens);
-- no other exchange or product category **in the current plan** (the adapter seam above is how one
-  is added later);
+- no other exchange **in the current plan** (the adapter seam above is how one is added later), and
+  no spot, inverse or options products on Bybit;
 - no options, GEX or gamma analytics;
 - **no withdrawal, transfer or funding operation, through any code path, ever** (C-2.8);
 - no public internet exposure, no tunnel other than Tailscale, no SaaS that receives market, order
@@ -101,10 +102,10 @@ flowchart TB
 The Electron shell carries no business logic, and owner and admin screens are RBAC-gated routes of
 the same SPA. `exchange/bybit` signs every request through `secrets`; QuestDB holds the hot ticks,
 book deltas, bars and footprint cells, and Postgres the relational state, the envelope-encrypted keys
-and the append-only audit log. The adapter boundary is the plug-in seam for further venues. Boxes
-group backend modules by concern; the authoritative module list, paths and allowed dependencies are
-CONSTITUTION §3 (adding a module or an edge needs an ADR, C-3.4). `paper` and `journal` are planned:
-their modules are empty scaffolds today.
+and the append-only audit log. The adapter boundary is the plug-in seam for venues added later.
+Boxes group backend modules by concern; the authoritative module list, paths and allowed
+dependencies are CONSTITUTION §3 (adding a module or an edge needs an ADR, C-3.4). `paper` and
+`journal` are planned: their modules are empty scaffolds today.
 
 ### Market data, from the exchange to the GPU
 
