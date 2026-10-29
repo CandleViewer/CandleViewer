@@ -9,7 +9,8 @@
  *   and the shell's live-region pair (`ConnectionStatusSlot`).
  * - `ShellCanvasOverlaySlot`: a positioned sibling of the route outlet inside `main`, covering the
  *   visible canvas. It never wraps or re-renders the outlet. Its layer ignores the pointer, so
- *   overlay content that takes input sets `pointer-events: auto` itself.
+ *   overlay content that takes input sets `pointer-events: auto` itself. #306 fills it with
+ *   SCR-159's in-canvas states (`OfflineOverlay`).
  * - `ShellPanicSlot`: the reserved Safety-cluster position at the TopBar's right (E10-D02 ruling 1,
  *   E10-D03 C5) for the CMP-211 PanicButtons organism, which E39-S05 builds. `ShellPanicMount`
  *   below types what that organism resolves itself. Until it lands the slot renders nothing: no node, no Tab stop, no
@@ -23,6 +24,7 @@
  */
 import type { JSX } from "react";
 import type { MeClaims } from "../../routes/rbac";
+import { OfflineOverlay } from "../system-states/OfflineOverlay";
 import { ShellBanner } from "./banner";
 import { ConnectionStatusSlot } from "./ConnectionStatusSlot";
 import { StatusBar } from "./StatusBar";
@@ -35,7 +37,8 @@ export const ShellBannerSlot: ShellSlot = ShellBanner;
 
 export const ShellConnectionSlot: ShellSlot = ConnectionStatusSlot;
 
-export const ShellCanvasOverlaySlot: ShellSlot = () => null;
+/** #306 slice 9: SCR-159's offline and tailnet-unreachable pages over the canvas. */
+export const ShellCanvasOverlaySlot: ShellSlot = OfflineOverlay;
 
 /** CMP-211's three actions, in Tab order (E39-D03 §5): FLATTEN ALL… → CANCEL ALL… → FREEZE…. */
 export type PanicAction = "flatten" | "cancel" | "kill";

@@ -13,6 +13,21 @@ export interface ReachabilityState {
   readonly cause: ReachabilityCause | null;
 }
 
+/** The shell store's copy (SCR-159, #306): the verdict and, while unreachable, the next probe. */
+export interface Reachability extends ReachabilityState {
+  /** Epoch ms of the next probe while unreachable ("Retrying in ~N s"); `null` while reachable. */
+  readonly retryAtMs: number | null;
+  /** A probe is running while unreachable (the page's busy state); always `false` while reachable. */
+  readonly probing: boolean;
+}
+
+export const REACHABLE: Reachability = Object.freeze({
+  reachable: true,
+  cause: null,
+  retryAtMs: null,
+  probing: false,
+});
+
 /** Upper bound on how long the UI may show a transient state before this
  * tracker must have committed to an explicit reachable/unreachable verdict
  * (SCR-159 performance note). Exported for the contract test asserting the

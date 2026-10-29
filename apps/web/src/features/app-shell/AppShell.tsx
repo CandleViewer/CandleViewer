@@ -74,7 +74,9 @@ export function AppShell(props: AppShellProps): JSX.Element {
         {banner}
       </div>
       <main id={mainId} ref={mainRef} tabIndex={-1} style={MAIN}>
-        <div style={SCROLL}>{children}</div>
+        <div data-shell-canvas="" style={SCROLL}>
+          {children}
+        </div>
         <div data-shell-slot="canvas-overlay" style={OVERLAY}>
           {canvasOverlay}
         </div>
