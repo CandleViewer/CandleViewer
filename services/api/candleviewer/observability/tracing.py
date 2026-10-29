@@ -4,11 +4,14 @@ Only these span names may be started — tracing market-data hot loops is
 rejected by ADR-0014 §5 / E04-K01, so `span()` refuses any other name.
 E29 (order path) and E26 (replay start) attach the real spans against this
 scaffolding. With `CV_OTEL_ENABLED=false` (the default) the OpenTelemetry
-API's no-op tracer is used: no exporter, no network.
+API's no-op tracer is used: no exporter, no network. The order path's names
+are `20-architecture.md` §12.3's, and so is the rule that a span ending in an
+exception keeps the exception's class alone, never its message (C-12.6).
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Final
@@ -16,17 +19,21 @@ from typing import Final
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.propagate import extract, inject
-from opentelemetry.trace import Span
+from opentelemetry.trace import Span, Status, StatusCode
 
-from candleviewer.observability.redaction import redact_text
+from candleviewer.observability.redaction import redact_structure, redact_text
 from candleviewer.observability.secret_type import Secret
 
 TRACER_NAME: Final = "candleviewer"
 
-#: Order path, in causal order, then replay session start.
+#: Order path (`20-architecture.md` §12.3): a single order's submission, its three children in
+#: their steps' order, a trade group's fan-out, the venue's create and a fill; then replay start.
 ORDER_PATH_SPANS: Final[tuple[str, ...]] = (
     "http.request",
+    "oms.submit",
     "oms.validate",
+    "oms.persist",
+    "oms.send",
     "oms.fanout",
     "exchange.place_order",
     "private_ws.fill",
@@ -55,6 +62,9 @@ SPAN_ATTRIBUTE_ALLOWLIST: Final[frozenset[str]] = frozenset(
 SANCTIONED_SPANS: Final[frozenset[str]] = frozenset(
     ORDER_PATH_SPANS + REPLAY_SPANS + CREDENTIAL_SPANS
 )
+_ORDER_LINK_ID: Final = "order_link_id"
+#: A status description a span keeps: an exception's class name, never a message (`_GuardedSpan`).
+_CLASS_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 
 
 class UnsanctionedSpanError(ValueError):
@@ -63,22 +73,46 @@ class UnsanctionedSpanError(ValueError):
 
 @contextmanager
 def span(name: str, attributes: Mapping[str, object] | None = None) -> Iterator[Span]:
-    """Start a sanctioned span as the current span."""
+    """Start a sanctioned span as the current span. One that ends in an exception is `ERROR` with
+    the exception's class alone (`_class_only`): OpenTelemetry's own defaults would record its
+    message, as an event and in the status, and neither passes the attribute filter (C-12.6)."""
     if name not in SANCTIONED_SPANS:
         raise UnsanctionedSpanError(f"span {name!r} is not on an ADR-0014 §5 path")
     tracer = trace.get_tracer(TRACER_NAME)
-    with tracer.start_as_current_span(name, attributes=_safe_attrs(attributes or {})) as s:
+    started = tracer.start_as_current_span(
+        name,
+        attributes=_safe_attrs(attributes or {}),
+        record_exception=False,
+        set_status_on_exception=False,
+    )
+    with started as s, _class_only(s):
         yield _GuardedSpan(s)  # type: ignore[misc]  # wraps set_attribute with the same filter
 
 
+@contextmanager
+def _class_only(s: Span) -> Iterator[None]:
+    """`s` set `ERROR` with the class of an exception that ends it, never its message or traceback
+    (20 §12.3); like OpenTelemetry's own rule, a `BaseException` that is no `Exception` (a
+    cancellation, a generator's exit) sets nothing."""
+    try:
+        yield
+    except Exception as exc:
+        s.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+        raise
+
+
 def _safe_attrs(attributes: Mapping[str, object]) -> dict[str, str | int | bool]:
-    """Allow-listed keys only; `Secret`→`***`; strings run through the redaction rule set."""
+    """Allow-listed keys only; `Secret`→`***`; strings run through the redaction rule set, an
+    `order_link_id` through the logs' typed pass (#3865, SR-E29-16): a §8.3 id is kept as it is,
+    as 20 §12.3's `oms.submit` carries it, and any other value is scanned."""
     out: dict[str, str | int | bool] = {}
     for key, value in attributes.items():
         if key not in SPAN_ATTRIBUTE_ALLOWLIST:
             continue
         if isinstance(value, Secret) or isinstance(value, bytes | bytearray | memoryview):
             out[key] = "***"
+        elif key == _ORDER_LINK_ID:
+            out[key] = str(redact_structure({key: str(value)})[key])
         elif isinstance(value, bool | int):
             out[key] = value
         else:
@@ -87,7 +121,9 @@ def _safe_attrs(attributes: Mapping[str, object]) -> dict[str, str | int | bool]
 
 
 class _GuardedSpan:
-    """Proxy whose `set_attribute(s)` apply `_safe_attrs`; everything else passes through."""
+    """Proxy whose `set_attribute(s)` and `add_event` apply `_safe_attrs`, whose `record_exception`
+    keeps the exception's class alone and whose `set_status` keeps no description but a class name
+    (20 §12.3, C-12.6); everything else passes through."""
 
     __slots__ = ("_span",)
 
@@ -101,6 +137,25 @@ class _GuardedSpan:
     def set_attributes(self, attributes: Mapping[str, object]) -> None:
         for k, v in _safe_attrs(attributes).items():
             self._span.set_attribute(k, v)
+
+    def add_event(
+        self,
+        name: str,
+        attributes: Mapping[str, object] | None = None,
+        timestamp: int | None = None,
+    ) -> None:
+        self._span.add_event(name, _safe_attrs(attributes or {}), timestamp)
+
+    def record_exception(self, exception: BaseException, *_args: object, **_kwargs: object) -> None:
+        """The exception's class as the span's `ERROR` status: no event, message or traceback."""
+        self._span.set_status(Status(StatusCode.ERROR, type(exception).__name__))
+
+    def set_status(self, status: Status | StatusCode, description: str | None = None) -> None:
+        """The status's code, its description kept only as a class name on `ERROR`."""
+        code = status.status_code if isinstance(status, Status) else status
+        text = status.description if isinstance(status, Status) else description
+        named = code is StatusCode.ERROR and text is not None and _CLASS_NAME.fullmatch(text)
+        self._span.set_status(Status(code, text if named else None))
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._span, name)

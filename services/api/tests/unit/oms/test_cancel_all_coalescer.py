@@ -21,7 +21,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.domain.order_link import account_tag
 from candleviewer.domain.primitives import AccountId, Symbol
-from candleviewer.exchange.base.errors import OmsErrorCode, TransportError
+from candleviewer.exchange.base.errors import OmsErrorCode, TransportError, UnknownStateError
 from candleviewer.exchange.base.fakes import FakeReject, FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, Order, OrderAck
 from candleviewer.observability.logging import _redaction_processor
@@ -630,6 +630,71 @@ async def test_a_slot_wait_cut_short_at_teardown_abandons_the_fold() -> None:
             await port.aclose()
             assert (await first).ok and (await last).ok
     assert join.abandoned == "slot" and _methods(venue) == ["cancel_order", "cancel_order"]
+
+
+# --- S4-G3 N1: the teardown abandons every open fold whose call has not left ---------------------
+
+
+async def test_aclose_abandons_a_gathering_fold_and_its_waiting_member_sends_its_own_cancel() -> (
+    None
+):
+    """N1 (P1): `aclose` while a fold still gathers cuts its watchdog short in its sleep, before
+    the watchdog abandons anything; the teardown then abandons the fold (`closed`), so the member
+    waiting at it sends its own cancel, never left waiting for one that will not come."""
+    venue = _venue("a", "b")
+    port, sleeps, _ = _port(venue)
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")) as join:
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            await _settle()
+            assert _fold_tasks() == ["oms-cancel-all-gather"] and sleeps.asked == [1.0]
+            await port.aclose()
+            assert (await first).ok
+    assert join.abandoned == "closed" and _methods(venue) == ["cancel_order"]
+    assert _fold_tasks() == []
+
+
+async def test_aclose_abandons_a_fold_whose_call_task_never_ran() -> None:
+    """N1 (P2): the last member's arrival starts the call task, and `aclose` comes before its
+    first step: cancelled unrun, it never reaches its own abandon, so the teardown's (`closed`)
+    answers both members, who each send their own cancel; no cancel-all leaves."""
+    venue = _venue("a", "b")
+    port, sleeps = await _waiting(venue)
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")) as join:
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            await _settle()
+            last = asyncio.create_task(port.cancel_order(_cancel("b")))
+            await asyncio.sleep(0)  # `last` arrives and starts the call task, not yet run
+            assert "oms-cancel-all-call" in _fold_tasks() and sleeps.asked == [1.0]
+            await port.aclose()
+            assert (await first).ok and (await last).ok
+    assert join.abandoned == "closed" and _methods(venue) == ["cancel_order", "cancel_order"]
+
+
+async def test_aclose_never_abandons_a_fold_whose_call_has_left() -> None:
+    """N1's bound: once the fold's call has left, the teardown never abandons it, so no member
+    sends its own cancel after it. `aclose` cuts the held call short, and each member still
+    waiting is answered its unknown outcome; nothing is sent again."""
+    venue = _HeldVenue()
+    for name in ("a", "b"):
+        venue.seed_order(_resting(name), uid=_REF.uid)
+    port, sleeps = await _waiting(venue)
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")) as join:
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            await _settle()
+            last = asyncio.create_task(port.cancel_order(_cancel("b")))
+            await _settle()
+            sleeps.passed.set()  # the slot comes: the call leaves, its answer held
+            await _settle()
+            assert join.left and _methods(venue) == ["cancel_all"]
+            await port.aclose()
+            for member in (first, last):
+                with pytest.raises(UnknownStateError):
+                    await member
+    assert join.abandoned is None and venue.cut == 1
+    assert _methods(venue) == ["cancel_all"]
 
 
 # --- CR-S4F-12: a KILL's cancel never waits on a fold --------------------------------------------

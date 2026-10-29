@@ -123,9 +123,10 @@ class CancelAllJoin:
     abandons the fold for a member that will not arrive or no longer waits. Until the call leaves,
     any member's departure, a leave or its cancellation, abandons the fold and ends the slot's
     wait: nothing was sent. Once it has left, no member's cancellation cuts it short; only its
-    owner's teardown cancels it, leaving the members still waiting an unknown outcome. The
-    gather's bound runs on `monotonic` and `sleep` from the join's opening. One event loop's, as
-    the order lanes are."""
+    owner's teardown cancels it, leaving the members still waiting an unknown outcome, and
+    `close`, the teardown's last word, abandons a fold whose call has not left. The gather's bound
+    runs on `monotonic` and `sleep` from the join's opening. One event loop's, as the order lanes
+    are."""
 
     def __init__(
         self,
@@ -162,7 +163,8 @@ class CancelAllJoin:
     @property
     def abandoned(self) -> str | None:
         """Why it was abandoned before anything was sent (`left`, a member left or was cut
-        short; `gather`, the gather's bound; `slot`, no spacer slot in time), or None."""
+        short; `gather`, the gather's bound; `slot`, no spacer slot in time; `closed`, its owner's
+        teardown), or None."""
         return self._why
 
     async def arrive(self, link: str) -> OrderAck | None:
@@ -191,6 +193,13 @@ class CancelAllJoin:
         call has left."""
         if link in self._members:
             self._abandon("left")
+
+    def close(self) -> None:
+        """Its owner's teardown, once the join's own tasks have ended (`CancelAllCoalescer.aclose`):
+        a fold whose call has not left is abandoned (`closed`), so each member still waiting sends
+        its own cancel, never left waiting on a watchdog or a call that the teardown cut short
+        before it ran. One whose call has left keeps its answer: nothing is sent again."""
+        self._abandon("closed")
 
     async def _expire(self) -> None:
         """The gather's bound: past it, a fold still gathering is abandoned."""

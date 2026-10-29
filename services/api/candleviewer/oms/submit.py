@@ -94,6 +94,7 @@ import asyncio
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, localcontext
@@ -135,6 +136,7 @@ from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.exchange.base.models import AccountRef, OrderLane
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.observability.tracing import inject_context, span
 from candleviewer.settings import OMS_PRICE_BAND_DEFAULT, OMS_PRICE_BAND_MAX, OMS_PRICE_BAND_MIN
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
@@ -263,6 +265,9 @@ EXCHANGE_ERROR: Final = "exchange_error"
 #: A `202` repeat's state while B1 has not resolved its order (the orchestrator's ruling of
 #: 2026-10-22, C-2.10): the answer says so rather than assume a success.
 RECONCILING: Final = "reconciling"
+#: `oms.submit`'s `result` for a 202 (20 Sec.12.3); a 429 or a 502 is its own code, a refusal its
+#: problem's.
+_ACCEPTED: Final = "accepted"
 #: The states whose create has no known outcome yet: `validated` was never sent (slice 3's
 #: startup kills it), `submitting` is in flight or lost (a restart's hydration resumes it under its
 #: id, within 24 Sec.8.3 rule 6), `unknown` and `quarantined` wait for reconciliation (24 Sec.8.5).
@@ -500,7 +505,9 @@ class _Rows:
 
 @dataclass(slots=True)
 class _Trace:
-    """One request's progress, for its refusal's record and its log lines."""
+    """One request's progress, for its refusal's record, its log lines and its spans (20
+    Sec.12.3): `validating` holds `oms.validate` open through step 8, and `result` is the code
+    `oms.submit` ends with."""
 
     request: OrderRequest
     context: SubmitContext
@@ -510,6 +517,19 @@ class _Trace:
     order: NewOrder | None = None
     persisted: bool = False
     size: EntrySize | None = None
+    validating: ExitStack = field(default_factory=ExitStack)
+    result: str | None = None
+
+    def attributes(self) -> dict[str, str]:
+        """`oms.submit`'s attributes, ids and codes only, each once the request reached it."""
+        link = None if self.order is None else self.order.order_link_id
+        named: dict[str, str | None] = {
+            "symbol": self.request.symbol,
+            "env": self.environment,
+            "order_link_id": link,
+            "result": self.result,
+        }
+        return {key: value for key, value in named.items() if value is not None}
 
 
 #: A decided anchor's status as an answer's (`AnchorStatus`).
@@ -714,13 +734,24 @@ class OrderSubmission:
         self._rate_rejected = counter("oms_rate_reject_total").child()
 
     async def submit(self, request: OrderRequest, context: SubmitContext) -> SubmitOutcome:
-        """The request's answer (module docstring), or its refusal, recorded first (C-2.9)."""
+        """The request's answer (module docstring), or its refusal, recorded first (C-2.9). It is
+        one `oms.submit` span, whose children each start at their first step (20 Sec.12.3):
+        `oms.validate` here, ended at step 8 (`_placed`) or by its refusal, so a refusal's record
+        is written outside it; `oms.persist` and `oms.send` in `_placed`."""
         trace = _Trace(request, context, self._monotonic())
-        try:
-            return await self._submit(trace)
-        except Exception as refusal:  # an OMS refusal, or a defect answered as an internal error
-            await self._refused(trace, refusal)
-            raise
+        with span("oms.submit") as traced:
+            try:
+                with trace.validating:
+                    trace.validating.enter_context(span("oms.validate"))
+                    outcome = await self._submit(trace)
+                trace.result = outcome.code or _ACCEPTED
+                return outcome
+            # an OMS refusal, or a defect answered as an internal error: recorded, then raised
+            except Exception as refusal:
+                await self._refused(trace, refusal)
+                raise
+            finally:
+                traced.set_attributes(trace.attributes())
 
     # --- Steps 1 to 8: nothing recorded, nothing sent ----------------------------------------
 
@@ -798,15 +829,18 @@ class OrderSubmission:
             raise RateBudgetExceeded(retry_after_s=reading.retry_after_s or 1)
         trace.step = "allocate"
         rows = await self._rows(trace, account, sized, profile)
+        trace.validating.close()  # step 8 done: `oms.validate` ends (`submit`)
         trace.step = "persist"
-        persisted = await self._persist(trace, rows, account.environment)
+        with span("oms.persist"):
+            persisted = await self._persist(trace, rows, account.environment)
         if isinstance(persisted, SubmitOutcome):
-            return persisted  # the key's earlier request answers this one
+            return persisted  # the key's earlier request answers this one: no `oms.send`
         trace.persisted = True
-        trace.step = "send"
-        watch = await self._send(trace, persisted, account)
-        trace.step = "answer"
-        return await self._answer(trace, persisted, watch, transport)
+        with span("oms.send"):
+            trace.step = "send"
+            watch = await self._send(trace, persisted, account)
+            trace.step = "answer"
+            return await self._answer(trace, persisted, watch, transport)
 
     async def _account(self, account_id: AccountId) -> AccountRef:
         """The account the order is signed for, by its id alone (SR-E27-21)."""
@@ -1450,7 +1484,8 @@ class OrderSubmission:
         (`user`) and the group draft's origin (`manual`, `_first_persist`) are manual-only until
         M15 (`rules`) submits through the pipeline, as `SubmitActor` already allows."""
         order = rows.order
-        watch = self._commands.expect(order, request_id=trace.context.request_id)
+        carrier = inject_context({})  # `oms.send`'s, which B1's invoke runs outside (20 Sec.12.3)
+        watch = self._commands.expect(order, request_id=trace.context.request_id, carrier=carrier)
         try:
             await self._machines.command(order.exchange_account_id, order.id, "SEND", actor="user")
         except OrderStepUnknown:
@@ -1634,6 +1669,7 @@ class OrderSubmission:
         """A refusal's record, written before it is answered (C-2.9), and its count; when the record
         does not land, `AuditNotDurable` (503 `audit_unavailable`) is raised in its place."""
         problem = problem_for(error) if isinstance(error, OmsError) else INTERNAL_ERROR
+        trace.result = problem.code
         request, order = trace.request, trace.order
         if trace.persisted and order is not None:
             kind: RequestObject = "order"
@@ -1663,6 +1699,7 @@ class OrderSubmission:
         try:
             await self._bounded(self._deps.audit.write(record))
         except Exception as exc:  # no refusal is answered unrecorded
+            trace.result = _AUDIT_UNAVAILABLE
             self._rejected.labels(_AUDIT_UNAVAILABLE).inc()
             _log().error(
                 "oms_submit_refusal_unrecorded", code=problem.code, failure=type(exc).__name__

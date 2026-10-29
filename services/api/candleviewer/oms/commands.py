@@ -172,6 +172,7 @@ from candleviewer.exchange.base.models import (
     TradingStopRequest,
 )
 from candleviewer.observability import spawn
+from candleviewer.observability.tracing import attach_context, span
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_KILL_CANCEL_TIMEOUT
 from candleviewer.storage.errors import StorageError
@@ -604,6 +605,14 @@ def _paired(
     return paired.get("stop_loss"), paired.get("take_profit")
 
 
+def _moved(row: OrderRow, sides: Mapping[str, Decimal | None]) -> dict[str, Decimal | None]:
+    """The sides an amend changes. The exit service re-pairs both into its terms, the unchanged one
+    at the order's own value (Q2, 24 Sec.8.9), and that side is no change: its record says
+    `changed: "false"` (`_record_amend`)."""
+    current = {"stop_loss": row.stop_loss, "take_profit": row.take_profit}
+    return {side: value for side, value in sides.items() if value != current.get(side)}
+
+
 def _check_amend_stops(request: AmendOrderRequest) -> None:
     """C-2.6 before the send: a TP/SL sent is a price above zero (the venue reads `0` as remove)."""
     for name, value in (("stop_loss", request.stop_loss), ("take_profit", request.take_profit)):
@@ -638,11 +647,14 @@ class PlaceWatch:
     """The pipeline's wait on one order's create (`OmsCommandPort.expect`). `answer()` resolves once
     `place` answered B1, with the answer it gave; with None when the call raised (B1 then lands the
     order in `unknown`) or when the registration was dropped unspent (`MAX_WATCHES`). `request_id`
-    is the registering HTTP request's correlation id, which the order's records carry (#3990)."""
+    is the registering HTTP request's correlation id, which the order's records carry (#3990), and
+    `carrier` its W3C trace context, `oms.send`'s, which the create's span starts under (20
+    Sec.12.3)."""
 
     order: NewOrder
     _future: asyncio.Future[Mapping[str, Any] | None] = field(repr=False)
     request_id: UUID | None = None
+    carrier: Mapping[str, str] = field(default_factory=dict, repr=False)
 
     @property
     def answered(self) -> bool:
@@ -779,13 +791,21 @@ class OmsCommandPort:
 
     # --- place -----------------------------------------------------------------------------
 
-    def expect(self, order: NewOrder, *, request_id: UUID | None = None) -> PlaceWatch:
+    def expect(
+        self,
+        order: NewOrder,
+        *,
+        request_id: UUID | None = None,
+        carrier: Mapping[str, str] | None = None,
+    ) -> PlaceWatch:
         """Register the order the pipeline is about to send (`SEND`): its `place` builds the create
         from `order` and sends it as a first send, and the watch answers what B1 was answered. A
         second registration of the order replaces the first, which is answered None. `request_id`
         is the correlation id of the HTTP request submitting it (#3990): the order's records carry
-        it, as B1's calls run in its own task, outside the request's context."""
-        watch = PlaceWatch(order, asyncio.get_running_loop().create_future(), request_id)
+        it, as B1's calls run in its own task, outside the request's context; for the same reason
+        `carrier` is the request's trace context, which the create's span starts under."""
+        future = asyncio.get_running_loop().create_future()
+        watch = PlaceWatch(order, future, request_id, dict(carrier or {}))
         replaced = self._watches.pop(order.id, None)
         if replaced is not None:
             replaced.resolve(None)
@@ -804,10 +824,15 @@ class OmsCommandPort:
             watch.resolve(None)
 
     async def place(self, command: b01.Command) -> Mapping[str, Any]:
-        """B1's create (module docstring); the order's registration, if any, is spent here."""
+        """B1's create (module docstring); the order's registration, if any, is spent here. The
+        create is one `exchange.place_order` span under its registering request's `oms.send`, the
+        watch's `carrier`; a create resumed with no registration starts a trace of its own (20
+        Sec.12.3)."""
         watch = self._watches.pop(_uuid(command.order.get("order_id")), None)
+        carrier = {} if watch is None else watch.carrier
         try:
-            answer = await self._place(command, watch)
+            with attach_context(carrier), span("exchange.place_order"):
+                answer = await self._place(command, watch)
         except BaseException:
             if watch is not None:
                 watch.resolve(None)
@@ -1448,8 +1473,9 @@ class OmsCommandPort:
             try:  # any other failure raises: a timed-out insert may have committed rows that only
                 # the complete read resolves, so it is never answered as unsent (fold 2 minor 2)
                 recorded = await self._record_amend(
-                    row, stop, take_profit, detail, sides, by=by, actor=actor, request_id=rid
-                )
+                    row, stop, take_profit, detail, _moved(row, sides), by=by, actor=actor,
+                    request_id=rid,
+                )  # fmt: skip
             except StopRequestInFlight:
                 return _held(row.order_link_id, STOP_REQUEST_RETRY_AFTER_S)
         port = self._router.port_for(account.environment)

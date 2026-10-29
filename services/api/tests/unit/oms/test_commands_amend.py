@@ -326,6 +326,26 @@ async def test_the_re_paired_side_is_audited_as_unchanged(rig: Rig) -> None:
 
 
 @pytest.mark.parametrize(
+    ("row", "sides", "moved"),
+    [
+        ({}, {"stop_loss": "58500", "take_profit": "65000"}, {"stop_loss", "take_profit"}),
+        ({}, {"stop_loss": "58000.0", "take_profit": "64000"}, set()),
+        ({"take_profit": None}, {"stop_loss": "58000", "take_profit": "65000"}, {"take_profit"}),
+    ],
+    ids=["both_moved", "the_same_values_sent_again", "a_side_the_order_lacks_added"],
+)
+def test_an_amend_marks_changed_only_the_sides_whose_value_moves(
+    row: dict[str, Any], sides: dict[str, str], moved: set[str]
+) -> None:
+    """S4-G3 (C-2.9): the exit service re-pairs both sides into its terms (Q2), so the port marks
+    a side changed only when its value moves from the order's, compared as numbers: both moved,
+    neither (the order's own values sent again, `58000.0` as `58000`), and a side the order lacks
+    that the amend adds."""
+    terms = {side: Decimal(value) for side, value in sides.items()}
+    assert set(oc._moved(cr.new_order(**row), terms)) == moved
+
+
+@pytest.mark.parametrize(
     ("over", "terms", "code"),
     [
         ({"cum_exec_qty": Decimal("0.004")}, {"stop_loss": "58500"}, "TPSL_AFTER_FILL"),

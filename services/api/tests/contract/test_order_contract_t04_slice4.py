@@ -20,6 +20,8 @@ from candleviewer.api.order_problems import order_problem
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.observability.context import bind_context
 from candleviewer.observability.correlation import CORRELATION_HEADER
+from candleviewer.oms.cancel_all import ACCOUNTS_AT_ONCE, FOLD_MIN
+from candleviewer.oms.commands import MAX_WATCHES
 from candleviewer.oms.errors import OmsError
 from candleviewer.oms.exits import ALREADY_FINAL, RECLASSIFIED, ExitStep
 from candleviewer.oms.recovery import FINALS
@@ -1251,3 +1253,49 @@ def test_the_change_log_records_the_order_routes_contract_as_built() -> None:
         "2 s by default and 1.5 to 5 s",
         "No table or column changes.",
     )
+
+
+# --- S4-G3: the closing slice's text catches up to the code (N3, I1) -----------------------------
+
+_COUNTED = {1: "one", 2: "two", 3: "three"}
+
+
+def test_cancel_all_folds_a_symbol_from_two_selected_orders_only() -> None:
+    """S4-G3 N3: 24 Sec.8.7 states the floor that the code (`FOLD_MIN`) and 22 state: a symbol
+    with fewer selected orders sends each its own cancel and reads nothing."""
+    floor = _COUNTED[FOLD_MIN]
+    assert (
+        f"for a symbol with at least {floor} selected orders (`FOLD_MIN`; a single order sends "
+        "its own cancel and reads nothing)" in _between(_INTERNAL_DOC, "### 8.7 Rate", "### 8.8 ")
+    )
+    assert f"a covered account-and-symbol group of {floor} or more orders" in _CANCEL_ALL
+
+
+def test_om_d13_bounds_concurrent_folds_by_the_command_ports_watches() -> None:
+    """S4-G3 I1 (E29 revision 26): OM-D13's residual names the bound that several large folds
+    meet at once, the command port's exit watches, with the code's figures; by the ruling of
+    2026-10-28 14:10Z the burst-parse residual names its host and CI's reading (words only, as
+    the slice-3 pin reads that row). The header and the review log record the revision."""
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    lines = threat.read_text(encoding="utf-8").splitlines()
+    [d13] = [_words(r) for r in lines if re.match(r"^\|\s*OM-D13\s*\|\s*The cancel-all fold's", r)]
+    assert not _missing(
+        d13,
+        f"(a request works up to `ACCOUNTS_AT_ONCE`, {ACCOUNTS_AT_ONCE}, accounts together)",
+        f"at most `MAX_WATCHES` ({MAX_WATCHES:,}) across the port: past it the oldest watch is "
+        "dropped, logged at ERROR (`oms_exit_watch_dropped`) and answered None",
+        "degrades only that exit's answer, a venue refusal's exact code, to `timeout`, and its "
+        "call's own records read `attribution: unregistered` (SEC-4662-01)",
+    )
+    [parse] = [_words(line) for line in lines if "| The burst's parse saturates" in line]
+    assert not _missing(
+        parse,
+        "parses every private push there, on the shared VPS",
+        "On CI's hosted runner (`py-perf` at #4854's head `8f5c1c4cf`, 2026-10-28) the parse took",
+        "so there the parse does not saturate it",
+    )
+    header = _words(" ".join(lines[:45]))
+    assert "Revision 26 records #913 S4-G3:" in header
+    [logged] = [_words(line) for line in lines if "| Revision 26, #913 S4-G3," in line]
+    assert logged.endswith("No STRIDE row, rating or count changes |")
+    assert "and its call's own records read `attribution: unregistered` (SEC-4662-01)" in logged

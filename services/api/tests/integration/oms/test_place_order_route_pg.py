@@ -35,6 +35,8 @@ from pydantic import SecretStr
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.profile_cache import EffectiveProfiles
+from candleviewer.api.order_cancel_all import make_cancel_all_router
+from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.orders import make_orders_router
 from candleviewer.auth.generated_permissions import Permission
@@ -135,6 +137,7 @@ class World:
     beats: Beats = field(default_factory=Beats)
     port: Port = field(init=False)
     body: dict[str, Any] = field(init=False)
+    runtime: OmsRuntime | None = field(default=None, init=False)  # the last process's (`_serving`)
 
     def __post_init__(self) -> None:
         self.port = Port(environment="demo", now_us=self.clock.us)
@@ -201,13 +204,17 @@ class _Listed(dict[str, Any]):
         return (tier,) if symbol in self else None
 
 
-def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> OmsRuntime:
+def _runtime(
+    world: World, dsn: str, profiles: Profiles, metrics: Metrics, drain_s: float | None = None
+) -> OmsRuntime:
     """A process's runtime over the database at `dsn`, as E4's: the clock guard measured, the
     flag views read, the account and its key read in memory, the catalogue composed, and the lane's
-    heartbeat on the world's beats."""
+    heartbeat on the world's beats; its stop drains for `drain_s` when given."""
+    drain = {} if drain_s is None else {"oms_drain_s": drain_s}
     settings = Settings(
-        storage_backend="real", pg_dsn=SecretStr(dsn), machine_event_wal_path=str(world.wal)
-    )
+        storage_backend="real", pg_dsn=SecretStr(dsn), machine_event_wal_path=str(world.wal),
+        **drain,
+    )  # fmt: skip
     key = UUID(cr.KEYS["demo"])
     row = TradingAccountRow(world.account, "demo", c6._uid(world.account), False, key)
     flags = (Flag(), Flag())
@@ -250,33 +257,47 @@ def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> Om
 
 @asynccontextmanager
 async def _serving(
-    world: World, *, dsn: str = "", profiles: Profiles | None = None, ready: bool = True
-) -> AsyncIterator[httpx.AsyncClient]:
-    """One API process until the block ends, when its facade, once composed, settles and it goes
-    down: `POST /orders` mounted over its OMS runtime, which is ready unless `ready` is False, and
-    then composed nothing to settle (CR-S3L2X-01). Its own pools, both on `dsn` (the OMS stores',
-    and the profile cache's unless `profiles` stands in), metrics and 24 h record; the venue, the
-    audit log and the pager are the world's."""
+    world: World, *, dsn: str = "", profiles: Profiles | None = None, ready: bool = True,
+    settle: bool = True, drain_s: float | None = None,
+) -> AsyncIterator[httpx.AsyncClient]:  # fmt: skip
+    """One API process until the block ends, when its facade, once composed, settles (unless
+    `settle` is False: a venue call left held would never let it) and it goes down, draining for
+    `drain_s` when given: `POST /orders`, `POST /orders/cancel-all` and the exit routes, mounted in
+    `create_app()`'s order over its OMS runtime (`world.runtime`), which is ready unless `ready`
+    is False, and then composed nothing to settle (CR-S3L2X-01). Its own pools, both on `dsn` (the
+    OMS stores', and the profile cache's unless `profiles` stands in), metrics and 24 h record; the
+    venue, the audit log and the pager are the world's."""
     metrics = Metrics("demo")
     process_dsn = dsn or c6._login(world.dsn, "cv_app")
     pool = SqlAlchemyRelationalRepository(process_dsn, "place-order-route-it")
     cache = EffectiveProfiles(SqlAlchemyAccountProfileStore(pool)) if profiles is None else profiles
-    runtime = _runtime(world, process_dsn, cache, metrics)
+    runtime = world.runtime = _runtime(world, process_dsn, cache, metrics, drain_s)
+    owner, records = _owner(world.user), OmsAudit(world.writer, environment="demo")
     app = FastAPI()
     app.include_router(
         make_orders_router(
-            _owner(world.user), lambda: runtime, audit=world.writer,
-            records=OmsAudit(world.writer, environment="demo"), oms_enabled=lambda: True,
+            owner, lambda: runtime, audit=world.writer, records=records, oms_enabled=lambda: True,
             metrics=metrics, pager=world.pager,
         )
     )  # fmt: skip
+    app.include_router(
+        make_cancel_all_router(
+            owner, lambda: runtime, audit=world.writer, records=records, metrics=metrics,
+            pager=world.pager,
+        )
+    )  # fmt: skip
+    app.include_router(
+        make_order_exits_router(
+            owner, lambda: runtime, audit=world.writer, metrics=metrics, pager=world.pager
+        )
+    )
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://cv")
     try:
         async with started(runtime), client:
             if ready:
                 await asyncio.wait_for(runtime.wait_ready(), _READY_BOUND_S)
             yield client
-            if ready:  # composed: a runtime never ready here composed nothing (CR-S3L2X-01)
+            if ready and settle:  # composed: one never ready composed nothing (CR-S3L2X-01)
                 parts = runtime._composed()  # the facade's tasks are the order lane's (CV-C13)
                 async with asyncio.timeout(_READY_BOUND_S):  # its turns settle (`Rig.settle`)
                     for _ in range(4):

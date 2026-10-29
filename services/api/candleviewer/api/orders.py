@@ -33,9 +33,10 @@ principal, step 2's refusal, the body's cap, the key, the 24 h record) is `api/o
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final, Protocol
@@ -88,6 +89,7 @@ from candleviewer.domain.primitives import AccountId, Environment, GroupId
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.observability.tracing import span
 from candleviewer.oms.errors import (
     PROBLEMS,
     AccountScopeDenied,
@@ -129,6 +131,8 @@ from candleviewer.storage.repositories.orders import OrderRow, OrderStoreError
 __all__ = ["MAX_ORDER_BODY_BYTES", "OrderPrincipals", "OrderRuntime", "make_orders_router"]
 
 _OPERATION: Final = "placeOrder"
+#: `placeOrder`'s path, as the router mounts it and as its `http.request` span names it.
+_ROUTE: Final = "/orders"
 _PERMISSION: Final = ORDERS_PERMISSION
 #: `rbac.denied`'s reason for an account outside the grants, as `enforce` writes it (step 4).
 _NOT_GRANTED: Final = (
@@ -276,6 +280,26 @@ def _order_request(body: dict[str, object], account_id: AccountId) -> OrderReque
     )  # fmt: skip
 
 
+type _Handler = Callable[[Request], Awaitable[Response]]
+
+
+def _traced(route: str) -> Callable[[_Handler], _Handler]:
+    """A `POST` route as one `http.request` span with its method, route and status code (20
+    Sec.12.3): `placeOrder`'s, the submission's spans under it, on the order lane too."""
+
+    def wrap(handler: _Handler) -> _Handler:
+        @functools.wraps(handler)  # FastAPI reads the handler's own signature
+        async def traced(request: Request) -> Response:
+            with span("http.request", {"http.method": "POST", "http.route": route}) as current:
+                response = await handler(request)
+                current.set_attribute("http.status_code", response.status_code)
+                return response
+
+        return traced
+
+    return wrap
+
+
 def make_orders_router(
     principals: OrderPrincipals | None, runtime: Callable[[], OrderRuntime | None], *,
     audit: AuditEmitter, records: SubmitAudit, oms_enabled: Callable[[], bool], metrics: Metrics,
@@ -405,7 +429,8 @@ def make_orders_router(
         kept.put(*held, stored)
         return out
 
-    @router.post("/orders", status_code=202)
+    @router.post(_ROUTE, status_code=202)
+    @_traced(_ROUTE)
     async def place_order(request: Request) -> Response:
         if principals is None:
             return problem(501, "not_implemented", "No principal source is composed.")

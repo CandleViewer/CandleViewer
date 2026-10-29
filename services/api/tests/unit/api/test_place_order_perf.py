@@ -17,7 +17,7 @@ import asyncio
 import gc
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -29,11 +29,13 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request
 
+from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.orders import make_orders_router
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.exchange.base.models import FeeRate, RiskLimitTier, Wallet
+from candleviewer.oms_lane import OrderLane
 from candleviewer.oms_wiring import GroupStores, OmsAudit, OmsRuntime, OmsStores
 from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
 from tests.unit.api.test_orders_route import BODY
@@ -91,14 +93,19 @@ class Owner:
 
 
 @asynccontextmanager
-async def serving() -> AsyncIterator[tuple[httpx.AsyncClient, OmsRuntime]]:
-    """`POST /orders` over a ready runtime that trades `cr.ACCOUNT` on demo: the instrument
-    catalogue composed, the account and its key read, both flag views read."""
+async def serving(
+    lane: Callable[[], OrderLane] | None = None,
+) -> AsyncIterator[tuple[httpx.AsyncClient, OmsRuntime]]:
+    """`POST /orders`, then `PATCH` and `DELETE /orders/{orderId}` (S4-G3's CG8), mounted in
+    `create_app()`'s order over a ready runtime that trades `cr.ACCOUNT` on demo: the instrument
+    catalogue composed, the account and its key read, both flag views read. Its order lane is the
+    world's, on this loop, unless `lane` builds one (`OrderLane`, its own thread)."""
     key = UUID(cr.KEYS["demo"])
     world = World(
         venue=_Figured(), accounts=[TradingAccountRow(cr.ACCOUNT, "demo", "1000001", False, key)]
     )
     world.store.submissions.seed_account(cr.ref())  # its environment, as Postgres holds it
+    world.store.seed_owner(USER)  # a live owner role, which the exit routes' scope read checks
     listed = _Listed({SYMBOL: instrument()})  # the catalogue's snapshot, built once as refreshed
     world.ingestion.instruments = SimpleNamespace(snapshot=lambda: listed)
     # A fresh quote whose mid is the bodies' price, inside the band the limit entry is checked in.
@@ -121,7 +128,10 @@ async def serving() -> AsyncIterator[tuple[httpx.AsyncClient, OmsRuntime]]:
     # the profile's day cap holds all of them (the position cap does not bind): the measure
     # is the path, not a cap.
     roomy = profile(max_daily_loss="1000000")
-    runtime = world.runtime(stores=stores, profiles=Profiles(held={(cr.ACCOUNT, None): roomy}))
+    # Under its own id too, as the profile cache answers it: an amend reads the leg's profile.
+    held = Profiles(held={(cr.ACCOUNT, None): roomy, (cr.ACCOUNT, roomy.profile_id): roomy})
+    on = {} if lane is None else {"lane": lane}
+    runtime = world.runtime(stores=stores, profiles=held, **on)
     app = FastAPI()
     records = OmsAudit(world.writer, environment="demo")
     app.include_router(
@@ -130,6 +140,9 @@ async def serving() -> AsyncIterator[tuple[httpx.AsyncClient, OmsRuntime]]:
             oms_enabled=lambda: True, metrics=world.metrics,
         )
     )  # fmt: skip
+    app.include_router(
+        make_order_exits_router(Owner(), lambda: runtime, audit=world.writer, metrics=world.metrics)
+    )
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://cv")
     async with started(runtime), client:
         async with asyncio.timeout(READY_BOUND_S):

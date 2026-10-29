@@ -10,7 +10,7 @@ import asyncio
 import math
 from collections import Counter, OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
-from dataclasses import fields
+from dataclasses import dataclass, field, fields
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -1101,12 +1101,44 @@ async def _entry(rig: SubmitRig, n: int) -> OrderRow:
     return row
 
 
+@dataclass
+class _Late:
+    """S4-G3 N2: one member's `orders.cancel` write-ahead held until `ahead` is set, so it
+    arrives at the fold after the other member and after the call task, had one started, had
+    its turns; `arrived` names each member's cancel as it meets the fold port."""
+
+    ahead: asyncio.Event = field(default_factory=asyncio.Event)
+    arrived: list[str | None] = field(default_factory=list)
+
+
+def _late(
+    rig: SubmitRig, folds: CancelAllCoalescer, held: OrderRow, monkeypatch: pytest.MonkeyPatch
+) -> _Late:
+    """`held`'s write-ahead held (`_Late`) and each member's arrival noted."""
+    late, written, meet = _Late(), rig.port.audits.write, folds.cancel_order
+
+    async def write(record: Any) -> None:
+        if record.action == "orders.cancel" and getattr(record, "object_id", None) == held.id:
+            await late.ahead.wait()
+        await written(record)
+
+    async def cancel_order(request: CancelOrderRequest) -> OrderAck:
+        late.arrived.append(request.order_link_id)
+        return await meet(request)
+
+    monkeypatch.setattr(rig.port.audits, "write", write)
+    monkeypatch.setattr(folds, "cancel_order", cancel_order)
+    return late
+
+
 async def test_over_the_real_exit_service_each_member_is_written_ahead_of_the_one_call(
     exit_rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """CR-S4F-16 (C-2.9): over the real exit service and B1 facade, a covered fold of two orders.
     At the venue's one cancel-all, each order's `orders.cancel` record and its B1
-    `cancel_request` step row are already written; both orders end `cancelled`."""
+    `cancel_request` step row are already written; both orders end `cancelled`. S4-G3 N2: the
+    second member's write-ahead is held until the first has arrived and the call task, had one
+    started, has had its turns, so a call sent at the first arrival leaves first and fails here."""
     rig = exit_rig
     first, second = await _entry(rig, 1), await _entry(rig, 2)
     venue, clock = rig.port.demo, _Clock()
@@ -1127,11 +1159,17 @@ async def test_over_the_real_exit_service_each_member_is_written_ahead_of_the_on
         return await sent(account, symbol)
 
     monkeypatch.setattr(venue, "cancel_all", cancel_all)
+    late = _late(rig, folds, second, monkeypatch)
     service = CancelAll(rig.port.orders, exits_of(rig), folds=(folds, rig.port.accounts))
     ask = _request(exclude_reduce_only=False)
     async with asyncio.timeout(5):
         scoped = await service.scope(OwnerScope(OWNER), ask)
-        got = await service.run(scoped, ask, actor=actor(OWNER), request_id=REQUEST)
+        run = asyncio.create_task(service.run(scoped, ask, actor=actor(OWNER), request_id=REQUEST))
+        await rig.quiet()  # the first member arrives; a call task, had one started, has its turns
+        assert late.arrived == [first.order_link_id]
+        assert "cancel_all" not in [call.method for call in venue.calls]
+        late.ahead.set()
+        got = await run
     assert got.accounts == (AccountCancels(cr.ACCOUNT, affected=2, error=None),)
     assert seen == {
         "records": [("success", "cancel_all")] * 2, "steps": ["cancel_request"] * 2,
@@ -1146,7 +1184,10 @@ async def test_a_run_cut_short_mid_fold_leaves_each_order_to_b1_its_cancel_sent_
     """The lane binding (20 Sec.6.2): the runtime's stop cancels the cancel-all run once its drain
     passes, here while the fold's call waits for its slot. Each member was written ahead, and its
     cancel stays with B1 (the exit service's shielded send): the fold is abandoned with nothing
-    sent, and each order's own cancel goes out once. None unwritten-ahead, none sent twice."""
+    sent, and each order's own cancel goes out once. None unwritten-ahead, none sent twice.
+    S4-G3 N2: the slot is free while the second member's write-ahead is held past the first's
+    arrival, then taken again before that member arrives, so a call sent at the first arrival
+    would leave, and fail here."""
     rig = exit_rig
     first, second = await _entry(rig, 1), await _entry(rig, 2)
     venue, clock, held = rig.port.demo, _Clock(), asyncio.Event()
@@ -1159,11 +1200,18 @@ async def test_a_run_cut_short_mid_fold_leaves_each_order_to_b1_its_cancel_sent_
     folds = CancelAllCoalescer(venue, spacer=spacer, monotonic=clock, sleep=_never)
     router = TradingRouter({"demo": folds, "live": rig.port.live}, lane_waits=cr.LANE_WAITS)
     monkeypatch.setattr(rig.port.port, "_router", router)
+    late = _late(rig, folds, second, monkeypatch)
     service = CancelAll(rig.port.orders, exits_of(rig), folds=(folds, rig.port.accounts))
     ask = _request(exclude_reduce_only=False)
     async with asyncio.timeout(5):
         scoped = await service.scope(OwnerScope(OWNER), ask)
+        held.set()  # the slot is free while the second member's write-ahead is held
         run = asyncio.create_task(service.run(scoped, ask, actor=actor(OWNER), request_id=REQUEST))
+        await rig.quiet()
+        assert late.arrived == [first.order_link_id]
+        assert "cancel_all" not in [call.method for call in venue.calls]
+        held.clear()  # taken again before the held member arrives
+        late.ahead.set()
         await rig.quiet()
         assert requests(rig, "orders.cancel") == [("success", "cancel_all")] * 2
         assert "cancel_all" not in [call.method for call in venue.calls]  # waiting for its slot
