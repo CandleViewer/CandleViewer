@@ -3,8 +3,9 @@
 The engineering hand-off of E40-D02 (#1013) for SCR-090, SCR-091, SCR-092, SCR-014 and SCR-115, assembled from the
 merged spec [E40-D02.md](E40-D02.md) (PR-1, #4126); every "§" below is the spec's. It decides nothing new: each row cites
 the section that decided it. Ruled by the orchestrator on 2026-10-29 (issuecomment-6486717743, BQ-1..BQ-9; the questions
-are issuecomment-6486480087). **Status:** text; the ten boards are PENDING (the boards PR fills C2's Penpot board ids and
-posts the owner walkthrough, spec §13.2). The re-plan to ten boards is PROPOSED, owner approval pending (#2701) (BQ-2).
+are issuecomment-6486480087). **Status:** the ten boards are drawn (r1, 2026-10-29; spec §0 "Boards as drawn"); C2 holds
+their Penpot board ids and sizes, and the owner walkthrough (spec §13.2) is posted on #1013 when the boards PR is
+ready. The re-plan to ten boards is PROPOSED, owner approval pending (#2701) (BQ-2).
 Every number here is the audit tool's: `python3 -I -B docs/design/_tools/e40_d02_alert_audit.py --json`, whose `--check`
 gates C1, C2, the copy deck, the allow-list, the token map, the cites and the Deferred rows. **Normative for E40-S01..S04
 and E40-Q01 / Q02:** the state matrix, the copy deck, the a11y contract and the budgets. Frame data is synthetic only
@@ -17,7 +18,7 @@ component replaces three literal copies (the E15-D03 form).
 
 | Item                     | CMP-163 AlertRow                                                                                                             | CMP-164 AlertBuilderForm                                                                                                         | CMP-165 AlertFiredToastGroup                                                                                   |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Final Penpot link        | `[ ]` the boards PR: page `E40-D02`, board 01 (A6) and 08; C2 below holds every frame                                        | `[ ]` the boards PR: board 02 (A8) with A16's strip; C2                                                                          | `[ ]` the boards PR: boards 03 (B1), 04 (B15), 09; C2                                                          |
+| Final Penpot link        | `[x]` page `E40-D02`, board 01 (A6) and 08, drawn (r1); C2 below holds every frame                                           | `[x]` board 02 (A8) with A16's strip, drawn (r1); C2                                                                             | `[x]` boards 03 (B1), 04 (B15), 09, drawn (r1); C2                                                             |
 | Variants × States matrix | `[x]` `15` CMP-163 States and Storybook (24 stories); spec §7.1; C1                                                          | `[x]` `15` CMP-164 States and Storybook (26 stories); spec §7.2; C1                                                              | `[x]` `15` CMP-165 States and Storybook (22 stories); spec §7.3; C1                                            |
 | Keyboard table           | `[x]` spec §11.2 SCR-090; D01 KM-7 (the a11y contract below); the row menu on `Shift+F10`, `Space` selects (spec §2.6, §2.7) | `[x]` spec §11.2 SCR-091, §3.2's order; D01 KM-8; `Ctrl+Enter` checks the draft and never saves (X-33)                           | `[x]` spec §11.2 Toast; D01 KM-5, KM-6; never focused on arrival; `Esc` dismisses and acknowledges             |
 | Accessible name / role   | `[x]` a `<tr>` with `th scope="row"`; "Select BTC above 65k", "More actions for BTC above 65k" (spec §2.2, §7.1)             | `[x]` the modal `dialog` "New alert"; the Delivery fieldset described by the boundary line; CMP-234 takes focus on a failed save | `[x]` `role="status"` through CMP-212's polite region at every severity (LR-1, LR-2, AM-11); "Alert: …" (X-30) |
@@ -27,85 +28,85 @@ component replaces three literal copies (the E15-D03 form).
 | Essential exceptions     | `[x]` none: every target ≥ 24 px in both densities (spec §11.3)                                                              | `[x]` none                                                                                                                       | `[x]` none                                                                                                     |
 | Tokens used              | `[x]` the token map's `SCR-090` group; `packages/ui/tokens` at `728b4254d`                                                   | `[x]` the token map's `SCR-091` group                                                                                            | `[x]` the token map's `SCR-092 toast` group                                                                    |
 | Data contract confirmed  | `[x]` `22` `Alert` as served; CC-3, CC-4, CC-5 for status, snooze and cooldown (spec §17.1)                                  | `[x]` `22` `AlertInput`, unchanged; the 409, 412, 422, 403, 404, 503 answers (spec §3.7); CC-10, CC-12, CC-19                    | `[x]` `23` §15.7 `alerts` items; CC-1, CC-2, CC-7, CC-18 (spec §4.1, §17.1)                                    |
-| Contrast and CVD         | `[x]` spec §14.2 CP-1..CP-4, CP-8..CP-11; CVD renders with board 01 (boards PR)                                              | `[x]` CP-6, CP-12, CP-16, CP-17                                                                                                  | `[x]` D01 CR-1..CR-12; CVD renders with board 03 (boards PR)                                                   |
+| Contrast and CVD         | `[x]` spec §14.2 CP-1..CP-4, CP-8..CP-11; CVD renders of board 01 in `img/`                                                  | `[x]` CP-6, CP-12, CP-16, CP-17                                                                                                  | `[x]` D01 CR-1..CR-12; CVD renders of board 03 in `img/`                                                       |
 | Design QA, `05` §10      | `[ ]` the `16` §12 pass runs on the boards PR; the `05` §10 template is D01 §7.3                                             | `[ ]` as CMP-163                                                                                                                 | `[ ]` as CMP-163                                                                                               |
 | Sign-off                 | `[ ]` owner approval pending (#1013, #2701)                                                                                  | `[ ]` owner approval pending                                                                                                     | `[ ]` owner approval pending                                                                                   |
 
 ## C2 — Frame index (the "Dev Mode links")
 
 Every frame of spec §12.1 and every light twin, in its order, with its board, size, status and its place in the owner
-walkthrough (the boards in their numbered order; a frame not on a board reads "on request"). The Penpot board id column is
-filled by the boards PR. Generated by the audit tool's `--write` and gated by `--check`.
+walkthrough (the boards in their numbered order; a frame not on a board reads "on request"). The Penpot board id column holds
+each drawn board's id and its size, read from its PNG header. Generated by the audit tool's `--write` and gated by `--check`.
 
 <!-- c2:begin -->
 
-| Walk       | Frame                                                               | Theme | Board | Size        | Status                       | Penpot board id |
-| ---------- | ------------------------------------------------------------------- | ----- | ----- | ----------- | ---------------------------- | --------------- |
-| on request | `A1 SCR-090/all-populated`                                          | dark  | —     | 1280 × 800  | specified (drawn on request) | —               |
-| on request | `A1 SCR-090/all-populated (light twin)`                             | light | —     | 1280 × 800  | specified (drawn on request) | —               |
-| on request | `A2 SCR-090/fired-tab`                                              | dark  | —     | 1280 × 800  | specified (drawn on request) | —               |
-| on request | `A2 SCR-090/fired-tab (light twin)`                                 | light | —     | 1280 × 800  | specified (drawn on request) | —               |
-| on request | `A3 SCR-090/snoozed-and-row-menu`                                   | dark  | —     | 1280 × 800  | specified (drawn on request) | —               |
-| on request | `A3 SCR-090/snoozed-and-row-menu (light twin)`                      | light | —     | 1280 × 800  | specified (drawn on request) | —               |
-| on request | `A4 SCR-090/empty-filtered-loading-error`                           | dark  | —     | 1600 × 1000 | specified (drawn on request) | —               |
-| on request | `A4 SCR-090/empty-filtered-loading-error (light twin)`              | light | —     | 1600 × 1000 | specified (drawn on request) | —               |
-| on request | `A5 SCR-090/bulk-selection-confirm`                                 | dark  | —     | 1280 × 800  | specified (drawn on request) | —               |
-| on request | `A5 SCR-090/bulk-selection-confirm (light twin)`                    | light | —     | 1280 × 800  | specified (drawn on request) | —               |
-| 1          | `A6 SCR-090/failure-states`                                         | dark  | 01    | 1280 × 900  | board 01, PENDING            | —               |
-| 8          | `A6 SCR-090/failure-states (light twin)`                            | light | 08    | 1280 × 900  | board 08, PENDING            | —               |
-| on request | `A7 SCR-090/viewer-and-manager`                                     | dark  | —     | 1280 × 800  | specified (drawn on request) | —               |
-| on request | `A7 SCR-090/viewer-and-manager (light twin)`                        | light | —     | 1280 × 800  | specified (drawn on request) | —               |
-| 2          | `A8 SCR-091/new-default`                                            | dark  | 02    | 720 × 960   | board 02, PENDING            | —               |
-| on request | `A8 SCR-091/new-default (light twin)`                               | light | —     | 720 × 960   | specified (drawn on request) | —               |
-| on request | `A9 SCR-091/edit-estimated-restatement-preview`                     | dark  | —     | 720 × 1100  | specified (drawn on request) | —               |
-| on request | `A9 SCR-091/edit-estimated-restatement-preview (light twin)`        | light | —     | 720 × 1100  | specified (drawn on request) | —               |
-| on request | `A10 SCR-091/validation-errors-and-pending`                         | dark  | —     | 720 × 1100  | specified (drawn on request) | —               |
-| on request | `A10 SCR-091/validation-errors-and-pending (light twin)`            | light | —     | 720 × 1100  | specified (drawn on request) | —               |
-| on request | `A11 SCR-091/vocabulary-unavailable-and-server-errors`              | dark  | —     | 1100 × 900  | specified (drawn on request) | —               |
-| on request | `A11 SCR-091/vocabulary-unavailable-and-server-errors (light twin)` | light | —     | 1100 × 900  | specified (drawn on request) | —               |
-| on request | `A12 SCR-091/channels-sound-test-fire`                              | dark  | —     | 720 × 1000  | specified (drawn on request) | —               |
-| on request | `A12 SCR-091/channels-sound-test-fire (light twin)`                 | light | —     | 720 × 1000  | specified (drawn on request) | —               |
-| on request | `A13 SCR-091/rule-editor-vs-alert-editor`                           | dark  | —     | 1500 × 1000 | specified (drawn on request) | —               |
-| on request | `A14 SCR-090-091/entry-points-and-flows`                            | dark  | —     | 1600 × 900  | specified (drawn on request) | —               |
-| on request | `A15 SCR-090/redline-focus-200`                                     | dark  | —     | 1600 × 1000 | specified (drawn on request) | —               |
-| on request | `A16 SCR-091/redline-focus-200`                                     | dark  | —     | 1600 × 1100 | specified (drawn on request) | —               |
-| 3          | `B1 SCR-092/toast-severities-actions`                               | dark  | 03    | 1100 × 900  | board 03, PENDING            | —               |
-| 9          | `B1 SCR-092/toast-severities-actions (light twin)`                  | light | 09    | 1100 × 900  | board 09, PENDING            | —               |
-| on request | `B2 SCR-092/stack-group-storm`                                      | dark  | —     | 1100 × 1000 | specified (drawn on request) | —               |
-| on request | `B2 SCR-092/stack-group-storm (light twin)`                         | light | —     | 1100 × 1000 | specified (drawn on request) | —               |
-| on request | `B3 SCR-092/detail-drawer`                                          | dark  | —     | 480 × 1100  | specified (drawn on request) | —               |
-| on request | `B3 SCR-092/detail-drawer (light twin)`                             | light | —     | 480 × 1100  | specified (drawn on request) | —               |
-| on request | `B4 SCR-092/detail-drawer-states`                                   | dark  | —     | 1480 × 700  | specified (drawn on request) | —               |
-| on request | `B4 SCR-092/detail-drawer-states (light twin)`                      | light | —     | 1480 × 700  | specified (drawn on request) | —               |
-| 5          | `B5 SCR-014/populated-mixed`                                        | dark  | 05    | 480 × 1000  | board 05, PENDING            | —               |
-| on request | `B5 SCR-014/populated-mixed (light twin)`                           | light | —     | 480 × 1000  | specified (drawn on request) | —               |
-| on request | `B6 SCR-014/grouped-storm-overflow`                                 | dark  | —     | 480 × 1000  | specified (drawn on request) | —               |
-| on request | `B6 SCR-014/grouped-storm-overflow (light twin)`                    | light | —     | 480 × 1000  | specified (drawn on request) | —               |
-| on request | `B7 SCR-014/empty-loading-error`                                    | dark  | —     | 1960 × 600  | specified (drawn on request) | —               |
-| on request | `B7 SCR-014/empty-loading-error (light twin)`                       | light | —     | 1960 × 600  | specified (drawn on request) | —               |
-| on request | `B8 SCR-014/mute-and-mark-read`                                     | dark  | —     | 960 × 900   | specified (drawn on request) | —               |
-| on request | `B8 SCR-014/mute-and-mark-read (light twin)`                        | light | —     | 960 × 900   | specified (drawn on request) | —               |
-| 6          | `B9 SCR-115/matrix-locked-rows`                                     | dark  | 06    | 960 × 1100  | board 06, PENDING            | —               |
-| 10         | `B9 SCR-115/matrix-locked-rows (light twin)`                        | light | 10    | 960 × 1100  | board 10, PENDING            | —               |
-| on request | `B10 SCR-115/sound-quiet-hours-test`                                | dark  | —     | 960 × 1100  | specified (drawn on request) | —               |
-| on request | `B10 SCR-115/sound-quiet-hours-test (light twin)`                   | light | —     | 960 × 1100  | specified (drawn on request) | —               |
-| on request | `B11 SCR-115/desktop-permission-states`                             | dark  | —     | 1480 × 900  | specified (drawn on request) | —               |
-| on request | `B11 SCR-115/desktop-permission-states (light twin)`                | light | —     | 1480 × 900  | specified (drawn on request) | —               |
-| on request | `B12 CMP-163/alert-row-variants-states`                             | dark  | —     | 1480 × 1100 | specified (drawn on request) | —               |
-| on request | `B12 CMP-163/alert-row-variants-states (light twin)`                | light | —     | 1480 × 1100 | specified (drawn on request) | —               |
-| on request | `B13 CMP-164/alert-builder-form-anatomy`                            | dark  | —     | 1100 × 1100 | specified (drawn on request) | —               |
-| on request | `B13 CMP-164/alert-builder-form-anatomy (light twin)`               | light | —     | 1100 × 1100 | specified (drawn on request) | —               |
-| on request | `B14 CMP-165/fired-toast-group-variants`                            | dark  | —     | 1100 × 1000 | specified (drawn on request) | —               |
-| on request | `B14 CMP-165/fired-toast-group-variants (light twin)`               | light | —     | 1100 × 1000 | specified (drawn on request) | —               |
-| 4          | `B15 SCR-092/placement-over-workspace`                              | dark  | 04    | 1600 × 1000 | board 04, PENDING            | —               |
-| on request | `B16 SCR-014/deep-links-and-role-variants`                          | dark  | —     | 1600 × 900  | specified (drawn on request) | —               |
-| on request | `B17 SCR-115/symbol-mute-and-viewer`                                | dark  | —     | 1600 × 900  | specified (drawn on request) | —               |
-| on request | `B18 CMP-045-060-212/documented-variants`                           | dark  | —     | 1400 × 900  | specified (drawn on request) | —               |
-| 7          | `B19 MOTION/storyboards`                                            | dark  | 07    | 1600 × 900  | board 07, PENDING            | —               |
-| on request | `B20 SOUND/assets-labels-fallback`                                  | dark  | —     | 1200 × 700  | specified (drawn on request) | —               |
-| on request | `B21 SCR-092/redline-focus-200`                                     | dark  | —     | 1600 × 1000 | specified (drawn on request) | —               |
-| on request | `B22 SCR-014/redline-focus-200`                                     | dark  | —     | 1600 × 1000 | specified (drawn on request) | —               |
-| on request | `B23 SCR-115/redline-focus-200`                                     | dark  | —     | 1600 × 1100 | specified (drawn on request) | —               |
+| Walk       | Frame                                                               | Theme | Board | Size        | Status                       | Penpot board id                                      |
+| ---------- | ------------------------------------------------------------------- | ----- | ----- | ----------- | ---------------------------- | ---------------------------------------------------- |
+| on request | `A1 SCR-090/all-populated`                                          | dark  | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| on request | `A1 SCR-090/all-populated (light twin)`                             | light | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| on request | `A2 SCR-090/fired-tab`                                              | dark  | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| on request | `A2 SCR-090/fired-tab (light twin)`                                 | light | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| on request | `A3 SCR-090/snoozed-and-row-menu`                                   | dark  | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| on request | `A3 SCR-090/snoozed-and-row-menu (light twin)`                      | light | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| on request | `A4 SCR-090/empty-filtered-loading-error`                           | dark  | —     | 1600 × 1000 | specified (drawn on request) | —                                                    |
+| on request | `A4 SCR-090/empty-filtered-loading-error (light twin)`              | light | —     | 1600 × 1000 | specified (drawn on request) | —                                                    |
+| on request | `A5 SCR-090/bulk-selection-confirm`                                 | dark  | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| on request | `A5 SCR-090/bulk-selection-confirm (light twin)`                    | light | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| 1          | `A6 SCR-090/failure-states`                                         | dark  | 01    | 1280 × 900  | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce931e97835` (1360 × 1289) |
+| 8          | `A6 SCR-090/failure-states (light twin)`                            | light | 08    | 1280 × 900  | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce9d266fdae` (1360 × 1271) |
+| on request | `A7 SCR-090/viewer-and-manager`                                     | dark  | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| on request | `A7 SCR-090/viewer-and-manager (light twin)`                        | light | —     | 1280 × 800  | specified (drawn on request) | —                                                    |
+| 2          | `A8 SCR-091/new-default`                                            | dark  | 02    | 720 × 960   | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce9486ffce0` (1848 × 1346) |
+| on request | `A8 SCR-091/new-default (light twin)`                               | light | —     | 720 × 960   | specified (drawn on request) | —                                                    |
+| on request | `A9 SCR-091/edit-estimated-restatement-preview`                     | dark  | —     | 720 × 1100  | specified (drawn on request) | —                                                    |
+| on request | `A9 SCR-091/edit-estimated-restatement-preview (light twin)`        | light | —     | 720 × 1100  | specified (drawn on request) | —                                                    |
+| on request | `A10 SCR-091/validation-errors-and-pending`                         | dark  | —     | 720 × 1100  | specified (drawn on request) | —                                                    |
+| on request | `A10 SCR-091/validation-errors-and-pending (light twin)`            | light | —     | 720 × 1100  | specified (drawn on request) | —                                                    |
+| on request | `A11 SCR-091/vocabulary-unavailable-and-server-errors`              | dark  | —     | 1100 × 900  | specified (drawn on request) | —                                                    |
+| on request | `A11 SCR-091/vocabulary-unavailable-and-server-errors (light twin)` | light | —     | 1100 × 900  | specified (drawn on request) | —                                                    |
+| on request | `A12 SCR-091/channels-sound-test-fire`                              | dark  | —     | 720 × 1000  | specified (drawn on request) | —                                                    |
+| on request | `A12 SCR-091/channels-sound-test-fire (light twin)`                 | light | —     | 720 × 1000  | specified (drawn on request) | —                                                    |
+| on request | `A13 SCR-091/rule-editor-vs-alert-editor`                           | dark  | —     | 1500 × 1000 | specified (drawn on request) | —                                                    |
+| on request | `A14 SCR-090-091/entry-points-and-flows`                            | dark  | —     | 1600 × 900  | specified (drawn on request) | —                                                    |
+| on request | `A15 SCR-090/redline-focus-200`                                     | dark  | —     | 1600 × 1000 | specified (drawn on request) | —                                                    |
+| on request | `A16 SCR-091/redline-focus-200`                                     | dark  | —     | 1600 × 1100 | specified (drawn on request) | —                                                    |
+| 3          | `B1 SCR-092/toast-severities-actions`                               | dark  | 03    | 1100 × 900  | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce96294f704` (2228 × 1304) |
+| 9          | `B1 SCR-092/toast-severities-actions (light twin)`                  | light | 09    | 1100 × 900  | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce9e89e21c5` (1180 × 1304) |
+| on request | `B2 SCR-092/stack-group-storm`                                      | dark  | —     | 1100 × 1000 | specified (drawn on request) | —                                                    |
+| on request | `B2 SCR-092/stack-group-storm (light twin)`                         | light | —     | 1100 × 1000 | specified (drawn on request) | —                                                    |
+| on request | `B3 SCR-092/detail-drawer`                                          | dark  | —     | 480 × 1100  | specified (drawn on request) | —                                                    |
+| on request | `B3 SCR-092/detail-drawer (light twin)`                             | light | —     | 480 × 1100  | specified (drawn on request) | —                                                    |
+| on request | `B4 SCR-092/detail-drawer-states`                                   | dark  | —     | 1480 × 700  | specified (drawn on request) | —                                                    |
+| on request | `B4 SCR-092/detail-drawer-states (light twin)`                      | light | —     | 1480 × 700  | specified (drawn on request) | —                                                    |
+| 5          | `B5 SCR-014/populated-mixed`                                        | dark  | 05    | 480 × 1000  | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce988343eb8` (680 × 1468)  |
+| on request | `B5 SCR-014/populated-mixed (light twin)`                           | light | —     | 480 × 1000  | specified (drawn on request) | —                                                    |
+| on request | `B6 SCR-014/grouped-storm-overflow`                                 | dark  | —     | 480 × 1000  | specified (drawn on request) | —                                                    |
+| on request | `B6 SCR-014/grouped-storm-overflow (light twin)`                    | light | —     | 480 × 1000  | specified (drawn on request) | —                                                    |
+| on request | `B7 SCR-014/empty-loading-error`                                    | dark  | —     | 1960 × 600  | specified (drawn on request) | —                                                    |
+| on request | `B7 SCR-014/empty-loading-error (light twin)`                       | light | —     | 1960 × 600  | specified (drawn on request) | —                                                    |
+| on request | `B8 SCR-014/mute-and-mark-read`                                     | dark  | —     | 960 × 900   | specified (drawn on request) | —                                                    |
+| on request | `B8 SCR-014/mute-and-mark-read (light twin)`                        | light | —     | 960 × 900   | specified (drawn on request) | —                                                    |
+| 6          | `B9 SCR-115/matrix-locked-rows`                                     | dark  | 06    | 960 × 1100  | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce993d8e9d0` (2088 × 1504) |
+| 10         | `B9 SCR-115/matrix-locked-rows (light twin)`                        | light | 10    | 960 × 1100  | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce9fc374bdd` (1040 × 1504) |
+| on request | `B10 SCR-115/sound-quiet-hours-test`                                | dark  | —     | 960 × 1100  | specified (drawn on request) | —                                                    |
+| on request | `B10 SCR-115/sound-quiet-hours-test (light twin)`                   | light | —     | 960 × 1100  | specified (drawn on request) | —                                                    |
+| on request | `B11 SCR-115/desktop-permission-states`                             | dark  | —     | 1480 × 900  | specified (drawn on request) | —                                                    |
+| on request | `B11 SCR-115/desktop-permission-states (light twin)`                | light | —     | 1480 × 900  | specified (drawn on request) | —                                                    |
+| on request | `B12 CMP-163/alert-row-variants-states`                             | dark  | —     | 1480 × 1100 | specified (drawn on request) | —                                                    |
+| on request | `B12 CMP-163/alert-row-variants-states (light twin)`                | light | —     | 1480 × 1100 | specified (drawn on request) | —                                                    |
+| on request | `B13 CMP-164/alert-builder-form-anatomy`                            | dark  | —     | 1100 × 1100 | specified (drawn on request) | —                                                    |
+| on request | `B13 CMP-164/alert-builder-form-anatomy (light twin)`               | light | —     | 1100 × 1100 | specified (drawn on request) | —                                                    |
+| on request | `B14 CMP-165/fired-toast-group-variants`                            | dark  | —     | 1100 × 1000 | specified (drawn on request) | —                                                    |
+| on request | `B14 CMP-165/fired-toast-group-variants (light twin)`               | light | —     | 1100 × 1000 | specified (drawn on request) | —                                                    |
+| 4          | `B15 SCR-092/placement-over-workspace`                              | dark  | 04    | 1600 × 1000 | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce97ac61809` (1680 × 1371) |
+| on request | `B16 SCR-014/deep-links-and-role-variants`                          | dark  | —     | 1600 × 900  | specified (drawn on request) | —                                                    |
+| on request | `B17 SCR-115/symbol-mute-and-viewer`                                | dark  | —     | 1600 × 900  | specified (drawn on request) | —                                                    |
+| on request | `B18 CMP-045-060-212/documented-variants`                           | dark  | —     | 1400 × 900  | specified (drawn on request) | —                                                    |
+| 7          | `B19 MOTION/storyboards`                                            | dark  | 07    | 1600 × 900  | drawn (r2)                   | `b96edf38-8e58-8006-8008-dce9bf3a5c1f` (1680 × 1256) |
+| on request | `B20 SOUND/assets-labels-fallback`                                  | dark  | —     | 1200 × 700  | specified (drawn on request) | —                                                    |
+| on request | `B21 SCR-092/redline-focus-200`                                     | dark  | —     | 1600 × 1000 | specified (drawn on request) | —                                                    |
+| on request | `B22 SCR-014/redline-focus-200`                                     | dark  | —     | 1600 × 1000 | specified (drawn on request) | —                                                    |
+| on request | `B23 SCR-115/redline-focus-200`                                     | dark  | —     | 1600 × 1100 | specified (drawn on request) | —                                                    |
 
 <!-- c2:end -->
 

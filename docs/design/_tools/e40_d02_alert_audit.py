@@ -21,8 +21,9 @@ with `e40_d02_tones.py` (imported to regenerate the bytes in memory). Ruled by t
 - [MATRIX] the pack's C1: 12 states x 5 screens = 60 cells, each a frame present in C2 and a copy
   string this spec holds, or `N/A — reason`; equal to the data below (C1 is generated: `--write`);
   C3's frames present in C2.
-- [INDEX] the pack's C2 equal to the frames and twins of §12.1 (board, size, status, walk order);
-  the Penpot board-id column is filled by the boards PR and not compared.
+- [INDEX] the pack's C2 equal to the frames and twins of §12.1 (board, size, status, walk order,
+  Penpot board id): a board whose §12.1 status reads `board NN, drawn (rN): board id `<uuid>`
+  (W x H)` is "drawn (rN)" in C2 with that id and size, any other board "board NN, PENDING".
 - [COPY] every string of the pack's copy deck is held verbatim by the spec.
 - [ALLOWLIST] §3.5's leaves and the pack's allow-list equal E40-T02's `TEMPLATE_FIELDS`; both keep
   the condition-metric clause and its "This condition" row (`_placeholder_ok`).
@@ -417,6 +418,24 @@ def boards(spec: str) -> list[tuple[str, str, str, str, str]]:
     return out
 
 
+DRAWN = re.compile(
+    r"board (\d\d), drawn \((r\d+[a-z]?)\): board id `([0-9a-f-]{36})` \((\d+ \u00d7 \d+)\)"
+)
+
+
+def drawn_of(status: str) -> dict[str, tuple[str, str, str]]:
+    """{board: (run, Penpot board id, board size)} for each board a status cell records as drawn."""
+    return {m.group(1): (m.group(2), m.group(3), m.group(4)) for m in DRAWN.finditer(status)}
+
+
+def c2_status(board: str, drawn: dict[str, tuple[str, str, str]]) -> tuple[str, str]:
+    """(C2 status, C2 Penpot board-id cell) of a board."""
+    if board not in drawn:
+        return f"board {board}, PENDING", "—"
+    run, bid, size = drawn[board]
+    return f"drawn ({run})", f"`{bid}` ({size})"
+
+
 def board_of(status: str) -> tuple[str | None, str | None]:
     """(the frame's own board, its light twin's board) named by a status cell."""
     own = re.match(r"board (\d\d)", status)
@@ -460,23 +479,19 @@ def c2_rows(pack: str) -> list[list[str]]:
 # --- generation ----------------------------------------------------------------------------------
 
 
-def c2_expected(spec: str) -> list[tuple[str, str, str, str, str, str]]:
-    """(walk, frame, theme, board, size, status) for every frame and twin, in §12.1's order."""
+def c2_expected(spec: str) -> list[tuple[str, str, str, str, str, str, str]]:
+    """(walk, frame, theme, board, size, status, board id) per frame and twin, in §12.1's order."""
     out = []
     for f in frames(spec):
         own, twin = board_of(f.status)
+        drawn = drawn_of(f.status)
         label = f"{f.fid} {f.name}"
+        status, bid = c2_status(own, drawn) if own else (SPEC_, "—")
         out.append(
-            (
-                str(int(own)) if own else "on request",
-                label,
-                "dark",
-                own or "—",
-                f.size,
-                f"board {own}, PENDING" if own else SPEC_,
-            )
+            (str(int(own)) if own else "on request", label, "dark", own or "—", f.size, status, bid)
         )
         if f.twin:
+            status, bid = c2_status(twin, drawn) if twin else (SPEC_, "—")
             out.append(
                 (
                     str(int(twin)) if twin else "on request",
@@ -484,7 +499,8 @@ def c2_expected(spec: str) -> list[tuple[str, str, str, str, str, str]]:
                     "light",
                     twin or "—",
                     f.size,
-                    f"board {twin}, PENDING" if twin else SPEC_,
+                    status,
+                    bid,
                 )
             )
     return out
@@ -508,8 +524,8 @@ def render_c2(spec: str) -> str:
         "| Walk | Frame | Theme | Board | Size | Status | Penpot board id |",
         "| --- " * 7 + "|",
     ]
-    for walk, label, theme, board, size, status in c2_expected(spec):
-        lines.append(f"| {walk} | `{label}` | {theme} | {board} | {size} | {status} | — |")
+    for walk, label, theme, board, size, status, bid in c2_expected(spec):
+        lines.append(f"| {walk} | `{label}` | {theme} | {board} | {size} | {status} | {bid} |")
     return "\n" + "\n".join(lines) + "\n"
 
 
@@ -654,7 +670,7 @@ def gate_matrix(ctx: Ctx, r: Result) -> None:
 
 def gate_index(ctx: Ctx, r: Result) -> None:
     want = c2_expected(ctx.spec)
-    got = [(x[0], strip_ticks(x[1]), x[2], x[3], x[4], x[5]) for x in c2_rows(ctx.pack)]
+    got = [(x[0], strip_ticks(x[1]), x[2], x[3], x[4], x[5], x[6]) for x in c2_rows(ctx.pack)]
     r.numbers.update(c2_rows=len(got))
     if len(got) != len(want):
         r.fail("INDEX", f"C2 holds {len(got)} rows; §12.1 gives {len(want)}")
@@ -876,6 +892,14 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
             "pack",
             r"^(\| 4 +\| `B15 [^|]+\| dark +\| 04 +\| )1600 \u00d7 1000",
             "\\g<1>1600 \u00d7 900",
+        ),
+    ),
+    (
+        "INDEX",
+        regex(
+            "pack",
+            r"^(\| \d+ +\|[^|]+\|[^|]+\|[^|]+\|[^|]+\| drawn \()r\d+[a-z]?\)",
+            r"\g<1>r0)",
         ),
     ),
     (
