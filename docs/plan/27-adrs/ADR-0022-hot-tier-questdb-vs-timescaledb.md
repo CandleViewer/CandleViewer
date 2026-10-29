@@ -1,14 +1,16 @@
 # ADR-0022 — Hot tier: QuestDB confirmed for all six query shapes
 
-- Status: **accepted-partial** — all six shapes confirm QuestDB per the pre-agreed mechanical rule, on
-  this session's synthetic, documented-constant-derived evidence; owner approval pending (spike E07-K01,
-  timeboxed 6 days). Per E07-K01's "Agent-delivery adaptations", owner `approved` comment on issue #167,
-  or owner merge of the PR, substitutes for Architect countersignature; do not block on it.
+- Status: **accepted** (ratified 2026-10-29 by main-orchestrator under the owner's delegation, #2701 ledger 2
+  (comment 6493096777), row 39; the owner may revoke there), **partial** until E07-S07's real-container re-run lands:
+  all six shapes confirm QuestDB per the pre-agreed mechanical rule, on this session's synthetic,
+  documented-constant-derived evidence (spike E07-K01, timeboxed 6 days). Per E07-K01's "Agent-delivery
+  adaptations", the owner's `approved` comment on issue #167, or owner merge of the PR, substitutes for Architect
+  countersignature.
   **Corrected** by `fix/e07-k01-b1` (`Closes #1562`): QA found the original pass's shape-B result was not
   reproducible from the documented harness command/seed (wall-clock timing defect); the corrected,
   reproducible harness shows shape B also confirms. See "Correction" below.
 - Date: 2026-09-28 (original); corrected 2026-09-29.
-- Deciders: Owner (`@basiltt`) — owner approval pending per the adaptation above.
+- Deciders: Owner (`@basiltt`) — ratified 2026-10-29 under the owner's delegation (see Status).
 - Amends: `ADR-0003-storage-tiers.md` (not superseded — ADR-0003's own Reversal path section anticipated
   exactly this spike and named the amendment path, not a fresh ADR, for a partial-confirm outcome).
 - Consulted: `docs/plan/21-database-schema.md` §4, §11.1, §11.4, §13.2, §13.3; `docs/plan/20-architecture.md`

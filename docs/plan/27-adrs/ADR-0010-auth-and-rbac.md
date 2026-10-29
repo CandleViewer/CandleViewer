@@ -135,9 +135,10 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
 
 Both decision and code remain as stated until the owner decides; this section does not choose.
 
-## Amendment 1 (2026-10-25, #4479): the bootstrap invite keeps `owner` (PROPOSED)
+## Amendment 1 (2026-10-25, #4479): the bootstrap invite keeps `owner` (ACCEPTED)
 
-- Status: **proposed**, pending the owner's sign-off on #2701 (orchestrator ruling 10 on #4479).
+- Status: **accepted** (proposed 2026-10-25, orchestrator ruling 10 on #4479; ratified 2026-10-29 by main-orchestrator
+  under the owner's delegation, #2701 ledger 2 (comment 6493096777), row 34; the owner may revoke there).
 - **The exception.** #2109 made every invite grant `viewer`. One invite is excepted: the offline
   bootstrap invite, an `owner` invite whose inviter is its own user, which only the host-gated mint
   CLI writes (#4479 C1/C2). At redemption it keeps `owner`, exactly once and only while no Owner

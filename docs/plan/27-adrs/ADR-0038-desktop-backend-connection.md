@@ -1,12 +1,12 @@
 # ADR-0038 — Desktop shell to backend: the backend address, the `app://` allowed origin, CORS and the CSRF token path (#3519)
 
-- Status: **accepted (interim)** (2026-10-20): binding now, with the ratification still due named here
-  (`docs/plan/27-adrs/README.md:5`). The orchestrator took owner decisions D1 to D6 on #2701 (the decisions:
+- Status: **accepted** (2026-10-20, interim; D1 to D6 ratified 2026-10-29 by main-orchestrator under the owner's
+  delegation, #2701 ledger 2 (comment 6493096777), row 37): binding now. The orchestrator took owner decisions D1 to D6 on #2701 (the decisions:
   comment 6290430849) under the owner's delegation (comment 6284192190), and Amendment 2 records them. D1 and
   D3 to D6 bind now. D2 is decided but not in force: it changes C-12.9, so it takes effect only when the S0
   amendment (#3947, PR #3949) merges with the owner's explicit approval, and until then C-12.9 as written
-  governs and nothing here relaxes it. D7 is not decided: it waits for S2's follow-up measurement, with no
-  permission prompt by default until then. The ratification still due is S0's merge and D7's dated amendment,
+  governs and nothing here relaxes it; D2 re-opens with #3949. D7 is not decided: it waits for S2's follow-up measurement, with no
+  permission prompt by default until then. What is still due is S0's merge and D7's dated amendment,
   and the owner may revoke any delegated decision on #2701.
 - Date: 2026-10-18
 - Deciders: Owner (`@basiltt`) through main-orchestrator (the delegation on #2701, Amendment 2); the Security

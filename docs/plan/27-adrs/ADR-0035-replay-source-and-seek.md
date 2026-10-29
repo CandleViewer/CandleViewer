@@ -1,6 +1,8 @@
 # ADR-0035 — Replay source tier, read-ahead and seek strategy
 
-- Status: **proposed** (draft from spike E26-K01; finalised in E26-T07; owner approval pending).
+- Status: **accepted** (ratified 2026-10-29 by main-orchestrator under the owner's delegation, #2701 ledger 2
+  (comment 6493096777), row 39; the owner may revoke there). Draft from spike E26-K01, finalised in E26-T07; decision 4
+  (`auto`) stays provisional until the CI QuestDB leg reports, as it says below.
 - Date: 2026-10-11
 - Deciders: Owner (`@basiltt`), Architect.
 - Numbering note: the ticket (E26-K01, #622) says "ADR-0018". 0018 is taken (monorepo tooling), and
@@ -30,7 +32,7 @@ restoring `BuilderState`, and then warming up metrics. Roadmap exit #8 requires 
 Delta re-apply takes 75–95 % of seek time. Cold Parquet reads ran at ~9 M events/s and the
 `(ts_event, seq)` merge at ~2.6 M events/s. The busiest minute at 100× needs 0.41 M events/s.
 
-## Decision (proposed)
+## Decision
 
 1. **Snapshot interval 60 s for 200-depth recording** (E16 recorder change). Snapshots then cost +18 MB
    hot / +2.2 MB cold per symbol-day.

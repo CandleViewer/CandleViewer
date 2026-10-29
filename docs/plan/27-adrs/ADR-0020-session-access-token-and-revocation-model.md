@@ -1,8 +1,8 @@
 # ADR-0020 — Session access-token format, WS re-auth cadence, and rotation-family revocation
 
-- Status: **proposed** — owner approval pending (spike E09-K01, timeboxed 3 days)
+- Status: **accepted** — ratified 2026-10-29 by main-orchestrator under the owner's delegation, #2701 ledger 2 (comment 6493096777), row 39; the owner may revoke there (spike E09-K01, timeboxed 3 days)
 - Date: 2026-09-25
-- Deciders: Owner (`@basiltt`) — see `docs/plan/backlog/all-tickets.json` E09-K01 "Agent-delivery adaptations": owner approval substitutes for Architect/Security-engineer countersignature; recorded here as **owner approval pending** until the owner comments `approved` on issue #134.
+- Deciders: Owner (`@basiltt`) — see `docs/plan/backlog/all-tickets.json` E09-K01 "Agent-delivery adaptations": owner approval substitutes for Architect/Security-engineer countersignature; recorded here as ratified 2026-10-29 under the owner's delegation (see Status), in place of the owner's `approved` comment on issue #134.
 - Consulted: `docs/plan/21-database-schema.md` §3.1.4, `docs/plan/24-internal-schemas.md` §15.1, `docs/plan/23-ws-protocol.md` §4.3/§9.5, `docs/plan/20-architecture.md` §5, `docs/plan/06-performance-and-load-standard.md`, `docs/plan/04-security-program.md`, `docs/plan/11-user-stories.md` US-ONB-004/US-ONB-009
 - Related: ADR-0010 (auth and RBAC — establishes opaque server-side sessions; this ADR refines the access-token/WS layer that ADR-0010 left at "no JWT in localStorage" without specifying the WS first-frame credential), ADR-0016 (statechart runtime — B16 `auth`×`elevation` chart consumes `elevated_until`/`mfa_satisfied_at` from this model)
 

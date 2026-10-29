@@ -1,9 +1,10 @@
 # ADR-0036 — Dev-only account-fixture transport (`CV_ACCOUNT_FIXTURE`) and its fence
 
-- Status: **proposed**. main-orchestrator accepted all ten decisions on 2026-10-16, interim under the owner's
-  delegation (#2893, issuecomment-6225372045); the owner ratifies (C-3.4) before S7, the per-request guard,
-  merges, which is this record's decision deadline (`docs/plan/27-adrs/README.md:5`). The slices before S7
-  (S2, S3, S5, S6 and S8) land under the interim rulings.
+- Status: **accepted** (ratified 2026-10-29 by main-orchestrator under the owner's delegation, #2701 ledger 2
+  (comment 6493096777), row 38; the owner may revoke there). main-orchestrator had accepted all ten decisions on
+  2026-10-16, interim under the owner's delegation (#2893, issuecomment-6225372045), the owner's ratification (C-3.4)
+  being due before S7, the per-request guard, merges, which was this record's decision deadline
+  (`docs/plan/27-adrs/README.md:5`). The slices before S7 (S2, S3, S5, S6 and S8) land under those rulings.
 - Date: 2026-10-16
 - Deciders: Owner (`@basiltt`) through main-orchestrator. Consulted: hcl-worker-1 (owner of #836) on
   decision 3; the Security engineer through the `security-review` label on #2893.
@@ -51,7 +52,7 @@ The danger is one mis-set variable: if the stub answered for a real key, the key
 empty `Wallet` group and the C-2.8 check would pass without exchange contact, a switch gating a safety
 invariant (C-4.14).
 
-## Decision (proposed)
+## Decision
 
 1. **Placement (C-3.4).** All fixture code lives in a new top-level dev-only package,
    `services/api/cvdev/account_fixture/`, outside the wheel and every `Dockerfile.api` stage, importable in a

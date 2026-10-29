@@ -1,8 +1,8 @@
 # ADR-0027 — Journal analytics query tier
 
-- Status: **proposed** (owner approval pending). The ticket text says "ADR-0016"; 0016..0026 are taken, so this is the next free number.
+- Status: **accepted** (ratified 2026-10-29 by main-orchestrator under the owner's delegation, #2701 ledger 2 (comment 6493096777), row 39; the owner may revoke there). The ticket text says "ADR-0016"; 0016..0026 are taken, so this is the next free number.
 - Date: 2026-10-03
-- Deciders: Owner (`@basiltt`) — owner approval pending.
+- Deciders: Owner (`@basiltt`) — ratified 2026-10-29 under the owner's delegation (see Status).
 - Related: E41-K01 (#959), E41-T03 (consumer), `docs/plan/spikes/E41-K01.md`, `docs/plan/21-database-schema.md` §3.7.
 
 ## Context
