@@ -47,6 +47,7 @@ from candleviewer.oms.ports import (
     NoReconciliation,
     ResyncReason,
 )
+from candleviewer.oms.positions import PositionWrites, SnapshotWrites
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms_stream_wiring import StreamWiring, build_stream_consumer
 from candleviewer.settings import Environment as ProcessEnvironment
@@ -70,6 +71,7 @@ RESYNCING = "oms.account_resyncing"
 REFUSED = ("page", "oms.stream_consumer", "an account's reconciliation request was refused")
 #: The venue's and the host's time at fake second 0: the facade's own clock (`order_rig`).
 WALL = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(microseconds=NOW_US)
+_STORES = ("positions", "snapshots")  # the projection's two stores, through `Written`
 #: From a test module: the events the adapter reads from one frame of `rows` on a topic, pushed
 #: for the account at `now_us`.
 type Reader = Callable[
@@ -143,6 +145,29 @@ class Book:
 
 
 @dataclass
+class Written:
+    """The position double: the stores the projection writes through (the world's `Book`, or the
+    ones a test names), each write, answered or refused, setting `wrote` as it returns, which
+    `World.until` waits on."""
+
+    positions: PositionWrites
+    snapshots: SnapshotWrites
+    wrote: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def upsert(self, state: PositionState) -> PositionRow:
+        try:
+            return await self.positions.upsert(state)
+        finally:
+            self.wrote.set()
+
+    async def append(self, snapshot: NewPositionSnapshot) -> PositionSnapshotRow:
+        try:
+            return await self.snapshots.append(snapshot)
+        finally:
+            self.wrote.set()
+
+
+@dataclass
 class World:
     """One process's consumer and facade, and what its doubles saw, in one ordered `trace`."""
 
@@ -163,17 +188,19 @@ class World:
     keyed: list[KeyedRecord] = field(default_factory=list)  # the successor's release records
     requests: Requests = field(default_factory=Requests)
     clock: FakeClockHealth | None = None
+    written: Written | None = None
     wiring: StreamWiring | None = None
 
     def compose(self, **over: Any) -> StreamWiring:
         """The consumer as S8b's runtime builds it, every port this world's but those `over`
-        names: the clock guard measured, the offset 0, the host's time the loop's."""
+        names: the clock guard measured, the offset 0, the host's time the loop's. The position
+        stores, the world's or those `over` names, are written through the position double."""
         loop = asyncio.get_running_loop()
         self.clock = FakeClockHealth(loop.time)
         self.clock.measure()
         ports: dict[str, Any] = dict.fromkeys(("ports", "health", "hub", "serving"), self)
         ports |= dict.fromkeys(("credentials", "audit", "emitter", "pager"), self)
-        ports |= dict.fromkeys(("positions", "snapshots"), self.book)
+        ports |= dict.fromkeys(_STORES, self.book)
         built: dict[str, Any] = {
             "facade": self.out.facade, "orders": self.out.orders,
             "stops": RecordedStopRepository(self.out.store.stops), "accounts": self.streamed,
@@ -183,7 +210,9 @@ class World:
             "wall_now": lambda: WALL + timedelta(seconds=loop.time()),
             "reconciliation": self.requests, "handovers": Handovers(self.trace),
         }  # fmt: skip
-        return build_stream_consumer(**(ports | built | over))
+        composed = ports | built | over
+        self.written = Written(composed["positions"], composed["snapshots"])
+        return build_stream_consumer(**(composed | dict.fromkeys(_STORES, self.written)))
 
     @property
     def consumer(self) -> Any:
@@ -302,11 +331,17 @@ class World:
             await self.out.facade.idle()
 
     async def until(self, done: Callable[[], bool], bound_s: float = 10.0) -> None:
-        """Loop turns until `done()`: on a real loop, where a store's I/O takes real time, the
-        bound turns a hang into a failure and is never a wait for time to pass (03 Sec.14)."""
+        """Until `done()`, read again each time the position double (`Written`) notes a write:
+        on a real loop, where a store's I/O takes real time, the loop waits on that I/O between
+        writes, never spinning, and the bound turns a hang into a failure, never a wait for time
+        to pass (03 Sec.14). So `done()` must hold once a write returns: the projection counts
+        `future_dated` as the upsert raises, and `reapplied` as the snapshot's append returns,
+        with no await between."""
+        assert self.written is not None
         async with asyncio.timeout(bound_s):
-            while not done():  # noqa: ASYNC110 - the consumer's own work, bounded above
-                await asyncio.sleep(0)
+            while not done():
+                self.written.wrote.clear()
+                await self.written.wrote.wait()
 
     # what the stores and the metrics hold
     async def row(self, order_id: UUID) -> OrderRow:

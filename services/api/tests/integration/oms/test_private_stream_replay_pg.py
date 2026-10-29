@@ -386,6 +386,10 @@ async def test_a_position_stamped_ahead_of_the_clock_is_refused_and_alerted(pg_d
     ports |= {"clock": clock, "clock_health": guard, "offset_ms": host.offset_ms, "wall_now": host}
     dated = ("page", "oms.positions", "a position push is dated ahead of the clock: clock fault")
     try:
+        # The refusals send no statement (`FutureDatedPositionError` comes first), so warm the
+        # pool here: the re-apply's 4 s bound (`REAPPLY_BOUND_S`) then covers its upsert, never
+        # the engine's first connect.
+        assert await store.list_open(account) == ()
         async with opened(parsed, account, **ports) as w:
             with capture_logs() as logs:
                 ahead = t0 + timedelta(seconds=10)  # the venue's clock, 10 s ahead of the host's
