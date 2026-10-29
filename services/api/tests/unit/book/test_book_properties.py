@@ -14,6 +14,7 @@ from candleviewer.book.resync import BookEngine
 from candleviewer.exchange.base.models import BookLevel
 
 from ._builders import delta, lvl, snap
+from .test_book_ws_topic import World, sub, top
 
 _QTY = st.integers(min_value=0, max_value=50)  # 0 deletes
 _BID = st.integers(min_value=900, max_value=999)
@@ -136,3 +137,34 @@ def test_property_malformed_or_duplicate_deletes_never_crash(dup: list[int], gar
     if eng.book is not None:
         bids, asks = eng.book.snapshot()
         assert all(lv.qty > 0 for lv in (*bids, *asks))
+
+
+@given(
+    seq=_deltas(),
+    depth=st.sampled_from([1, 50, 200]),
+    steps=st.lists(st.sampled_from([0.0, 0.01, 0.2]), min_size=30, max_size=30),
+)
+@settings(max_examples=60, deadline=None)
+def test_property_replaying_a_windows_d_frames_over_its_snapshot_is_the_live_top(
+    seq: list[tuple[list[BookLevel], list[BookLevel]]], depth: int, steps: list[float]
+) -> None:
+    """S4: whatever the cadence, applying every `d` a window sent to the snapshot it served gives
+    exactly `book.top(served)`: no stale level is left behind and none is missing."""
+
+    async def run() -> tuple[dict[str, dict[Decimal, Decimal]], dict[str, dict[Decimal, Decimal]]]:
+        w = World()
+        eng = await w.engine()
+        await w.feed(eng, snap(10, [lvl(999, 1), lvl(950, 2)], [lvl(1001, 1), lvl(1050, 2)]))
+        held = w.attach(sub(depth))
+        u = 10
+        for (bids, asks), step in zip(seq, steps, strict=False):
+            await w.feed(eng, delta(u + 1, u, bids, asks))
+            u += 1
+            w.clock.now += step
+            w.topic.tick()
+        w.clock.now += 1
+        w.topic.tick()
+        return held.held, top(eng, depth)
+
+    held, live = asyncio.run(run())
+    assert held == live
