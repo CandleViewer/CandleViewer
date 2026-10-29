@@ -2,13 +2,14 @@
 
 G-4: every save and every import stores the acting user and the server's clock as the IR's
 `created_by`, `created_at` and `updated_at`, whatever the document claimed, and the version's
-author is that user. G-12: a save body names a rule's accounts only in `ir.scope.account_ids`; a
-member `22` does not name, or an account key in a member outside `ir`, is refused with an audited
-`422 rule_ir_invalid` naming the member, and nothing is stored.
+author is that user. G-12: a save body names no account outside `ir`; a member `22` does not
+name, or an account key in a member outside `ir`, is refused with an audited `422 rule_ir_invalid`
+naming the member, and nothing is stored.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -18,7 +19,15 @@ from hypothesis import strategies as st
 
 from candleviewer.api.rules_actor import make_rules_audit
 from candleviewer.audit.models import AuditOutcome
+from candleviewer.audit.writer import AuditUnavailable
+from candleviewer.rules import manager as rules_manager
+from candleviewer.rules.ir.accounts import (
+    collect_account_ids,
+    holds_account_key,
+    redact_account_ids,
+)
 from candleviewer.rules.manager import (
+    BODY_REFUSALS,
     MAX_BODY_REFUSALS,
     Actor,
     InMemoryRuleStore,
@@ -31,7 +40,8 @@ from tests.rules.test_rules_routes import _Env, _ir
 from tests.rules.test_scope import A, C
 
 NOW = 1_761_652_800_000_000  # the server's clock in these tests, in µs
-USER_A, USER_B = str(uuid.UUID(int=0xA)), str(uuid.UUID(int=0xB))
+#: Apart from every account id (`A` is 10, `C` 12), so an author never passes for an account.
+USER_A, USER_B = str(uuid.UUID(int=0xA1)), str(uuid.UUID(int=0xB1))
 CLAIMED: dict[str, Any] = {"created_by": str(uuid.UUID(int=0xC1)), "created_at": 1, "updated_at": 2}
 WRITE = {"rules:read", "rules:write"}
 
@@ -45,6 +55,14 @@ def _env(uid: str = USER_A, **kw: Any) -> _Env:
 
     e.mgr = RulesManager(InMemoryRuleStore(), default_registry(), audit=audit, now_us=lambda: NOW)
     return e
+
+
+def _as(role: str) -> tuple[_Env, str]:
+    """The env and user id of `role`: the Owner, or a Manager with a grant (a refusal binds
+    every role, 22 `RuleInput`)."""
+    if role == "owner":
+        return _env(), USER_A
+    return _env(USER_B, perms=WRITE, owner=False, granted=frozenset({str(A)})), USER_B
 
 
 def _save(e: _Env, op: str, rid: str, body: dict[str, Any]) -> Any:
@@ -64,7 +82,7 @@ def _authored(version: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def _rows(e: _Env) -> list[tuple[str, int]]:
-    """Every stored rule, by name and latest version, as the Owner's `listRules` shows it."""
+    """Every stored rule the caller sees, by name and latest version, as `listRules` shows it."""
     return [(i["name"], i["latest_version"]) for i in e.c.get("/rules").json()["items"]]
 
 
@@ -150,14 +168,15 @@ _OUTSIDE = {
 }
 
 
+@pytest.mark.parametrize("role", ["owner", "manager"])
 @pytest.mark.parametrize("op", ["create", "update"])
 @pytest.mark.parametrize("member", list(_OUTSIDE))
 def test_an_account_list_outside_ir_scope_is_refused_audited_and_stores_nothing(
-    op: str, member: str
+    role: str, op: str, member: str
 ) -> None:
     """Scenario: A body key the server does not store is refused (an account list outside
-    ir.scope.account_ids), whether `22` names the member or not."""
-    e = _env()
+    ir.scope.account_ids), whether `22` names the member or not, for every role."""
+    e, uid = _as(role)
     rid = e.create(name="base")
     r = _save(e, op, rid, {"ir": _ir("2", name="sent"), member: _OUTSIDE[member]})
     assert r.status_code == 422 and r.json()["code"] == "rule_ir_invalid"
@@ -167,40 +186,71 @@ def test_an_account_list_outside_ir_scope_is_refused_audited_and_stores_nothing(
     record = {"rule_id": "" if op == "create" else rid, "op": op}
     assert e.audits[-1] == (
         "rule.scope_refused",
-        record | {"reason": "accounts_outside_scope", "actor": USER_A},
+        record | {"reason": "accounts_outside_scope", "actor": uid},
     )
     assert _rows(e) == [("base", 1)]
 
 
+@pytest.mark.parametrize("role", ["owner", "manager"])
 @pytest.mark.parametrize(
     ("op", "member"),
     [("create", "zzz"), ("update", "zzz"), ("create", "expected_version"), ("update", "id")],
 )
 def test_a_member_22_does_not_name_is_refused_naming_it_audited_and_stores_nothing(
-    op: str, member: str
+    role: str, op: str, member: str
 ) -> None:
     """Scenario: A body key the server does not store is refused (a key the contract does not
-    name; `expected_version` is named on `updateRule` only)."""
-    e = _env()
+    name; `expected_version` is named on `updateRule` only), for every role."""
+    e, uid = _as(role)
     rid = e.create(name="base")
     r = _save(e, op, rid, {"ir": _ir("2", name="sent"), member: 1})
     assert r.status_code == 422 and r.json()["code"] == "rule_ir_invalid"
+    assert r.json()["detail"] == "1 member of the save body is refused."
     assert r.json()["errors"] == [
-        {"field": member, "rule": "unknown_field", "message": r.json()["detail"]}
+        {"field": member, "rule": "unknown_field", "message": BODY_REFUSALS["unknown_field"]}
     ]
-    assert e.audits[-1][0] == "rule.scope_refused"
+    assert e.audits[-1][0] == "rule.scope_refused" and e.audits[-1][1]["actor"] == uid
     assert e.audits[-1][1]["reason"] == "unknown_field" and e.audits[-1][1]["op"] == op
     assert _rows(e) == [("base", 1)]
 
 
+def test_a_body_refused_for_both_reasons_names_each_member_in_order_audited_for_accounts() -> None:
+    """Each refused member in body order, counted in `detail`; the record's reason is
+    `accounts_outside_scope` when any member names accounts."""
+    e = _env()
+    r = e.c.post("/rules", json={"ir": _ir(), "zzz": 1, "bindings": _OUTSIDE["bindings"]})
+    assert (r.status_code, r.json()["detail"]) == (422, "2 members of the save body are refused.")
+    assert [(x["field"], x["rule"]) for x in r.json()["errors"]] == [
+        ("zzz", "unknown_field"),
+        ("bindings", "accounts_outside_scope"),
+    ]
+    refused = {"rule_id": "", "op": "create", "reason": "accounts_outside_scope", "actor": USER_A}
+    assert e.audits == [("rule.scope_refused", refused)] and _rows(e) == []
+
+
 def test_a_refusal_names_a_member_only_by_a_plain_identifier_and_a_bounded_number() -> None:
     e = _env()
-    body: dict[str, Any] = {"ir": _ir(), "a b": 1, "x" * 65: 1, "\u0101": 1, "fine_name": 1}
+    body: dict[str, Any] = {"ir": _ir(), "a b": 1, "x" * 65: 1, "\u0101": 1, "y" * 64: 1}
     body |= {f"k{i}": i for i in range(MAX_BODY_REFUSALS)}
     r = e.c.post("/rules", json=body)
     fields = [x["field"] for x in r.json()["errors"]]
-    assert r.status_code == 422 and fields[:5] == ["$", "$", "$", "fine_name", "k0"]
+    assert r.status_code == 422 and fields[:5] == ["$", "$", "$", "y" * 64, "k0"]
     assert len(fields) == MAX_BODY_REFUSALS == 20
+    assert r.json()["detail"] == "24 members of the save body are refused."
+
+
+@pytest.mark.parametrize("op", ["create", "update"])
+@pytest.mark.parametrize("rest", [{}, {"ir": _ir("2"), "note": 7}], ids=["no-ir", "note-not-text"])
+def test_a_refused_member_is_answered_before_the_bodys_other_faults(
+    op: str, rest: dict[str, Any]
+) -> None:
+    """The members first (G-12): a body that is also a `400` (no `ir` object, or a `note` that is
+    not text) is the audited `422 accounts_outside_scope`, and nothing is stored."""
+    e = _env()
+    rid = e.create(name="base")
+    r = _save(e, op, rid, rest | {"bindings": _OUTSIDE["bindings"]})
+    assert (r.status_code, r.json()["errors"][0]["rule"]) == (422, "accounts_outside_scope")
+    assert e.audits[-1][1]["reason"] == "accounts_outside_scope" and _rows(e) == [("base", 1)]
 
 
 def test_every_member_22_names_is_taken_on_each_save_route() -> None:
@@ -255,17 +305,63 @@ def test_a_caller_without_rules_write_is_refused_before_the_body_is_read(op: str
 def test_a_managers_save_on_another_users_rule_or_an_ungranted_account_stores_nothing(
     op: str,
 ) -> None:
-    """Cross-account, each route: B's update of A's rule is the unseen `404`, and a create naming
-    an account outside B's grants is `403`; both are audited and nothing is stored."""
+    """Cross-account, each route: B's update of A's rule is the unseen `404` before its body's
+    members are weighed (an unknown one here), and a create naming an account outside B's grants
+    is `403`; both are audited and nothing is stored."""
     e = _env()
     rid = e.create(name="base")
     e_b = _env(USER_B, perms=WRITE, owner=False, granted=frozenset({str(A)}))
     e_b.mgr = e.mgr
     scope = {"level": "account", "account_ids": [str(C)]}
-    r = _save(e_b, op, rid, {"ir": _ir("2", name="sent", scope=scope, **CLAIMED)})
+    body = {"ir": _ir("2", name="sent", scope=scope, **CLAIMED)}
+    r = _save(e_b, op, rid, body if op == "create" else body | {"zzz": 1})
     assert r.status_code == (403 if op == "create" else 404)
-    assert e.audits[-1][0] == "rule.scope_refused" and e.audits[-1][1]["actor"] == USER_B
+    why = "account_not_granted" if op == "create" else "rule_not_visible"
+    assert e.audits[-1][0] == "rule.scope_refused"
+    assert (e.audits[-1][1]["actor"], e.audits[-1][1]["reason"]) == (USER_B, why)
     assert _rows(e) == [("base", 1)]
+
+
+@pytest.mark.parametrize("op", ["create", "update"])
+@pytest.mark.parametrize("how", ["unavailable", "stalled", "defect"])
+def test_a_refusal_whose_record_is_not_written_is_503_and_stores_nothing(
+    op: str, how: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.9, each route: a refusal waits at most `REFUSAL_AUDIT_TIMEOUT_S` for its record. A
+    writer that fails or stalls is `503 audit_unavailable`, as the scope check answers its own,
+    and nothing is stored; any other failure is a defect, never a retryable `503`."""
+    e = _env()
+    rid = e.create(name="base")
+
+    async def broken(_action: str, _payload: dict[str, Any]) -> None:
+        if how == "unavailable":
+            raise AuditUnavailable("WAL unwritable")
+        if how == "defect":
+            raise RuntimeError("a defect")
+        for _ in range(100):  # never answers: a bound of 0 s ends the wait at the first yield
+            await asyncio.sleep(0)
+        raise AssertionError("the record was not bounded")
+
+    e.mgr.set_hooks(audit=broken)
+    monkeypatch.setattr(rules_manager, "REFUSAL_AUDIT_TIMEOUT_S", 0.0)
+    body = {"ir": _ir("2", name="sent"), "bindings": _OUTSIDE["bindings"]}
+    if how == "defect":
+        with pytest.raises(rules_manager.RuleRefusalUnrecorded):
+            _save(e, op, rid, body)
+    else:
+        r = _save(e, op, rid, body)
+        assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+    assert _rows(e) == [("base", 1)]
+
+
+@pytest.mark.parametrize(("key", "held"), [("bot\n_account_ids", True), ("account_ids\n", False)])
+def test_an_account_key_is_matched_whole_line_breaks_included(key: str, held: bool) -> None:
+    """22 `RuleInput`: a prefix ending in `_` may hold a line break, and a key that goes on past
+    `account_ids` is no account key; collecting, redacting and the body check read it alike."""
+    doc = {"params": {key: ["acct-1"]}}
+    assert collect_account_ids(doc) == (("acct-1",) if held else ())
+    assert (redact_account_ids(doc) == {"params": {}}) is held
+    assert holds_account_key(doc) is held
 
 
 async def test_a_stored_rule_reads_back_only_while_it_lives_and_by_its_own_versions() -> None:

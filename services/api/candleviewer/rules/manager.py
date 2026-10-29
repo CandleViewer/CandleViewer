@@ -47,8 +47,8 @@ from candleviewer.rules.vocabulary import MetricRegistry
 COMPILER_VERSION = "1.0.0"
 #: Bounded replay cache for `Idempotency-Key` (C-2.18); see `set_mode`.
 IDEM_CACHE_MAX = 4096
-#: How long `set_mode` waits for a refusal's own audit record (C-2.9): `api.csrf.AUDIT_TIMEOUT_S`,
-#: which `rules` may not import (a test pins them equal).
+#: How long a refusal waits for its own audit record (C-2.9), `set_mode`'s and every scope
+#: refusal's: `api.csrf.AUDIT_TIMEOUT_S`, which `rules` may not import (a test pins them equal).
 REFUSAL_AUDIT_TIMEOUT_S: Final = 2.0
 #: Bound on one disarm of a rule armed above a hard cap, run beside the evaluator tick (#3232).
 TICK_DISARM_TIMEOUT_S: Final = 2.0
@@ -99,6 +99,12 @@ class RuleAuditUnavailable(RuleError):
 
     def __init__(self, message: str = "audit unavailable", **extra: Any) -> None:
         super().__init__(503, "audit_unavailable", message, **extra)
+
+
+class RuleRefusalUnrecorded(Exception):
+    """A scope refusal's own record was not written (C-2.9) and nothing changed: the hook failed,
+    or did not answer within `REFUSAL_AUDIT_TIMEOUT_S`; `__cause__` says which, for the route to
+    answer (`rules` may not import `audit`). A success record's failure is never wrapped."""
 
 
 def _ir_invalid(issues: list[Issue]) -> RuleError:
@@ -360,11 +366,15 @@ class RulesManager:
         )
 
     async def _refuse_scope(self, rule_id: str, op: str, reason: str, actor: Actor) -> None:
-        """C-2.9: a refused rule mutation/arm is itself audited (write-ahead, before the raise)."""
-        await self._audit(
-            "rule.scope_refused",
-            {"rule_id": rule_id, "op": op, "reason": reason, "actor": actor.user_id},
-        )
+        """C-2.9: a refused rule mutation/arm is itself audited (write-ahead, before the raise),
+        waiting at most `REFUSAL_AUDIT_TIMEOUT_S` for its record, as `set_mode`'s refusal does: a
+        record not written is `RuleRefusalUnrecorded`, before anything is stored."""
+        record = {"rule_id": rule_id, "op": op, "reason": reason, "actor": actor.user_id}
+        try:
+            async with asyncio.timeout(REFUSAL_AUDIT_TIMEOUT_S):
+                await self._audit("rule.scope_refused", record)
+        except Exception as lost:  # the hook names no error type: `rules` may not import `audit`
+            raise RuleRefusalUnrecorded from lost
 
     async def _require_grants(self, rule: Rule, actor: Actor, op: str, rule_id: str) -> None:
         """C-12.4: a non-owner may only target accounts granted to them. Refusals are audited."""
@@ -562,12 +572,12 @@ class RulesManager:
         actor: Actor,
         rule_id: str = "",
     ) -> None:
-        """G-12 (#4835): a save body takes only the `members` its contract names, and a rule's
-        accounts only in `ir.scope.account_ids`: a member outside `ir` holding an account key at
-        any depth is refused whatever its name. A refusal is audited first (C-2.9), as a scope
-        refusal of `op` whose reason is `accounts_outside_scope` when a member names accounts,
-        else `unknown_field`, then answered `422 rule_ir_invalid` naming each member (at most
-        `MAX_BODY_REFUSALS`). Nothing is stored."""
+        """G-12 (#4835): a save body takes only the `members` its contract names, and no account
+        outside `ir`: a member outside `ir` holding an account key at any depth is refused
+        whatever its name. A refusal is audited first (C-2.9), as a scope refusal of `op` whose
+        reason is `accounts_outside_scope` when a member names accounts, else `unknown_field`,
+        then answered `422 rule_ir_invalid` naming each member (at most `MAX_BODY_REFUSALS`),
+        its `detail` the count refused. Nothing is stored."""
         refused: list[tuple[str, str]] = []
         for key, value in body.items():
             outside = key != "ir" and holds_account_key({key: value})
@@ -582,7 +592,9 @@ class RulesManager:
             {"field": _member(key), "rule": reason, "message": BODY_REFUSALS[reason]}
             for key, reason in refused[:MAX_BODY_REFUSALS]
         ]
-        raise RuleError(422, "rule_ir_invalid", errors[0]["message"], errors=errors)
+        n = len(refused)
+        what = "1 member of the save body is" if n == 1 else f"{n} members of the save body are"
+        raise RuleError(422, "rule_ir_invalid", f"{what} refused.", errors=errors)
 
     @staticmethod
     def check_document(doc: Any) -> None:

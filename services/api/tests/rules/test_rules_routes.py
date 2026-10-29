@@ -207,9 +207,11 @@ def test_versions_and_active_version_rollback() -> None:
 def test_invalid_ir_422_and_bad_bodies() -> None:
     e = _Env()
     assert e.c.post("/rules", json={"ir": {"name": "x"}}).status_code == 422
-    assert e.c.post("/rules", json={"nope": 1}).status_code == 400
+    assert e.c.post("/rules", json={"name": "no ir"}).status_code == 400  # a member 22 names
     bad = e.c.post("/rules", content="[1]", headers={"content-type": "application/json"})
     assert bad.status_code == 400
+    hdr = {"content-type": "application/json", "If-Match": "1"}
+    assert e.c.put(f"/rules/{e.create()}", content="[1]", headers=hdr).status_code == 400
 
 
 def test_unwired_unavailable_and_bad_id() -> None:
