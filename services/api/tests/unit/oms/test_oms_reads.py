@@ -17,7 +17,12 @@ from candleviewer.oms.errors import AccountScopeDenied, StoreUnavailable
 from candleviewer.oms.reads import OmsReads, aggregate_positions
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import OwnerScope
-from candleviewer.storage.repositories.oms_reads import ExecutionQuery, OrderQuery, PositionQuery
+from candleviewer.storage.repositories.oms_reads import (
+    ExecutionQuery,
+    OrderQuery,
+    PositionQuery,
+    PositionsTooMany,
+)
 from candleviewer.storage.repositories.orders import AccountsOutOfScope, OrderConstraintError
 from tests.unit.api.oms_reads_world import ACCOUNT_A, ACCOUNT_B, MISSING, USERS, position
 
@@ -143,6 +148,7 @@ async def test_every_read_is_of_the_services_environment() -> None:
         (AccountsOutOfScope("outside"), AccountScopeDenied),
         (StorageTierUnavailable("down"), StoreUnavailable),
         (OrderConstraintError("x"), StoreUnavailable),
+        (PositionsTooMany(), StoreUnavailable),  # refused whole, never cut (#4997 m2)
     ],
 )
 async def test_a_refusal_or_an_outage_is_the_oms_error(
@@ -155,7 +161,7 @@ async def test_a_refusal_or_an_outage_is_the_oms_error(
 
 
 async def test_a_read_that_does_not_answer_in_its_bound_is_store_unavailable() -> None:
-    reads = OmsReads(_Store(hold=True), "demo", timeout_s=0.01)  # type: ignore[arg-type]
+    reads = OmsReads(_Store(hold=True), "demo", timeout_s=0.01)  # type: ignore[arg-type]  # a port
     with pytest.raises(StoreUnavailable):
         await reads.positions(_OWNER, PositionQuery())
 
@@ -163,4 +169,4 @@ async def test_a_read_that_does_not_answer_in_its_bound_is_store_unavailable() -
 @pytest.mark.parametrize("bound", [0.0, -1.0, 2.5, float("nan")])
 def test_a_reads_bound_is_only_ever_tightened(bound: float) -> None:
     with pytest.raises(ValueError, match="tightened"):
-        OmsReads(_Store(), "demo", timeout_s=bound)  # type: ignore[arg-type]
+        OmsReads(_Store(), "demo", timeout_s=bound)  # type: ignore[arg-type]  # a port

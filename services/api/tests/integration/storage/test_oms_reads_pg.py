@@ -124,7 +124,7 @@ async def _orders(store: SqlAlchemyOmsReads, scope: object, **query: object) -> 
         OrderQuery(**query),
         environment="demo",
         after=None,
-        limit=500,  # type: ignore[arg-type]
+        limit=500,  # type: ignore[arg-type]  # a scope or filters the test names untyped
     )
     return [listed.order.id for listed in found]
 
@@ -156,7 +156,7 @@ async def test_scope_is_enforced_server_side_no_filter_combination_reaches_b(
         ExecutionQuery(order_id=world["b1"]),
         environment="demo",
         after=None,
-        limit=50,  # type: ignore[arg-type]
+        limit=50,  # type: ignore[arg-type]  # the module's order id, read untyped
     )
     assert fills == ()
 
@@ -294,7 +294,7 @@ _BULK_FILLS = (
 
 def _plan(dsn: str, stmt: object) -> tuple[list[dict[str, object]], str]:
     """`stmt`'s executed plan (`EXPLAIN ANALYZE`): its nodes, and its text for the PR."""
-    compiled = stmt.compile(  # type: ignore[attr-defined]
+    compiled = stmt.compile(  # type: ignore[attr-defined]  # a `Select`, passed as `object`
         dialect=pg_psycopg.dialect(), compile_kwargs={"render_postcompile": True}
     )
     with tg._conn(dsn) as c:
@@ -321,9 +321,9 @@ def _assert_indexed(nodes: list[dict[str, object]], index: str, accounts: int, l
     ]
     scans = [n for n in nodes if n.get("Index Name") == index]
     assert scans and all(n["Node Type"] in ("Index Scan", "Index Only Scan") for n in scans)
-    assert all(int(n["Actual Rows"]) <= limit + 2 for n in scans)  # type: ignore[call-overload]
+    assert all(int(n["Actual Rows"]) <= limit + 2 for n in scans)  # type: ignore[call-overload]  # JSON
     for sort in (n for n in nodes if n["Node Type"] == "Sort"):
-        [child] = sort["Plans"]  # type: ignore[misc]
+        [child] = sort["Plans"]  # type: ignore[misc]  # the plan's JSON, untyped
         fed = int(child["Actual Rows"]) * int(child["Actual Loops"])
         assert fed <= accounts * limit, sort
 

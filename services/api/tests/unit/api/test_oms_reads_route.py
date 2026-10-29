@@ -19,7 +19,7 @@ from starlette.datastructures import QueryParams
 from candleviewer.api.oms_read_params import next_cursor, order_query
 from candleviewer.api.order_diagnostics import RecordRefused, exchange_calls
 from candleviewer.storage.repositories.exchange_payload import redact_exchange_payload
-from candleviewer.storage.repositories.oms_reads import Keyset
+from candleviewer.storage.repositories.oms_reads import MAX_ORDER_EXECUTIONS, Keyset
 from candleviewer.storage.repositories.orders import MAX_EVENT_PAGE
 from tests.unit.api.oms_reads_world import (
     ACCOUNT_A,
@@ -29,13 +29,16 @@ from tests.unit.api.oms_reads_world import (
     NOW,
     RECORD,
     T0,
+    USERS,
     World,
     accounts_of,
     bearer,
     event,
+    fill,
     ids,
     order,
     position,
+    viewing_as,
 )
 
 _LISTS = ("/orders", "/executions", "/executions/closed-pnl")
@@ -139,6 +142,7 @@ async def test_scope_is_enforced_server_side_account_b_is_403_audited_and_reads_
         assert (record["action"], record["outcome"]) == ("rbac.denied", "denied")
         assert record["after_state"]["exchange_account_ids"] == [str(a) for a in asked]
         assert record["actor_user_id"] is not None and record["session_id"] is not None
+        assert record["actor_label"] == f"user:{who}"
 
 
 _COMBINATIONS: list[dict[str, Any]] = [
@@ -326,6 +330,7 @@ async def test_diagnostics_serve_the_order_events_and_records_after_the_audit_ro
     assert [e["id"] for e in body["events"]] == [1, 2] and "reconciliation" not in body
     [record] = world.audit.emitted
     assert (record["action"], record["object_kind"]) == ("order.diagnostics_viewed", "order")
+    assert record["actor_label"] == "user:owner"  # 24 Sec.15.5's `user:<role>` (#4997 M2)
     assert record["object_id"] == body["order"]["id"]
     assert record["after_state"] == {"account_id": str(ACCOUNT_A)}
     assert record["session_id"] is not None and record["actor_user_id"] is not None
@@ -474,7 +479,7 @@ async def test_scope_is_enforced_server_side_a_forged_cursor_position_reaches_no
     world = World()
     b1 = next(o for o, _ in world.store.orders if o.exchange_account_id == ACCOUNT_B)
     listing = order_query(QueryParams("limit=1"))
-    me = world.principals.tokens["manager"].snapshot.user_id  # type: ignore[union-attr]
+    me = world.principals.tokens["manager"].snapshot.user_id  # type: ignore[union-attr]  # composed
     forged = next_cursor(
         listing, "listOrders", me, Keyset(b1.created_ts, b1.id), int(NOW.timestamp())
     )
@@ -518,6 +523,47 @@ class _Versions(dict[Any, int]):
         super().__init__()
         self.calls = calls
 
-    def get(self, key: Any, default: Any = None) -> int:  # type: ignore[override]
+    def get(self, key: Any, default: Any = None) -> int:  # type: ignore[override]  # a stand-in
         self.calls.append("version")
         return 3
+
+
+# -- the security lens's folds (#4997) ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("path", "params"),
+    [
+        ("/orders", {"exchange_account_ids": str(ACCOUNT_B)}),
+        ("/positions", {"exchange_account_ids": str(ACCOUNT_B)}),
+        ("/orders/00000000-0000-0000-0000-000000000a04", {}),  # B's order: the audited 404
+    ],
+)
+async def test_a_refusal_under_a_live_view_as_names_the_viewer_never_the_target(
+    path: str, params: dict[str, str]
+) -> None:
+    """#4997 M1: the Owner viewing as the Manager reads as the Manager; the scope refusal's
+    `rbac.denied` names the viewer, so the app's tripwire writes it rather than refusing it."""
+    world = World(viewing=viewing_as("manager"))
+    answer = await _get(world, path, "manager", **params)
+    assert answer.status_code in (403, 404)
+    [record] = world.audit.emitted
+    assert record["action"] == "rbac.denied"
+    assert record["actor_user_id"] == USERS["owner"] and record["actor_label"] == "user:owner"
+
+
+async def test_get_order_with_a_history_past_its_caps_fails_closed() -> None:
+    """#4997 m3: a timeline past `MAX_EVENT_PAGE` events or `MAX_ORDER_EXECUTIONS` fills is never
+    served cut: `getOrder` answers 503, as diagnostics does."""
+    world = World()
+    a1 = world.store.orders[0][0]
+    world.store.events[a1.id] = [event(n, a1.id, {}) for n in range(1, MAX_EVENT_PAGE + 2)]
+    answer = await _get(world, f"/orders/{a1.id}", include_events="true")
+    assert (answer.status_code, answer.json()["code"]) == (503, "store_unavailable")
+    world = World()
+    world.store.fills += [
+        (fill(1000 + n, ACCOUNT_A, a1.id, exec_id=f"X{n}"), None)
+        for n in range(MAX_ORDER_EXECUTIONS + 1)
+    ]
+    answer = await _get(world, f"/orders/{a1.id}")
+    assert (answer.status_code, answer.json()["code"]) == (503, "store_unavailable")

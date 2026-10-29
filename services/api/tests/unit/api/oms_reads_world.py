@@ -15,19 +15,22 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Final
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
 from candleviewer.api.oms_reads import make_oms_reads_router
 from candleviewer.api.order_principal import TradingPrincipal
+from candleviewer.app import _refuse_target_as_actor
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.view_as import ViewAsPhase, ViewAsRequestContext, bound_view_as
 from candleviewer.oms.errors import StoreUnavailable
 from candleviewer.oms.reads import OmsReads
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope
 from candleviewer.storage.repositories.executions import ExecutionRow
 from candleviewer.storage.repositories.oms_reads import (
+    MAX_ORDER_EXECUTIONS,
     ExecutionQuery,
     Keyset,
     ListedExecution,
@@ -92,10 +95,15 @@ class Principals:
 
 @dataclass
 class Audit:
+    """The audit writer behind the app's own tripwire (`_refuse_target_as_actor`, #3085 S8), as
+    `_LazyAuditEmitter` puts it before every write: a record naming a view-as target as its
+    actor is refused (`TargetNamedAsActor`), never recorded."""
+
     emitted: list[dict[str, Any]] = field(default_factory=list)
     fail: bool = False
 
     async def emit(self, action: str, **fields: Any) -> None:
+        _refuse_target_as_actor(action, fields)
         if self.fail:
             raise RuntimeError("the audit writer is not started")
         self.emitted.append({"action": action, **fields})
@@ -234,7 +242,10 @@ class Store:
             chain = tuple(self.events.get(order_id, ())) if events else ()
             fills = tuple(ListedExecution(x, g) for x, g in self.fills if x.order_id == order_id)
             more = len(chain) > MAX_EVENT_PAGE
-            return OrderDetail(found, chain[:MAX_EVENT_PAGE], fills, more)
+            more_fills = len(fills) > MAX_ORDER_EXECUTIONS
+            return OrderDetail(
+                found, chain[:MAX_EVENT_PAGE], fills[:MAX_ORDER_EXECUTIONS], more, more_fills
+            )
         return OutOfScope(None)
 
     async def _fills(
@@ -335,6 +346,8 @@ class World:
     composed: bool = True
     versions: dict[uuid.UUID, int] = field(default_factory=dict)
     now: datetime = NOW
+    #: A live view-as context bound around each request, as the view-as guard binds one.
+    viewing: ViewAsRequestContext | None = None
 
     def app(self) -> FastAPI:
         reads = OmsReads(ReadStore(self.store), "demo") if self.composed else None  # type: ignore[arg-type]  # the in-memory port
@@ -345,6 +358,14 @@ class World:
                 clock=lambda: self.now,
             )
         )  # fmt: skip
+        if self.viewing is not None:
+            context = self.viewing
+
+            @app.middleware("http")
+            async def bound(request: Request, call_next: Any) -> Any:
+                with bound_view_as(context):
+                    return await call_next(request)
+
         return app
 
     @asynccontextmanager
@@ -352,6 +373,15 @@ class World:
         transport = ASGITransport(app=self.app())
         async with AsyncClient(transport=transport, base_url="http://t") as client:
             yield client
+
+
+def viewing_as(target: str) -> ViewAsRequestContext:
+    """The Owner viewing as `target` in a live context: the read answers as the target."""
+    return ViewAsRequestContext(
+        viewer_user_id=USERS["owner"], viewer_session_id=SESSION, viewer_label="owner",
+        target_user_id=USERS[target], context_id=uuid.uuid5(SESSION, "view-as"),
+        subject_user_id=USERS[target], phase=ViewAsPhase.LIVE,
+    )  # fmt: skip
 
 
 def bearer(who: str) -> dict[str, str]:
@@ -367,7 +397,25 @@ def accounts_of(body: dict[str, Any]) -> set[str]:
 
 
 __all__ = [
-    "ACCOUNT_A", "ACCOUNT_B", "ACCOUNT_LIVE", "MISSING", "NOW", "RECORD", "T0", "Audit",
-    "Principals", "Store", "World", "accounts_of", "bearer", "event", "fill", "ids", "order",
-    "position", "replace", "seeded",
+    "ACCOUNT_A",
+    "ACCOUNT_B",
+    "ACCOUNT_LIVE",
+    "MISSING",
+    "NOW",
+    "RECORD",
+    "T0",
+    "Audit",
+    "Principals",
+    "Store",
+    "World",
+    "accounts_of",
+    "bearer",
+    "event",
+    "fill",
+    "ids",
+    "order",
+    "position",
+    "replace",
+    "seeded",
+    "viewing_as",
 ]  # fmt: skip

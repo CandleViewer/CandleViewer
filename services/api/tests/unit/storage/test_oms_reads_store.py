@@ -243,3 +243,26 @@ async def test_an_over_long_event_chain_is_flagged_never_silently_cut() -> None:
     store, _ = _store(_Result([_scoped_row()]), _Result(chain[:3]), _Result([]))
     found = await store.order(_GRANT, ORDER, environment="demo", events=True)
     assert isinstance(found, OrderDetail) and not found.more_events
+
+
+async def test_a_positions_read_past_its_bound_is_refused_whole() -> None:
+    """#4997 m2: `listPositions` reads at most `MAX_POSITIONS` rows (C-2.18), one more to know."""
+    from candleviewer.storage.repositories.oms_reads import MAX_POSITIONS, PositionsTooMany
+
+    assert "LIMIT $" in _sql(_STATEMENTS["positions_statement"])
+    many = [_position_row(id=uuid.UUID(int=n)) for n in range(MAX_POSITIONS + 1)]
+    store, _ = _store(_Result([{"id": ACCOUNT}]), _Result(many))
+    with pytest.raises(PositionsTooMany):
+        await store.positions(_GRANT, PositionQuery(), environment="demo")
+    store, _ = _store(_Result([{"id": ACCOUNT}]), _Result(many[:MAX_POSITIONS]))
+    assert len(await store.positions(_GRANT, PositionQuery(), environment="demo")) == MAX_POSITIONS
+
+
+async def test_an_orders_fills_past_their_cap_are_flagged() -> None:
+    from candleviewer.storage.repositories.oms_reads import MAX_ORDER_EXECUTIONS
+
+    fills = [_fill_row(id=uuid.UUID(int=n)) for n in range(MAX_ORDER_EXECUTIONS + 1)]
+    store, _ = _store(_Result([_scoped_row()]), _Result(fills))
+    found = await store.order(_GRANT, ORDER, environment="demo", events=False)
+    assert isinstance(found, OrderDetail) and found.more_executions
+    assert len(found.executions) == MAX_ORDER_EXECUTIONS and not found.more_events

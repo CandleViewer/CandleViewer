@@ -39,6 +39,11 @@ class _Route:
 
 def test_an_orders_version_is_the_oms_s_while_it_knows_one() -> None:
     assert order_versions(lambda: None)(ORDER) is None
-    assert order_versions(lambda: _Route(7))(ORDER) == 7  # type: ignore[arg-type,return-value]
-    assert order_versions(lambda: _Route(None))(ORDER) is None  # type: ignore[arg-type,return-value]
-    assert order_versions(lambda: _Route(7, ready=False))(ORDER) is None  # type: ignore[arg-type,return-value]
+    assert _version(_Route(7)) == 7
+    assert _version(_Route(None)) is None
+    assert _version(_Route(7, ready=False)) is None
+
+
+def _version(route: Any) -> int | None:
+    """The version `order_versions` reads off `route`, a stand-in typed as the runtime."""
+    return order_versions(lambda: route)(ORDER)
