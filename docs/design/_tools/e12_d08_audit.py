@@ -1095,10 +1095,10 @@ REPEAT = re.compile(
 # (423's name is read capitalised, so the spec's "locked inputs" is not a status)
 _FOUR_XX_WORDS = (
     r"\b4xx\b|\b4-?series\b|\bfour-hundreds?\b|\bvalidation\b|\bforbidden\b|\brefus\w*"
-    r"|\bclient errors?\b|\bbad request\b|\bunauthori[sz]ed\b|\bnot found\b|\bconflict\w*"
+    r"|\bclient errors?\b|\bbad request\b|\bunauthori[sz]ed\b|\bnot[ -]found\b|\bconflict\w*"
     r"|\bunprocessable\b|\bgone\b|\bpayload too large\b|\breject\w*|\bdenied\b|\bdeclined\b"
     r"|\bpayment required\b|\bmethod not allowed\b|\bnot acceptable\b"
-    r"|\bproxy authentication required\b|\brequest time-?out\b|\blength required\b"
+    r"|\bproxy authentication required\b|\brequest[ -]time-?out\b|\blength required\b"
     r"|\bprecondition (?:failed|required)\b|\b(?:content|request entity) too large\b"
     r"|\b(?:uri|request-uri) too long\b|\bunsupported media type\b"
     r"|\b(?:requested )?range not satisfiable\b|\bexpectation failed\b|\bteapot\b"
@@ -1360,23 +1360,38 @@ PCT = re.compile(
     r"|(?<!from )(?<!after )\b\d+(?:\.\d+)?\s?(?:ms|s|secs?|seconds?|min|minutes?)\b"
     # the delta's MJ-2: a share as a fraction in words, and a time to go without a unit
     r"|\bto go\b|\bof the way\b|\b(?:halves|thirds|quarters|fifths|sixths|eighths|tenths)\b"
-    r"|\b(?:a|one|two|three|four) (?:half|third|quarter|fifth|tenth)\b|\bhalf(?:way| done| built)\b",
+    # round 3's MJ-3: a hyphen in the word fraction, every ordinal to a tenth, and a count over
+    # the total ("1.24 M of 3.1 M prints", "out of", "of the total", "of all")
+    r"|\b(?:a|one|two|three|four|five|six|seven|eight|nine)[ -](?:half|third|quarter|fifth"
+    r"|sixth|seventh|eighth|ninth|tenth)s?\b|\bhalf(?:way| done| built)\b"
+    r"|\b(?:sevenths|ninths)\b|\b[\d.]+\s?[KM]? of [\d.]+\s?[KM]?(?![\w.])"
+    r"|\bof the total\b|\bof all\b|\bout of\b",
     re.IGNORECASE,
 )
 
 
 # the ruled elapsed figure ("2 min 10 s elapsed", "0:14 elapsed", "after {2 min 10 s}"): cut
 # before a deck string or a Shows cell is read for a share or a time left (the delta's MJ-2)
+# round 3's m-2: only "after … elapsed" and W-47's brace slot are the elapsed figure; a bare
+# "after 3 min" is a predicted time and is read
 ELAPSED_FIG = re.compile(
-    r"\bafter \{?(?:\d+ min )?\d+ (?:min|s)\b\}?(?: elapsed\b)?"
+    r"\bafter \{(?:\d+ min )?\d+ (?:min|s)\}|\bafter (?:\d+ min )?\d+ (?:min|s) elapsed\b"
     r"|\b(?:\d+ min )?\d+ (?:min|s) elapsed\b|\b\d+:\d\d elapsed\b",
+    re.IGNORECASE,
+)
+# round 3's m-2: a nearness, an expected end, most of the prints or a predicted time, read only
+# in a deck string or a Shows cell of a `-unknown` phase (the spec's prose keeps PCT alone)
+NEAR = re.compile(
+    r"\b(?:nearly|almost|close to|about) (?:there|done|built|finished|complete)\b"
+    r"|\bexpected (?:end|finish|time)\b|\bmost (?:of the )?prints\b"
+    r"|\b(?:ready|done|finished) (?:after|in|by|at)\b|\bafter \d+(?:\.\d+)?\s?(?:s|min)\b",
     re.IGNORECASE,
 )
 
 
 def shows_progress(q: str) -> bool:
     t = ELAPSED_FIG.sub(" ", q)
-    return bool(PCT.search(t) or LEFT.search(t))
+    return bool(PCT.search(t) or LEFT.search(t) or NEAR.search(t))
 
 
 # what a claim says the strip shows: any display or content verb makes it a claim, not a label
@@ -1391,7 +1406,8 @@ SHOWS = re.compile(
 # the ruled marker (BQ-19: "never a percentage or a time left") and its negated forms
 PROGRESS_RULED = re.compile(
     r"\bnever a percentage or a time left\b|\bno percentage(?:,| and| or) no time left\b"
-    r"|\b(?:never|no)\b(?: [\w-]+){0,3} percentage\b",
+    # round 3's MJ-3: the loose negated form skips no comparative ("no more than a percentage")
+    r"|\b(?:never|no)\b(?: (?!(?:more|less|fewer|than|over|under)\b)[\w-]+){0,3} percentage\b",
     re.IGNORECASE,
 )
 # counts done only: the elapsed time or the prints done, with no figure PCT reads as progress
@@ -3658,6 +3674,18 @@ MUTATIONS: tuple[Mutation, ...] = (
             (
                 "G-LADDER",
                 "5. ",
+                "The refusals `23` marks retryable and a not-found bars request go through the same backoff.",
+                "orch r1 delta r3 m-3: the BQ-11 marker beside a hyphenated not-found",
+            ),
+            (
+                "G-LADDER",
+                "5. ",
+                "The refusals `23` marks retryable and a request-timeout follow the same schedule.",
+                "orch r1 delta r3 m-3: the BQ-11 marker beside a hyphenated request-timeout",
+            ),
+            (
+                "G-LADDER",
+                "5. ",
                 "The refusals `23` marks retryable, validation errors included, rerun on the transport's ladder.",
                 "orch r1 delta MJ-1: the BQ-11 marker beside a validation error",
             ),
@@ -3812,6 +3840,82 @@ MUTATIONS: tuple[Mutation, ...] = (
         swap(
             '"Build cancelled after 2 min 10 s elapsed. Still showing Volume 50 BTC."',
             '"Build cancelled two fifths of the way through. Still showing Volume 50 BTC."',
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta r3 MJ-3: the over-budget-unknown Shows cell allows no more than a percentage",
+        row_cell(
+            "7.1 ",
+            "over-budget-unknown",
+            2,
+            '"taking longer than estimated" with the elapsed time and no more than a percentage beside it; `Cancel` stays; no auto-cancel',
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta r3 MJ-3: W-46 words the share as a hyphenated fraction",
+        swap(
+            '"Build cancelled after 2 min 10 s elapsed. Still showing Volume 50 BTC."',
+            '"Build cancelled one-third done. Still showing Volume 50 BTC."',
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta r3 MJ-3: W-46 shows prints done of the total",
+        swap(
+            '"Build cancelled after 2 min 10 s elapsed. Still showing Volume 50 BTC."',
+            '"Build cancelled with 1.24 M of 3.1 M prints built. Still showing Volume 50 BTC."',
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta r3 MJ-3: W-45 shows a seventh built",
+        swap(
+            '2 min 10 s elapsed · total unknown · taking longer than estimated"',
+            '2 min 10 s elapsed · total unknown · a seventh built"',
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta r3 m-2: W-45 predicts a ready time",
+        swap(
+            '2 min 10 s elapsed · total unknown · taking longer than estimated"',
+            '2 min 10 s elapsed · total unknown · ready after 3 min"',
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta r3 m-2: W-45 says nearly there",
+        swap(
+            '2 min 10 s elapsed · total unknown · taking longer than estimated"',
+            '2 min 10 s elapsed · total unknown · nearly there"',
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta r3 m-2: the outcome-unknown Shows cell names the expected end",
+        row_cell(
+            "7.1 ",
+            "outcome-unknown",
+            2,
+            "as `outcome`; the cancel notice and the editor's line name the elapsed time and the expected end, never a percentage",
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta r3 m-2: W-45 says most prints built",
+        swap(
+            '2 min 10 s elapsed · total unknown · taking longer than estimated"',
+            '2 min 10 s elapsed · total unknown · most prints built"',
         ),
         tag="X",
     ),
