@@ -522,8 +522,13 @@ def amendments(spec: str, problems: list[str], screens: str | None = None) -> di
             for q in quoted(today):
                 if q not in (line if no else brief):
                     problems.append(f"A-row {r[0]}: today's text not on 16 line {no or '?'}: {q!r}")
-            if "184" in field and "E05-D03 (#162)" not in proposed:
-                problems.append(f"A-row {r[0]}: the 16:184 row does not point at #162")
+            if "184" in field:
+                if "E05-D03 (#162)" not in proposed:
+                    problems.append(f"A-row {r[0]}: the 16:184 row does not point at #162")
+                if "does not touch `16`:184" not in proposed:
+                    problems.append(
+                        f"A-row {r[0]}: the 16:184 row must say PR 2 does not touch 16:184"
+                    )
         elif "`14`" in entry:
             saw14 = True
             if not (proposed.startswith(A47_HEAD) and proposed.endswith(A47_TAIL)):
@@ -583,6 +588,9 @@ FORBIDDEN = {
     "local path": re.compile("/ho" + r"me/\w+|/Us" + r"ers/\w+|C:\\\\"),
     "worker name": re.compile(r"\b[a-z]{2,5}-wor" + r"ker-\d+\b|wt-no" + r"tes|\bAgent [A-C]\b"),
     "host or url": re.compile(r"https?://|pen" + r"pot\.[a-z]|\.candle" + r"viewer\.com"),
+    "16:184 contingency": re.compile(
+        r"(?i)if #162 has not merged|applies A-46|whichever lands first|if #162 is not merged"
+    ),
     "colour emoji": re.compile("[\U0001f300-\U0001faff\u2600-\u26ff]"),
     "page id or uuid": re.compile(
         r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"
@@ -775,8 +783,18 @@ MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
     ),
     (
         "the 16:184 row forgets #162",
-        "re-worded by E05-D03 (#162)",
-        "re-worded by E05-D03 (issue one-six-two)",
+        "pointer: E05-D03 (#162) A-7",
+        "pointer: E05-D03 (issue one-six-two) A-7",
+    ),
+    (
+        "the 16:184 contingency returns",
+        "## 20. Summary",
+        "## 20. Summary (if #162 has not merged, PR 2 applies A-46)",
+    ),
+    (
+        "A-46 stops saying PR 2 leaves 16:184 alone",
+        "PR 2 cites A-7 and does not touch `16`:184; until A-7",
+        "PR 2 cites A-7 and edits `16`:184; until A-7",
     ),
     (
         "a tenth board",
