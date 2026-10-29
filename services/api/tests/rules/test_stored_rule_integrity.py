@@ -24,6 +24,7 @@ from candleviewer.rules.manager import (
     InMemoryRuleStore,
     RuleError,
     RulesManager,
+    rule_visible,
 )
 from candleviewer.rules.vocabulary import default_registry
 from tests.rules.test_rules_routes import _Env, _ir
@@ -265,3 +266,18 @@ def test_a_managers_save_on_another_users_rule_or_an_ungranted_account_stores_no
     assert r.status_code == (403 if op == "create" else 404)
     assert e.audits[-1][0] == "rule.scope_refused" and e.audits[-1][1]["actor"] == USER_B
     assert _rows(e) == [("base", 1)]
+
+
+async def test_a_stored_rule_reads_back_only_while_it_lives_and_by_its_own_versions() -> None:
+    """The reads a save relies on: a page after a cursor holds only the later rules, a version id
+    the rule does not hold is `404` and changes nothing, and a deleted rule is no one's."""
+    e = _env()
+    first, second = sorted([e.create(name="one"), e.create(name="two")])
+    assert [i["id"] for i in e.c.get(f"/rules?cursor={first}").json()["items"]] == [second]
+    owner = Actor(USER_A, "s1", frozenset(WRITE), is_owner=True)
+    with pytest.raises(RuleError) as missing:
+        await e.mgr.set_active_version(first, str(uuid.UUID(int=0xDEAD)), "", owner)
+    assert missing.value.status == 404 and sorted(_rows(e)) == [("one", 1), ("two", 1)]
+    assert e.c.delete(f"/rules/{second}").status_code == 204
+    deleted = await e.mgr._s.get(second)
+    assert deleted is not None and not rule_visible(deleted, owner)
