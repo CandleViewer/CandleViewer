@@ -178,6 +178,8 @@ class StreamConsumer:
         self._paged: set[AccountId] = set()  # accounts whose defect or refused resync paged
         self._unavailable: set[AccountId] = set()
         self._resynced: dict[AccountId, int] = {}  # the clock's epoch each account last read
+        #: an account its disable closed, and health's tracking read in place then (`_hold`)
+        self._disabled: dict[AccountId, frozenset[AccountId]] = {}
 
     def start(self) -> bool:
         """Start consuming; True when this call started it. Once, and never after `stop()`: a stop
@@ -231,9 +233,13 @@ class StreamConsumer:
             self._paged.discard(gone)
             self._unavailable.discard(gone)
             self._resynced.pop(gone, None)
+            self._disabled.pop(gone, None)
         for account_id in wanted:  # a task that ended restarts here: the only backoff
             task = self._tasks.get(account_id)
             if task is None or task.done():
+                if self._disabled.get(account_id) is wanted:  # held while that read stays
+                    continue
+                self._disabled.pop(account_id, None)
                 name = f"oms-stream-{account_id}"
                 self._tasks[account_id] = spawn_child(group, self._account(account_id), name=name)
 
@@ -340,8 +346,20 @@ class StreamConsumer:
                             account_id, error_code="AUTH_ERROR", exchange_ret_code=None
                         )
                     )
+                elif status.reason == "account_disabled":
+                    await self._hold(account_id)
                 return "rotate" if status.reason == "key_rotated" else "end"
         return "go"
+
+    async def _hold(self, account_id: AccountId) -> None:
+        """24 Sec.8.12: the account's disable closed its stream, and its key refuses a subscribe
+        until the re-enable lifts it, while health's tracking read in place may still list it. So
+        the refresh does not restart it while that read stays in place (a subscribe it would
+        refuse is a defect and pages): health's next read, which lists it again only once it is
+        re-enabled, equal to the last or not, decides. The read is taken here, never the last
+        refresh's, which health may have replaced since; one that fails is this account's defect.
+        Keyed on this status alone, never on a refused subscribe, which still pages."""
+        self._disabled[account_id] = await self._bounded(self._accounts.streamed_accounts())
 
     async def _clock_resynced(self, account_id: AccountId) -> None:
         """S8b (24 Sec.8.12 "Protection readings", the orchestrator's Q7): the exchange clock came

@@ -721,6 +721,26 @@ async def test_health_accounts_are_account_healths_last_good_read_read_in_place(
     assert await accounts.streamed_accounts() == {A}
 
 
+async def test_health_accounts_answer_one_object_per_read_so_reads_are_told_apart() -> None:
+    """24 Sec.8.12 (the delta's Minor 1): the set is answered as health holds it, never copied, so
+    the same read answers the same object and health's next read a new one, even an equal one:
+    the consumer holds an account its disable closed until that next read, by identity."""
+
+    class Health:
+        read = frozenset({A})
+
+        def streamed(self) -> frozenset[UUID]:
+            return self.read
+
+    health = Health()
+    accounts = wiring.HealthAccounts(health)
+    first = await accounts.streamed_accounts()
+    assert first is health.read and await accounts.streamed_accounts() is first
+    health.read = frozenset({A})  # health's next read, equal to the last
+    again = await accounts.streamed_accounts()
+    assert again == first and again is not first and again is health.read
+
+
 def test_clock_epoch_moves_only_on_an_unhealthy_to_healthy_edge() -> None:
     """S8b (the orchestrator's Q7): the epoch the consumer reads on each item moves once each time
     the exchange clock comes back into sync, a healthy read after one that was not, never on each

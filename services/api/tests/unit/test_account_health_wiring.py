@@ -244,8 +244,9 @@ async def test_an_account_owing_a_dead_mans_switch_call_stays_tracked_until_it_r
 async def test_streamed_accounts_are_the_last_good_read_never_a_replayed_or_owed_one() -> None:
     """24 Sec.8.12 (E29-T05 S8b, the orchestrator's Q5): what the private-stream consumer streams
     is the last good tracking read, published whole after its `track` calls: never an account
-    tracked for a replayed dead-man's-switch call alone, owed while that call keeps failing; and a
-    failed read keeps the last good one."""
+    tracked for a replayed dead-man's-switch call alone, owed while that call keeps failing; a new
+    set each pass that works, equal or not, as the consumer tells one read from the next by it;
+    and a failed read keeps the last good one, the same set."""
     journal = Journal(Episode(ACC_B, "degraded", "no_success", T0))  # a killed process left it
     rig = Rig(ACC, journal=journal)
     rig.dms.failing.add(ACC_B)  # its replayed call keeps failing: it stays owed and tracked
@@ -255,9 +256,13 @@ async def test_streamed_accounts_are_the_last_good_read_never_a_replayed_or_owed
     rig.wanted = frozenset({ACC, _ACC_C})
     await rig.run(TRACKING_REFRESH_S)
     assert rig.runtime.streamed() == {ACC, _ACC_C}
+    read = rig.runtime.streamed()
+    await rig.run(TRACKING_REFRESH_S)  # the same accounts, read again: a new set (24 Sec.8.12)
+    assert rig.runtime.streamed() == read and rig.runtime.streamed() is not read
+    read = rig.runtime.streamed()
     rig.read_error = ConnectionError(_ECHO)
     await rig.run(TRACKING_REFRESH_S)  # a failed pass: the set stays as the last good read left it
-    assert rig.runtime.streamed() == {ACC, _ACC_C}
+    assert rig.runtime.streamed() is read
     assert rig.runtime.monitor.current(ACC_B) is HealthState.DOWN  # still owed, still not streamed
     await rig.close()
 

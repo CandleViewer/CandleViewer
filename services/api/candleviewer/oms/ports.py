@@ -691,7 +691,9 @@ class StreamedAccounts(Protocol):
     has a port for. Ids alone, so nothing it answers selects a key (`TradingAccounts`, SR-E27-21).
     The consumer reads it again on each of health's tracking refreshes (15 s), bounding the call
     (C-2.18), and skips an account whose resolve is refused (`OrderRefused`), logged by its id
-    alone, until the next read. A read that cannot answer raises; an empty set found none."""
+    alone, until the next read. A read that cannot answer raises; an empty set found none. Each
+    read answers one set object, the same until health's next tracking read replaces it, equal or
+    not: the consumer holds an account its disable closed until that next read (E29-T05)."""
 
     async def streamed_accounts(self) -> frozenset[AccountId]: ...
 

@@ -17,6 +17,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.accounts.wallet import WalletSnapshot
 from candleviewer.domain.primitives import AccountId
+from candleviewer.exchange.base.errors import AuthError
 from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import (
     AccountRef,
@@ -118,6 +119,8 @@ class Rig:
     resyncs: int = 0  # the clock's epoch: how often it has come back into sync
     reapply_gate: asyncio.Event | None = None  # a reapply that answers once the test opens it
     reapplied_in: list[asyncio.Task[Any] | None] = field(default_factory=list)
+    refusing: set[UUID] = field(default_factory=set)  # accounts whose key refuses a subscribe
+    read: frozenset[UUID] = field(default_factory=frozenset)  # health's tracking read in place
 
     def consumer(self, **kw: Any) -> StreamConsumer:
         ports = dict.fromkeys(("accounts", "trading", "streams", "health", "reconciliation"), self)
@@ -145,10 +148,18 @@ class Rig:
             await asyncio.Event().wait()
 
     async def streamed_accounts(self) -> frozenset[UUID]:
+        """Account health's tracking read in place, as `HealthAccounts` answers it: the same set
+        until `streamed` changes or health reads again (`new_read`)."""
         await self._stall("streamed")
         if self.read_fails:
             raise ConnectionError("the read failed")
-        return frozenset(self.streamed)
+        if self.read != self.streamed:
+            self.read = frozenset(self.streamed)
+        return self.read
+
+    def new_read(self) -> None:
+        """Account health's next tracking read, listing what the last one did: a new set."""
+        self.read = frozenset(self.streamed)
 
     async def trading_account(self, account_id: AccountId) -> AccountRef:
         self.log.append(("resolve", account_id))
@@ -160,6 +171,8 @@ class Rig:
     async def subscribe(self, ref: AccountRef) -> PrivateStream:
         self.log.append(("subscribe", ref.account_id))
         await self._stall("subscribe")
+        if ref.account_id in self.refusing:  # its key closed or marked, as the adapter's registry
+            raise AuthError("the account's key may not open a private stream")
         inner = await self.port.subscribe_private(ref)
         return Spy(inner, self.closes, ref.account_id, "aclose" in self.hang)
 
@@ -430,6 +443,64 @@ async def test_consumer_key_rotated_with_a_refused_resolve_ends_and_the_next_ref
     rig.unresolvable.clear()
     await rig.refresh()
     assert c.accounts() == {A} and len(entries(rig, "subscribe")) == 2
+
+
+async def disabled(r: Rig) -> StreamConsumer:
+    """A consumer whose account's stream the account's disable closed (`closed`,
+    `account_disabled`), its key refusing a subscribe from then on, as the adapter's tombstone."""
+    c = await running(r)
+    r.port.push(status("closed", "account_disabled"))
+    await r.until(lambda: r.closes == [A])
+    r.refusing.add(A)
+    return c
+
+
+async def test_consumer_a_disabled_account_is_not_restarted_while_healths_read_stays(
+    rig: Rig,
+) -> None:
+    """24 Sec.8.12 (the delta's Minor 1): health's tracking read still lists an account the
+    disable just closed, so the next refresh restarts nothing: no subscribe the key would refuse,
+    no defect and no page. Once health's next read drops it, nothing of it is kept."""
+    c = await disabled(rig)
+    await rig.refresh()
+    assert entries(rig, "subscribe") == [("subscribe", A)] and c.accounts() == set()
+    assert "defect" not in rig.counts and rig.pages == [] and ("drop", A) in rig.log
+    rig.streamed = set()  # health's next read: it is disabled
+    await rig.refresh()
+    assert c._disabled == {} and entries(rig, "subscribe") == [("subscribe", A)]
+
+
+async def test_consumer_a_re_enabled_account_is_streamed_again_at_healths_next_read(
+    rig: Rig,
+) -> None:
+    """The hold is tied to health's read, never to what it lists: re-enabled within one period,
+    its key lifted, the account is listed again by health's next read, equal to the last, and the
+    refresh after it subscribes it, with no defect and no page."""
+    c = await disabled(rig)
+    await rig.refresh()
+    rig.refusing.clear()  # the re-enable lifts the key's tombstone
+    await rig.refresh()  # the same read in place: still held
+    assert c.accounts() == set()
+    rig.new_read()
+    await rig.refresh()
+    assert c.accounts() == {A} and entries(rig, "subscribe") == [("subscribe", A)] * 2
+    assert "defect" not in rig.counts and rig.pages == []
+
+
+async def test_consumer_a_refused_subscribe_not_closed_for_a_disable_still_pages(
+    rig: Rig,
+) -> None:
+    """Keyed on `closed`/`account_disabled` alone, never on a refused subscribe: a key closed for
+    its auth refusals and marked by the third, whose subscribe the next refresh meets with
+    `AuthError`, is the account's defect and pages, the read in place unchanged."""
+    c = await running(rig)
+    rig.port.push(status("closed", "auth_refused"))
+    await rig.until(lambda: rig.closes == [A])
+    rig.refusing.add(A)
+    await rig.refresh()
+    await rig.until(lambda: "defect" in rig.counts)
+    assert entries(rig, "subscribe") == [("subscribe", A)] * 2 and c.accounts() == set()
+    assert len(rig.pages) == 1 and "AuthError" in rig.pages[0]
 
 
 async def test_consumer_silence_past_the_bound_drops_closes_and_ends(rig: Rig) -> None:

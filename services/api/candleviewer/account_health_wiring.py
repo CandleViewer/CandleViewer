@@ -351,7 +351,8 @@ class AccountHealthRuntime:
         signable key, so never one tracked for a replayed or owed dead-man's-switch call alone.
         Read in place from the order lane (E29-T05 S8b): one read of an attribute each pass that
         works replaces whole after its `track` calls, so the consumer streams no account the
-        monitor does not track. `StreamedAccountsUnread` until the boot pass has worked."""
+        monitor does not track, with a new set each time, equal or not, which is how the consumer
+        tells one read from the next. `StreamedAccountsUnread` until the boot pass has worked."""
         streamed = self._streamed
         if streamed is None:
             raise StreamedAccountsUnread("account health has not read the accounts yet")
@@ -494,7 +495,9 @@ class AccountHealthRuntime:
             self.monitor.replay(episode, row)
         self._tracked = (self._tracked - removed) | added
         self._booted = True
-        self._streamed = frozenset(wanted)  # whole, once tracked: the order lane reads it in place
+        # whole, once tracked, which the order lane reads in place; a new set each pass, equal or
+        # not, as the consumer tells one read from the next by it (`HealthAccounts`, 24 Sec.8.12)
+        self._streamed = frozenset(set(wanted))
         if added or removed:
             logger().info(
                 "account_health.tracking_changed",

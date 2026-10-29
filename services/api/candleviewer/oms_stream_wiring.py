@@ -63,7 +63,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import Any, ClassVar, Final, Literal, Protocol, get_args
+from typing import Any, ClassVar, Final, Literal, Protocol, cast, get_args
 from uuid import UUID
 
 import structlog
@@ -557,13 +557,16 @@ class HealthAccounts:
     """`StreamedAccounts` (the orchestrator's Q5): the set account health monitors, its last good
     tracking read, never an account it tracks for a replayed or owed dead-man's-switch call alone,
     read in place from the lane: one read of a frozenset the serving loop replaces whole, never a
-    hop, so no stall of that loop faults the consumer. It raises until health's boot pass."""
+    hop, so no stall of that loop faults the consumer. It raises until health's boot pass. The
+    set is answered as health holds it, never copied: the same object until health's next read
+    replaces it, equal or not, which is how the consumer tells one read from the next (its hold
+    on a disabled account, 24 Sec.8.12)."""
 
     def __init__(self, health: TrackedAccounts) -> None:
         self._health = health
 
     async def streamed_accounts(self) -> frozenset[AccountId]:
-        return frozenset(AccountId(account_id) for account_id in self._health.streamed())
+        return cast("frozenset[AccountId]", self._health.streamed())  # ids: `AccountId` is a UUID
 
 
 class ClockReading(Protocol):

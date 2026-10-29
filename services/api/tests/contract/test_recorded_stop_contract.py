@@ -646,9 +646,10 @@ def test_8_12_says_the_runtime_runs_the_consumer_and_logs_it_as_19_51() -> None:
     """E29-T05 S8b (#848): 24 section 8.12 as built, logged as section 19.51 after E08-T09's 19.50.
     The banner no longer says nothing runs the consumer; `StreamedAccounts` is account health's
     last good tracking read, read in place, never an account tracked for a replayed or owed call
-    alone; the runtime's `stream` phase announces the stand-ins; and a position row held as dated
+    alone; the runtime's `stream` phase announces the stand-ins; a position row held as dated
     ahead of the store's clock is applied again once the clock is back in sync, which the
-    consumer's re-sync now runs, bounded."""
+    consumer's re-sync now runs, bounded; and an account its disable closed (#898 B3b2) waits for
+    health's next tracking read, told apart by its set object, keyed on that status alone."""
     head = "### 8.12 The private-stream consumer (E29-T05)"
     section = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n---\n", 1)[0])
     assert "contract first: nothing runs it yet" not in section
@@ -667,6 +668,13 @@ def test_8_12_says_the_runtime_runs_the_consumer_and_logs_it_as_19_51() -> None:
         "**Readiness (the orchestrator's ruling of 2026-10-25).** Once the runtime is `ready`, "
         "the `/readyz` `oms` check (`20-architecture.md` §6.2) is `degraded` while the consumer "
         "has not started, while it has faulted",
+        "Each read answers one set, the same object until health's next read replaces it, equal "
+        "or not, so the consumer tells one read from the next (a disabled account, below).",
+        "a disabled account waits for health's next tracking read (below)",
+        "So the consumer takes that read as the status comes and does not restart the account "
+        "while it stays in place: no refused subscribe counts a defect or pages.",
+        "The hold is keyed on that status alone, never on a refused subscribe, which stays a "
+        "defect and pages",
     )
     assert "While the consumer runs, the `/readyz`" not in section  # fails closed from `ready`
     log = "### 19.51 2026-10-28 — §8.12: the private-stream consumer runs (E29-T05, #848)\n"
@@ -678,4 +686,7 @@ def test_8_12_says_the_runtime_runs_the_consumer_and_logs_it_as_19_51() -> None:
         f"bounded at {REAPPLY_TIMEOUT_S:g} s and counted `reapply_timeout`",
         "the Readiness paragraph names the not-started case.",
         "No REST, WS, table, column, chart or `machine_hash` change;",
+        "an account its disable closed (`closed`, `account_disabled`) is not restarted while the "
+        "health tracking read taken as the status comes stays in place,",
+        "The hold is keyed on that status, never on a refused subscribe.",
     )
