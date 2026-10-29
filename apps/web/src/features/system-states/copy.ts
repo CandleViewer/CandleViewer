@@ -6,7 +6,8 @@
  * SCR-153 / CMP-092 rows: `docs/design/E17/E17-D02.md` §8 "The drawn issues" (the routing table
  * is §6; the severities are its first-match partition, M-3). Where the design has no string for a
  * row, the row takes the merged spec's nearest string and is marked PROPOSED beside it (coordinator
- * ruling on #306, 2026-10-27); every DEGRADED_COPY row is verbatim, so none is PROPOSED.
+ * ruling on #306, 2026-10-27); every DEGRADED_COPY string is verbatim, and only the break-glass
+ * row's tone and stillWorks pairing are PROPOSED.
  */
 
 export type DegradedSeverity = "info" | "warning" | "blocking";
@@ -19,6 +20,8 @@ export interface DegradedCopy {
    * sentence that already says it (the store-down row).
    */
   readonly stillWorks: string | null;
+  /** How the row's entry is said, a property of its class (E17-D02 §11 rows 5 and 16). */
+  readonly announce: "assertive" | "polite";
 }
 
 /** The CMP-092 rows whose producer the client already reads, keyed by the issue id. */
@@ -28,42 +31,62 @@ export const DEGRADED_COPY = {
     severity: "blocking",
     message: "Maintenance mode — new orders off.",
     stillWorks: "Cancel and close still work.",
+    announce: "assertive",
   },
   /** Routing row 6: the `postgres` component `down`, the one the maintenance gate depends on. */
   storeDown: {
     severity: "blocking",
     message: "Database unavailable — new orders off; cancel and close still work.",
     stillWorks: null,
+    announce: "assertive",
+  },
+  /**
+   * SR-023: `notice` `auth.break_glass_used` (`23` §15.9), sent after a first `auth_ok` while a
+   * break-glass reset is unresolved. The message is the notice's own, verbatim (E42-D03 OV-10;
+   * `break_glass_notice.py` `_MESSAGE`), the same for every role. It refuses nothing, so it is
+   * never "blocking"; PROPOSED: the warning tone and §8's "Order entry unaffected." beside it
+   * (no §6 row routes it). Said assertively once, as OV-10 asks (§11 row 5 would be polite).
+   */
+  breakGlass: {
+    severity: "warning",
+    message: "Break-glass recovery was used on this server; the Owner must review it.",
+    stillWorks: "Order entry unaffected.",
+    announce: "assertive",
   },
   /** Routing row 8: `exchange_state.public_ws` in `connecting` / `disconnected` (matrix row 13). */
   exchangeFeedDown: {
     severity: "warning",
     message: "Exchange feed down — the server is restoring the connection.",
     stillWorks: "Charts and book pause; positions, cancel and close still work.",
+    announce: "polite",
   },
   /** Routing row 9: `exchange_state.private_ws` in `connecting` / `resyncing` (matrix row 24), ≤ 10 s. */
   privateReconnect: {
     severity: "warning",
     message: "Position data is being verified — actions temporarily limited.",
     stillWorks: "Market data is live; cancel and close still work, confirmed over REST.",
+    announce: "polite",
   },
   /** Routing row 10: the `rule_engine` component `down` (`14` SCR-153). */
   ruleEngineDown: {
     severity: "info",
     message: "Armed rules are not being evaluated — manual orders still work.",
     stillWorks: "Rule actions resume when the engine is back.",
+    announce: "polite",
   },
   /** Routing row 10: the `recorder` component `down` (`14` SCR-153). */
   recorderDown: {
     severity: "info",
     message: "Recorder down — no new history is being written.",
     stillWorks: "Charts, orders, positions, cancel and close still work.",
+    announce: "polite",
   },
   /** Routing row 10, client-side: SCR-159's GPU page answered "Keep software rendering" (#306 9c). */
   gpuFallback: {
     severity: "info",
     message: "Chart engine in fallback — reduced visuals.",
     stillWorks: "Order entry unaffected.",
+    announce: "polite",
   },
 } as const satisfies Readonly<Record<string, DegradedCopy>>;
 

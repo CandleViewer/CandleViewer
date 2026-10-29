@@ -7,7 +7,9 @@
  * Routing (`docs/design/E17/E17-D02.md` §6, first match wins; one reason, one surface): row 6
  * blocking (maintenance: the `notice` or the `maintenance.mode` flag; the `postgres` component), row 8 the public exchange feed, row 10 the other
  * components. The overall `health` word routes nothing by itself. The transport states (the SCR-152
- * region) are never an issue here.
+ * region) are never an issue here. SR-023's break-glass notice (`auth.break_glass_used`) has no §6
+ * row: it leads the rows that gate nothing (PROPOSED), and no frame clears it, since a resolution
+ * only stops the notice on later first authentications (`23` §15.9).
  *
  * A dismissal hides a row for its episode only and the row returns when a new frame re-asserts the
  * condition (§8): each issue carries `assertedSeq`, the number of frames that asserted it in the
@@ -46,6 +48,7 @@ export const PRIVATE_HANDOVER_MS = 10_000;
 const ORDER: readonly DegradedIssueId[] = [
   "maintenance",
   "storeDown",
+  "breakGlass",
   "exchangeFeedDown",
   "privateReconnect",
   "ruleEngineDown",
@@ -107,6 +110,7 @@ function verdicts(u: SystemUpdate): Map<DegradedIssueId, boolean> {
   if (u.kind === "notice") {
     if (u.reason === "maintenance.enabled") out.set("maintenance", true);
     if (u.reason === "maintenance.disabled") out.set("maintenance", false);
+    if (u.reason === "auth.break_glass_used") out.set("breakGlass", true); // never on `critical`
   }
   if (u.kind === "health" || u.kind === "feature_flags") {
     // §15.9: the flag re-asserts maintenance on every snapshot or flag push; the notice is one-shot.
