@@ -31,9 +31,9 @@ its code:
   exports in the ruled pattern, every board PENDING until PR 2.
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL, 0 WARN is the bar);
-`--self-test` applies one mutation per gate to an in-memory copy of the spec and passes only when
-each adds exactly one new FAIL with its gate's code, the restored text reproduces the base result
-and no file on disk changed.
+`--self-test` applies one mutation per gate (MUTATIONS) and the paraphrase probes (PROBES) to an
+in-memory copy of the spec and passes only when each adds exactly one new FAIL with its gate's
+code, a re-run on the unmutated text reproduces the base result and no file on disk changed.
 
 Usage: python3 -I -B docs/design/_tools/e05_d03_motion_audit.py [--check] [--json] [--self-test]
 """
@@ -106,7 +106,8 @@ E11-D06|255|Last-price pill;theme.css|48|--cv-motion-scale: 1;theme.css|69|prefe
 dialog.css|29|prefers-reduced-motion: no-preference;drawer.css|118|no-preference
 select.css|106|no-preference;toast.css|56|no-preference;skeleton.css|34|linear 4
 spinner.css|29|linear infinite;store.ts|172|os.reduceMotion;themeFromSettings.ts|87|flag === true
-model.ts|60|flashOnTick: !calm;KeymapHost.tsx|71|Locked;E33-D04-handoff|135|C.8"""
+model.ts|60|flashOnTick: !calm;14|2411|disable flash-on-update;14|2412|frame budget
+KeymapHost.tsx|71|Locked;E33-D04-handoff|135|C.8"""
 RULE_TEXT = {
     "MR-1": "no element starts more than 3 flashes in any 1 000 ms window",
     "MR-2": "an animation whose `animation-iteration-count` × `animation-duration` exceeds "
@@ -120,14 +121,22 @@ RULE_TEXT = {
     "alpha stays 0.25 (PROPOSED within E08-D11's 0.15–0.35 as a _tuning_, not a gate) for the "
     "owner's later prototype run.",
 }
-AROW_SHA = "7f106600539a"  # sha256 prefix over every A-row's id, line, heading, pre and post
+AROW_SHA = "0e2ff0bd3ca5"  # sha256 prefix over every A-row's id, line, heading, pre and post
 # A-7 as R162 BQ-16 rules it (the list's ASCII arrow written as `16`'s, with `16`'s full stop)
 A7_POST = (
     "- Node-graph connection made: `fast` `opacity` fade, never a line-draw (a stroke-dash draw "
     "reads as direction); stagger 0; no pulse on the connecting port; reduce → instant (E37-D03 "
     "BQ-08, RULED on #876)."
 )
-DECLINED = ("motion.hold", "motion.spin", "motion.toast", "motion.drawer")
+DECLINED = (
+    "motion.hold",
+    "motion.spin",
+    "motion.toast",
+    "motion.drawer",
+    "motion.slide",
+    "motion.shimmer",
+    "motion.toggle",
+)
 FLASH_ALPHA, HOT_MS, WINDOW_MS, CEILING = 0.25, 500, 1000, 3
 BANNED_ROT13 = (
     "yrnx rkcbfrq olcnff rkcybvg nggnpx benpyr erirny haobhaqrq sybbq fgnyy QbF nqivfbel TUFN "
@@ -335,6 +344,17 @@ def gate_rules(ctx: Ctx, r: Result) -> None:
                 r.fail("G3-RULES", f"row {rid}: MR-2 runs past 5 000 ms")
         elif not rep.startswith("one-shot"):
             r.fail("G3-RULES", f"row {rid}: repeat cell {rep!r} is not a ruled form")
+        if row.get("recipe", "").startswith("Value flash") and not (
+            cap and re.search(r"≥ 1 Hz for 10 s", rep)
+        ):
+            r.fail("G3-RULES", f"row {rid}: A23 needs the per-cell cap and the 1 Hz-for-10 s stop")
+        if rid == "7" and (
+            "static glyph" not in row.get("reduce", "") or "puls" in rep + row.get("reduce", "")
+        ):
+            r.fail("G3-RULES", "row 7: the reduce state must be the static glyph, no pulse (BQ-05)")
+    hs1 = re.search(r"\*\*HS-1 .*?At least (\d+) ms between flash starts", rules, re.DOTALL)
+    if not hs1 or int(hs1.group(1)) != HOT_MS:
+        r.fail("G3-RULES", f"HS-1's prose interval is not {HOT_MS} ms")
     said = re.search(r"333 ms admits (\d+)", rules)
     hot = re.search(r"at 500 ms a cell starts at most (\d+)", rules)
     if (
@@ -573,6 +593,17 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G7-BOARDS", sub("`E05-D03 / 08 rules-card`", "`E05-D03 / 08 Rules-card`")),
 )
 
+# Paraphrase probes (lens round 1): edits a weaker gate would let through; each must add one FAIL.
+PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
+    ("G3-RULES", regex(r"≥ 500 ms between starts per cell, ≤ 20[^|]*", "one-shot, once per tick ")),
+    ("G3-RULES", sub("a cell at ≥ 1 Hz for 10 s stops", "a cell at ≥ 9 Hz for 10 s stops")),
+    ("G3-RULES", sub("| `none` — a static glyph", "| `none` — an opacity pulse, a static glyph")),
+    (
+        "G3-RULES",
+        sub("At least 500 ms between flash starts", "At least 400 ms between flash starts"),
+    ),
+)
+
 
 def digests() -> dict[str, str]:
     return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in (SPEC, Path(__file__))}
@@ -583,7 +614,7 @@ def self_test(ctx: Ctx, base: Result) -> list[str]:
     before, spec_sha = digests(), hashlib.sha256(ctx.spec.encode()).hexdigest()
     covered = {code for code, _ in MUTATIONS}
     bad += [f"self-test: gate {g} has no mutation" for g, _ in GATE_FNS if g not in covered]
-    for code, fn in MUTATIONS:
+    for code, fn in (*MUTATIONS, *PROBES):
         mutated = fn(ctx)
         if mutated.spec == ctx.spec:
             bad.append(f"self-test {code}: the mutation did not apply")
@@ -593,9 +624,9 @@ def self_test(ctx: Ctx, base: Result) -> list[str]:
             bad.append(f"self-test {code}: expected one new [{code}] FAIL, got {new[:3]}")
     again = run(ctx)
     if hashlib.sha256(ctx.spec.encode()).hexdigest() != spec_sha:
-        bad.append("self-test: the restored text is not byte-identical")
+        bad.append("self-test: the spec text in memory changed")
     if again.fails != base.fails or again.numbers != base.numbers:
-        bad.append("self-test: the restored text does not reproduce the base result")
+        bad.append("self-test: a re-run does not reproduce the base result")
     if digests() != before:
         bad.append("self-test: a file on disk changed")
     return bad
@@ -632,8 +663,9 @@ def main(argv: list[str]) -> int:
         if args.self_test:
             out += [f"FAIL {line}" for line in st]
             out.append(
-                f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations, one per "
-                "gate, each one new FAIL; restored text byte-identical; files on disk unchanged"
+                f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations (one per "
+                f"gate) and {len(PROBES)} probes, each one new FAIL; a re-run reproduces the base "
+                "result; files on disk unchanged"
             )
         print("\n".join(out))
     failed = bool(res.fails or st)
