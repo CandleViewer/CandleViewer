@@ -93,7 +93,10 @@ DS_SRC_REL = "packages/ui/tokens"
 # the merged design docs this spec builds on
 UNTOUCHED = ("14", "15", "16", "21", "22", "23", "24")
 UNTOUCHED_DOCS = ("D02", "D03", "D04", "D06", "D08", "D09", "S03", "README")
-OWN_PATHS = (SPEC_REL, HAND_REL, TOOL_REL, RULED_PIN_TXT)
+# the CodeQL accepted-risk entry for this tool's `--json` print, and its line pin (ruled on
+# #4930, 08:49Z): the two files this PR may touch beyond its own four
+RISK_PATHS = ("security/accepted-risks.yaml", "scripts/tests/test_security_gate.py")
+OWN_PATHS = (SPEC_REL, HAND_REL, TOOL_REL, RULED_PIN_TXT) + RISK_PATHS
 CITE_FILES: dict[str, str] = {
     "D02": "docs/design/E09/E09-D02.md",
     "D03": "docs/design/E09/E09-D03.md",
