@@ -3,9 +3,10 @@ a binary subscription (`23-ws-protocol.md` §3.2, §3.4, §8.2). `book` (kind 2)
 `bars` (4) re-encode it from their updates' parts and decode back to the merged body. A `bars`
 window leaves structured only by §3.4's own trigger, and as one frame per kind-4 frame past the
 u32 span (§3.6). An unmerged update keeps its own part. A window without a part of its family's
-kind leaves structured, as do a `trades` window with `dropped` prints and every footprint and
-heatmap window (no encoder yet: #593, #605), and a structured subscription's window is never built
-from parts."""
+kind leaves structured, as do a `trades` window with `dropped` prints and every footprint window
+(no encoder yet: #593), and a structured subscription's window is never built from parts. A
+`heatmap` window (#605) leaves as one kind-6 `d` per column, unless a column is not complete or
+carries an off-window total (§14.5, BQ-8)."""
 
 from __future__ import annotations
 
@@ -193,10 +194,36 @@ def _footprint(t_ms: int) -> Update:
     return {**_HEAD, "bars": [bar]}, _VECTORS["footprint"], None
 
 
-def _heatmap(t_ms: int) -> Update:
-    column = {"t_ms": T0_MS + t_ms, "price_min": "100", "price_step": "1", "bids": [1], "asks": [2]}
+def _heatmap(t_ms: int, samples: int | None = None, off: float = 0.0) -> Update:
+    column: Body = {
+        "t_ms": T0_MS + t_ms, "price_min": "100", "price_step": "1", "bids": [1, 0.0625],
+        "asks": [2, 0.1875], "complete": True,
+    }  # fmt: skip
+    if samples is not None:
+        column["samples"] = samples
+    if off:
+        column["off_window_bid_qty"] = off
     body = {"symbol": "BTCUSDT", "time_bucket_ms": 500, "columns": [column]}
     return body, _VECTORS["heatmap_column"], None
+
+
+def test_a_merged_heatmap_window_leaves_as_one_kind_6_frame_per_column() -> None:
+    """#605 (§3.6, §8.6): a merged binary `heatmap` window leaves as consecutive kind-6 `d`
+    frames, one per column, oldest bucket first, each flagged `coalesced`, the first carrying the
+    window's counts and the rest 1; each decodes back to its column, sizes rounded half to even
+    at the part's `qty_scale` (24 §6.5: 62.5 -> 62 and 187.5 -> 188 at 3 places)."""
+    emissions = _take("heatmap", [_heatmap(500), _heatmap(0)])
+    assert [(e.coalesced_count, e.window_count) for e in emissions] == [(2, 2), (1, 1)]
+    for emission, t_ms in zip(emissions, (0, 500), strict=True):
+        assert emission.part is not None
+        assert emission.part.flags & FLAG_COALESCED and not emission.part.flags & FLAG_ESTIMATED
+        [column] = emission.body["columns"]
+        assert column["t_ms"] == T0_MS + t_ms
+        decoded = _decoded(emission.part)
+        assert decoded["columns"] == [
+            {"t_ms": T0_MS + t_ms, "price_min": "100.00", "price_step": "1.00",
+             "bids": [1.0, 0.062], "asks": [2.0, 0.188]}
+        ]  # fmt: skip
 
 
 def _bare(update: Update) -> Update:
@@ -221,9 +248,15 @@ def _bare(update: Update) -> Update:
             lambda: [(b, _VECTORS["book_snapshot"], m) for b, _, m in _WINDOWS["book"]()],
             id="book-other-kind",
         ),
-        # These two flip to kinds 5 and 6 when #593 and #605 add their merged-window encoders.
+        # This one flips to kind 5 when #593 adds its merged-window encoder; heatmap's (#605) is
+        # `test_a_merged_heatmap_window_leaves_as_one_kind_6_frame_per_column`.
         pytest.param("footprint", lambda: [_footprint(0), _footprint(60_000)], id="footprint-593"),
-        pytest.param("heatmap", lambda: [_heatmap(0), _heatmap(500)], id="heatmap-605"),
+        pytest.param(  # a column below its native count (§14.5): kind 6 has no `samples` field
+            "heatmap", lambda: [_heatmap(0), _heatmap(500, samples=3)], id="heatmap-incomplete"
+        ),
+        pytest.param(  # an off-window total: kind 6 has no field for it either
+            "heatmap", lambda: [_heatmap(0), _heatmap(500, off=2.5)], id="heatmap-off-window"
+        ),
     ],
 )
 def test_a_merged_window_without_a_part_it_can_carry_leaves_structured(
