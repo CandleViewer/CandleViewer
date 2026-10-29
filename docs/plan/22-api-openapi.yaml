@@ -205,7 +205,8 @@ info:
     ### Idle lock (E09-D06, #2300)
     A session with no activity passes `session.idle_deadline` (`last_seen_at + idle_timeout_s`)
     and becomes **idle-locked**; `POST /auth/lock` (CMP-098 "Lock now", #4743) locks it at once,
-    exactly as if that deadline fell due. It is locked, not revoked: WS frames keep flowing
+    exactly as if that deadline fell due, without moving it: the lock moment is the
+    `auth.session_locked` audit row's time. It is locked, not revoked: WS frames keep flowing
     (ADR-0020 section 4). Only `POST /auth/unlock`, `POST /auth/logout`, `POST /auth/lock` and
     `GET /auth/session` are allowed while locked, and logout ends only the calling session
     (SCR-005 "Sign out instead"): `all_sessions: true` from a locked session answers
@@ -251,8 +252,7 @@ info:
     Activity is explicit. Only `POST /auth/session/extend` and a successful `POST /auth/unlock`
     record activity: both re-stamp `last_seen_at` on the session row, and unlock's re-stamp is
     recorded as `UNLOCK_OK` on B16 (extend sends B16 nothing), so only they move
-    `session.idle_deadline` forward; `POST /auth/lock` only brings it to the moment of the lock.
-    No other operation moves it,
+    `session.idle_deadline`. No other operation moves it,
     whatever it reads or writes, and neither does client-side input or WS traffic.
     `POST /auth/refresh` is not activity: the
     rotated session inherits `last_seen_at` (as it inherits `expires_at`), so
@@ -260,6 +260,7 @@ info:
     `23-ws-protocol.md` section 4.3 schedule still locks on time. `GET /auth/session` is
     read-only. Extend is refused once locked; only `POST /auth/unlock` lifts a lock.
     A read-only downgrade (`POST /auth/step-up`) does not refuse extend: extend acts on no data.
+    Nor does it refuse lock, which acts on no data either and only reduces risk.
     `session_revoked` is answered only by `POST /auth/unlock` and `POST /auth/lock`; every other
     operation keeps the uniform `unauthenticated` for a revoked or expired session, so no other
     route works as a session oracle.
@@ -278,9 +279,9 @@ info:
 
     * **The viewer's own operations.** `POST /admin/view-as`, `GET` and
       `DELETE /auth/session/view-as`, `GET /auth/session`, `POST /auth/refresh`,
-      `POST /auth/logout`, `POST /auth/session/extend` and `POST /auth/unlock` act on the
-      viewer's own session, as the viewer, and `POST /telemetry/frontend` carries only bucket
-      counts. None of the rules below applies to them, so leaving view-as is one call that
+      `POST /auth/logout`, `POST /auth/session/extend`, `POST /auth/lock` and `POST /auth/unlock`
+      act on the viewer's own session, as the viewer, and `POST /telemetry/frontend` carries only
+      bucket counts. None of the rules below applies to them, so leaving view-as is one call that
       nothing refuses.
     * **Read-only.** Every other state-changing request, except the protective writes below,
       answers `403 view_as_read_only` and changes nothing. State-changing means the method
@@ -1780,28 +1781,33 @@ paths:
       summary: Idle-lock the calling session at once (CMP-098 "Lock now")
       description: |
         Locks the calling session at once, exactly as if its idle deadline fell due now (see
-        "Idle lock"): `session.idle_deadline` becomes the moment of the lock, which every later
-        `401 session_idle_locked` gives as `idle_locked_at`, and B16 records the lock as it
-        records any deadline that fell due (`IDLE_DEADLINE` into `auth.idle_locked`, which
-        writes `auth.idle_locked`). The body is the same `SessionInfo` as `GET /auth/session`,
-        with `session.locked: true` and `step_up_expires_at: null`: as at any lock, every step-up
-        grant and pending challenge of the session is void from that moment. Lock records no
-        activity and never moves `expires_at`; only `POST /auth/unlock` lifts the lock (SCR-005).
+        "Idle lock"): B16 takes the same `IDLE_DEADLINE` transition into `auth.idle_locked`. The
+        deadline itself does not move: `session.idle_deadline`, and the `idle_locked_at` of a
+        later `401 session_idle_locked`, still give `last_seen_at + idle_timeout_s`. The lock
+        moment is the `auth.session_locked` audit row's time. The body is the same `SessionInfo`
+        as `GET /auth/session`, with `session.locked: true` and `step_up_expires_at: null`: as at
+        any lock, every step-up grant and pending challenge of the session is void from that
+        moment. Lock records no activity and never moves `expires_at`; only `POST /auth/unlock`
+        lifts the lock (SCR-005).
 
         The session is identified as in "Idle lock": an access token inside its lifetime, else
         the `cv_refresh` cookie, which gets the SR-042 `Origin` check and the SR-041 CSRF check
         of `POST /auth/refresh`, as a cookie-identified `POST /auth/logout` does. Self only: any
-        query parameter is refused with `422` (SR-026).
+        query parameter is refused with `422` (SR-026). Lock acts on the caller's own session and
+        only reduces risk, so neither a read-only downgrade nor a view-as context refuses it: it
+        is one of the viewer's own operations ("View-as session").
 
         * A session that is already idle-locked answers `200` with its `SessionInfo` and changes
-          nothing: the lock keeps its moment, and no `auth.session_locked` is written.
+          nothing. It writes no second `auth.session_locked`: one record per lock, and the access
+          log has the call.
         * A revoked session, or one past its absolute lifetime, answers `401 session_revoked`,
           with `revoked_reason` as `POST /auth/unlock` gives it: the client signs in again
           (SCR-001). An access token or cookie of a session that a refresh rotated away, or one
           this server never issued, gets the uniform `401 unauthenticated`.
 
-        Audited write-ahead as `auth.session_locked`, the record of this request (C-2.9): if the
-        audit sink is down the answer is `503` and the session is not locked.
+        The lock is recorded by `auth.session_locked`, written ahead (C-2.9), and by B16's own
+        `auth.idle_locked`; the route sends B16 no `REQUEST` (28 B16.7). If the audit sink is down
+        the answer is `503` and the session is not locked.
       security:
         - bearerAuth: []
         - refreshCookie: []
@@ -1816,7 +1822,7 @@ paths:
               schema: { $ref: "#/components/schemas/SessionInfo" }
               examples:
                 locked:
-                  summary: Locked by "Lock now"; the idle deadline is the moment of the lock
+                  summary: Locked by "Lock now" before its idle deadline, which does not move
                   value:
                     user:
                       id: "11111111-2222-3333-4444-555555555555"
@@ -1834,7 +1840,7 @@ paths:
                       id: "5b1f0c3e-7d2a-4c11-9e8f-0a1b2c3d4e5f"
                       issued_at: "2026-09-14T10:24:00Z"
                       expires_at: "2026-09-14T20:05:00Z"
-                      idle_deadline: "2026-09-14T10:41:30Z"
+                      idle_deadline: "2026-09-14T10:46:02Z"
                       idle_timeout_s: 900
                       locked: true
         "401":
@@ -12635,7 +12641,7 @@ paths:
         earlier 15). `live_enablement`, `killswitch`, `backups`, `sl_loosen`, `accounts` and
         `recorder_purge` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive
         invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on
-        every write except `POST /auth/logout`, `POST /auth/session/extend` and
+        every write except `POST /auth/logout`, `POST /auth/session/extend`, `POST /auth/lock` and
         `DELETE /auth/session/view-as`; `POST /auth/step-up` answers it itself). Endpoints that
         require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
         `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
@@ -17252,7 +17258,10 @@ components:
         idle_locked_at:
           type: string
           format: date-time
-          description: "`session_idle_locked` only: when the session idle-locked (its `idle_deadline`)."
+          description: >
+            `session_idle_locked` only: the session's `idle_deadline`, which is when it idle-locked,
+            unless `POST /auth/lock` locked it first (its lock moment is then the
+            `auth.session_locked` audit row's time).
         revoked_reason:
           type: string
           enum: [expired, unlock_attempts_exceeded, revoked]
@@ -17895,9 +17904,9 @@ components:
           description: >
             When the idle lock engages unless activity is recorded first
             (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and
-            `POST /auth/unlock` move it forward, `POST /auth/lock` brings it to the moment of the
-            lock, and `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment
-            it locked.
+            `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once
+            `locked`, the moment it locked, unless `POST /auth/lock` locked the session first: lock
+            never moves it, and its moment is the `auth.session_locked` audit row's time.
         idle_timeout_s:
           type: integer
           minimum: 300
@@ -17905,7 +17914,9 @@ components:
           description: Idle timeout of this session in seconds (per user, 5 to 60 minutes).
         locked:
           type: boolean
-          description: True once `idle_deadline` has passed; only `POST /auth/unlock` clears it.
+          description: >
+            True once `idle_deadline` has passed or `POST /auth/lock` locked the session; only
+            `POST /auth/unlock` clears it.
     SessionExtendResponse:
       type: object
       required: [session, server_time]

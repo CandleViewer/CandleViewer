@@ -172,7 +172,7 @@ class Problem(BaseModel):
     idle_locked_at: Annotated[
         AwareDatetime | None,
         Field(
-            description="`session_idle_locked` only: when the session idle-locked (its `idle_deadline`)."
+            description="`session_idle_locked` only: the session's `idle_deadline`, which is when it idle-locked, unless `POST /auth/lock` locked it first (its lock moment is then the `auth.session_locked` audit row's time).\n"
         ),
     ] = None
     revoked_reason: Annotated[
@@ -439,7 +439,7 @@ class SessionState(BaseModel):
     idle_deadline: Annotated[
         AwareDatetime,
         Field(
-            description="When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it forward, `POST /auth/lock` brings it to the moment of the lock, and `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked.\n"
+            description="When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked, unless `POST /auth/lock` locked the session first: lock never moves it, and its moment is the `auth.session_locked` audit row's time.\n"
         ),
     ]
     idle_timeout_s: Annotated[
@@ -453,7 +453,7 @@ class SessionState(BaseModel):
     locked: Annotated[
         StrictBool,
         Field(
-            description="True once `idle_deadline` has passed; only `POST /auth/unlock` clears it."
+            description="True once `idle_deadline` has passed or `POST /auth/lock` locked the session; only `POST /auth/unlock` clears it.\n"
         ),
     ]
 

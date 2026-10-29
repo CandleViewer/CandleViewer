@@ -2479,7 +2479,7 @@
             "type": "integer"
           },
           "idle_locked_at": {
-            "description": "`session_idle_locked` only: when the session idle-locked (its `idle_deadline`).",
+            "description": "`session_idle_locked` only: the session's `idle_deadline`, which is when it idle-locked, unless `POST /auth/lock` locked it first (its lock moment is then the `auth.session_locked` audit row's time).\n",
             "format": "date-time",
             "type": "string"
           },
