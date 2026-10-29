@@ -377,6 +377,7 @@ class SessionService:
         last_seen_at: datetime | None = None,
         step_up_failures: int = 0,
         readonly_until: datetime | None = None,
+        locked_at: datetime | None = None,
     ) -> MintedSession:
         """Issue a brand-new session — session fixation is prevented by
         always minting a fresh `session_id`/refresh token here, never
@@ -401,6 +402,9 @@ class SessionService:
         *step_up_failures* and *readonly_until* are the step-up penalty `refresh()`
         carries to the successor (#4051, SR-025): a rotation never lifts the read-only
         downgrade or forgets a strike. Grants are never carried. A sign-in starts clean.
+
+        *locked_at* is the lock by request `refresh()` carries to the successor (#4743): a
+        rotation never lifts a lock. A sign-in never passes it.
 
         Raises `UserDisabled` when the user is `disabled` or gone (#2911):
         the repository reads `users.status` under the user-row lock in the
@@ -434,6 +438,7 @@ class SessionService:
             view_as=view_as,
             step_up_failures=step_up_failures,
             readonly_until=readonly_until,
+            locked_at=locked_at,
         )
         created = await self._repository.create_session(session)
         if created is None:
@@ -599,6 +604,9 @@ class SessionService:
             # (as `last_seen_at` is), so a strike recorded after `presented` was read counts.
             step_up_failures=claimed.step_up_failures,
             readonly_until=claimed.readonly_until,
+            # #4743: a lock by request that landed after `presented` was read, before the claim,
+            # is on the claim's row: the successor is locked too, so a rotation never lifts it.
+            locked_at=claimed.locked_at,
         )
         await self._repository.link_rotation(
             prev_session_id=str(presented.id), next_session_id=str(minted.session_id)
@@ -876,7 +884,8 @@ class SessionService:
         # B16.7 (C-2.12, C-2.21; PR #2290 ruling rule 4d): lifting the lock drops every
         # step-up elevation in the same write that re-stamps `last_seen_at`, so a
         # password-only unlock never inherits a grace window, a one-shot grant or a
-        # pending challenge taken before it.
+        # pending challenge taken before it. The write also clears a lock by request and
+        # stamps `unlocked_at` (#4743).
         touched = await self._repository.lift_idle_lock(session_id, now=now)
         if touched is None:
             raise SessionNotFound("session disappeared during unlock")

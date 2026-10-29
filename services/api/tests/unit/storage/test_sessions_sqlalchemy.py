@@ -32,6 +32,8 @@ _NOW = datetime(2026, 9, 30, tzinfo=UTC)
 StepUpColumns = tuple[dict[str, datetime], int, datetime | None]
 #: #3085: the `sessions` view-as columns (`0042_sessions_view_as`), one per `ViewAsState` field.
 _VIEW_AS_COLUMNS = tuple(f"view_as_{name}" for name in ViewAsState.model_fields)
+#: #4743: the lock by request and the last unlock (`0056_sessions_lock_state`).
+_LOCK_COLUMNS = ("locked_at", "unlocked_at")
 
 
 def _row(**over: Any) -> SimpleNamespace:
@@ -55,6 +57,7 @@ def _row(**over: Any) -> SimpleNamespace:
         "step_up_failures": 0,
         "readonly_until": None,
         **dict.fromkeys(_VIEW_AS_COLUMNS),
+        **dict.fromkeys(_LOCK_COLUMNS),
     }
     m.update(over)
     return SimpleNamespace(_mapping=m)
@@ -179,15 +182,16 @@ async def test_update_step_up_state_of_a_revoked_or_absent_row_writes_nothing() 
     assert seen == [] and len(rel.session.calls) == 1 and rel.commits == 0
 
 
-async def test_lift_idle_lock_restamps_and_clears_elevations_in_one_conditional_write() -> None:
-    """#2301 (B16.7): one UPDATE re-stamps `last_seen_at` and clears
-    `step_up_elevations`; `step_up_failures` and `readonly_until` are kept."""
+async def test_lift_idle_lock_restamps_clears_elevations_and_the_lock_in_one_write() -> None:
+    """#2301 (B16.7): one UPDATE re-stamps `last_seen_at`, clears `step_up_elevations` and a lock
+    by request (#4743) and stamps the unlock; `step_up_failures` and `readonly_until` are kept."""
     repo, rel = _repo([_row(step_up_failures=2)])
     got = await repo.lift_idle_lock("sid", now=_NOW)
     ((sql, params),) = rel.session.calls
     assignments = sql.split("WHERE", 1)[0]
     assert "last_seen_at = :now" in assignments
     assert "step_up_elevations = '{}'::jsonb" in assignments
+    assert "locked_at = NULL" in assignments and "unlocked_at = :now" in assignments
     assert "step_up_failures" not in assignments and "readonly_until" not in assignments
     assert "revoked_at IS NULL" in sql and "RETURNING" in sql
     assert params == {"id": "sid", "now": _NOW}
@@ -300,9 +304,10 @@ async def test_reads_by_id_and_refresh_hash_carry_the_users_status_in_one_statem
     assert rel.units == 2
 
 
-async def test_touch_last_seen_is_conditional_on_the_lock() -> None:
+async def test_touch_last_seen_is_conditional_on_both_locks() -> None:
     """#2300 (B16.7): activity never lifts a lock, not even one that engaged after the
-    caller's own check: the write keeps only a row still unlocked at `:now`."""
+    caller's own check: the write keeps only a row still unlocked at `:now`, by its deadline
+    and by request (#4743)."""
     repo, rel = _repo([_row()])
     await repo.touch_last_seen("sid", now=_NOW)
     ((sql, params),) = rel.session.calls
@@ -310,7 +315,31 @@ async def test_touch_last_seen_is_conditional_on_the_lock() -> None:
     assert "last_seen_at = :now" in assignments
     assert "revoked_at IS NULL" in condition and "RETURNING" in condition
     assert "last_seen_at + make_interval(secs => idle_timeout_s) > :now" in condition
+    assert "locked_at IS NULL" in condition
     assert params == {"id": "sid", "now": _NOW}
+
+
+async def test_create_session_binds_the_lock_the_record_carries() -> None:
+    """#4743: a refresh carries a lock by request to its successor, so the insert binds the
+    record's `locked_at`; a new row has no unlock, so `unlocked_at` is never bound."""
+    repo, rel = _repo([SimpleNamespace(_mapping={"status": "active"})])
+    session = SimpleNamespace(**row_to_fields(_row(locked_at=_NOW - timedelta(minutes=2))))
+
+    await repo.create_session(session)
+
+    _, (insert_sql, insert_params) = rel.session.calls
+    assert insert_params["locked_at"] == session.locked_at
+    assert "unlocked_at" not in insert_params and "unlocked_at" not in insert_sql
+
+
+@pytest.mark.parametrize("column", _LOCK_COLUMNS)
+def test_row_to_fields_refuses_a_row_read_without_a_lock_column(column: str) -> None:
+    """Fail closed (#4743): a read that missed `locked_at` would unlock the session, and one that
+    missed `unlocked_at` would keep a download link the unlock ended. Each is read by key."""
+    row = _row()
+    del row._mapping[column]
+    with pytest.raises(KeyError, match=column):
+        row_to_fields(row)
 
 
 # -- #3085: the view-as columns (`0042_sessions_view_as`) on every record the repository builds.

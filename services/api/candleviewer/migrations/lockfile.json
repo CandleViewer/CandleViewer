@@ -271,6 +271,11 @@
       "path": "services/api/candleviewer/migrations/versions/0055_watchlists.py",
       "sha256": "924dce0b19385c76c62c8dfdb410358231702ab9ae6ed85ffa34ee2fc409ca81",
       "down_revision": "0054_scanner_presets"
+    },
+    "0056_sessions_lock_state": {
+      "path": "services/api/candleviewer/migrations/versions/0056_sessions_lock_state.py",
+      "sha256": "1d0f26840428563d11cfaba9834306d06b522036581354001c44976ec627f42c",
+      "down_revision": "0055_watchlists"
     }
   }
 }

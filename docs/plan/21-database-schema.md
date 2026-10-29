@@ -650,6 +650,8 @@ Only `risk.unfreeze_manager` lowers a freeze.
 | `view_as_end_recorded_at` | timestamptz | yes | NULL | When `admin.view_as_ended` was written; NULL after an end = record pending   |
 | `view_as_cleared_at` | timestamptz | yes  | NULL    | Set by `DELETE /auth/session/view-as` once ended; the end columns stay         |
 | `view_as_end_reason` | text        | yes  | NULL    | `ended` / `expired` / `viewer_ineligible` / `target_ineligible` / `session_ended` |
+| `locked_at`          | timestamptz | yes  | NULL    | #4743 (`0056`): the lock by request (`POST /auth/lock`); while set the session is idle-locked; only an unlock clears it |
+| `unlocked_at`        | timestamptz | yes  | NULL    | #4743 (`0056`): the last successful unlock, never cleared                      |
 
 ```sql
 CREATE TABLE sessions (
@@ -720,6 +722,15 @@ CREATE INDEX ix_sessions_view_as_target  ON sessions (view_as_target_user_id)
   WHERE view_as_context_id IS NOT NULL AND view_as_ended_at IS NULL;
 CREATE INDEX ix_sessions_view_as_context ON sessions (view_as_context_id)
   WHERE view_as_context_id IS NOT NULL;
+```
+
+**Lock by request and the last unlock (#4743, migration `0056_sessions_lock_state`).** `POST /auth/lock` (22 `authLock`, CMP-098 "Lock now") locks a session at once, exactly as if its idle deadline fell due, and `locked_at` on its own row holds that lock. `SessionRecord.is_idle_locked` reads it beside the deadline, so every check of the row refuses the session, on every process and after a restart; the B16 chart only records the lock (28 B16.7, C-2.21). Any value locks: no clock decides it. The lock never moves `last_seen_at` or the deadline (22 `SessionState.idle_deadline`), no API field serves the value, and the lock moment is the `auth.session_locked` audit row's time. The lock is one unit of work under the row's lock (`FOR NO KEY UPDATE`): the row is read, the `auth.session_locked` record is written ahead (C-2.9) and `locked_at` is set, so of concurrent locks exactly one writes, and a session that is already locked is answered with nothing written. Extend's write refuses a row that holds a lock (`locked_at IS NULL`), a refresh carries it from the claimed row to the successor, and only an unlock clears it, in the one write that re-stamps `last_seen_at` and clears every step-up grant. That write also stamps `unlocked_at`, the last successful unlock, which nothing clears: download links end at any unlock of the session chain (`admin/backups/downloads.py`, `grant_ended`). Both columns hold times only (§12, P0). Every read of a session row selects both, and the repository reads them by key, so a read that missed one fails instead of reporting an unlocked session. The downgrade refuses while a live session (not revoked, inside its absolute lifetime) is locked by request (C-5.2).
+
+```sql
+-- 0056_sessions_lock_state (#4743): a session's lock by request and its last unlock, times only
+ALTER TABLE sessions
+  ADD COLUMN locked_at   timestamptz,
+  ADD COLUMN unlocked_at timestamptz;
 ```
 
 #### 3.1.5 `mfa_methods`, `mfa_challenges`, `recovery_codes`
@@ -4945,6 +4956,7 @@ NAMING_CONVENTION = {
 | `0053_tg_frozen_after_draft`    | trigger `trg_tg_write_once` (§3.3.2): once a group leaves `draft` it never returns, and `symbol`, `side`, `entry_type`, `origin`, `is_paper`, `algo`, `algo_params`, `created_at`, `origin_rule_id` and `origin_rule_run_id` are frozen — **E28-T05 #909** (SEC-2-04); the downgrade (rollback only) restores 0039's function           |
 | `0054_scanner_presets`          | `scanner_presets` (§3.8.7) with `ux_sp_name` and `ux_sp_default`, and `scanner` added to `lp_kind` (§3.8.1) — **E08-T09 #4708**; the downgrade refuses while any preset or a `scanner` pane exists                                                                                                                                      |
 | `0055_watchlists`               | `watchlists` (§3.8.6): a user's lists, `symbols` in order and at most 200, `version` the guard of a replace, unique index `ux_wl_name` on `(user_id, lower(name))` — **E08-T07 #4706**; the downgrade refuses while any list exists                                                                                                     |
+| `0056_sessions_lock_state`      | `sessions.locked_at` and `sessions.unlocked_at`, two nullable columns with no default (§3.1.4): a session's lock by request and its last unlock — **E09-S03-F1 #4743**; the downgrade refuses while a live session is locked by request                                                                                                 |
 
 ---
 

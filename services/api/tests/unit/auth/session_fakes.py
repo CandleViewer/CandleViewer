@@ -91,7 +91,15 @@ class FakeSessionRepository:
         session = self.sessions.get(session_id)
         if session is None or session.revoked_at is not None:
             return None
-        updated = session.model_copy(update={"last_seen_at": now, "step_up_elevations": {}})
+        # As the SQL write: both locks lift and the unlock is stamped, in one step (#4743).
+        updated = session.model_copy(
+            update={
+                "last_seen_at": now,
+                "step_up_elevations": {},
+                "locked_at": None,
+                "unlocked_at": now,
+            }
+        )
         self.sessions[session_id] = updated
         return updated
 

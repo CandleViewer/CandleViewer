@@ -31,7 +31,9 @@ class SessionRepository(Protocol):
     async def create_session(self, session: SessionRecord) -> SessionRecord | None:
         """Insert a new `sessions` row. Callers always pass a fully-formed
         `SessionRecord` (id/hash/timestamps already computed) — this method
-        never generates an id or a token hash itself. #2911: inserts nothing and
+        never generates an id or a token hash itself. It writes the lock by
+        request the record carries (`locked_at`, a refresh's carry, #4743). #2911:
+        inserts nothing and
         returns `None` when the user is `disabled` or gone (absent or soft-
         deleted), read under a lock on the user's row that a disable's own lock
         on it waits for (and vice versa), in the insert's transaction."""
@@ -64,7 +66,8 @@ class SessionRepository(Protocol):
     async def touch_last_seen(self, session_id: str, *, now: datetime) -> SessionRecord | None:
         """Stamp `last_seen_at = now` (idle-deadline reset on activity) iff the
         row is neither revoked nor idle-locked at *now* (`last_seen_at +
-        idle_timeout_s > now`), in one conditional write. Returns `None`
+        idle_timeout_s > now`, and no lock by request: `locked_at` NULL, #4743),
+        in one conditional write. Returns `None`
         otherwise, or if the session no longer exists (caller must not
         resurrect a dead session's idle clock, nor lift a lock that engaged
         after its own check: activity never lifts a lock, #2300)."""
@@ -72,9 +75,10 @@ class SessionRepository(Protocol):
 
     async def lift_idle_lock(self, session_id: str, *, now: datetime) -> SessionRecord | None:
         """The successful unlock of an idle-locked row (#2301, B16.7): in one
-        write, stamp `last_seen_at = now` and clear `step_up_elevations` (grace
-        windows, `once:` grants, `pending:` challenges), keeping
-        `step_up_failures` and `readonly_until`. A one-factor unlock never
+        write, stamp `last_seen_at = now`, clear `step_up_elevations` (grace
+        windows, `once:` grants, `pending:` challenges) and a lock by request
+        (`locked_at`, #4743), and stamp `unlocked_at = now`, which nothing clears;
+        keeping `step_up_failures` and `readonly_until`. A one-factor unlock never
         inherits a two-factor elevation. Same `None` contract as
         `touch_last_seen`."""
         ...

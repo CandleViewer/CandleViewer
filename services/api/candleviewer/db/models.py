@@ -367,6 +367,10 @@ sessions = Table(
     Column("view_as_end_recorded_at", TIMESTAMP(timezone=True)),
     Column("view_as_cleared_at", TIMESTAMP(timezone=True)),
     Column("view_as_end_reason", Text),
+    # #4743 (`0056_sessions_lock_state`): the lock by request (`POST /auth/lock`) and the last
+    # unlock, times only (21 Sec.12, class P0; Sec.3.1.4).
+    Column("locked_at", TIMESTAMP(timezone=True)),
+    Column("unlocked_at", TIMESTAMP(timezone=True)),
     CheckConstraint("expires_at > issued_at", name="sessions_expiry"),
     CheckConstraint("idle_timeout_s BETWEEN 300 AND 3600", name="sessions_idle_timeout_range"),
     CheckConstraint("step_up_failures BETWEEN 0 AND 3", name="sessions_step_up_failures_range"),
