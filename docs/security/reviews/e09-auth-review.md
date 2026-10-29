@@ -48,7 +48,7 @@ and §4.
 | SR-022 recovery codes | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2152 (M3) |
 | SR-023 break-glass CLI | `breakglass.py`; `admin/breakglass.py:5-11`, `:395-411`, `:464-502`; `secrets/service.py:688-707`; the notice at `ws/gateway.py:1682-1688` and `app.py:1699` | `tests/unit/admin/test_breakglass_flow.py:256` (`test_break_glass_requires_host_filesystem_and_kek_present`); the drill (§3) | PASS in code (#2119). The drill passes AC3, and AC2 is met for R0 by the owner's rulings (§3) |
 | SR-024 timeouts + 12 h trading freshness | 12 h absolute at `auth/session_service.py:87`, carried on refresh at `:576`; `extend` only re-stamps idle (`api/sessions.py:1321-1343`) | `tests/unit/auth/test_session_service.py` | PASS, by construction. #2108 (R-2) open. |
-| SR-025 step-up, 5 min, scoped | `auth/step_up.py:72`, `:83`, `:98`, `:457-483` (password and TOTP, #2154), `:658`; the view-as start is handler-gated (`api/step_up.py`) | `tests/unit/auth/test_step_up.py`; AC-STEP-01..04 | PASS. D-2 shipped in #2154. U35's binding is still #2304 |
+| SR-025 step-up, 5 min, scoped | `auth/step_up.py:72`, `:83`, `:98`, `:457-483` (password and TOTP, #2154), `:658`; the view-as start is handler-gated (`api/step_up.py`) | `tests/unit/auth/test_step_up.py`; AC-STEP-01..04 | PASS. D-2 shipped in #2154. U35's binding is on `main` since #2304 closed on 2026-10-27 (`auth/step_up.py:128-129`) |
 | SR-026 no target-user on self-service | `security/semgrep/auth/no-target-user-on-self-service.yml`; `undeclared_query_refusal` at `api/auth.py:562` | rule fixtures under `security/semgrep/auth/fixtures/` | PASS |
 | SR-027 invite creates least-privilege user | `auth/models.py:376-381` (#2124) | `tests/unit/api/test_invites_router.py::test_create_rejects_owner_role_and_duplicate`; AC-INV-01..04 | PASS. R-3 is fixed (#2124) |
 | SR-028 password policy + other-session revoke | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2110, #2099 (R-4) |
@@ -132,10 +132,13 @@ the SR-ids row is proposed by #4288, which wrote this refresh, and so is F-8's e
 | L2 | this review | SR-010: details held in the private repository advisory (maintainers) | Information disclosure | Low | Owner | #4206; #4222 | 2026-10-23 / 2027-01-22 | Open |
 | L3 | this review | U30: details held in the private repository advisory (maintainers) | Elevation of privilege | Low | Security | #1237 (E43-T09) | 2026-10-23 / 2027-02-25 | Open |
 | L4 | this review | U29: details held in the private repository advisory (maintainers) | Denial of service | Low | Security | #1232 (E43-T03) | 2026-10-23 / 2027-02-04 | Open |
+| D12-1 | E09-D12 hand-off pack lens (#4959), 2026-10-29 | SR-014: details held in the private repository advisory (maintainers) | Information disclosure | Medium | Backend (virtarix-worker-3) | #4961 | 2026-10-29 / 2026-11-05 | Open |
+| ENV-1 | E09-X02, E09-Q05 | The environment-dependent verification (Docker, Postgres, k6, staging) has not run in the integration lane | — (gate coverage) | Low | Backend (virtarix-worker-3) | #2105 | 2026-10-09 / 2026-11-26 | Open |
 | SR-ids | this review | The threat model's provisional SR-024, -052, -053, -054 and -057 collide with registered SRs in 04 §6.3 and §6.4; RSK-020's text, RSK-021's `(SR-024, U12)`, AC-AUTHZ-03 and the abuse-case U23 row (SR-054) cite the colliding ids | — | Info | Security | #2832 | 2026-10-23 / 2026-11-26 | Open |
 
 Rows R-1 to R-7 and D-1/D-2 come from this review on 2026-10-09; M1 to M4, L1 to L4 and the SR-ids
-row from its re-examination on 2026-10-23, which also closed the rows marked fixed. Owner
+row from its re-examination on 2026-10-23, which also closed the rows marked fixed. D12-1 and ENV-1
+come from the delegated sign-off of 2026-10-29 (§7). Owner
 decisions are on #1778
 ([items AB–AE](https://github.com/CandleViewer/CandleViewer/issues/1778#issuecomment-6079001525)):
 AB, the R-6 break-glass CLI, became E09-S11 (#2119); AC is R-3; AD is D-1; AE is D-2. The sign-off
@@ -298,7 +301,7 @@ calls.
 
 ## 7. Sign-off: the E09 gate verdict
 
-A draft: the reviewer completes it at READY.
+Completed at READY, 2026-10-29: the sign-off below is recorded on #300 (comment 6501580457).
 
 This record is the security gate (E09-X04) of #36, the epic "[E09] Auth, sessions, 2FA & RBAC".
 The owner's rulings are #2701 ledger addendum A, rows A7–A13 (comment 6499102601), cited in this
@@ -315,9 +318,10 @@ record as "row A7" and so on (§3's A1 to A13 are the operator's ambiguities):
 | A12 | §2's due dates, U45 and the §3.6.1 residual | The due dates accepted as proposed; U45 confirmed (ledger 2 row 30), review 2027-02-04 with UL1-E2; the §3.6.1 residual accepted, review 2027-02-25 |
 | A13 | The post-break-glass `system` notice | Its UI half and its WCAG 2.2 AA check are re-homed to #306 as a scope line (render the notice, run the a11y check, observe it once on the dev stack): #306 owns them, and #2494 closed without them |
 
-- Reviewer: the delivery orchestrator's Fable lens at READY, on the head of the PR that adds this
-  section: the Security engineer's sign-off under the owner's delegation (#2701 comment 6490317249).
-- Date: filled at READY.
+- Security-engineer sign-off (delegated, owner directive 2026-10-29 07:05Z): PASS WITH CONDITIONS
+  at `528315c7` / `be164eca`, 2026-10-29. The reviewer is the delivery orchestrator's Fable lens,
+  under the owner's delegation (#2701 comment 6490317249); its record is #300 comment 6501580457,
+  and its four conditions are folded here (§1's SR-025 row, §2's D12-1 and ENV-1 rows, this line).
 - Open accepted risks, each signed by its row above with the review date there: F-2, F-4 and F-8
   (row A8), the dated residual U10 / O3 (row A9), U45 and the §3.6.1 residual (row A12); and M4,
   under E42's AD-F14 until #1238 (`docs/security/threat-models/e42-admin.md` §13.2), its #2701 ask
