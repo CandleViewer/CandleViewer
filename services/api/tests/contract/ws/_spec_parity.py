@@ -223,6 +223,7 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
     "Max inbound frame": "limits.MAX_INBOUND_FRAME_BYTES limits.MAX_PREAUTH_FRAME_BYTES",
     "Max values / inbound frame": "codec.MAX_MSGPACK_VALUES",  # both encodings (#4924)
     "Inbound frame weight": "limits.INBOUND_WEIGHT_BYTES limits.INBOUND_WEIGHT_VALUES",  # #4924
+    "Per-user decode budget": "lifecycle.DECODE_BUDGET_BURST lifecycle.DECODE_BUDGET_PER_S",
     "Fragments per inbound message": "limits.WS_MAX_FRAGMENTS_PER_MESSAGE",
     "Charge per inbound fragment": "limits.WS_FRAGMENT_OVERHEAD_BYTES limits.SERVER_WS_MAX_SIZE",
     "Inbound frames / connection": "limits.WS_INBOUND_FRAME_BURST limits.WS_INBOUND_FRAMES_PER_S",

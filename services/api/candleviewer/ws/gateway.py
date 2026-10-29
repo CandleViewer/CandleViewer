@@ -154,6 +154,7 @@ from candleviewer.ws.lifecycle import (
     SUBPROTOCOL_MSGPACK,
     ConnectRateLimiter,
     ConnEvent,
+    DecodeBudget,
     InboundRateLimiter,
     Lifecycle,
     OriginRefusal,
@@ -198,6 +199,7 @@ from candleviewer.ws.metrics import (
     cv_ws_closes_total,
     cv_ws_connect_rate_limited_total,
     cv_ws_connections_in_use,
+    cv_ws_decode_budget_refused_total,
     cv_ws_handshake_seconds,
     cv_ws_overflow_total,
     cv_ws_system_frames_withheld_total,
@@ -439,6 +441,9 @@ class GatewayHub:
         self._live: set[_Connection] = set()
         #: The sockets between `accept` and their first `auth_ok` (`admit_unauthenticated`).
         self._unauthenticated: set[_Connection] = set()
+        #: #4924 (§8.5): each user's decode budget, kept while the user holds a live socket and
+        #: dropped with its last (`discard`): bounded by the live sockets.
+        self._budgets: dict[uuid.UUID, DecodeBudget] = {}
         self._empty = asyncio.Event()
         self._empty.set()
 
@@ -467,8 +472,19 @@ class GatewayHub:
     def discard(self, conn: _Connection) -> None:
         self._live.discard(conn)
         self._unauthenticated.discard(conn)
+        user = conn.user_id
+        if user is not None and not any(c.user_id == user for c in self._live):
+            self._budgets.pop(user, None)  # the user's last socket: its budget goes with it
         if not self._live:
             self._empty.set()
+
+    def decode_budget(self, user_id: uuid.UUID) -> DecodeBudget:
+        """The decode budget every socket of `user_id` shares (§8.5, #4924), made at its first
+        `auth_ok` and kept until its last socket ends."""
+        budget = self._budgets.get(user_id)
+        if budget is None:
+            budget = self._budgets[user_id] = DecodeBudget()
+        return budget
 
     async def wait_empty(self) -> None:
         """Return once every connection handler has finished (callers bound it)."""
@@ -646,6 +662,10 @@ class _Connection:
         self.rate = InboundRateLimiter()
         #: §8.5: from the first `auth_ok`, the `pong`s that `rate` does not count.
         self.pongs = PongBudget()
+        #: #4924 (§8.5): the decode budget of the user, shared by its sockets, from the first
+        #: `auth_ok` (`GatewayHub.decode_budget`); None before it, so a socket that has not
+        #: authenticated draws on its own rate only.
+        self.decode_budget: DecodeBudget | None = None
         #: Data frames stop at `OUTBOUND_QUEUE_MAX` (`push`); the `CLOSE_ITEMS` still fit (C-2.18).
         self.outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=OUTBOUND_QUEUE_MAX + CLOSE_ITEMS)
         self.user_id: uuid.UUID | None = None
@@ -1133,7 +1153,10 @@ class _Connection:
         # the bound only (`_parse` refuses the rest); a MessagePack frame's after its decode.
         counted = json_values_over_count(raw) if isinstance(raw, str) and not self.msgpack else 0
         weight = inbound_frame_weight(size, min(counted, MAX_MSGPACK_VALUES + 1))
-        charged_as = self.charge(pong=pong, weight=weight)
+        # #4924: the tokens past the first also draw on the user's decode budget; so does any
+        # MessagePack frame that could hold a value debit, which then needs the budget out of debt.
+        shared = weight > 1 or (self.msgpack and size >= INBOUND_WEIGHT_VALUES)
+        charged_as = self.charge(pong=pong, weight=weight, shared=shared)
         if charged_as is None:
             return _REFUSED
         decoded: list[int] = []
@@ -1143,15 +1166,21 @@ class _Connection:
             return _OVERSIZE
         if charged_as == "pong" and not (isinstance(frame, dict) and frame.get("t") == "pong"):
             # It opened with `t: "pong"` and is another kind: the rate counts it as any frame.
-            if self.charge(pong=False, weight=weight) is None:
+            if self.charge(pong=False, weight=weight, shared=shared) is None:
                 return _REFUSED
         if decoded:  # MessagePack: the values it held, debited now that they are known
-            self.rate.debit(decoded[0] // INBOUND_WEIGHT_VALUES)
+            owed = decoded[0] // INBOUND_WEIGHT_VALUES
+            self.rate.debit(owed)
+            if self.decode_budget is not None and owed:
+                self.decode_budget.debit(self.clock(), owed)
         return frame
 
-    def charge(self, *, pong: bool, weight: int) -> str | None:
+    def charge(self, *, pong: bool, weight: int, shared: bool = False) -> str | None:
         """Charge one inbound frame before it is decoded (§8.5): `"pong"` when the `pong` budget
-        took it, `"rate"` when the inbound rate did, None when it is refused.
+        took it, `"rate"` when the inbound rate did, None when it is refused. From the first
+        `auth_ok`, a `shared` frame also needs its `weight - 1` tokens from the user's decode
+        budget (#4924): checked first, taken only once the rate has admitted it, with no await
+        between, so a refusal takes nothing from either.
 
         A `pong` (`decode` has read its leading `t` from the first `auth_ok`) takes from its own
         budget first; past it, and for every other frame, the inbound rate takes `weight` tokens,
@@ -1161,7 +1190,12 @@ class _Connection:
         now = self.clock()
         if pong and self.pongs.allow(now):
             return "pong"
-        if self.rate.allow(now, weight):
+        budget = self.decode_budget if shared else None
+        if budget is not None and not budget.can(now, weight - 1):
+            cv_ws_decode_budget_refused_total.inc()
+        elif self.rate.allow(now, weight):
+            if budget is not None:
+                budget.take(weight - 1)
             return "rate"
         self.rate_strikes += 1
         if self.rate_strikes > 1:
@@ -1778,6 +1812,7 @@ def make_ws_router(
                 revocation_hub.unregister(conn.session_id, conn.closer)
             conn.pending_session_id = None  # registered above, and now the socket's own
         conn.session_id, conn.user_id = session_id, user_id
+        conn.decode_budget = gateway_hub.decode_budget(user_id)  # #4924: shared by its sockets
         conn.authz.session_id = session_id  # E17-R-16: its audit rows name the session
         # §9.6: a context's end closes the sockets bound to it, and only those (`close_context`).
         revocation_hub.bind(session_id, conn.closer, conn.view_as_context_id)

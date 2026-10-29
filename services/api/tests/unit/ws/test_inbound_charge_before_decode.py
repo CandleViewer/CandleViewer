@@ -10,7 +10,9 @@ Python loop walks the frame's text; what the decoder accepts is unchanged (SR-18
 
 from __future__ import annotations
 
+import contextlib
 import json
+import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, Final
@@ -22,8 +24,16 @@ from hypothesis import strategies as st
 
 import candleviewer.ws.gateway as gateway
 from candleviewer.ws.codec import MAX_MSGPACK_VALUES, decode_client_frame
-from candleviewer.ws.gateway import _REFUSED, _Connection
-from candleviewer.ws.lifecycle import PONG_BUDGET_BURST, RATE_PER_SECOND, InboundRateLimiter
+from candleviewer.ws.gateway import _REFUSED, GatewayHub, _Connection
+from candleviewer.ws.lifecycle import (
+    DECODE_BUDGET_BURST,
+    MAX_CONNECTIONS_PER_USER,
+    PONG_BUDGET_BURST,
+    RATE_PER_SECOND,
+    WIDEST_SUB_EXTRA_TOKENS,
+    DecodeBudget,
+    InboundRateLimiter,
+)
 from candleviewer.ws.limits import (
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_CONTAINERS,
@@ -37,6 +47,7 @@ from candleviewer.ws.limits import (
     json_nests_deeper,
     json_values_over_count,
 )
+from tests.security.ws._raw import delta
 from tests.unit.ws.test_inbound_frame_limits import (
     _bye,
     _connection,
@@ -436,3 +447,93 @@ def test_charge_a_small_frame_led_by_t_pong_that_decodes_to_another_kind_is_char
     assert _decode(conn, frame) is _REFUSED
     (err,) = _queued(conn)
     assert (err["p"]["code"], conn.rate_strikes) == ("client_rate_limited", 1)
+
+
+# -- the per-user decode budget (#4924): tokens past the first, shared by a user's sockets -------
+
+
+def test_decode_budget_holds_its_burst_refills_and_carries_a_debt() -> None:
+    budget = DecodeBudget(burst=10, per_second=2)
+    assert budget.can(0.0, 10) and not budget.can(0.0, 11)
+    budget.take(10)
+    assert not budget.can(0.0, 1) and budget.can(0.5, 1)  # half a second: one token back
+    budget.debit(0.5, 5)  # 1 - 5: in debt
+    assert not budget.can(2.0, 0) and budget.can(2.5, 0)  # out of debt once refilled to 0
+
+
+def test_decode_budget_burst_is_every_socket_re_subscribing_with_the_widest_subs() -> None:
+    sub = json.dumps(_widest_sub())
+    extra = inbound_frame_weight(len(sub.encode()), json_values_over_count(sub)) - 1
+    assert extra == WIDEST_SUB_EXTRA_TOKENS
+    subs = MAX_SUBSCRIPTIONS // MAX_TOPICS_PER_SUB
+    assert DECODE_BUDGET_BURST == MAX_CONNECTIONS_PER_USER * subs * extra == 96
+
+
+def test_hub_shares_one_budget_per_user_and_drops_it_with_the_last_socket() -> None:
+    hub = GatewayHub()
+    a, b, early = _connection(JSON[0]), _connection(JSON[0]), _connection(JSON[0])
+    for conn in (a, b, early):
+        hub.add(conn)
+    user = uuid.uuid4()
+    for conn in (a, b):  # what the first `auth_ok` does
+        conn.user_id, conn.decode_budget = user, hub.decode_budget(user)
+    assert a.decode_budget is b.decode_budget and early.decode_budget is None
+    assert hub.decode_budget(uuid.uuid4()) is not a.decode_budget  # another user's is its own
+    hub.discard(a)
+    assert hub.decode_budget(user) is b.decode_budget  # kept while a socket of the user lives
+    hub.discard(b)
+    assert hub.decode_budget(user) is not b.decode_budget  # dropped with the last one
+
+
+def test_charge_a_frame_past_one_token_is_refused_when_the_users_budget_is_spent() -> None:
+    """Two sockets of one user: the first spends the shared budget with frames near the cap; the
+    second's next such frame is refused on its own socket, as the rate refuses one, and counted;
+    its frames of one token still pass on its own rate."""
+    refused = delta("cv_ws_decode_budget_refused_total")
+    budget = DecodeBudget(burst=14, per_second=1)
+    first, second = (_connection(JSON[0], authed=True) for _ in range(2))
+    first.decode_budget = second.decode_budget = budget
+    big = json.dumps({"t": "ping", "id": "b", "p": {"pad": "x" * 250_000}})  # 8 tokens: 7 shared
+    assert _decode(first, big)["t"] == "ping"
+    assert _decode(second, big)["t"] == "ping"  # 14 of 14
+    _queued(second)
+    assert _decode(second, big) is _REFUSED
+    (err,) = _queued(second)
+    assert (err["p"]["code"], second.rate_strikes, refused()) == ("client_rate_limited", 1, 1)
+    assert _decode(second, json.dumps({"t": "ping", "id": "s"}))["t"] == "ping"
+
+
+def test_charge_a_msgpack_frame_that_may_owe_a_debit_waits_for_the_budget_out_of_debt() -> None:
+    budget = DecodeBudget(burst=4, per_second=1)
+    conn = _connection(MSGPACK[0], authed=True)
+    conn.decode_budget = budget
+    assert _decode(conn, _msgpack_at_bound("a"))["t"] == "ping"  # 0 before, 4 debited: 0 left
+    assert _decode(conn, _msgpack_at_bound("b"))["t"] == "ping"  # 0 >= 0: admitted, -4 after
+    assert _decode(conn, _msgpack_at_bound("c")) is _REFUSED  # in debt
+    small = msgpack.packb({"t": "ping", "id": "s"})
+    assert _decode(conn, small)["t"] == "ping"  # under 4 KiB: its socket's rate only
+
+
+def test_gateway_every_socket_of_a_user_re_subscribing_with_the_widest_subs_is_never_refused() -> (
+    None
+):
+    """All eight sockets a user may hold reconnect at the same instant and re-subscribe their whole
+    sets with the widest `sub`s: every one is served, and the shared budget is spent exactly, so
+    one more such `sub` on any of them is refused."""
+    sub = _widest_sub()
+    w = _World()
+    with contextlib.ExitStack() as stack:
+        sockets = [
+            stack.enter_context(w.client.websocket_connect("/ws", subprotocols=JSON))
+            for _ in range(MAX_CONNECTIONS_PER_USER)
+        ]
+        stack.enter_context(w.client)
+        for ws in sockets:
+            assert _hello(ws)["t"] == "welcome"
+            assert _auth(ws)["t"] == "auth_ok"
+        for ws in sockets:
+            for n in range(MAX_SUBSCRIPTIONS // MAX_TOPICS_PER_SUB):
+                _send(ws, {**sub, "id": f"s{n}"})
+                assert _recv(ws)["t"] == "sub_ok"
+        _send(sockets[0], {**sub, "id": "more"})
+        assert _recv(sockets[0])["p"]["code"] == "client_rate_limited"
