@@ -51,6 +51,7 @@ TEST_ONLY_MODULES = (
     "testcontainers",
     "respx",
     "openapi_spec_validator",
+    "schemathesis",
 )
 #: Top-level names only, so `find_spec` imports nothing: it prints those the image can import.
 TEST_ONLY_PROBE = (
