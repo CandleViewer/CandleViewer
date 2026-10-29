@@ -39,7 +39,14 @@ import { encodeMessage, StormStores, evaluateStorm, STORM } from "./scenes/b7-st
 import { mulberry32 } from "../fixtures/rng.mjs";
 import { percentile } from "../stats.mjs";
 import { buildDriverScript } from "../driver.mjs";
-import { MATRIX_SCENARIOS, RUNTIMES, REPORT_SCHEMA, summariseCell } from "./matrix-lib.mjs";
+import {
+  MATRIX_SCENARIOS,
+  RUNTIMES,
+  REPORT_SCHEMA,
+  DONE_GRACE_MS,
+  cellsComplete,
+  summariseCell,
+} from "./matrix-lib.mjs";
 import { ELECTRON_FLAGSETS } from "./electron/flagsets.cjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -308,8 +315,10 @@ async function main() {
       else if (b.kind === "cell") {
         this.results.push(b);
         console.log(`[matrix] ${runtime} ${b.scenario} ${b.notRunnable ? "NOT RUNNABLE" : "done"}`);
+        if (cellsComplete(this.results, scenarios)) this.onCellsComplete();
       } else this.results.push(b);
     },
+    onCellsComplete: () => {},
     onPageRequest(q) {
       this.shellQuery ??= Object.fromEntries(q.entries());
     },
@@ -320,6 +329,18 @@ async function main() {
   };
   const donePromise = new Promise((ok) => {
     state.onDone = ok;
+  });
+  // Every requested cell is in: a page that never sends `/done` cannot hold the run to its budget.
+  const cellsDone = new Promise((ok) => {
+    let armed = false;
+    state.onCellsComplete = () => {
+      if (armed) return;
+      armed = true;
+      setTimeout(() => {
+        console.warn(`[matrix] every requested cell arrived; no /done within ${DONE_GRACE_MS} ms`);
+        ok({});
+      }, DONE_GRACE_MS).unref();
+    };
   });
   const server = await startServer(state);
   const port = server.address().port;
@@ -356,6 +377,7 @@ async function main() {
   );
   const done = await Promise.race([
     donePromise,
+    cellsDone,
     timeout,
     handle.exited?.then(() => ({ error: "shell exited early" })) ?? new Promise(() => {}),
   ]);
