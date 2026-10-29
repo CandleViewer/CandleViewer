@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import gc
 import json
 import math
@@ -76,8 +77,14 @@ from websockets.typing import Origin, Subprotocol
 import candleviewer.ws.gateway as gateway
 from candleviewer.observability.context import spawn
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
-from candleviewer.ws.codec import MAX_MSGPACK_VALUES
-from candleviewer.ws.lifecycle import MAX_CONNECTIONS_PER_USER, RATE_PER_MINUTE, RATE_PER_SECOND
+from candleviewer.ws.codec import MAX_MSGPACK_VALUES, decode_client_frame
+from candleviewer.ws.lifecycle import (
+    MAX_CONNECTIONS_PER_USER,
+    RATE_PER_MINUTE,
+    RATE_PER_SECOND,
+    DecodeBudget,
+    InboundRateLimiter,
+)
 from candleviewer.ws.limits import (
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_CONTAINERS,
@@ -331,7 +338,7 @@ async def nodelay_stack() -> AsyncIterator[Stack]:
 
 
 async def measure(
-    stack: Stack, flood: Flood | HeavyFlood | None
+    stack: Stack, flood: Flood | HeavyFlood | SyncFlood | None
 ) -> tuple[list[float], list[tuple[int, Any]]]:
     """N updates of the recorded book to a user on `book`, each timed from its publish to its
     arrival: its milliseconds, and the `(s, body)` of each `d`. The flood, if any, sends ahead of
@@ -535,6 +542,27 @@ def over(id: str) -> str:
     return text
 
 
+class UserBudget:
+    """The flooding user's decode budget as the gateway keeps it (`lifecycle.DecodeBudget`, its
+    defaults), on the updates' clock: what the flood may send without a refusal. It starts full
+    and is never ahead of the gateway's, whose earlier frames found it full too."""
+
+    def __init__(self) -> None:
+        self.budget = DecodeBudget()
+
+    def admits(self, i: int, frames: list[tuple[int, int]]) -> bool:
+        """Whether frames of `(tokens before decode, tokens debited after)` sent in turn ahead of
+        update `i` all pass; if so they are taken."""
+        trial = copy.deepcopy(self.budget)
+        for before, after in frames:
+            if not trial.can(i * TICK_S, before):
+                return False
+            trial.take(before)
+            trial.debit(i * TICK_S, after)
+        self.budget = trial
+        return True
+
+
 @dataclass
 class HeavyFlood:
     """The flooding user's sockets: `paced` at the per-socket pace, `burst` past the per-second
@@ -544,6 +572,9 @@ class HeavyFlood:
     burst: Raw
     value: str | None
     sent: Counter[Raw] = field(default_factory=Counter)
+    overs: Counter[Raw] = field(default_factory=Counter)
+    user: UserBudget = field(default_factory=UserBudget)
+    burst_admitted: int = 0
 
     @property
     def weight(self) -> int:
@@ -573,14 +604,20 @@ class HeavyFlood:
     async def tick(self, i: int) -> None:
         """What the flood sends ahead of update `i`. The burst is handled before the update: it
         ends in the socket's close, which the reader of the client waits for."""
-        every = self.every
-        for k, raw in enumerate(self.paced):
-            if i % every == k % every and await send(raw, heavy(f"h{i}", self.value)):
+        every, extra, over_extra = self.every, self.weight - 1, weight_of(over("o0")) - 1
+        for k, raw in enumerate(self.paced):  # each only when the user's budget admits it too
+            if i % every == k % every and self.user.admits(i, [(extra, 0)]):
+                assert await send(raw, heavy(f"h{i}", self.value))
                 self.sent[raw] += 1
-            if i in OVER_AT:
-                await send(raw, over(f"o{i}"))
-        if i == HEAVY_AT:
-            for n in range(RATE_PER_SECOND // self.weight + 2):  # the second refusal closes it
+            if i in OVER_AT and self.user.admits(i, [(over_extra, 0)]):
+                assert await send(raw, over(f"o{i}"))
+                self.overs[raw] += 1
+        if i == HEAVY_AT:  # as many as its second's tokens and the user's budget admit, then two
+            while self.burst_admitted < RATE_PER_SECOND // self.weight and self.user.admits(
+                i, [(extra, 0)]
+            ):
+                self.burst_admitted += 1
+            for n in range(self.burst_admitted + 2):  # the second refusal closes it
                 if not await send(self.burst, heavy(f"b{n}", self.value)):
                     break
             await self.burst.until(lambda: self.burst.count("bye") == 1, "the burst's close")
@@ -616,7 +653,6 @@ async def test_heavy_frames_from_every_socket_as_fast_as_admitted_stay_in_budget
     monkeypatch.setattr(gateway, "json", SimpleNamespace(loads=spy_loads, dumps=json.dumps))
     async with nodelay_stack() as loud:
         flood = await HeavyFlood.open(loud, value)
-        burst_admitted = RATE_PER_SECOND // flood.weight
         sent = math.ceil(N / flood.every) * flood.weight + len(OVER_AT) * weight_of(over("o0"))
         assert sent + 2 <= RATE_PER_MINUTE, f"{sent} tokens from a socket, past the minute's"
         try:
@@ -625,10 +661,10 @@ async def test_heavy_frames_from_every_socket_as_fast_as_admitted_stay_in_budget
             unread = err(None, ErrorCode.FRAME_MALFORMED)
             for raw in flood.paced:  # every paced frame within the bounds admitted and answered
                 assert raw.count("pong") == flood.sent[raw] > 0
-                assert [whole(x) for x in raw.frames(of="err")] == [unread] * len(OVER_AT)
+                assert [whole(x) for x in raw.frames(of="err")] == [unread] * flood.overs[raw]
                 assert raw.frames(of="bye") == []
             pongs = [x["id"] for x in flood.burst.frames(of="pong")]
-            assert pongs == [f"b{n}" for n in range(burst_admitted)]  # the second's tokens
+            assert pongs == [f"b{n}" for n in range(flood.burst_admitted)]
             refusals = [whole(x) for x in flood.burst.frames() if x["t"] in {"err", "bye"}]
             limited = bye(
                 "client_rate_limited", "Inbound frame rate exceeded.", retry_after_ms=1000
@@ -639,8 +675,8 @@ async def test_heavy_frames_from_every_socket_as_fast_as_admitted_stay_in_budget
             await flood.close()
     # Charged before decode: the two frames the rate refused never reached `_parse`, and no frame
     # past the value bound reached the decoder.
-    over_bound = len(OVER_AT) * len(flood.paced)
-    assert len(parsed) == sum(flood.sent.values()) + over_bound + burst_admitted
+    over_bound = sum(flood.overs.values())
+    assert len(parsed) == sum(flood.sent.values()) + over_bound + flood.burst_admitted
     assert max(decoded) <= MAX_MSGPACK_VALUES
     assert (errors(), closes(), malformed()) == (1, 1, over_bound)
     assert same == bodies  # the same bodies, in the same order, as without the flood
@@ -648,3 +684,131 @@ async def test_heavy_frames_from_every_socket_as_fast_as_admitted_stay_in_budget
     added = statistics.median(beside) - statistics.median(alone)
     assert added <= TOLERANCE_MS, f"the flood added {added:.2f} ms to the median"
     assert max(beside) <= STALL_MS, f"an update took {max(beside):.2f} ms, past {STALL_MS} ms"
+
+
+# -- frames at the value bound under 32 KiB, every socket in the same round (#4924) -------------
+#
+# The same user's eight sockets each hold a small frame at the value bound: in JSON, the container
+# cap's empty lists and `0`s up to the bound (under 32 KiB); in MessagePack, lists of nils that the
+# decoder charges the bound exactly (about 16 KiB). All eight send one in the same round, as often
+# as the gateway admits: each socket's rate at the tokens it takes for one such frame, read off the
+# rate itself (a spy) on a probe before the run, and the user's decode budget, which the eight
+# share (`UserBudget`, the gateway's own bucket on the updates' clock). A round is sent only when
+# both admit all eight. Every frame is answered; the other user's stream is timed as above.
+
+SYNC_SUBPROTOCOLS = {"json": "cv.v1.json", "msgpack": "cv.v1.msgpack"}
+#: The slowest update beside a MessagePack round: one round of eight frames at the value bound is
+#: decoded and validated value by value, so it can hold the loop past `STALL_MS` once. A C-speed
+#: validation is a follow-up on #415; this bounds the round, p95 and the median stay as above.
+MSGPACK_ROUND_STALL_MS = 2 * STALL_MS
+
+
+def at_bound(id: str, subprotocol: str) -> str | bytes:
+    """A `ping` at the value bound, under 32 KiB."""
+    if subprotocol == "cv.v1.json":
+        head, tail = f'{{"t":"ping","id":"{id}","p":{{"pad":[', "]}}"
+        lists = ",".join(["[]"] * (MAX_JSON_CONTAINERS - 3))
+        zeros = ",0" * (MAX_MSGPACK_VALUES - json_values_over_count(head + lists + tail))
+        text = head + lists + zeros + tail
+        assert json_values_over_count(text) == MAX_MSGPACK_VALUES and len(text) < 32 * 1024
+        return text
+    # 7 for the envelope, 3 for `p`, 1 + 127 for `pad` and 1 + n for each of its 127 lists
+    pad = [[None] * n for n in [128] * 125 + [119, 0]]
+    packed: bytes = msgpack.packb({"t": "ping", "id": id, "p": {"pad": pad}})
+    charged: list[int] = []
+    decode_client_frame(packed, charged=charged)
+    assert charged == [MAX_MSGPACK_VALUES] and len(packed) < 32 * 1024
+    return packed
+
+
+class _Taken(InboundRateLimiter):
+    """The inbound rate, recording the tokens of the last frame any connection's admitted."""
+
+    last = 0
+
+    def allow(self, now: float, weight: int = 1) -> bool:
+        ok = super().allow(now, weight)
+        if ok:
+            _Taken.last = weight
+        return ok
+
+    def debit(self, tokens: int) -> None:
+        super().debit(tokens)
+        _Taken.last += tokens
+
+
+@dataclass
+class SyncFlood:
+    """The flooding user's sockets, all sending a frame at the value bound in the same round."""
+
+    sockets: list[Raw]
+    subprotocol: str
+    every: int
+    shared: tuple[int, int]  # one frame's draw on the user's budget: before decode, after it
+    user: UserBudget = field(default_factory=UserBudget)
+    sent: int = 0
+
+    @classmethod
+    async def open(cls, stack: Stack, subprotocol: str) -> SyncFlood:
+        token = (await stack.sessions.mint(str(FLOODER))).access_token
+        async with contextlib.AsyncExitStack() as dialled:  # a dial that fails closes the earlier
+            sockets = list[Raw]()
+            for _ in range(MAX_CONNECTIONS_PER_USER):
+                sockets.append(raw := await dial(stack, token, subprotocol))
+                dialled.push_async_callback(raw.close)
+            probe = sockets[0]  # one frame's tokens, as the rate takes them
+            await send(probe, at_bound("probe", subprotocol))
+            await probe.until(lambda: probe.count("pong") == 1, "the probe's pong")
+            weight = _Taken.last
+            # Past the first token: before decode in JSON, debited after it in MessagePack.
+            shared = (weight - 1, 0) if subprotocol == "cv.v1.json" else (0, weight - 1)
+            flood = cls(sockets, subprotocol, paced_every(weight, weight), shared)
+            assert flood.user.admits(0, [shared])  # the probe's draw, as early as the run's
+            dialled.pop_all()  # the flood owns them now: `close`
+        return flood
+
+    async def close(self) -> None:
+        for raw in self.sockets:
+            await raw.close()
+
+    async def tick(self, i: int) -> None:
+        if i % self.every == 0 and self.user.admits(i, [self.shared] * len(self.sockets)):
+            frame = at_bound(f"v{i}", self.subprotocol)
+            for raw in self.sockets:
+                assert await send(raw, frame)
+            self.sent += 1
+
+    async def settle(self) -> None:
+        """Each frame is answered before the next update: its handling is done."""
+        for k, raw in enumerate(self.sockets):
+            want = self.sent + (k == 0)  # the probe's pong too
+            await raw.until(lambda raw=raw, want=want: raw.count("pong") == want, "pongs")
+
+
+@pytest.mark.parametrize(
+    "subprotocol", list(SYNC_SUBPROTOCOLS.values()), ids=list(SYNC_SUBPROTOCOLS)
+)
+async def test_value_bound_frames_from_every_socket_in_the_same_round_stay_in_budget(
+    monkeypatch: pytest.MonkeyPatch, subprotocol: str
+) -> None:
+    async with nodelay_stack() as quiet:
+        alone, bodies = await measure(quiet, None)
+    monkeypatch.setattr(gateway, "InboundRateLimiter", _Taken)
+    async with nodelay_stack() as loud:
+        flood = await SyncFlood.open(loud, subprotocol)
+        try:
+            beside, same = await measure(loud, flood)
+            print(
+                f"#4924 sync {subprotocol} {flood.sent} rounds: alone {figures(alone)}; "
+                f"beside the flood {figures(beside)}"
+            )
+            for raw in flood.sockets:  # every frame admitted and answered, none refused
+                assert raw.frames(of="err") == raw.frames(of="bye") == []
+        finally:
+            await flood.close()
+    assert same == bodies  # the same bodies, in the same order, as without the flood
+    assert p95(beside) <= BUDGET_MS, f"p95 {p95(beside):.2f} ms past budget #6 ({BUDGET_MS} ms)"
+    added = statistics.median(beside) - statistics.median(alone)
+    assert added <= TOLERANCE_MS, f"the flood added {added:.2f} ms to the median"
+    stall = STALL_MS if subprotocol == "cv.v1.json" else MSGPACK_ROUND_STALL_MS
+    assert max(beside) <= stall, f"an update took {max(beside):.2f} ms, past {stall} ms"
