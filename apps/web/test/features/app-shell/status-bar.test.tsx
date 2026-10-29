@@ -9,7 +9,8 @@ import {
   formatUtcClock,
   type ClockSource,
 } from "../../../src/features/app-shell/clock";
-import { APP_VERSION, StatusBar } from "../../../src/features/app-shell/StatusBar";
+import { StatusBar } from "../../../src/features/app-shell/StatusBar";
+import { CLIENT_VERSION } from "../../../src/lib/ws/protocol/frames";
 import { resetShellState, setShellState } from "../../../src/shell/bootstrap/store.js";
 import { toLatencyIndicator } from "../../../src/lib/telemetry/latencyIndicator.js";
 
@@ -192,7 +193,7 @@ describe("StatusBar (CMP-208) and its health chips (CMP-210)", () => {
     const pkg = JSON.parse(
       readFileSync(resolve(import.meta.dirname, "../../../package.json"), "utf8"),
     ) as { version: string };
-    expect(APP_VERSION).toBe(pkg.version);
+    expect(CLIENT_VERSION).toBe(pkg.version); // the one build version hello reports (SCR-157)
     expect(screen.getByText(`v${pkg.version}`)).toBeInTheDocument();
     expect(screen.getByText("Bar close 00:42")).toBeInTheDocument();
   });

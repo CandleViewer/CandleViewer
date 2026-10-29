@@ -165,6 +165,43 @@ describe("in-place re-auth (23 4.1) and a new socket's auth_ok", () => {
   });
 });
 
+describe("the server's build label (23 §2.3, §4.2; E10-S04 SCR-157)", () => {
+  const welcome = (protocol: unknown, serverVersion: unknown): EngineEvent => ({
+    type: "welcome",
+    connectionId: "ws_1",
+    protocol: wire(protocol),
+    serverVersion: wire(serverVersion),
+  });
+
+  it("is null until a welcome; each welcome refreshes it, and a lost link keeps the last", () => {
+    expect(INITIAL_WS_STATE.server).toBeNull(); // never welcomed, unlike a welcome's refused label
+    const up = run(connecting, welcome("cv.v1", "1.4.2"), authOk(OFF));
+    expect(up.server).toEqual({ protocol: "cv.v1", version: "1.4.2" });
+    expect(up.orderEntry.enabled).toBe(true); // a label says nothing of the kill switch
+    const lost = reduce(up, retry(1));
+    expect(lost.server).toBe(up.server);
+    const next = run(connecting, welcome("cv.v1", "1.4.2"), authOk(OFF), retry(1), connecting);
+    expect(reduce(next, welcome("cv.v2", "2.0.0")).server).toEqual({
+      protocol: "cv.v2",
+      version: "2.0.0",
+    });
+    expect(reduce(up, welcome("cv.v1", "1.4.2"))).toBe(up); // the same label changes nothing
+  });
+
+  it("keeps 1 to 32 printable ASCII characters, unpadded, of each part: anything else is null", () => {
+    const server = (protocol: unknown, version: unknown) =>
+      reduce(INITIAL_WS_STATE, welcome(protocol, version)).server;
+    for (const kept of ["c".repeat(32), "1.4 rc", "~", "!"]) {
+      expect(server(kept, kept)).toEqual({ protocol: kept, version: kept }); // the class's bounds
+    }
+    const junk = ["", "v".repeat(33), "1.4\n", "1.4\x1f", "1.4\x7f", " 1.4", "1.4 ", " "];
+    for (const value of [...junk, "1.4\u202e2", "1.4\u00e9", 7, null, {}, undefined]) {
+      expect(server(value, value)).toEqual({ protocol: null, version: null });
+      expect(server("cv.v1", value)).toEqual({ protocol: "cv.v1", version: null });
+    }
+  });
+});
+
 describe("total over the wire, and frozen", () => {
   it("ignores a system update that is not an object", () => {
     const live = run(authOk(OFF));

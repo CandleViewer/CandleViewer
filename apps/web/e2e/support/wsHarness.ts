@@ -42,6 +42,10 @@ export interface WsHarness {
 }
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
+/** The build's version (`apps/web/package.json`, what `__CV_APP_VERSION__` is): no SCR-157 band. */
+const BUILD_VERSION = (
+  JSON.parse(readFileSync(join(ROOT, "apps/web/package.json"), "utf8")) as { version: string }
+).version;
 const FIXTURE = "packages/fixtures/bybit/2026-10-05/ws/recorded_tickers_BTCUSDT.jsonl";
 /** Bybit v5 `tickers` key:14.8 key, as services/api/candleviewer/api/ticker.py maps them. */
 const KEYS = `lastPrice:last_price markPrice:mark_price indexPrice:index_price bid1Price:bid1_price
@@ -171,7 +175,7 @@ export async function installWsHarness(page: Page, heartbeat?: Heartbeat): Promi
           p: {
             protocol: "cv.v1",
             encoding: "json",
-            server_version: "e2e-harness",
+            server_version: BUILD_VERSION,
             connection_id: `ws_e2e_${c.n}`,
             server_time_ms: now(),
             auth_required: true,

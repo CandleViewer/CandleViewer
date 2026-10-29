@@ -343,7 +343,16 @@ describe("the worker's message (worker -> tab)", () => {
     source: "live",
   };
   const WORKER: Record<string, unknown> = {
-    state: STATE,
+    "state before any welcome": STATE, // its build label is null
+    // E10-S04 (SCR-157): the last welcome's build label, at its limits, and with a part refused
+    "state with a build label": {
+      t: "state",
+      state: { ...INITIAL_WS_STATE, server: { protocol: "cv.v1", version: "v".repeat(32) } },
+    },
+    "state with a refused protocol label": {
+      t: "state",
+      state: { ...INITIAL_WS_STATE, server: { protocol: null, version: "1.0.0" } },
+    },
     data: DATA,
     "data of a replay stream": { ...DATA, status: "stale", source: "replay" },
     system: { t: "system", update: { kind: "health", health: "healthy" } },
@@ -376,6 +385,17 @@ describe("the worker's message (worker -> tab)", () => {
     ["a state that is not one", { t: "state", state: { transport: 1 } }],
     ["a state with no sequence number", { t: "state", state: { transport: "connected" } }],
     ["a state that is null", { t: "state", state: null }],
+    ...[
+      undefined,
+      { protocol: "cv.v1" },
+      { protocol: "cv.v1", version: "v".repeat(33) },
+      { protocol: 1, version: "1.0.0" },
+      { protocol: "cv.v1", version: "" },
+      { protocol: "cv.v1", version: "1.0.0 " },
+    ].map((server): [string, unknown] => [
+      `a state whose build label is ${JSON.stringify(server)}`,
+      { t: "state", state: { ...INITIAL_WS_STATE, server } },
+    ]),
     ["data with an unknown status", { ...DATA, status: "dead" }],
     ["data whose frames are not a list", { ...DATA, frames: {} }],
     ["data with no options", { ...DATA, effective: null }],
