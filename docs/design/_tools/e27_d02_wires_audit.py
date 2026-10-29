@@ -21,7 +21,9 @@ keeps the other 39 "specified (drawn on request)". The gates, each FAIL led by i
 - [SCAN] no 16+ hex or mixed 18+ alphanumeric run, key ids are `...` plus 4, IPv4 only from RFC
   5737, 7+ digit numbers only the catalogue's placeholder UIDs.
 - [COPY] section 10's withdrawal refusal is CP-5's ruled text (#4936, BQ-9), byte for byte; the
-  memo's CP-5 holds that text or, until #4936 merges, the text it replaces (reported in `--json`).
+  memo's CP-5 holds that text or, until #4936 merges, the text it replaces: that state is printed in
+  `--check`'s summary line and in `--json` (not a WARN, since the spec is right either way), and the
+  text PR rebases onto #4936's merge before READY, when this gate re-pins to the memo (BQ-9).
 - [SUFFIX] every drawn title naming a LIVE account (a box title, a "Test", "Disable", "Revoke key",
   "Rotate the key of", "Actions for" or "Details for" title, a deleted-account notice) carries
   " · LIVE" (BQ-3).
@@ -562,8 +564,10 @@ def main(argv: list[str]) -> int:
     if args.self_test:
         res.numbers["mutations"] = len(MUTATIONS)
     if args.json:
-        payload = {"numbers": res.numbers, "fails": res.fails, "warns": res.warns}
-        payload["self_test"] = st
+        payload: dict[str, object] = {"numbers": res.numbers, "fails": res.fails}
+        payload["warns"] = res.warns
+        if args.self_test:
+            payload["self_test"] = st
         print(json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True))
     else:
         out = [f"FAIL {line}" for line in res.fails] + [f"WARN {line}" for line in res.warns]
