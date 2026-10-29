@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections import OrderedDict, deque
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -46,7 +46,7 @@ from candleviewer.orderflow.liquidity_models import (
     LiquiditySample,
 )
 
-TAPE_MAX = 16_384  # prints kept per aggressor side; oldest dropped first
+TAPE_MAX = 16_384  # prints kept per aggressor side (expiry queue); oldest dropped first
 DEDUPE_MAX = 16_384  # trade ids remembered
 _NONE_BUCKET = np.iinfo(np.int64).min
 
@@ -146,10 +146,12 @@ class LiquidityTracker:
         self._prev: dict[BookSide, dict[int, Decimal]] = {"bid": {}, "ask": {}}
         self._pending: dict[tuple[BookSide, int], tuple[Decimal, int]] = {}
         self._cycles: dict[tuple[BookSide, int], list[int]] = {}
-        self._tape: dict[str, deque[tuple[int, int, Decimal]]] = {
-            "buy": deque(maxlen=TAPE_MAX),
-            "sell": deque(maxlen=TAPE_MAX),
-        }
+        # BQ-5: aggressor volume per (side, tick) inside the window, plus the FIFO that expires it
+        self._tape_q: dict[str, deque[tuple[int, int, Decimal]]] = {"buy": deque(), "sell": deque()}
+        self._tape_qty: dict[str, dict[int, Decimal]] = {"buy": {}, "sell": {}}
+        self._tape_cum: dict[str, tuple[list[int], list[Decimal]]] = {}  # per-sample prefix sums
+        # drops no print explains yet: held one sample for late prints (key -> prior, left, ts)
+        self._suspect: dict[tuple[BookSide, int], tuple[Decimal, Decimal, int]] = {}
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._mid_bucket: int | None = None
 
@@ -162,7 +164,30 @@ class LiquidityTracker:
         self._seen[ev.trade_id] = None
         if len(self._seen) > DEDUPE_MAX:
             self._seen.popitem(last=False)
-        self._tape[ev.side].append((ev.ts_event, ev.price_ticks, ev.qty))
+        side = ev.side
+        self._expire_tape(side, ev.ts_event - self._window_us)
+        q = self._tape_q[side]
+        if len(q) >= TAPE_MAX:
+            self._drop_oldest(side)
+        q.append((ev.ts_event, ev.price_ticks, ev.qty))
+        qty = self._tape_qty[side]
+        qty[ev.price_ticks] = qty.get(ev.price_ticks, Decimal(0)) + ev.qty
+        self._tape_cum.pop(side, None)
+
+    def _drop_oldest(self, side: str) -> None:
+        _, tick, q = self._tape_q[side].popleft()
+        qty = self._tape_qty[side]
+        left = qty[tick] - q
+        if left > 0:
+            qty[tick] = left
+        else:
+            del qty[tick]
+
+    def _expire_tape(self, side: str, floor: int) -> None:
+        q = self._tape_q[side]
+        while q and q[0][0] < floor:
+            self._drop_oldest(side)
+            self._tape_cum.pop(side, None)
 
     def on_sample(self, ts_us: int, phase: BookPhase, book: BookView) -> LiquiditySample:
         """One book sample. Not LIVE (or a one-sided book) is an estimated gap, no events."""
@@ -192,6 +217,10 @@ class LiquidityTracker:
         events: list[LiquidityReload | LiquidityPulled] = []
         had_state = bool(self._prev["bid"] or self._prev["ask"])
         self._expire(ts_us)
+        self._tape_cum.clear()
+        for tape_side in ("buy", "sell"):
+            self._expire_tape(tape_side, ts_us - self._window_us)
+        self._resolve_suspects(ts_us, events)
         self._detect("bid", bids, ts_us, events, had_state)
         self._detect("ask", asks, ts_us, events, had_state)
         return LiquiditySample(ts_us, False, bands, tuple(events))
@@ -263,6 +292,7 @@ class LiquidityTracker:
     def _reset(self) -> None:
         self._prev = {"bid": {}, "ask": {}}
         self._pending.clear()
+        self._suspect.clear()
         self._cycles.clear()
         self._mid_bucket = None
 
@@ -311,7 +341,8 @@ class LiquidityTracker:
                 if tick not in cur and in_range:
                     self._step(side, tick, s0, Decimal(0), ts_us, out)
             for tick, s1 in cur.items():
-                before = prev.get(tick)
+                # a level consumed to zero and pending prior-size refill reappears from 0
+                before = prev.get(tick, Decimal(0) if (side, tick) in self._pending else None)
                 if before is not None:
                     self._step(side, tick, before, s1, ts_us, out)
         self._prev[side] = cur
@@ -349,34 +380,49 @@ class LiquidityTracker:
         drop = s0 - s1
         if s0 < self.min_size or drop <= 0 or drop < c.reload_consume_pct * s0:
             return
-        traded = self._traded_through(side, tick, ts_us)
+        traded = self._traded_through(side, tick)
         if traded >= drop * c.tolerance_pct:
             self._pending[key] = (s0, ts_us)
         else:
-            out.append(
-                LiquidityPulled(
-                    **self._envelope(ts_us, "pulled", side, tick, 0),
-                    side=side,
-                    price=tick * self.tick_size,
-                    price_ticks=tick,
-                    prior_size=s0,
-                    remaining_size=s1,
-                    traded_qty=traded,
-                )
-            )
+            # no print explains it yet: hold one sample for a late print (m1), then classify
+            self._suspect[key] = (s0, s1, ts_us)
 
-    def _traded_through(self, side: BookSide, tick: int, ts_us: int) -> Decimal:
-        """Aggressor volume at or through the level inside the window: buys lift an ask, sells
-        hit a bid."""
-        tape = self._tape["buy" if side == "ask" else "sell"]
-        floor = ts_us - self._window_us
-        while tape and tape[0][0] < floor:
-            tape.popleft()
-        total = Decimal(0)
-        for _, t, q in tape:
-            if (t >= tick) if side == "ask" else (t <= tick):
-                total += q
-        return total
+    def _resolve_suspects(self, ts_us: int, out: list[LiquidityReload | LiquidityPulled]) -> None:
+        c = self.config
+        for key, (prior, left, t0) in self._suspect.items():
+            side, tick = key
+            traded = self._traded_through(side, tick)
+            if traded >= (prior - left) * c.tolerance_pct:
+                self._pending[key] = (prior, t0)  # consumed after all: its window runs from t0
+            else:
+                out.append(
+                    LiquidityPulled(
+                        **self._envelope(t0, "pulled", side, tick, 0),
+                        side=side,
+                        price=tick * self.tick_size,
+                        price_ticks=tick,
+                        prior_size=prior,
+                        remaining_size=left,
+                        traded_qty=traded,
+                    )
+                )
+        self._suspect.clear()
+
+    def _traded_through(self, side: BookSide, tick: int) -> Decimal:
+        """Aggressor volume at or through the level inside the window (buys lift an ask, sells
+        hit a bid), from per-sample prefix sums over the tape's distinct ticks."""
+        tape = "buy" if side == "ask" else "sell"
+        cum = self._tape_cum.get(tape)
+        if cum is None:
+            ticks = sorted(self._tape_qty[tape])
+            sums = [Decimal(0)]
+            for t in ticks:
+                sums.append(sums[-1] + self._tape_qty[tape][t])
+            cum = self._tape_cum[tape] = (ticks, sums)
+        ticks, sums = cum
+        if side == "ask":
+            return sums[-1] - sums[bisect_left(ticks, tick)]
+        return sums[bisect_right(ticks, tick)]
 
     def _envelope(self, ts_us: int, kind: str, side: str, tick: int, n: int) -> _Envelope:
         return {

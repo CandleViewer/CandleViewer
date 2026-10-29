@@ -69,5 +69,26 @@ def test_recorded_wall_pulled_without_prints_emits_one_pulled() -> None:
     _set_ask(book, "631210.0", "50")
     t.on_sample(0, BookPhase.LIVE, book)
     _set_ask(book, "631210.0", "1")
-    (p,) = t.on_sample(100 * MS, BookPhase.LIVE, book).events
+    assert not t.on_sample(100 * MS, BookPhase.LIVE, book).events
+    (p,) = t.on_sample(200 * MS, BookPhase.LIVE, book).events
     assert isinstance(p, LiquidityPulled) and p.traded_qty == 0
+
+
+def test_recorded_wall_consumed_to_zero_and_refilled_emits_one_reload() -> None:
+    book, t = _snapshot(), tracker()
+    wall_px = "631210.0"
+    wall = int(Decimal(wall_px) / TICK)
+    _set_ask(book, wall_px, "50")
+    t.on_sample(0, BookPhase.LIVE, book)
+    t.on_trade(trade(50, wall, "50"))
+    _set_ask(book, wall_px, "0")  # the wall is eaten and leaves the book
+    assert not t.on_sample(100 * MS, BookPhase.LIVE, book).events
+    _set_ask(book, wall_px, "48")
+    (r,) = t.on_sample(200 * MS, BookPhase.LIVE, book).events
+    assert isinstance(r, LiquidityReload)
+    assert (r.price_ticks, r.prior_size, r.replenished_size, r.refill_count) == (
+        wall,
+        Decimal(50),
+        Decimal(48),
+        1,
+    )

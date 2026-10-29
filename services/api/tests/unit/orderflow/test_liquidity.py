@@ -98,8 +98,11 @@ def test_pulled_is_not_reload() -> None:
     """Scenario: Pulled is not reload (a level disappears with no prints at that price)."""
     t = tracker()
     sample(t, 0, book("10"))
-    (p,) = sample(t, 100, FakeBook({1000: "20", 999: "5"}, {1001: "4", 1003: "20"})).events
+    gone = FakeBook({1000: "20", 999: "5"}, {1001: "4", 1003: "20"})
+    assert not sample(t, 100, gone).events  # held one sample for a late print (m1)
+    (p,) = sample(t, 200, gone).events
     assert isinstance(p, LiquidityPulled)
+    assert p.ts_event == 100_000  # stamped with the drop's sample
     assert p.estimated is True
     assert (p.side, p.price_ticks, p.prior_size, p.remaining_size, p.traded_qty) == (
         "ask",
@@ -109,7 +112,7 @@ def test_pulled_is_not_reload() -> None:
         D(0),
     )
     # coming back later is not a reload: the pull never opened a consume
-    assert not sample(t, 200, book("10")).events
+    assert not sample(t, 300, book("10")).events
 
 
 @pytest.mark.parametrize(("traded", "consumed"), [("1", True), ("0.9", False)])
@@ -117,13 +120,8 @@ def test_tolerance_edge_separates_consumed_from_pulled(traded: str, consumed: bo
     t = tracker()  # drop 10 x tolerance 0.1 = 1
     sample(t, 0, book("10"))
     t.on_trade(trade(10, 1002, traded))
-    ev = sample(
-        t,
-        100,
-        book(
-            "0.001",
-        ),
-    ).events
+    sample(t, 100, book("0.001"))
+    ev = sample(t, 200, book("0.001")).events
     assert (not ev) is consumed
     if not consumed:
         assert isinstance(ev[0], LiquidityPulled) and ev[0].traded_qty == D(traded)
@@ -135,7 +133,8 @@ def test_prints_through_the_level_count_but_the_wrong_side_or_price_does_not() -
         sample(t, 0, book("10"))
         for tr in trades:
             t.on_trade(tr)
-        return bool(sample(t, 100, book("1")).events)
+        sample(t, 100, book("1"))
+        return bool(sample(t, 200, book("1")).events)
 
     assert not pulled([trade(10, 1005, "5")])  # a sweep through 1002 consumed it
     assert pulled([trade(10, 1001, "5")])  # below the wall: did not reach it
@@ -148,7 +147,8 @@ def test_duplicate_trade_ids_count_once() -> None:
     sample(t, 0, book("10"))
     t.on_trade(trade(10, 1002, "0.6", trade_id="x"))
     t.on_trade(trade(11, 1002, "0.6", trade_id="x"))  # 1.2 if counted twice
-    (p,) = sample(t, 100, book("0.001")).events
+    sample(t, 100, book("0.001"))
+    (p,) = sample(t, 200, book("0.001")).events
     assert isinstance(p, LiquidityPulled)
 
 
@@ -273,3 +273,46 @@ def test_config_validation_names_the_field() -> None:
     ):
         with pytest.raises(LiquidityConfigInvalid):
             LiquidityConfig(**bad).validated()  # type: ignore[arg-type]
+
+
+def test_late_print_turns_a_pending_pull_into_a_consume() -> None:
+    """m1: a print stamped before the drop but delivered after its sample is not a pull."""
+    t = tracker()
+    sample(t, 0, book("10"))
+    assert not sample(t, 100, book("3")).events  # the book change beat the print
+    t.on_trade(trade(90, 1002, "6"))  # ts before the sample, delivered after it
+    assert not sample(t, 200, book("3")).events  # no pulled event, ever
+    (r,) = sample(t, 300, book("9")).events
+    assert isinstance(r, LiquidityReload) and r.prior_size == D(10)
+
+
+@pytest.mark.parametrize("side", ["ask", "bid"])
+def test_wall_consumed_to_zero_and_refilled_is_a_reload(side: str) -> None:
+    """M1: the level leaves the book entirely, then comes back."""
+    t = tracker()
+    kind, tick = ("sell", 998) if side == "bid" else ("buy", 1002)
+
+    def wall(qty: str | None) -> FakeBook:
+        w = {} if qty is None else {999 if side == "bid" else 1002: qty}
+        if side == "bid":
+            return FakeBook({1000: "20", 998: "5", **w}, {1001: "4"})
+        return FakeBook({1000: "20"}, {1001: "4", 1003: "20", **w})
+
+    sample(t, 0, wall("10"))
+    t.on_trade(trade(10, tick, "11", side=kind))
+    assert not sample(t, 100, wall(None)).events  # gone entirely
+    (r,) = sample(t, 200, wall("10")).events
+    assert isinstance(r, LiquidityReload) and r.side == side
+    assert (r.prior_size, r.replenished_size, r.refill_count) == (D(10), D(10), 1)
+
+
+def test_tape_is_bounded_and_expires() -> None:
+    from candleviewer.orderflow.liquidity import TAPE_MAX
+
+    t = tracker()
+    for i in range(TAPE_MAX + 50):
+        t.on_trade(trade(0, 1002 + i % 7, "1"))  # one instant: only the cap evicts
+    assert len(t._tape_q["buy"]) == TAPE_MAX
+    assert sum(t._tape_qty["buy"].values()) == TAPE_MAX
+    sample(t, 10_000_000, book("10"))  # far past the window: everything expires
+    assert not t._tape_q["buy"] and not t._tape_qty["buy"]
