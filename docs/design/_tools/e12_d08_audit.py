@@ -1025,6 +1025,23 @@ def g_map(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
         ("With a previous series, every failure is the strip's inline notice",),
         "§3",
     )
+    # BQ-11 upheld (2026-10-29): the five WS refusals `23` marks retryable ride the ladder on the
+    # data-feed card, the card's line reading its state; the §3 Retry cell and the §4.1 sentence
+    ws_row = row("WS refusals:")
+    ws_cell = ws_row[5] if len(ws_row) > 5 else ""
+    if not ws_cell.startswith(
+        "the ladder for the five `23` marks retryable"
+    ) or not all(f"`{c}`" in ws_cell for c in WS_RETRYABLE):
+        bad.append("§3: the WS refusals' Retry cell does not give the five the ladder")
+    bad += need(
+        section(spec, "4.1 "),
+        (
+            "**The refusals `23` marks retryable**",
+            "stay on the data-feed card with no carve-out",
+            '"Retrying in N s" (W-14)',
+        ),
+        "§4.1",
+    )
     for r in table(sec):
         statuses = set(re.findall(r"\((4\d\d)\)", r[0])) - {"429"}
         if statuses and len(r) > 5 and re.search(r"ladder|automatic", r[5]):
@@ -1140,12 +1157,18 @@ def g_ladder(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
             codes.add("429")
         return codes == {"429"} and not other
 
-    bad += contra(spec, AUTO_RETRY, FOUR_XX, only_429, "an automatic retry on a 4xx")
+    bad += contra(
+        spec,
+        AUTO_RETRY,
+        FOUR_XX,
+        lambda c: only_429(c) or ws_retryable(c),
+        "an automatic retry on a 4xx",
+    )
     bad += contra(
         spec,
         ACT,
         FOUR_XX,
-        lambda c: only_429(c) or not ACT.search(CODE.sub(" ", c)),
+        lambda c: only_429(c) or ws_retryable(c) or not ACT.search(CODE.sub(" ", c)),
         "an action on a 4xx without the ruled marker",
     )
     # M-1r4: the subject is the 4xx alone. A claim naming a 4xx, a refusal or a validation error
@@ -1157,7 +1180,12 @@ def g_ladder(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
         if not FOUR_XX.search(CITE.sub(" ", ISSUE.sub(" ", c))):
             continue
         body = CODE.sub(" ", c)
-        if only_429(c) or LADDER_MARK.search(body) or not PROCESS.search(body):
+        if (
+            only_429(c)
+            or ws_retryable(c)
+            or LADDER_MARK.search(body)
+            or not PROCESS.search(body)
+        ):
             continue
         bad.append(
             f"a 4xx claim without the ruled marker contradicts the ruling: {c[:90]!r}"
@@ -1195,6 +1223,27 @@ LADDER_MARK = re.compile(
 )
 
 
+# BQ-11 as the orchestrator upheld it (2026-10-29): the WS refusals `23` marks retryable stay on
+# the data-feed card and the transport's ladder runs for them (`23`:1626-1632). The allowed marker
+# is the phrase "refusals `23` marks retryable"; it excuses a claim only when every code the claim
+# names is one of the five and no HTTP 4xx number or class is named beside them
+WS_RETRYABLE = (
+    "subscription_limit",
+    "too_many_topics",
+    "resync_rate_limited",
+    "client_rate_limited",
+    "slow_consumer",
+)
+WS_MARK = re.compile(r"\brefusals `23` marks retryable\b", re.IGNORECASE)
+
+
+def ws_retryable(c: str) -> bool:
+    if not WS_MARK.search(c) or re.search(r"\b4\d\d\b|\b4xx\b", CITE.sub(" ", c)):
+        return False
+    named = {x.strip("`") for x in CODE.findall(c)} - {"23"}
+    return named <= set(WS_RETRYABLE)
+
+
 def g_edge(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
     sec = visible(section(spec, "6.3 "))
     bad = need(
@@ -1229,10 +1278,30 @@ def g_progress(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
     if len(known) < 2 or "D08-G1" not in known[1]:
         bad.append("the determinate phase is not tied to D08-G1")
     words = deck(spec)
-    for w in re.findall(r"W-\d+", unknown[4] if len(unknown) > 4 else ""):
-        for q in quotes(words.get(w, ["", "", ""])[2]):
-            if re.search(r"%|percent|\bleft\b", q):
-                bad.append(f"{w} shows a percentage or a time left with no total")
+    if not unknown:
+        bad.append("the total-unknown phase is missing")
+
+    def shares(row: list[str]) -> list[str]:
+        return [
+            w
+            for w in re.findall(r"W-\d+", row[4] if len(row) > 4 else "")
+            for q in quotes(words.get(w, ["", "", ""])[2])
+            if re.search(r"%|percent|\bleft\b", q)
+        ]
+
+    # M-1 of the orchestrator's round 1: bound per phase, not per string. A phase named `*-unknown`
+    # shows no share and no time left; any other phase whose strings show one is total-known only
+    # (its When names D08-G1) and has its `-unknown` twin, the ruled default with the elapsed time
+    for name, r in rows.items():
+        if name.endswith("unknown"):
+            bad += [
+                f"{w} shows a percentage or a time left in {name}" for w in shares(r)
+            ]
+        elif name != "total-known" and shares(r):
+            if len(r) < 2 or "D08-G1" not in r[1]:
+                bad.append(f"{name} shows a percentage without tying it to D08-G1")
+            if f"{name}-unknown" not in rows:
+                bad.append(f"{name} shows a percentage and has no {name}-unknown form")
     bad += contra(spec, NO_TOTAL, PCT, what="a percentage or a time left with no total")
     # subject deny (M-1r3): a claim about what an unknown-total build shows carries the ruled marker
     # or names counts done only; anything else it says it shows is denied, however worded
@@ -3541,6 +3610,12 @@ MUTATIONS: tuple[Mutation, ...] = (
                 "A declined request is queued behind the backoff.",
                 "r7: declined",
             ),
+            (
+                "G-LADDER",
+                "4.1 ",
+                "A `validation_failed` refusal `23` marks retryable is sent again on the ladder.",
+                "orch r1: the BQ-11 marker on a code outside the five",
+            ),
         )
     ),
     Mutation(
@@ -3613,11 +3688,56 @@ MUTATIONS: tuple[Mutation, ...] = (
         in_handoff(swap("Rule: every line is", "Rule: each line is")),
         tag="P",
     ),
+    Mutation(
+        "G-MAP",
+        "orch r1: drop the BQ-11 sentence from §4.1",
+        lambda s: re.sub(
+            r" \*\*The refusals `23` marks retryable\*\*[^\n]*?the ladder ends\.",
+            "",
+            s,
+            count=1,
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-MAP",
+        "orch r1: give the five WS refusals no ladder in §3",
+        row_cell("3. ", "~`resync_rate_limited`", 5, "none: `Retry` (D02:326)"),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 M-1: give the outcome-unknown phase the percentage notice",
+        row_cell("7.1 ", "outcome-unknown", 4, "W-35, W-36, W-38"),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 M-1: drop the over-budget-unknown phase",
+        lambda s: drop_row(s, "7.1 ", "over-budget-unknown"),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 M-1: untie the over-budget phase from D08-G1",
+        row_cell(
+            "7.1 ",
+            "over-budget",
+            1,
+            "elapsed past the estimate, or past 10<!--=CITE:budget.s--> s per 1 M prints",
+        ),
+        tag="X",
+    ),
     # N-n: legitimate rewordings; re-pinned, they must trip nothing
     *(
         Mutation("", what, say_in(sec, sentence), tag="N")
         for sec, sentence, what in (
             ("5. ", "A 400 is never retried automatically.", "a negated 4xx retry"),
+            (
+                "4.1 ",
+                "The refusals `23` marks retryable are sent again until the ladder ends.",
+                "orch r1: the BQ-11 marker on the five",
+            ),
             (
                 "7.1 ",
                 "With no total the strip shows no percentage and no time left.",
@@ -3690,6 +3810,16 @@ MUTATIONS: tuple[Mutation, ...] = (
         tag="N",
     ),
 )
+
+
+def drop_row(spec: str, prefix: str, lead: str) -> str:
+    """Remove the table row whose lead cell is `lead` under the section `prefix` opens."""
+    body = section(spec, prefix)
+    for line in body.split("\n"):
+        cells = split_row(line) if line.lstrip().startswith("|") else []
+        if cells and cells[0] == lead:
+            return spec.replace(body, body.replace(line + "\n", "", 1), 1)
+    raise LookupError(f"mutation row missing: {prefix} {lead}")
 
 
 def drop_rule(spec: str, prefix: str) -> str:
