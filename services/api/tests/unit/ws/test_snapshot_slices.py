@@ -101,8 +101,15 @@ def _big(columns: int = 60, rows: int = 200) -> SnapshotBody:
     return SnapshotBody({"symbol": "BTCUSDT", "time_bucket_ms": 100, "columns": cols})
 
 
+class _Catching(Source):
+    """A source that can tell what changed during a spread snapshot (here: nothing)."""
+
+    def catch_up(self, sub: Any, since: int) -> list[Any]:
+        return []
+
+
 def _conn(body: SnapshotBody, turn_s: float, max_frame_bytes: int | None = None) -> Conn:
-    source = Source()
+    source = _Catching()
     source.bodies["heatmap"] = body
     conn = Conn(source, cache=SnapshotCache(), max_frame_bytes=max_frame_bytes)
     conn.emitter.turn_s = turn_s
@@ -234,3 +241,120 @@ def test_a_small_snapshot_is_left_to_the_queues_encoder() -> None:
     sub = _sub(conn)
     assert conn.emitter.snapshot(sub, "initial")
     assert queued == [] and len(conn.out) == 1  # as before: the dict, the queue encodes it
+
+
+# -- m-C: one turn budget, shared ------------------------------------------------------------------
+
+
+async def test_concurrent_snapshots_share_one_turn_budget_round_robin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m-C: three large snapshots on three connections run under one budget a loop turn (here
+    one step a turn), taking turns, never three slices in one turn."""
+    from candleviewer.ws import sequencing
+
+    conns = [_conn(_big(), turn_s=0.0, max_frame_bytes=64_000) for _ in range(3)]
+    subs = [_sub(c) for c in conns]
+    per_turn: list[list[str]] = []
+    real = sequencing.TopicEmitter._step
+
+    def counted(self: Any, job: Any) -> bool:
+        per_turn[-1].append(job.sub.sub_id + str(id(self)))
+        return bool(real(self, job))
+
+    turn = sequencing._Turns._turn
+
+    def marked(self: Any) -> None:
+        per_turn.append([])
+        turn(self)
+
+    monkeypatch.setattr(sequencing.TopicEmitter, "_step", counted)
+    monkeypatch.setattr(sequencing._Turns, "_turn", marked)
+    for conn, sub in zip(conns, subs, strict=True):
+        assert conn.emitter.snapshot(sub, "initial")
+    for _ in range(100_000):
+        await asyncio.sleep(0)
+        if all(c.out for c in conns):
+            break
+    assert all(c.out for c in conns)
+    stepped = [t for t in per_turn if t]
+    assert stepped and all(len(t) == 1 for t in stepped)  # one step a turn, all jobs together
+    order = [t[0] for t in stepped[:6]]
+    assert len(set(order[:3])) == 3  # round-robin: each job in turn
+
+
+# -- m-A: what changed meanwhile follows the snapshot ----------------------------------------------
+
+
+class _Moving(Source):
+    """A source whose state moves while its snapshot is under way and that cannot tell what."""
+
+    def catch_up(self, sub: Any, since: int) -> None:
+        return None
+
+    def build_steps(self, sub: Any) -> Any:
+        body = self.build(sub)
+        for _ in range(20):
+            yield
+        self.gen += 1  # an update the snapshot does not hold
+        return body
+
+
+async def test_a_source_that_cannot_catch_up_is_snapshotted_again_when_it_moved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+
+    source = _Moving()
+    source.bodies["heatmap"] = _big(columns=2, rows=4)
+    conn = Conn(source, cache=SnapshotCache())
+    conn.emitter.turn_s = 0.0
+    sub = _sub(conn)
+    assert conn.emitter.snapshot(sub, "initial")
+    for _ in range(100_000):
+        await asyncio.sleep(0)
+        if len([f for f in conn.out if f["t"] == "snap"]) >= 2:
+            break
+    snaps = [f for f in conn.out if f["t"] == "snap"]
+    assert [f["s"] for f in snaps][:2] == [1, 2]  # the state it missed comes as a new snap
+
+
+# -- M-C: the snapshot cache's byte bound ---------------------------------------------------------
+
+
+def test_the_snapshot_cache_is_bounded_by_bytes_oldest_out_first() -> None:
+    from candleviewer.ws.sequencing import SNAPSHOT_CACHE_MAX_BYTES
+
+    assert SNAPSHOT_CACHE_MAX_BYTES == 64 * 1024 * 1024
+    source = Source()
+    source.bodies["heatmap"] = _big(columns=10, rows=40)
+    cache = SnapshotCache()
+    conns = [Conn(source, cache=cache) for _ in range(3)]
+    for i, conn in enumerate(conns):
+        if i == 1:  # room for two of them
+            cache.max_bytes = cache.bytes * 5 // 2
+        result, sub = conn.authz.admit(
+            {"ch": CH, "opts": {"encoding": "structured", "window_seconds": 100 + i}}
+        )
+        assert sub is not None, result
+        sub.announced = True
+        assert conn.emitter.snapshot(sub, "initial")
+    sizes = [r.nbytes for _, r in cache._entries.values()]
+    assert len(cache) == 2 and cache.bytes == sum(sizes) <= cache.max_bytes
+    assert sizes[0] > 10_000  # its JSON's estimate (`Rendered.nbytes`), not a count
+    cache.invalidate(CH)
+    assert (len(cache), cache.bytes) == (0, 0)
+    tiny = SnapshotCache(max_bytes=1_000)  # a render larger than the whole bound: used, not kept
+    conn = Conn(source, cache=tiny)
+    sub = _sub(conn)
+    assert conn.emitter.snapshot(sub, "initial") and len(tiny) == 0 and tiny.bytes == 0
+
+
+async def test_a_source_that_cannot_catch_up_is_never_spread() -> None:
+    """Spreading needs `catch_up` (§7.1: nothing may be lost while pending): any other source's
+    snapshot finishes in the call that asked for it, as before #605, whatever its size."""
+    source = Source()
+    source.bodies["heatmap"] = _big()
+    conn = Conn(source, cache=SnapshotCache(), max_frame_bytes=64_000)
+    conn.emitter.turn_s = 0.0
+    sub = _sub(conn)
+    assert conn.emitter.snapshot(sub, "initial") and conn.out and not conn.emitter._jobs

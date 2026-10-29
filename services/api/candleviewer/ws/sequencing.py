@@ -32,6 +32,8 @@ import json
 import secrets
 import time
 import uuid
+import weakref
+from collections import deque
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -139,6 +141,11 @@ SP_ROOM: Final = "f" * (2 * SPAN_ID_BYTES)
 _WIDEST: Final = 2**64
 _LONGEST_REASON: Final = max(SNAP_REASONS, key=len)
 SNAPSHOT_CACHE_MAX: Final = 4096
+#: #605 (M-C): the bytes the process-wide snapshot cache may hold, every entry's `Rendered.nbytes`
+#: (its b64 chunks, or its structured payload's JSON bound) together, oldest out first. 64 MiB
+#: holds a dozen full-budget heatmap renders (5.4 MiB binary, 4 MiB structured at G-03) beside
+#: thousands of book and bars ones; an entry outlives its subscriptions only within it.
+SNAPSHOT_CACHE_MAX_BYTES: Final = 64 * 1024 * 1024
 #: #605 (M-1): CPU one loop turn spends on a snapshot (render, chunking, encoding) before the rest
 #: waits for the next turn (`TopicEmitter.snapshot`), so a turn stays inside budget #6 (20 ms).
 SNAPSHOT_TURN_S: Final = 0.005
@@ -301,6 +308,9 @@ class SnapshotBody:
     stale: bool = False
     estimated: bool = False
     meta: Mapping[str, Any] = field(default_factory=dict)
+    #: #605 (M-C): the source's bound on its structured payload's JSON bytes, when it knows one
+    #: cheaply (the heatmap does); the snapshot cache charges it. None: estimated (`_weight`).
+    size_hint: int | None = None
 
     def __post_init__(self) -> None:
         # `stale` is the flag's alone: an owner's own key is dropped, not refused, because `replace`
@@ -349,6 +359,20 @@ class Rendered:
     meta: Mapping[str, Any] = field(default_factory=dict)
     complete: tuple[int, ...] = ()
     root: Mapping[str, Any] | None = None
+    #: #605 (M-C): what the snapshot cache charges for it (`SnapshotCache.max_bytes`).
+    nbytes: int = 0
+
+
+def _weight(payload: Mapping[str, Any], hint: int | None) -> int:
+    """A structured payload's JSON bytes for the cache: the source's hint, else an estimate that
+    reads one item of each list (its length times that item's size) and costs no full encode."""
+    if hint is not None:
+        return hint
+    total = 256
+    for value in payload.values():
+        if isinstance(value, list) and value:
+            total += len(value) * (len(_dumps(value[0])) + 1)
+    return total
 
 
 def cap_heatmap(body: SnapshotBody) -> SnapshotBody:
@@ -427,7 +451,9 @@ def render_steps(
         complete, root = _heatmap_held(body)
     binary = sub.effective.get("encoding") == "binary" and bool(body.parts)
     if not binary:
-        return Rendered(structured_payload(fam, body), (), body.stale, body.meta, complete, root)
+        payload = structured_payload(fam, body)
+        weight = _weight(payload, body.size_hint)
+        return Rendered(payload, (), body.stale, body.meta, complete, root, weight)
     if body.meta:  # `snapshot` sized the budget without the owner's keys, which every chunk carries
         max_part_bytes -= len(_dumps(dict(body.meta)))
     flags = _flags(body, sub.replay_session_id is not None)
@@ -444,7 +470,8 @@ def render_steps(
     for i, f in enumerate(frames):
         chunks.append(_chunk(f, i == last, flags, ps, qs))
         yield
-    return Rendered(None, tuple(chunks), body.stale, body.meta, complete, root)
+    weight = sum(map(len, chunks))
+    return Rendered(None, tuple(chunks), body.stale, body.meta, complete, root, weight)
 
 
 def _chunk(frame: Frame, last: bool, flags: int, ps: int, qs: int) -> str:
@@ -663,13 +690,64 @@ def assemble_steps(
 
 @dataclass(slots=True)
 class _SnapJob:
-    """A snapshot under way (`TopicEmitter.snapshot`): its steps, the request it serves and the
-    loop callback of its next slice."""
+    """A snapshot under way (`TopicEmitter.snapshot`): its steps, the request it serves, and
+    whether it was dropped or must be taken again once done (`catch_up` refused)."""
 
     sub: Subscription
     steps: Generator[None, None, bool]
     key: tuple[Any, ...]
-    handle: asyncio.Handle | None = None
+    reason: SnapReason = "initial"
+    dropped: bool = False
+    restart: bool = False
+
+
+class _Turns:
+    """#605 (m-C): the snapshot jobs under way on one loop, every emitter's: one callback a loop
+    turn steps them round-robin, one step each in turn, until the budget (the smallest `turn_s`
+    among them) is spent, so they share it whatever their number. Jobs left over continue in the
+    next turn."""
+
+    _BY_LOOP: Final[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _Turns]] = (
+        weakref.WeakKeyDictionary()
+    )
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self.jobs: deque[tuple[TopicEmitter, _SnapJob]] = deque()
+        self.armed = False
+
+    @classmethod
+    def of(cls, loop: asyncio.AbstractEventLoop) -> _Turns:
+        turns = cls._BY_LOOP.get(loop)
+        if turns is None:
+            turns = cls._BY_LOOP[loop] = cls(loop)
+        return turns
+
+    def add(self, emitter: TopicEmitter, job: _SnapJob) -> None:
+        self.jobs.append((emitter, job))
+        self._arm()
+
+    def _arm(self) -> None:
+        if not self.armed:
+            self.armed = True
+            self.loop.call_soon(self._turn)
+
+    def _turn(self) -> None:
+        self.armed = False
+        if not self.jobs:
+            return
+        budget = min(emitter.turn_s for emitter, _ in self.jobs)
+        began = time.perf_counter()
+        try:
+            while self.jobs:
+                emitter, job = self.jobs.popleft()
+                if emitter._step(job):
+                    self.jobs.append((emitter, job))
+                if time.perf_counter() - began >= budget:
+                    break
+        finally:
+            if self.jobs:
+                self._arm()
 
 
 # -- shared snapshot cache -----------------------------------------------------------------------
@@ -680,8 +758,14 @@ class SnapshotCache:
     source's `generation` moves: cost is per topic, not per subscriber (snapshot amplification,
     WS-D03). Private families never enter it (SR-190)."""
 
-    def __init__(self, maxsize: int = SNAPSHOT_CACHE_MAX) -> None:
+    def __init__(
+        self, maxsize: int = SNAPSHOT_CACHE_MAX, max_bytes: int = SNAPSHOT_CACHE_MAX_BYTES
+    ) -> None:
         self.maxsize = maxsize
+        #: #605 (M-C): what the entries may hold together (`Rendered.nbytes`), oldest out
+        #: first; a render larger than all of it is used once and not kept.
+        self.max_bytes = max_bytes
+        self.bytes = 0
         self._entries: dict[tuple[Any, ...], tuple[int, Rendered]] = {}
         self._stale: set[str] = set()
         self.builds = 0
@@ -693,7 +777,7 @@ class SnapshotCache:
         """Forget every rendered snapshot of `ch`: after a server-initiated resync the cached
         state predates the incident and must never be served again."""
         for key in [k for k in self._entries if k[0] == ch]:
-            del self._entries[key]
+            self._evict(key)
 
     def get(
         self,
@@ -708,6 +792,8 @@ class SnapshotCache:
         sub: Subscription,
         source: SnapshotSource,
         max_part_bytes: int,
+        *,
+        gen: int | None = None,
     ) -> Generator[None, None, Rendered | None]:
         """`get`, yielding inside its render (`render_steps`): a hit is no step at all, and a
         render is entered in the cache only once it is whole."""
@@ -720,7 +806,8 @@ class SnapshotCache:
                 sorted((k, repr(v)) for k, v in sub.effective.items() if k != "paused")
             )
             key = (sub.ch, sub.replay_session_id, identity)
-            gen = source.generation(sub)
+            if gen is None:  # the caller's reading, else the source's own now
+                gen = source.generation(sub)
             hit = self._entries.get(key)
             if hit is not None and hit[0] == gen:
                 rendered = hit[1]
@@ -728,10 +815,15 @@ class SnapshotCache:
                 rendered = yield from self._build(sub, source, max_part_bytes)
                 if rendered is None:
                     return None
-                self._entries.pop(key, None)
-                while len(self._entries) >= self.maxsize:
-                    del self._entries[next(iter(self._entries))]
-                self._entries[key] = (gen, rendered)
+                self._evict(key)
+                if rendered.nbytes <= self.max_bytes:
+                    while self._entries and (
+                        len(self._entries) >= self.maxsize
+                        or self.bytes + rendered.nbytes > self.max_bytes
+                    ):
+                        self._evict(next(iter(self._entries)))
+                    self._entries[key] = (gen, rendered)
+                    self.bytes += rendered.nbytes
         if rendered is not None:
             self._mark_stale(sub.ch, rendered.stale)
         return rendered
@@ -771,6 +863,11 @@ class SnapshotCache:
         cv_ws_snapshot_build_seconds.labels(topic=fam).observe(spent)
         self.builds += 1
         return rendered
+
+    def _evict(self, key: tuple[Any, ...]) -> None:
+        entry = self._entries.pop(key, None)
+        if entry is not None:
+            self.bytes -= entry[1].nbytes
 
     def _mark_stale(self, ch: str, stale: bool) -> None:
         if stale:
@@ -882,14 +979,18 @@ class TopicEmitter:
         until a later flush succeeds. Nothing once it has ended (§8.4 Lanes, defence in depth).
         Once its frames are queued, `on_snapshot` is told.
 
-        #605 (M-1): a snapshot whose render, chunking and encoding take more than
-        `SNAPSHOT_TURN_S` of CPU in this call finishes in later loop turns, a slice each
-        (`_continue`), and this returns True. Its frames are all queued in its last slice, in
-        order, the last with `s` (§3.6); until then it stays `snapshot_pending`, so no `d` of it
-        precedes them (§7.1), and its `s` is the one it would have had. One that fits in the slice
-        is emitted here, as before. A new request while one is under way replaces it when the
-        state, the subscription's options or the reason changed (nothing of it was queued), and is
-        that one otherwise. Without a running loop (a synchronous caller) it finishes here."""
+        #605 (M-1, m-C): the work runs in steps. This call runs up to `turn_s` of them inline, the
+        request's own slice, so a small snapshot is emitted here, as before; the rest of a large
+        one runs in later loop turns under one CPU budget a turn shared by every snapshot job of
+        the process (`_Turns`, round-robin over the jobs), and this returns True. Only a source
+        that can tell what changed meanwhile (`catch_up`) is spread so; any other's snapshot
+        finishes in this call, as before. Its frames are all queued in its last step, in order, the
+        last with `s` (§3.6); until then it stays `snapshot_pending`, so no `d` of it precedes them
+        (§7.1), and its `s` is the one it would have had. What its source changed meanwhile follows
+        as `d` frames (`catch_up`), or, when it cannot tell, the snapshot is taken again. A new
+        request while one is under way replaces it when the state, the options or the reason
+        changed (nothing of it was queued), and is that one otherwise. Without a running loop it
+        finishes in this call."""
         if self.source is None or not sub.announced or sub.ended:
             return False
         job = self._jobs.get(sub.sub_id)
@@ -897,23 +998,33 @@ class TopicEmitter:
             if job.sub is sub and job.key == self._job_key(sub, reason):
                 return True
             self._drop_job(sub.sub_id)
-        steps = self._snapshot_steps(sub, reason)
-        began = time.perf_counter()
+        job = _SnapJob(sub, self._snapshot_steps(sub, reason), (), reason=reason)
+        try:
+            turns = _Turns.of(asyncio.get_running_loop())
+        except RuntimeError:  # no loop to come back on: finish here
+            return bool(_finish(job.steps))
+        if not self._spreads(sub):  # its source cannot give what changed meanwhile: as before
+            return bool(_finish(job.steps))
+        began = time.perf_counter()  # the request's own slice, so a small one is emitted here
         while True:
             try:
-                next(steps)
+                next(job.steps)
             except StopIteration as done:
                 return bool(done.value)
             if time.perf_counter() - began >= self.turn_s:
                 break
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:  # no loop to come back on: finish here
-            return bool(_finish(steps))
-        job = _SnapJob(sub, steps, self._job_key(sub, reason))
+        job.key = self._job_key(sub, reason)
         self._jobs[sub.sub_id] = job
-        job.handle = loop.call_soon(self._continue, job)
+        turns.add(self, job)
         return True
+
+    def _spreads(self, sub: Subscription) -> bool:
+        """Whether `sub`'s snapshot may be spread across loop turns: its source can tell what
+        changed meanwhile (`catch_up`), so nothing is lost while it is pending (§7.1)."""
+        spreads = getattr(self.source, "spreads", None)
+        if spreads is not None:
+            return bool(spreads(sub))
+        return getattr(self.source, "catch_up", None) is not None
 
     def _job_key(self, sub: Subscription, reason: SnapReason) -> tuple[Any, ...]:
         source = self.source
@@ -924,27 +1035,24 @@ class TopicEmitter:
     def _drop_job(self, sub_id: str) -> None:
         job = self._jobs.pop(sub_id, None)
         if job is not None:
-            if job.handle is not None:
-                job.handle.cancel()
+            job.dropped = True
             job.steps.close()
 
-    def _continue(self, job: _SnapJob) -> None:
-        """One loop turn's slice of a snapshot under way (`snapshot`)."""
+    def _step(self, job: _SnapJob) -> bool:
+        """One step of a job under way (`_Turns`); False once it is done, dropped or failed."""
         sub = job.sub
-        if self._jobs.get(sub.sub_id) is not job:
-            return
+        if job.dropped or self._jobs.get(sub.sub_id) is not job:
+            return False
         if sub.ended:
             self._drop_job(sub.sub_id)
-            return
-        began = time.perf_counter()
+            return False
         try:
-            while True:  # one step at least, then as many as the slice holds
-                next(job.steps)
-                if time.perf_counter() - began >= self.turn_s:
-                    break
+            next(job.steps)
         except StopIteration:
             self._jobs.pop(sub.sub_id, None)
-            return
+            if job.restart:  # its source could not catch up: the snapshot is taken again
+                self.snapshot(sub, job.reason)
+            return False
         except Exception as exc:  # contained: it stays pending, for the next flush (§10.1)
             self._jobs.pop(sub.sub_id, None)
             _log().error(
@@ -953,8 +1061,8 @@ class TopicEmitter:
                 ch=sub.ch,
                 error=type(exc).__name__,
             )
-            return
-        job.handle = asyncio.get_running_loop().call_soon(self._continue, job)
+            return False
+        return True
 
     def _snapshot_steps(self, sub: Subscription, reason: SnapReason) -> Generator[None, None, bool]:
         previous = sub.seq
@@ -976,9 +1084,12 @@ class TopicEmitter:
         base["meta"] = meta
         # Sized so that no frame, `sp` included, exceeds the cap (§3.1 Room, §3.6).
         budget = b64_budget(self.max_frame_bytes, _widest(sub))
-        if self.source is None:  # pragma: no cover - `snapshot` checked it
+        source = self.source
+        if source is None:  # pragma: no cover - `snapshot` checked it
             return False
-        rendered = yield from self.cache.fetch(sub, self.source, budget)
+        # the state a shared render is built from (a private one is never spread: no catch-up)
+        gen0 = None if sub.topic.family.private else source.generation(sub)
+        rendered = yield from self.cache.fetch(sub, source, budget, gen=gen0)
         if rendered is None:
             return False
         if rendered.meta:  # the owner's keys join the server's, which win (`SERVER_META_KEYS`)
@@ -1021,7 +1132,27 @@ class TopicEmitter:
                 _log().info("ws resync", **fields)
         if self.on_snapshot is not None:
             self.on_snapshot(sub, rendered)
+        if gen0 is not None and self._jobs.get(sub.sub_id) is not None:  # it was spread
+            self._catch_up(sub, source, gen0)
         return True
+
+    def _catch_up(self, sub: Subscription, source: SnapshotSource, gen0: int) -> None:
+        """m-A (§7.1): a snapshot spread across turns was built from the state at its start, and
+        the `d` frames of what changed meanwhile were refused while it was pending: they follow it
+        now, from the source's `catch_up(sub, since)` (a list of `(body, part)`), or, when it has
+        none or cannot, the snapshot is taken again."""
+        if source.generation(sub) == gen0:
+            return
+        catch_up = getattr(source, "catch_up", None)
+        missed = None if catch_up is None else catch_up(sub, gen0)
+        if missed is None:
+            job = self._jobs.get(sub.sub_id)
+            if job is not None:
+                job.restart = True
+                sub.snapshot_pending = True
+            return
+        for body, part in missed:
+            self.delta(sub, body, part=part)
 
     def _frame_steps(
         self, base: dict[str, Any], rendered: Rendered

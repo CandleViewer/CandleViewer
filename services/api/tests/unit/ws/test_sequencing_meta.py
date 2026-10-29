@@ -93,7 +93,12 @@ class _OwnerCache(SnapshotCache):
     refuses them, so this reaches the merge."""
 
     def fetch(
-        self, sub: Subscription, source: SnapshotSource, max_part_bytes: int
+        self,
+        sub: Subscription,
+        source: SnapshotSource,
+        max_part_bytes: int,
+        *,
+        gen: int | None = None,
     ) -> Generator[None, None, Rendered | None]:
         owner = {"reason": "owner", "source": "owner", "previous_seq": 99, "history_bars": 3}
         return Rendered(EMPTY, (), False, MappingProxyType(owner))

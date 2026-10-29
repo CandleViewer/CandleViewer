@@ -215,6 +215,20 @@ class SnapshotRouter:
         built: SnapshotBody | None = yield from steps(sub)
         return built
 
+    def spreads(self, sub: Subscription) -> bool:
+        """Whether the family adapter can tell what changed during a snapshot spread across
+        loop turns (`catch_up`): only then is it spread (#605)."""
+        return getattr(self._source(sub), "catch_up", None) is not None
+
+    def catch_up(self, sub: Subscription, since: int) -> list[tuple[Any, Any]] | None:
+        """The family adapter's `catch_up` (#605: the `d` frames a snapshot spread across loop
+        turns missed), or None, which takes the snapshot again, when it has none."""
+        catch_up = getattr(self._source(sub), "catch_up", None)
+        if catch_up is None:
+            return None
+        missed: list[tuple[Any, Any]] | None = catch_up(sub, since)
+        return missed
+
     def generation(self, sub: Subscription) -> int:
         source = self._source(sub)
         try:
