@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from functools import partial
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Final, NoReturn
 
 import msgpack
 import pytest
@@ -356,16 +356,39 @@ def test_x02_ac_05_every_collaborator_of_the_subscription_services_is_known_to_t
     )
 
 
-def _round_trip(c: RawClient, payload: bytes | str) -> dict[str, Any]:
-    """`payload` out and the next frame in, by the socket session itself: the harness's bounded
-    receive starts a thread per frame, which would more than double the time measured."""
+def _round_trip(c: RawClient, payload: bytes | str) -> tuple[dict[str, Any], float]:
+    """`payload` out and the reply in, by the socket session itself: the harness's bounded
+    receive starts a thread per frame, which would more than double the time measured. With the
+    outbound pipeline on, the server's RTT-probe `ping` can precede the reply (§9.1: a client MUST
+    answer it, else the connection ages to `saturated`); it is answered with its `pong` and the
+    time spent answering is left out of the elapsed time returned beside the reply. A `system` push
+    (the `connection_quality` notice the unanswered probe can raise) is skipped, not the reply."""
+    t0 = time.perf_counter()
     if isinstance(payload, bytes):
         c.ws.send_bytes(payload)
-        reply: dict[str, Any] = msgpack.unpackb(c.ws.receive_bytes())
     else:
         c.ws.send_text(payload)
-        reply = json.loads(c.ws.receive_text())
-    return reply
+    spent = 0.0
+    while True:
+        reply: dict[str, Any] = (
+            msgpack.unpackb(c.ws.receive_bytes())
+            if isinstance(payload, bytes)
+            else json.loads(c.ws.receive_text())
+        )
+        if reply.get("t") == "d" and reply.get("ch") == "system":
+            continue  # an unsolicited push (the connection-quality notice), not the reply
+        if reply.get("t") != "ping":
+            return reply, time.perf_counter() - t0 - spent
+        mark = time.perf_counter()
+        c.send_raw({"t": "pong", "id": reply["id"]})
+        spent += time.perf_counter() - mark
+
+
+#: The gateway clock's step per sample. With the outbound pipeline on, the server's 1 s RTT probe
+#: is due every `1 / step` samples; at 0.25 s that is every 4th, which the arms' alternating order
+#: (`e u | u e`, period 4) hands to one arm every time, a bias the test would then measure. 0.3 s
+#: is not a divisor of the order's period, so the probe lands on both arms alike.
+_CLOCK_STEP_S: Final = 0.3
 
 
 def _no_reply(*_: object) -> NoReturn:
@@ -380,11 +403,11 @@ def test_x02_ac_05_the_two_refusals_take_the_same_time(
     positions` naming the foreign account or the unknown id, the two frames of one size and
     encoded once; interleaved, each pair's order alternating; `WARMUP` pairs dropped, then
     `SAMPLES` per arm with gc off; the ratio of medians and Mann-Whitney. Before each frame the
-    gateway's clock steps 0.25 s (inside the inbound limits) and the clock of the connection's
-    denial-record budget a full window, so every sample writes its row. The whole timed loop has
-    `WATCHDOG_S` seconds (an alarm: the session's receive has no bound), so a reply that never
-    comes fails the leg instead of hanging it. The raw samples go to `tmp_path` only: #298 classes
-    them SECRET."""
+    gateway's clock steps `_CLOCK_STEP_S` (inside the inbound limits) and the clock of the
+    connection's denial-record budget a full window, so every sample writes its row. The whole
+    timed loop has `WATCHDOG_S` seconds (an alarm: the session's receive has no bound), so a
+    reply that never comes fails the leg instead of hanging it. The raw samples go to `tmp_path`
+    only: #298 classes them SECRET."""
     alice = world.login("alice")
     world.login("bob", BOB)
     budget = Clock()
@@ -404,11 +427,9 @@ def test_x02_ac_05_the_two_refusals_take_the_same_time(
             gc.disable()
             for i in range(WARMUP + SAMPLES):
                 for name in sorted(arms, reverse=i % 2 == 1):
-                    world.clock.now += 0.25
+                    world.clock.now += _CLOCK_STEP_S
                     budget.now += DENIAL_AUDIT_WINDOW_S
-                    t0 = time.perf_counter()
-                    reply = _round_trip(c, payloads[name])
-                    dt = time.perf_counter() - t0
+                    reply, dt = _round_trip(c, payloads[name])
                     assert reply["p"]["results"] == refused
                     if i >= WARMUP:
                         arms[name].append(dt)
