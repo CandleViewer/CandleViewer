@@ -46,8 +46,9 @@ groups:
         # re-snapshots every subscription to the book, so this is the total across topics and
         # connections: it cannot miss a topic over the line, and the `ch` in the `ws resync` log
         # lines says which one it was. `increase()` extrapolates to the window edges, so five
-        # events read a little over 5: round() makes "above 5" mean six. Nothing calls
-        # SequencingHub.upstream_desync in production yet, so this stays at zero until it does.
+        # events read a little over 5: round() makes "above 5" mean six. The book topic calls
+        # SequencingHub.upstream_desync on a book desync, and the other topics re-snapshot with the
+        # same reason after lost or failed updates, so this counts each one, per subscription.
         expr: round(sum by (env) (increase(cv_ws_resync_total{reason="upstream_desync"}[1h]))) > 5
         for: 5m
         labels:
