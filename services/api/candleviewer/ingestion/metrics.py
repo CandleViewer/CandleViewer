@@ -155,6 +155,11 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
     ),
     _g("book_subscriptions_active", "Live book WS subscriptions, by topic depth.", "depth"),
     _c("book_crossed_total", "Crossed books detected (each a resync, never clamped).", "symbol"),
+    _c(
+        "ingest_book_tier_warmup_abandoned_total",
+        "Warming book tiers dropped past their warm-up deadline; each re-warm then backs off.",
+        "symbol",
+    ),
     # E08-T04 connection (E08-T06: dashboard + silent-death meta-alert)
     _g("ingest_ws_up", "1 while the public socket is open, else 0.", "socket"),
     _g("ingest_enabled", "1 when the ingestion pipeline is wired in this process."),
@@ -422,6 +427,7 @@ book_apply_latency_ms = _histogram("book_apply_latency_ms")
 book_publish_latency_ms = _histogram("book_publish_latency_ms")
 book_subscriptions_active = _gauge("book_subscriptions_active")
 book_crossed_total = _counter("book_crossed_total")
+ingest_book_tier_warmup_abandoned_total = _counter("ingest_book_tier_warmup_abandoned_total")
 #: E21-T01: the book series the metric catalogue lists as exported (re-exported from here).
 BOOK_EXPORTED_NAMES: Final = frozenset(
     {
@@ -429,6 +435,7 @@ BOOK_EXPORTED_NAMES: Final = frozenset(
         "book_publish_latency_ms",
         "book_subscriptions_active",
         "book_crossed_total",
+        "ingest_book_tier_warmup_abandoned_total",
     }
 )
 ingest_ws_up = _gauge("ingest_ws_up")

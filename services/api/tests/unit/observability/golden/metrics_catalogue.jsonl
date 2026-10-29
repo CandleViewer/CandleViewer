@@ -275,6 +275,7 @@
 ["indicator_presets_total", "gauge", ["builtin"], "planned", "E13"]
 ["indicator_recompute_total", "counter", ["reason"], "live", "E13"]
 ["indicator_subscriptions", "gauge", ["bucket"], "live", "E13"]
+["ingest_book_tier_warmup_abandoned_total", "counter", ["symbol"], "live", "E21"]
 ["ingest_queue_depth", "gauge", ["stage"], "live", "E04"]
 ["ingest_stage_seconds", "histogram", ["stage"], "live", "E04"]
 ["kline_hot_boundary_fallback_total", "counter", ["reason"], "live", "E12"]

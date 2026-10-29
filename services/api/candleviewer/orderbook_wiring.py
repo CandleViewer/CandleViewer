@@ -22,7 +22,10 @@ Wires the venue-neutral `book` module to ingestion. Rules:
   default once no 500 demand is left (the WS references' grace has run by then).
   The stream's tick applies a tier change, built muted and swapped in whole. A
   warming tier's snapshot times out as the active one's does; one not LIVE within
-  `WARMUP_DEADLINE_S` is dropped, so `apply_tiers` re-evaluates the demand.
+  `WARMUP_DEADLINE_S` is dropped, so `apply_tiers` re-evaluates the demand; that
+  symbol's next warm-up to the same depth waits `REWARM_BACKOFF_BASE_S`, doubling per
+  abandonment to `REWARM_BACKOFF_CAP_S`, until that tier goes LIVE or its 500 demand
+  changes (`ingest_book_tier_warmup_abandoned_total{symbol}` counts each one).
 * E21-T01: `BestQuoteEvent` on `{env}.md.{symbol}.quote` after each event the
   active tier applied, only on change (`book.quote`); each resync incident's
   `BookDesyncEvent` on `{env}.health.{symbol}.book_desync` with its structured
@@ -60,6 +63,7 @@ from candleviewer.ingestion.metrics import (
     book_writes_dropped_total,
     ingest_book_live,
     ingest_book_resyncs_total,
+    ingest_book_tier_warmup_abandoned_total,
     symbol_label,
 )
 from candleviewer.ingestion.planner import DEFAULT_GRACE_S, DemandTracker
@@ -80,6 +84,12 @@ WRITE_QUEUE_MAXSIZE = 8192
 SNAPSHOT_TIMEOUT_S = 10.0
 #: E21-T01: a warming tier not LIVE this long after its change started is dropped (F2).
 WARMUP_DEADLINE_S = 3 * SNAPSHOT_TIMEOUT_S
+#: #604 (Fable delta, Medium): after an abandoned warm-up the symbol's next warm-up to that depth
+#: waits this long, doubling per abandonment up to the cap, so a venue that never serves the
+#: 500 snapshot costs one unsubscribe + subscribe per 10 min, not per 30 s. The abandoned tier
+#: going LIVE, a change of the symbol's 500 demand set, or forgetting the symbol resets it.
+REWARM_BACKOFF_BASE_S = WARMUP_DEADLINE_S
+REWARM_BACKOFF_CAP_S = 600.0
 #: Per-symbol snapshot-request backoff (#1898 review r2): 250 ms doubling to 30 s,
 #: x[1, 1.25) jitter. A good snapshot resets it; suppressed requests are counted
 #: as `ingest_book_resyncs_total{reason="backoff"}` and the book stays out of LIVE.
@@ -93,6 +103,22 @@ RESYNC_STABLE_S = 5.0
 BOOK_STALE_AFTER_S = STALENESS_S["book"]
 _TICK_S = 0.25
 _JITTER = random.SystemRandom().random
+
+
+class _Rewarm:
+    """One symbol's re-warm gate after an abandoned warm-up (clock-injected)."""
+
+    __slots__ = ("depth", "fails", "next_ok")
+
+    def __init__(self, depth: int) -> None:
+        self.depth, self.fails, self.next_ok = depth, 0, 0.0
+
+    def abandoned(self, now: float) -> float:
+        """Record an abandonment at `now`; the delay before the next warm-up."""
+        delay = min(REWARM_BACKOFF_CAP_S, REWARM_BACKOFF_BASE_S * 2.0**self.fails)
+        self.fails = min(self.fails + 1, 16)
+        self.next_ok = now + delay
+        return delay
 
 
 class _ResyncBackoff:
@@ -224,6 +250,8 @@ class BookStream:
         #: symbol -> clock() reading when its warming tier started, and the limit it has.
         self._warm_since: dict[str, float] = {}
         self._warmup_s = warmup_deadline_s
+        #: #604: symbol -> its re-warm gate after an abandoned warm-up (one per known symbol).
+        self._rewarm: dict[str, _Rewarm] = {}
         #: #3806: the catalogue's tick size (the one `parse_frame` reads), and the grid each
         #: (symbol, depth) book was last snapshotted on. Without it the grid check is off.
         self._tick_size = tick_size
@@ -277,17 +305,34 @@ class BookStream:
         """`acquire`, naming the topic depth the consumer reads (E21-T01): the tier's demand."""
         if not self._is_listed(symbol):
             raise UnknownSymbolError(symbol)
+        deep = self._deep_demand(symbol)
         self._wants.setdefault(symbol, {})[consumer] = depth
+        self._demand_changed(symbol, deep)
         self.acquire(consumer, symbol)
 
     def release(self, consumer: str, symbol: str) -> None:
         self._demand.release(consumer, symbol)
+        deep = self._deep_demand(symbol)
         wants = self._wants.get(symbol)
         if wants is not None:
             wants.pop(consumer, None)
             if not wants:
                 del self._wants[symbol]
+        self._demand_changed(symbol, deep)
         self.sync()
+
+    def _deep_demand(self, symbol: str) -> frozenset[str]:
+        return frozenset(c for c, d in self._wants.get(symbol, {}).items() if d >= DEEP_TIER)
+
+    def _demand_changed(self, symbol: str, before: frozenset[str]) -> None:
+        """#604: a change of the symbol's 500 demand set is a fresh start: no re-warm backoff."""
+        if self._deep_demand(symbol) != before:
+            self._rewarm.pop(symbol, None)
+
+    def rewarm_at(self, symbol: str) -> float | None:
+        """#604: the clock reading before which `symbol` is not re-warmed, or `None`."""
+        rw = self._rewarm.get(symbol)
+        return None if rw is None else rw.next_ok
 
     def tier(self, symbol: str) -> int:
         """The tier `symbol`'s demand asks for (BQ-1): 500 while a consumer reads 500 and
@@ -299,9 +344,12 @@ class BookStream:
     async def apply_tiers(self) -> int:
         """Start the tier change of each symbol whose active tier is not the one its demand asks
         for and that is not already warming one; the changes started."""
-        n = 0
+        n, now = 0, self._clock()
         for symbol, tb in list(self._books.items()):
             want = self.tier(symbol)
+            rw = self._rewarm.get(symbol)
+            if rw is not None and rw.depth == want and now < rw.next_ok:
+                continue  # #604: that depth's last warm-up was abandoned: backing off
             if tb.warming is None and tb.active.depth != want:
                 self._warm_since[symbol] = self._clock()
                 await tb.change_depth(want)
@@ -346,6 +394,7 @@ class BookStream:
         self._books.pop(symbol, None)
         self._wants.pop(symbol, None)  # F6: a pruned symbol's depth demand goes with it
         self._warm_since.pop(symbol, None)
+        self._rewarm.pop(symbol, None)
         for key in self._keys.pop(symbol, []):
             if self._supervisor is not None:
                 self._supervisor.detach(key)
@@ -485,6 +534,9 @@ class BookStream:
                 self._quotes.forget(symbol)
             if obj.state is not BookPhase.LIVE and symbol in self._books:
                 self._not_live_since.setdefault(symbol, self._clock())
+            rw = self._rewarm.get(symbol)
+            if obj.state is BookPhase.LIVE and rw is not None and rw.depth == obj.depth:
+                del self._rewarm[symbol]  # #604: the tier that was abandoned is LIVE now
             if obj.state is BookPhase.LIVE:  # stable-LIVE for RESYNC_STABLE_S resets it
                 bo = self._backoff.get(symbol)
                 if bo is not None:
@@ -605,13 +657,30 @@ class BookStream:
                 tb.warming, dropped = None, True
                 del self._warm_since[sym]
                 self._first_sub.discard((sym, w.depth))  # a later warm-up subscribes afresh
-                logger().warning("book_tier_warmup_abandoned", symbol=sym, depth=w.depth)
+                self._abandoned(sym, tb, w.depth, now)
             elif w.check_timeout(self._timeout_us):
                 n += 1
                 await w.on_snapshot_timeout()
         if dropped:
             self.sync()
         return n
+
+    def _abandoned(self, sym: str, tb: TieredBook, depth: int, now: float) -> None:
+        """#604: count and log the abandonment and back off the symbol's next warm-up. The log
+        stays per abandonment: the backoff makes it at most one per symbol per 10 min."""
+        rw = self._rewarm.get(sym)
+        if rw is None or rw.depth != depth:
+            rw = self._rewarm[sym] = _Rewarm(depth)
+        delay = rw.abandoned(now)
+        ingest_book_tier_warmup_abandoned_total.labels(symbol=symbol_label(sym)).inc()
+        logger().warning("book_tier_warmup_abandoned", symbol=sym, depth=depth, retry_in_s=delay)
+        if tb.active.phase is BookPhase.LIVE:
+            # The symbol's resync backoff grew on the dropped tier's snapshot timeouts; the LIVE
+            # active tier does not inherit that cooldown. Nothing retries the dropped engine:
+            # the deferred loop only calls `active.request_snapshot()`, and `TieredBook` drops
+            # frames of a depth that is neither its active nor its warming tier.
+            self._backoff.pop(sym, None)
+            self._deferred.discard(sym)
 
     async def drain_writes(self, max_batch: int = 500) -> int:
         """Write one batch in row order; on failure requeue the unwritten

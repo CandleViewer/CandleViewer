@@ -1761,6 +1761,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=33,
     ),
     _s(
+        "ingest_book_tier_warmup_abandoned_total",
+        "counter",
+        "warmups",
+        ("symbol",),
+        "Warming book tiers dropped past their warm-up deadline; each re-warm then backs off.",
+        "dashboard only (a steady rate: the venue does not serve that depth's snapshot)",
+        _L,
+        "E21",
+        exported=True,
+        max_series=33,
+    ),
+    _s(
         "engine_process_seconds",
         "histogram",
         "seconds",

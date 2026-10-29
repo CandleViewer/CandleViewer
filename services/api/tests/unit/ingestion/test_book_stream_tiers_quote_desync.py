@@ -124,6 +124,8 @@ async def test_a_warming_tier_that_never_snapshots_falls_back_past_its_deadline(
     await r.stream.check_timeouts()
     engine = r.stream.engine(SYM)
     assert engine is not None and engine.depth == 200 and r.desired == {book_topic(SYM, 200)}
+    assert await r.stream.apply_tiers() == 0  # re-warm backs off (test_book_tier_rewarm_backoff)
+    r.now += WARMUP_DEADLINE_S
     assert await r.stream.apply_tiers() == 1  # the 500 demand is still there: it warms again
     r.stream.release("ws:book:500", SYM)
     r.now += WARMUP_DEADLINE_S + 1
