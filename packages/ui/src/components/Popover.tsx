@@ -269,6 +269,9 @@ export function Popover(props: PopoverProps): JSX.Element {
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === "Escape") {
       // The topmost layer takes Esc and stops there (conventions 32); a tooltip inside takes it first.
+      // A layer opened above this one from inside it (a combobox list, a menu) is not topmost-us: Esc
+      // passes on to the stack, which hands it to that layer, list first.
+      if (!layer.isTopmost()) return;
       event.preventDefault();
       event.stopPropagation();
       change(false);

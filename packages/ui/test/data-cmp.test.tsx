@@ -5,7 +5,10 @@ import {
   Button,
   Card,
   Checkbox,
+  CommandPalette,
   ConfirmDialog,
+  DatePicker,
+  DateRangePicker,
   Dialog,
   Drawer,
   FormField,
@@ -19,6 +22,7 @@ import {
   SegmentedControl,
   Select,
   Slider,
+  Table,
   Tabs,
   TextInput,
   Toast,
@@ -99,6 +103,28 @@ const molecules: [string, () => JSX.Element][] = [
     ),
   ],
   ["CMP-045", () => <Toast title="Session extended" />],
+  ["CMP-047", () => <DatePicker aria-label="Go to date" value="2026-10-23" onChange={noop} />],
+  [
+    "CMP-047",
+    () => (
+      <DateRangePicker
+        aria-label="Replay range"
+        value={{ start: "2026-10-01", end: "2026-10-07" }}
+        onChange={noop}
+      />
+    ),
+  ],
+  [
+    "CMP-049",
+    () => (
+      <Table
+        caption="Users"
+        columns={[{ id: "name", header: "Name", cell: (row: string) => row }]}
+        rows={["alex"]}
+        rowKey={(row) => row}
+      />
+    ),
+  ],
   ["CMP-050", () => <Card title="Accounts">Body</Card>],
 ];
 
@@ -111,6 +137,17 @@ describe("molecules carry their catalogue id", () => {
   it("CMP-043 marks exactly one root with data-cmp (in its portalled layer)", async () => {
     await mount(<Dialog open title="Go to date" onOpenChange={noop} />);
     expect(document.querySelectorAll('[data-cmp="CMP-043"]')).toHaveLength(1);
+  });
+
+  it("CMP-059 marks exactly one root with data-cmp (inside its CMP-043 layer)", async () => {
+    await mount(
+      <CommandPalette
+        open
+        onOpenChange={noop}
+        commands={[{ id: "a", label: "Alpha", group: "Action", onRun: noop }]}
+      />,
+    );
+    expect(document.querySelectorAll('[data-cmp="CMP-059"]')).toHaveLength(1);
   });
 
   it("CMP-044 marks exactly one root with data-cmp (inside its CMP-043 layer)", async () => {

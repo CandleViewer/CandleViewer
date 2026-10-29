@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
-import { useState, type JSX } from "react";
+import { useRef, useState, type JSX } from "react";
 import { act } from "react";
 import { expect, fireEvent, fn, userEvent, waitFor, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { Select, type SelectProps } from "../src/components/index.js";
 import * as stories from "../src/components/Select.stories.js";
+import { useLayer } from "../src/components/internal/layers.js";
 import { mount } from "./theme/mount.js";
 
 const REASON = "Owner only";
@@ -477,6 +478,41 @@ describe("Select open-list keys", () => {
     key(host, "Escape");
     expect(seen).not.toHaveBeenCalled();
     document.removeEventListener("keydown", seen);
+  });
+
+  it("Esc with a layer opened above the open list goes to that layer; then Esc closes the list", async () => {
+    const above = vi.fn();
+    let raise = (): void => undefined;
+    /** A layer that opens over the list on demand and closes on its own Esc. */
+    function Above(): JSX.Element {
+      const ref = useRef<HTMLDivElement>(null);
+      const [up, setUp] = useState(false);
+      raise = () => setUp(true);
+      useLayer(up, {
+        element: ref,
+        modal: false,
+        onEscape: () => {
+          above();
+          setUp(false);
+        },
+      });
+      return <div ref={ref} />;
+    }
+    const host = await mount(
+      <>
+        <Host value="a" />
+        <Above />
+      </>,
+    );
+    key(host, "Enter");
+    expect(box(host)).toHaveAttribute("aria-expanded", "true");
+    act(() => raise());
+    expect(key(host, "Escape")).toBe(false); // the stack took it for the layer above
+    expect(above).toHaveBeenCalledOnce();
+    expect(box(host)).toHaveAttribute("aria-expanded", "true");
+    expect(key(host, "Escape")).toBe(false);
+    expect(above).toHaveBeenCalledOnce();
+    expect(box(host)).toHaveAttribute("aria-expanded", "false");
   });
 
   it("keeps the active option valid when the options change while open", async () => {

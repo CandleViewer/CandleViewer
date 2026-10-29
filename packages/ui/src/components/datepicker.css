@@ -1,0 +1,241 @@
+/*
+ * CMP-047 DatePicker (E05-S03 slice 13; D02F CMP-047, conventions 21, 26, 29): the CMP-007 well (fields.css) with
+ * the value in `type.num.base`, a "UTC" suffix and a CMP-002 ghost calendar button flush at its end; the calendar is
+ * a modal CMP-017 Popover (popover.css: surface, edge, elevation, fade) padded `space.inset.md`. Day cells are
+ * `size.control.height` squares: today a 1px `text.tertiary` ring, the selected day the selected role (the tint and
+ * a 2px inner `border.selected` outline), out-of-range numbers at `opacity.disabled`. Tokens only; no motion of its
+ * own (a month change is instant). Slice 14 adds the range (Start and End, the in-range band) and the time well.
+ */
+.cv-datepicker .cv-field__input {
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+}
+
+/* The calendar button sits flush with the well's end, under its boundary, as SearchBox's clear button. */
+.cv-datepicker .cv-field > .cv-icon-button {
+  margin-block: calc(var(--cv-field-bw) * -1);
+  margin-inline-end: calc(var(--cv-field-bw) * -1);
+  background-clip: padding-box;
+}
+
+.cv-datepicker .cv-field > .cv-field__trail {
+  padding-inline-end: var(--space-inset-xs);
+}
+
+/* With time: the date well fills the row, the time well (an `HH:MM` input) keeps its width, space.inset.xs after. */
+.cv-datepicker__row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+}
+
+.cv-datepicker__row > .cv-datepicker__date {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cv-datepicker__row > .cv-datepicker__time {
+  flex: 0 0 auto;
+}
+
+/*
+ * Range: Start and End space.inset.sm apart, each with its CMP-040 label. The row wraps, so End stacks under Start
+ * when the host is narrower than both (a field's basis is five control heights, eight with time).
+ */
+.cv-daterange__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-sm);
+}
+
+.cv-daterange__part {
+  display: flex;
+  flex: 1 1 calc(var(--size-control-height) * 5);
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+}
+
+.cv-daterange[data-time] .cv-daterange__part {
+  flex-basis: calc(var(--size-control-height) * 8);
+}
+
+.cv-daterange__label {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  overflow-wrap: anywhere;
+}
+
+/* Plain disabled: the labels dim with their fields (CMP-040); T2 never dims. */
+.cv-daterange[data-disabled] .cv-daterange__label {
+  opacity: var(--opacity-disabled);
+}
+
+/* The format hint: CMP-040's help line (caption, text.secondary). */
+.cv-datepicker__hint {
+  padding-block-start: var(--space-stack-xs);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-popover.cv-datepicker__dialog {
+  padding: var(--space-inset-md);
+}
+
+.cv-datepicker__calendar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+}
+
+.cv-datepicker__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-inset-xs);
+}
+
+.cv-datepicker__month {
+  margin: 0;
+  color: var(--color-text-primary);
+  text-align: center;
+  font: var(--type-ui-heading-sm-font-weight) var(--type-ui-heading-sm-font-size) /
+    var(--type-ui-heading-sm-line-height) var(--type-ui-heading-sm-font-family);
+}
+
+.cv-datepicker__grid {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.cv-datepicker__weekday {
+  padding: 0;
+  color: var(--color-text-tertiary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  text-align: center;
+}
+
+.cv-datepicker__weekday abbr {
+  text-decoration: none;
+}
+
+.cv-datepicker__cell {
+  padding: 0;
+  width: var(--size-control-height);
+  height: var(--size-control-height);
+}
+
+.cv-datepicker__day {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-control-height);
+  height: var(--size-control-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+}
+
+.cv-datepicker__day:hover:not([aria-disabled]) {
+  background: var(--color-surface-hover);
+}
+
+/* The keyboard ring (CMP-039), inset so the grid never clips it. */
+.cv-datepicker__day:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * 1px * -1);
+}
+
+.cv-datepicker__day[data-today] {
+  box-shadow: inset 0 0 0 calc(var(--border-hairline) * 1px) var(--color-text-tertiary);
+}
+
+.cv-datepicker__day[data-selected] {
+  background: var(--color-action-selected);
+  box-shadow: inset 0 0 0 calc(var(--border-thick) * 1px) var(--color-border-selected);
+  color: var(--color-text-primary);
+}
+
+/* In range: the band behind the days between the ends (decorative: the ends, the fields and the status carry it). */
+.cv-datepicker__cell[data-in-range] {
+  background: var(--color-surface-selected);
+}
+
+/* Out of range: inactive (availability), not T2; the caption names the range in words. */
+.cv-datepicker__day[aria-disabled] {
+  opacity: var(--opacity-disabled);
+  cursor: default;
+}
+
+.cv-datepicker__caption {
+  margin: 0;
+  max-inline-size: calc(var(--size-control-height) * 7);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+@media (forced-colors: active) {
+  .cv-datepicker .cv-field > .cv-icon-button {
+    color: ButtonText;
+  }
+
+  .cv-datepicker .cv-field[data-disabled] > .cv-icon-button {
+    color: GrayText;
+  }
+
+  .cv-datepicker__day {
+    forced-color-adjust: none;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .cv-datepicker__day:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .cv-datepicker__day[data-today] {
+    box-shadow: none;
+    border: 1px solid CanvasText;
+  }
+
+  .cv-datepicker__day[data-selected] {
+    box-shadow: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .cv-datepicker__day[aria-disabled] {
+    opacity: 1;
+    color: GrayText;
+  }
+
+  .cv-datepicker__cell[data-in-range] > .cv-datepicker__day {
+    border: 1px solid Highlight;
+  }
+
+  .cv-daterange__label {
+    color: CanvasText;
+  }
+
+  .cv-daterange[data-disabled] .cv-daterange__label {
+    color: GrayText;
+    opacity: 1;
+  }
+
+  .cv-datepicker__hint,
+  .cv-datepicker__caption {
+    color: CanvasText;
+  }
+}

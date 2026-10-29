@@ -1,0 +1,317 @@
+/*
+ * CMP-049 Table, table and grid modes (E05-S03, D02F CMP-049). Tokens only; static (no motion: the skeletons and the sort
+ * spinner bring CMP-015's and CMP-014's own, so reduced motion needs nothing here, the reflow included). The host sizes the table's box; the region scrolls inside it and
+ * the header row sticks to its top. `separate` borders, so the sticky header keeps its rule.
+ */
+.cv-table {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  max-block-size: 100%;
+}
+
+/* A 1 em box the reflow observer watches, so a font-size change at a fixed width re-measures. */
+.cv-table__em-probe {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 1em;
+  block-size: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.cv-table__region {
+  min-block-size: 0;
+  overflow: auto;
+}
+
+.cv-table__region:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * -1 * 1px);
+}
+
+.cv-table__table {
+  inline-size: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--color-text-primary);
+}
+
+.cv-table__caption {
+  padding-block-end: var(--space-inset-xs);
+  text-align: start;
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  color: var(--color-text-secondary);
+}
+
+.cv-table__loading {
+  margin-inline-start: var(--space-inset-sm);
+}
+
+/* The header row: sticky, on surface.hover, a 1 px border.subtle rule under it (the real edge forced colours keep). */
+.cv-table__header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  block-size: var(--size-row-height);
+  padding: 0 var(--space-inset-sm);
+  border-block-end: calc(var(--border-hairline) * 1px) solid var(--color-border-subtle);
+  background: var(--color-surface-hover);
+  text-align: start;
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  color: var(--color-text-primary);
+}
+
+.cv-table__header[aria-sort] {
+  padding: 0;
+}
+
+.cv-table__header[data-numeric] {
+  text-align: end;
+}
+
+.cv-table__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A sort button fills its cell; the glyph trails the label at inset.xs. */
+.cv-table__sort {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: var(--size-row-height);
+  margin: 0;
+  padding: 0 var(--space-inset-sm);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.cv-table__header[data-numeric] .cv-table__sort {
+  justify-content: flex-end;
+}
+
+.cv-table__sort-glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+.cv-table__sort .cv-spinner {
+  flex: none;
+}
+
+/* Body rows: zebra (odd canvas, even raised), hover on surface.hover; cells never use text.tertiary. */
+.cv-table__row {
+  background: var(--color-surface-canvas);
+}
+
+.cv-table__row:nth-child(even) {
+  background: var(--color-surface-raised);
+}
+
+.cv-table__row:hover {
+  background: var(--color-surface-hover);
+}
+
+.cv-table__cell {
+  block-size: var(--size-row-height);
+  padding: 0 var(--space-inset-sm);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  color: var(--color-text-primary);
+}
+
+/* Text truncates with an ellipsis; the full text stays in the DOM and is read whole. */
+.cv-table__text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Numbers are end-aligned at type.num.base and never wrap or truncate. */
+.cv-table__cell[data-numeric] {
+  text-align: end;
+  white-space: nowrap;
+}
+
+.cv-table__state {
+  padding: 0;
+}
+
+/*
+ * Grid mode (D02F CMP-049, G21). A focused cell scrolls below the sticky header, never under it (WCAG 2.4.11): the
+ * header row is one `size.row.height` tall (its select box is held to it), so that is each body cell's scroll
+ * margin. Selected rows take `color.action.selected` (after hover and the zebra, so it wins on both).
+ */
+.cv-table__cell {
+  scroll-margin-block-start: var(--size-row-height);
+}
+
+.cv-table__row[aria-selected="true"],
+.cv-table__row[aria-selected="true"]:hover {
+  background: var(--color-action-selected);
+}
+
+/* The select column (a CMP-005 per row, select-all in the header) and the trailing actions column: one control wide. */
+.cv-table__select,
+.cv-table__actions {
+  inline-size: var(--size-control-height);
+  padding: 0;
+  text-align: center;
+}
+
+.cv-table__select .cv-choice {
+  min-block-size: var(--size-row-height);
+  align-items: center;
+  vertical-align: middle;
+}
+
+/*
+ * The box's label ("Select alex", "Select all rows") stays rendered, so it still names the box (a `<label for>`
+ * name source: clipped, never `display: none`); the column shows the box alone.
+ */
+.cv-table__select .cv-choice__label {
+  position: absolute;
+  inline-size: 0;
+  block-size: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.cv-table__actions .cv-icon-button {
+  vertical-align: middle;
+}
+
+/*
+ * Stacked reflow (`16` §3 rule 4): below the columns' summed `minWidthEm` (set as `data-layout` by the
+ * component) every part is a block with its explicit table role. The header row wraps its sort buttons and no
+ * longer sticks; each body row is one block: the first cell its heading line, every other cell a header–value
+ * pair. Text wraps instead of truncating, so nothing overflows sideways. Static: no motion.
+ */
+.cv-table[data-layout="stacked"] :is(table, caption, thead, tbody, tr, th, td) {
+  display: block;
+}
+
+.cv-table[data-layout="stacked"] thead tr {
+  display: flex;
+  flex-wrap: wrap;
+  background: var(--color-surface-hover);
+  border-block-end: calc(var(--border-hairline) * 1px) solid var(--color-border-subtle);
+}
+
+.cv-table[data-layout="stacked"] .cv-table__header {
+  position: static;
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  block-size: auto;
+  min-block-size: var(--size-row-height);
+  border-block-end: 0;
+}
+
+.cv-table[data-layout="stacked"] .cv-table__sort {
+  inline-size: auto;
+  max-inline-size: 100%;
+}
+
+.cv-table[data-layout="stacked"] .cv-table__label {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.cv-table[data-layout="stacked"] .cv-table__row {
+  padding-block: var(--space-inset-xs);
+}
+
+.cv-table[data-layout="stacked"] .cv-table__cell {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-inset-sm);
+  block-size: auto;
+  min-block-size: var(--size-row-height);
+  text-align: start;
+}
+
+/* The heading line: the first data cell, in the label weight, with no header label of its own. */
+.cv-table[data-layout="stacked"] .cv-table__cell[data-heading] {
+  font-weight: var(--type-ui-label-font-weight);
+}
+
+.cv-table__cell-label {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  color: var(--color-text-secondary);
+}
+
+.cv-table[data-layout="stacked"] .cv-table__text {
+  min-inline-size: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.cv-table[data-layout="stacked"] .cv-table__cell-label + .cv-table__text {
+  text-align: end;
+}
+
+/* Stacked, the select box and the actions button sit on their own lines at the row's start. */
+.cv-table[data-layout="stacked"] :is(.cv-table__select, .cv-table__actions) {
+  inline-size: auto;
+  justify-content: flex-start;
+}
+
+@media (forced-colors: active) {
+  .cv-table__region:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .cv-table__header {
+    border-block-end: 1px solid CanvasText;
+  }
+
+  .cv-table__row .cv-table__cell {
+    border-block-end: 1px solid CanvasText;
+  }
+
+  .cv-table__sort-glyph {
+    color: currentColor;
+  }
+
+  .cv-table__row[aria-selected="true"],
+  .cv-table__row[aria-selected="true"]:hover {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .cv-table__row[aria-selected="true"] .cv-table__cell {
+    color: HighlightText;
+  }
+
+  /* Stacked: one separator per row block, not per cell. */
+  .cv-table[data-layout="stacked"] thead tr,
+  .cv-table[data-layout="stacked"] .cv-table__row {
+    border-block-end: 1px solid CanvasText;
+  }
+
+  .cv-table[data-layout="stacked"] .cv-table__row .cv-table__cell {
+    border-block-end: 0;
+  }
+}

@@ -19,6 +19,7 @@ import { Kbd } from "./Kbd.js";
 import { Spinner } from "./Spinner.js";
 import { cx } from "./internal/cx.js";
 import { useLayer, useLayerPortal } from "./internal/layers.js";
+import { keyShortcuts } from "./internal/keyShortcuts.js";
 import { extendTyped, matchIndex, type Typed } from "./internal/listNav.js";
 import { tabStopAfter, tabStopBefore } from "./internal/tabbable.js";
 import {
@@ -109,6 +110,12 @@ interface MenuOwnProps {
   onOpenChange?: (open: boolean) => void;
   /** The type-ahead clock, ms (`performance.now` by default); injectable for tests. */
   now?: () => number;
+  /**
+   * The host's live region says a re-shown T2 reason (once per press): the menu then renders no `role="status"` of
+   * its own. For a host that already owns the one polite region of its surface (CMP-049's line, G12), so a menu per
+   * row adds no region. Absent, the menu renders its own region while any item has a reason.
+   */
+  announceReason?: (reason: string) => void;
   className?: string;
 }
 
@@ -165,29 +172,6 @@ const ROLES: Readonly<Record<MenuItemKind, string>> = {
 
 const shown = (item: MenuItem): string =>
   item.opensConfirm === true && !item.label.endsWith("…") ? `${item.label}…` : item.label;
-
-/** The keymap's display words that `aria-keyshortcuts` spells differently (UI Events key values). */
-const ARIA_KEYS: Readonly<Record<string, string>> = {
-  Ctrl: "Control",
-  Cmd: "Meta",
-  Opt: "Alt",
-  Del: "Delete",
-  Esc: "Escape",
-  Ins: "Insert",
-  PgUp: "PageUp",
-  PgDn: "PageDown",
-  Return: "Enter",
-  "↑": "ArrowUp",
-  "↓": "ArrowDown",
-  "←": "ArrowLeft",
-  "→": "ArrowRight",
-};
-
-const keyShortcuts = (keys: readonly string[] | undefined): string | undefined => {
-  const bound = (keys ?? []).map((key) => key.trim()).filter((key) => key !== "");
-  if (bound.length === 0) return undefined;
-  return bound.map((key) => (Object.hasOwn(ARIA_KEYS, key) ? ARIA_KEYS[key] : key)).join("+");
-};
 
 interface Section {
   readonly key: string;
@@ -318,6 +302,7 @@ export function Menu(props: MenuProps): JSX.Element {
     defaultOpen = false,
     onOpenChange,
     now = () => performance.now(),
+    announceReason,
     className,
   } = props;
   const ariaLabel = props["aria-label"];
@@ -442,7 +427,10 @@ export function Menu(props: MenuProps): JSX.Element {
             : tabStopAfter(from, surface.current);
       root.closeAll(next ?? from);
     },
-    refuse: (key, text) => setRecall((prev) => ({ key, text, count: prev.count + 1 })),
+    refuse: (key, text) => {
+      if (announceReason !== undefined) announceReason(text);
+      else setRecall((prev) => ({ key, text, count: prev.count + 1 }));
+    },
     focused: (key) => {
       if (recall.key !== key && recall.text !== undefined)
         setRecall((prev) => ({ key: "", count: prev.count }));
@@ -479,7 +467,7 @@ export function Menu(props: MenuProps): JSX.Element {
   return (
     <>
       {isContext ? null : cloneElement(triggerElement, triggerProps)}
-      {anyReason(items) ? (
+      {announceReason === undefined && anyReason(items) ? (
         <span className="cv-visually-hidden" role="status">
           {recall.text === undefined ? null : <span key={recall.count}>{recall.text}</span>}
         </span>

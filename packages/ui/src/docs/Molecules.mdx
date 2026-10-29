@@ -127,6 +127,27 @@ query; "Searching…" is shown, never said. `asyncSearch` gets an `AbortSignal`;
 newer query's. A local source without `noResultsText` keeps the list closed when nothing matches; the count
 ("0 results") is still said, so give a host sentence where an empty answer needs one.
 
+### CommandPalette (CMP-059, APG Combobox with a grouped listbox popup, inside the APG Dialog (Modal))
+
+| Keys                    | Action                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Typing                  | Filters (fuzzy, ranked, grouped); the first result becomes active; the count is said once the query settles. |
+| ↓ / ↑                   | Next / previous option, skipping group headers and wrapping; focus stays in the input.                       |
+| Home / End              | First / last option.                                                                                         |
+| PageDown / PageUp       | Ten options on, or back; no wrap.                                                                            |
+| Enter                   | Runs the active command and closes; a destructive one asks the host's confirm; a gated one says its reason.  |
+| Ctrl+Enter              | The group run (`onRunGroup`), gated and confirmed as Enter; without `onRunGroup`, nothing.                   |
+| Esc                     | Closes; focus returns to the opener (CMP-043).                                                               |
+| Tab                     | Stays in the dialog: the input and CMP-043's close button.                                                   |
+| A held Enter (repeated) | Nothing more: a command runs once, a reason is said once per press.                                          |
+
+The input is `role="combobox"` (`aria-autocomplete="list"`, `aria-controls`, `aria-activedescendant`); the listbox
+holds one `role="group"` per section, named by its header. An option's name is its label, then "confirms" on a
+destructive row; a gated option is `aria-disabled` and described by its reason; the CMP-022 hint is `aria-hidden` and
+its keys are the option's `aria-keyshortcuts`. One polite status says the count (or the no-results sentence) once per
+settled query and a re-shown reason once per press. Every string is a prop (E15's SCR-012 keys); `Ctrl+K` is the
+host's binding (#305).
+
 ### Tabs (CMP-042, APG Tabs)
 
 | Keys                                    | Action                                                                                                                                 |
@@ -322,6 +343,87 @@ The trigger is the host's (the CMP-227 chip): `trigger` renders it from the prop
 button. The static methodology (`content`) shows at once; the current values (`values`) load under
 it as CMP-015 rows, or fail as a CMP-027 inline error with Retry (`error`, `onRetry`).
 
+### Table (CMP-049, table mode: the WAI-ARIA APG Table pattern)
+
+| Keys                                             | Action                                                                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                  | The scroll region when it scrolls (named by the caption), then the sortable header buttons in order; the body has no stop. |
+| Arrows, Page Up / Down, Home / End on the region | Scroll it (native).                                                                                                        |
+| Enter / Space on a header button                 | Sorts ascending, then descending; while that column is `sortPending` the press changes nothing.                            |
+
+| Element     | Role                            | Name             | ARIA                                                                                            |
+| ----------- | ------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------- |
+| table       | table (native `<table>`)        | the caption      | `aria-rowcount` (rows and the header; -1 while loading); `aria-busy="true"` while loading       |
+| region      | region, only while it scrolls   | the caption      | `tabindex="0"`; no role and no stop when everything fits                                        |
+| header cell | columnheader (`th scope="col"`) | its label        | `aria-sort` on the sorted column, `none` on the other sortable ones, none on plain headers      |
+| sort button | button                          | the header label | `aria-busy="true"` while `sortPending`; a CMP-014 spinner replaces the glyph                    |
+| row         | row                             | —                | `aria-rowindex` (absolute: the header row is 1)                                                 |
+| live region | status, one per table           | —                | polite: a settled sort ("Sorted by Size, ascending"), a finished load ("3 rows"), an error once |
+
+The consumer sorts the rows: `onSortChange` asks for the next sort and the host passes the sorted
+`rows` and `sort` back. Numeric columns (`numeric`, a NumericText format) are end-aligned and never
+truncate; text cells truncate with an ellipsis and keep the full text in the DOM. Loading keeps the
+header row under CMP-015 skeleton rows and shows the caption's loading words; empty and
+filtered-empty render the host's CMP-026 (`emptyState`) across every column; an error renders CMP-027
+with Retry, spoken once by the table's region (the panel itself is not live). v0 renders every row
+and is not virtualised: above 200 rows it warns in development (#266).
+
+Below the sum of its columns' `minWidthEm` (default 8 each, in the table's own `em`, so 200 % zoom
+counts) the table stacks, one block per row, read in order: the header buttons (wrapped, still
+sorting), then each row with its first cell as the heading line and every other cell as its header
+label then its value. The label is visible but hidden from assistive technology, which takes the
+header from the cell's `columnheader` (the explicit table roles stay while stacked). In table
+navigation a screen reader says the header once, then the value; reading linearly in browse mode it
+reads the values without their headers. Not yet confirmed with NVDA or VoiceOver: an E05-D05 check.
+
+The polite line clears as a load, a pending sort or a Retry starts, so a result identical to the
+last one (the same row count after a reload, the same failure after a Retry) is said again. The
+default empty title "No rows to show" is PROPOSED copy, pending E05-D05 review.
+
+### Table, grid mode (CMP-049, the WAI-ARIA APG Grid pattern)
+
+Any interactive column makes the table a grid: `onRowSelect`'s select column, `rowActions`' actions
+column, or a column marked `interactive`; `grid` forces it on a static table.
+
+| Keys                    | Action                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab         | One stop: into the grid on the last focused cell, else the first body cell; the next Tab leaves.                   |
+| ↑ / ↓                   | Previous / next row, the header row included; stops at the edges.                                                  |
+| ← / →                   | Previous / next cell; stops at the edges.                                                                          |
+| Home / End              | First / last cell of the row.                                                                                      |
+| Ctrl+Home / Ctrl+End    | The grid's first cell (the header row) / its last cell (the last row).                                             |
+| Page Up / Page Down     | By the rows that fit the visible region, less the header; stops at the first / last row.                           |
+| Enter / Space           | On a header button, sorts; on the select box, toggles it; on the actions button, opens the row menu.               |
+| Space                   | On any other body cell, toggles the row's selection (with a select column).                                        |
+| Enter / F2              | On an `interactive` cell, moves focus to its first control (which owns its keys from then on).                     |
+| Esc                     | In an `interactive` cell's control, back to the cell; in the row menu, closes it, focus back where it opened from. |
+| Shift+F10, the Menu key | On a focused body cell, opens the row's menu at the row; T2 items stay arrow-reachable and are never activated.    |
+
+| Element      | Role                                  | Name                              | ARIA                                                                                                            |
+| ------------ | ------------------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| table        | grid                                  | the caption                       | `aria-rowcount`, `aria-colcount`; `aria-multiselectable` with a select column                                   |
+| cell         | gridcell (header cells: columnheader) | its content                       | the roving `tabindex` (0 on the remembered cell); a control takes it in its place                               |
+| row          | row                                   | —                                 | `aria-rowindex`; `aria-selected` with a select column                                                           |
+| select boxes | checkbox (CMP-005)                    | "Select all rows"; "Select {row}" | select-all mixed when some rows are selected                                                                    |
+| actions      | button (CMP-002, `more-horizontal`)   | "Actions for {row}"               | `aria-haspopup="menu"`; opens CMP-041                                                                           |
+| live region  | status, the table's one               | —                                 | adds the selection count ("2 selected", rows only), once per change, and a row menu's T2 reason, once per press |
+
+`{row}` is `rowLabel(row)`, by default the first column's value when it is text or a number, else
+the row's key. A focused cell scrolls into view below the sticky header (`scroll-margin-top` is the
+header's height), so focus is never hidden under it; in grid mode a scrolling region stays a named
+landmark but takes no Tab stop of its own. Selected rows take `color.action.selected` (Highlight in
+forced colours).
+
+A press on a cell makes it the remembered cell, so a right-click opens the pressed row's menu; a
+press beside a built-in control (the select or actions cell's padding) focuses that control. Row
+menus pass CMP-041's `announceReason`, so they render no live region of their own: the table keeps
+one. A row's items (`rowActions`) are asked for only while its menu is open.
+
+Stacked (the reflow above), a grid degrades to a table: arrow navigation needs rows and columns
+laid out, so the explicit table roles return and every control (the select boxes, the actions
+buttons, an `interactive` cell's controls) is its own Tab stop, in reading order; the row menu
+still opens with `Shift+F10`, and `aria-selected` stays on the rows.
+
 ### Menu (CMP-041, APG Menu Button and Menu)
 
 | Keys                                         | Action                                                                                                        |
@@ -377,3 +479,75 @@ Submenu decisions (E05-S03):
 - A submenu always opens on its first item; a checked radio item in it does not choose where it starts.
 - No RTL mirroring yet: `→` opens and `←` closes in every direction, and a submenu opens `right-start`
   (a known deferral, to be tracked in its own issue).
+
+A re-shown T2 reason is said by the menu's own polite `role="status"`, rendered only while some item
+has a reason. A host that owns its surface's one live region (CMP-049's line) passes
+`announceReason` instead: the menu then renders no region and hands each re-shown reason to the
+host.
+
+### DatePicker (CMP-047, APG Date Picker Dialog; the dialog is modal)
+
+| Keys                                            | Action                                                                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab (field)                         | The date field, the time field (`withTime`), then the calendar button.                                              |
+| Typing                                          | `YYYY-MM-DD`, parsed on blur or Enter; never clamped. Unparsable or out-of-range text keeps its words and no value. |
+| Alt+↓ in the field; Enter / Space on the button | Opens the dialog; focus on the selected day, else today, else the nearest allowed day.                              |
+| ← / →                                           | Previous / next day, across month and year edges.                                                                   |
+| ↑ / ↓                                           | The same weekday, previous / next week.                                                                             |
+| Home / End                                      | Monday / Sunday of the week.                                                                                        |
+| Page Up / Page Down                             | Previous / next month: the same day number, clamped to the month's last.                                            |
+| Shift+Page Up / Shift+Page Down                 | Previous / next year (29 February clamps to 28).                                                                    |
+| Enter / Space on a day                          | Picks it and closes.                                                                                                |
+| Enter / Space on an out-of-range day            | Nothing changes; the caption is spoken on every such press.                                                         |
+| Tab / Shift+Tab (dialog)                        | Cycles the month buttons and the grid's one tab stop; focus stays in the dialog.                                    |
+| Esc                                             | Closes without a change. Every close returns focus to the calendar button.                                          |
+| Any key while T2                                | The field is read-only, the button `aria-disabled`: the dialog never opens; the reason is spoken once per visit.    |
+
+| Element         | Role                        | Name                               | ARIA                                                                                            |
+| --------------- | --------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
+| date field      | textbox                     | CMP-040's label (or `aria-label`)  | `aria-describedby`: the error, the format hint, then the "UTC" suffix; T2 the reason alone      |
+| calendar button | button                      | "Choose date"                      | `aria-haspopup="dialog"`, `aria-expanded`; T2 `aria-disabled="true"` with the reason            |
+| dialog          | dialog, `aria-modal="true"` | the month heading ("October 2026") | a modal CMP-017 Popover                                                                         |
+| grid            | grid                        | the month heading                  | Monday-first `columnheader`s, each an `abbr` with the full weekday name                         |
+| day             | gridcell holding a button   | "23 October 2026", with ", today"  | `aria-selected` on the selected cell; `aria-disabled` out of range; `aria-current="date"` today |
+| month buttons   | button                      | "Previous month" / "Next month"    | CMP-002 `ghost`; focus stays on the button                                                      |
+| caption status  | status                      | —                                  | empty until an out-of-range day is chosen                                                       |
+
+The value is an ISO `YYYY-MM-DD` string in UTC, never a `Date`; today comes from an injectable
+`now` clock. The date math is in-house: no date library. `withTime` adds an `HH:MM` well after the
+date (24-hour UTC, typed only, parsed on blur or Enter as `H:MM` or `HH:MM`) with its own `time` and
+`onTimeChange`, and the calendar button moves to the end of the time well, so the Tab order is the
+date, the time, then the button. The range form is its own export, `DateRangePicker`, so
+`DatePickerProps` keeps `value: string | null`.
+
+A press inside the open calendar stays the calendar's: React bubbles it through the portal to the
+well, which forwards only presses on its own padding and suffix to the field. A read-only field
+keeps its value selectable, and its calendar button is natively disabled, so it leaves the Tab
+order (T2's `aria-disabled` is for a gated field only). Empty cells before the 1st and after the
+last day are empty `gridcell`s, as in the APG example.
+
+### DateRangePicker (CMP-047 range; the same dialog and grid keys)
+
+| Keys                                            | Action                                                                                                               |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab (fields)                        | Start, Start time, End, End time (the times with `withTime`), then the calendar button on the End field's last well. |
+| Typing                                          | Each field parsed on blur or Enter and committed on its own; an end before the start is the host's check.            |
+| Alt+↓ in any field; Enter / Space on the button | Opens the dialog on the start, else today, else the nearest allowed day.                                             |
+| Enter / Space on a day                          | The first pick sets the start; the second sets the end and closes; a second pick before the start replaces it.       |
+| Esc                                             | Closes without a change, dropping a pending start; focus returns to the calendar button.                             |
+| Any key while T2                                | Every field read-only behind its lock, the button `aria-disabled`; one reason for all.                               |
+
+| Element         | Role                      | Name                               | ARIA                                                                                           |
+| --------------- | ------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
+| range           | group                     | CMP-040's label (or `aria-label`)  | `data-mode="range"`; one error line, one hint, one reason for every field                      |
+| Start / End     | textbox                   | the visible labels "Start" / "End" | as the date field; `startLabel` / `endLabel` rename them                                       |
+| time fields     | textbox                   | "Start time" / "End time"          | the date label + " time" (`startLabel` / `endLabel` rename them); `HH:MM`; "UTC" described     |
+| calendar button | button                    | "Choose dates"                     | as the single form                                                                             |
+| day             | gridcell holding a button | as the single form                 | `aria-selected` on every day of the range (only the start while the end is pending)            |
+| start status    | status (in the dialog)    | —                                  | "Start 2026-10-01. Choose the end date." on the start pick, and on a pick that replaces it     |
+| range status    | status (in the group)     | —                                  | "2026-10-01 to 2026-10-07, 7 days." once the dialog has closed and the page is no longer inert |
+
+The band (`color.surface.selected` behind the days between the ends) is decorative: the ends, the
+fields and the two sentences carry the range. While the end is pending it previews to the day under
+the pointer, else the focused day, and selects nothing. The fields wrap, so End stacks under Start
+when the host is narrower than both.

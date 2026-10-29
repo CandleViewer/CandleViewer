@@ -13,6 +13,7 @@ import { Icon } from "../icons/Icon.js";
 import { ReasonText } from "./internal/disabledReason.js";
 import { useFieldControl } from "./internal/fieldContext.js";
 import { FieldMessage, useRefusalAnnounce } from "./internal/fieldParts.js";
+import { useLayer } from "./internal/layers.js";
 import {
   extendTyped,
   firstIndex,
@@ -237,6 +238,16 @@ export function Select({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, current]);
 
+  // The open list is a layer of the overlay stack (conventions 32), so a Popover it sits in lets Esc reach the list
+  // first. The trigger's own handler takes a plain Esc (focus never leaves it while open); the stack only sees a
+  // chord, which stays the host's, so the list never claims it there and it passes to the layer below.
+  const layer = useLayer(open, {
+    element: popupRef,
+    modal: false,
+    onEscape: () => setOpen(false),
+    claimsEscape: () => false,
+  });
+
   const handleKey = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (reason.gated || reason.disabled) return;
     const { key } = event;
@@ -319,6 +330,8 @@ export function Select({
         choose(current);
         break;
       case "Escape":
+        // A layer opened above the list takes Esc first: it passes on to the stack untouched.
+        if (!layer.isTopmost()) break;
         // The first Esc closes the list and stops there; a second one bubbles to the host. React's stopPropagation
         // also stops the native event, so a bubble-phase document listener never sees it (a capture one still does).
         consume();

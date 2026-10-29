@@ -79,7 +79,9 @@ describe("menu.css contract (CMP-041)", () => {
     const exit = find(normal, ".cv-menu[hidden]", "transition");
     expect(exit).toContain("display: none");
     expect(exit).toContain("pointer-events: none");
-    expect(exit).toContain("opacity var(--motion-duration-fast) var(--motion-easing-accelerate)");
+    expect(exit).toContain(
+      "opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate))",
+    );
     expect(find(normal, ".cv-menu:not([data-positioned])", "opacity")).toContain("opacity: 0");
   });
 

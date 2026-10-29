@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { expect, fireEvent, within } from "storybook/test";
 import { afterEach, describe, it, vi } from "vitest";
 import { Button, Popover, Tooltip, type PopoverProps } from "../src/components/index.js";
+import { useLayer } from "../src/components/internal/layers.js";
 import { mount } from "./theme/mount.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -434,6 +435,42 @@ describe("Popover (CMP-017)", () => {
     expect(isOpen()).toBe(true);
     await key("Escape");
     expect(isOpen()).toBe(false);
+  });
+
+  it("Esc with a layer above it (a list opened from inside) goes to that layer; then Esc closes it", async () => {
+    const above = vi.fn();
+    /** A list-like layer opened from a field inside the panel: it stays registered until its own Esc. */
+    function Field(): JSX.Element {
+      const ref = useRef<HTMLDivElement>(null);
+      const [up, setUp] = useState(true);
+      useLayer(up, {
+        element: ref,
+        modal: false,
+        onEscape: () => {
+          above();
+          setUp(false);
+        },
+      });
+      return (
+        <div ref={ref}>
+          <input aria-label="Symbol" />
+        </div>
+      );
+    }
+    const host = await mount(
+      <Popover aria-label="Layer" anchor={<Button>Layer</Button>}>
+        <Field />
+      </Popover>,
+    );
+    await click(trigger(host, "Layer"));
+    expect(within(dialog()).getByRole("textbox", { name: "Symbol" })).toHaveFocus();
+    await key("Escape");
+    expect(above).toHaveBeenCalledOnce();
+    expect(isOpen()).toBe(true);
+    await key("Escape");
+    expect(above).toHaveBeenCalledOnce();
+    expect(isOpen()).toBe(false);
+    expect(trigger(host, "Layer")).toHaveFocus();
   });
 
   it("heading, body and footer parts; className joins", async () => {

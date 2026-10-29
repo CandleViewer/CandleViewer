@@ -291,6 +291,22 @@ describe("Menu (CMP-041) items", () => {
     expect(status).toHaveTextContent("");
   });
 
+  it("announceReason: no status region of its own; the host is handed the reason once per press", async () => {
+    const announceReason = fn<(reason: string) => void>();
+    await renderMenu({ items: states, announceReason });
+    expect(page.queryByRole("status")).toBeNull();
+    await openWith("{Enter}");
+    expect(page.queryByRole("status")).toBeNull();
+    await press("{ArrowDown}");
+    expect(announceReason).not.toHaveBeenCalled();
+    await press("{Enter}{Enter}");
+    expect(announceReason.mock.calls).toEqual([
+      ["Only the owner can change account settings."],
+      ["Only the owner can change account settings."],
+    ]);
+    expect(page.queryByRole("status")).toBeNull();
+  });
+
   it("hovering moves focus to the row's item, gated, disabled and busy rows too, without activating", async () => {
     const onSelect = fn();
     await renderMenu({ items: states.map((item) => ({ ...item, onSelect })) });
