@@ -368,6 +368,29 @@ def _held(world: AdminWorld) -> dict[str, Any]:
     }
 
 
+def test_view_as_lock_locks_only_the_viewers_own_session(admin: AdminWorld) -> None:
+    """#4743 (BQ-3): lock is one of the viewer's own operations, so a viewing Owner's lock passes
+    the view-as guard and locks the Owner's own session, as the viewer; the Manager's session is
+    untouched, and the record names the viewer and the viewer's session."""
+    owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
+    admin.elevate(["users"])  # the start's step-up class
+    start = {"json": {"target_user_id": str(manager.user_id), "reason": "AC-LOCK view-as"}}
+    assert admin.send("owner", "POST", "/admin/view-as", start).status_code == 201
+    mark = len(admin.audit.records)
+    r = admin.send("owner", "POST", "/auth/lock", {})
+    assert r.status_code == 200 and r.json()["session"]["id"] == str(owner.session_id), r.text
+    rows = cast(Any, admin.auth.view_as_store).sessions  # the fake store's rows
+    assert rows[str(owner.session_id)].locked_at is not None
+    assert rows[str(manager.session_id)].locked_at is None
+    (locked,) = [
+        rec for rec in admin.audit.records[mark:] if rec["action"] == "auth.session_locked"
+    ]
+    assert (str(locked["actor_user_id"]), str(locked["session_id"])) == (
+        str(owner.user_id),
+        str(owner.session_id),
+    )
+
+
 def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     """The deployed composition's whole path (the S13b security look's Low-2): an Owner starts
     viewing as a Manager, `201`, which `GET /auth/session/view-as` reads back `active`, with the
