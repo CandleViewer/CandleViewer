@@ -913,6 +913,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=3,
     ),
     _s(
+        "cv_account_disabled_total",
+        "counter",
+        "disables",
+        ("reason",),
+        "Stored account disables (updateExchangeAccount, E27-S04) by why each went ahead: flat, "
+        "leave_positions, flattened or dead; a repeat stores nothing and is not counted.",
+        "dashboard",
+        _L,
+        "E27",
+        max_series=4,
+    ),
+    _s(
         "cv_key_rotation_notices_total",
         "counter",
         "notices",

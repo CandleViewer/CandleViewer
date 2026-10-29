@@ -157,8 +157,9 @@ class NewKeyRotation:
 
 
 RotationStep = Literal["validated", "cutover", "completed", "failed"]
-#: `create_account`'s write-ahead audit hook (C-2.9, #895): awaited on the inserted row in the
-#: insert's transaction, before its commit; anything it raises rolls the insert back.
+#: The write-ahead audit hook of `create_account` (C-2.9, #895) and `update_account` (#898):
+#: awaited on the written row in its transaction, before its commit; anything it raises rolls the
+#: write back.
 AccountWriteAhead = Callable[[ExchangeAccountRow], Awaitable[None]]
 
 
@@ -188,6 +189,11 @@ class AccountsStoreRuleError(AccountsStoreError):
 
 class AccountsStoreStaleError(AccountsStoreError):
     """If-Match token no longer matches a live row."""
+
+
+class AccountsStoreUnchangedError(AccountsStoreError):
+    """`update_account`'s `expect_enabled` no longer holds on a live row whose tag still matches:
+    a concurrent disable or re-enable won, and nothing was written (#898 B3b2)."""
 
 
 class AccountsRowCounts(Protocol):
@@ -239,6 +245,8 @@ class AccountsStore(AccountsRowCounts, Protocol):
         patch: ExchangeAccountPatch,
         *,
         if_match: datetime | None,
+        expect_enabled: bool | None = None,
+        write_ahead: AccountWriteAhead | None = None,
     ) -> ExchangeAccountRow | None: ...
 
     async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> bool: ...

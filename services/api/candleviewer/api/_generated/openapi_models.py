@@ -668,7 +668,7 @@ class UpdateExchangeAccountRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    label: Annotated[str | None, Field(max_length=80)] = None
+    label: Annotated[str | None, Field(max_length=80, min_length=1)] = None
     enabled: Annotated[
         StrictBool | None,
         Field(

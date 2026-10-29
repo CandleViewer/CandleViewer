@@ -883,6 +883,16 @@ def test_create_app_serves_the_wallet_topic_from_the_runtime_through_the_gateway
     assert [entry["exchange_account_id"] for entry in body.structured["health"]] == [str(ACC)]
 
 
+def test_create_app_binds_the_ws_closed_scope_to_the_runtimes_standings() -> None:
+    """23 §9.5 (F-01, #898 B3b2): `SubscriptionServices.account_closed` unset closes no account,
+    so the one assignment the refusal depends on is pinned: the bound read is the standings' own."""
+    app = appmod.create_app(Settings(environment=Environment.TESTNET))
+    runtime, services = app.state.account_health, app.state.ws_registry.services
+    closed: Any = services.account_closed
+    assert closed is not None
+    assert closed.__self__ is runtime.standings and closed == runtime.standings.closed
+
+
 @pytest.mark.parametrize("seam", ["release", "journal"])
 def test_a_release_or_a_journal_without_the_read_it_goes_with_is_refused(seam: str) -> None:
     async def release() -> None:

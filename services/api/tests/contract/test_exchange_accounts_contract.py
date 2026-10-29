@@ -844,8 +844,8 @@ def test_the_dead_path_audits_why_the_stop_loss_refusal_was_lifted() -> None:
     assert "`account.disabled`" in vocabulary and "`account.deleted`" in vocabulary
     assert "`api_key.revoke`" in vocabulary and "apikey.revoked" not in doc
     assert "api_key.revoke" in AUDIT_ACTIONS
-    # E27-S04 (#898) registers `account.disabled` with its route and flips this line.
-    assert "account.disabled" not in AUDIT_ACTIONS
+    # E27-S04 (#898) registered `account.disabled` with its route (B3b2) and flipped this line.
+    assert "account.disabled" in AUDIT_ACTIONS
     assert "accounts.disable" not in OPENAPI_SPEC_PATH.read_text(encoding="utf-8")
 
 

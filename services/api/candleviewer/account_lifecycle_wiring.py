@@ -39,19 +39,32 @@ from typing import Any, Final, Literal, Protocol
 import structlog
 
 from candleviewer.accounts.consequences import ARMED_LISTED
+from candleviewer.accounts.lifecycle import (
+    AccountLifecycle,
+    DisableReason,
+    LifecycleStore,
+    Standings,
+    Streams,
+    Subscriptions,
+)
 from candleviewer.accounts.profile_repository import ArmedRule
 from candleviewer.rules.manager import RuleRow, RulesManager, RuleStore
 from candleviewer.statechart.plugins import LogPager, Pager
 from candleviewer.user_cascade_wiring import DISARMED, RulesNotRunning, _acting_owner, _disarm_lock
 
 __all__ = [
+    "DISABLE_REASONS",
     "PAGE_EVENT",
     "AccountRuleDisarmer",
     "CoveringRules",
     "Disarmed",
     "account_disarm_key",
     "coverage",
+    "wire_account_lifecycle",
 ]
+
+#: `cv_account_disabled_total{reason}`'s closed set, every child bound at zero.
+DISABLE_REASONS: Final[tuple[DisableReason, ...]] = ("flat", "leave_positions", "flattened", "dead")
 
 #: The page's event (ticket tech notes: "critical when rule disarm fails").
 PAGE_EVENT: Final = "account.rule_not_disarmed"
@@ -213,3 +226,42 @@ class AccountRuleDisarmer:
                 _log().critical(
                     "accounts.disarm_page_failed", event=PAGE_EVENT, error=type(exc).__name__
                 )
+
+
+class _Counter(Protocol):
+    def labels(self, *values: str) -> Any: ...
+
+
+class _Rules(Protocol):
+    """`profiles_wiring.ProfilesWiring`'s armed-rule read."""
+
+    @property
+    def rules(self) -> CoveringRules: ...
+
+
+def wire_account_lifecycle(
+    store: LifecycleStore | None,
+    profiles: _Rules | None,
+    *,
+    standings: Standings,
+    subscriptions: Subscriptions,
+    rule_store: RuleStore,
+    manager: Callable[[], RulesManager | None],
+    streams: Streams,
+    disabled: _Counter,
+) -> AccountLifecycle | None:
+    """The account lifecycle `updateExchangeAccount` stores through (E27-S04 B3b2, #898), over the
+    accounts store and the profile wiring's R10 armed-rule read (`None` without either: the fake
+    backend, whose route answers 503; the store is checked first, so a profile wiring is read only
+    with it), the key standing, the WS revoke, the rule disarm and the adapter's private-stream
+    close; each stored disable is counted by its reason, every child bound at 0."""
+    if store is None or profiles is None:
+        return None
+    rules = profiles.rules
+    for reason in DISABLE_REASONS:
+        disabled.labels(reason)
+    disarmer = AccountRuleDisarmer(rules, rule_store, manager)
+    return AccountLifecycle(
+        store, standings, subscriptions, disarmer, streams,
+        count=lambda reason: disabled.labels(reason).inc(),
+    )  # fmt: skip

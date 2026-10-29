@@ -41,6 +41,7 @@ from candleviewer.storage.repositories.accounts import (
     AccountsStoreRuleError,
     AccountsStoreScopeDeniedError,
     AccountsStoreStaleError,
+    AccountsStoreUnchangedError,
     AccountWriteAhead,
     ApiKeyRotationRow,
     ApiKeyRow,
@@ -263,6 +264,8 @@ _UPDATE = sa.text(
     "updated_at = greatest(clock_timestamp(), ea.updated_at + interval '1 microsecond') "
     "WHERE ea.id = CAST(:id AS uuid) AND ea.deleted_at IS NULL "
     "AND (CAST(:if_match AS timestamptz) IS NULL OR ea.updated_at = CAST(:if_match AS timestamptz))"
+    " AND (CAST(:expect_enabled AS boolean) IS NULL "
+    "OR ea.is_enabled = CAST(:expect_enabled AS boolean))"
     " RETURNING "
     "ea.id::text AS id, ea.exchange::text AS exchange, ea.env::text AS env, "
     "ea.kind::text AS kind, ea.exchange_uid AS exchange_uid, "
@@ -687,7 +690,14 @@ class SqlAlchemyAccountsStore:
         patch: ExchangeAccountPatch,
         *,
         if_match: datetime | None,
+        expect_enabled: bool | None = None,
+        write_ahead: AccountWriteAhead | None = None,
     ) -> ExchangeAccountRow | None:
+        """One conditional `UPDATE` (compare-and-set): `if_match` the stored `updated_at`,
+        `expect_enabled` the stored `is_enabled` (#898 B3b2). A live row that misses the first is
+        `AccountsStoreStaleError`, one that misses only the second `AccountsStoreUnchangedError`
+        (a concurrent disable or re-enable won: a repeat). `write_ahead` is awaited on the
+        updated row before the commit, as `create_account`'s is."""
         owner = _require_owner(scope)
         if (
             patch.label is None
@@ -704,6 +714,7 @@ class SqlAlchemyAccountsStore:
             "position_mode": patch.position_mode,
             "margin_mode": patch.margin_mode,
             "if_match": if_match,
+            "expect_enabled": expect_enabled,
         }
         try:
             async with self._relational.unit_of_work() as uow:
@@ -713,9 +724,15 @@ class SqlAlchemyAccountsStore:
                     live = await uow.session.execute(
                         _GET_OWNER, {"id": str(account_id), "caller": str(owner.user_id)}
                     )
-                    if live.mappings().first() is not None:
-                        raise AccountsStoreStaleError
-                    return None
+                    if (found := live.mappings().first()) is None:
+                        return None
+                    if expect_enabled is not None and (
+                        if_match is None or found["updated_at"] == if_match
+                    ):
+                        raise AccountsStoreUnchangedError
+                    raise AccountsStoreStaleError
+                if write_ahead is not None:
+                    await bounded_write_ahead(write_ahead(_account(row)), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
             state, name = _sqlstate_and_constraint(exc)

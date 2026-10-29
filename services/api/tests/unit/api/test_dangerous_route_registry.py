@@ -721,8 +721,8 @@ def test_recording_writes_without_step_up_are_swept_and_allow_listed(path: str) 
 _PENDING_HANDLER_GATES = {
     ("POST", "/admin/backups/{backupId}/restore"),
     # E27-S04 (#898), B3a: registered with the class; each is mounted, with its handler test, by
-    # its slice (B3b2 the patch, B3c the delete, B3d the revoke), which drops it here.
-    ("PATCH", "/exchange-accounts/{accountId}"),
+    # its slice (B3c the delete, B3d the revoke), which drops it here. B3b2 mounted the patch
+    # (`tests/contract/test_update_exchange_account_provider.py`).
     ("DELETE", "/exchange-accounts/{accountId}"),
     ("DELETE", "/exchange-accounts/{accountId}/keys/{keyId}"),
     # E28-T05 (#909): S2d mounts the definition's replace and delete, with its handler test.

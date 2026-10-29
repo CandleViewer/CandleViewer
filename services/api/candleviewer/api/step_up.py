@@ -560,6 +560,48 @@ async def require_bound_elevation(
     return spent if isinstance(spent, SpentGrant) else required_problem(spent, text)
 
 
+#: (request, its fingerprint, the challenge's text) -> the no-grace grant this request spent,
+#: else the problem to return (`bound_request_elevation`).
+BoundRequestElevation = Callable[
+    [Request, str, ChallengeText], Awaitable[JSONResponse | SpentGrant]
+]
+
+
+def bound_request_elevation(
+    auth: _AuthLike, action_class: str, emitter: _Emitter
+) -> BoundRequestElevation:
+    """`require_bound_elevation` of `action_class` for the session behind the bearer token,
+    authenticated as `request_elevation` authenticates it (E27-S04 B3b2, #898): a handler whose
+    principal carries no session id fingerprints the request it validated and passes it here."""
+
+    async def demand(
+        request: Request, fingerprint: str, text: ChallengeText
+    ) -> JSONResponse | SpentGrant:
+        if not auth.sessions_is_active:
+            return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+        token = _bearer(request)
+        if token is None:
+            return _unauthenticated()
+        try:
+            record = await auth.sessions.authenticate_access_token(token)
+        except AuthError:
+            return _unauthenticated()
+        return await require_bound_elevation(
+            auth, record.id, action_class, fingerprint=fingerprint, emitter=emitter, text=text
+        )
+
+    return demand
+
+
+async def demand_bound_elevation(
+    elevation: BoundRequestElevation | None, request: Request, fingerprint: str, text: ChallengeText
+) -> JSONResponse | SpentGrant:
+    """`elevation(request, fingerprint, text)`; none wired is a 503, as in `demand_elevation`."""
+    if elevation is None:
+        return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+    return await elevation(request, fingerprint, text)
+
+
 #: `is_dangerous` routes (permissions seeded `is_dangerous=true`) -> the
 #: step-up action class that must be elevated. Method + path regex. Paths are
 #: the `22-api-openapi.yaml` contract; entries for routes that later epics
@@ -1053,11 +1095,14 @@ def make_step_up_router(
 
 
 __all__ = [
+    "BoundRequestElevation",
     "RequestElevation",
     "SpentGrant",
     "StepUpAuth",
     "StepUpEmitter",
     "StepUpRefused",
+    "bound_request_elevation",
+    "demand_bound_elevation",
     "demand_elevation",
     "make_read_only_guard",
     "make_step_up_router",

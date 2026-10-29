@@ -45,6 +45,11 @@ class AccountVersionConflictError(AccountsError):
     """If-Match token is stale; problem code `version_conflict` (412)."""
 
 
+class AccountUnchangedError(AccountsError):
+    """A compare-and-set on the account's enabled flag missed: a concurrent disable or re-enable
+    stored it first, and nothing was written. The caller's request is then a repeat (#898)."""
+
+
 class ProfileUnavailableError(AccountsError):
     """A profile could not be read. The effective read (the order path's cache) raises it when the
     store failed or timed out, when writes kept overtaking the read, or for an unreadable stored

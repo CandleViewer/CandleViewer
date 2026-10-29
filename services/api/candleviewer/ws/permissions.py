@@ -303,6 +303,10 @@ class SubscriptionServices:
     span_ids: Callable[[], str] | None = None
     #: #3476 (§7.5): the rebuild limit per user, which every connection's budget draws on too.
     user_rebuilds: UserRebuilds = field(default_factory=UserRebuilds)
+    #: §9.5 (E27-S04, #898): whether an account is closed to new subscriptions, its account
+    #: disabled or its last signable key revoked (`KeyStandings.closed`, synchronous, bound late
+    #: by the app); `None` closes none.
+    account_closed: Callable[[uuid.UUID], bool] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -789,13 +793,21 @@ class ConnectionAuthz:
         return scope or EntityScope()
 
     def _may_view(self, permission: Permission, account: uuid.UUID) -> bool:
+        """The grant decides, and an account closed by its disable or last key's revoke is out of
+        scope for every caller (§9.5): a `sub` naming it alone is `account_scope_denied`, and
+        one naming others too is narrowed to them. The standing is read only for an account the
+        grant admits, so an id outside the scope reads nothing more than an unknown one (E17-X02
+        AC-05)."""
         decision = decide(
             self.principal,
             permission,
             scope=Scope.GRANTED_ACCOUNTS,
             exchange_account_id=account,
         )
-        return isinstance(decision, Allow)
+        if not isinstance(decision, Allow):
+            return False
+        closed = self.services.account_closed
+        return closed is None or not closed(account)
 
     def _record(self, sub: Subscription) -> None:
         self.by_id[sub.sub_id] = sub

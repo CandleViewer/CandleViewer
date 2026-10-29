@@ -39,7 +39,9 @@ from candleviewer.storage.repositories.accounts import (
     AccountsStoreRuleError,
     AccountsStoreScopeDeniedError,
     AccountsStoreStaleError,
+    AccountsStoreUnchangedError,
     ExchangeAccountPatch,
+    ExchangeAccountRow,
     GrantScope,
     NewExchangeAccount,
     NewKeyRotation,
@@ -771,3 +773,99 @@ async def test_the_grantee_read_ends_on_the_server_at_250_ms_without_a_caller_bo
     assert sqlstate_of(raised.value) == "57014"
     monkeypatch.undo()
     assert await store.list_grantees(owner, acct.id) == ()
+
+
+# -- #898 B3b2: the patch's write-ahead and its compare-and-set on `is_enabled` ------------------
+
+
+async def test_a_refused_write_ahead_rolls_the_disable_back(
+    store: SqlAlchemyAccountsStore, pg_dsn: str
+) -> None:
+    owner = OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(_exchange(pg_dsn)))
+    seen: list[bool] = []
+
+    async def refused(row: ExchangeAccountRow) -> None:
+        seen.append(row.is_enabled)
+        raise RuntimeError("the audit writer refused")
+
+    with pytest.raises(RuntimeError):
+        await store.update_account(
+            owner,
+            acct.id,
+            ExchangeAccountPatch(is_enabled=False),
+            if_match=None,
+            expect_enabled=True,
+            write_ahead=refused,
+        )
+    assert seen == [False]  # the hook saw the written row, inside its transaction
+    assert await store.get_account(owner, acct.id) == acct  # rolled back
+
+
+async def test_a_stale_tag_is_412_and_a_missed_enabled_flag_a_repeat(
+    store: SqlAlchemyAccountsStore, pg_dsn: str
+) -> None:
+    owner = OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(_exchange(pg_dsn)))
+    off = ExchangeAccountPatch(is_enabled=False)
+    done = await store.update_account(owner, acct.id, off, if_match=None, expect_enabled=True)
+    assert done is not None and done.is_enabled is False
+    with pytest.raises(AccountsStoreStaleError):  # the tag the caller read moved
+        await store.update_account(
+            owner, acct.id, off, if_match=acct.updated_at, expect_enabled=True
+        )
+    with pytest.raises(AccountsStoreUnchangedError):  # no tag: the disable is a repeat
+        await store.update_account(owner, acct.id, off, if_match=None, expect_enabled=True)
+    with pytest.raises(AccountsStoreUnchangedError):  # the current tag: still a repeat
+        await store.update_account(
+            owner, acct.id, off, if_match=done.updated_at, expect_enabled=True
+        )
+
+
+def _waiting_on_a_lock(dsn: str) -> bool:
+    with _c(dsn) as conn:
+        row = conn.execute(
+            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
+        ).fetchone()
+    return row is not None and int(str(row[0])) > 0
+
+
+async def test_two_racing_disables_store_once_and_write_one_record(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    """Ruling 6: the second blocks on the row lock, sees the account disabled and is a repeat."""
+    owner = OwnerScope(_user(pg_dsn, "owner"))
+    first, second = SqlAlchemyAccountsStore(rel), SqlAlchemyAccountsStore(rel)
+    acct = await first.create_account(owner, _new(_exchange(pg_dsn)))
+    records: list[str] = []
+    held = asyncio.Event()
+    go = asyncio.Event()
+
+    async def slow(row: ExchangeAccountRow) -> None:
+        records.append("first")
+        held.set()
+        await go.wait()  # the first holds the row lock inside its transaction
+
+    async def fast(row: ExchangeAccountRow) -> None:
+        records.append("second")
+
+    off = ExchangeAccountPatch(is_enabled=False)
+    one = asyncio.create_task(
+        first.update_account(
+            owner, acct.id, off, if_match=None, expect_enabled=True, write_ahead=slow
+        )
+    )
+    await held.wait()
+    two = asyncio.create_task(
+        second.update_account(
+            owner, acct.id, off, if_match=None, expect_enabled=True, write_ahead=fast
+        )
+    )
+    async with asyncio.timeout(10):  # an event waiter on the server's own view, no sleep
+        while not await asyncio.to_thread(_waiting_on_a_lock, pg_dsn):  # noqa: ASYNC110 - polls the server's lock view, bounded above
+            await asyncio.sleep(0)
+    go.set()
+    assert (await one) is not None
+    with pytest.raises(AccountsStoreUnchangedError):
+        await two
+    assert records == ["first"]

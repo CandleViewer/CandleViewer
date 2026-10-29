@@ -519,6 +519,9 @@ _BEFORE_THE_GATE = {
     ("POST", "/users/{uid}/invite"): (404, None),
     ("DELETE", "/users/{uid}/invite"): (404, None),
     ("POST", "/exchange-accounts"): (503, "store_unavailable"),
+    # E27-S04 B3b2 (#898): the patch reads the account (the `404`) before the step-up, from the
+    # store the fake backend lacks; `test_update_exchange_account_provider.py` reaches its gate.
+    ("PATCH", "/exchange-accounts/{uid}"): (503, "store_unavailable"),
 }
 
 

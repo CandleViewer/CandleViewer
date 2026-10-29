@@ -40,6 +40,9 @@ _SESSIONS_OWN = {
     ("api/step_up.py", "request_elevation.demand"): (
         "the session's own step-up elevation, for a handler-gated route (#2304 slice 3b)"
     ),
+    ("api/step_up.py", "bound_request_elevation.demand"): (
+        "the session's own no-grace grant, bound to the request its handler validated (#898)"
+    ),
     ("api/step_up.py", "make_step_up_router._session"): (
         "the session's step-up state; the owner check compares the subject (`_owner`)"
     ),

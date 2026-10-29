@@ -63,7 +63,7 @@ mapping before the store or after it.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
@@ -120,6 +120,7 @@ class _Key:
 class _Account:
     armed: bool  # enabled, with trading armed
     keys: tuple[_Key, ...]
+    enabled: bool = True  # `is_enabled` as the read listed it, until a re-enable's `release`
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,12 +197,14 @@ class KeyStandings:
         lifecycle hold."""
         keys: dict[UUID, list[_Key]] = {}
         armed: dict[UUID, bool] = {}
+        enabled: dict[UUID, bool] = {}
         for row in rows:
             account = row.account
             stored = _Key(row.key_id, row.verified_at, row.last_error_code)
             keys.setdefault(account.id, []).append(stored)
             armed[account.id] = account.is_enabled and account.trading_enabled
-        accounts = {a: _Account(armed[a], tuple(listed)) for a, listed in keys.items()}
+            enabled[account.id] = account.is_enabled
+        accounts = {a: _Account(armed[a], tuple(ks), enabled[a]) for a, ks in keys.items()}
         state, results = self._state, self._results()
         holds = state.holds if began is None else _ended(state.holds, accounts, began)
         rejections = {
@@ -245,6 +248,24 @@ class KeyStandings:
             disabled = DisabledReason.ACCOUNT_DISABLED
         return KeyStanding(active, disabled)
 
+    def closed(self, account_id: UUID) -> bool:
+        """23 §9.5 (F-01, #898 B3b2): whether a new WS `sub` naming the account is refused for it,
+        synchronously and from memory: under a lifecycle hold, when the last good read listed it
+        disabled (so the refusal outlives a restart: the read lists `is_enabled=false` again), or
+        when every key that read listed is revoked here. An account no read listed is not closed
+        by this: one that never had a key, or before the first read. So after a restart a
+        disabled account with no key row is subscribable until a read lists it; it has no signable
+        key, so no private stream feeds it, and the order gate's `standing()` is `None` for it
+        (fail-closed)."""
+        state = self._state
+        hold = state.holds.get(account_id, _NO_HOLD)
+        if hold.reason is not None:
+            return True
+        account = state.accounts.get(account_id)
+        if account is None:
+            return False
+        return not account.enabled or all(key.key_id in hold.revoked for key in account.keys)
+
     def read_begins(self) -> int:
         """Called as a tracking read begins, before its await: its generation, which `observe`
         takes back as `began`, so a read in flight when a key is revoked never ends that hold."""
@@ -262,10 +283,15 @@ class KeyStandings:
         logger().warning("account.standing_held", account_id=str(account_id), reason=kept)
 
     def release(self, account_id: UUID) -> bool:
-        """The account's re-enable is stored: its `account_disabled` hold ends (`True`), and the
-        tracking read's rows decide again. A delete's hold, or none, is left as it is (`False`);
-        a revoked key stays out until a read lets it go."""
+        """The account's re-enable is stored: its `account_disabled` hold ends (`True`), the
+        listed account counts as enabled for `closed`, and the tracking read's rows decide again.
+        A delete's hold, or none, is left as it is (`False`); a revoked key stays out until a read
+        lets it go."""
         state = self._state
+        listed = state.accounts.get(account_id)
+        if listed is not None and not listed.enabled:  # stored enabled: no read waited for
+            accounts = {**state.accounts, account_id: replace(listed, enabled=True)}
+            self._state = state = _State(accounts, state.rejections, state.read_at, state.holds)
         prior = state.holds.get(account_id, _NO_HOLD)
         if prior.reason != "account_disabled":
             return False
