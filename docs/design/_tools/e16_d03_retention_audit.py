@@ -190,67 +190,76 @@ BINDINGS = (
 # doc | line at the base | text the line must hold. A `14` line may sit lower by the pointer line.
 CITED_TABLE = """
 14 | 85 | **RBAC denies server-side; the UI presents.**
-14 | 2766 | ### SCR-141 — Admin: retention policy editor
-14 | 2768 | cold-tier migration age (QuestDB → Parquet), pin overrides
-14 | 2769 | retention ≥1 day; raw-tick retention ≤ bar retention
-14 | 2770 | CMP-008 NumericStepperInput, CMP-040 FormField, CMP-044 ConfirmDialog, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
-14 | 2772 | every duration field states its unit
-14 | 2773 | the screen shows the job's queued/running/complete state
-14 | 2774 | `retention.default_changed` `{before, after}`
-14 | 2775 | the 'this will delete N GB covering dates X-Y' warning before applying a reduction
-22 | 710 | - code: retention_invalid_policy
-22 | 1069 | - recording:write
-22 | 4944 | operationId: updateRecordedSymbol
-22 | 5019 | operationId: pinRecordedSymbol
-22 | 5131 | operationId: getStorageUsage
-22 | 5189 | operationId: listRetentionPolicies
-22 | 5235 | operationId: setRetentionPolicies
-22 | 5239 | (per-symbol beats global); pinned symbols are exempt.
-22 | 5242 | `downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy` until
-22 | 5243 | the store holds their fields, as is a set where a stream derived from `trades` outlives it;
-22 | 5246 | starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
-22 | 5247 | `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
-22 | 5249 | Audited as `retention.change` (the set before and after), written before the new set is
-22 | 5256 | - name: apply_now
-22 | 282 | answers `403 view_as_read_only` and changes nothing.
-22 | 11767 | (ADR-0004), so a restart loses every
-22 | 14333 | operationId: purgeRecordedData
-22 | 16587 | StreamKind:
-22 | 16603 | RetentionAction:
-22 | 18382 | RetentionPolicyInput:
-22 | 18387 | retain_days: { type: integer, minimum: 1, maximum: 3650 }
-22 | 18395 | RetentionPolicy:
-22 | 21105 | status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
-21 | 2899 | market data is mainnet even for demo trading
-21 | 2905 | retention_days    integer,                              -- NULL → use retention_policies default
-21 | 2974 | #### 3.6.3 `retention_policies`
-21 | 3003 | Resolution order for a (symbol, stream): pinned symbol → infinite retention
-21 | 3005 | `retain_days` reads by `action`, through one mapping (`read_policy_row`)
-21 | 3005 | the total horizon stays the stream's §7 total, never shorter than the hot window
-21 | 4506 | a `retention_purge` audit entry records symbol, stream, range and row count
-21 | 4520 | | `trades`                              | 30 d
-21 | 4521 | | `orderbook_deltas`                    | 7 d
-21 | 4525 | Irreplaceable (no REST history)
-21 | 4529 | Rebuildable from `trades` while trades exist
-21 | 4535 | | **Pinned symbol (any stream)**
-24 | 3854 | class RetentionRule(BaseModel):
-24 | 3866 | Daily retention job (03:00 UTC): move hot→cold past `hot_days`
+14 | 2792 | ### SCR-141 — Admin: retention policy editor
+14 | 2794 | cold-tier migration age (QuestDB → Parquet), pin overrides
+14 | 2795 | retention ≥1 day; raw-tick retention ≤ bar retention
+14 | 2796 | CMP-008 NumericStepperInput, CMP-040 FormField, CMP-044 ConfirmDialog, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
+14 | 2798 | every duration field states its unit
+14 | 2799 | the screen shows the job's queued/running/complete state
+14 | 2800 | `retention.default_changed` `{before, after}`
+14 | 2801 | the 'this will delete N GB covering dates X-Y' warning before applying a reduction
+22 | 716 | - code: retention_invalid_policy
+22 | 1085 | - recording:write
+22 | 5237 | operationId: updateRecordedSymbol
+22 | 5314 | operationId: pinRecordedSymbol
+22 | 5427 | operationId: getStorageUsage
+22 | 5485 | operationId: listRetentionPolicies
+22 | 5531 | operationId: setRetentionPolicies
+22 | 5535 | (per-symbol beats global); pinned symbols are exempt.
+22 | 5538 | `downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy` until
+22 | 5539 | the store holds their fields, as is a set where a stream derived from `trades` outlives it;
+22 | 5542 | starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
+22 | 5543 | `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
+22 | 5537 | it to Parquet (its total horizon stays the stream default), and for `drop` the total horizon.
+22 | 5540 | an unknown field is `422 validation_failed`. Always needs the `recorder` step-up
+22 | 5544 | request stores nothing.
+22 | 5546 | stored; if it cannot be written the answer is `503 audit_unavailable` and nothing changes.
+22 | 12111 | /admin/jobs/{jobId}:
+22 | 12123 | evicted job id is `404 not_found`. `error` carries a stable code, never a message. An
+22 | 19280 | StorageUsage:
+22 | 19315 | accelerate_retention: { type: boolean }
+22 | 22063 | Job:
+22 | 5545 | Audited as `retention.change` (the set before and after), written before the new set is
+22 | 5552 | - name: apply_now
+22 | 284 | answers `403 view_as_read_only` and changes nothing.
+22 | 12129 | (ADR-0004), so a restart loses every
+22 | 15065 | operationId: purgeRecordedData
+22 | 17453 | StreamKind:
+22 | 17469 | RetentionAction:
+22 | 19316 | RetentionPolicyInput:
+22 | 19321 | retain_days: { type: integer, minimum: 1, maximum: 3650 }
+22 | 19329 | RetentionPolicy:
+22 | 22087 | status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+21 | 2989 | market data is mainnet even for demo trading
+21 | 2995 | retention_days    integer,                              -- NULL → use retention_policies default
+21 | 3064 | #### 3.6.3 `retention_policies`
+21 | 3093 | Resolution order for a (symbol, stream): pinned symbol → infinite retention
+21 | 3095 | `retain_days` reads by `action`, through one mapping (`read_policy_row`)
+21 | 3095 | the total horizon stays the stream's §7 total, never shorter than the hot window
+21 | 4692 | a `retention_purge` audit entry records symbol, stream, range and row count
+21 | 4706 | | `trades`                              | 30 d
+21 | 4707 | | `orderbook_deltas`                    | 7 d
+21 | 4711 | Irreplaceable (no REST history)
+21 | 4715 | Rebuildable from `trades` while trades exist
+21 | 4721 | | **Pinned symbol (any stream)**
+24 | 3886 | class RetentionRule(BaseModel):
+24 | 3898 | Daily retention job (03:00 UTC): move hot→cold past `hot_days`
 04 | 368 | A Manager (not the Owner) changes global retention policy
-04 | 926 | | SR-099 | Retention jobs MUST honour pins, run dry-run-first with a report
-04 | 1139 | | `recording:write`                                  |  ✔(step-up for purge/retention)
-04 | 1185 | Pin a recording / change retention (add, update: with `pinned` or `retention_days`)
+04 | 958 | | SR-099 | Retention jobs MUST honour pins, run dry-run-first with a report
+04 | 1171 | | `recording:write`                                  |  ✔(step-up for purge/retention)
+04 | 1217 | Pin a recording / change retention (add, update: with `pinned` or `retention_days`)
 11 | 4146 | Then it reports exactly what would be deleted, by symbol, range and size, before anything is removed
 11 | 4895 | Then a preview of the impact is shown and typed confirmation is required
 12 | 111 | | R-340 | `/admin/recorder` | Recorder & retention config
 13 | 440 | **Screens:** SCR-140, SCR-141, SCR-142, SCR-100, SCR-103, SCR-047
-20 | 896 | | `CV_RECORDER_RETENTION_DAYS`     | int    | `30`
+20 | 907 | | `CV_RECORDER_RETENTION_DAYS`     | int    | `30`
 15 | 119 | ### CMP-008 NumericStepperInput
-15 | 433 | ### CMP-040 FormField
-15 | 473 | ### CMP-044 ConfirmDialog
-15 | 671 | ### CMP-065 FormSection
-15 | 811 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
-15 | 884 | ### CMP-087 AdminLayout (RBAC-gated shell)
-15 | 940 | ### CMP-093 AuditActionTrigger
+15 | 459 | ### CMP-040 FormField
+15 | 503 | ### CMP-044 ConfirmDialog
+15 | 714 | ### CMP-065 FormSection
+15 | 862 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
+15 | 936 | ### CMP-087 AdminLayout (RBAC-gated shell)
+15 | 992 | ### CMP-093 AuditActionTrigger
 05 | 90 | ### 3.4 Focus management in dense layouts
 05 | 144 | ### 6.2 Layer 2 — ARIA live regions for streaming updates
 E09 | 39 | Has the **server** just refused this control's action or route
@@ -285,6 +294,8 @@ E16D02 | 771 | **D-13 (SCR-141/142):**
 E16D02 | 777 | **D-15 (2b in the grid):**
 E16D02 | 778 | **D-16 (the view-as notice):**
 E16D01 | 222 | "Older data was removed by the retention policy (<N> days)."
+21 | 3078 | last_run_at    timestamptz,
+21 | 4714 | | `bars_time`                           | 365 d
 """
 POINTER = "E16-D03.md](../design/E16/E16-D03.md)"
 DOC_NAMES = (
