@@ -39,9 +39,12 @@ from typing import Any, Final, Literal, Protocol
 import structlog
 
 from candleviewer.accounts.consequences import ARMED_LISTED
+from candleviewer.accounts.key_revoke import KeyRevoke
 from candleviewer.accounts.lifecycle import (
     AccountLifecycle,
+    DeleteReason,
     DisableReason,
+    KeyDestroyerPort,
     LifecycleStore,
     Standings,
     Streams,
@@ -53,18 +56,24 @@ from candleviewer.statechart.plugins import LogPager, Pager
 from candleviewer.user_cascade_wiring import DISARMED, RulesNotRunning, _acting_owner, _disarm_lock
 
 __all__ = [
+    "DELETE_REASONS",
     "DISABLE_REASONS",
     "PAGE_EVENT",
+    "REVOCATION_RESULTS",
     "AccountRuleDisarmer",
     "CoveringRules",
     "Disarmed",
     "account_disarm_key",
     "coverage",
     "wire_account_lifecycle",
+    "wire_key_revoke",
 ]
 
 #: `cv_account_disabled_total{reason}`'s closed set, every child bound at zero.
 DISABLE_REASONS: Final[tuple[DisableReason, ...]] = ("flat", "leave_positions", "flattened", "dead")
+#: `cv_account_deleted_total{reason}`'s and `cv_key_revocations_total{result}`'s closed sets.
+DELETE_REASONS: Final[tuple[DeleteReason, ...]] = ("flat", "flattened")
+REVOCATION_RESULTS: Final = ("revoked", "completed", "overran")
 
 #: The page's event (ticket tech notes: "critical when rule disarm fails").
 PAGE_EVENT: Final = "account.rule_not_disarmed"
@@ -249,19 +258,55 @@ def wire_account_lifecycle(
     manager: Callable[[], RulesManager | None],
     streams: Streams,
     disabled: _Counter,
+    destroyer: KeyDestroyerPort | None = None,
+    deleted: _Counter | None = None,
 ) -> AccountLifecycle | None:
-    """The account lifecycle `updateExchangeAccount` stores through (E27-S04 B3b2, #898), over the
-    accounts store and the profile wiring's R10 armed-rule read (`None` without either: the fake
-    backend, whose route answers 503; the store is checked first, so a profile wiring is read only
-    with it), the key standing, the WS revoke, the rule disarm and the adapter's private-stream
-    close; each stored disable is counted by its reason, every child bound at 0."""
+    """The account lifecycle `updateExchangeAccount` and `deleteExchangeAccount` store through
+    (E27-S04 B3b2 and B3c, #898), over the accounts store and the profile wiring's R10 armed-rule
+    read (`None` without either: the fake backend, whose route answers 503; the store is checked
+    first, so a profile wiring is read only with it), the key standing, the WS revoke, the rule
+    disarm, the adapter's private-stream close and M2's key destroyer (the delete's; `None`: the
+    delete answers 503 with nothing changed); each stored disable is counted by its reason, as
+    each delete is, every child bound at 0."""
     if store is None or profiles is None:
         return None
     rules = profiles.rules
     for reason in DISABLE_REASONS:
         disabled.labels(reason)
+    for reason in DELETE_REASONS:
+        if deleted is not None:
+            deleted.labels(reason)
+
+    def count_deleted(reason: DeleteReason) -> None:
+        if deleted is not None:
+            deleted.labels(reason).inc()
+
     disarmer = AccountRuleDisarmer(rules, rule_store, manager)
     return AccountLifecycle(
         store, standings, subscriptions, disarmer, streams,
-        count=lambda reason: disabled.labels(reason).inc(),
+        count=lambda reason: disabled.labels(reason).inc(), destroyer=destroyer,
+        count_deleted=count_deleted,
     )  # fmt: skip
+
+
+def wire_key_revoke(
+    lifecycle: AccountLifecycle | None,
+    profiles: _Rules | None,
+    *,
+    standings: Standings,
+    subscriptions: Subscriptions,
+    rule_store: RuleStore,
+    manager: Callable[[], RulesManager | None],
+    streams: Streams,
+    destroyer: KeyDestroyerPort,
+    revocations: _Counter,
+) -> KeyRevoke | None:
+    """`revokeApiKey`'s revoke (E27-S04 B3d, #898) over the same ports as the lifecycle and M2's
+    key destroyer, sharing the lifecycle's per-account locks (a revoke never interleaves a
+    delete); `None` without the lifecycle (the fake backend: 503). Every result child bound at 0."""
+    if lifecycle is None or profiles is None:
+        return None
+    for result in REVOCATION_RESULTS:
+        revocations.labels(result)
+    disarmer = AccountRuleDisarmer(profiles.rules, rule_store, manager)
+    return KeyRevoke(standings, subscriptions, disarmer, streams, destroyer, locks=lifecycle.locks)

@@ -51,6 +51,7 @@ from candleviewer.storage.repositories.accounts import (
     VerifiedKey,
 )
 from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
+from candleviewer.storage.repositories.audit_sqlalchemy import insert_audit_row_locked
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -869,3 +870,48 @@ async def test_two_racing_disables_store_once_and_write_one_record(
     with pytest.raises(AccountsStoreUnchangedError):
         await two
     assert records == ["first"]
+
+
+# -- #898 B3c: the delete's soft delete switches the account off and keeps its history ---------
+
+
+async def test_the_soft_delete_switches_the_account_off_and_its_history_survives(
+    store: SqlAlchemyAccountsStore, rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    """`_SOFT_DELETE` sets `deleted_at` and `is_enabled = false` (22: "marks it `disabled`") with
+    `trading_enabled`; the account's executions and the audit records naming it are untouched
+    (the ticket's "Historical records survive"), and a read of the account no longer finds it."""
+    owner = OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(_exchange(pg_dsn)))
+    exec_id = uuid.uuid4()
+    with _c(pg_dsn) as c:
+        c.execute(
+            "INSERT INTO executions (id, exchange_account_id, exec_id, symbol, side, exec_qty, "
+            "exec_price, exec_value, exec_type, is_maker, exec_ts) VALUES (%s, %s, 'E1', "
+            "'BTCUSDT', 'Buy', 1, 60000, 60000, 'Trade', false, now())",
+            (str(exec_id), str(acct.id)),
+        )
+    record = {
+        "record_id": str(uuid.uuid4()), "actor_label": "owner", "action": "account.deleted",
+        "object_kind": "exchange_account", "object_id": str(acct.id), "outcome": "success",
+        "severity": "warning", "event_ts": datetime.now(UTC).isoformat(),
+    }  # fmt: skip
+    async with rel.unit_of_work() as uow:
+        assert await insert_audit_row_locked(uow.session, record)
+        await uow.commit()
+    assert await store.soft_delete_account(owner, acct.id) is True
+    with _c(pg_dsn) as c:
+        flags = c.execute(
+            "SELECT is_enabled, trading_enabled, deleted_at IS NOT NULL FROM exchange_accounts "
+            "WHERE id = %s",
+            (str(acct.id),),
+        ).fetchone()
+        executions = c.execute(
+            "SELECT count(*) FROM executions WHERE exchange_account_id = %s", (str(acct.id),)
+        ).fetchone()
+        audited = c.execute(
+            "SELECT count(*) FROM audit_log WHERE object_id = %s", (str(acct.id),)
+        ).fetchone()
+    assert flags == (False, False, True)
+    assert executions == (1,) and audited == (1,)
+    assert await store.get_account(owner, acct.id) is None

@@ -55,6 +55,7 @@ from candleviewer.secrets import (
     ExportKeyStore,
     ExportSigner,
     KcvStore,
+    KeyDestroyer,
     LoopSigning,
     LoopStoreFactory,
     RotationRunning,
@@ -70,6 +71,7 @@ from candleviewer.secrets import (
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
+    mint_key_destroyer,
     mint_loop_signing,
     mint_rotation_running,
     mint_signing_key_rotator,
@@ -128,7 +130,8 @@ class SecretsBundle:
     also for `listAuditSigningKeys` and the export's own `503`, the rotator is `admin`'s, for
     `rotateAuditSigningKey`, and the running rotation the export route's, for its own `409`.
     `lane_signing(audit=)`, called on the order lane's loop with the lane's own audit writer, binds
-    signing there (#913 L3b) over a credential store M2 builds on that loop (#913 L1d)."""
+    signing there (#913 L3b) over a credential store M2 builds on that loop (#913 L1d).
+    `key_destroyer` destroys one stored key of one account (#898's delete and revoke)."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -139,6 +142,7 @@ class SecretsBundle:
     signing_key_rotator: SigningKeyRotator
     rotation_running: RotationRunning
     lane_signing: LaneSigningBinder
+    key_destroyer: KeyDestroyer
 
 
 __all__ = [
@@ -330,6 +334,7 @@ def secrets_bundle(
         mint_signing_key_rotator(svc),
         mint_rotation_running(svc),
         lane_signing,
+        mint_key_destroyer(svc),
     )
 
 

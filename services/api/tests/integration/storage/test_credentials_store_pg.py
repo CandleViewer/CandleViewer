@@ -383,6 +383,25 @@ async def test_get_is_namespaced_by_environment(pg_dsn: str) -> None:
         await rel.dispose()
 
 
+async def test_a_live_key_of_a_soft_deleted_account_is_never_lent(pg_dsn: str) -> None:
+    """#898 R6: the delete destroys every live key before its soft delete; a key it missed (a crash
+    between them, or one stored since) of an account whose `deleted_at` is set reads as absent, so
+    M2 refuses the borrow and never decrypts it."""
+    rel, store = _store(pg_dsn)
+    try:
+        acct = _account(pg_dsn)
+        (key_id,) = await _seed(store, acct, 1)
+        broker = CredentialBroker(store, _audit, _kek(0, 1))
+        assert await _borrow(broker, key_id) == "KEY0000ABCD"  # its DEK cached by now
+        _sql(pg_dsn, "UPDATE exchange_accounts SET deleted_at = now() WHERE id = %s", acct)
+        assert await store.get(key_id, "demo") is None
+        with pytest.raises(CredentialUnavailable, match=r"^credential_unavailable$"):
+            await _borrow(broker, key_id)
+        assert _sql(pg_dsn, "SELECT revoked_at FROM api_keys WHERE id = %s", key_id) == [(None,)]
+    finally:
+        await rel.dispose()
+
+
 #: KV-T03 (#836): an array of pairs, which `dict()` would read as an object.
 _PAIRS = [["permissions", {"ContractTrade": ["Order", "Position"]}], ["uid", "1"]]
 

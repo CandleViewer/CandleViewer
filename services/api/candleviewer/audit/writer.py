@@ -131,6 +131,10 @@ KEYED_ACTIONS: Final[Mapping[str, uuid.UUID]] = MappingProxyType(
         "sl.attached": uuid.UUID("d6abc860-0257-4214-9142-d65723f23fd7"),
         "sl.modified": uuid.UUID("132f3241-512e-445d-86af-731eab14fe5e"),
         "tp.modified": uuid.UUID("0f574dd0-7558-4261-8417-7c38870c061d"),
+        # E27-S04 (#898 R7): a key revoke's completion record, named by the key's id (a key is
+        # revoked once, never restored), so the call whose close completes writes it and every
+        # repeat, after a crash or a restart too, lands on the same row.
+        "api_key.revoked": uuid.UUID("05b2ed69-7564-401d-8d03-51392a7758ca"),
     }
 )
 

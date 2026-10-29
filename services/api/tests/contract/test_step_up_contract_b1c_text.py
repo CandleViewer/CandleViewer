@@ -145,10 +145,8 @@ def test_the_ahead_record_carries_intent_and_the_completion_record_says_flattene
 
 
 def test_the_revoke_completion_record_is_in_the_vocabulary_after_its_ahead_record() -> None:
-    assert (
-        "`api_key.revoke`, `api_key.revoked` (not registered yet, B3), `apikey.verify_failed`"
-        in _DOC_24
-    )
+    # #898's closing B3 PR registered it with `revokeApiKey` and dropped "(not registered yet)".
+    assert "`api_key.revoke`, `api_key.revoked`, `apikey.verify_failed`" in _DOC_24
     assert "`api_key.revoked` is its completion record" in _DOC_24
     assert "written after the key is destroyed and the close of its private streams" in _DOC_24
     assert "`api_key.revoked`" in _op(_KEY, "delete")

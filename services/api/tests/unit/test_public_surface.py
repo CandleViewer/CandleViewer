@@ -219,6 +219,8 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "mint_rotation_running",  # #889 S10: its mint, pinned to admin/wiring.py likewise
         "LoopSigning",  # #913 L3b: signing bound to the order lane's loop, minted in wiring
         "mint_loop_signing",  # #913 L3b: its mint, pinned to admin/wiring.py likewise
+        "KeyDestroyer",  # #898: destroys one stored key of one account, minted in wiring
+        "mint_key_destroyer",  # #898: its mint, pinned to admin/wiring.py likewise
         "LoopStoreFactory",  # #913 L1d: the type of the root's lane store factory, M2's to call
     },
     # E26-T02: the replay read path's request, in-stream gap marker, storage ports, typed

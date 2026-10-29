@@ -39,13 +39,15 @@ _INSERT = sa.text(
     ":dek_ref, :kek_version, CAST(:permission_snapshot AS jsonb), :read_only, :can_trade "
     "FROM exchange_accounts ea WHERE ea.id = :exchange_account_id AND ea.env::text = :env"
 )
+#: A key of a soft-deleted account reads as absent, so it is never lent (#898 R6: a delete
+#: destroys every live key first, and this holds even if one was missed).
 _GET = sa.text(
     "SELECT k.id, k.exchange_account_id, ea.env::text AS env, k.label, k.key_id_enc, "
     "k.key_id_last4, k.secret_enc, k.enc_nonce, k.dek_ref, k.kek_version, k.enc_alg, "
     "k.permission_snapshot, k.status::text AS status, (k.revoked_at IS NOT NULL) AS revoked, "
     "k.can_withdraw, k.can_transfer "
     "FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
-    "WHERE k.id = :id AND ea.env::text = :env"
+    "WHERE k.id = :id AND ea.env::text = :env AND ea.deleted_at IS NULL"
 )
 #: Record fields `insert` never writes: the database sets them (0017 defaults, the CHECKs).
 _READ_ONLY = frozenset({"revoked", "status", "can_withdraw", "can_transfer"})

@@ -35,7 +35,7 @@ from starlette.types import ASGIApp
 
 from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
 from candleviewer.account_health_wiring import wire_account_health
-from candleviewer.account_lifecycle_wiring import wire_account_lifecycle
+from candleviewer.account_lifecycle_wiring import wire_account_lifecycle, wire_key_revoke
 from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.accounts.service import AccountsService
@@ -2346,19 +2346,12 @@ def create_app(
     # The lifespan drains its imports before `stop_all` stops audit and M2, then frees its pool.
     key_imports = wire_key_import(ctx, bundle.candidate_keys, _LazyAuditEmitter(ctx.audit))
     app.state.key_imports = key_imports
-    app.include_router(
-        make_exchange_keys_router(
-            key_imports,
-            _LazyAuditEmitter(ctx.audit),
-            owner_resolver,
-            egress_ip=resolved.egress_ip,
-            rotation=KeyRotationPolicy.from_settings(resolved),
-            # #836 slice 2b6: `testApiKey`, its verdict enforced by the self-check (decision 11).
-            tests=wire_key_test(ctx, selfcheck, key_imports),
-            auth=ctx.auth,  # a refusal names the caller's session (#4174)
-            elevation=keys_elevation,  # after RBAC and the account's read (#2304 slice 3b)
-        )
-    )
+    # E27-S04 B3c/B3d (#898): M2's key destroyer, the delete's and the revoke's, bound here beside
+    # the import's capability so neither route's module imports `secrets` (C-3.2).
+    key_destroyer = bundle.key_destroyer
+    # #836 slice 2b6: `testApiKey`, its verdict enforced by the self-check (decision 11); the key
+    # routes are mounted below, once the revoke's ports (the standing, the lifecycle) exist.
+    key_tests = wire_key_test(ctx, selfcheck, key_imports)
     # E27-S04 B2a (#898): the exposure read over an account's signable keys (real backend only),
     # for the consequence read and the revoke, disable and delete 409s. No I/O until asked.
     app.state.exposure_read = wire_exposure_read(ctx)
@@ -2431,6 +2424,20 @@ def create_app(
     # E27-S04 B3b2 (#898, 23 §9.5 F-01): a disabled account, or one whose last signable key is
     # revoked, is out of every new subscription's scope; bound here, the standing being built late.
     ws_services.account_closed = account_health.standings.closed
+    # E27-S04 B3b2/B3c (#898): the patch's disable, re-enable and relabel, and the delete, over the
+    # effect ports (the hold, the WS revoke, the disarm as the Owner, the bounded stream close) and
+    # M2's key destroyer, behind one fresh no-grace `accounts` code bound to the validated request;
+    # wired with the consequence read they read (else 503).
+    lifecycle = wire_account_lifecycle(
+        None if consequences is None else accounts_store, profiles,
+        standings=account_health.standings, subscriptions=app.state.ws_events,
+        rule_store=rule_store, manager=lambda: ctx.rules.manager(), streams=ctx.exchange_bybit,
+        disabled=register_r0(metrics_facade)["cv_account_disabled_total"],
+        destroyer=key_destroyer,
+        deleted=register_r0(metrics_facade)["cv_account_deleted_total"],
+    )  # fmt: skip
+    revocations = register_r0(metrics_facade)["cv_key_revocations_total"]
+    accounts_bound = bound_request_elevation(ctx.auth, "accounts", _LazyAuditEmitter(ctx.audit))
     app.include_router(
         make_exchange_accounts_router(
             accounts_store,
@@ -2441,18 +2448,32 @@ def create_app(
             auth=ctx.auth,  # a refusal names the caller's session (#4174)
             elevation=keys_elevation,  # the create's `keys`, after its shape rules (#2304)
             consequences=consequences,
-            # E27-S04 B3b2 (#898): the patch's disable, re-enable and relabel over the effect
-            # ports (the hold, the WS revoke, the disarm as the Owner, the bounded stream close),
-            # behind one fresh no-grace `accounts` code bound to the validated request; wired
-            # with the consequence read the disable reads (else 503).
-            lifecycle=wire_account_lifecycle(
-                None if consequences is None else accounts_store, profiles,
-                standings=account_health.standings, subscriptions=app.state.ws_events,
-                rule_store=rule_store, manager=lambda: ctx.rules.manager(),
-                streams=ctx.exchange_bybit,
-                disabled=register_r0(metrics_facade)["cv_account_disabled_total"],
+            lifecycle=lifecycle,
+            bound=accounts_bound,
+        )
+    )  # fmt: skip
+    # E27-T03 (#836): `createApiKey` and `testApiKey`; E27-S04 B3d (#898): `revokeApiKey` over the
+    # same store, the consequence read, M2's destroyer and the lifecycle's ports and locks, its
+    # `flatten_first` behind the `accounts` code (real backend only; else 503).
+    app.include_router(
+        make_exchange_keys_router(
+            key_imports,
+            _LazyAuditEmitter(ctx.audit),
+            owner_resolver,
+            egress_ip=resolved.egress_ip,
+            rotation=KeyRotationPolicy.from_settings(resolved),
+            tests=key_tests,
+            auth=ctx.auth,  # a refusal names the caller's session (#4174)
+            elevation=keys_elevation,  # after RBAC and the account's read (#2304 slice 3b)
+            accounts=accounts_store, consequences=consequences, bound=accounts_bound,
+            environment=resolved.environment.value,
+            revoker=wire_key_revoke(
+                lifecycle, profiles, standings=account_health.standings,
+                subscriptions=app.state.ws_events, rule_store=rule_store,
+                manager=lambda: ctx.rules.manager(), streams=ctx.exchange_bybit,
+                destroyer=key_destroyer, revocations=revocations,
             ),
-            bound=bound_request_elevation(ctx.auth, "accounts", _LazyAuditEmitter(ctx.audit)),
+            revocations=lambda result: revocations.labels(result).inc(),
         )
     )  # fmt: skip
     # #837 W3: the one order-entry gate every submit path consults, the maintenance check first and

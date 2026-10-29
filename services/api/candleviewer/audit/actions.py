@@ -155,6 +155,14 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # action with outcome `denied` and its code. A repeat writes none.
         "account.disabled",
         "account.updated",
+        # E27-S04 (#898 B3c): `deleteExchangeAccount`, written ahead of the switch-off it commits
+        # with (C-2.9), naming the `challenge_id` of the `accounts` grant it spent; a refusal after
+        # the gate is the same action with outcome `denied` and its code.
+        "account.deleted",
+        # E27-S04 (#898 B3d): `revokeApiKey`'s completion record, after the key is destroyed and
+        # the close of its private streams completed (22): keyed (`KEYED_ACTIONS`) by the key, so
+        # each revoke has one, written by the call whose close completes and never twice (R7).
+        "api_key.revoked",
         # E27-T03 (#836, decision 12): a key that fails its verification policy, `{rule, key_id}`
         # (the account's id where no key is stored); critical for a withdraw, transfer, fiat or
         # card right, any right that moves funds.

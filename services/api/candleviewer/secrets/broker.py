@@ -641,15 +641,24 @@ class CredentialBroker:
         digest = message_sha256(parts)
         return await self._borrow(key_id, mac, caller_module, purpose, digest=digest, io=io)
 
-    async def destroy(self, key_id: UUID, *, actor: tuple[str, str, str | None] = _SYSTEM) -> None:
+    async def destroy(
+        self,
+        key_id: UUID,
+        *,
+        actor: tuple[str, str, str | None] = _SYSTEM,
+        account_id: UUID | None = None,
+    ) -> None:
         """Fence first (in-flight borrows refuse at their post-audit re-check, and the key's
         pending `last_used_at` write is cancelled), then audit, flush and revoke. A failure keeps
         the key fenced for this process (fail closed) and appends
-        `security.credential_destroy_failed`; the original error is always re-raised."""
+        `security.credential_destroy_failed`; the original error is always re-raised. With
+        `account_id` (#898), another account's key is refused as an unknown one, untouched."""
         row = await self._load(key_id)
         if row is None:
             self.flush_cache(key_id)
             raise CredentialUnavailable("credential_unavailable")
+        if account_id is not None and row.exchange_account_id != account_id:
+            raise CredentialUnavailable("credential_unavailable")  # not fenced, recorded or revoked
         with self._guard:  # #913 L3b: for every loop; other loops' writes are cancelled there
             self._destroyed.add(key_id)
             self._cache.flush(key_id)

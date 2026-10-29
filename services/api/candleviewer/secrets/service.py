@@ -241,6 +241,29 @@ class LoopSigning:
         await self.__check()
 
 
+@final
+class KeyDestroyer:
+    """Destroys one stored key of one account (#898's delete and revoke; #897's rotation), minted
+    once in `admin.wiring`: fenced, recorded with the acting user (SR-E27-09), then revoked, as
+    `CredentialBroker.destroy` does; another account's key is refused, nothing touched. It returns
+    nothing and raises M2's codes only (C-2.7, C-12.2). Holds a closure only (C-3.2)."""
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _m2_only(cls)
+        super().__init_subclass__(**kw)
+
+    __slots__ = ("__destroy",)
+
+    def __init__(self, destroy: Callable[[UUID, UUID, str, str], Awaitable[None]]) -> None:
+        self.__destroy = destroy
+
+    async def destroy(
+        self, account_id: UUID, key_id: UUID, *, actor_user_id: str, actor_role: str
+    ) -> None:
+        """Destroy `key_id` if it is `account_id`'s, else `CredentialUnavailable`."""
+        await self.__destroy(account_id, key_id, actor_user_id, actor_role)
+
+
 class SecretsLifecycleFacade:
     """What `AppContext.secrets` holds: start/stop/health only. Closures, no service field."""
 
@@ -955,6 +978,21 @@ def mint_candidate_keys(
         return await hold_candidate(resolve(), caller, hold_s, *args)
 
     return CandidateKeys(run)
+
+
+def mint_key_destroyer(service: SecretsService) -> KeyDestroyer:
+    """Wiring-time capability to destroy a stored key (#898; #897 reuses it). Called once, in
+    `admin.wiring.secrets_bundle`; it refuses an actor the record cannot name (SR-E27-09) before
+    anything else, and fails closed while degraded."""
+
+    async def destroy(account_id: UUID, key_id: UUID, actor_user_id: str, actor_role: str) -> None:
+        if not actor_role or not isinstance(actor_user_id, str) or not actor_user_id:
+            raise ValueError("a destroy needs the acting user and role (SR-E27-09)")
+        UUID(actor_user_id)  # the audit log's actor column is a user id
+        actor = ("user", actor_role, actor_user_id)
+        await service._require().destroy(key_id, actor=actor, account_id=account_id)
+
+    return KeyDestroyer(destroy)
 
 
 def mint_export_signer(service: SecretsService) -> ExportSigner:
