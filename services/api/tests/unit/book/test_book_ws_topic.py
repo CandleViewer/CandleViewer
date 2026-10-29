@@ -555,3 +555,32 @@ async def test_a_held_window_renders_the_cross_seq_it_was_seeded_with() -> None:
     second = w.topic.build(sub(50))  # the first one holds the window
     assert second is not None
     assert second["structured"]["xseq"] == seeded and second["trailer"][1] == seeded
+
+
+async def test_a_publisher_running_behind_yields_to_the_event_loop_every_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #4929 (C-2.18): a turn with its window already due awaits nothing else, so it must yield
+    # once, or the publisher keeps the loop it shares with the OMS for as long as it runs behind.
+    w = World()
+    w.topic.open()
+    turns: list[int] = []
+    other = 0
+
+    def tick() -> None:
+        turns.append(other)
+        if len(turns) == 5:
+            w.topic._sub = None  # stop the loop after five late turns
+
+    monkeypatch.setattr(w.topic, "next_due", lambda: w.clock.now - 1.0)
+    monkeypatch.setattr(w.topic, "pump", lambda: None)
+    monkeypatch.setattr(w.topic, "tick", tick)
+
+    async def neighbour() -> None:
+        nonlocal other
+        while len(turns) < 5:
+            other += 1
+            await asyncio.sleep(0)
+
+    await asyncio.gather(w.topic._run(), neighbour())
+    assert turns[-1] >= 4  # the neighbour ran between the publisher's turns

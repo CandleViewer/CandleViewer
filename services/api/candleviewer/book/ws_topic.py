@@ -521,6 +521,8 @@ class BookTopic[B]:
                     with contextlib.suppress(TimeoutError):
                         async with asyncio.timeout(wait):
                             self.offer(await sub.get())
+                else:  # a turn that runs late still yields: it never starves the event loop
+                    await asyncio.sleep(0)
                 self.pump()
                 self.tick()
             except Exception as exc:  # never let one bad turn stop every book `d`
