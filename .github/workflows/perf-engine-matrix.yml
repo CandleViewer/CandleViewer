@@ -26,8 +26,9 @@ name: perf-engine-matrix
 # run time beyond the lockfile's packages, the Electron binary (SR-138 allowlist runner) and the
 # lockfile's Playwright Chromium. Baseline-update policy: packages/chart-engine/README.md.
 #
-# Scenario sets: per PR, B1 B2 B3 B4 B5 B7 B9 (3 repetitions x 20 s, the 100k-bar M0 fixture);
-# the 30-minute B10 soak runs only in the nightly Electron job.
+# Scenario sets: per PR, B1 B2 B3 B4 B5 B9 (3 repetitions x 20 s, the 100k-bar M0 fixture); B7 and
+# the 30-minute B10 soak run only in the nightly Electron job. B7 stalls on SwiftShader (the M0
+# report's U5): its first PR run hung until the harness timeout and left no usable report.
 
 on:
   pull_request:
@@ -78,7 +79,7 @@ jobs:
         working-directory: packages/chart-engine
         run: >-
           node bench/matrix/run-matrix.mjs --runtime chromium
-          --scenarios B1,B2,B3,B4,B5,B7,B9 --out-dir "$RUNNER_TEMP/matrix"
+          --scenarios B1,B2,B3,B4,B5,B9 --out-dir "$RUNNER_TEMP/matrix"
       - name: Compare with the committed baseline (recording; fails only if the run failed)
         working-directory: packages/chart-engine
         run: >-

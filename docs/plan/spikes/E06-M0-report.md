@@ -364,7 +364,7 @@ O1–O5 are `26` §16's. U1–U9 are new; each has an owner and a resolution pat
 | U2  | B10 memory peak and growth missed (inconclusive)                                     | Chart-engine lead                 | Re-measure with the real engine on reference hardware (E11-S15, E11-Q03)                                                                                                            |
 | U3  | B7 frame p95 not recorded (`summariseCell` drops it)                                 | Chart-engine lead                 | Keep `workerFrameP95Ms` in the cell when E11-T06 promotes the harness                                                                                                               |
 | U4  | Stage split beyond mirror and upload not recorded                                    | Chart-engine lead                 | Record `gl-load.mjs`'s submit / finish split and engine stage markers (E11-T07, E11-T06)                                                                                            |
-| U5  | SwiftShader stalls (B7 hang, the B10 soak's largest frame, §3.5) on the Chromium arm | QA                                | Watch the CI job; a recurrence is a harness bug (worker storm needs a timeout)                                                                                                      |
+| U5  | SwiftShader stalls (B7 hang, the B10 soak's largest frame, §3.5) on the Chromium arm | QA                                | B7 runs nightly only (Electron), not per PR on SwiftShader; the harness watchdog fix (a timeout for the worker storm) and B7's return to the per-PR set are E11-T06 (#449)          |
 | U6  | No GPU in CI; hosted-runner numbers are software GL                                  | Architect                         | Dedicated GPU runner with a pinned flag set: E03-T14 / E11-T06                                                                                                                      |
 | U7  | Q02 hardware cells (N1, I1, Edge, Firefox, G1–G3) and the `degraded-2d` renderer     | QA                                | E11-Q07 (#519) matrix charter; E11-T05 (#522) renderer                                                                                                                              |
 | U8  | B5 co-tenancy variant (dev stack up) not run                                         | Chart-engine lead                 | Run once the dev stack and the real engine exist (E11-Q03)                                                                                                                          |
@@ -374,21 +374,22 @@ O1–O5 are `26` §16's. U1–U9 are new; each has an owner and a resolution pat
 
 `.github/workflows/perf-engine-matrix.yml`, recording only, not a required check:
 
-- **Per PR** touching `packages/chart-engine/**`: headless Chromium, K01 pinned flags, B1 B2 B3 B4 B5 B7 B9,
-  3 repetitions × 20 s on the 100k-bar M0 fixture (no 30-minute soak per PR).
+- **Per PR** touching `packages/chart-engine/**`: headless Chromium, K01 pinned flags, B1 B2 B3 B4 B5 B9,
+  3 repetitions × 20 s on the 100k-bar M0 fixture (no B7 per PR, since it stalls on SwiftShader, U5; no 30-minute soak per PR).
 - **Nightly (02:41 UTC) and on dispatch**: Electron with the `tuned` flag set under `xvfb-run`, the full set
   including the 30-minute B10 soak.
 - `bench/matrix/ci-compare.mjs` writes the comparison with `bench/matrix/baselines/<runtime>-ubuntu-latest.json`
   to the job summary (flagged at > 5 %, `06` §7.4, and ≥ 0.2 ms, this job's two-tick floor for the 0.1 ms timer, §1) and exits 0 on a regression; no report, an invalid
   report or a harness run error exits 1, so a failure to run is a red job. Report JSON and summary are uploaded.
 - These are regression-tracking numbers only, never reference-hardware evidence (§5).
-- B7's SwiftShader stall is intermittent (U5), so a watchdog run error can turn the per-PR job red on some
-  chart-engine PRs; that is a failure to run surfaced by design, not a regression, and the job is not required.
+- B7's SwiftShader stall (U5) is why B7 left the per-PR set: its first per-PR run hung until the harness
+  budget expired. If a stall ever reaches the nightly Electron run, the job goes red: a failure to run
+  surfaced by design, not a regression, and the job is not required.
 - Repetitions and median-of-p95 are the harness's rules (E06-K01), inherited, not restated. No fixture or flag
   is fetched at run time; the fixture is generated from the committed seed.
 - **Baselines** move only by a reviewed PR with a rationale, from a CI artefact of `main` on the same runner
   class — policy in `packages/chart-engine/README.md`. The first Chromium baseline is taken from this job's
-  first run on `main` and the first Electron baseline from its first green nightly on `main`, each committed by
+  first run on `main` (a `workflow_dispatch` on `main`: the Chromium job runs on PRs and on dispatch, never on a push) and the first Electron baseline from its first green nightly on `main`, each committed by
   a follow-up PR; until then the job records "no baseline yet" for that runtime. Making it gating is E11-T06 (#449).
 
 ## 13. Follow-ups (E11, E10)
