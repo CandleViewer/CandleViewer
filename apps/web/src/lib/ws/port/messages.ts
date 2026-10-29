@@ -12,6 +12,7 @@ import { MAX_TOKEN_LENGTH } from "../core/connection";
 import type { EngineCounters } from "../core/engine";
 import { ERR_CODE, isTopic, isUuid, type DataBody } from "../protocol/codec";
 import type { HelloPayload, SubOptions, SystemUpdate } from "../protocol/frames";
+import { isBuildLabel } from "../state/reducer";
 import type { TopicStatus, WsState } from "../state/types";
 import type { SubscriptionPriority } from "../../../shell/bootstrap/subscriptionOrder";
 
@@ -161,6 +162,10 @@ const isNat = (v: unknown): v is number =>
   typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const isBoundedPositive = (v: unknown, max: number): v is number =>
   typeof v === "number" && Number.isFinite(v) && v > 0 && v <= max;
+/** E10-S04 (SCR-157): `null` before any `welcome`, else each part `null` or one the worker kept. */
+const isServerBuild = (v: unknown): boolean =>
+  v === null ||
+  (isRec(v) && [v["protocol"], v["version"]].every((part) => part === null || isBuildLabel(part)));
 /**
  * A copy of the record `v` made through its JSON text, so what was measured is what is kept (a getter
  * is read once) and a key such as `__proto__` is a plain own property of the copy, never its prototype.
@@ -310,8 +315,12 @@ export function parseWorkerMessage(data: unknown): WorkerMessage | undefined {
   switch (data["t"]) {
     case "state": {
       const state = data["state"];
-      // cast: `reduce` made it; the tab only refuses what is not a state at all
-      return isRec(state) && typeof state["transport"] === "string" && isNat(state["transitionSeq"])
+      // cast: `reduce` made it; the tab refuses what is not a state at all, and a build label it
+      // would show that is not a bounded one
+      return isRec(state) &&
+        typeof state["transport"] === "string" &&
+        isNat(state["transitionSeq"]) &&
+        isServerBuild(state["server"])
         ? { t: "state", state: state as unknown as WsState }
         : undefined;
     }

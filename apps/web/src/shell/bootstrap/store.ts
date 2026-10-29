@@ -17,7 +17,9 @@
  *  - the SCR-153 degraded facts (E10-S04 #306), folded from every `system` frame,
  *    with row 9's 10 s hand-over to R5 timed here (E17-D02 §6);
  *  - SCR-159's reachability, the liveness probe's verdict (`liveness.ts`), and the desktop
- *    shell's last GPU-process crash while its page shows (`gpuCrash.ts`).
+ *    shell's last GPU-process crash while its page shows (`gpuCrash.ts`);
+ *  - SCR-157's facts: the last `welcome`'s build label, which the worker read and vetted, and
+ *    whether the update banner was postponed.
  */
 import type { generated } from "@candleviewer/protocol";
 import {
@@ -83,6 +85,15 @@ export interface ShellState {
   readonly reachability: Reachability;
   /** SCR-159's GPU page (F15, desktop only): the last crash, until the user keeps software rendering. */
   readonly gpuCrash: GpuCrash | null;
+  /**
+   * The last `welcome`'s `protocol` (23 §4.2): `undefined` until the first `welcome`, `null` when
+   * it carried none the client keeps, which SCR-157 reads as incompatible (10b fails closed).
+   */
+  readonly serverProtocol: string | null | undefined;
+  /** Its `server_version`: `undefined` until a `welcome` carries one the client keeps. */
+  readonly serverVersion: string | undefined;
+  /** SCR-157's Later: the update banner is gone for the session, and the StatusBar reminds. */
+  readonly updateDeferred: boolean;
 }
 
 const INITIAL_BOOTSTRAP: BootstrapPhase = { kind: "loading" };
@@ -103,6 +114,9 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
   everLive: false,
   reachability: REACHABLE,
   gpuCrash: null,
+  serverProtocol: undefined,
+  serverVersion: undefined,
+  updateDeferred: false,
 });
 
 let state: ShellState = INITIAL_SHELL_STATE;
@@ -178,6 +192,11 @@ export function applyGpuCrash(crash: GpuCrash): boolean {
 /** "Keep software rendering": the page goes; SCR-153's GPU row holds for the session (BQ-9.3). */
 export function keepSoftwareRendering(): void {
   setShellState({ gpuCrash: null, degraded: setGpuFallback(state.degraded, true) });
+}
+
+/** SCR-157's Later (E10-D03 §9.1): the banner goes until the next launch; the StatusBar reminds. */
+export function deferUpdate(): void {
+  setShellState({ updateDeferred: true });
 }
 
 /** Test-only reset to the initial, unauthenticated shell state. */

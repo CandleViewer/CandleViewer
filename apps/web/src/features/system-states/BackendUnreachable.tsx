@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useNavigate } from "react-router";
 import { Icon } from "@candleviewer/ui";
+import { CLIENT_VERSION } from "../../lib/ws/protocol/frames";
 import { backoffDelayWithJitter } from "../../shell/bootstrap/backoff";
 import { runBootstrap } from "../../shell/bootstrap/bootstrap";
 import { markReachable } from "../../shell/bootstrap/liveness";
@@ -155,7 +156,7 @@ export function BackendUnreachable(): JSX.Element {
           {row("unknown", BOOT_CHECKS.version)}
         </ul>
       </OfflinePage>
-      <p style={FOOT}>{SCR159_COPY.buildLine(__CV_APP_VERSION__)}</p>
+      <p style={FOOT}>{SCR159_COPY.buildLine(CLIENT_VERSION)}</p>
     </ScreenRoot>
   );
 }

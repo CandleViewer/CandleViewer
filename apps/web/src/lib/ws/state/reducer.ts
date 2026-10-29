@@ -33,7 +33,20 @@ export const INITIAL_WS_STATE = deepFreeze<WsState>({
   orderEntry: { enabled: false, reason: "kill_switch_unknown" },
   diagnostics: { connectionId: null, requestId: null },
   outage: null,
+  server: null,
 });
+
+/** `hello.client_version`'s bound (23 §13.2), for a build label and a protocol name alike. */
+const MAX_BUILD_LABEL = 32;
+/** Printable ASCII, the space included, with no space at either end. */
+const UNPADDED_PRINTABLE = /^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/;
+/** E10-S04 (SCR-157): a `welcome` label the client keeps; no control, bidi or blank one shows. */
+export const isBuildLabel = (v: unknown): v is string =>
+  typeof v === "string" &&
+  v.length > 0 &&
+  v.length <= MAX_BUILD_LABEL &&
+  UNPADDED_PRINTABLE.test(v);
+const labelOf = (v: unknown): string | null => (isBuildLabel(v) ? v : null);
 
 type Patch = { -readonly [K in keyof WsState]?: WsState[K] };
 
@@ -111,8 +124,13 @@ function patchFor(prev: WsState, e: EngineEvent): Patch {
         ...outagePatch(prev, e.lost),
       };
     case "welcome":
-      if (typeof e.connectionId !== "string") return {};
-      return { diagnostics: { ...prev.diagnostics, connectionId: e.connectionId } };
+      // the build label is each `welcome`'s, whatever its connection id: a part not kept is `null`
+      return {
+        ...(typeof e.connectionId === "string" && {
+          diagnostics: { ...prev.diagnostics, connectionId: e.connectionId },
+        }),
+        server: { protocol: labelOf(e.protocol), version: labelOf(e.serverVersion) },
+      };
     case "auth_ok":
       // On a live socket `auth_ok` is an in-place re-auth (23 4.1): the same connection, so a
       // pending shutdown, the quality class and the `system` stream carry over, and no kill switch

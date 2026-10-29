@@ -24,6 +24,9 @@ export const PICKER_REASON = "Not available in this build.";
 export const PICKER_NOTE = "Pickers: not available in this build.";
 export const SEARCH_REASON = "The command palette is not available in this build.";
 
+/** CMP-084's id: focus lands here after SCR-157's Later (E10-D04 T-19) and its dialog (§9.1). */
+export const SEARCH_TRIGGER_ID = "cv-search-trigger";
+
 /** `aria-keyshortcuts` syntax for a hint: "Ctrl+K" -> "Control+K", "Cmd+K" -> "Meta+K". */
 export const ariaKeys = (hint: string): string =>
   hint.replace(/\bCtrl\b/g, "Control").replace(/\b(Cmd|Meta)\b/g, "Meta");
@@ -72,6 +75,7 @@ export function TopBar(props: TopBarProps): JSX.Element {
         {PICKER_NOTE}
       </span>
       <Button
+        id={SEARCH_TRIGGER_ID}
         variant="ghost"
         size="sm"
         {...(onSearch === undefined
