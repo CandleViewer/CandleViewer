@@ -4104,9 +4104,9 @@
       "put": {
         "x-rbac": {
           "permissions": [
-            "settings:write"
+            "admin:write"
           ],
-          "scope": "self"
+          "scope": "none"
         }
       }
     },
