@@ -2,13 +2,13 @@
 
 File `E42-D03 boards`, page `E42-D03`; export `docs/design/E42/img/E42-D03-09-components.png`; sheet `09-components.json` (validated); theme dark.
 
-Board 09 of the confirmed ten (plan e42d03-plan.md, main-orchestrator 2026-10-29 13:57Z; old §0 board(s) 91, boards-branch §0 L72 at 4babb1f62). Grid (18000, 3200); 4560 x 2470 px; 1 frames by §0's count; footer "page E42-D03 · board 09 · r2".
+Board 09 of the confirmed ten (the confirmed plan (#886 comment 6498384157), main-orchestrator 2026-10-29 13:57Z; old §0 board(s) 91, boards-branch §0 L72 at 4babb1f62). Grid (18000, 3200); 4560 x 2470 px; 1 frames by §0's count; footer "page E42-D03 · board 09 · r2".
 
 ## Frames and panels
 
-- `components · CMP-087 stories · 1280×800 [91]` — frame; components, old id [91] node `frame-1280` of `91-components.json` (gen/gen_91.py), 1280 x 800 at (80, 80); gen_91.py re-run in the sandbox: frames byte-equal to its own output (.pre-skel); the recorded sheet drops the CMP-015 Skeleton inst's State prop (live read-back), so the recorded frames are used
-- `components · sheet page 2, the other contracts' stories (DEV panel, not a frame) [91]` — panel (not a frame); components, old id [91] node `frame-2560` of `91-components.json` (gen/gen_91.py), 2560 x 1440 at (1440, 80); gen_91.py re-run in the sandbox: frames byte-equal to its own output (.pre-skel); the recorded sheet drops the CMP-015 Skeleton inst's State prop (live read-back), so the recorded frames are used
-- `components · SCR-121 parts at 1280 (DEV panel, not a frame) [91]` — panel (not a frame); components, old id [91] node `panel · SCR-121 parts at 1280 (not a frame)` of `91-components.json` (gen/gen_91.py), 1280 x 755 at (80, 896); gen_91.py re-run in the sandbox: frames byte-equal to its own output (.pre-skel); the recorded sheet drops the CMP-015 Skeleton inst's State prop (live read-back), so the recorded frames are used
+- `components · CMP-087 stories · 1280×800 [91]` — frame; components, old id [91] node `frame-1280` of `91-components.json` (gen_91.py), 1280 x 800 at (80, 80); gen_91.py re-run unchanged (gen10/harvest.json): frames byte-equal to its own output (.pre-skel); the recorded sheet drops the CMP-015 Skeleton inst's State prop (live read-back), so the recorded frames are used
+- `components · sheet page 2, the other contracts' stories (DEV panel, not a frame) [91]` — panel (not a frame); components, old id [91] node `frame-2560` of `91-components.json` (gen_91.py), 2560 x 1440 at (1440, 80); gen_91.py re-run unchanged (gen10/harvest.json): frames byte-equal to its own output (.pre-skel); the recorded sheet drops the CMP-015 Skeleton inst's State prop (live read-back), so the recorded frames are used
+- `components · SCR-121 parts at 1280 (DEV panel, not a frame) [91]` — panel (not a frame); components, old id [91] node `panel · SCR-121 parts at 1280 (not a frame)` of `91-components.json` (gen_91.py), 1280 x 755 at (80, 896); gen_91.py re-run unchanged (gen10/harvest.json): frames byte-equal to its own output (.pre-skel); the recorded sheet drops the CMP-015 Skeleton inst's State prop (live read-back), so the recorded frames are used
 
 ## Annotation column
 
@@ -21,8 +21,8 @@ Board 09 of the confirmed ten (plan e42d03-plan.md, main-orchestrator 2026-10-29
 
 ## Validator and size
 
-- `09-components.json: 0 errors, 27 warnings, 38 sections, 213190 bytes` (exit 0)
-- 38 sections, 944 nodes (shapes estimate; 0 instances), 194696 bytes compact JSON
+- `09-components.json: 0 errors, 27 warnings, 38 sections, 213201 bytes` (exit 0)
+- 38 sections, 944 nodes (shapes estimate; 0 instances), 194707 bytes compact JSON
 
 ## Live checks for the drawer (new; the old boards' carried lines are in the sheet's notes, prefixed [NN])
 

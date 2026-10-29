@@ -2,12 +2,12 @@
 
 File `E42-D03 boards`, page `E42-D03`; export `docs/design/E42/img/E42-D03-03-scr120-withdrawal.png`; sheet `03-scr120-withdrawal.json` (validated); theme dark.
 
-Board 03 of the confirmed ten (plan e42d03-plan.md, main-orchestrator 2026-10-29 13:57Z; old §0 board(s) 94, boards-branch §0 L66 at 4babb1f62). Grid (12000, 0); 4560 x 2276 px; 2 frames by §0's count; footer "page E42-D03 · board 03 · r2".
+Board 03 of the confirmed ten (the confirmed plan (#886 comment 6498384157), main-orchestrator 2026-10-29 13:57Z; old §0 board(s) 94, boards-branch §0 L66 at 4babb1f62). Grid (12000, 0); 4560 x 2276 px; 2 frames by §0's count; footer "page E42-D03 · board 03 · r2".
 
 ## Frames and panels
 
-- `OV-9 · 1280×800 [94]` — frame; OV-9, old id [94] node `frame-1280` of `94-scr120-withdrawal.json` (gen/gen_94.py), 1280 x 800 at (80, 80); gen_94.py re-run in the sandbox: frames byte-equal to the recorded sheet
-- `OV-9 · 2560×1440 [94]` — frame; OV-9, old id [94] node `frame-2560` of `94-scr120-withdrawal.json` (gen/gen_94.py), 2560 x 1440 at (1440, 80); gen_94.py re-run in the sandbox: frames byte-equal to the recorded sheet
+- `OV-9 · 1280×800 [94]` — frame; OV-9, old id [94] node `frame-1280` of `94-scr120-withdrawal.json` (gen_94.py), 1280 x 800 at (80, 80); gen_94.py re-run unchanged (gen10/harvest.json): frames byte-equal to the recorded sheet
+- `OV-9 · 2560×1440 [94]` — frame; OV-9, old id [94] node `frame-2560` of `94-scr120-withdrawal.json` (gen_94.py), 2560 x 1440 at (1440, 80); gen_94.py re-run unchanged (gen10/harvest.json): frames byte-equal to the recorded sheet
 
 ## Annotation column
 
@@ -20,8 +20,8 @@ Board 03 of the confirmed ten (plan e42d03-plan.md, main-orchestrator 2026-10-29
 
 ## Validator and size
 
-- `03-scr120-withdrawal.json: 0 errors, 3 warnings, 14 sections, 113704 bytes` (exit 0)
-- 14 sections, 451 nodes (shapes estimate; 0 instances), 104430 bytes compact JSON
+- `03-scr120-withdrawal.json: 0 errors, 3 warnings, 14 sections, 113715 bytes` (exit 0)
+- 14 sections, 451 nodes (shapes estimate; 0 instances), 104441 bytes compact JSON
 
 ## Live checks for the drawer (new; the old boards' carried lines are in the sheet's notes, prefixed [NN])
 

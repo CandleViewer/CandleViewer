@@ -2,13 +2,13 @@
 
 File `E42-D03 boards`, page `E42-D03`; export `docs/design/E42/img/E42-D03-07-role-matrix.png`; sheet `07-role-matrix.json` (validated); theme dark.
 
-Board 07 of the confirmed ten (plan e42d03-plan.md, main-orchestrator 2026-10-29 13:57Z; old §0 board(s) 88, boards-branch §0 L71 at 4babb1f62). Grid (6000, 3200); 4640 x 2174 px; 3 frames by §0's count; footer "page E42-D03 · board 07 · r2".
+Board 07 of the confirmed ten (the confirmed plan (#886 comment 6498384157), main-orchestrator 2026-10-29 13:57Z; old §0 board(s) 88, boards-branch §0 L71 at 4babb1f62). Grid (6000, 3200); 4640 x 2174 px; 3 frames by §0's count; footer "page E42-D03 · board 07 · r2".
 
 ## Frames and panels
 
-- `N-6 · Owner (basiltt) · 1280×800 [88]` — frame; N-6, old id [88] node `role · Owner` of `88-role-matrix.json` (gen/gen_88.py), 1280 x 842 at (80, 80); gen_88.py re-run in the sandbox: frames byte-equal to the recorded sheet
-- `N-6 · Manager (alex) · 1280×800 [88]` — frame; N-6, old id [88] node `role · Manager` of `88-role-matrix.json` (gen/gen_88.py), 1280 x 842 at (1440, 80); gen_88.py re-run in the sandbox: frames byte-equal to the recorded sheet
-- `N-6 · Viewer (erin) · 1280×800 [88]` — frame; N-6, old id [88] node `role · Viewer` of `88-role-matrix.json` (gen/gen_88.py), 1280 x 842 at (2800, 80); gen_88.py re-run in the sandbox: frames byte-equal to the recorded sheet
+- `N-6 · Owner (basiltt) · 1280×800 [88]` — frame; N-6, old id [88] node `role · Owner` of `88-role-matrix.json` (gen_88.py), 1280 x 842 at (80, 80); gen_88.py re-run unchanged (gen10/harvest.json): frames byte-equal to the recorded sheet
+- `N-6 · Manager (alex) · 1280×800 [88]` — frame; N-6, old id [88] node `role · Manager` of `88-role-matrix.json` (gen_88.py), 1280 x 842 at (1440, 80); gen_88.py re-run unchanged (gen10/harvest.json): frames byte-equal to the recorded sheet
+- `N-6 · Viewer (erin) · 1280×800 [88]` — frame; N-6, old id [88] node `role · Viewer` of `88-role-matrix.json` (gen_88.py), 1280 x 842 at (2800, 80); gen_88.py re-run unchanged (gen10/harvest.json): frames byte-equal to the recorded sheet
 
 ## Annotation column
 
@@ -21,8 +21,8 @@ Board 07 of the confirmed ten (plan e42d03-plan.md, main-orchestrator 2026-10-29
 
 ## Validator and size
 
-- `07-role-matrix.json: 0 errors, 0 warnings, 7 sections, 57214 bytes` (exit 0)
-- 7 sections, 207 nodes (shapes estimate; 0 instances), 52798 bytes compact JSON
+- `07-role-matrix.json: 0 errors, 0 warnings, 7 sections, 57225 bytes` (exit 0)
+- 7 sections, 207 nodes (shapes estimate; 0 instances), 52809 bytes compact JSON
 
 ## Live checks for the drawer (new; the old boards' carried lines are in the sheet's notes, prefixed [NN])
 

@@ -1,11 +1,12 @@
-"""cap10: compose E42-D03's ten confirmed boards (plan: e42d03-plan.md, #886 comment 6498384157, confirmed by
+"""cap10: compose E42-D03's ten confirmed boards (the confirmed plan (#886 comment 6498384157), confirmed by
 main-orchestrator 2026-10-29 13:57Z) from the old per-board sheets' frames (method of E42-D04's gen10/cap10.py).
 
-Each frame is the old board's frame node tree exactly as its generator (gen/gen_NN.py) wrote and validated it in
-E42-D03/NN-<slug>.json: only the frame's root is renamed (old boards call theirs "frame-1280" / "frame-2560", which
-would collide on a board) and given its x/y on the new board. harvest.py re-runs the ten source generators in a sandbox
-and records that their fresh frames equal the recorded ones (BUILD.md). This module only reads gen/, the kit and the old
-sheets; it writes ../E42-D03-cap10/ and ../E42-D03-cap10-v4/.
+Each frame is the old board's frame node tree exactly as its generator (gen_NN.py) wrote and validated it in the
+recorded source sheet NN-<slug>.json (SOURCES): only the frame's root is renamed (old boards call theirs "frame-1280" /
+"frame-2560", which would collide on a board) and given its x/y on the new board. gen10/harvest.json records that the
+ten source generators re-ran unchanged and that their fresh frames equal the recorded ones (BUILD.md). This module
+reads the kit, the pins and the source sheets; it writes cap10/ (not committed), the board .md files beside the kit
+and v4/ (packed).
 
 Board: a plain (non-flex) root, fill color.surface.app, clip; frames 1:1 left to right in one row with 80 px gutters
 and an 80 px margin (no 80 px spacing token exists, so the gutters are positions, not a flex gap). The old boards'
@@ -22,6 +23,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -34,15 +36,23 @@ SHEETS = SRC.parent
 G10 = SRC / "gen10"
 OUT = SRC / "cap10"  # the unpacked sheets (not committed; v4/ expands to them)
 PACKED = SRC / "v4"
-PIN_SPEC = G10 / "pin" / "branch-4babb1f62.md"  # git show origin/design/e42-d03-boards (= e42kit.SPEC_RULED)
+# the ten recorded source sheets (NN-<slug>.json for NN in 09 26 53 57 72 88 90 91 92 94): records, not committed
+# (BUILD.md, Rebuild); E42D03_SOURCES names the folder that holds them (default: the kit folder)
+SOURCES = Path(os.environ.get("E42D03_SOURCES") or SRC)
+PIN_SPEC = G10 / "pin" / "branch-4babb1f62.md"  # frozen copy if present, else git (_pin_bytes; = e42kit.SPEC_RULED)
 PIN_MD5 = "d91202f9bf42206dd1a5cbc865d5ce02"
 PIN_REV = "4babb1f62"
-MAIN_SPEC = G10 / "pin" / "main-58660d32f.md"  # git show origin/main (unchanged since 58660d32f)
+MAIN_SPEC = G10 / "pin" / "main-58660d32f.md"  # frozen copy if present, else git show 58660d32f (on main)
+PIN_GIT = {  # frozen pin -> (repo path, the revisions / blob that hold its bytes); the pin dir is not committed
+    "branch-4babb1f62.md": ("docs/design/E42/E42-D03.md",
+                            ("4babb1f62", "3dafe78a7", "378a49898b8afc6af67c1ebd91b2d96076c0ed1a")),
+    "main-58660d32f.md": ("docs/design/E42/E42-D03.md", ("58660d32f", "8e7825b5b464ca17bd051889c74f1d7a80226177")),
+}
 MAIN_MD5 = "2e87d809cdb23a4cc311f21a272abf33"
 VALIDATOR = SHEETS / "tools" / "validate_sheet.py"
 COMPONENTS = SHEETS / "tools" / "components.offline.json"
 PACKER = SHEETS / "tools" / "compact.py"
-PLAN_NAME = "e42d03-plan.md"
+PLAN_NAME = "the confirmed plan (#886 comment 6498384157)"
 CONFIRMED = "2026-10-29 13:57Z"
 
 M = 80  # margin and gutter
@@ -71,7 +81,8 @@ def fr(state: str, nn: int, px: int, old: str = "", tag: str = "") -> F:
     return F(state, nn, old or f"frame-{px}", f"{state}{' · ' + tag if tag else ''} · {size} [{nn:02d}]")
 
 
-# --- the confirmed plan's table (e42d03-plan.md), one row each. old §0 row: the boards-branch §0 line naming the old id
+# --- the confirmed plan's table (#886 comment 6498384157), one row each. old §0 row: the boards-branch §0 line
+# naming the old id
 BOARDS: dict[int, dict[str, Any]] = {
     1: {"slug": "tint-proof", "theme": "dark+light", "star": True, "keys": "", "s0": 64,
         "items": [fr("OV-2", 9, 1280, "frame-1280 SCR-120 overview", "SCR-120 overview"),
@@ -127,8 +138,23 @@ KEY_NOTE = {
 
 
 # --- the pinned specs
+def _pin_bytes(p: Path) -> bytes:
+    """The pin's bytes: the frozen copy if present, else `git show <rev>:<path>` (repo-relative, read-only, no network):
+    the pin's revision, then the boards PR's commit holding the same bytes, then the blob id."""
+    if p.exists():
+        return p.read_bytes()
+    rel, revs = PIN_GIT[p.name]
+    for rev in revs:
+        obj = rev if len(rev) == 40 else f"{rev}:{rel}"
+        res = subprocess.run(["git", "-C", str(SRC), "show", obj], capture_output=True, timeout=60, check=False)
+        if res.returncode == 0:
+            return res.stdout
+    raise RuntimeError(f"{p.name}: no frozen copy and git show finds none of {', '.join(revs)}; fetch the boards PR's "
+                       "head ref (BUILD.md, Rebuild)")
+
+
 def _read(p: Path, md5: str) -> list[str]:
-    raw = p.read_bytes()
+    raw = _pin_bytes(p)
     if hashlib.md5(raw).hexdigest() != md5:
         raise RuntimeError(f"{p.name}: md5 is not {md5[:8]}")
     return raw.decode("utf-8").split("\n")
@@ -162,7 +188,9 @@ def quote(a: int, b: int) -> str:
 
 # --- reading the old sheets
 def old_sheet(nn: int) -> tuple[Path, dict[str, Any]]:
-    p = next(q for q in SRC.glob(f"{nn:02d}-*.json") if q.suffix == ".json")
+    p = next((q for q in SOURCES.glob(f"{nn:02d}-*.json") if q.suffix == ".json"), None)
+    if p is None:
+        raise RuntimeError(f"old sheet {nn:02d}-*.json not in {SOURCES.name}/: set E42D03_SOURCES (BUILD.md, Rebuild)")
     return p, json.loads(p.read_text(encoding="utf-8"))
 
 
@@ -289,7 +317,7 @@ def substitute(n: Node) -> tuple[Node, int]:
     return out, total
 
 
-# --- live-check fold (2026-10-29): the SHEET-FIX lines of p0/E42-D03-cap10/livecheck-report.md, applied to the
+# --- live-check fold (2026-10-29): the SHEET-FIX lines of the boards' live-check report, applied to the
 # carried trees after substitute() so a regeneration reproduces what was fixed live. Only the named nodes change.
 UNDERLINE_W = {  # the sibling word -> (width the estimate gave, width measured live)
     "Change": (46, 48), "BTC scalp": (61, 62), "Default": (43, 45), "Workspace": (68, 70), "Journal": (44, 47),
@@ -303,6 +331,30 @@ ECHO_W = 186  # the CMP-016 echo's measured width (live check, 06 1280)
 LIVEFIX_CHECKS = {6: [
     "fix pass (live check): after render, pin the svg group of every 'countdown glyph' (banner 1280, banner 2560, "
     "inset 1) at (1, 1) inside its 16 px box: the kit places it 43 px low"]}
+
+# --- carries for the next redraw (review fold, 2026-10-29): two carried annotation strings went stale before the
+# boards were drawn; the drawn boards keep them (E42-D03 §0's as-built record names both, verbatim) and these sheets
+# carry the fix, so the next render is right. Each old string must occur exactly once on its board.
+CARRIES: dict[int, list[tuple[str, str]]] = {
+    1: [("Q4 (L150, owner, due 2026-10-27): the neutral band;",
+         "Q4 (§3, owner, #2701; the neutral default stands until ruled): the neutral band;")],
+    8: [(("Boards 90–92 draw 3 + 2 + 2 = 7 frames: board 91 has two, so §0 L73's 6 / 211 hold only if 91 becomes one "
+          "frame (open item 1)."),
+         ("Under the cap [90]–[92] count 3 + 1 + 2 = 6 frames: [91] is board 09's one 1280 frame (its old 2560 page a "
+          "DEV panel beside it), so §0's 6, and its 23 of 211, hold."))],
+}
+
+
+def carry(nn: int, sections: list[dict[str, Any]]) -> list[str]:
+    """Apply CARRIES[nn] to the carried text nodes; returns the old strings replaced (each exactly once)."""
+    done = []
+    for old, new in CARRIES.get(nn, []):
+        hits = [n for s in sections for n in walk(s["node"]) if n.get("t") == "text" and old in str(n.get("chars"))]
+        if len(hits) != 1:
+            raise RuntimeError(f"board {nn:02d}: carry {old[:40]!r} found {len(hits)} times, not once")
+        hits[0]["chars"] = hits[0]["chars"].replace(old, new)
+        done.append(old)
+    return done
 
 
 def _word_of(parent: Node) -> str:
@@ -388,7 +440,8 @@ def focus_block(screen: str) -> Node:
 def provenance(nn: int) -> str:
     h = json.loads((G10 / "harvest.json").read_text(encoding="utf-8")).get(f"{nn:02d}")
     if not h or h["exit"] != 0:
-        raise RuntimeError(f"gen_{nn:02d}.py: no clean sandbox re-run in harvest.json")
+        raise RuntimeError(f"gen_{nn:02d}.py: no clean re-run in harvest.json")
+    # the drawn wording ("in the sandbox": the isolated re-run harvest.json records); md() words it without the place
     if h.get("frames_equal"):
         return f"gen_{nn:02d}.py re-run in the sandbox: frames byte-equal to the recorded sheet"
     if h.get("frames_equal_pre_skel"):
@@ -551,6 +604,7 @@ def build(nn: int) -> Built:
     ann_secs.append({"into": "annotations", "node": block("board", "Board", bline)})
     ann_secs.append({"into": "annotations", "node": text("footer", f"page E42-D03 · board {nn:02d} · r2",
                                                          "type.ui.caption", "color.text.tertiary")})
+    carry(nn, ann_secs)
     col_h = est_h({"t": "board", "name": "annotations", "o": col["o"], "w": COL_W,
                    "kids": col["kids"] + [s["node"] for s in ann_secs[1:]]})
     sections += ann_secs
@@ -567,9 +621,11 @@ def merged_notes(r: Built, nn: int, grid: tuple[int, int]) -> dict[str, list[str
     keys = ("sources", "copy_keys", "copy_gaps", "spec_gaps", "fallbacks", "tokens", "live_checks", "deviations")
     out: dict[str, list[str]] = {k: [] for k in keys}
     out["sources"].append(f"cap10: gen10/{r.stem}.py + gen10/cap10.py compose old id(s) "
-                          f"{', '.join('%02d' % k for k in sorted(r.sheets))} ({', '.join(r.sheets.values())}) per the "
-                          f"confirmed plan {PLAN_NAME} ({CONFIRMED}); boards-branch text {PIN_REV} (md5 {PIN_MD5[:8]}, "
+                          f"{', '.join('%02d' % k for k in sorted(r.sheets))} ({', '.join(r.sheets.values())}) per "
+                          f"{PLAN_NAME} ({CONFIRMED}); boards-branch text {PIN_REV} (md5 {PIN_MD5[:8]}, "
                           f"§0 L{BOARDS[nn]['s0']}); main {MAIN_MD5[:8]} at 58660d32f unchanged")
+    out["deviations"] += [f"carry for the next redraw (E42-D03 §0, as built): the drawn board reads {o!r}; this "
+                          f"sheet reads {n!r}" for o, n in CARRIES.get(nn, [])]
     out["deviations"] += [
         "frames renamed from the old ids' 'frame-1280' / 'frame-2560' to '<state> · <size> [<old id>]'; node trees "
         "otherwise byte-identical to the recorded sheet",
@@ -662,7 +718,7 @@ def write(nn: int, step_y: int) -> dict[str, Any]:
     md_text = md(res, nn)
     if LEAK.search(md_text):
         raise RuntimeError(f"board {nn:02d}: the .md carries a local path or agent name")
-    (OUT / f"{r.stem}.md").write_text(md_text, encoding="utf-8")
+    (SRC / f"{r.stem}.md").write_text(md_text, encoding="utf-8")  # the committed board .md, beside the kit
     if code != 0:
         raise RuntimeError(f"{jp.name}: validator exit {code} ({vline})")
     return res
@@ -676,16 +732,16 @@ def md(res: dict[str, Any], nn: int) -> str:
          + (f"theme {b['theme']}." if b["theme"] != "dark+light" else  # the review pass's wording (board 01)
             "theme dark. (Its light pair is the same board exported under the light token theme and composited "
             "beside it.)"), "",
-         f"Board {nn:02d} of the confirmed ten (plan {PLAN_NAME}, main-orchestrator {CONFIRMED}; old §0 board(s) "
+         f"Board {nn:02d} of the confirmed ten ({PLAN_NAME}, main-orchestrator {CONFIRMED}; old §0 board(s) "
          f"{', '.join('%02d' % o for o in sorted(r.sheets))}, boards-branch §0 L{b['s0']} at {PIN_REV}). Grid "
          f"({res['grid'][0]}, {res['grid'][1]}); {r.board['w']} x {r.board['h']} px; {r.n_count} frames by §0's count"
          + (f" ({r.n_drawn} drawn)" if r.n_drawn != r.n_count else "")
          + f"; footer \"page E42-D03 · board {nn:02d} · r2\".", "", "## Frames and panels", ""]
     for m in r.items:
         kind = "frame" if m["frames"] else "panel (not a frame)"
+        prov = provenance(m["old_board"]).replace("re-run in the sandbox", "re-run unchanged (gen10/harvest.json)")
         L.append(f"- `{m['name']}` — {kind}; {m['state']}, old id [{m['old_board']:02d}] node `{m['old_node']}` of "
-                 f"`{m['sheet']}` (gen/gen_{m['old_board']:02d}.py), {m['w']} x {m['h']} at ({m['x']}, {m['y']}); "
-                 f"{provenance(m['old_board'])}")
+                 f"`{m['sheet']}` (gen_{m['old_board']:02d}.py), {m['w']} x {m['h']} at ({m['x']}, {m['y']}); {prov}")
     if b.get("count_note"):
         L.append(f"- count: {b['count_note']}")
     L += ["", "## Annotation column", "",
@@ -704,7 +760,7 @@ def md(res: dict[str, Any], nn: int) -> str:
           "## Live checks for the drawer (new; the old boards' carried lines are in the sheet's notes, prefixed [NN])",
           "", f"- {merged_notes(r, nn, res['grid'])['live_checks'][0]}",
           "- every inst node carried from the old boards keeps its old live check (notes.live_checks, [NN] lines)", ""]
-    return "\n".join(L) + "\n"
+    return "\n".join(L).rstrip("\n") + "\n"  # the committed (prettier) form: no trailing blank line
 
 
 def pack(jp: Path) -> tuple[int, str]:

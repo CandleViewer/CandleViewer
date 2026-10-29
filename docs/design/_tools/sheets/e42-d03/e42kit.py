@@ -46,7 +46,7 @@ SHEETS_DIR = KIT_DIR.parent
 VALIDATOR = SHEETS_DIR / "tools" / "validate_sheet.py"
 COMPONENTS = SHEETS_DIR / "tools" / "components.offline.json"
 TOKENS_FILE = SHEETS_DIR / "tools" / "token-sync.json"  # the token sync (the boards read the E42-D02-era copy)
-SPEC = KIT_DIR / "spec" / "E42-D03@7884a33bd.md"  # frozen (not committed: `git show`): the boards branch moved to 4babb1f62 (R-1/R-2); line pins stay at 7884a33bd
+SPEC = KIT_DIR / "spec" / "E42-D03@7884a33bd.md"  # frozen copy; absent, pin_bytes() reads it with git show (R-1/R-2: lines stay at 7884a33bd)
 SPEC_MD5 = "3f909f5f71e333b6c112f595fefaae8c"  # HEAD 7884a33bd, the board cap (was 2e87d809, 58660d32f); no line moved
 SPEC_MD5_PRE_GATE = "92d95c06fcef71501ca0f9e68a72185d"  # 782eb0e4d + #960 Q11: re-pinned by repin/linemap.json
 D01 = KIT_DIR.parents[2] / "research" / "e42-admin.md"  # dlg.disable = D01:668-672
@@ -2604,7 +2604,7 @@ def _ws(s: str) -> str:
 def _spec_checks(check: Any) -> None:
     """Every COPY, LABELS, MARKER and SAMPLE string against the spec (and D01, D09) at the lines this kit cites, the
     gate fold's T2 anchors and §0's counts against the registry."""
-    spec = SPEC.read_text(encoding="utf-8").split("\n")
+    spec = pin_bytes(SPEC).decode("utf-8").split("\n")
     sec14 = "\n".join(spec[607:624])  # §14's rows, L608-624
     docs = {"spec": spec, "D01": D01.read_text(encoding="utf-8").split("\n"),
             "D09": D09.read_text(encoding="utf-8").split("\n")}
@@ -2717,7 +2717,7 @@ def selftest() -> int:
     prims = sorted(n for n in names if n.startswith(("color.", "type.")) and {s for s, _ in table.get(n, set())} ==
                    {"primitives"})
     check(not prims, f"colour and typography tokens are semantic {prims or ''}")
-    md5 = hashlib.md5(SPEC.read_bytes()).hexdigest() if SPEC.exists() else "missing"
+    md5 = hashlib.md5(pin_bytes(SPEC)).hexdigest()
     print(("PASS " if md5 == SPEC_MD5 else "WARN ") + f"spec revision {md5[:8]} (line numbers read at {SPEC_MD5[:8]})")
     _spec_checks(check)
     reset_notes()
@@ -2995,7 +2995,7 @@ def _selftest_sheet(check: Any, fails: list[str]) -> int:
 
 # --- R-1 / R-2 (orchestrator ruling 2026-10-25 01:30Z; build notes "RULINGS R-1 / R-2"): appended after the self-test
 # so no earlier kit line moves (board 94 computes a kit line number). CMP-138 and CMP-044 are read from the spec at
-# the boards branch's 4babb1f62 and `15` there (git show, frozen in spec/ beside the kit); every other line pin stays at SPEC
+# the boards branch's 4babb1f62 and `15` there (frozen in spec/, else pin_bytes()); every other line pin stays at SPEC
 # (7884a33bd). Nothing above this block changed except SPEC's path (the same bytes, frozen).
 SPEC_RULED = KIT_DIR / "spec" / "E42-D03@4babb1f62.md"
 SPEC_RULED_MD5 = "d91202f9bf42206dd1a5cbc865d5ce02"  # 969 lines; §0 L84-91, §12 L555-556, §16 L711-712, §20 L822-842
@@ -3006,7 +3006,7 @@ CAT_RULED_MD5 = "310980c4dbe1e4a65ae03cc528ce3183"  # CMP-044 `15:473-480` (#441
 def ruled_lines(doc: str) -> list[str]:
     """The lines of the ruled spec ("spec", 4babb1f62) or catalogue ("15"), after checking their md5 (R-1, R-2)."""
     path, md5 = {"spec": (SPEC_RULED, SPEC_RULED_MD5), "15": (CAT_RULED, CAT_RULED_MD5)}[doc]
-    data = path.read_bytes()
+    data = pin_bytes(path)
     if hashlib.md5(data).hexdigest() != md5:
         raise SystemExit(f"{path.name}: md5 is not {md5[:8]}: re-read every ruled line")
     return data.decode("utf-8").splitlines()
@@ -3157,6 +3157,33 @@ def cap138_meter(state: str, frac: float, w: int = 160, h: int = 8, note: str = 
     return box(f"CMP-138 RiskCapMeter (composition) · {state} bar", kids, None, w=w + extra, h=tick_h,
                note='role="meter", aria-valuenow/min/max and aria-valuetext, the state word in the accessible name; '
                     "never live (`15:1582`; E39-D02 §6)" + (f"; {note}" if note else ""))
+
+
+# --- Pins. The frozen copies under spec/ are not committed; when one is absent, pin_bytes() reads the same bytes with
+# `git show` (repo-relative, read-only, no network): the pin's revision, then the boards PR's own commit that holds the
+# same bytes (the pin itself was rebased away), then the blob id. Each reader still checks the md5.
+PIN_GIT: dict[str, tuple[str, tuple[str, ...]]] = {
+    "E42-D03@7884a33bd.md": ("docs/design/E42/E42-D03.md",
+                             ("7884a33bd", "357a0b097", "f5756899dd059eca01dfbd155a7df95e017e6f0d")),
+    "E42-D03@4babb1f62.md": ("docs/design/E42/E42-D03.md",
+                             ("4babb1f62", "3dafe78a7", "378a49898b8afc6af67c1ebd91b2d96076c0ed1a")),
+    "15@4babb1f62.md": ("docs/plan/15-component-catalogue.md",
+                        ("4babb1f62", "a7caf791b024083b08792dcd4b10930cb3961d48")),
+}
+
+
+def pin_bytes(path: Path) -> bytes:
+    """A frozen pin's bytes: the file under spec/ if present, else `git show <rev>:<path>` / `git show <blob>`."""
+    if path.exists():
+        return path.read_bytes()
+    rel, revs = PIN_GIT[path.name]
+    for rev in revs:
+        obj = rev if len(rev) == 40 else f"{rev}:{rel}"
+        res = subprocess.run(["git", "-C", str(KIT_DIR), "show", obj], capture_output=True, timeout=60, check=False)
+        if res.returncode == 0:
+            return res.stdout
+    raise SystemExit(f"{path.name}: not under spec/, and git show finds none of {', '.join(revs)} ({rel}); "
+                     "fetch the boards PR's head ref (gen10/BUILD.md, Rebuild)")
 
 
 if __name__ == "__main__":

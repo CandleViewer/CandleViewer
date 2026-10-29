@@ -1,20 +1,49 @@
 # E42-D03 (#886) cap10 — the ten confirmed boards, composed offline
 
-Plan of record: `e42d03-plan.md` (#886 comment 6498384157, confirmed by main-orchestrator
-2026-10-29 13:57Z). Outputs: `../../E42-D03-cap10/NN-<slug>.json` + `.md` (validated) and `../../E42-D03-cap10-v4/`
-(packed with `../../compact.py`, the packer the earlier E42-D03-v4 selection used). Regenerate: `python3 -I -B
-gen10/harvest.py` (optional: proves the sources), then `python3 -I -B gen10/NN-<slug>.py` for each board (from
-`E42-D03/`).
+Plan of record: the confirmed plan (#886 comment 6498384157), confirmed by main-orchestrator 2026-10-29 13:57Z.
+Outputs (from the kit folder, `docs/design/_tools/sheets/e42-d03/`): `cap10/NN-<slug>.json` (validated with
+`../tools/validate_sheet.py --components ../tools/components.offline.json`; not committed), `NN-<slug>.md` beside the
+kit, and `v4/NN-<slug>.json` (packed with `../tools/compact.py`). Regenerate:
+`E42D03_SOURCES=<folder> python3 -I -B gen10/NN-<slug>.py` for each board, run from the kit folder; then
+`python3 -I -B gen10/tools/v4check.py` and `python3 -I -B gen10/tools/asdrawn.py` (below, Rebuild).
+
+## Rebuild: what is committed, what is a record
+
+A checkout rebuilds the ten boards from committed files plus one recorded input:
+
+- **Committed and run:** the kit (`e42kit.py`, read-only here: its estimator), `gen10/cap10.py` and the ten
+  `gen10/NN-<slug>.py`, `gen10/harvest.json`, `../tools/` (validator, inventory, packer), `gen10/tools/`.
+- **Spec pins (no copies committed):** `cap10.py` and `e42kit.py` read a pin from `gen10/pin/` or `spec/` when the
+  frozen copy is there, else with `git show` (repo-relative, read-only): boards-branch text 4babb1f62 (md5 d91202f9)
+  via 4babb1f62, then this PR's 3dafe78a7 (the same bytes; 4babb1f62 was rebased away), then blob 378a4989; main
+  58660d32f (md5 2e87d809, on `main`); the kit's SPEC 7884a33bd (md5 3f909f5f; this PR's 357a0b097). Every read is
+  md5-checked. After the squash merge the PR commits stay fetchable as the PR's head ref (`refs/pull/4978/head`);
+  58660d32f is on `main`.
+- **Records, not committed:** the ten source sheets `09-tint-proof.json`, `26-scr120-trading-unknown.json`,
+  `94-scr120-withdrawal.json`, `53-scr122-unbind-unknown.json`, `57-scr122-invited.json`, `72-scr124-active.json`,
+  `88-role-matrix.json`, `90-status-treatments.json`, `91-components.json`, `92-redlines.json` (about 2 MB, 63,000
+  lines of JSON) are read from `E42D03_SOURCES`. They are the validated outputs of the old per-board generators
+  `gen_NN.py` (15,000 lines for these ten), which are not committed either: they hard-code local checkout paths in
+  dozens of places, read E42-D02 and E10-D02 from a second checkout, and read `15` at 4babb1f62, which no commit on
+  `main` or in this PR holds. The harvest that re-ran them (`harvest.json`, committed as the record `cap10.py` reads)
+  and its runner scripts drive those generators, so the runners are not committed. 90 and 91 would regenerate with
+  the CMP-015 `State` prop (drift 5 below), which `cap10.py`'s `substitute()` removes.
+- **Proof (review fold, 2026-10-29):** in a fresh detached worktree, with only committed files plus the ten source
+  sheets, the ten scripts regenerate `v4/` byte-identical to the committed sheets and the ten `.md` files
+  byte-identical (`git status` clean but the untracked `cap10/`), and `gen10/tools/v4check.py` expands every packed
+  sheet to its `cap10/` sheet, sha256 matching, validator exit 0. The same run at cf47ac05b (before this fold)
+  reproduced that commit's `v4/` byte for byte. `gen10/tools/asdrawn.py` proves the committed `v4/` equals the sheets
+  the boards were drawn from (cf47ac05b) section for section but the two carries (Carries below).
 
 ## Method
 
 - `cap10.py` (shared) + one `NN-<slug>.py` per board. Each frame is the old board's frame node tree taken from the
-  recorded sheet `E42-D03/NN-<slug>.json` (the generator's validated output), only the root renamed
+  recorded source sheet `NN-<slug>.json` (the generator's validated output), only the root renamed
   `<state> · <size> [<old id>]` and placed by x/y; `cap10.py` re-checks that every carried tree is byte-identical to
-  the recorded one apart from name/x/y. Nothing in `gen/`, the kit or the old sheets was edited.
-- `harvest.py` + `sandbox.py` (method of E42-D04's gen10): the ten source generators re-run unchanged in logic in
-  `gen10/sb/` (the kit copied byte-identical; `gen10/validate_sheet.py` and `gen10/components.offline.json` are
-  symlinks so the sandbox kit's `SHEETS_DIR = KIT_DIR.parent` finds them). Result (`harvest.json`): all ten exit 0;
+  the recorded one apart from name/x/y. No generator, the kit or the old sheets was edited.
+- The harvest (method of E42-D04's gen10): the ten source generators re-run unchanged in logic in an isolated copy
+  of the kit (copied byte-identical), each board's annotation calling it "the sandbox". Result (`harvest.json`): all
+  ten exit 0;
   frames byte-equal to the recorded sheet for 09, 26, 94, 53, 57, 72, 88, 92; for 90 and 91 the fresh frames equal
   the generators' own `.pre-skel` output and the recorded sheets differ only by the CMP-015 Skeleton inst's `State`
   prop, dropped after generation (live read-back) — the recorded (fixed) frames are used.
@@ -32,13 +61,12 @@ gen10/harvest.py` (optional: proves the sources), then `python3 -I -B gen10/NN-<
   (none on these boards); no section over 24,000 B; no `chars` / `name` / note / board name / `.md` text matching
   `cap10.LEAK` (local paths and lane names; five carried note lines were scrubbed:
   [53] a briefs path, [57]/[72] gate-record paths, [90]/[91] the boards-branch worktree name). Packed files'
-  `compactOf.file` is rewritten after packing to the path relative to the sheets folder
-  (`E42-D03-cap10/NN-<slug>.json`, sha256 unchanged), so no packed file carries a local absolute path;
-  `mkcall4.py` resolves it against its cwd, so run it from the sheets folder (checked: all ten pass its staleness check).
+  `compactOf.file` is rewritten after packing to the bare file name (`NN-<slug>.json`, sha256 unchanged), so no
+  packed file carries a local path; `../tools/mkcall4.py` resolves it against its cwd, so run it from `cap10/`.
 - Spec pins: boards-branch `origin/design/e42-d03-boards` = `4babb1f62` (fetched 2026-10-29; md5 d91202f9, 969 lines;
-  = the kit's frozen `SPEC_RULED`) copied to `gen10/pin/branch-4babb1f62.md`; main unchanged since `58660d32f`
-  (md5 2e87d809) copied to `gen10/pin/main-58660d32f.md`. No re-pin of the kit or any generator was needed (they run
-  on their own frozen pins: SPEC 7884a33bd, SPEC_RULED 4babb1f62).
+  = the kit's frozen `SPEC_RULED`) as `gen10/pin/branch-4babb1f62.md`; main unchanged since `58660d32f` (md5
+  2e87d809) as `gen10/pin/main-58660d32f.md`; neither copy is committed (Rebuild: `git show`). No re-pin of the kit or
+  any generator was needed (they run on their own frozen pins: SPEC 7884a33bd, SPEC_RULED 4babb1f62).
 
 ## Boards (frame ids → source generator)
 
@@ -65,7 +93,7 @@ PNGs with the 10 exports).
 
 - The brief's Task block names a different set (01 scr135-populated … 10 light-representatives, "total must be 38",
   "board 08 = old 66 … 10 = AL-29 / FF-16 / MM-9", "boards 01, 04, 05, 06 carry overlays"): that is E42-D04's cap10
-  brief. Its own Source-of-truth line and the "E42-D03 specifics" block point at `e42d03-plan.md`, so the ten boards,
+  brief. Its own Source-of-truth line and the "E42-D03 specifics" block point at the confirmed plan, so the ten boards,
   their frames (23, not 38) and the keyboard rider (boards 04 and 06, plus board 10) follow that plan.
 - Board 01: the plan's table says "four 1280 frames (5120 px)", its count note says the old 09 sheet draws two and the
   light pair is the same board exported under the light theme. Drawn as two (the sheet's content unchanged), counted
@@ -93,9 +121,9 @@ PNGs with the 10 exports).
    26's renders removed, §17 / §21 re-points) are not in the text yet. Each board's Board block therefore cites the
    old id's §0 row (L64, L66, L68, L70, L71, L72; checked to say "Drawn") and the plan.
 4. **gen_26 refuses on today's tree:** `WT = k.SPEC.parents[3]` resolved to the worktree until R-1/R-2 froze `SPEC`
-   under `E42-D03/spec/`; now it points at the scratch folder and `git show e69a9200c:…` fails. The sandbox
-   substitutes the worktree path (sandbox.py, one counted replacement); with it the frames are byte-equal. Fix in
-   gen_26 when it is next touched.
+   under the kit's `spec/`; now it points at the kit's parent folder and `git show e69a9200c:…` fails. The harvest
+   substitutes the checkout path (one counted replacement); with it the frames are byte-equal. Fix in gen_26 when it
+   is next touched.
 5. **CMP-015 Skeleton `State` prop:** boards 08 / 09 (old 90 / 91) carry the post-generation fix (no `State`), but
    `components.offline.json` still lists `State` on CMP-015 and the generators still emit it: regenerating 90 / 91
    would bring the prop back. Fix the inventory and the kit's skeleton helper together.
@@ -112,16 +140,16 @@ Three MINOR findings from the light review lens, all closed:
    the §0 rule: the light pair is the same board under the light theme, exported separately. So the root is 3280 px,
    not the 5120 px in the plan's table, and the total is 23 frames by §0 (21 drawn)." If four drawn frames are wanted
    instead, add renamed `· light` copies of the same two trees to `BOARDS[1]`. This adds no new content.
-2. **`compactOf.file` absolute paths in `E42-D03-cap10-v4/`.** Each is rewritten to the sheets-relative path, and each
+2. **`compactOf.file` absolute paths in the packed sheets.** Each is rewritten to a relative path, and each
    sha256 is re-verified against the unpacked sheet before the rewrite. Packed-file bytes are otherwise unchanged
    (compact JSON). `compactOf` is never sent to Penpot (`mkcall4.py` reads it only for its staleness check). A leak
    scan (`cap10.LEAK`) over every
-   `E42-D03-cap10/*` and `E42-D03-cap10-v4/*` file finds no hits. `mkcall4.py <sheet> count` exits 0 on all ten packed
-   files when run from the sheets folder.
+   unpacked and packed file finds no hits. `mkcall4.py <sheet> count` exits 0 on all ten packed files when run from
+   the unpacked sheets' folder.
 3. **Review depth: validator and content fidelity.**
    - Validator re-run (`validate_sheet.py <sheet> --components components.offline.json`): all ten exit 0 with 0
      errors. Warnings are 1, 3, 3, 27, 29, 52, 0, 34, 27, 3, the same as recorded above.
-   - Frame-by-frame diff of every board against its source sheet (`E42-D03/09, 26, 94, 53, 57, 72, 88, 90, 91, 92`,
+   - Frame-by-frame diff of every board against its source sheet (`09, 26, 94, 53, 57, 72, 88, 90, 91, 92`,
      the recorded sheets, not `.pre-skel`), ignoring the root name, x and y and mapping the renamed root through each
      child section's `into`: every frame group matches exactly, all 21 drawn frames on the ten boards, including 02 ← 26,
      03 ← 94 (OV-9 withdrawal check) and 06 ← 72 (V-4).
@@ -152,9 +180,9 @@ nodes would fail rendering ("component not found"). `cap10.py` now replaces them
 - Also folded into `cap10.py` so a regeneration reproduces the reviewed outputs: the `compactOf.file` rewrite
   (review fix pass item 2; sha256 checked in `pack()`) and board 01's `.md` theme wording.
 - Results: all ten sheets validate exit 0, 0 errors, warnings unchanged (1, 3, 3, 27, 29, 52, 0, 34, 27, 3); 0
-  `"t": "inst"` nodes and no boolean `wrap` in `E42-D03-cap10/` and `E42-D03-cap10-v4/`; leak scan clean;
+  `"t": "inst"` nodes and no boolean `wrap` in the unpacked and packed sheets; leak scan clean;
   `mkcall4.py <packed> count` exit 0 on 06, 08, 09.
-- Identity check (against the pre-fix outputs kept in `gen10/fix-pre/`): boards 01-05, 07, 10 are byte-identical
+- Identity check (against the pre-fix outputs, a record not committed): boards 01-05, 07, 10 are byte-identical
   (`.json`, `.md`, packed). On 06, 08, 09 the board, export, section list and `into` paths are unchanged and every
   section equals `substitute(pre-fix section)` exactly (2 + 3 + 1 sections touched, 6 nodes replaced); `.md` differs
   only in the validator byte count and the node / instance counts; notes differ only in `fallbacks`, `live_checks`,
@@ -164,8 +192,8 @@ nodes would fail rendering ("component not found"). `cap10.py` now replaces them
 
 The SHEET-FIX lines of the live-check report (boards 04, 06, 09, 10 and the all-boards lines) are folded into
 `cap10.py` (`livefix()`, run in `build()` after `substitute()`; `ROOT_H` in `write()`), so a regeneration reproduces
-what was fixed live. `cap10.py.pre-sheetfix` is the pre-fold copy; the pre-fold outputs and the diff script are in
-`fix-pre/sheetfix/` (`cap10/`, `v4/`, `_diff.py`). No text string, token or other node changed.
+what was fixed live. The pre-fold `cap10.py`, its outputs and the diff script are records (not committed). No text
+string, token or other node changed.
 
 - 06 `T2 2b · cancel with its echo` (1280 frame only, as fixed live): w 32, h 58, `clip` false; the CMP-016 echo
   is `abs`, x = 32 - 186 = -154, y = 36 (right-aligned to the IconButton, 4 px under it). The 2560 frame is unchanged
@@ -182,5 +210,29 @@ what was fixed live. `cap10.py.pre-sheetfix` is the pre-fold copy; the pre-fold 
   row-2 boards at y 3200.
 - 10 pills (measured vs estimate): focus 3 x+1, 5 x-2, 8 x+2 (both frames); 10, 15, 16 x+1 and 11-14 y+3 (2560).
 - Results: all ten validate exit 0 with 0 errors, warnings unchanged (1, 3, 3, 27, 29, 52, 0, 34, 27, 3); re-packed
-  with `compactOf.file` rewritten to the absolute `E42-D03-cap10/` path (sha256 checked); scan: 0 `inst`, no boolean
-  `wrap`, no local-path string in the sheets, `.md` or packed files (the absolute `compactOf.file` excepted).
+  with `compactOf.file` rewritten (sha256 checked; the committed form is the bare file name); scan: 0 `inst`, no
+  boolean `wrap`, no local-path string in the sheets, `.md` or packed files.
+
+## Review fold (2026-10-29, PR #4978 lenses)
+
+- **Rebuild (B-1):** pins read with `git show` when no frozen copy is present (`cap10._pin_bytes`,
+  `e42kit.pin_bytes`, appended after the kit's last block so no kit line moves); the source sheets read from
+  `E42D03_SOURCES`; `harvest.json` committed with its run paths reduced to file names; each board `.md` written
+  beside the kit in its committed form (no trailing blank line). The section "Rebuild" above lists what is a record
+  and the proof.
+- **Paths and wording (B-2):** this file and `cap10.py` cite the repo tools and "the confirmed plan (#886 comment
+  6498384157)"; the board `.md` files name the generators as `gen_NN.py` and the harvest as `gen10/harvest.json`.
+  The drawn annotation keeps its provenance words ("re-run in the sandbox"), so the sheets still match the boards.
+- **Tools:** `gen10/tools/v4check.py` (E42-D04's, pointed at this kit), `gen10/tools/framediff.py` (E42-D04's, its
+  files read through `Path`) and `gen10/tools/asdrawn.py` (the committed `v4/` against the as-drawn sheets at a
+  revision); all three ruff- and black-clean.
+- **Carries for the next redraw (C-3, C-8):** two carried annotation strings were stale when drawn; `cap10.CARRIES`
+  fixes them in the sheets (each must occur once; a `deviations` note names both), the drawn boards keep them until
+  the next redraw, and E42-D03 §0's as-built record names them verbatim. Board 08 [90], the frames block: "Boards
+  90–92 draw 3 + 2 + 2 = 7 frames: board 91 has two, so §0 L73's 6 / 211 hold only if 91 becomes one frame (open
+  item 1)." → "Under the cap [90]–[92] count 3 + 1 + 2 = 6 frames: [91] is board 09's one 1280 frame (its old 2560
+  page a DEV panel beside it), so §0's 6, and its 23 of 211, hold." Board 01 [09], the questions block: "Q4 (L150,
+  owner, due 2026-10-27): the neutral band;" → "Q4 (§3, owner, #2701; the neutral default stands until ruled): the
+  neutral band;". `asdrawn.py`: every other section of the ten boards is node-identical to cf47ac05b; notes differ in
+  `sources` (the plan's name) and, on 01 and 08, `deviations` (the carry) and 01's `live_checks` (its column
+  estimate, 2131 → 2149 px, inside the 2349 px root).

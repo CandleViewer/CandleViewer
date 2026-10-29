@@ -8,16 +8,18 @@ were built with:
   metrics, and E42-D04's kit (`../e42-d04/`) imports it read-only. Paths are repo-relative (`../tools/` for the
   validator, the components list and the token sync).
 - `gen10/`: `cap10.py` (the confirmed ten-board plan, the layout and the annotation column), the ten thin board
-  scripts `NN-<slug>.py` and `BUILD.md` (how the ten boards were composed, the review and live-check fix passes).
-- `NN-<slug>.md` (×10): each board's sidecar.
-- `v4/NN-<slug>.json` (×10): the packed sheets the boards were rendered from, byte-identical apart from
-  `compactOf.file` (a bare file name). `compactOf.sha256` stays the rendered original's.
+  scripts `NN-<slug>.py`, `harvest.json` (the record of the source generators' re-run), `tools/` (`v4check.py`,
+  `asdrawn.py`, `framediff.py`) and `BUILD.md` (how the ten boards were composed, the fix passes and the review fold).
+- `NN-<slug>.md` (×10): each board's sidecar, written by `cap10.py`.
+- `v4/NN-<slug>.json` (×10): the packed sheets, `compactOf.file` a bare file name. They equal the sheets the boards
+  were rendered from (cf47ac05b) section for section but two carried strings fixed for the next redraw
+  (`gen10/BUILD.md`, "Review fold").
 
-Not committed: the unpacked sheets (each `v4/` sheet expands, with `../tools/compact.py`'s inverse, to its original
-section for section: checked on 2026-10-29, every original validator exit 0), the 104 per-id generators (`gen/`) and
-their per-id sheets the frames were harvested from, the harvest and sandbox scripts, the spec pins (`spec/`,
-`gen10/pin/`: re-create each with the `git show` its constant names), the line maps (`repin/`), logs, pre-copies and
-caches. `cap10.py` writes the unpacked sheets to `cap10/` and packs into `v4/`.
+Not committed: the unpacked sheets (`cap10.py` writes them to `cap10/`; `gen10/tools/v4check.py` expands each `v4/`
+sheet to its `cap10/` sheet section for section, validator exit 0), the 104 per-id generators (`gen/`) and their
+per-id sheets (the ten the frames were harvested from are the one recorded input of a rebuild:
+`gen10/BUILD.md`, "Rebuild"), the harvest's runner scripts, the spec pins (`spec/`, `gen10/pin/`: read with
+`git show` when absent), the line maps (`repin/`), logs, pre-copies and caches.
 
 The history below is the kit's own, kept as written (the per-id era, the folds, the merge and the cap); the ten boards'
 build is `gen10/BUILD.md`.
