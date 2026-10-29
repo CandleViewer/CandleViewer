@@ -113,9 +113,6 @@ STORE_CELLS_MAX: Final = 262_144
 STORE_TIMEOUT_S: Final = 5.0
 #: Bound on draining the store queue at `stop`.
 STOP_DRAIN_S: Final = 5.0
-#: Columns a snapshot spread across loop turns may have missed and still sends as `d` frames
-#: (`catch_up`); more is a fresh snapshot. 64 is 6.4 s of 100 ms columns.
-CATCH_UP_MAX: Final = 64
 #: CPU a loop turn spends re-bucketing seeds, so a turn stays inside budget #6 (20 ms).
 SEED_TURN_S: Final = 0.005
 _U64_MAX: Final = 2**64 - 1
@@ -526,8 +523,10 @@ class _Ring:
         n = column.rows
         if n > ROWS or len(column.ask_sizes) != n:
             raise ValueError("a column has at most ROWS rows, as many asks as bids (G-07a)")
-        self._sizes[slot, :n] = np.asarray(column.bid_sizes, dtype=np.float64)
-        self._sizes[slot, ROWS : ROWS + n] = np.asarray(column.ask_sizes, dtype=np.float64)
+        row = self._sizes[slot]
+        row[:] = 0.0  # n-D: no cell of the slot's last column outlives it
+        row[:n] = np.asarray(column.bid_sizes, dtype=np.float64)
+        row[ROWS : ROWS + n] = np.asarray(column.ask_sizes, dtype=np.float64)
         self._t_ms[slot], self._bucket[slot] = column.ts_ms, column.bucket_ms
         self._origin[slot], self._step[slot] = column.price_origin_ticks, column.price_step_ticks
         self._rows[slot], self._samples[slot] = n, column.samples
@@ -1241,31 +1240,37 @@ class HeatmapTopic:
             state.waiting = True
             return None
         spec = state.spec
-
-        ring = state.ring
-
         limit = _limit(
             window_seconds=int(sub.effective.get("window_seconds", DEFAULT_WINDOW_S)),
             bucket_ms=spec.time_bucket_ms,
             queue_frames=self._queue_frames,
         )
-
-        def bounded(per_column: int, per_row: int) -> range:
-            return ring.newest_fitting(per_column, per_row, limit, self._queue_bytes // 2)
-
+        budget = self._queue_bytes // 2
         binary = sub.effective.get("encoding") == "binary"
-        picked = bounded(COLUMN_FRAME_BYTES, ROW_BYTES) if binary else range(0)
+        per = (COLUMN_FRAME_BYTES, ROW_BYTES) if binary else (STRUCTURED_COLUMN_BYTES,
+                                                               STRUCTURED_ROW_BYTES)  # fmt: skip
+        # M-D: the span is resolved once, here, before any yield, and copied: a column closing
+        # while the snapshot is spread reuses a ring slot, never the snapshot's. Its newest
+        # column is the ring's at this generation, so `catch_up` sends exactly what closed after.
+        ring = state.ring.newest(len(state.ring.newest_fitting(*per, limit, budget)))
+        everything = range(len(ring))
         built: list[Any] = []
-        for i in picked:  # a part a step: kind 6 only when every column has one
-            column = ring[i]
-            if not column.binary_ok or (part := self._frame(column, steps)) is None:
-                built = []
-                break
-            built.append(part)
-            yield
+        if binary:
+            for i in everything:  # kind 6 only when every column has a part
+                column = ring[i]
+                if not column.binary_ok or (part := self._frame(column, steps)) is None:
+                    built = []
+                    break
+                built.append(part)
+                yield
         parts: tuple[Any, ...] = tuple(built)
-        if not parts:  # structured: G-03 counts each column at its JSON's bound (23 §6.1)
-            picked = bounded(STRUCTURED_COLUMN_BYTES, STRUCTURED_ROW_BYTES)
+        # A structured fallback's columns are the newest of the copy that fit at their JSON's
+        # bound (23 §6.1): a suffix of the copy, as a column costs more there than in kind 6.
+        picked = (
+            everything
+            if parts or not binary
+            else ring.newest_fitting(STRUCTURED_COLUMN_BYTES, STRUCTURED_ROW_BYTES, limit, budget)
+        )
         # A binary snapshot sends its parts only: its structured side carries what the gateway
         # reads of it (each column's bucket and that it is complete, §8.2), not 1 024 floats a
         # column it would never send. A structured one gets every §14.5 column.
@@ -1294,9 +1299,11 @@ class HeatmapTopic:
                           size_hint=hint)  # fmt: skip
 
     def catch_up(self, sub: HeatmapSub, since: int) -> list[tuple[dict[str, Any], Any]] | None:
-        """The `d` frames of the columns that closed since generation `since` (m-A, 23 §7.1): a
-        snapshot spread across loop turns holds the columns of its first turn, and these follow
-        it. None when they cannot be told apart (a seed, or more than the ring holds)."""
+        """The `d` frames of the columns that closed since generation `since` (m-A, M-E, 23 §7.1):
+        a snapshot spread across loop turns holds a copy of the ring's newest columns at `since`
+        (`build_steps`), and these follow it. A ready spec's generation moves by one a closed
+        column (`_close`), so they are the ring's newest `version - since`. None only when more
+        closed than the ring holds (2 000 columns), which no snapshot waits for."""
         held = self._held(sub)
         if held is None:
             return None
@@ -1304,10 +1311,15 @@ class HeatmapTopic:
         missed = state.version - since
         if missed <= 0:
             return []
-        if missed > len(state.ring) or missed > CATCH_UP_MAX:
+        if missed > len(state.ring):
             return None
         columns = [state.ring[i] for i in range(len(state.ring) - missed, len(state.ring))]
         return [self._delta(state.spec, column, steps) for column in columns]
+
+    def cacheable(self, sub: HeatmapSub) -> bool:
+        """m-D: never in the shared snapshot cache. Its generation moves every bucket, so an
+        entry is rarely hit, and a render of up to half a queue would evict other families'."""
+        return False
 
     def generation(self, sub: HeatmapSub) -> int:
         held = self._held(sub)

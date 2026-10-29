@@ -545,6 +545,10 @@ def test_the_ring_copies_its_newest_columns_and_refuses_a_column_past_rows() -> 
     assert copy.pop().ts_ms == T0 + 500 and len(copy) == 2
     assert len(H._Ring(0).newest(5)) == 0
     H._Ring(0).append(_col(0, 1))  # the native spec keeps no ring
+    full = H._Ring(1)
+    full.append(_col(0, ROWS))
+    full.append(_col(100, 3))  # n-D: the slot's reuse leaves no cell of its last column
+    assert not full._sizes[0, 3:ROWS].any() and not full._sizes[0, ROWS + 3 :].any()
     with pytest.raises(ValueError, match="ROWS"):
         ring.append(_col(0, ROWS + 1))
     with pytest.raises(ValueError, match="ROWS"):
@@ -1059,3 +1063,100 @@ async def test_a_column_closing_mid_snapshot_follows_it_as_a_d(
     held = [c["t_ms"] - T0 for c in snap["p"]["columns"]]
     assert held == [k * COLUMN_MS for k in range(5)]
     assert [(f["t"], f["s"], f["p"]["columns"][0]["t_ms"] - T0) for f in rest] == [("d", 2, 500)]
+
+
+def _full(w: World, spec: HeatmapSpec, rows: int) -> H._SpecState:
+    state = w.topic._symbols[SYM].specs[spec]
+    for i in range(HEATMAP_SNAPSHOT_MAX_COLUMNS):
+        state.ring.append(_col(100 * i, rows))
+        state.version += 1
+    return state
+
+
+def _close_one(state: H._SpecState, rows: int) -> int:
+    """A column closing, as `_close` keeps the ring: appended, the generation moved."""
+    t = state.ring[-1].ts_ms + 100 - T0
+    state.ring.append(_col(t, rows))
+    state.version += 1
+    return T0 + t
+
+
+async def test_a_spread_snapshot_at_capacity_is_the_copy_of_its_first_step() -> None:
+    """Fable M-D: at capacity every close moves the ring's head; a snapshot spread across steps
+    reads a copy taken at its first, so its parts and its `t_ms` agree, with no gap and no
+    duplicate, and `catch_up` sends exactly the columns closed after the copy."""
+    w = World()
+    await live(w)
+    spec = HeatmapSpec(SYM, time_bucket_ms=100)
+    sub = w.hold(spec)
+    state = _full(w, spec, ROWS)
+    gen0 = w.topic.generation(sub)
+    steps = w.topic.build_steps(sub)
+    closed: list[int] = []
+    while True:
+        try:
+            next(steps)
+        except StopIteration as done:
+            body = done.value
+            break
+        closed.append(_close_one(state, ROWS))  # a close between every two steps
+    assert isinstance(body, SnapshotBody) and len(closed) > 100
+    times = [c["t_ms"] for c in body.structured["columns"]]
+    assert [p.ts_base_ms for p in body.parts] == times
+    newest = T0 + 100 * (HEATMAP_SNAPSHOT_MAX_COLUMNS - 1)
+    assert times == list(range(newest - 100 * (len(times) - 1), newest + 1, 100))
+    missed = w.topic.catch_up(sub, gen0)
+    assert missed is not None
+    assert [b["columns"][0]["t_ms"] for b, _ in missed] == closed
+
+
+async def test_many_spread_snapshots_over_a_moving_spec_all_end_and_none_restarts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fable M-E: 32 concurrent snapshots of one full spec while columns keep closing (more than
+    the old 64-column catch-up bound) all end, none is taken again, and each is followed by
+    exactly the columns closed after its copy."""
+    from candleviewer.ws.permissions import Subscription
+    from candleviewer.ws.sequencing import SnapshotCache, TopicEmitter
+    from candleviewer.ws.topics import effective_options, parse_topic
+
+    w = World(queue_frames=200)  # 100-column snapshots: the test stays fast
+    await live(w)
+    spec = HeatmapSpec(SYM, time_bucket_ms=100)
+    lease = w.hold(spec).heatmap_lease
+    state = _full(w, spec, 64)
+    restarts: list[str] = []
+    real = TopicEmitter._catch_up
+
+    def counted(self: Any, sub: Any, source: Any, gen0: int) -> None:
+        real(self, sub, source, gen0)
+        job = self._jobs.get(sub.sub_id)
+        if job is not None and job.restart:
+            restarts.append(sub.sub_id)
+
+    monkeypatch.setattr(TopicEmitter, "_catch_up", counted)
+    parsed = parse_topic(f"heatmap.{SYM}")
+    opts = {"encoding": "binary", "window_seconds": 900}
+    emitters: list[tuple[TopicEmitter, list[dict[str, Any]]]] = []
+    for n in range(32):
+        out: list[dict[str, Any]] = []
+        emitter = TopicEmitter(out.append, connection_id=f"c{n}", wall_ms=lambda: T0,
+                               clock=lambda: 0.0, source=cast(Any, w.topic),
+                               cache=SnapshotCache())  # fmt: skip
+        emitter.turn_s, emitter.step_s = 0.0, 0.0  # one step a turn, every job: the worst case
+        sub = Subscription(f"s{n}", parsed, opts, effective_options(parsed, opts))
+        sub.heatmap_lease = lease
+        assert emitter.snapshot(sub, "initial")
+        emitters.append((emitter, out))
+    closes = 0
+    for turn in range(1_000_000):
+        if not any(e._jobs for e, _ in emitters):
+            break
+        await asyncio.sleep(0)
+        if turn % 10 == 0 and closes < 300:
+            _close_one(state, 64)
+            closes += 1
+    assert not any(e._jobs for e, _ in emitters) and not restarts and closes > 64
+    for _, out in emitters:
+        snaps = [f for f in out if f["t"] == "snap" and f["s"] is not None]
+        assert len(snaps) == 1
