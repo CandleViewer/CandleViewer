@@ -769,7 +769,8 @@
               "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
             },
             "min_size": {
-              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+              "maxLength": 32
             },
             "cluster_window_ms": {
               "type": "integer",
@@ -894,7 +895,8 @@
               "type": "boolean"
             },
             "min_notional_usd": {
-              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+              "maxLength": 32
             }
           },
           "additionalProperties": false
@@ -1095,7 +1097,8 @@
           "description": "indicators.* only (§6.1); a change triggers `resnapshot: true`."
         },
         "min_size": {
-          "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+          "maxLength": 32
         },
         "time_bucket_ms": {
           "enum": [100, 250, 500, 1000, 5000],
@@ -1319,7 +1322,7 @@
       "$id": "cv://ws/v1/trades.schema.json",
       "title": "trades.{symbol}",
       "type": "object",
-      "required": ["symbol", "trades"],
+      "required": ["symbol", "trades", "big_trade_threshold"],
       "properties": {
         "symbol": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/symbol"
@@ -1374,11 +1377,11 @@
         "dropped": {
           "type": "integer",
           "minimum": 0,
-          "description": "Prints filtered out by `min_size` since the previous frame; never silent."
+          "description": "Prints filtered out by `min_size` since the previous frame, plus any shed when more items than the option set's pending bound waited for one frame (§6.1); never silent."
         },
         "big_trade_threshold": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
-          "description": "The engine's current effective big-trade threshold for the symbol, absolute: base units in `absolute_size` mode, USDT in `notional` and `percentile` (§6.1). Every frame of the `trades` publisher (E22-T02, #654) carries it; it is optional here only because frames built before that publisher, the §3.4 conformance vectors among them (`candleviewer/ws/cvwb_vectors.py`, kind 3), predate it; #654's implementation PR makes it required."
+          "description": "The engine's current effective big-trade threshold for the symbol, absolute: base units in `absolute_size` mode, USDT in `notional` and `percentile` (§6.1). Every frame of the `trades` publisher (E22-T02, #654) carries it. A kind-3 body has no slot for it (§3.4): a binary client keeps the value from `sub_ok.effective` and the latest structured frame."
         },
         "coalesced": {
           "type": "boolean",

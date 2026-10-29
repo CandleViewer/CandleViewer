@@ -156,6 +156,9 @@ COALESCE_FIELDS: Final = frozenset({"book", "bars", "footprint"})
 MERGE_DISCLOSED: Final = frozenset(
     {"heatmap", "metrics", "ticker", "positions", "wallet", "indicators"}
 )
+#: Families that always carry both, `coalesced_count` at least 1: `trades` appends, and its count
+#: is the source batches a frame appended, whether or not it merged (§8.6, §14.2; E22-T02).
+COUNT_DISCLOSED: Final = frozenset({"trades"})
 
 cv_ws_resync_total = Counter(
     "cv_ws_resync_total", "Server-sent re-snapshots by reason.", labelnames=("reason",)
@@ -777,7 +780,10 @@ class TopicEmitter:
             frame |= {"e": "b64", "p": encode_b64(replace(part, flags=flags), weight)}
         else:
             p = dict(body or {})  # a fresh dict per subscription: no shared private buffers
-            if fam in COALESCE_FIELDS or (coalesced_count > 1 and fam in MERGE_DISCLOSED):
+            if fam in COUNT_DISCLOSED:
+                p["coalesced"] = coalesced_count > 1
+                p["coalesced_count"] = max(coalesced_count, 1)
+            elif fam in COALESCE_FIELDS or (coalesced_count > 1 and fam in MERGE_DISCLOSED):
                 p["coalesced"] = coalesced_count > 1
                 if coalesced_count > 1:
                     p["coalesced_count"] = coalesced_count

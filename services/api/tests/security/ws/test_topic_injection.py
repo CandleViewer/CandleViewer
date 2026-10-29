@@ -31,7 +31,13 @@ T, TICKER = "trades.BTCUSDT", "ticker.ETHUSDT"  # the two valid topics every bat
 #: trading ones).
 CATALOGUE = {"BTCUSDT": "trading", "ETHUSDT": "trading", "LUNAUSDT": "closed"}
 _EFFECTIVE = {
-    T: {"throttle_ms": 100, "encoding": "binary", "coalesce": True},
+    T: {
+        "throttle_ms": 100,
+        "encoding": "binary",
+        "coalesce": True,
+        "cluster_window_ms": 0,  # 23 §6.1: the `trades` defaults are echoed (E22-T02)
+        "cluster_tolerance_ticks": 0,
+    },
     TICKER: {"throttle_ms": 250, "encoding": "structured", "coalesce": True},
 }
 

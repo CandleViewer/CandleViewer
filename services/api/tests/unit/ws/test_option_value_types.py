@@ -109,7 +109,8 @@ def test_validate_options_a_value_of_the_wrong_type_is_out_of_range(
         validate_options(FAMILIES[family], {name: value})
     err = exc.value
     assert (err.code, err.field) == ("invalid_options", name)
-    assert err.message == f"Option '{name}' is out of range."
+    opt = {**UNIVERSAL, **FAMILIES[family].options}[name]
+    assert err.message == opt.out_of_range(name)  # E22-T02: `trades` names its range
 
 
 @pytest.mark.parametrize(("family", "name", "choice"), CHOICES)

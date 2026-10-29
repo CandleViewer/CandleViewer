@@ -90,7 +90,10 @@ SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
         {"symbol": _S, "bids": [["100.0", "1.0"]], "asks": [["101.0", "2.0"]]},
         {"symbol": _S, "bids": [["100.0", "0"]], "asks": []},
     ),
-    "trades": ({"symbol": _S, "trades": []}, {"symbol": _S, "trades": [_TRADE]}),
+    "trades": (
+        {"symbol": _S, "big_trade_threshold": "0", "trades": []},
+        {"symbol": _S, "big_trade_threshold": "0", "trades": [_TRADE]},
+    ),
     "bars": ({**_SER, "bars": []}, {**_SER, "bars": [{**_BAR, "v": "3", "confirm": False}]}),
     "footprint": ({**_SER, "bars": []}, {**_SER, "bars": [_FP_BAR]}),
     "indicators": (

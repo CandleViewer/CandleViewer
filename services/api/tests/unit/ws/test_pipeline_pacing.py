@@ -49,7 +49,9 @@ def _routed(hub: SequencingHub, **config: Any) -> tuple[ConnectionPipeline, list
     pipe, asked, conn = _attached(**config)
     source = conn.emitter.source
     assert isinstance(source, Source)
-    source.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    source.bodies["trades"] = SnapshotBody(
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []}
+    )
     source.bodies["bars"] = SnapshotBody({**_SERIES, "bars": []})
     hub.register(conn.authz, pipe)
     return pipe, asked, conn
@@ -123,7 +125,7 @@ def test_200_prints_leave_in_order_unmerged() -> None:
     _queued(pipe)
     prints = [_print(i) for i in range(201)]
     for p in prints:
-        hub.publish(_TRADES, {"symbol": "BTCUSDT", "trades": [p]})
+        hub.publish(_TRADES, {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": [p]})
     conn.clock.now = 0.1
     pipe.service(0.1)
     first, window = _queued(pipe)
@@ -827,7 +829,7 @@ def _step(step: str, conn: Conn, pacer: Pacer, sub: Subscription, n: int) -> Non
     if step == "offer" and family == "book":
         pacer.offer(sub, _bid(str(100 + n), str(n % 3)))
     elif step == "offer" and family == "trades":
-        pacer.offer(sub, {"symbol": "BTCUSDT", "trades": [_print(n)]})
+        pacer.offer(sub, {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": [_print(n)]})
     elif step == "offer":
         column = {**_COLUMN, "t_ms": 500 * n, "complete": n % 2 == 0}
         pacer.offer(sub, {"symbol": "BTCUSDT", "time_bucket_ms": 500, "columns": [column]})
@@ -1141,25 +1143,22 @@ def test_a_merged_machines_window_discloses_nothing() -> None:
     assert not {"coalesced", "coalesced_count"} & set(merged["p"])
 
 
-#: §14.2 declares `coalesced` on `trades` from #654's contract slice (BQ9), ahead of its publisher.
-#: #654's implementation PR makes the emitter disclose it and deletes this carve-out.
-_DECLARED_AHEAD_OF_THE_EMITTER = frozenset({"trades"})
-
-
 def test_the_families_that_disclose_are_those_whose_schema_declares_coalesced() -> None:
     """§8.2 (#3268): the emitter discloses a merge on exactly the families whose payload schema
-    declares `coalesced` (§14, §15), never on another (`machines`, §15.10), but for the families
-    the contract declares it on ahead of their publisher (`trades`, #654)."""
-    from candleviewer.ws.sequencing import COALESCE_FIELDS, MERGE_DISCLOSED  # local: added by #3268
+    declares `coalesced` (§14, §15), never on another (`machines`, §15.10); `trades` always
+    carries its count (E22-T02, #654)."""
+    from candleviewer.ws.sequencing import (  # local: added by #3268 and #654
+        COALESCE_FIELDS,
+        COUNT_DISCLOSED,
+        MERGE_DISCLOSED,
+    )
 
     declared = {
         sid.rsplit("/", 1)[1].removesuffix(".schema.json")
         for sid, schema in SCHEMAS.items()
         if "coalesced" in schema.get("properties", {})
     }
-    assert _DECLARED_AHEAD_OF_THE_EMITTER <= declared
-    assert not _DECLARED_AHEAD_OF_THE_EMITTER & (COALESCE_FIELDS | MERGE_DISCLOSED)
-    assert COALESCE_FIELDS | MERGE_DISCLOSED == declared - _DECLARED_AHEAD_OF_THE_EMITTER
+    assert COALESCE_FIELDS | MERGE_DISCLOSED | COUNT_DISCLOSED == declared
 
 
 def test_a_count_above_1_is_disclosed_with_the_flag_off_too() -> None:
@@ -1191,7 +1190,11 @@ def test_a_lone_update_with_a_producer_count_leaves_its_topic_intact() -> None:
     _queued(pipe)
     before = _conflation()
     with capture_logs() as logs:
-        hub.publish(_TRADES, {"symbol": "BTCUSDT", "trades": [_print(0)]}, coalesced_count=3)
+        hub.publish(
+            _TRADES,
+            {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": [_print(0)]},
+            coalesced_count=3,
+        )
     assert [f["t"] for f in _queued(pipe)] == ["d"]
     assert _pacer(pipe).resnapshot_required == {}
     assert [e for e in logs if e["event"] == "ws update failed"] == []

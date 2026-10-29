@@ -47,9 +47,10 @@ _SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
         {"symbol": _SYM, "bids": [["100.0", "0"]], "asks": []},
     ),
     "trades": (
-        {"symbol": _SYM, "trades": []},
+        {"symbol": _SYM, "big_trade_threshold": "0", "trades": []},
         {
             "symbol": _SYM,
+            "big_trade_threshold": "0",
             "trades": [{"ts_ms": 1, "price": "100.0", "size": "1", "side": "buy"}],
         },
     ),
@@ -299,6 +300,7 @@ def _reference_workspace() -> tuple[Source, list[dict[str, Any]]]:
     src.bodies["trades"] = SnapshotBody(
         {
             "symbol": _SYM,
+            "big_trade_threshold": "0",
             "trades": [
                 {"ts_ms": 1_789_000_000_000 + i, "price": "100.5", "size": "0.01", "side": "buy"}
                 for i in range(100)

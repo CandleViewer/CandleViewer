@@ -6,7 +6,7 @@ verbatim, so a change is a reviewed diff (CODEOWNER: backend + security)."""
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from typing import Final
 
 TRADES_MAX_WINDOW_MS: Final = 21_600_000  # 6 h (SR-E22-01)
@@ -48,5 +48,17 @@ def prints_buffer_effective_max(cluster_window_ms: int) -> int:
 
 
 def min_size_floor(lot_size: Decimal, tick_notional: Decimal) -> Decimal:
-    """`MIN_SIZE_FLOOR` per instrument: max(lot_size, one tick-notional) (SR-E22-03)."""
+    """`MIN_SIZE_FLOOR` per instrument: max(lot_size, one tick-notional) (SR-E22-03). As ruled
+    (2026-10-28), `lot_size` is the instrument's `min_order_qty` and `tick_notional` the size of
+    its minimum order notional at the reference price (`notional_size`)."""
     return max(lot_size, tick_notional)
+
+
+def notional_size(min_notional: Decimal, ref_price: Decimal | None, qty_step: Decimal) -> Decimal:
+    """The size worth `min_notional` at `ref_price`, ceiled to `qty_step` (SR-E22-03). 0 while no
+    price is known yet, or when the instrument has no minimum notional: `MIN_SIZE_FLOOR` then
+    collapses to `min_order_qty`."""
+    if ref_price is None or ref_price <= 0 or min_notional <= 0 or qty_step <= 0:
+        return Decimal(0)
+    steps = (min_notional / ref_price / qty_step).to_integral_value(rounding=ROUND_CEILING)
+    return steps * qty_step

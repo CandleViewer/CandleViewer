@@ -37,7 +37,9 @@ _FOOTPRINT = {"symbol": "BTCUSDT", "bar_type": "tick", "param": "1000"}
 def _conn() -> tuple[Conn, Pacer]:
     source = Source()
     source.books["BTCUSDT"] = Book("BTCUSDT")
-    source.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    source.bodies["trades"] = SnapshotBody(
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []}
+    )
     source.bodies["heatmap"] = SnapshotBody(
         {"symbol": "BTCUSDT", "time_bucket_ms": 500, "columns": []}
     )
@@ -321,13 +323,13 @@ def test_pacer_orders_and_executions_bypass_throttle_and_coalescing() -> None:
 def test_pacer_200_prints_in_one_window_leave_in_order_as_one_batch() -> None:
     conn, pacer = _conn()
     sub = _sub(conn, "trades.BTCUSDT")
-    pacer.offer(sub, {"symbol": "BTCUSDT", "trades": []})
+    pacer.offer(sub, {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []})
     conn.take()
     prints = [
         {"id": f"t{i}", "ts_ms": 1, "price": "1", "size": "1", "side": "buy"} for i in range(200)
     ]
     for p in prints:
-        pacer.offer(sub, {"symbol": "BTCUSDT", "trades": [p]})
+        pacer.offer(sub, {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": [p]})
     pacer.tick(100.1)
     [frame] = conn.take()
     assert frame["p"]["trades"] == prints

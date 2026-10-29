@@ -22,6 +22,7 @@ from typing import Any, Final, Literal
 
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, PrincipalSnapshot, decide
+from candleviewer.orderflow.limits import CLUSTER_TOLERANCE_TICKS_MAX, CLUSTER_WINDOW_MS_MAX_WS
 from candleviewer.ws import limits
 from candleviewer.ws.lifecycle import MAX_EPOCH_MS
 
@@ -40,7 +41,10 @@ _UUID_RE: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 _SESSION_RE: Final = re.compile(r"[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
 #: §6.1 (22 `PaneIntervalCode`: one spelling per value): a whole number has no leading zeros.
 _WHOLE_RE: Final = re.compile(r"0|[1-9][0-9]*")
-_DECIMAL_RE: Final = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
+#: A decimal option's longest text (E22 security lens): 32 characters, sign and point included,
+#: so a crafted `min_size` or `min_notional_usd` cannot make the parse or the compare costly.
+MAX_DECIMAL_TEXT: Final = 32
+_DECIMAL_RE: Final = re.compile(rf"^(?=.{{1,{MAX_DECIMAL_TEXT}}}$)-?[0-9]+(\.[0-9]+)?$")
 #: Accepted characters of a bars/footprint `param`; dots are illegal (§6.1, use a colon).
 _PARAM_RE: Final = re.compile(r"^[A-Za-z0-9:]{1,24}$")
 _SEGMENT_RE: Final = re.compile(r"^[A-Za-z0-9:_]+$")
@@ -110,12 +114,21 @@ class Opt:
     choices: frozenset[Any] = frozenset()
     min_items: int = 0
     max_items: int | None = None
+    #: The refusal names the allowed range (`trades`, 23 §6.1: "cluster_window_ms must be
+    #: 0 to 2000"); the other options keep the generic message.
+    ranged: bool = False
+
+    def out_of_range(self, name: str) -> str:
+        """The message of a refused value of this option, `name`d."""
+        if self.ranged and self.lo is not None and self.hi is not None:
+            return f"{name} must be {self.lo:g} to {self.hi:g}."
+        return f"Option '{name}' is out of range."
 
     def check(self, name: str, value: Any) -> Any:
         """Return the validated value or raise `invalid_options` naming `name`."""
         ok = _CHECKS[self.kind](self, value)
         if not ok:
-            raise TopicError("invalid_options", f"Option '{name}' is out of range.", name)
+            raise TopicError("invalid_options", self.out_of_range(name), name)
         if self.kind == "uuids":
             return sorted({str(uuid.UUID(str(v))) for v in value})
         return value
@@ -302,8 +315,9 @@ FAMILIES: Final[Mapping[str, TopicFamily]] = {
             "TradesBatch",
             {
                 "min_size": _DEC,
-                "cluster_window_ms": Opt("int", 0, 5000),
-                "cluster_tolerance_ticks": Opt("int", 0, 20),
+                # SR-E22-04 (E22-T02): the WS bound, never the §13.5 union's 5000 (23 §6.1).
+                "cluster_window_ms": Opt("int", 0, CLUSTER_WINDOW_MS_MAX_WS, ranged=True),
+                "cluster_tolerance_ticks": Opt("int", 0, CLUSTER_TOLERANCE_TICKS_MAX, ranged=True),
             },
         ),
         _md(
@@ -724,6 +738,10 @@ def effective_throttle_ms(topic: ParsedTopic, requested: int | None) -> int:
 BARS_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({"history": 500, "include_delta": False})
 #: §6.1: the `indicators` option a client may leave out, echoed in `effective`.
 INDICATORS_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({"history": 500})
+#: §6.1 (E22-T02): the `trades` cluster options when left out (0: no clustering), echoed.
+TRADES_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType(
+    {"cluster_window_ms": 0, "cluster_tolerance_ticks": 0}
+)
 
 
 def effective_options(topic: ParsedTopic, opts: Mapping[str, Any]) -> dict[str, Any]:
@@ -739,7 +757,11 @@ def effective_options(topic: ParsedTopic, opts: Mapping[str, Any]) -> dict[str, 
     eff["coalesce"] = False if fam.never_throttled else opts.get("coalesce", True)
     if topic.depth is not None:
         eff["depth"] = topic.depth
-    defaults = {"bars": BARS_DEFAULTS, "indicators": INDICATORS_DEFAULTS}.get(fam.family, {})
+    defaults = {
+        "bars": BARS_DEFAULTS,
+        "indicators": INDICATORS_DEFAULTS,
+        "trades": TRADES_DEFAULTS,
+    }.get(fam.family, {})
     for key, value in defaults.items():
         eff.setdefault(key, value)
     if fam.family == "heatmap":

@@ -256,7 +256,9 @@ def test_upstream_desync_snap_carries_reason_previous_seq_and_counts() -> None:
     hub.register(conn.authz, conn.emitter)
     _, sub = conn.sub("book.BTCUSDT.50")
     hub.publish(sub.ch, {"symbol": "BTCUSDT", "bids": [], "asks": []})
-    src.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    src.bodies["trades"] = SnapshotBody(
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []}
+    )
     _, trades = conn.sub("trades.BTCUSDT")
     conn.take()
     before = _resync_count("upstream_desync")
@@ -371,7 +373,9 @@ def test_resnapshot_upstream_desync_never_displaces_a_backpressure_hold() -> Non
 
 def test_emitter_flush_pending_skips_backpressure() -> None:
     hub, conn, held, src = _hub_book()
-    src.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    src.bodies["trades"] = SnapshotBody(
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []}
+    )
     _, other = conn.sub("trades.BTCUSDT")
     conn.take()
     _hold(held)
@@ -1046,7 +1050,9 @@ def test_property_sequence_contiguous_per_subscription(ops: list[tuple[str, str]
     eth = Book("ETHUSDT")
     eth.apply([["1.0", "1"]], [["2.0", "1"]])
     src.books["ETHUSDT"] = eth
-    src.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    src.bodies["trades"] = SnapshotBody(
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []}
+    )
     hub = SequencingHub()
     conn = Conn(src)
     hub.register(conn.authz, conn.emitter)
@@ -1055,7 +1061,7 @@ def test_property_sequence_contiguous_per_subscription(ops: list[tuple[str, str]
         conn.clock.now = float(i * 20)  # stays under the resync rate limit
         sym = ch.split(".")[1]
         body: dict[str, Any] = (
-            {"symbol": sym, "trades": []}
+            {"symbol": sym, "big_trade_threshold": "0", "trades": []}
             if ch.startswith("trades")
             else {"symbol": sym, "bids": [], "asks": []}
         )

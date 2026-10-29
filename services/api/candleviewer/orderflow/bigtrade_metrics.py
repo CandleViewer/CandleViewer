@@ -13,6 +13,7 @@ __all__ = [
     "bigtrade_flagged_total",
     "bigtrade_input_rejected_total",
     "bigtrade_prints_evaluated_total",
+    "bigtrade_range_rejected_total",
     "bigtrade_replay_mismatch_total",
     "bigtrade_state_truncated_total",
     "bigtrade_threshold_advisory_total",
@@ -48,4 +49,9 @@ bigtrade_replay_mismatch_total = Counter(
     "bigtrade_replay_mismatch_total",
     "Replay determinism defects: recomputed threshold/advisory differs from the recording.",
     ["symbol"],
+)
+bigtrade_range_rejected_total = Counter(
+    "bigtrade_range_rejected_total",
+    "Trade-tape reads refused by an SR-E22-01..03 bound before any read, by endpoint (E22-T02).",
+    ["endpoint"],
 )

@@ -22,6 +22,7 @@ from candleviewer.exchange.bybit.orderbook import parse_book_frame
 from candleviewer.exchange.bybit.ticker import parse_ticker_frame
 from candleviewer.exchange.bybit.trades import parse_trade_frame
 from candleviewer.ingestion.ticker_stream import TickerMerger
+from candleviewer.orderflow.bigtrade_tape import TapeItem, TapePrint
 from tests._corpus import frames
 from tests.contract.bybit._support import TradeHarness, tick_of
 
@@ -82,7 +83,7 @@ async def test_trade_events_and_rest_rows_use_internal_vocabulary_only() -> None
     assert events
     for e in events:
         assert_clean(e.model_dump(mode="json"))
-        assert_clean(serialize_trade(e))
+        assert_clean(serialize_trade(TapeItem(TapePrint(e, False, None), e.qty, 1, False)))
 
 
 def test_book_events_and_rest_view_use_internal_vocabulary_only() -> None:

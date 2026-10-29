@@ -93,6 +93,11 @@ class Clusterer:
             out.append(self._evict())
         return out
 
+    def expire(self, now_us: int) -> list[Closed]:
+        """Close every open cluster whose deadline is before `now_us` with no print to place: a
+        live reader's clock, so a quiet tape still closes its clusters (E22-T02, 23 §6.1)."""
+        return self._sweep(now_us) if self.enabled else []
+
     def _sweep(self, now_us: int) -> list[Closed]:
         out: list[Closed] = []
         horizon = self.window_ms * 1000

@@ -42,7 +42,9 @@ def _setup(
     source = Source()
     for symbol in ("BTCUSDT", "ETHUSDT"):
         source.books[symbol] = Book(symbol)
-    source.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    source.bodies["trades"] = SnapshotBody(
+        {"symbol": "BTCUSDT", "big_trade_threshold": "0", "trades": []}
+    )
     conn = Conn(source, ACC_A, max_frame_bytes=max_frame_bytes)
     conn.clock.now = 100.0
     queue = OutboundQueue(max_bytes=max_bytes, max_frames=max_frames)
