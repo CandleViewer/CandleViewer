@@ -1256,11 +1256,25 @@
                 "description": "False while the time bucket is still accumulating.",
                 "type": "boolean"
               },
+              "off_window_ask_qty": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "off_window_bid_qty": {
+                "description": "Resting bid size outside the column's price window (24 §6.2 step 4); present only on the structured wire.",
+                "minimum": 0,
+                "type": "number"
+              },
               "price_min": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
               },
               "price_step": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+              },
+              "samples": {
+                "description": "Book states aggregated into the column (24 §6.1); 0 is a column the engine missed (24 §6.3). Absent on a column built at the default.",
+                "minimum": 0,
+                "type": "integer"
               },
               "t_ms": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"

@@ -779,6 +779,15 @@ export interface HeatmapSymbol {
     bids: number[];
     asks: number[];
     /**
+     * Book states aggregated into the column (24 §6.1); 0 is a column the engine missed (24 §6.3). Absent on a column built at the default.
+     */
+    samples?: number;
+    /**
+     * Resting bid size outside the column's price window (24 §6.2 step 4); present only on the structured wire.
+     */
+    off_window_bid_qty?: number;
+    off_window_ask_qty?: number;
+    /**
      * False while the time bucket is still accumulating.
      */
     complete?: boolean;
