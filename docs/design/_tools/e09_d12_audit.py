@@ -37,8 +37,10 @@ working tree.
    G-SHAPE and G-BOLD the heading levels, code indentation and the ruled clauses' bold.
    G-UNTOUCHED compares committed and uncommitted paths with `git merge-base HEAD origin/main`
    and FAILs when it does not resolve or a git call fails; only this PR's four files may differ,
-   and `14` only by BQ-40's pointer lines. G-CHARSET, G-CELLS, G-CLOSE, G-PENPOT, G-ENTROPY,
-   G-HANDREF and G-BUDGET close the set.
+   and `14` only by BQ-40's pointer lines. G-EDGE refuses a server-edge cite, a status the base
+   is said to answer or a fix direction on sign-in (round 1 P-1: ids and trackers public, detail
+   private). G-CHARSET, G-CELLS, G-CLOSE, G-PENPOT, G-ENTROPY, G-HANDREF and G-BUDGET close the
+   set.
 5. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over EVERY unit of the spec
    (each heading, table row by its lead cell, rule line, prose sentence and fenced block, by
    region and location, NFKC and whitespace-normalised, with a line-shape tag per region) and
@@ -107,10 +109,6 @@ CITE_FILES: dict[str, str] = {
     "REV": "docs/security/reviews/e09-auth-review.md",
     "ACT": "services/api/candleviewer/audit/actions.py",
     "GEN": "services/api/candleviewer/api/_generated/openapi_models.py",
-    "APIAUTH": "services/api/candleviewer/api/auth.py",
-    "LOGINSVC": "services/api/candleviewer/auth/login_service.py",
-    "HEALTH": "services/api/candleviewer/api/health.py",
-    "AUTHAPI": "apps/web/src/features/auth/authApi.ts",
     "LOGIN": "apps/web/src/features/auth/LoginScreen.tsx",
     "INVITE": "apps/web/src/features/invites/InviteAcceptScreen.tsx",
     "CHECK": "apps/web/src/features/onboarding/SetupChecklistCard.tsx",
@@ -2739,8 +2737,10 @@ def g_crows(t: Texts) -> list[Finding]:
     return bad
 
 
-# a G-row past R194's ledger (G-1..G-10) is flagged for the orchestrator's acknowledgement
-NEW_GROW = "new, for the orchestrator's acknowledgement:"
+# G-rows past R194's ledger (G-1..G-10): G-11 and G-12 acknowledged (D7, ruled 14:24Z) and G-13
+# (round 1 P-2); each is a plain G-row, and the old acknowledgement marker is stale
+NEW_GROW = "new, for the orchestrator's acknowledgement"
+ACKED_GROWS = (11, 12, 13)
 
 
 def g_grows(t: Texts) -> list[Finding]:
@@ -2753,11 +2753,11 @@ def g_grows(t: Texts) -> list[Finding]:
             bad.append(F("G-GROWS", f"{r[0]} is not due at once", "spec", sec))
     ids = g_ids(t.spec)
     for r in rows_of(t.spec, GROW_HEAD):
-        if re.fullmatch(r"G-\d+", r[0]) and int(r[0][2:]) > 10 and not r[1].startswith(NEW_GROW):
-            bad.append(
-                F("G-GROWS", f"{r[0]} is new but not flagged for an acknowledgement", "spec", sec)
-            )
-    if ids & {5, 8} or not {1, 2, 3, 4, 6, 7, 9, 10, 11, 12} <= ids:
+        if NEW_GROW in r[1]:
+            bad.append(F("G-GROWS", f"{r[0]} keeps the stale acknowledgement marker", "spec", sec))
+    if ids - {1, 2, 3, 4, 6, 7, 9, 10, *ACKED_GROWS}:
+        bad.append(F("G-GROWS", f"{sorted(ids)} has a row not acknowledged", "spec", sec))
+    if ids & {5, 8} or not {1, 2, 3, 4, 6, 7, 9, 10, *ACKED_GROWS} <= ids:
         bad.append(F("G-GROWS", f"the ledger's ids are {sorted(ids)}", "spec", sec))
     body = section(t.spec, GROW_HEAD)
     for need in ("D05:565–574", "D08:433–434", "D09:463–472", "S03:195–196"):
@@ -2871,6 +2871,35 @@ def g_ahead(t: Texts) -> list[Finding]:
     return bad
 
 
+# ---------------------------------------------------------------------------- the edge
+
+# round 1 P-1 / P-2 (ids, status and trackers public, detail private): no cite into the server's
+# sign-in edge or the client's API module, no status the base is said to answer on sign-in, no
+# fix direction; the client rule stays, stated neutrally (§4.1)
+EDGE = re.compile(
+    r"\b(?:APIAUTH|LOGINSVC|AUTHAPI|HEALTH) ?:\s*\d|api/(?:auth|health)\.py|auth/login_service"
+    r"|auth/authApi\.ts|`?\b423\b`?|until (?:it|the edge|the server) aligns|align\w* the edge"
+    r"|\b(?:the )?(?:shipped )?(?:login |sign.?in )?edge(?:'s)? (?:answers|returns|still)"
+    r"|the shipped (?:login |sign.?in )?edge|\bthe edge's\b|\bat the base the edge\b",
+    re.IGNORECASE,
+)
+
+
+def g_edge(t: Texts) -> list[Finding]:
+    """Round 1 P-1: no line of the spec or the deck cites the sign-in edge or its answers."""
+    bad: list[Finding] = []
+    for i, line in enumerate(t.spec.split("\n"), 1):
+        m = EDGE.search(strip_comments(line))
+        if m:
+            msg = f"spec:{i} an edge cite or answer ({m[0].strip()})"
+            bad.append(F("G-EDGE", msg, "spec", h2_at(t.spec, i)))
+    for key, e in deck_strings(t.deck).items():
+        m = EDGE.search(json.dumps(e, ensure_ascii=False))
+        if m:
+            bad.append(F("G-EDGE", f"deck {key}: an edge cite or answer ({m[0]})", "deck", key))
+    return bad
+
+
 # ---------------------------------------------------------------------------- the folds
 
 # each fold of a lens finding on a ruled sentence: (section, the text that carries it, what it
@@ -2890,9 +2919,9 @@ FOLDS: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "15.1 C-rows",
-        "the `423`'s `Retry-After` is never rendered",
-        "C-22: the edge's `423` read as the one failure",
-        "the `423`'s `Retry-After` is shown",
+        "the client rule of §4.1 (F-1)",
+        "C-22 against #4961 by number only (round 1 P-1)",
+        "the client's own rule",
     ),
     (
         "5.8 SCR-019",
@@ -2908,21 +2937,33 @@ FOLDS: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "4.1 The conditions",
-        "with no `code` member (APIAUTH:634, :730, :853)",
-        "the pre-auth `401`s keyed on status",
-        "with a `code` member",
+        "the client keys on the status alone, never on a `code`, `title` or `detail`",
+        "the pre-auth `401`s keyed on status alone",
+        "the client keys on the `code`",
     ),
     (
-        "4.2 The fallbacks",
-        "the shipped edge's distinct title (APIAUTH:873–876) is never keyed on",
-        "F-3: the edge's exhausted title never keyed on",
-        "the shipped edge's distinct title is keyed on",
+        "0. Status",
+        "not built; owner: the E09 frontend lane",
+        "R-008 step 4 not built, with its owner (round 1 M-1)",
+        "built; owner: the E09 frontend lane",
+    ),
+    (
+        "0. Status",
+        "step 3's CMP-206 acknowledgement gate (frozen (3))",
+        "R-009's acknowledgement-gate delta (round 1 M-1)",
+        "step 3's codes",
+    ),
+    (
+        "5.7 SCR-017",
+        "`invite.live_from`",
+        "the step-4 strings keyed, the live-from line included (round 1 M-1)",
+        "`invite.later`",
     ),
     (
         "5.1 SCR-001",
-        "the client never reads the probe's environment",
-        "the probes' environment never read (RULED BQ-11)",
-        "the client reads the probe's environment",
+        "the client never reads an environment before sign-in",
+        "no environment read before sign-in (RULED BQ-11)",
+        "the client reads an environment before sign-in",
     ),
     (
         "5.9 SCR-112",
@@ -2950,21 +2991,21 @@ FOLDS: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "17. Versioning",
-        "**D5** asks a ruling (ready line)",
-        "D5 asks a ruling",
-        "**D5** is recorded",
+        "**D5** RULED (accepted",
+        "D5 RULED",
+        "**D5** asks a ruling (ready line",
     ),
     (
         "17. Versioning",
-        "**D6** asks a ruling (ready line)",
-        "D6 asks a ruling",
-        "**D6** is recorded",
+        "**D6** RULED (accepted",
+        "D6 RULED",
+        "**D6** asks a ruling (ready line",
     ),
     (
         "17. Versioning",
-        "**D7** asks an acknowledgement (ready line)",
-        "D7 asks an acknowledgement",
-        "**D7** is recorded",
+        "**D7** RULED (acknowledged",
+        "D7 acknowledged",
+        "**D7** asks an acknowledgement (ready line",
     ),
 )
 # §10.2: the registered names the band's operations write (ACT; lens 3 m-3)
@@ -3478,6 +3519,7 @@ MEASURED_GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_frozen,
     g_never,
     g_fold,
+    g_edge,
     g_crows,
     g_grows,
     g_qrows,
@@ -4106,14 +4148,14 @@ MUTATIONS = (
         for i, (_h, needle, what, alt) in enumerate(FOLDS)
     ),
     Mutation(
-        "M-86",
+        "M-88",
         "G-FOLD",
         "a registered audit name dropped",
         spec=sub("`auth.csrf_refused` (ACT:55)", "the refusal (ACT:55)"),
     ),
-    Mutation("M-87", "G-FOLD", "a band condition dropped", spec=drop_row("invite rate limited")),
+    Mutation("M-89", "G-FOLD", "a band condition dropped", spec=drop_row("invite rate limited")),
     Mutation(
-        "M-88",
+        "M-90",
         "G-ASSETS",
         "the ruled ten codes dropped (BQ-34)",
         spec=sub(
@@ -4121,49 +4163,55 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        "M-89",
+        "M-91",
         "G-COMP",
         "a component not by `15`'s name (BQ-28)",
         spec=sub("| CMP-097 OnboardingChecklist", "| CMP-097 Checklist"),
     ),
     Mutation(
-        "M-90",
+        "M-92",
         "G-DECKKEY",
         "a coined key marked merged (BQ-26)",
         deck=deck_set("enrol.done", "key_status", "merged"),
     ),
     Mutation(
-        "M-91",
+        "M-93",
         "G-DECKKEY",
         "a coined namespace not recorded (BQ-26)",
         spec=sub("`enrol.*`, ", ""),
     ),
     Mutation(
-        "M-92",
+        "M-94",
         "G-DECK",
         "an S03 §4.2 row without its entry (BQ-26)",
         deck=deck_set("sessions.columns", "source", "S03:154"),
     ),
     Mutation(
-        "M-93",
+        "M-95",
         "G-DECK",
         "the unserved re-enrol entry not held",
         deck=deck_set("twofactor.reenrol", "status", "merged"),
     ),
     Mutation(
-        "M-94",
+        "M-96",
         "G-GROWS",
-        "a new G-row not flagged",
-        spec=sub("| G-12 | new, for the orchestrator's acknowledgement: ", "| G-12 | "),
+        "the stale acknowledgement marker kept (D7)",
+        spec=sub("| G-12 | ", "| G-12 | new, for the orchestrator's acknowledgement: "),
     ),
-    Mutation("M-95", "G-UNTOUCHED", "a BQ-40 pointer line missing", lever=lever_pointer_missing),
-    Mutation("M-96", "G-UNTOUCHED", "`14` edited past the pointer lines", lever=lever_plan_edit),
-    Mutation("M-97", "G-UNTOUCHED", "a git call fails", lever=lever_git),
+    Mutation("M-97", "G-UNTOUCHED", "a BQ-40 pointer line missing", lever=lever_pointer_missing),
+    Mutation("M-98", "G-UNTOUCHED", "`14` edited past the pointer lines", lever=lever_plan_edit),
+    Mutation("M-99", "G-UNTOUCHED", "a git call fails", lever=lever_git),
     Mutation(
-        "M-98",
+        "M-100",
         "G-AROWS",
         "the pointer turned back into an A-row",
         spec=after_line("| A-2 ", "| A-11 | `14` SCR-001 | Hand-off pack line | the `14` owner |"),
+    ),
+    Mutation(
+        "M-101",
+        "G-EDGE",
+        "an edge cite returns (round 1 P-1)",
+        spec=after_line(S51, "- The base's sign-in answers: see APIAUTH:635."),
     ),
     # X-n: paraphrases, re-pinned, so only the lexicon gate may catch them
     Mutation(
@@ -4449,7 +4497,7 @@ MUTATIONS = (
         "X-43",
         "G-SHAPE",
         "P06 a line indented into code",
-        spec=sub("\nAt the base `authLogin`,", "\n    At the base `authLogin`,"),
+        spec=sub("\n**Every credential failure", "\n    **Every credential failure"),
     ),
     Mutation(
         "X-44",

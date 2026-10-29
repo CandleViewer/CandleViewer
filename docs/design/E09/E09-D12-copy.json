@@ -461,6 +461,54 @@
       },
       "key_status": "PROPOSED"
     },
+    "invite.accounts": {
+      "string": "Accounts: {accounts}",
+      "screen": "SCR-017",
+      "state": "step 4",
+      "provenance": "14",
+      "source": "`14`:452",
+      "status": "merged",
+      "params": {
+        "{accounts}": "getMe accounts[]"
+      },
+      "key_status": "PROPOSED"
+    },
+    "invite.environment": {
+      "string": "Environment: {environment}",
+      "screen": "SCR-017",
+      "state": "step 4",
+      "provenance": "14",
+      "source": "`14`:452",
+      "status": "merged",
+      "params": {
+        "{environment}": "getMe accounts[] environment"
+      },
+      "key_status": "PROPOSED"
+    },
+    "invite.limits": {
+      "string": "Limits: {caps}",
+      "screen": "SCR-017",
+      "state": "step 4",
+      "provenance": "14",
+      "source": "`14`:453",
+      "status": "merged",
+      "params": {
+        "{caps}": "getMyLimits"
+      },
+      "key_status": "PROPOSED"
+    },
+    "invite.live_from": {
+      "string": "API key pending Bybit's 48 h restriction - live from {date}.",
+      "screen": "SCR-017",
+      "state": "step 4",
+      "provenance": "14",
+      "source": "`14`:454–455",
+      "status": "merged",
+      "params": {
+        "{date}": "the checklist's api_key.unblock_at"
+      },
+      "key_status": "PROPOSED"
+    },
     "invite.welcome": {
       "string": "Welcome, {display_name}",
       "screen": "SCR-017",
