@@ -1727,7 +1727,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "histogram",
         "milliseconds",
         ("symbol", "depth"),
-        "A book change's arrival at the WS publisher to the publish of its window, ms.",
+        "A book change's arrival at the WS publisher to the publish of its window, ms, including "
+        "its hold in the depth's conflation window.",
         "p95 above the depth's window (20 / 50 / 100 ms) + 20 ms (budget #6)",
         _L,
         "E21",

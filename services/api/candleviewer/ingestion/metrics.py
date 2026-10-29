@@ -148,7 +148,8 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
     _h("book_apply_latency_ms", "A book delta frame's receipt to its apply, ms.", "symbol"),
     _h(
         "book_publish_latency_ms",
-        "A book change's arrival at the WS publisher to the publish of its window, ms.",
+        "A book change's arrival at the WS publisher to the publish of its window, ms, including "
+        "its hold in the depth's conflation window.",
         "symbol",
         "depth",
     ),
