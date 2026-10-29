@@ -115,6 +115,9 @@ export type { FormFieldLayout, FormFieldProps } from "./FormField.js";
 export { FormSection } from "./FormSection.js";
 export type { FormSectionProps } from "./FormSection.js";
 
+export { FuzzyList, fuzzyOptionId } from "./FuzzyList.js";
+export type { FuzzyListItem, FuzzyListProps, FuzzyListTag } from "./FuzzyList.js";
+
 export {
   GlobalErrorAnnouncement,
   GlobalErrorBoundaryFallback,
@@ -260,6 +263,9 @@ export type { SparklineProps, SparklineTrend } from "./Sparkline.js";
 
 export { Spinner } from "./Spinner.js";
 export type { SpinnerProps } from "./Spinner.js";
+
+export { SymbolSearchInput } from "./SymbolSearchInput.js";
+export type { SymbolSearchInputProps, SymbolSearchTarget } from "./SymbolSearchInput.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";

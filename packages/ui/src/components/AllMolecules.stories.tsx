@@ -12,10 +12,12 @@ import { Dialog } from "./Dialog.js";
 import { Drawer } from "./Drawer.js";
 import { FormField } from "./FormField.js";
 import { FormSection } from "./FormSection.js";
+import { FuzzyList, type FuzzyListItem } from "./FuzzyList.js";
 import { Combobox } from "./index.js";
 import { InfoPanel } from "./InfoPanel.js";
 import { Menu } from "./Menu.js";
 import { SearchBox } from "./SearchBox.js";
+import { SymbolSearchInput } from "./SymbolSearchInput.js";
 import { Table, type TableColumn } from "./Table.js";
 import { Tabs } from "./Tabs.js";
 import { TextInput } from "./TextInput.js";
@@ -25,9 +27,10 @@ import { Text } from "./Typography.js";
 /**
  * E05-T04's visual-regression matrix for the E05-S03 band, once per theme x density. Like the atoms matrix it
  * holds only what renders at rest: fixed data, a frozen clock for the date pickers, motion stopped by the in-app
- * reduced-motion override, no timer running (single Toasts, never the timed region), and every menu and listbox
- * closed. The reflowed Table renders stacked at a 200 % text scale: its threshold is in `em`, so the scaled box
- * is the same state as a 200 % page zoom (the Table's own Reflow story drives the zoom itself).
+ * reduced-motion override, no timer running (single Toasts, never the timed region), and every portalled menu and
+ * listbox closed (CMP-213's list is drawn in place). The reflowed Table renders stacked at a 200 % text scale: its
+ * threshold is in `em`, so the scaled box is the same state as a 200 % page zoom (the Table's own Reflow story
+ * drives the zoom itself).
  *
  * The four modal or full-height overlays (Dialog, ConfirmDialog, Drawer, CommandPalette) each take the whole page
  * and its focus, so each has its own story per theme x density below the at-rest page, opened at mount.
@@ -79,6 +82,26 @@ const COLUMNS: readonly TableColumn<Position>[] = [
 ];
 const BY_PNL = { columnId: "pnl", direction: "descending" } as const;
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"].map((s) => ({ value: s, label: s }));
+/** E08-D05's rows (§6.1, §6.4): a Recent group with a delisted symbol, and a ranked list with its active option. */
+const RECENT: readonly FuzzyListItem[] = [
+  { id: "ETHUSDT", label: "ETHUSDT", hint: "ETH / USDT", tags: ["recent"] },
+  {
+    id: "LUNAUSDT",
+    label: "LUNAUSDT",
+    hint: "LUNA / USDT",
+    chip: { label: "Delisted by the exchange", icon: "cancelled" },
+    disabled: true,
+    delisted: true,
+    reason: "LUNAUSDT is not trading on Bybit.",
+  },
+];
+const RANKED: readonly FuzzyListItem[] = ["ETHUSDT", "ETHFIUSDT"].map((s): FuzzyListItem => ({
+  id: s,
+  label: s,
+  matchRanges: [[0, 3]],
+  hint: `${s.slice(0, -4)} / USDT`,
+  values: ["—", "—"],
+}));
 const TABS = [
   { id: "positions", label: "Positions" },
   { id: "orders", label: "Orders" },
@@ -151,6 +174,23 @@ function AllMolecules(): JSX.Element {
         <FormField label="Symbol">
           <Combobox options={SYMBOLS} value="ETHUSDT" onChange={fn()} />
         </FormField>
+      </Cell>
+      <Cell id="CMP-160 SymbolSearchInput · CMP-213 FuzzyList">
+        <SymbolSearchInput
+          value=""
+          onChange={fn()}
+          onSelect={fn()}
+          items={[]}
+          recentSymbols={RECENT}
+          target={{ label: "Changes Chart 1 · BTCUSDT 1m", armed: true }}
+        />
+        <FuzzyList
+          id="matrix-ranked"
+          aria-label="Ranked symbols"
+          items={RANKED}
+          activeId="ETHUSDT"
+          onActivate={fn()}
+        />
       </Cell>
       <Cell id="CMP-050 Card">
         <Card title="Accounts" actions={<Button variant="ghost">Manage</Button>}>
@@ -273,8 +313,8 @@ const matrix = (theme: ThemeName, density: DensityName): Story => ({
     await expect(
       within(canvasElement).getByRole("table", { name: "Open positions" }).closest("[data-cmp]"),
     ).not.toHaveAttribute("data-layout");
-    // Every listbox and menu is closed: nothing portalled is open at rest.
-    await expect(document.querySelector('[role="listbox"]')).toBeNull();
+    // Every portalled listbox and menu is closed at rest; CMP-213's list is drawn in place.
+    await expect(document.querySelector('[role="listbox"]:not(.cv-fuzzylist__list)')).toBeNull();
     await expect(document.querySelector('[role="menu"]:not([hidden])')).toBeNull();
   },
 });

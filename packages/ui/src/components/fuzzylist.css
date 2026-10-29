@@ -1,0 +1,146 @@
+/*
+ * CMP-213 FuzzyList (E08-D05 §6.1, §9.4, A-D05-3). Every row, a group's header or an option, is exactly
+ * `size.row.height`, so the window's spacers count in rows and no row is ever measured. The match is weight
+ * and tone (semibold `text.primary` over regular `text.secondary`); the active option is `surface.selected` plus a
+ * `border.thick` `border.selected` bar (the bar is the cue). A T2 label stays `text.secondary`: E08-D05 §9.5
+ * rejects `text.tertiary` on `surface.selected` (3.98:1). Tokens only; nothing animates (E08-D05 §9.3).
+ */
+.cv-fuzzylist__list {
+  max-block-size: calc(var(--cv-fuzzylist-rows, 8) * var(--size-row-height));
+  overflow-y: auto;
+}
+
+.cv-fuzzylist__header,
+.cv-fuzzylist__row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-sm);
+  block-size: var(--size-row-height);
+  padding-inline: calc(var(--space-inset-sm) - var(--border-thick) * 1px) var(--space-inset-sm);
+  border-inline-start: calc(var(--border-thick) * 1px) solid transparent;
+  white-space: nowrap;
+}
+
+.cv-fuzzylist__header {
+  color: var(--color-text-tertiary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-fuzzylist__row {
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.cv-fuzzylist__row:hover {
+  background: var(--color-surface-hover);
+}
+
+/* Light `surface.hover` equals the overlay (E08-D05 §13's CR): a hovered row takes the selected fill, no bar. */
+:root[data-theme="light"] .cv-fuzzylist__row:hover {
+  background: var(--color-surface-selected);
+}
+
+.cv-fuzzylist__row[data-active] {
+  border-inline-start-color: var(--color-border-selected);
+  background: var(--color-surface-selected);
+}
+
+.cv-fuzzylist__row[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.cv-fuzzylist__lead {
+  display: inline-flex;
+  flex: none;
+  inline-size: var(--size-icon);
+  block-size: var(--size-icon);
+}
+
+/* The symbol never truncates (E08-D05 B01 "long symbol"); the hint does. */
+.cv-fuzzylist__label {
+  flex: 3 1 0;
+  min-inline-size: max-content;
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+}
+
+.cv-fuzzylist__match {
+  background: none;
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.cv-fuzzylist__tags {
+  margin-inline-start: var(--space-inset-xs);
+}
+
+/* Delisted (E08-D05 §6.4): struck in the delisted text; the chip's glyph in the delisted indicator. */
+.cv-fuzzylist__row[data-delisted] .cv-fuzzylist__label {
+  color: var(--color-data-confidence-delisted-text);
+  text-decoration: line-through;
+}
+
+.cv-fuzzylist__row[data-delisted] .cv-fuzzylist__chip {
+  --cv-tag-glyph: var(--color-data-confidence-delisted-indicator);
+}
+
+.cv-fuzzylist__hint {
+  flex: 3 1 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-fuzzylist__value {
+  flex: 2 1 0;
+  min-inline-size: 0;
+  text-align: end;
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+}
+
+.cv-fuzzylist__chip {
+  display: flex;
+  flex: 3 1 0;
+  min-inline-size: 0;
+}
+
+/* CMP-015's rows, static here (E08-D05 §6.2 "six skeleton rows (static)"): no shimmer band. */
+.cv-fuzzylist__skeleton .cv-skeleton__block::after {
+  content: none;
+}
+
+/* Forced colours: the active row is Highlight with a HighlightText bar; no token colour survives. */
+@media (forced-colors: active) {
+  .cv-fuzzylist__row,
+  .cv-fuzzylist__row:hover,
+  :root[data-theme] .cv-fuzzylist__row:hover {
+    forced-color-adjust: none;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .cv-fuzzylist__row[data-active],
+  :root[data-theme] .cv-fuzzylist__row[data-active]:hover {
+    border-inline-start-color: HighlightText;
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .cv-fuzzylist__match,
+  .cv-fuzzylist__row[data-delisted] .cv-fuzzylist__label {
+    color: inherit;
+  }
+
+  .cv-fuzzylist__header {
+    color: CanvasText;
+  }
+
+  .cv-fuzzylist__chip {
+    forced-color-adjust: auto;
+  }
+}
