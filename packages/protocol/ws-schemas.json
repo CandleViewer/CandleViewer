@@ -4372,6 +4372,9 @@
           "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
         },
         "server_version": {
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[!-~](?:[ -~]*[!-~])?$",
           "type": "string"
         }
       },

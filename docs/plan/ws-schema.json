@@ -502,7 +502,10 @@
           "enum": ["msgpack", "json"]
         },
         "server_version": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[!-~](?:[ -~]*[!-~])?$"
         },
         "git_sha": {
           "type": "string",

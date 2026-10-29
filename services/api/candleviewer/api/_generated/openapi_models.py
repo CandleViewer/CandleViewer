@@ -5288,7 +5288,9 @@ class HealthReport(BaseModel):
             description="`not_deployed` = module not built yet; ranks as healthy for `overall`. Rank: down > warning > degraded > healthy."
         ),
     ] = None
-    version: str | None = None
+    version: Annotated[
+        str | None, Field(max_length=32, min_length=1, pattern="^[!-~](?:[ -~]*[!-~])?$")
+    ] = None
     git_sha: str | None = None
     environment: str | None = None
     uptime_seconds: JsonInt | None = None
@@ -6437,7 +6439,7 @@ class JournalTradeContext(BaseModel):
 
 
 class BuildInfo(BaseModel):
-    version: str
+    version: Annotated[str, Field(max_length=32, min_length=1, pattern="^[!-~](?:[ -~]*[!-~])?$")]
     commit: str
     built_at: AwareDatetime
     api_version: str | None = None
