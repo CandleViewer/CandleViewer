@@ -6,6 +6,7 @@ orders them."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Collection, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -15,11 +16,14 @@ from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.trade_group_repository import TradeGroupReader
+from candleviewer.api import trade_groups
 from candleviewer.api.trade_group_cursor import CURSOR_TTL_S, decode_cursor, encode_cursor
+from candleviewer.api.trade_group_projection import group_document
 from candleviewer.api.trade_groups import make_trade_groups_router as router
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
@@ -53,12 +57,14 @@ def group(
     n: int, symbol: str, status: TradeGroupStatus, hours: int, *accounts: UUID,
     by: UUID = OWNER_ID,
 ) -> TradeGroupRecord:  # fmt: skip
-    """Group `n`, made by `by` at T0 plus `hours`, with a leg on each account; its note and ref are
-    its own, so a value shown for one group is never another's."""
+    """Group `n`, made by `by` at T0 plus `hours` and updated half an hour later (a cursor's place
+    is its creation, never its update), with a leg on each account; its note and ref are its own,
+    so a value shown for one group is never another's."""
     at, key = T0 + timedelta(hours=hours), UUID(int=0x5000 + n)
     row = replace(
         _GROUP_ROW, id=key, symbol=symbol, status=status, created_by=by, created_at=at,
-        updated_at=at, intent_note=f"{NOTE} {n}", client_group_ref=str(UUID(int=0x6000 + n)),
+        updated_at=at + timedelta(minutes=30), intent_note=f"{NOTE} {n}",
+        client_group_ref=str(UUID(int=0x6000 + n)),
     )  # fmt: skip
     legs = tuple(
         replace(_LEG_ROW, id=UUID(int=0x7000 + 16 * n + i), trade_group_id=key,
@@ -175,7 +181,7 @@ def test_list_filters_by_symbol_status_and_time_and_pages(world: World) -> None:
     assert world.ids(**{"from": _at(2), "to": _at(4)}) == ids_of(CORE3, TWIN, SOLO)
     assert world.ids(symbol="BTCUSDT", status="open", **{"from": _at(0)}) == ids_of(PAIR)
     pages, cursor = list[dict[str, Any]](), None
-    while True:
+    for _ in NEWEST_FIRST:  # a page a group at most: a cursor that repeats a group fails, not loops
         pages.append(world.read(limit=2, **({} if cursor is None else {"cursor": cursor})).json())
         if (cursor := pages[-1]["meta"]["next_cursor"]) is None:
             break
@@ -215,6 +221,40 @@ def test_a_page_ends_at_its_last_served_group_and_reads_the_served_orders_once(
         [str(world.store.orders[x.id][0])] for x in PAIR.legs
     ]
     assert world.store.asked[2:] == [tuple(x.id for x in PAIR.legs)]
+
+
+def _off_the_loop() -> bool:
+    """True on a thread that runs no event loop: a worker's, never the serving loop's."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return True
+    return False
+
+
+def test_a_page_and_a_group_are_rendered_and_encoded_off_the_serving_loop(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1C-01 (AGENTS.md 5.2): a page of 500 groups with 20 legs takes about half a second to
+    render and encode, so the list and the get do both on a worker thread, and answer the bytes
+    the framework's own `JSONResponse` gives."""
+    ran = list[tuple[str, bool]]()
+
+    def rendered(*args: Any) -> Any:
+        ran.append(("document", _off_the_loop()))
+        return group_document(*args)
+
+    class Encoded(JSONResponse):
+        def render(self, content: Any) -> bytes:
+            ran.append(("encode", _off_the_loop()))
+            return super().render(content)
+
+    monkeypatch.setattr(trade_groups, "group_document", rendered)
+    monkeypatch.setattr(trade_groups, "JSONResponse", Encoded)
+    for answer in (world.read(), world.read(PAIR.group.id)):
+        inline = JSONResponse(answer.json())
+        assert (answer.content, dict(answer.headers)) == (inline.body, dict(inline.headers))
+    assert sorted(set(ran)) == [("document", True), ("encode", True)]  # both, never on the loop
 
 
 @pytest.mark.parametrize(
@@ -283,8 +323,9 @@ def test_a_viewer_reads_groups(world: World) -> None:
 
 
 def test_a_bad_cursor_and_an_inverted_range_are_400(world: World) -> None:
-    """A cursor holds the last served group's place, bound to operation, caller and filters for an
-    hour; a naive time or `from` after `to` is `invalid_time_range`; no read is made for any."""
+    """A cursor holds the last served group's place, bound to operation, caller and each filter as
+    given for an hour; a naive time or `from` after `to` is `invalid_time_range`; no read is made
+    for any."""
     cursor, now = world.read(limit=1).json()["meta"]["next_cursor"], int(NOW.timestamp())
     place = decode_cursor(cursor, _LIST, OWNER_ID, NO_FILTERS, now)
     assert place is not None
@@ -306,6 +347,14 @@ def test_a_bad_cursor_and_an_inverted_range_are_400(world: World) -> None:
         got = world.read(cursor=sent)
         assert (got.status_code, got.json()["code"]) == (400, "invalid_cursor"), sent
     assert world.read(limit=1, cursor=eth).status_code == 400  # issued under another filter
+    for issued, replayed in (  # `status`, `from` and `to` each bind a cursor, as the symbol does
+        ({"status": "open"}, {"status": "closed"}),
+        ({"from": _at(2)}, {"from": _at(3)}), ({"to": _at(4)}, {"to": _at(5)}),
+    ):  # fmt: skip
+        page = world.read(limit=1, **issued).json()["meta"]["next_cursor"]
+        assert world.read(limit=1, cursor=page, **issued).status_code == 200  # as it was issued
+        again = world.read(limit=1, cursor=page, **replayed)
+        assert (again.status_code, again.json()["code"]) == (400, "invalid_cursor"), replayed
     world.principal = principal("manager", A, C)
     theirs = world.read(limit=1).json()["meta"]["next_cursor"]  # issued to the manager
     world.principal = principal("owner")
@@ -343,10 +392,13 @@ def test_faults_are_refused_or_503_logged_by_class_and_sqlstate_or_500(world: Wo
     class and SQLSTATE (C-12.6); a defect, 500, echoing nothing."""
     world.store.fails = TradeGroupStoreScopeDeniedError()
     assert [world.read(PAIR.group.id).status_code, world.read().status_code] == [403, 403]
-    assert [(r["reason"], r.get("object_id")) for r in world.audit] == [
-        ("not_owner:orders:read:granted_accounts", str(PAIR.group.id)),
-        ("not_owner:orders:read:granted_accounts", None),
-    ]  # fmt: skip
+    denied = {  # the whole record: its outcome, its severity and its actor included
+        "action": "rbac.denied", "actor_label": str(OWNER_ID), "actor_user_id": OWNER_ID,
+        "actor_ip": "testclient", "outcome": "denied", "severity": "warning", "request_id": None,
+        "session_id": None, "reason": "not_owner:orders:read:granted_accounts",
+    }  # fmt: skip
+    named = {"object_kind": "trade_group", "object_id": str(PAIR.group.id)}
+    assert world.audit == [denied | named, denied]
     world.fails = RuntimeError("the audit writer is not started")
     refused = replace(PAIR.legs[0], filled_qty=Decimal(9))  # above its target: no model holds it
     with capture_logs() as logs:

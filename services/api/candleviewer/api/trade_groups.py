@@ -6,15 +6,18 @@ listed and is the get's one 404, byte for byte a missing group's, with no record
 order read (SR-E29-13). A page is read as `limit + 1`, so a next page is known without a count:
 `meta` has no `total`, which would count groups the caller cannot read (OL-02). The cursor is the
 last group served's `(created_at, id)`, never the look-ahead row's; the served legs' orders are
-read once. Logs carry a class and a SQLSTATE alone (C-12.6).
+read once. The documents of a page and their JSON are built on a worker thread, as a page of 500
+groups with 20 legs takes about half a second (AGENTS.md 5.2). Logs carry a class and a SQLSTATE
+alone (C-12.6).
 """
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import struct
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final
 
@@ -29,7 +32,7 @@ from candleviewer.accounts.errors import (
 )
 from candleviewer.accounts.profiles import to_us
 from candleviewer.accounts.trade_group_repository import TradeGroupReader
-from candleviewer.accounts.trade_groups import from_us
+from candleviewer.accounts.trade_groups import ScopedTradeGroup, from_us
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.profile_audit import Emitter
 from candleviewer.api.profiles import problem
@@ -81,6 +84,22 @@ def _after(place: bytes | None) -> tuple[datetime, uuid.UUID] | None:
         return from_us(at), uuid.UUID(bytes=key)
     except (struct.error, OverflowError):
         return None
+
+
+type _Orders = Mapping[uuid.UUID, Sequence[uuid.UUID]]  # each leg's order ids, by leg id
+
+
+def _page(
+    shown: Sequence[ScopedTradeGroup], orders: _Orders, meta: Mapping[str, object]
+) -> Response:
+    """22's page: the documents of `shown` and their JSON, CPU work that grows with the page, so
+    it is run on a worker thread, never on the serving loop (R1C-01)."""
+    return JSONResponse({"items": [group_document(g, orders) for g in shown], "meta": meta})
+
+
+def _one(scoped: ScopedTradeGroup, orders: _Orders) -> Response:
+    """22's `TradeGroup` of one group, in its JSON: run on a worker thread, as `_page` is."""
+    return JSONResponse(group_document(scoped, orders))
 
 
 def make_trade_groups_router(
@@ -181,7 +200,7 @@ def make_trade_groups_router(
             place = _PLACE.pack(last.created_at, last.group_id.bytes)
             nxt = encode_cursor(_LIST, principal.user_id, bound, place, now)
         meta = {"next_cursor": nxt, "has_more": nxt is not None, "count": len(shown)}
-        return JSONResponse({"items": [group_document(g, orders) for g in shown], "meta": meta})
+        return await asyncio.to_thread(_page, shown, orders, meta)
 
     @router.get("/trade-groups/{tradeGroupId}")
     async def get_trade_group(
@@ -197,6 +216,6 @@ def make_trade_groups_router(
             orders = await groups.order_ids(scope, [x.leg_id for x in scoped.record.legs])
         except Exception as exc:  # mapped, or raised as a defect
             return await refused(request, principal, named, exc)
-        return JSONResponse(group_document(scoped, orders))
+        return await asyncio.to_thread(_one, scoped, orders)
 
     return router
