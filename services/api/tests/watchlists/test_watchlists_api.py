@@ -126,6 +126,8 @@ def test_a_probe_of_another_users_list_is_audited_rbac_denied_and_the_404_stands
         ({"symbols": ["BTCUSDT", "LUNAUSDT"]}, "symbols", "unknown_symbol", 422),
         ({"symbols": ["BTCUSDT", "BTCUSDT"]}, "symbols", "duplicate_symbol", 422),
         ({"name": "mAjOrS"}, "name", "name_taken", 409),
+        ({"name": "Ma\u202ejors"}, "name", "not_allowed", 422),  # a bidi override (Cf)
+        ({"name": "Ma\x1bjors"}, "name", "not_allowed", 422),  # ESC (Cc)
     ],
 )
 def test_an_invalid_list_is_refused_naming_its_field_and_nothing_is_written(
