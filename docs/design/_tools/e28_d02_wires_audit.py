@@ -186,7 +186,7 @@ RULE_KEYS = (
     "`not_found` (an override's profile)",
 )
 
-# The strings the ruling of record fixes (BQ-6, BQ-9, BQ-10, BQ-17, BQ-18, BQ-5), verbatim.
+# The strings the ruling of record fixes (BQ-6, BQ-9, BQ-10, BQ-17, BQ-18, BQ-5, CD-9), verbatim.
 RULED_STRINGS = (
     (
         "BTCUSDT has an open position on sub_001 — new entries on it will be blocked; closing "
@@ -208,6 +208,7 @@ RULED_STRINGS = (
     "Every order carries a stop-loss at the exchange. This cannot be turned off.",
     "not reachable from this UI",
     'an unknown figure reads "unknown", never zero',
+    '"N of M will be sent"',
 )
 CD6 = RULED_STRINGS[6]
 SAFETY_FRAME = "SCR-131 / Safety: the native stop-loss as a fixed statement"
@@ -220,23 +221,23 @@ CONTROL_RE = re.compile(
 
 # Load-bearing cites: each must occur in the spec and its lines must hold the text at the base.
 PINS: dict[str, str] = {
-    "`22:3499-3501`": "a position sized",
-    "`22:3502-3504`": "native_stop_mandatory",
-    "`22:3616-3618`": "Every account has one from",
-    "`22:6645`": "listed only when every member",
-    "`22:6693`": "These accounts have no symbol in common",
-    "`22:16516`": "The default binding has its own operation.",
-    "`22:16557`": "SOLUSDT allows at most 20x",
-    "`22:16570`": "cannot be turned off",
-    "`22:19899`": "Never null",
-    "`22:23140`": "stop_fallback",
+    "`22:3620-3622`": "a position sized",
+    "`22:3623-3625`": "native_stop_mandatory",
+    "`22:3737-3739`": "Every account has one from",
+    "`22:6766`": "listed only when every member",
+    "`22:6814`": "These accounts have no symbol in common",
+    "`22:16638`": "The default binding has its own operation.",
+    "`22:16679`": "SOLUSDT allows at most 20x",
+    "`22:16692`": "cannot be turned off",
+    "`22:20031`": "Never null",
+    "`22:23272`": "stop_fallback",
     "`21:1478`": "require_native_sl",
     "`24:3616`": "daily_loss_lockout",
-    "`14:1433`": "excluded: symbol not allowed by profile",
-    "`14:1444`": "below the 0.001 minimum",
-    "`14:2637`": "allows all symbols - consider restricting",
-    "`14:2699`": "single server call",
-    "`14:2700`": "denying a symbol with an open position is refused",
+    "`14:1441`": "excluded: symbol not allowed by profile",
+    "`14:1452`": "below the 0.001 minimum",
+    "`14:2646`": "allows all symbols - consider restricting",
+    "`14:2708`": "single server call",
+    "`14:2709`": "denying a symbol with an open position is refused",
     "`ADR40:441-445`": "capped by profile: 5x",
     "`MX:1500-1513`": "not_mounted",
     "`MX:1528-1533`": "not_mounted",
@@ -863,7 +864,7 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
             "-".join(["b1e2c3d4", "aaaa", "4bbb", "8ccc", "d" * 12]) + "\n\n## 1. Purpose",
         ),
     ),
-    ("CITES", sub("`22:3499-3501`", "`22:3399-3401`", 0)),
+    ("CITES", sub("`22:3620-3622`", "`22:3399-3401`", 0)),
 )
 
 
