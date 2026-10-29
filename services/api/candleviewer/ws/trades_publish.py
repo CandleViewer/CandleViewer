@@ -25,10 +25,12 @@ the `trades` family's snapshot source, publisher and subscription leases, over t
   deadline plus `LATE_GRACE_US`), `dropped` since the last one (a frame goes out for drops alone:
   never silent; prints `min_size` filtered, plus those shed when more than `PENDING_MAX` items
   waited for one frame, `overflow`), the symbol's `big_trade_threshold`, and `coalesced_count`,
-  the source batches it appended. It carries a kind-3 part only when one can say everything
-  (§3.4): no cluster of more than one print, no drop, the threshold unchanged since the option
-  tape's last frame, and the instrument scales known and exact; else it leaves structured, binary
-  subscribers included.
+  the source batches it appended (§14.2): each bus drain that gave the option tape an item or a
+  drop counts one, as does each window whose clock closed a cluster; a drain whose prints only
+  joined a cluster still open appended nothing yet and counts none. It carries a kind-3 part only
+  when one can say everything (§3.4): no cluster of more than one print, no drop, the threshold
+  unchanged since the option tape's last frame, and the instrument scales known and exact; else
+  it leaves structured, binary subscribers included.
 - **Snapshot.** The option tape's last `SNAPSHOT_ITEMS` sent items, oldest first, `dropped` 0 and
   the current threshold; kind 3 beside it unless an item is a cluster. `generation` moves with
   every frame and threshold change; continuity is never proven (§7.6).
