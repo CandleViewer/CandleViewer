@@ -115,6 +115,20 @@ jobs:
       - name: Install the browser system libraries (as the e2e Electron job does)
         working-directory: apps/desktop
         run: pnpm exec playwright install --with-deps chromium
+      # The hosted image blocks unprivileged user namespaces, so Chromium's sandbox needs its SUID
+      # helper owned by root and setuid, as Electron's Linux docs require. Without it Electron aborts
+      # at launch rather than run unsandboxed (the first dispatch, 2026-10-29). The measured shell
+      # keeps its sandbox: `--no-sandbox` is no option for the hardened shell this job measures.
+      - name: Make Electron's sandbox helper setuid root
+        working-directory: apps/desktop
+        run: |
+          # Resolved without running electron's index.js (which can download a missing binary); a
+          # symlink is refused, so root never takes ownership of a link's target.
+          pkg="$(node -p "require('path').dirname(require.resolve('electron/package.json'))")"
+          sandbox="$pkg/dist/chrome-sandbox"
+          test -f "$sandbox" && ! test -L "$sandbox"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
       # Electron needs an X display: the runner image ships xvfb, as _job-e2e.yml's e2e-electron uses.
       - name: Run the matrix, Electron (`tuned` flag set, full set with the 30-minute B10 soak)
         continue-on-error: true
