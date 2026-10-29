@@ -551,14 +551,14 @@ class UserBudget:
         self.budget = DecodeBudget()
 
     def admits(self, i: int, frames: list[tuple[int, int]]) -> bool:
-        """Whether frames of `(tokens before decode, tokens debited after)` sent in turn ahead of
-        update `i` all pass; if so they are taken."""
+        """Whether frames of `(tokens taken before decode, tokens given back after it)` sent in
+        turn ahead of update `i` all pass; if so they are taken."""
         trial = copy.deepcopy(self.budget)
-        for before, after in frames:
+        for before, back in frames:
             if not trial.can(i * TICK_S, before):
                 return False
             trial.take(before)
-            trial.debit(i * TICK_S, after)
+            trial.refund(back)
         self.budget = trial
         return True
 
@@ -686,55 +686,61 @@ async def test_heavy_frames_from_every_socket_as_fast_as_admitted_stay_in_budget
     assert max(beside) <= STALL_MS, f"an update took {max(beside):.2f} ms, past {STALL_MS} ms"
 
 
-# -- frames at the value bound under 32 KiB, every socket in the same round (#4924) -------------
+# -- frames at the value bound, every socket in the same round (#4924) ---------------------------
 #
-# The same user's eight sockets each hold a small frame at the value bound: in JSON, the container
-# cap's empty lists and `0`s up to the bound (under 32 KiB); in MessagePack, lists of nils that the
-# decoder charges the bound exactly (about 16 KiB). All eight send one in the same round, as often
-# as the gateway admits: each socket's rate at the tokens it takes for one such frame, read off the
-# rate itself (a spy) on a probe before the run, and the user's decode budget, which the eight
-# share (`UserBudget`, the gateway's own bucket on the updates' clock). A round is sent only when
-# both admit all eight. Every frame is answered; the other user's stream is timed as above.
+# The same user's eight sockets each hold a small frame with many values: in JSON, the container
+# cap's empty lists and `0`s up to the value bound (under 32 KiB); in MessagePack, lists of nils
+# that the decoder charges the bound exactly (about 16 KiB), or about 4 000 nils in under 4 KiB,
+# which its size charges nothing past the first token. All eight send one in the same round, as
+# often as the gateway admits: each socket's rate at the tokens it takes for one such frame, read
+# off the rate itself (a spy) on a probe before the run, and the user's decode budget, which the
+# eight share (`UserBudget`, the gateway's own bucket on the updates' clock). A round is sent only
+# when both admit all eight. Every frame is answered; the other user's stream is timed as above.
 
-SYNC_SUBPROTOCOLS = {"json": "cv.v1.json", "msgpack": "cv.v1.msgpack"}
-#: The slowest update beside a MessagePack round: one round of eight frames at the value bound is
-#: decoded and validated value by value, so it can hold the loop past `STALL_MS` once. A C-speed
-#: validation is a follow-up on #415; this bounds the round, p95 and the median stay as above.
-MSGPACK_ROUND_STALL_MS = 2 * STALL_MS
+SYNC_SHAPES = {
+    "json": "cv.v1.json",
+    "msgpack": "cv.v1.msgpack",
+    "msgpack-under-4-kib": "cv.v1.msgpack",
+}
 
 
-def at_bound(id: str, subprotocol: str) -> str | bytes:
-    """A `ping` at the value bound, under 32 KiB."""
-    if subprotocol == "cv.v1.json":
+def at_bound(id: str, shape: str) -> str | bytes:
+    """A `ping` of `shape` (`SYNC_SHAPES`)."""
+    if shape == "json":
         head, tail = f'{{"t":"ping","id":"{id}","p":{{"pad":[', "]}}"
         lists = ",".join(["[]"] * (MAX_JSON_CONTAINERS - 3))
         zeros = ",0" * (MAX_MSGPACK_VALUES - json_values_over_count(head + lists + tail))
         text = head + lists + zeros + tail
         assert json_values_over_count(text) == MAX_MSGPACK_VALUES and len(text) < 32 * 1024
         return text
-    # 7 for the envelope, 3 for `p`, 1 + 127 for `pad` and 1 + n for each of its 127 lists
-    pad = [[None] * n for n in [128] * 125 + [119, 0]]
+    if shape == "msgpack":
+        # 7 for the envelope, 3 for `p`, 1 + 127 for `pad` and 1 + n for each of its 127 lists
+        pad = [[None] * n for n in [128] * 125 + [119, 0]]
+        values, under = MAX_MSGPACK_VALUES, 32 * 1024
+    else:  # 7 + 3 + (1 + 31) + 31 x 128 = 4 010 values
+        pad, values, under = [[None] * 127 for _ in range(31)], 4_010, 4 * 1024
     packed: bytes = msgpack.packb({"t": "ping", "id": id, "p": {"pad": pad}})
     charged: list[int] = []
     decode_client_frame(packed, charged=charged)
-    assert charged == [MAX_MSGPACK_VALUES] and len(packed) < 32 * 1024
+    assert charged == [values] and len(packed) < under
     return packed
 
 
 class _Taken(InboundRateLimiter):
-    """The inbound rate, recording the tokens of the last frame any connection's admitted."""
+    """The inbound rate, recording the tokens the last frame any connection admitted took before
+    its decode (`before`) and kept after it (`kept`)."""
 
-    last = 0
+    before = kept = 0
 
     def allow(self, now: float, weight: int = 1) -> bool:
         ok = super().allow(now, weight)
         if ok:
-            _Taken.last = weight
+            _Taken.before = _Taken.kept = weight
         return ok
 
-    def debit(self, tokens: int) -> None:
-        super().debit(tokens)
-        _Taken.last += tokens
+    def refund(self, tokens: int) -> None:
+        super().refund(tokens)
+        _Taken.kept = max(1, _Taken.kept - tokens)
 
 
 @dataclass
@@ -742,27 +748,28 @@ class SyncFlood:
     """The flooding user's sockets, all sending a frame at the value bound in the same round."""
 
     sockets: list[Raw]
-    subprotocol: str
+    shape: str
     every: int
-    shared: tuple[int, int]  # one frame's draw on the user's budget: before decode, after it
+    shared: tuple[
+        int, int
+    ]  # one frame's draw on the user's budget: taken before decode, back after
     user: UserBudget = field(default_factory=UserBudget)
     sent: int = 0
 
     @classmethod
-    async def open(cls, stack: Stack, subprotocol: str) -> SyncFlood:
+    async def open(cls, stack: Stack, shape: str) -> SyncFlood:
         token = (await stack.sessions.mint(str(FLOODER))).access_token
         async with contextlib.AsyncExitStack() as dialled:  # a dial that fails closes the earlier
             sockets = list[Raw]()
             for _ in range(MAX_CONNECTIONS_PER_USER):
-                sockets.append(raw := await dial(stack, token, subprotocol))
+                sockets.append(raw := await dial(stack, token, SYNC_SHAPES[shape]))
                 dialled.push_async_callback(raw.close)
             probe = sockets[0]  # one frame's tokens, as the rate takes them
-            await send(probe, at_bound("probe", subprotocol))
+            await send(probe, at_bound("probe", shape))
             await probe.until(lambda: probe.count("pong") == 1, "the probe's pong")
-            weight = _Taken.last
-            # Past the first token: before decode in JSON, debited after it in MessagePack.
-            shared = (weight - 1, 0) if subprotocol == "cv.v1.json" else (0, weight - 1)
-            flood = cls(sockets, subprotocol, paced_every(weight, weight), shared)
+            before, kept = _Taken.before, _Taken.kept
+            shared = (before - 1, before - kept)  # past the first token: taken, and given back
+            flood = cls(sockets, shape, paced_every(before, before), shared)
             assert flood.user.admits(0, [shared])  # the probe's draw, as early as the run's
             dialled.pop_all()  # the flood owns them now: `close`
         return flood
@@ -773,7 +780,7 @@ class SyncFlood:
 
     async def tick(self, i: int) -> None:
         if i % self.every == 0 and self.user.admits(i, [self.shared] * len(self.sockets)):
-            frame = at_bound(f"v{i}", self.subprotocol)
+            frame = at_bound(f"v{i}", self.shape)
             for raw in self.sockets:
                 assert await send(raw, frame)
             self.sent += 1
@@ -785,21 +792,19 @@ class SyncFlood:
             await raw.until(lambda raw=raw, want=want: raw.count("pong") == want, "pongs")
 
 
-@pytest.mark.parametrize(
-    "subprotocol", list(SYNC_SUBPROTOCOLS.values()), ids=list(SYNC_SUBPROTOCOLS)
-)
+@pytest.mark.parametrize("shape", list(SYNC_SHAPES))
 async def test_value_bound_frames_from_every_socket_in_the_same_round_stay_in_budget(
-    monkeypatch: pytest.MonkeyPatch, subprotocol: str
+    monkeypatch: pytest.MonkeyPatch, shape: str
 ) -> None:
     async with nodelay_stack() as quiet:
         alone, bodies = await measure(quiet, None)
     monkeypatch.setattr(gateway, "InboundRateLimiter", _Taken)
     async with nodelay_stack() as loud:
-        flood = await SyncFlood.open(loud, subprotocol)
+        flood = await SyncFlood.open(loud, shape)
         try:
             beside, same = await measure(loud, flood)
             print(
-                f"#4924 sync {subprotocol} {flood.sent} rounds: alone {figures(alone)}; "
+                f"#4924 sync {shape} {flood.sent} rounds: alone {figures(alone)}; "
                 f"beside the flood {figures(beside)}"
             )
             for raw in flood.sockets:  # every frame admitted and answered, none refused
@@ -810,5 +815,4 @@ async def test_value_bound_frames_from_every_socket_in_the_same_round_stay_in_bu
     assert p95(beside) <= BUDGET_MS, f"p95 {p95(beside):.2f} ms past budget #6 ({BUDGET_MS} ms)"
     added = statistics.median(beside) - statistics.median(alone)
     assert added <= TOLERANCE_MS, f"the flood added {added:.2f} ms to the median"
-    stall = STALL_MS if subprotocol == "cv.v1.json" else MSGPACK_ROUND_STALL_MS
-    assert max(beside) <= stall, f"an update took {max(beside):.2f} ms, past {stall} ms"
+    assert max(beside) <= STALL_MS, f"an update took {max(beside):.2f} ms, past {STALL_MS} ms"
