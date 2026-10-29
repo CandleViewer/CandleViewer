@@ -31,7 +31,12 @@ from candleviewer.admin.inspector import (
 )
 from candleviewer.admin.overview.fanout import SliceFanOut
 from candleviewer.admin_wiring import build_statechart_inspector, dropped_receipts_reader
-from candleviewer.api.admin_statecharts import machine_key, make_statechart_router, visibility
+from candleviewer.api.admin_statecharts import (
+    GrantsOf,
+    machine_key,
+    make_statechart_router,
+    visibility,
+)
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.generated_permissions import Permission
@@ -104,6 +109,10 @@ class Store:
             raise OSError(f"{_DSN} is down")  # must never be echoed
         return self.rows
 
+    async def snapshot(self, kind: str, eid: str | None, env: str) -> SnapshotRow | None:
+        found = [r for r in await self.snapshots() if (r.machine_kind, r.entity_id) == (kind, eid)]
+        return next((r for r in found if r.environment == env), None)
+
 
 def inspector(*rows: SnapshotRow, **sources: Any) -> StatechartInspector:
     """An uncached inspector over `rows`, every source wired unless `sources` overrides it."""
@@ -121,11 +130,17 @@ class Resolver:
         return AuditPrincipal(user, role, perms, is_owner=owner)
 
 
-def make_app(inspect: StatechartInspector, clock: Callable[[], datetime] = lambda: NOW) -> FastAPI:
+def make_app(
+    inspect: StatechartInspector,
+    clock: Callable[[], datetime] = lambda: NOW,
+    grants: GrantsOf | None = None,
+) -> FastAPI:
     app = FastAPI()
     app.add_exception_handler(AdminAreaRefused, admin_area_refused_handler)
     install_error_redaction(app)  # the app's 422: no input echoed (E43-T06)
-    router = make_statechart_router(inspect, resolver=Resolver(), audit=AuditSpy(), clock=clock)
+    router = make_statechart_router(
+        inspect, resolver=Resolver(), audit=AuditSpy(), clock=clock, grants=grants
+    )
     app.include_router(router)
     return app
 
@@ -345,6 +360,8 @@ def test_no_request_touches_an_interpreter(monkeypatch: pytest.MonkeyPatch) -> N
     client = _client()
     listed = client.get("/admin/statecharts", headers=_OWNER)
     assert listed.status_code == 200 and len(listed.json()["items"]) == 7
+    detail = client.get(f"/admin/statecharts/order:{ID_2}?environment=demo", headers=_OWNER)
+    assert detail.json()["machine"]["state"] == "triggered"
     assert client.get("/admin/statecharts/order/export", headers=_OWNER).status_code == 200
 
 

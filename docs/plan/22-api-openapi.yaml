@@ -14776,9 +14776,9 @@ paths:
         and `kinds`, and `snapshots` is `error` with the fixed reason "snapshot seal did not
         verify". A failed seal also writes a `system_events` row (component `statechart`, severity
         `critical`, a fixed message), once per machine, environment and snapshot `updated_at`, not
-        once per read, so it shows in `listIncidents`. `statechart` is not yet in the `se_component`
-        CHECK (migration 0008, `21-database-schema.md` §3.10.2), so the route slice widens it in a
-        new migration before it writes that row. When the snapshot store cannot be read, `items` and
+        once per read, so it shows in `listIncidents`. Migration `0057_se_component_statechart`
+        adds `statechart` to the `se_component` CHECK (`21-database-schema.md` §3.10.2) for that
+        row. When the snapshot store cannot be read, `items` and
         `kinds` are empty and `snapshots` says why (`AdminSliceStatus`); the response is still
         `200`.
       x-rbac: { permissions: [admin:read], scope: none }

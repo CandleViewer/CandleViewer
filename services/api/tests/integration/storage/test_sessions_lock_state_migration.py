@@ -83,10 +83,11 @@ def _conn(dsn: str) -> Conn:
 
 @pytest.fixture(scope="module")
 def server() -> Iterator[str]:
-    """A server whose `_TEMPLATE` database is at head and untouched, for each test to clone."""
+    """A server whose `_TEMPLATE` database is at `_REV` (not head: a later revision must not move
+    this test) and untouched, for each test to clone."""
     with PostgresContainer("postgres:16-alpine") as container:
         dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+psycopg")
-        assert _alembic(dsn, "upgrade", "head").returncode == 0
+        assert _alembic(dsn, "upgrade", _REV).returncode == 0
         with _conn(dsn.rsplit("/", 1)[0] + "/postgres") as c:
             stmt = sql.SQL("CREATE DATABASE {} TEMPLATE {}")
             c.execute(stmt.format(sql.Identifier(_TEMPLATE), sql.Identifier(dsn.rsplit("/", 1)[1])))
@@ -95,7 +96,7 @@ def server() -> Iterator[str]:
 
 @pytest.fixture
 def db(server: str) -> str:
-    """This test's own database, at head."""
+    """This test's own database, at `_REV`."""
     name = f"lock_state_{uuid.uuid4().hex[:12]}"
     with _conn(f"{server}/postgres") as c:
         stmt = sql.SQL("CREATE DATABASE {} TEMPLATE {}")
@@ -149,7 +150,7 @@ def test_downgrade_then_upgrade_round_trips_when_no_live_session_is_locked(
     sids = [_session(db, state) for state in states]
     assert _alembic(db, "downgrade", _PREV).returncode == 0
     assert _columns(db) == []
-    assert _alembic(db, "upgrade", "head").returncode == 0
+    assert _alembic(db, "upgrade", _REV).returncode == 0
     assert [row[0] for row in _columns(db)] == ["locked_at", "unlocked_at"]
     with _conn(db) as c:
         rows = c.execute("SELECT id::text, locked_at, unlocked_at FROM sessions").fetchall()

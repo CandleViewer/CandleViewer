@@ -702,7 +702,8 @@ instrument_versions = Table(
 )
 
 #: `system_events` (E04-T04, revision 0008_system_events; `recipient_user_id`, revision
-#: 0047_system_events_recipient, #3085: the user a row is addressed to).
+#: 0047_system_events_recipient, #3085: the user a row is addressed to; `statechart` in
+#: `se_component`, revision 0057_se_component_statechart, E42-T07).
 system_events = Table(
     "system_events",
     metadata,
@@ -722,7 +723,7 @@ system_events = Table(
     Column("recipient_user_id", ForeignKey("users.id", ondelete="SET NULL")),
     CheckConstraint(
         "component IN ('ingestion','book_engine','bars','orderflow','oms','rules','recorder',"
-        "'replay','api','ws','db','exchange','auth','backup')",
+        "'replay','api','ws','db','exchange','auth','backup','statechart')",
         name="se_component",
     ),
     Index("ix_se_time", text("event_ts DESC")),

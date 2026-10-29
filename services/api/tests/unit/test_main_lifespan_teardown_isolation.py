@@ -40,6 +40,7 @@ _STEPS = (
     "metrics_runtime",
     "health_registry",
     "disk_budget",
+    "statechart_seal_events",
     "health_pg",
     "kline_boundary_pg",
     "log_level_overrides",

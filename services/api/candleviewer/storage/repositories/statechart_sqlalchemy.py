@@ -18,7 +18,9 @@ or verify: the HMAC envelope is the trust boundary, and `persistence.Restorer` c
   which of some `send_id`s have a row; `mark_replayed` stamps each named row once.
 - Events: `insert_batch` in the order given with `ON CONFLICT (row_hash) DO NOTHING`; `head`, the
   latest `row_hash` or the genesis; `read_chain`, a keyset page of `CHAIN_PAGE_ROWS` rows after a
-  `seq`; `read_whole_chain`, every page up to `CHAIN_MAX_ROWS` rows, else `ChainTooLongError`.
+  `seq`; `read_whole_chain`, every page up to `CHAIN_MAX_ROWS` rows, else `ChainTooLongError`;
+  `read_recent`, the latest rows newest first, with neither `payload` nor `fault` read
+  (`RecentEventRecord`, the inspector's timeline, E42-T07).
 
 One unit of work per call. Its statements are capped at `STORE_TIMEOUT_S` by a transaction-local
 `statement_timeout` (lock waits included, as `OMS_STATEMENT_TIMEOUT_MS`), and the whole call (the
@@ -137,6 +139,18 @@ class EventRecord:
     seq: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class RecentEventRecord:
+    """A `machine_events` row without its `payload` and `fault` (only whether it has one)."""
+
+    event_type: str
+    phase: str
+    from_states: tuple[str, ...]
+    to_states: tuple[str, ...]
+    faulted: bool
+    occurred_at: datetime
+
+
 SNAPSHOT_COLUMNS: Final = tuple(_MS[f.name] for f in fields(SnapshotRecord))
 JOURNAL_COLUMNS: Final = tuple(_MDJ[f.name] for f in fields(JournalRecord))
 EVENT_COLUMNS: Final = tuple(_ME[f.name] for f in fields(EventRecord))
@@ -226,6 +240,15 @@ def read_chain_statement(
 ) -> sa.Select[Any]:
     page = sa.and_(_key(_ME, machine_kind, entity_id, env), _ME.seq > after_seq)
     return sa.select(*EVENT_COLUMNS).where(page).order_by(_ME.seq).limit(CHAIN_PAGE_ROWS)
+
+
+def read_recent_statement(
+    machine_kind: str, entity_id: str, env: str, limit: int
+) -> sa.Select[Any]:
+    columns = (_ME.event_type, _ME.phase, _ME.from_states, _ME.to_states, _ME.occurred_at)
+    faulted = _ME.fault.is_not(None).label("faulted")
+    latest = sa.select(*columns, faulted).where(_key(_ME, machine_kind, entity_id, env))
+    return latest.order_by(_ME.seq.desc()).limit(limit)
 
 
 def _client_deadline() -> asyncio.Timeout:
@@ -418,3 +441,14 @@ class SqlAlchemyEventStore(_Store):
                 )
             if len(page) < CHAIN_PAGE_ROWS:
                 return tuple(chain)
+
+    async def read_recent(
+        self, machine_kind: str, entity_id: str, env: str, *, limit: int
+    ) -> tuple[RecentEventRecord, ...]:
+        """The machine's latest `limit` rows (1 to `CHAIN_PAGE_ROWS`), newest first."""
+        if not 0 < limit <= CHAIN_PAGE_ROWS:
+            raise ValueError("limit must be 1 to CHAIN_PAGE_ROWS")
+        stmt = read_recent_statement(machine_kind, entity_id, env, limit)
+        rows = await self._run("events.read_recent", stmt)
+        arrays = ("from_states", "to_states")
+        return tuple(RecentEventRecord(**{**r, **{a: tuple(r[a]) for a in arrays}}) for r in rows)

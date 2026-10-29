@@ -20,7 +20,9 @@ from pydantic import SecretStr
 from structlog.testing import capture_logs
 
 import candleviewer.admin_wiring as admin_wiring
+import candleviewer.api.admin_statecharts as admin_statecharts
 import candleviewer.app as app_module
+from candleviewer.admin_wiring import RegistryScopedStore
 from candleviewer.app import create_app
 from candleviewer.audit.machine_events import MachineEventWrongLoop
 from candleviewer.settings import Settings
@@ -80,6 +82,14 @@ class _Inspectors:
             return self.built
 
         monkeypatch.setattr(app_module, "build_statechart_inspector", spy)
+        self.routers: list[dict[str, Any]] = []
+        router = admin_statecharts.make_statechart_router
+
+        def router_spy(inspector: Any, **kwargs: Any) -> Any:
+            self.routers.append(kwargs)
+            return router(inspector, **kwargs)
+
+        monkeypatch.setattr(app_module, "make_statechart_router", router_spy)
 
 
 async def test_without_keys_the_bundle_is_none_and_persistence_stays_unwired(
@@ -118,7 +128,11 @@ def test_with_keys_replay_the_inspector_and_the_metrics_are_wired(
     admission = sessions._gateway._admission
     assert isinstance(admission, LatchAdmission) and admission.latch is bundle.latch
     [call] = inspectors.calls
-    assert call["store"] is bundle.snapshots and call["keys"] is keys
+    store = call["store"]  # E42-T07: each row's scope is bound from the machines registry
+    assert isinstance(store, RegistryScopedStore) and store._store is bundle.snapshots
+    assert call["keys"] is keys
+    [router] = inspectors.routers  # a non-Owner's grants are read on the real backend
+    assert router["grants"] is not None
     exposition = generate_latest(app.state.app_context.metrics).decode()
     assert exposition.count("# HELP cv_machine_persist_ops_total ") == 1
     assert exposition.count("# HELP cv_machine_event_wal_pending ") == 1
