@@ -110,6 +110,9 @@ const molecules: [string, () => JSX.Element][] = [
         aria-label="Replay range"
         value={{ start: "2026-10-01", end: "2026-10-07" }}
         onChange={noop}
+      />
+    ),
+  ],
   [
     "CMP-049",
     () => (
