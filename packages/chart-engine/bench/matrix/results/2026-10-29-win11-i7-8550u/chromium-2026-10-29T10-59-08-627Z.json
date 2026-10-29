@@ -1,0 +1,107 @@
+{
+  "schema": "cv-matrix-report/1",
+  "dryRun": false,
+  "runtime": "chromium",
+  "timestamp": "2026-10-29T11:00:21.060Z",
+  "cotenancy": false,
+  "manifest": {
+    "schema": "cv-version-manifest/1",
+    "machine": {
+      "cpu": "Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz",
+      "cpuCount": 8,
+      "totalMemMb": 16234,
+      "os": "win32",
+      "osBuild": "10.0.26300",
+      "arch": "x64",
+      "gpu": "Intel(R) UHD Graphics 620",
+      "driver": "31.0.101.2135",
+      "webview2Version": null
+    },
+    "runtime": "chromium",
+    "versions": {
+      "node": "20.19.5",
+      "electron": null,
+      "chromium": "156.0.8078.4",
+      "tauri": null,
+      "webview2": null,
+      "playwright": "1.64.1"
+    },
+    "flagSet": {
+      "name": "pinned-K01 (software GL; override with a real-GPU set on the reference machine, see README)",
+      "flags": [
+        "--use-gl=angle",
+        "--use-angle=swiftshader",
+        "--disable-gpu-vsync",
+        "--enable-webgl2",
+        "--force-color-profile=srgb"
+      ]
+    }
+  },
+  "manifestIncomplete": [],
+  "seed": "20260928",
+  "seed32": 2904068074,
+  "fixture": {
+    "seed": "20260928",
+    "seed32": 2904068074,
+    "barCount": 100000,
+    "sha256": "dedf0e86781c31341d6e54e992ad0cfe85c2b65e25011becaff131eb77a9e579",
+    "fnv1a": "7716744d",
+    "serializedChars": 289533856
+  },
+  "driverScriptSha256": "d8ee23927a3106dc62ff75b7a87b4e05f4109975627e425cd8874af63634359d",
+  "config": {
+    "reps": 3,
+    "seed": "20260928",
+    "bars": 100000,
+    "durationMs": 20000,
+    "soakMs": 1800000
+  },
+  "capabilities": {
+    "webgl2": true,
+    "EXT_color_buffer_float": true,
+    "r16fSampling": true,
+    "OES_texture_float_linear": true,
+    "instancing": true,
+    "offscreenCanvas": true,
+    "offscreenCanvasWorker": false,
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "vendor": "Google Inc. (Google)",
+    "maxTextureSize": 8192
+  },
+  "cells": [
+    {
+      "scenario": "B7",
+      "status": "ok",
+      "modes": {
+        "inline": {
+          "repetitions": 3,
+          "decodeP95Ms": 0.09999996423721313,
+          "drops": 0,
+          "duplicates": 0,
+          "pass": true
+        },
+        "worker": {
+          "repetitions": 3,
+          "decodeP95Ms": 0.09999996423721313,
+          "drops": 0,
+          "duplicates": 0,
+          "pass": true,
+          "offscreenWebgl2InWorker": true
+        }
+      },
+      "workerError": null
+    }
+  ],
+  "residentMemoryMb": {
+    "source": "PowerShell WorkingSet64 sum by process name",
+    "shellMetrics": [],
+    "sampledMb": [
+      1806,
+      1054,
+      1053,
+      1048
+    ],
+    "peakMb": 1806
+  },
+  "runError": null
+}

@@ -1,0 +1,5180 @@
+{
+  "schema": "cv-matrix-report/1",
+  "dryRun": false,
+  "runtime": "electron",
+  "timestamp": "2026-10-29T09:31:26.520Z",
+  "cotenancy": false,
+  "manifest": {
+    "schema": "cv-version-manifest/1",
+    "machine": {
+      "cpu": "Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz",
+      "cpuCount": 8,
+      "totalMemMb": 16234,
+      "os": "win32",
+      "osBuild": "10.0.26300",
+      "arch": "x64",
+      "gpu": "Intel(R) UHD Graphics 620",
+      "driver": "31.0.101.2135",
+      "webview2Version": null
+    },
+    "runtime": "electron",
+    "versions": {
+      "node": "20.19.5",
+      "electron": "45.0.0",
+      "chromium": "156.0.8078.48",
+      "tauri": null,
+      "webview2": null,
+      "playwright": null
+    },
+    "flagSet": {
+      "name": "electron-tuned",
+      "flags": [
+        "--enable-gpu-rasterization",
+        "--disable-features=CalculateNativeWinOcclusion"
+      ]
+    }
+  },
+  "manifestIncomplete": [],
+  "seed": "20260928",
+  "seed32": 2904068074,
+  "fixture": {
+    "seed": "20260928",
+    "seed32": 2904068074,
+    "barCount": 100000,
+    "sha256": "dedf0e86781c31341d6e54e992ad0cfe85c2b65e25011becaff131eb77a9e579",
+    "fnv1a": "7716744d",
+    "serializedChars": 289533856
+  },
+  "driverScriptSha256": "d8ee23927a3106dc62ff75b7a87b4e05f4109975627e425cd8874af63634359d",
+  "config": {
+    "reps": 3,
+    "seed": "20260928",
+    "bars": 100000,
+    "durationMs": 20000,
+    "soakMs": 1800000
+  },
+  "capabilities": {
+    "webgl2": true,
+    "EXT_color_buffer_float": true,
+    "r16fSampling": true,
+    "OES_texture_float_linear": true,
+    "instancing": true,
+    "offscreenCanvas": true,
+    "offscreenCanvasWorker": false,
+    "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "vendor": "Google Inc. (Intel)",
+    "maxTextureSize": 16384
+  },
+  "cells": [
+    {
+      "scenario": "B1",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.10000002384185791,
+      "p95": 0.20000004768371582,
+      "p99": 0.30000001192092896,
+      "p95PerRep": [
+        0.20000004768371582,
+        0.19999998807907104,
+        0.2999999523162842
+      ],
+      "outliers33": 0,
+      "maxMs": 0.9000000357627869,
+      "drawCalls": 4,
+      "mirrorP95Ms": 0.19999998807907104,
+      "texUploadMedianMs": null,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.15,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 2.208,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.72,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.35
+      }
+    },
+    {
+      "scenario": "B2",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.10000002384185791,
+      "p95": 0.20000004768371582,
+      "p99": 0.30000001192092896,
+      "p95PerRep": [
+        0.20000004768371582,
+        0.2999999523162842,
+        0.20000004768371582
+      ],
+      "outliers33": 0,
+      "maxMs": 0.6000000238418579,
+      "drawCalls": 4,
+      "mirrorP95Ms": 0.20000004768371582,
+      "texUploadMedianMs": null,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.15,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 0.798,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.72,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.35
+      }
+    },
+    {
+      "scenario": "B3",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.19999998807907104,
+      "p95": 0.30000001192092896,
+      "p99": 0.3999999761581421,
+      "p95PerRep": [
+        0.3999999761581421,
+        0.30000001192092896,
+        0.2999999523162842
+      ],
+      "outliers33": 0,
+      "maxMs": 1.699999988079071,
+      "drawCalls": 3,
+      "mirrorP95Ms": 0.20000004768371582,
+      "texUploadMedianMs": null,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "dataWindowRecompute": 0,
+        "footprintTextGeometry": 0.866138,
+        "paneRedraw": 0.54,
+        "compositePresent": 0.36000000000000004,
+        "inputHandling": 0.05,
+        "candleGeometry": 0,
+        "heatmapUpload": 0,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0
+      }
+    },
+    {
+      "scenario": "B4",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.10000002384185791,
+      "p95": 0.5999999642372131,
+      "p99": 0.800000011920929,
+      "p95PerRep": [
+        0.5999999642372131,
+        0.5999999642372131,
+        0.8999999761581421
+      ],
+      "outliers33": 0,
+      "maxMs": 5.5,
+      "drawCalls": 5,
+      "mirrorP95Ms": 0.20000004768371582,
+      "texUploadMedianMs": 0,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.05,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 0,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.74,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.36000000000000004
+      }
+    },
+    {
+      "scenario": "B5",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.19999998807907104,
+      "p95": 0.5,
+      "p99": 81.59999996423721,
+      "p95PerRep": [
+        0.5,
+        0.5,
+        0.5999999642372131
+      ],
+      "outliers33": 114,
+      "maxMs": 140,
+      "drawCalls": 15,
+      "mirrorP95Ms": 0.19999998807907104,
+      "texUploadMedianMs": 0,
+      "soak": null,
+      "composition": {
+        "indicatorSeries": 3,
+        "orderLines": 50,
+        "layers": [
+          "A:bars+LOD",
+          "B:footprint+SDF",
+          "C:heatmap-ring",
+          "indicators",
+          "order-lines"
+        ],
+        "visibleBars": 368,
+        "indicatorPointsPerFrame": 1104,
+        "gates": {
+          "p95FrameMs": 16.7,
+          "maxDrawCalls": 40,
+          "exitCriterion4": {
+            "p50FrameMs": 16.666666666666668,
+            "p95FrameMs": 18.181818181818183
+          }
+        }
+      },
+      "modelledStageMs": {
+        "inputHandling": 0.25,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 2.208,
+        "footprintTextGeometry": 0.866138,
+        "heatmapUpload": 0,
+        "paneRedraw": 2.3864,
+        "overlayRedraw": 0.32,
+        "domMirrorSync": 0,
+        "compositePresent": 0.36000000000000004
+      }
+    },
+    {
+      "scenario": "B7",
+      "status": "ok",
+      "modes": {
+        "inline": {
+          "repetitions": 3,
+          "decodeP95Ms": 0,
+          "drops": 0,
+          "duplicates": 0,
+          "pass": true
+        },
+        "worker": {
+          "repetitions": 3,
+          "decodeP95Ms": 0,
+          "drops": 0,
+          "duplicates": 0,
+          "pass": true,
+          "offscreenWebgl2InWorker": true
+        }
+      },
+      "workerError": null
+    },
+    {
+      "scenario": "B9",
+      "status": "ok",
+      "repetitions": 3,
+      "coldInitToFirstFrameMs": 7
+    },
+    {
+      "scenario": "B10",
+      "status": "ok",
+      "repetitions": 1,
+      "admissibleForAdrEvidence": true,
+      "p50": 1.300000011920929,
+      "p95": 2.599999964237213,
+      "p99": 3.5,
+      "p95PerRep": [
+        2.599999964237213
+      ],
+      "outliers33": 2,
+      "maxMs": 59.30000001192093,
+      "drawCalls": 9,
+      "mirrorP95Ms": 1,
+      "texUploadMedianMs": 0,
+      "soak": [
+        {
+          "bucket": 0,
+          "frames": 601,
+          "p95": 2.899999976158142,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 1,
+          "frames": 659,
+          "p95": 3.099999964237213,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 2,
+          "frames": 661,
+          "p95": 3,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 3,
+          "frames": 660,
+          "p95": 2.599999964237213,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 4,
+          "frames": 660,
+          "p95": 1.899999976158142,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 5,
+          "frames": 659,
+          "p95": 2.300000011920929,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 6,
+          "frames": 660,
+          "p95": 1.9000000357627869,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 7,
+          "frames": 660,
+          "p95": 2.800000011920929,
+          "outliers33": 1,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 8,
+          "frames": 660,
+          "p95": 2.300000011920929,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 9,
+          "frames": 660,
+          "p95": 2.5,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 10,
+          "frames": 661,
+          "p95": 2.099999964237213,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 11,
+          "frames": 660,
+          "p95": 2.600000023841858,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 12,
+          "frames": 660,
+          "p95": 2.600000023841858,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 13,
+          "frames": 660,
+          "p95": 2.300000011920929,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 14,
+          "frames": 660,
+          "p95": 2.800000011920929,
+          "outliers33": 1,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 15,
+          "frames": 660,
+          "p95": 2.600000023841858,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 16,
+          "frames": 660,
+          "p95": 2.800000011920929,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 17,
+          "frames": 660,
+          "p95": 2,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 18,
+          "frames": 660,
+          "p95": 1.800000011920929,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 19,
+          "frames": 660,
+          "p95": 1.899999976158142,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 20,
+          "frames": 659,
+          "p95": 1.9000000357627869,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 21,
+          "frames": 660,
+          "p95": 1.899999976158142,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 22,
+          "frames": 660,
+          "p95": 1.899999976158142,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 23,
+          "frames": 660,
+          "p95": 2.5,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 24,
+          "frames": 660,
+          "p95": 2.600000023841858,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 25,
+          "frames": 660,
+          "p95": 2.699999988079071,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 26,
+          "frames": 660,
+          "p95": 3.099999964237213,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 27,
+          "frames": 660,
+          "p95": 3,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 28,
+          "frames": 660,
+          "p95": 2.599999964237213,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        },
+        {
+          "bucket": 29,
+          "frames": 660,
+          "p95": 2.199999988079071,
+          "outliers33": 0,
+          "texUploadMedianMs": 0
+        }
+      ],
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.15,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 2.208,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.72,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.35
+      }
+    }
+  ],
+  "residentMemoryMb": {
+    "source": "app.getAppMetrics() workingSetSize sum",
+    "shellMetrics": [
+      {
+        "workingSetMb": 525,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 1217,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 1021,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 1030,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 689,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 669,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 701,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 718,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 747,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 749,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 776,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 784,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 784,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 784,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 785,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 784,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 786,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 785,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 789,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 786,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 787,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 786,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 787,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 832,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 882,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 932,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 987,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 978,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 978,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 978,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 978,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 978,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 978,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 979,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 978,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 985,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 983,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 979,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 979,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 981,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 981,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 981,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 984,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 979,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 979,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 979,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 979,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 979,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 980,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 981,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 981,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 986,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 988,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 988,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 991,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 991,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 988,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 988,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 1003,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 987,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 994,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 991,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 988,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 991,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 995,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 988,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 988,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 988,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 987,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 987,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 988,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 986,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 991,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 991,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 989,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 991,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 990,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 992,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 992,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 991,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 992,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 991,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 992,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 859,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 865,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 859,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 857,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 860,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      }
+    ],
+    "sampledMb": [
+      1378,
+      1305,
+      1029,
+      688,
+      663,
+      672,
+      718,
+      842,
+      749,
+      772,
+      783,
+      785,
+      784,
+      789,
+      785,
+      785,
+      785,
+      785,
+      785,
+      786,
+      786,
+      787,
+      842,
+      889,
+      930,
+      981,
+      978,
+      979,
+      980,
+      979,
+      979,
+      980,
+      979,
+      979,
+      979,
+      979,
+      979,
+      980,
+      980,
+      980,
+      980,
+      981,
+      980,
+      980,
+      981,
+      980,
+      981,
+      980,
+      980,
+      980,
+      984,
+      980,
+      981,
+      980,
+      981,
+      980,
+      979,
+      980,
+      979,
+      980,
+      979,
+      980,
+      980,
+      981,
+      982,
+      988,
+      989,
+      990,
+      987,
+      990,
+      991,
+      990,
+      990,
+      991,
+      990,
+      990,
+      987,
+      990,
+      989,
+      990,
+      991,
+      988,
+      991,
+      993,
+      988,
+      990,
+      991,
+      990,
+      992,
+      991,
+      989,
+      989,
+      988,
+      988,
+      989,
+      991,
+      987,
+      991,
+      989,
+      991,
+      991,
+      990,
+      991,
+      992,
+      991,
+      992,
+      989,
+      990,
+      991,
+      990,
+      992,
+      860,
+      865,
+      859,
+      858,
+      857
+    ],
+    "peakMb": 1378
+  },
+  "runError": null
+}

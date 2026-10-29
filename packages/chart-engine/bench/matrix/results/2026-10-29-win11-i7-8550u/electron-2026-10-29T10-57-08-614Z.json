@@ -1,0 +1,335 @@
+{
+  "schema": "cv-matrix-report/1",
+  "dryRun": false,
+  "runtime": "electron",
+  "timestamp": "2026-10-29T10:57:42.532Z",
+  "cotenancy": false,
+  "manifest": {
+    "schema": "cv-version-manifest/1",
+    "machine": {
+      "cpu": "Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz",
+      "cpuCount": 8,
+      "totalMemMb": 16234,
+      "os": "win32",
+      "osBuild": "10.0.26300",
+      "arch": "x64",
+      "gpu": "Intel(R) UHD Graphics 620",
+      "driver": "31.0.101.2135",
+      "webview2Version": null
+    },
+    "runtime": "electron",
+    "versions": {
+      "node": "20.19.5",
+      "electron": "45.0.0",
+      "chromium": "156.0.8078.48",
+      "tauri": null,
+      "webview2": null,
+      "playwright": null
+    },
+    "flagSet": {
+      "name": "electron-default",
+      "flags": []
+    }
+  },
+  "manifestIncomplete": [],
+  "seed": "20260928",
+  "seed32": 2904068074,
+  "fixture": {
+    "seed": "20260928",
+    "seed32": 2904068074,
+    "barCount": 100000,
+    "sha256": "dedf0e86781c31341d6e54e992ad0cfe85c2b65e25011becaff131eb77a9e579",
+    "fnv1a": "7716744d",
+    "serializedChars": 289533856
+  },
+  "driverScriptSha256": "d8ee23927a3106dc62ff75b7a87b4e05f4109975627e425cd8874af63634359d",
+  "config": {
+    "reps": 3,
+    "seed": "20260928",
+    "bars": 100000,
+    "durationMs": 20000,
+    "soakMs": 1800000
+  },
+  "capabilities": {
+    "webgl2": true,
+    "EXT_color_buffer_float": true,
+    "r16fSampling": true,
+    "OES_texture_float_linear": true,
+    "instancing": true,
+    "offscreenCanvas": true,
+    "offscreenCanvasWorker": false,
+    "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "vendor": "Google Inc. (Intel)",
+    "maxTextureSize": 16384
+  },
+  "cells": [
+    {
+      "scenario": "B1",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.19999998807907104,
+      "p95": 0.30000001192092896,
+      "p99": 0.3999999761581421,
+      "p95PerRep": [
+        0.30000001192092896,
+        0.30000001192092896,
+        0.30000001192092896
+      ],
+      "outliers33": 0,
+      "maxMs": 0.8999999761581421,
+      "drawCalls": 4,
+      "mirrorP95Ms": 0.2999999523162842,
+      "texUploadMedianMs": null,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.15,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 2.208,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.72,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.35
+      }
+    },
+    {
+      "scenario": "B2",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.19999998807907104,
+      "p95": 0.30000001192092896,
+      "p99": 0.3999999761581421,
+      "p95PerRep": [
+        0.30000001192092896,
+        0.30000001192092896,
+        0.30000001192092896
+      ],
+      "outliers33": 0,
+      "maxMs": 0.800000011920929,
+      "drawCalls": 4,
+      "mirrorP95Ms": 0.20000004768371582,
+      "texUploadMedianMs": null,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.15,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 0.798,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.72,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.35
+      }
+    },
+    {
+      "scenario": "B3",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.19999998807907104,
+      "p95": 0.30000001192092896,
+      "p99": 0.40000003576278687,
+      "p95PerRep": [
+        0.30000001192092896,
+        0.30000001192092896,
+        0.3999999761581421
+      ],
+      "outliers33": 0,
+      "maxMs": 1.100000023841858,
+      "drawCalls": 3,
+      "mirrorP95Ms": 0.20000004768371582,
+      "texUploadMedianMs": null,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "dataWindowRecompute": 0,
+        "footprintTextGeometry": 0.866138,
+        "paneRedraw": 0.54,
+        "compositePresent": 0.36000000000000004,
+        "inputHandling": 0.05,
+        "candleGeometry": 0,
+        "heatmapUpload": 0,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0
+      }
+    },
+    {
+      "scenario": "B4",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.10000002384185791,
+      "p95": 0.5,
+      "p99": 0.7999999523162842,
+      "p95PerRep": [
+        0.5,
+        0.5999999642372131,
+        0.5
+      ],
+      "outliers33": 0,
+      "maxMs": 3.899999976158142,
+      "drawCalls": 5,
+      "mirrorP95Ms": 0.20000004768371582,
+      "texUploadMedianMs": 0,
+      "soak": null,
+      "composition": null,
+      "modelledStageMs": {
+        "inputHandling": 0.05,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 0,
+        "footprintTextGeometry": 0,
+        "heatmapUpload": 0,
+        "paneRedraw": 0.74,
+        "overlayRedraw": 0,
+        "domMirrorSync": 0,
+        "compositePresent": 0.36000000000000004
+      }
+    },
+    {
+      "scenario": "B5",
+      "status": "ok",
+      "repetitions": 3,
+      "admissibleForAdrEvidence": true,
+      "p50": 0.19999998807907104,
+      "p95": 0.5999999642372131,
+      "p99": 83,
+      "p95PerRep": [
+        0.6000000238418579,
+        0.5,
+        0.5999999642372131
+      ],
+      "outliers33": 114,
+      "maxMs": 143.60000002384186,
+      "drawCalls": 15,
+      "mirrorP95Ms": 0.19999998807907104,
+      "texUploadMedianMs": 0,
+      "soak": null,
+      "composition": {
+        "indicatorSeries": 3,
+        "orderLines": 50,
+        "layers": [
+          "A:bars+LOD",
+          "B:footprint+SDF",
+          "C:heatmap-ring",
+          "indicators",
+          "order-lines"
+        ],
+        "visibleBars": 368,
+        "indicatorPointsPerFrame": 1104,
+        "gates": {
+          "p95FrameMs": 16.7,
+          "maxDrawCalls": 40,
+          "exitCriterion4": {
+            "p50FrameMs": 16.666666666666668,
+            "p95FrameMs": 18.181818181818183
+          }
+        }
+      },
+      "modelledStageMs": {
+        "inputHandling": 0.25,
+        "dataWindowRecompute": 0,
+        "candleGeometry": 2.208,
+        "footprintTextGeometry": 0.866138,
+        "heatmapUpload": 0,
+        "paneRedraw": 2.3864,
+        "overlayRedraw": 0.32,
+        "domMirrorSync": 0,
+        "compositePresent": 0.36000000000000004
+      }
+    },
+    {
+      "scenario": "B9",
+      "status": "ok",
+      "repetitions": 3,
+      "coldInitToFirstFrameMs": 2.800000011920929
+    }
+  ],
+  "residentMemoryMb": {
+    "source": "app.getAppMetrics() workingSetSize sum",
+    "shellMetrics": [
+      {
+        "workingSetMb": 582,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      },
+      {
+        "workingSetMb": 1327,
+        "processes": 4,
+        "gpuDevice": [
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 2,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 22807,
+            "deviceString": "Intel(R) UHD Graphics 620",
+            "driverVersion": "31.0.101.2135",
+            "gpuPreference": 0,
+            "revision": 7,
+            "subSysId": 576460714,
+            "vendorId": 32902
+          },
+          {
+            "active": false,
+            "deviceId": 140,
+            "deviceString": "Microsoft Basic Render Driver",
+            "driverVersion": "10.0.26100.9711",
+            "gpuPreference": 0,
+            "revision": 0,
+            "subSysId": 0,
+            "vendorId": 5140
+          }
+        ]
+      }
+    ],
+    "sampledMb": [
+      1327
+    ],
+    "peakMb": 1327
+  },
+  "runError": null
+}
