@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createEngine, stepFrame, animationWorkUnits, DEFAULT_RENDER_FLAGS } from "../src/index";
+import {
+  createEngine,
+  stepFrame,
+  animationWorkUnits,
+  DEFAULT_RENDER_FLAGS,
+} from "../src/compat.js";
 
 const calm = { animate: false, heatmapFade: false, inertia: false, flashOnTick: false };
 

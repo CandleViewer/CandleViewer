@@ -369,8 +369,8 @@ forbidden_modules = ["candleviewer.exchange.bybit"]
 [[frontend_package]]
 name = "packages/chart-engine"
 rule = "C-2.16"
-forbidden_deps = ["react", "react-dom"]
-forbidden_identifiers = ["fetch", "XMLHttpRequest", "bybit"]
+forbidden_deps = ["react", "react-dom", "apps/*"]
+forbidden_identifiers = ["fetch", "XMLHttpRequest", "WebSocket", "bybit"]
 
 [[frontend_package]]
 name = "packages/protocol"

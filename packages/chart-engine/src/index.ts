@@ -1,18 +1,64 @@
-// Public entrypoint for @candleviewer/chart-engine.
-// Scaffold only (E02-T03): rendering, layers and worker wiring land in E06/E11.
-// C-2.16: this package must never import React, DOM globals, `fetch`, or any
-// Bybit/exchange-specific module. `pnpm --filter @candleviewer/chart-engine lint`
-// enforces this via the shared `no-restricted-imports` / `no-restricted-globals`
-// rule set in packages/config/eslint.config.mjs.
+// Public entrypoint for @candleviewer/chart-engine: exactly the surface of
+// docs/plan/26-chart-engine-design.md §8 (E11-T01), re-exports only. A name added here widens the
+// frozen surface; test/api/surface.test.ts snapshots the list so a widening shows up in review.
+// C-2.16: no React, no DOM globals, no fetch/XMLHttpRequest/WebSocket, no exchange knowledge in
+// this package (`pnpm --filter @candleviewer/chart-engine lint` and .dependency-cruiser.js).
+// The pre-§8 palette/flags seam lives at `@candleviewer/chart-engine/compat` (README BQ-2).
 
-/**
- * Engine version marker, bumped alongside the package version. Consumers can
- * assert on this in integration smoke tests without depending on internals.
- */
-export const CHART_ENGINE_VERSION = "0.1.0";
-
-export type { EngineHandle } from "./core/handle.js";
-export { createEngine } from "./core/handle.js";
-export type { EngineOptions, EngineStats, EngineTheme } from "./core/handle.js";
-export type { RenderFlags, FrameState } from "./core/flags.js";
-export { DEFAULT_RENDER_FLAGS, animationWorkUnits, stepFrame } from "./core/flags.js";
+export { createChart } from "./api/chart.js";
+export type {
+  BarView,
+  BubbleOptions,
+  CandleData,
+  CandleOptions,
+  Chart,
+  ChartEvents,
+  ChartOptions,
+  Density,
+  Drawing,
+  FocusedUnit,
+  FootprintCellRef,
+  FootprintData,
+  FootprintOptions,
+  FrameStats,
+  HeatmapColumnData,
+  HeatmapOptions,
+  HistogramOptions,
+  IndicatorHandle,
+  IndicatorPlugin,
+  LineOptions,
+  LineStyle,
+  LutId,
+  Modifiers,
+  OrderLine,
+  OutputBuffers,
+  OutputSpec,
+  OverlayHandle,
+  OverlayPlugin,
+  Pane,
+  PaneId,
+  PaneOptions,
+  ParamSpec,
+  Params,
+  PickResult,
+  PluginContext,
+  Point,
+  PriceScale,
+  ProfileOptions,
+  Range,
+  Rect,
+  RenderContext,
+  SeriesDataMap,
+  SeriesDeltaMap,
+  SeriesHandle,
+  SeriesOptionsMap,
+  SeriesPlugin,
+  SeriesType,
+  TextStyle,
+  TextureId,
+  ThemeTokens,
+  TimeScale,
+  Unsubscribe,
+  Viewport,
+  VisibleWindow,
+} from "./api/types.js";

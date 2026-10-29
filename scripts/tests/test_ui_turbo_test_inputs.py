@@ -186,11 +186,9 @@ def _preset(package: str) -> str:
     return _config_export(found[0])
 
 
-def _tsconfig_chain(package: str) -> list[str]:
-    """The package's tsconfig.json and the files its `extends` chain reads; none without one."""
-    chain = [f"{package}/tsconfig.json"]
-    if not (ROOT / chain[0]).is_file():
-        return []
+def _extends_chain(start: str) -> list[str]:
+    """`start` and the files its `extends` chain reads."""
+    chain = [start]
     for _ in range(5):
         parent = json.loads((ROOT / chain[-1]).read_text(encoding="utf-8")).get("extends")
         if parent is None:
@@ -202,6 +200,25 @@ def _tsconfig_chain(package: str) -> list[str]:
             else posixpath.normpath(posixpath.join(here, parent))
         )
     raise AssertionError(f"tsconfig extends chain too long: {chain}")
+
+
+def _tsconfig_chain(package: str) -> list[str]:
+    """The package's tsconfig.json and the files its `extends` chain reads; none without one.
+
+    A solution-style tsconfig.json (`files: []` with `references`, as chart-engine's since #337)
+    reads each referenced config and its own `extends` chain instead.
+    """
+    root = f"{package}/tsconfig.json"
+    if not (ROOT / root).is_file():
+        return []
+    doc = json.loads((ROOT / root).read_text(encoding="utf-8"))
+    if doc.get("files") == [] and doc.get("references"):
+        reads = [root]
+        for ref in doc["references"]:
+            target = posixpath.normpath(posixpath.join(package, ref["path"]))
+            reads += [path for path in _extends_chain(target) if path not in reads]
+        return reads
+    return _extends_chain(root)
 
 
 @pytest.mark.parametrize("task", ["test", "test:cov"])
@@ -239,7 +256,8 @@ def test_the_scan_finds_every_suite_that_spreads_the_preset() -> None:
 @pytest.mark.parametrize("package", SUITES)
 def test_vitest_suites_hash_the_runner_config_and_what_it_loads(package: str, task: str) -> None:
     reads = [_vitest_config(package), _preset(package), *_tsconfig_chain(package)]
-    assert len(reads) in (2, 5), reads  # the config, the preset and three tsconfig files, if any
+    # The config, the preset and three tsconfig files, if any; more for a solution-style root.
+    assert len(reads) == 2 or len(reads) >= 5, reads
     inputs = _inputs(package, task)
     assert [path for path in reads if not _covered(path, inputs, package)] == []
 

@@ -1,4 +1,4 @@
-import type { EngineHandle } from "@candleviewer/chart-engine";
+import type { EngineHandle } from "@candleviewer/chart-engine/compat";
 import { readEngineTheme } from "./chartColorMode.js";
 
 type ThemedEngine = Pick<EngineHandle, "setTheme">;

@@ -35,7 +35,9 @@ module.exports = {
     {
       name: "packages-not-to-apps",
       severity: "error",
-      comment: "C-3.5: `packages/*` must never import from `apps/*`.",
+      comment:
+        "C-3.5: `packages/*` must never import from `apps/*` (for packages/chart-engine also " +
+        "C-2.16: the engine is framework-free and app-agnostic).",
       from: { path: "^packages" },
       to: { path: "^apps" },
     },
@@ -103,11 +105,22 @@ module.exports = {
     {
       name: "chart-engine-no-react",
       severity: "error",
-      comment: "C-2.16: chart-engine must not depend on React/ReactDOM (framework-free core).",
-      from: { path: "^packages/chart-engine/src/(core|layers)" },
+      comment:
+        "C-2.16: chart-engine must not depend on React/ReactDOM (framework-free package). " +
+        "Matches the bare specifier when unresolvable and the resolved node_modules path.",
+      from: { path: "^packages/chart-engine/(src|bench)" },
       to: {
-        path: "^(react|react-dom)($|/)",
+        path: "(^|node_modules/)(react|react-dom)($|/)",
       },
+    },
+    {
+      name: "chart-engine-no-exchange",
+      severity: "error",
+      comment:
+        "C-2.16: chart-engine must have no Bybit/exchange knowledge: no import whose path names " +
+        "it (case-insensitive). ESLint's no-restricted-syntax covers symbol names.",
+      from: { path: "^packages/chart-engine/(src|bench)" },
+      to: { path: "[Bb][Yy][Bb][Ii][Tt]" },
     },
     {
       name: "chart-engine-core-no-dom-host",

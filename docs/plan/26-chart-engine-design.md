@@ -398,7 +398,15 @@ export interface Chart {
   takeScreenshot(opts?: { scale?: number }): Promise<Blob>;
   getStats(): FrameStats;
   dispose(): void;
+  // 05-accessibility-standard.md §6.1: the DOM mirror anchor and the visible-window /
+  // focused-unit query surface (E11-T01).
+  getDomMirrorRoot(): HTMLElement;
+  getVisibleWindow(): VisibleWindow | null;
+  getFocusedUnit(): FocusedUnit | null;
 }
+
+// Mounts into `container` and returns synchronously; capability detection is lazy (E11-T01).
+export function createChart(opts: ChartOptions): Chart;
 
 export interface Pane {
   readonly id: PaneId;
@@ -563,10 +571,18 @@ export interface IndicatorPlugin {
 }
 ```
 
-React binding (in `apps/web`, deliberately thin):
+The shipped surface (`packages/chart-engine/src/api/types.ts`, E11-T01) keeps every name and member
+above. It defines the supporting types this sketch names but leaves open (`ThemeTokens`, `PaneId`,
+`TimeScale`, `PriceScale`, the option bags, the plugin context types) in their narrowest form, and
+records each choice in the package README's "Design deltas". The pre-§8 palette/flags handle is served
+at `@candleviewer/chart-engine/compat`, never from the package root.
+
+React binding (in `apps/web`, deliberately thin). As shipped (E11-T01): `syncGroup` is a field of
+`options`, `label` names the chart region (05 §6.1), `onFrameStats` is optional, and the crosshair is
+read with the `useCrosshair()` hook rather than an `onCrosshair` prop:
 
 ```tsx
-<Chart options={chartOptions} onCrosshair={setCrosshair} syncGroup="main">
+<Chart options={{ ...chartOptions, syncGroup: "main" }} label="BTCUSDT price chart">
   <Pane heightRatio={0.6}>
     <HeatmapSeries data={heatmap} options={heatmapOpts} />
     <CandleSeries data={bars} />

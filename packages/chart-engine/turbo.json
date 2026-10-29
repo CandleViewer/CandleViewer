@@ -7,6 +7,9 @@
         "$TURBO_EXTENDS$",
         "vitest.config.mjs",
         "tsconfig.json",
+        "tsconfig.core.json",
+        "tsconfig.dom.json",
+        "eslint.config.mjs",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs"
@@ -17,6 +20,9 @@
         "$TURBO_EXTENDS$",
         "vitest.config.mjs",
         "tsconfig.json",
+        "tsconfig.core.json",
+        "tsconfig.dom.json",
+        "eslint.config.mjs",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs"

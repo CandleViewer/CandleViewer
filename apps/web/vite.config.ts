@@ -30,9 +30,14 @@ export default defineConfig({
         find: /^@candleviewer\/ui$/,
         replacement: resolve(import.meta.dirname, "../../packages/ui/src/index.ts"),
       },
+      // The root is the §8 surface; `/compat` is the pre-§8 palette/flags seam (E11-T01 BQ-2).
       {
-        find: "@candleviewer/chart-engine",
+        find: /^@candleviewer\/chart-engine$/,
         replacement: resolve(import.meta.dirname, "../../packages/chart-engine/src/index.ts"),
+      },
+      {
+        find: /^@candleviewer\/chart-engine\/compat$/,
+        replacement: resolve(import.meta.dirname, "../../packages/chart-engine/src/compat.ts"),
       },
       {
         find: "@candleviewer/protocol",

@@ -138,7 +138,7 @@ describe("SCR-117 routed in the real app", () => {
 
 describe("engine flags binding and accessible panel", () => {
   it("bindEngineFlags forwards disable-canvas-animation to the real engine", async () => {
-    const { createEngine } = await import("@candleviewer/chart-engine");
+    const { createEngine } = await import("@candleviewer/chart-engine/compat");
     const { bindEngineFlags } = await import("../../src/features/a11y-preferences");
     const ch = createEngineFlagsChannel();
     const engine = createEngine();

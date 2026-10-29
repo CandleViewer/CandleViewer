@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createEngine } from "../src/core/handle.js";
-import { CHART_ENGINE_VERSION } from "../src/index.js";
+import { CHART_ENGINE_VERSION } from "../src/compat.js";
 
-describe("chart-engine public export surface", () => {
+describe("chart-engine compat entry (pre-§8 seam)", () => {
   it("exposes createEngine returning a disposable handle", () => {
     const handle = createEngine();
     expect(typeof handle.dispose).toBe("function");

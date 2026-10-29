@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createEngine, type EngineTheme } from "../src/index.js";
+import { createEngine, type EngineTheme } from "../src/compat.js";
 
 const cvd: EngineTheme = {
   palette: "cvd-safe",

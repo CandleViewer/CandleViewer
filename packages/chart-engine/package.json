@@ -2,6 +2,7 @@
   "name": "@candleviewer/chart-engine",
   "version": "0.1.0",
   "private": true,
+  "sideEffects": false,
   "description": "Custom WebGL2 candle/footprint/orderflow chart engine. No React, no DOM in core/layers, no network, no exchange knowledge (CONSTITUTION.md C-2.16).",
   "license": "UNLICENSED",
   "type": "module",
@@ -12,6 +13,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./compat": {
+      "types": "./dist/compat.d.ts",
+      "import": "./dist/compat.js"
+    },
     "./bench": {
       "types": "./dist/bench.d.ts",
       "import": "./dist/bench.js"
@@ -21,7 +26,7 @@
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.core.json --noEmit && tsc -p tsconfig.dom.json --noEmit",
     "test": "vitest run --project unit",
     "test:cov": "vitest run --project unit --coverage",
     "test:perf": "vitest run --project perf",
