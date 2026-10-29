@@ -412,10 +412,10 @@ def refuse_live_without_freeze(environment: ProcessEnvironment, lockout: object)
     """The live start-up self-check of the foreign-order lockout, beside
     `ports.refuse_live_without_reconciliation` and
     `stream_consumer.refuse_live_without_position_rows`, run on the binding as bound: a live
-    process with `PagingForeignOrderLockout` would record and page a fill with no OMS intent but
-    never freeze its account (SR-E27-19), so it is `FreezeUnavailable` until E39-T04 (#4208) binds
-    the freeze: an interim port fails closed on live (#913's ruling R4; the security sign-off on
-    #848, condition M1). The environment compares by value."""
+    process with `PagingForeignOrderLockout` would record and page an order or fill with no OMS
+    intent but never freeze its account (SR-E27-19), so it is `FreezeUnavailable` until E39-T04
+    (#4208) binds the freeze: the condition #913's ruling R4 set for its interim ports, which the
+    security sign-off on #848 applies here (condition M1). The environment compares by value."""
     if environment == ProcessEnvironment.LIVE and isinstance(lockout, PagingForeignOrderLockout):
         raise FreezeUnavailable("a live process needs E39-T04's foreign-order freeze")
 

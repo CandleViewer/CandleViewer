@@ -22,6 +22,7 @@ from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 from candleviewer.oms import stream_consumer
 from candleviewer.oms.ports import NoReconciliation
 from candleviewer.oms.stream_consumer import REAPPLY_TIMEOUT_S, Outcome
+from candleviewer.oms_stream_wiring import StreamWiring
 from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW
 
 _PLAN = OPENAPI_SPEC_PATH.parent
@@ -728,7 +729,11 @@ def test_8_12_names_the_wallet_clock_the_stand_ins_signals_and_the_holds_windows
         "once the hold is taken, which releases the hold.",
         "brings no `account_disabled` status to hold on, so the restart before health's next "
         "read meets the closed key.",
+        "`refuse_live_without_freeze(environment, lockout)` (`oms_stream_wiring`) raises "
+        "`FreezeUnavailable` while the lockout as bound is the paging stand-in, which cannot "
+        "freeze,",
     )
+    assert "refuse_live_without_freeze(" in inspect.getsource(StreamWiring.refuse_live)
     held = _words(inspect.getdoc(stream_consumer.StreamConsumer._hold) or "")
     assert not _missing(
         held,
@@ -764,5 +769,7 @@ def test_8_12_names_the_wallet_clock_the_stand_ins_signals_and_the_holds_windows
         'the page "an account\'s reconciliation request was refused", once per episode,',
         "the paragraph no longer calls the hold absolute but names its two windows,",
         "Their fix is a carry on #848; `StreamConsumer._hold`'s docstring says the same.",
+        "the lockout's paging stand-in, which cannot freeze, is a start-up refusal for "
+        "`CV_ENVIRONMENT=live` too,",
         "No REST, WS, table, column, chart or `machine_hash` change.",
     )

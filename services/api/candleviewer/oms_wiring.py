@@ -2684,7 +2684,8 @@ class OmsRuntime:
             # started (`_stream_started`), its stop the stop's first step (`_stream_stop`); its
             # position store on this pool over the exchange-synced clock its projection reads too
             # (CG14). Its stand-ins refuse a live process here, on the bindings as bound, until
-            # E29-T06 (D4; the orchestrator's Q8): the runtime fails closed, never ready.
+            # E29-T06 (D4; the orchestrator's Q8) and, for the paging foreign-order lockout, until
+            # E39-T04 (the security sign-off on #848, M1): the runtime fails closed, never ready.
             wall = ExchangeWallClock(ingestion.clock_offset_snapshot_ms)
             positions = stores.positions(wall)
             stream = build_stream_consumer(
