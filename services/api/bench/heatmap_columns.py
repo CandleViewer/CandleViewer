@@ -83,6 +83,8 @@ class Report:
     source: str
     # Fable M-1 (#605): a `sub` at the full G-03 budget and a 2 000-column re-seed.
     snapshot_columns: int = 0
+    #: n-E: the whole build run to its end in one call (`HeatmapTopic.build`), total CPU across
+    #: what the gateway spreads over many loop turns, never one turn's.
     snapshot_build_ms: float = 0.0
     snapshot_encode_ms: float = 0.0
     #: The gateway's render of that snapshot (`sequencing.render`, one loop turn), 20 runs:
@@ -137,6 +139,14 @@ class Report:
     spread_32_jobs_wall_s_max: float = 0.0
     spread_32_jobs_restarts: int = 0
     spread_unfinished_at_cap: int = 0
+    #: M-F: one binary snapshot of a full spec while 300 columns close during it: the largest
+    #: CPU of one job step (ms), the columns the snapshot kept and the `d` frames after it, and
+    #: what they queued together, at G-03 sizes and as encoded.
+    catch_up_step_cpu_max_ms: float = 0.0
+    catch_up_snapshot_columns: int = 0
+    catch_up_d_frames: int = 0
+    catch_up_g03_bytes: int = 0
+    catch_up_queued_bytes: int = 0
 
 
 class _Hub:
@@ -391,13 +401,11 @@ async def _spread_jobs(topic: HeatmapTopic, lease: Any, state: Any, k: int,
     opts = {"encoding": "binary", "window_seconds": 900}
     last: dict[int, float] = {}
     restarts = [0]
-    real = TopicEmitter._catch_up
+    real = TopicEmitter._restart
 
-    def counted(self: TopicEmitter, sub: Any, source: Any, gen0: int) -> None:
-        real(self, sub, source, gen0)
-        job = self._jobs.get(sub.sub_id)
-        if job is not None and job.restart:
-            restarts[0] += 1
+    def counted(self: TopicEmitter, sub: Any) -> None:
+        restarts[0] += 1
+        real(self, sub)
 
     def close() -> None:
         newest = state.ring[-1]
@@ -406,7 +414,7 @@ async def _spread_jobs(topic: HeatmapTopic, lease: Any, state: Any, k: int,
 
     emitters = []
     began = time.perf_counter()
-    TopicEmitter._catch_up = counted  # type: ignore[method-assign]  # counted for the bench
+    TopicEmitter._restart = counted  # type: ignore[method-assign]  # counted for the bench
     try:
         for j in range(k):
 
@@ -429,8 +437,62 @@ async def _spread_jobs(topic: HeatmapTopic, lease: Any, state: Any, k: int,
                 due += 0.1
             await asyncio.sleep(0)
     finally:
-        TopicEmitter._catch_up = real  # type: ignore[method-assign]
+        TopicEmitter._restart = real  # type: ignore[method-assign]
     return max(last.values(), default=0.0), restarts[0], sum(1 for e in emitters if e._jobs)
+
+
+async def _catch_up_burst(topic: HeatmapTopic, lease: Any, state: Any,
+                          closes: int = 300) -> tuple[float, int, int, int, int]:  # fmt: skip
+    """M-F: one binary snapshot of `lease`'s full spec on a connection that queues encoded
+    frames, 5 columns closing a loop turn while it is pending until `closes` have (as `_close`
+    keeps the ring), and nothing drained: the largest CPU of one job step (ms), the snapshot's
+    columns, the `d` frames after it, and their G-03 and encoded bytes together."""
+    parsed = parse_topic(f"heatmap.{SYMBOL}")
+    opts = {"encoding": "binary", "window_seconds": 900}
+    out: list[dict[str, Any]] = []
+    emitter = TopicEmitter(out.append, connection_id="m-f", wall_ms=lambda: T0,
+                           clock=time.monotonic, source=cast(Any, topic),
+                           cache=SnapshotCache())  # fmt: skip
+    sizes: list[int] = []
+
+    def queued(frame: dict[str, Any], payload: str | bytes, _r: float | None) -> None:
+        out.append(frame)  # as the pipeline queues it: encoded once, in a job step
+        sizes.append(len(payload))
+
+    emitter.push_encoded, emitter.encode_payload, emitter.wire = queued, json_payload, "json"
+    sub = Subscription("s-mf", parsed, opts, effective_options(parsed, opts))
+    sub.heatmap_lease = lease
+    cpu: list[float] = []
+    real = TopicEmitter._step
+
+    def timed(self: TopicEmitter, job: Any) -> bool:
+        began = time.thread_time()
+        try:
+            return real(self, job)
+        finally:
+            cpu.append((time.thread_time() - began) * 1000)
+
+    TopicEmitter._step = timed  # type: ignore[method-assign]  # timed for the bench
+    try:
+        began = time.thread_time()
+        emitter.snapshot(sub, "initial")
+        cpu.append((time.thread_time() - began) * 1000)
+        done = 0
+        while emitter._jobs:
+            if done < closes and sub.snapshot_pending:  # closes during the snapshot only
+                for _ in range(5):
+                    newest = state.ring[-1]
+                    state.ring.append(replace(newest, ts_ms=newest.ts_ms + COLUMN_MS))
+                    state.version += 1
+                    done += 1
+            await asyncio.sleep(0)
+    finally:
+        TopicEmitter._step = real  # type: ignore[method-assign]
+    snap = [f for f in out if f["t"] == "snap"]
+    deltas = [f for f in out if f["t"] == "d"]
+    g03 = (len(snap) + len(deltas)) * (48 + 16 * ROWS)
+    encoded = sum(sizes) + sum(len(json_payload(f)) for f in out[len(sizes) :])
+    return max(cpu), len(snap), len(deltas), g03, encoded
 
 
 def snapshot_and_seed(report: Report, seed: int) -> Report:
@@ -522,6 +584,10 @@ def snapshot_and_seed(report: Report, seed: int) -> Report:
     report.reseed_turn_max_ms = max(turns, default=0.0)
     report.reseed_total_ms = sum(turns)
     report.steady_core_share_at_cap = 32 * 10 * report.build_ms_p50 / 1000
+    burst = asyncio.run(_catch_up_burst(topic, lease, state))
+    report.catch_up_step_cpu_max_ms, report.catch_up_snapshot_columns = burst[0], burst[1]
+    report.catch_up_d_frames, report.catch_up_g03_bytes = burst[2], burst[3]
+    report.catch_up_queued_bytes = burst[4]
     for k in (8, 32):
         wall, restarts, unfinished = asyncio.run(_spread_jobs(topic, lease, state, k))
         setattr(report, f"spread_{k}_jobs_wall_s_max", wall)
