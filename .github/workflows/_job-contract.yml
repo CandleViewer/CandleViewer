@@ -54,6 +54,9 @@ jobs:
         working-directory: services/api
         # tests/contract's perf budgets run here on purpose (and in py-perf): see ON_PURPOSE in
         # scripts/tests/test_workflow_pytest_markers.py.
+        env:
+          # E12-Q04 (#420): where tests/contract/conftest.py writes the conformance report.
+          CV_CONFORMANCE_REPORT_DIR: conformance-report
         run: uv run pytest tests/contract -m "not integration and not fuzz and not harness and not flaky" --no-cov
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -74,3 +77,13 @@ jobs:
         # $ref closure and every section 12 example frame. Prints schema/example counts.
         # Also runs the E17-T05 blocking gate error_registry_single_source.
         run: make contracts
+
+      - name: Upload the E12-Q04 conformance report (surface x case x outcome)
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e12-q04-conformance
+          path: services/api/conformance-report/
+          if-no-files-found: warn
+          retention-days: 30
