@@ -2762,7 +2762,7 @@ sequenceDiagram
 Rules:
 
 1. **Dry-run preview is mandatory** in the UI before a multi-account submit. The preview is the same code path as execution (`dry_run=True`), so what is previewed is what is sent.
-2. **Sizing happens per account against that account's own wallet snapshot** (≤2 s old, else refreshed). The preview alone never refreshes: it reads caches only, within the order path's figures TTL (`day_figures.FIGURES_TTL_S`, §9.3.6), so a leg whose figures are not cached is `blocked` with `figure_unknown` (SR-E28-22; `22-api-openapi.yaml` `previewTradeGroup`). The submit keeps this rule.
+2. **Sizing happens per account against that account's own wallet snapshot** (≤2 s old, else refreshed). The preview alone never refreshes: it reads caches only, within the order path's figures TTL (`day_figures.FIGURES_TTL_S`, §9.3.6), so a leg whose figures are not cached is `blocked` with `figure_unknown` (SR-E28-22; `22-api-openapi.yaml` `previewTradeGroup`). It peeks the readings the order lane keeps (`DayRiskFigures.peek`) and asks the venue nothing, warm or cold, and its account and profile reads write nothing: a preview's only writes are its audit rows (E28-T05). The submit keeps this rule.
 3. **Concurrency is bounded at 5 in-flight submissions** and ordered by descending leg notional, so the largest, most consequential leg goes first and a partial failure leaves the smallest legs unfilled.
 4. **Rate budget is checked across all UIDs before the first send.** Limits are per-UID, so N accounts genuinely have N budgets — but the shared IP limit (600 req/5 s) is global and is also checked.
 5. **Every leg's entry carries an attached native SL** (§8.8). A leg that cannot attach one is aborted rather than opened naked.

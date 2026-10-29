@@ -187,6 +187,9 @@ PROFILE_PROPAGATION_BUCKETS: Final = (0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 
 #: A profile save's round trip (#906 D3b): edges at the 300 ms write budget (06 budget #13), the
 #: second pass's 1.5 s catalogue deadline and SCR-131's 2 s.
 PROFILE_SAVE_BUCKETS: Final = (0.025, 0.05, 0.1, 0.3, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0)
+#: A trade-group preview's round trip (E28-T05 #909): edges at SCR-061's 300 ms p95 (AC 10), finer
+#: below it, and the 2 s of the store and audit bounds above it.
+TRADEGROUP_PREVIEW_BUCKETS: Final = (0.01, 0.025, 0.05, 0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0)
 #: One leg's sizing (E28-T03): edges around the 1 ms p95 per-leg budget (06-performance #4).
 SIZER_BUCKETS: Final = (5e-5, 1e-4, 2.5e-4, 5e-4, 1e-3, 2.5e-3, 5e-3, 0.01)
 #: Statechart transition latency.
@@ -720,7 +723,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E28",
         max_series=2,
     ),
-    # --- Trade-group overrides (#2635, F-01; planned until E28-T05 #909 / E34-S01 #999) ------
+    # --- Trade-group overrides (#2635, F-01; live since E28-T05 #909, then E34-S01 #999) ------
     _s(
         "cv_override_refused_total",
         "counter",
@@ -729,22 +732,48 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Trade-group requests refused because a leg would exceed its bound profile's caps or "
         "risk budget, one per distinct refused field of the override table (ADR-0040).",
         "dashboard only",
-        _P,
+        _L,
         "E28",
         max_series=42,
     ),
-    # E28-T05 S3c (#909): the trade-group preview's answers no audit row reads alone (PF-D01).
+    # E28-T05 S3c, S3d (#909): the trade-group preview, every answer by its outcome (PF-D01).
     _s(
         "cv_tradegroup_preview_total",
         "counter",
         "previews",
         ("outcome",),
-        "Trade-group previews by outcome: rate_limited, past the per-user bucket (a 429, never "
-        "audited), and environment_mismatch, a leg outside this server's environment (SR-E28-16).",
+        "Trade-group previews by outcome, an answer's status: ok (200), refused (401, 403, 404), "
+        "rate_limited (429, never audited), invalid (400, 422), error (5xx), and "
+        "environment_mismatch, a leg outside this server's environment (SR-E28-16).",
         "dashboard only",
         _L,
         "E28",
-        max_series=2,
+        max_series=6,
+    ),
+    _s(
+        "cv_tradegroup_preview_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "A trade-group preview's round trip in the router, from the handler's entry to its "
+        "answer, every answer but a 429 (SCR-061: 300 ms p95 at five accounts).",
+        "dashboard only (AC 10's p95 is the py-perf job's test)",
+        _L,
+        "E28",
+        buckets=TRADEGROUP_PREVIEW_BUCKETS,
+        max_series=1,
+    ),
+    _s(
+        "cv_tradegroup_legs_skipped_total",
+        "counter",
+        "legs",
+        ("reason",),
+        "Legs a trade-group preview's plan skipped, by 22's code: the request's own (skipped) or "
+        "the sizer's (profile_disabled, symbol_not_allowed, symbol_denied, below_min_notional).",
+        "dashboard only",
+        _L,
+        "E28",
+        max_series=5,
     ),
     # #906 D3e: the bridge from `ProfilesChanged` to the sockets (`profile_notices_wiring`).
     _s(

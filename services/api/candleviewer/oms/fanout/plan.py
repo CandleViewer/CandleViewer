@@ -16,12 +16,14 @@ missing native stop (C-2.6), the comparator, its readiness and the guard (`guard
 the leg's profile with ADR-0040's cap rows 29 to 36 at `min(B, A)`; one that raises fails closed);
 else `ready`, or `warn` when its stop fell back. Logs carry ids and codes only (C-12.6). R7's
 account-state counts, once known (#881), only block their leg: the request moves none (R1C-04).
+Each leg it plans runs inside its caller's `leg_span` (the preview's `oms.preview_leg`, #909).
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, fields, replace
 from decimal import Context, Decimal, localcontext
 from types import MappingProxyType
@@ -201,6 +203,7 @@ def plan_group(
     guard: LegGuard,
     stops: ports.StopResolver,
     observer: SizerMetrics,
+    leg_span: Callable[[AccountId], AbstractContextManager[object]] = nullcontext,
 ) -> GroupPlan | GroupRefused:
     """Every leg in request order (module docstring); a refusal names every offending leg. A
     repeated account is 22's `duplicate_account`; a leg with no resolved profiles is a 404."""
@@ -215,7 +218,8 @@ def plan_group(
         if not leg.skip:
             if (chosen := profiles.get(leg.account_id)) is None:
                 raise comparator.ProfileNotFound
-            plan, violations = _plan_leg(request, leg, chosen, snapshot, guard, stops, observer)
+            with leg_span(leg.account_id):
+                plan, violations = _plan_leg(request, leg, chosen, snapshot, guard, stops, observer)
             if violations:
                 refused.append(RefusedLeg(index, chosen.bound, chosen.alternate, violations))
         _log().debug(

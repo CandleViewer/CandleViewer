@@ -22,13 +22,20 @@ one `trade_group.previewed` row (ruling 2), after a scope refusal's `rbac.denied
 `trade_group.override_refused` rows; one unwritten is 503 `audit_unavailable`, nothing answered past
 it (C-2.9). An outage decides nothing and writes none. No `Idempotency-Key` is read and no arm
 token is needed (22). No `detail`, log or label carries a figure, symbol, label or body (C-12.6).
+
+Each answer is one `oms.preview` span, under which the planner starts one `oms.preview_leg` per leg
+it plans (`PREVIEW_SPANS`), and is counted once by its outcome (`OUTCOMES`) and, but a 429, timed;
+a plan's skipped legs are counted by reason, and a widening's fields once each (20 Sec.12.1).
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
+import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final, Protocol, cast
@@ -42,6 +49,7 @@ from candleviewer.accounts import override_comparator as comparator
 from candleviewer.accounts.errors import AccountNotFoundError, AccountsError
 from candleviewer.accounts.models import ExchangeAccount
 from candleviewer.accounts.profile_cache import EffectiveProfiles
+from candleviewer.accounts.sizer import SkipReason
 from candleviewer.accounts.sizer_metrics import SizerMetrics
 from candleviewer.accounts.trade_group_readiness import ReadinessSource
 from candleviewer.api import profile_body as edge
@@ -74,8 +82,9 @@ from candleviewer.auth.metrics import count_authz_denial, normalise_role
 from candleviewer.auth.scopes import Deny, ForbiddenError, account_scope, decide, enforce
 from candleviewer.domain.primitives import AccountId, Environment, Symbol
 from candleviewer.observability.context import current_request_uuid
-from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics import NOOP_CHILD, MetricChild, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.observability.tracing import span
 from candleviewer.oms import ports
 from candleviewer.oms.classify import intent_errors
 from candleviewer.oms.errors import (
@@ -97,7 +106,10 @@ from candleviewer.oms.submit import STORE_TIMEOUT_S
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.accounts import AccountScope
 
-__all__ = ["PREVIEW_PATH", "PreviewOms", "PreviewReads", "make_trade_group_preview_router"]
+__all__ = [
+    "OUTCOMES", "PREVIEW_PATH", "SKIP_REASONS", "PreviewOms", "PreviewReads",
+    "make_trade_group_preview_router",
+]  # fmt: skip
 
 PREVIEW_PATH: Final = "/trade-groups/preview"
 _WRITE: Final = Permission.ORDERS_WRITE
@@ -107,6 +119,85 @@ _UNREAD: Final = (AccountsError, StorageError, TimeoutError)
 type Figures = Mapping[uuid.UUID, comparator.AccountFigures | None]
 #: What a `trade_group.previewed` row answers: a plan, a whole refusal, or a refusal's rule or code.
 type Answer = planner.GroupPlan | planner.GroupRefused | str
+type _Handler = Callable[[Request], Awaitable[Response]]
+#: `cv_tradegroup_preview_total`'s outcomes: each answer's by its status (`_outcome`), and a leg
+#: in another environment its own, not `invalid` (SR-E28-16, C-2.11).
+OUTCOMES: Final = ("ok", "refused", "rate_limited", "invalid", "environment_mismatch", "error")
+#: `cv_tradegroup_legs_skipped_total`'s reasons, 22's codes of a skipped leg: the request's own
+#: skip, and the sizer's (`SkipReason`), which `rejection_code` keeps.
+SKIP_REASONS: Final = ("skipped", *(reason.value for reason in SkipReason))
+
+
+def _outcome(status: int) -> str:
+    """An answer's outcome by its status: a refusal (401, 403, 404) `refused`, a body or leg the
+    preview cannot take (400, 422) `invalid`, and a 5xx `error`."""
+    if status == 429:
+        return "rate_limited"
+    if status >= 500:
+        return "error"
+    return "ok" if status < 300 else "invalid" if status in (400, 422) else "refused"
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewMeasures:
+    """The preview's series (20 Sec.12.1), every child bound once: each label set is closed, and
+    no value outside it is counted (`NOOP_CHILD`), so nothing on the answer's path can raise."""
+
+    outcomes: Mapping[str, MetricChild]
+    seconds: MetricChild
+    skipped: Mapping[str, MetricChild]
+    refused: Mapping[str, MetricChild]
+
+    @classmethod
+    def bound(cls, metrics: Metrics) -> PreviewMeasures:
+        """Registered through the facade as catalogued (idempotent)."""
+        spec = {s.name: s for s in CATALOGUE}
+
+        def children(name: str, values: Iterable[str]) -> dict[str, MetricChild]:
+            s = spec[name]
+            metric = metrics.counter(s.name, s.help, s.labels, max_series=s.max_series)
+            return {value: metric.labels(value) for value in values}
+
+        timed = spec["cv_tradegroup_preview_seconds"]
+        seconds = metrics.histogram(timed.name, timed.help, buckets=timed.buckets or (),
+                                    max_series=timed.max_series)  # fmt: skip
+        return cls(
+            children("cv_tradegroup_preview_total", OUTCOMES), seconds.child(),
+            children("cv_tradegroup_legs_skipped_total", SKIP_REASONS),
+            children("cv_override_refused_total", sorted(comparator.OVERRIDE_CLASS)),
+        )  # fmt: skip
+
+    def answered(self, outcome: str, elapsed_s: float) -> None:
+        """One answer by its outcome, timed unless the bucket refused it."""
+        self.outcomes.get(outcome, NOOP_CHILD).inc()
+        if outcome != "rate_limited":
+            self.seconds.observe(elapsed_s)
+
+    def planned(self, plan: planner.GroupPlan) -> None:
+        """Each leg the plan skipped, by its code."""
+        for leg in plan.legs:
+            if leg.status == "skipped":
+                self.skipped.get(str(leg.reason), NOOP_CHILD).inc()
+
+    def widening(self, refused: planner.GroupRefused) -> None:
+        """Each distinct field of the override table the request was refused on (ADR-0040)."""
+        violations = (v for leg in refused.legs for v in leg.violations)
+        for cap in comparator.refused_fields(violations):
+            self.refused.get(cap, NOOP_CHILD).inc()
+
+
+@dataclass(slots=True)
+class _Seen:
+    """What one answer does not say of itself: its symbol once read (its span's), and whether a
+    leg was in another environment (its `400`'s outcome)."""
+
+    symbol: str | None = None
+    mismatch: bool = False
+
+
+def _leg_span(account_id: AccountId) -> AbstractContextManager[object]:
+    """One planned leg, an `oms.preview_leg` span under the preview's, by its account id."""
+    return span("oms.preview_leg", {"exchange_account_id": str(account_id)})
 
 
 def _log() -> Any:
@@ -336,9 +427,8 @@ def make_trade_group_preview_router(
     """`POST /trade-groups/preview` (module docstring): no principal source or no OMS runtime
     composed, 501; no `reads`, 503."""
     router = APIRouter(tags=["trading"])
-    spec = next(spec for spec in CATALOGUE if spec.name == "cv_tradegroup_preview_total")
-    counted = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
-    observer = SizerMetrics.register(metrics)
+    measures, observer = PreviewMeasures.bound(metrics), SizerMetrics.register(metrics)
+    traced = {} if reads is None else {"env": reads.environment}
 
     def unread(what: str, exc: BaseException | None = None) -> JSONResponse:
         if exc is not None:
@@ -365,6 +455,7 @@ def make_trade_group_preview_router(
         who: comparator.RefusalActor, group: planner.GroupRequest, refused: planner.GroupRefused
     ) -> Response:
         """A whole refusal: each offending leg's `trade_group.override_refused` row first."""
+        measures.widening(refused)
         made = [comparator.refusal_record(
             leg.violations, actor=who, bound=leg.bound, leg_index=leg.index,
             alternate_id=None if leg.alternate is None else leg.alternate.profile_id,
@@ -390,8 +481,34 @@ def make_trade_group_preview_router(
             who, group, "account_scope_denied", denied, ("rbac.denied", denial)
         )
 
+    def measured(handler: _Handler) -> _Handler:
+        """`handler` as one `oms.preview` span: the environment, the symbol once read and the
+        outcome; that outcome counted, and the answer timed but a 429's (20 Sec.12.1). What the
+        answer does not say of itself, the handler notes on the request's `_Seen`."""
+
+        @functools.wraps(handler)  # FastAPI reads the handler's own signature
+        async def timed(request: Request) -> Response:
+            started, request.state.preview = time.perf_counter(), _Seen()
+            with span("oms.preview", traced) as current:
+                try:
+                    response = await handler(request)
+                except Exception:  # an answer FastAPI turns into a 500: an `error`, then raised
+                    measures.answered("error", time.perf_counter() - started)
+                    raise
+                seen, outcome = cast(_Seen, request.state.preview), _outcome(response.status_code)
+                if outcome == "invalid" and seen.mismatch:
+                    outcome = "environment_mismatch"
+                named = {} if seen.symbol is None else {"symbol": seen.symbol}
+                current.set_attributes(named | {"result": outcome})
+            measures.answered(outcome, time.perf_counter() - started)
+            return response
+
+        return timed
+
     @router.post(PREVIEW_PATH)
+    @measured
     async def preview_trade_group(request: Request) -> Response:
+        seen = cast(_Seen, request.state.preview)
         if principals is None:
             return problem(501, "not_implemented", "No principal source is composed.")
         try:
@@ -402,7 +519,6 @@ def make_trade_group_preview_router(
             return problem(401, "unauthenticated", "No verified session for this request.")
         caller, actor = principal.snapshot, submit_actor(principal, request)
         if (wait := limiter.try_take(caller.user_id)) is not None:  # the user's, not the session's
-            counted.labels("rate_limited").inc()
             detail = "Too many previews; retry after the delay given."
             limited = problem(429, "rate_limited", detail, retry_after_seconds=wait)
             limited.headers["Retry-After"] = str(wait)
@@ -431,6 +547,7 @@ def make_trade_group_preview_router(
         if isinstance(body, list):
             return await audit_answer(who, None, body[0].rule, _invalid(body, 422))
         group = _group(body)
+        seen.symbol = group.symbol
         if unsound := _unsound(body):
             return await audit_answer(who, group, unsound[0].rule, _invalid(unsound, 422))
         for leg in group.legs:  # step 7: every grant first, from memory, then the rows
@@ -451,7 +568,7 @@ def make_trade_group_preview_router(
                               "This account is not in this server's environment.")
                    for i, row in enumerate(rows) if row.env.value != reads.environment]  # fmt: skip
         if outside:  # step 8, counted and recorded (SR-E28-16); no such leg reaches the figures
-            counted.labels("environment_mismatch").inc()
+            seen.mismatch = True
             return await audit_answer(who, group, "environment_mismatch", _invalid(outside))
         named = [None if leg.overrides is None else leg.overrides.profile_id for leg in body.legs]
         try:
@@ -492,12 +609,13 @@ def make_trade_group_preview_router(
         try:
             plan = planner.plan_group(
                 group, profiles=chosen, snapshot=snapshot, guard=preview.guard,
-                stops=preview.stops, observer=observer,
+                stops=preview.stops, observer=observer, leg_span=_leg_span,
             )  # fmt: skip
         except OrderInvalid as exc:  # the planner's own refusals, each naming its rule
             return await audit_answer(who, group, exc.errors[0].rule, order_problem(exc))
         if isinstance(plan, planner.GroupRefused):
             return await widened(who, group, plan)
+        measures.planned(plan)
         labels = {row.id: row.label for row in rows}
         return await audit_answer(who, group, plan, JSONResponse(preview_document(plan, labels)))
 

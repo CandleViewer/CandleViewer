@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+from collections import Counter
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
@@ -18,6 +19,10 @@ from uuid import UUID
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from prometheus_client import REGISTRY
 
 from candleviewer.accounts.errors import AccountNotFoundError, ProfileUnavailableError
@@ -28,6 +33,7 @@ from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.preview_limiter import PreviewLimiter
 from candleviewer.api.trade_group_preview import (
     PREVIEW_PATH,
+    SKIP_REASONS,
     PreviewReads,
     make_trade_group_preview_router,
 )
@@ -83,6 +89,14 @@ def counted(world: World, outcome: str) -> float:
     labels = {"outcome": outcome, "env": "demo"}
     found = world.metrics.registry.get_sample_value("cv_tradegroup_preview_total", labels)
     return found or 0.0
+
+
+def series(world: World, name: str) -> dict[str, float]:
+    """`name`'s samples by the value of their one label but `env`."""
+    return {
+        next(v for k, v in s.labels.items() if k != "env"): s.value
+        for family in world.metrics.registry.collect() for s in family.samples if s.name == name
+    }  # fmt: skip
 
 
 class World:
@@ -548,3 +562,82 @@ def test_the_route_reaches_no_write_or_exchange_port() -> None:
     assert named == {"candleviewer.oms.ports", "candleviewer.oms.fanout.plan",
                      "candleviewer.oms.submit.STORE_TIMEOUT_S"}  # fmt: skip
     assert not [m for m in modules if "wiring" in m]
+
+
+def test_each_answer_is_counted_once_by_its_outcome_and_all_but_a_429_timed() -> None:
+    """20 Sec.12.1: one `cv_tradegroup_preview_total` count per answer, by its status (a `401`,
+    `403` or `404` `refused`, a `400` or `422` `invalid`, a `5xx` `error`, a defect's `500` too), a
+    leg in another environment its own `environment_mismatch` (SR-E28-16); each child bound once,
+    so no value outside the closed set appears; every answer but a `429` timed."""
+    world = World(rate=6)  # the Owner's six answers past the session take its bucket's six
+    sent = [
+        world.post(),
+        world.post(who="viewer"),
+        world.post(who="nobody"),
+        world.post(body(A, A)),
+        world.post(body(A, L)),
+        world.post(body((A, {"leverage": "11"}))),
+    ]
+    world.fail = PREVIEWED
+    sent.append(world.post())  # unrecorded: 503
+    world.faults = {"preview": RuntimeError("a defect")}
+    sent += [world.post(), world.post()]  # a defect FastAPI answers 500; then past the bucket: 429
+    assert [r.status_code for r in sent] == [200, 403, 401, 422, 400, 403, 503, 500, 429]
+    assert series(world, "cv_tradegroup_preview_total") == {
+        "ok": 1, "refused": 3, "rate_limited": 1, "invalid": 1, "environment_mismatch": 1,
+        "error": 2,
+    }  # fmt: skip
+    timed = {"env": "demo"}
+    assert (
+        world.metrics.registry.get_sample_value("cv_tradegroup_preview_seconds_count", timed) == 8
+    )
+
+
+def test_a_widening_counts_each_field_it_was_refused_on_once(world: World) -> None:
+    """ADR-0040 Decision 1, `cv_override_refused_total{cap}` live: one count per distinct field a
+    request was refused on, however many of its legs' `override_refused` rows name it (the day's
+    loss cap on two legs, once; a leverage past the cap, once); no count for a refusal that is no
+    widening."""
+    big, fields = {"sizing": {"mode": "fixed_qty", "qty": "0.2"}}, Counter[str]()
+    for sent in (body((A, big), (B, big)), body((A, {"leverage": "11"}), B)):
+        world.records.clear()
+        assert world.post(sent).status_code == 403
+        rows = [r["after_state"] for r in world.records if r["action"] == REFUSED]
+        fields.update({v["field"] for row in rows for v in row["violations"]})
+    assert world.post(who="viewer").status_code == 403
+    assert (fields["max_daily_loss"], fields["max_leverage_cap"]) == (1, 1)
+    refused = series(world, "cv_override_refused_total")
+    assert {cap: n for cap, n in refused.items() if n} == dict(fields)
+
+
+def test_each_skipped_leg_is_counted_by_its_reason(world: World) -> None:
+    """20 Sec.12.1: `cv_tradegroup_legs_skipped_total{reason}`, one per leg a plan skipped, by
+    22's code (the request's own skip, or the sizer's), over children bound for the closed set."""
+    assert world.post(body(A, (B, {"skip": True}), (C, {"skip": True}))).status_code == 200
+    skipped = series(world, "cv_tradegroup_legs_skipped_total")
+    assert (skipped["skipped"], sum(skipped.values()), set(skipped)) == (2, 2, set(SKIP_REASONS))
+
+
+def test_a_preview_is_one_span_with_a_child_per_leg_it_plans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ticket's trace: each preview one `oms.preview` span with its environment, its symbol
+    once read and its outcome; each leg the planner plans one `oms.preview_leg` child naming its
+    account. A leg the request skips plans nothing; a refusal before the plan has no child."""
+    exporter, provider = InMemorySpanExporter(), TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(trace, "get_tracer", provider.get_tracer)
+    world = World()
+    assert [world.post(body(A, B, (C, {"skip": True}))).status_code,
+            world.post(who="viewer").status_code] == [200, 403]  # fmt: skip
+    spans = exporter.get_finished_spans()
+    previews = [s for s in spans if s.name == "oms.preview"]
+    legs = [s for s in spans if s.name == "oms.preview_leg"]
+    assert [dict(s.attributes or {}) for s in previews] == [
+        {"env": "demo", "symbol": "BTCUSDT", "result": "ok"}, {"env": "demo", "result": "refused"},
+    ]  # fmt: skip
+    assert [dict(s.attributes or {}) for s in legs] == [
+        {"exchange_account_id": str(A)}, {"exchange_account_id": str(B)},
+    ]  # fmt: skip
+    parent = previews[0].context
+    assert parent is not None and [leg.parent for leg in legs] == [parent, parent]
