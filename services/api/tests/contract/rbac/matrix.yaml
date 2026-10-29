@@ -1120,11 +1120,12 @@ operations:
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   PUT /recording/retention-policies:
-    permissions: ['recording:write']
+    permissions: ['admin:write']
     scope: none
     public: false
     state: executed
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    # Capability 9c (04-security-program §7.2 row 9c): Owner-only, the E16 threat model's R-T1 class.
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /recording/sessions:
     permissions: ['recording:read']
     scope: none

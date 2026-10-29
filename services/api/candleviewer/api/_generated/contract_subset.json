@@ -6124,7 +6124,7 @@
       "put": {
         "x-rbac": {
           "permissions": [
-            "recording:write"
+            "admin:write"
           ],
           "scope": "none"
         }

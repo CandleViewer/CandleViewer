@@ -4757,7 +4757,7 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `audit_signing_keys` (PG)             | ∞                  | —                                      | ∞             | —                            | No row is deleted: a retired key verifies the exports it signed (§3.1.5b)         |
 | `risk_*`, `kill_switch_state` (PG)    | ∞                  | —                                      | ∞             | —                            | Part of the accountability trail (§3.11)                                          |
 
-Changing any retention value is a dangerous action: it requires the `recording:write` permission with step-up (04 §7.2.2 row 9), writes a `retention.change` audit entry with before/after, and the UI shows the computed volume delta before confirmation.
+Changing any retention value is a dangerous action under the `recorder` step-up: a symbol's `pinned` or `retention_days` requires `recording:write` (04 §7.2.2 row 9) and the global policy set is Owner-only (`admin:write`, row 9c); each change writes a `retention.change` audit entry with before/after, and the UI shows the computed volume delta before confirmation.
 
 ---
 

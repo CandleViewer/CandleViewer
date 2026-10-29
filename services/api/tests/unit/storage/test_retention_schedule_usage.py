@@ -42,14 +42,20 @@ def test_per_symbol_beats_global() -> None:
 
 
 def test_retention_change_requires_permission() -> None:
-    require_retention_change([Permission.RECORDING_WRITE])
+    require_retention_change([Permission.ADMIN_WRITE])
     with pytest.raises(RetentionPermissionDenied):
         require_retention_change([Permission.RECORDING_READ, Permission.ORDERS_READ])
 
 
-def test_retention_change_is_the_seeded_recording_write_code_not_the_audit_action() -> None:
+def test_retention_change_needs_the_owner_code_not_recording_write() -> None:
+    # 04 row 9c, the E16 threat model's R-T1 class: a Manager's codes do not reach it.
+    with pytest.raises(RetentionPermissionDenied):
+        require_retention_change([Permission.RECORDING_READ, Permission.RECORDING_WRITE])
+
+
+def test_retention_change_is_the_seeded_owner_code_not_the_audit_action() -> None:
     # #2699: `retention.change` is an audit action no role holds; the gate is the seeded code.
-    assert RETENTION_CHANGE_PERMISSION == Permission.RECORDING_WRITE
+    assert RETENTION_CHANGE_PERMISSION == Permission.ADMIN_WRITE
     with pytest.raises(RetentionPermissionDenied):
         require_retention_change(["retention.change"])
 

@@ -4695,8 +4695,9 @@ export interface paths {
      *     it to Parquet (its total horizon stays the stream default), and for `drop` the total horizon.
      *     `downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy` until
      *     the store holds their fields, as is a set where a stream derived from `trades` outlives it;
-     *     an unknown field is `422 validation_failed`. Always needs the `recorder` step-up
-     *     (`403 step_up_required`). Changes apply at the next nightly sweep; `apply_now=true` also
+     *     an unknown field is `422 validation_failed`. Owner-only (`admin:write`, the E16 threat
+     *     model's R-T1 class): any other caller is refused with 403, audited as `rbac.denied`. Always
+     *     needs the `recorder` step-up (`403 step_up_required`). Changes apply at the next nightly sweep; `apply_now=true` also
      *     starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
      *     `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
      *     request stores nothing.

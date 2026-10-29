@@ -16,15 +16,16 @@ from pathlib import Path
 from candleviewer.storage.models import StreamKind
 
 #: The seeded RBAC code the contract gates retention changes with (`setRetentionPolicies`,
-#: 04 §7.2.2 row 9, #1778 decision Z: Owner and Manager; step-up belongs to the route, #2738).
+#: 04 §7.2.2 row 9c: Owner-only, the E16 threat model's R-T1 class; step-up belongs to the route,
+#: #2738).
 #: `retention.change` is the audit action for such a change, not a permission (#2699). `storage`
 #: may not import `auth`; tests/unit/auth/test_permission_literals.py checks this literal against
 #: `rbac_seed.json`.
-RETENTION_CHANGE_PERMISSION = "recording:write"
+RETENTION_CHANGE_PERMISSION = "admin:write"
 
 
 class RetentionPermissionDenied(PermissionError):
-    """Caller lacks `recording:write`."""
+    """Caller lacks `admin:write`."""
 
 
 def require_retention_change(permissions: Iterable[str]) -> None:
