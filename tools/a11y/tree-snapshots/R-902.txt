@@ -1,5 +1,18 @@
 - main:
-  - heading "R-902 — owned by E10" [level=1]
-  - paragraph: This screen has not shipped yet.
+  - paragraph: CandleViewer
+  - heading "Can't reach the server" [level=1]
+  - paragraph: The app started, but the backend does not answer.
+  - list:
+    - listitem:
+      - img "Passed"
+      - text: Network connected
+    - listitem:
+      - img "Failed"
+      - text: Backend answers — no reply within 5 s
+    - listitem:
+      - img "Unknown"
+      - text: Backend version — unknown until it answers
+  - button "Retry now"
+  - paragraph: CandleViewer v0.1.0 · environment not known yet
 - status
 - status

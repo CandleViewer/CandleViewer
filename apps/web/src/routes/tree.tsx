@@ -16,6 +16,7 @@ import { StubRoute } from "./StubRoute";
 import { ForbiddenState, NotFoundState } from "./ErrorStates";
 import { PlaceholderRoute } from "./PlaceholderRoute";
 import { PanelErrorBoundary } from "../features/system-states/PanelErrorBoundary";
+import { BackendUnreachable } from "../features/system-states/BackendUnreachable";
 import { AdminInviteScreen } from "../features/invites/AdminInviteScreen";
 import { LoginScreen } from "../features/auth/LoginScreen";
 import { ChangePasswordScreen } from "../features/auth/ChangePasswordScreen";
@@ -32,6 +33,7 @@ import { ScreenRoot } from "../features/app-shell/ScreenRoot";
 function elementFor(routeId: string, owner: string | null): RouteObject["element"] {
   if (routeId === "R-900") return <ForbiddenState />;
   if (routeId === "R-901") return <NotFoundState />;
+  if (routeId === "R-902") return <BackendUnreachable />; // SCR-159 at boot (#306)
   if (routeId === "R-001") return <LoginScreen />;
   if (routeId === "R-007") return <ChangePasswordScreen />;
   if (routeId === "R-009") return <InviteAcceptScreen />;

@@ -508,7 +508,7 @@ test.describe("Backend connection probe (#3519 S2): ADR-0038 A1 to A11 as measur
           consoleLines.push(`${message.type()}: ${message.text()}`.slice(0, 300));
         }
       });
-      // The harness check: the web app renders over app:// (no backend session: the sign-in screen).
+      // The harness check: the web app renders over app:// (no backend answers it: R-902's takeover).
       await expect(win.locator("#root main")).toBeVisible();
       expect(originOf(win.url())).toBe(APP_ORIGIN);
       const runtime = await shell.evaluate(
