@@ -13,6 +13,8 @@ documented JSON).
 no shared response. Its session is locked by an idle timeout that has passed while its access token
 still lives, its password check stands in for login's (the B16 chart is real), and its `503` for an
 unwired backend is driven bare too. `authExtendSession` (#2300) is pinned like `authLogout`.
+`authLock` (#4743) too, but for its `401` (`session_revoked`, `unauthenticated`), its own; it
+answers `200` for a live session and for one that is already locked.
 
 Provider side: each operation is driven to every status it declares, through the real session
 router behind the app's SR-041 guard and error handler, over the shared in-memory fakes
@@ -21,8 +23,8 @@ the contract omits fails, and so does a declared status no request reaches. The 
 caller's session through the session backend and refuses `authLogout` and `revokeMySession` with
 `403` first when it is not wired, so the router's own `503` for that cause is driven with the
 router mounted bare. Out of the pin: the `501 not_implemented` of an unwired identity provider,
-which `authRefresh`, `authGetSession` and `authUnlock` answer and none declares. Bodies are not
-compared (#2828).
+which `authRefresh`, `authGetSession`, `authUnlock` and `authLock` answer and none declares.
+Bodies are not compared (#2828).
 """
 
 from __future__ import annotations
@@ -86,9 +88,13 @@ _DECLARED: dict[str, frozenset[int]] = {
     "revokeMySession": frozenset({204, 401, 403, 404, 422, 503}),
     "authUnlock": frozenset({200, 401, 403, 409, 422, 429, 503}),
     "authExtendSession": frozenset({200, 401, 403, 503}),
+    "authLock": frozenset({200, 401, 403, 422, 503}),
 }
-#: Failure statuses an operation documents itself, with codes of its own (#2300).
-_OWN_RESPONSE: dict[str, frozenset[int]] = {"authUnlock": frozenset({401, 409})}
+#: Failure statuses an operation documents itself, with codes of its own (#2300, #4743).
+_OWN_RESPONSE: dict[str, frozenset[int]] = {
+    "authUnlock": frozenset({401, 409}),
+    "authLock": frozenset({401}),
+}
 #: The shared response (`components.responses`) each failure status reuses.
 _SHARED_RESPONSE = {
     401: "Unauthorized",
@@ -325,6 +331,10 @@ def _unlock_twice(world: _World, caller: MintedSession) -> httpx.Response:
     return _unlock(world, caller)
 
 
+def _lock(world: _World, caller: MintedSession, **kw: Any) -> httpx.Response:
+    return world.post("/auth/lock", caller, **kw)
+
+
 #: Per operation, one request for each status it declares: (status, why, the world it runs in, the
 #: request). The 503 has a row for each cause the router has (audit sink not active, audit sink
 #: refusing, session backend not wired) and the 422 of `authRefresh` for each kind of body it
@@ -382,6 +392,21 @@ _ANSWERS: dict[str, list[tuple[int, str, Callable[[], _World], _Send]]] = {
         (503, "audit inactive", _LOCKED_NO_SINK, _unlock),
         (503, "audit refused", _LOCKED_SINK_REFUSES, _unlock),
         (503, "backend unwired", _BARE_NO_BACKEND, _unlock),
+    ],
+    "authLock": [
+        (200, "locked", _OK, _lock),
+        (200, "already locked", _LOCKED, _lock),
+        (401, "session gone", _GONE, _lock),
+        (403, "csrf", _OK, lambda w, c: _lock(w, c, headers=_BAD)),
+        (
+            422,
+            "other session",
+            _OK,
+            lambda w, c: _lock(w, c, params={"session_id": str(_STRANGER)}),
+        ),
+        (503, "audit inactive", _NO_SINK, _lock),
+        (503, "audit refused", _SINK_REFUSES, _lock),
+        (503, "backend unwired", _BARE_NO_BACKEND, _lock),
     ],
     "authExtendSession": [
         (200, "extended", _OK, lambda w, c: w.post("/auth/session/extend", c)),
