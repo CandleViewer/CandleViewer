@@ -1372,21 +1372,30 @@ class InMemoryForeignOrderLockout:
 
 
 class InMemoryStreamedAccounts:
-    """A `StreamedAccounts` (`ports.py`, 24 Sec.8.12) over the accounts a test seeds: each read
-    counts in `reads` and answers them, or raises `error` when one is set (a store that cannot
-    answer), leaving the seeded set as it was."""
+    """A `StreamedAccounts` (`ports.py`, 24 Sec.8.12) over the accounts a test seeds, answered as
+    account health's tracking read in place: one set object, the same across reads until
+    `accounts` changes or health reads again (`new_read`), equal or not, which is how the consumer
+    tells one read from the next. Each read counts in `reads`, or raises `error` when one is set
+    (a store that cannot answer), leaving the seeded set as it was."""
 
     def __init__(self, *accounts: AccountId) -> None:
         self.accounts: set[AccountId] = set(accounts)
         self.error: Exception | None = None
         self.reads = 0
+        self._read: frozenset[AccountId] = frozenset(self.accounts)
 
     async def streamed_accounts(self) -> frozenset[AccountId]:
         self.reads += 1
         await asyncio.sleep(0)
         if self.error is not None:
             raise self.error
-        return frozenset(self.accounts)
+        if self._read != self.accounts:
+            self._read = frozenset(self.accounts)
+        return self._read
+
+    def new_read(self) -> None:
+        """Account health's next tracking read, listing what the last one did: a new set."""
+        self._read = frozenset(self.accounts)
 
 
 class InMemoryReconciliationRequests:

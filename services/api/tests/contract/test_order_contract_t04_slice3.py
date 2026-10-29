@@ -1047,6 +1047,8 @@ def test_20_says_the_runtime_owns_and_runs_the_private_stream_consumer() -> None
         "Status: as built by E29-T05's wiring slice (S8b).",
         "a live process fails closed there until E29-T06, as its stand-in reconciliation refuses "
         "a live start on the binding as bound",
+        "and until E39-T04, as its paging foreign-order lockout, which cannot freeze, refuses one "
+        "too",
         "It starts where the runtime sets `ready`",
         "`wait_ready()` stays the serving loop's, and the start crosses to the lane, where the "
         "consumer runs; a start the lane refuses or does not answer, or whose dead-man's-switch "

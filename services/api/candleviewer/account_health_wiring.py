@@ -289,8 +289,9 @@ class AccountHealthRuntime:
     `order_entry_check`. The private-WS consumer gets `feed` through `ctx.accounts.account_health`
     (`AccountHealthFeed`): the evidence calls of the monitor, and the wallet cache's `apply` as
     `wallet_pushed`. `wallet_pushed` does not bound a frame's `updated_at`: the consumer refuses a
-    frame dated ahead of the host clock before it gets here (a dated-ahead snapshot would block
-    every later refresh).
+    frame dated more than 5 s (`MAX_FUTURE_SKEW`) ahead of the exchange-synced clock
+    (`ExchangeWallClock`) before it gets here (a dated-ahead snapshot would block every later
+    refresh).
 
     The OMS runtime (E29-T05 S8b) reads `streamed`, the accounts its private-stream consumer
     streams, from the order lane, and calls `stream_started` once the consumer starts, which opens

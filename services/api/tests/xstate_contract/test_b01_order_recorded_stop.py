@@ -662,6 +662,43 @@ async def test_terms_changed_unchanged_repeat_writes_nothing_and_records_nothing
     assert said == [("b01_terms_unchanged", "info")]
 
 
+class _Unreadable(Mapping[str, Any]):
+    """A push whose every read fails in a way the terms' checks do not foresee."""
+
+    def __getitem__(self, key: str) -> Any:
+        raise LookupError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+
+async def test_terms_refused_on_a_push_it_cannot_read_records_its_class_and_never_raises() -> None:
+    """A1, INV-B1-q: the refusal arm is total. A push it cannot read at all is recorded as
+    `terms_refused` with the failure's class as its reason and logged at ERROR; the action never
+    raises into the machine. Called on the binding's own API (E29-T05's test plan)."""
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    async def hook(name: str, context: dict[str, Any]) -> None:
+        seen.append((name, context))
+
+    context = {"recorded_stop": True, "exchange_order_id": EXCHANGE_ID, "order_link_id": LINK}
+    event = SimpleNamespace(type="TERMS_CHANGED", payload=_Unreadable())
+    b01.set_audit_hook(hook)
+    try:
+        with capture_logs() as logs:
+            await b01.audit_terms_refused(SimpleNamespace(), context, event, None)
+    finally:
+        b01.set_audit_hook(None)
+    [(name, recorded)] = seen
+    assert name == "terms_refused"
+    assert recorded["denied"] == {"reason": "LookupError", "trigger": "TERMS_CHANGED"}
+    said = [(e["event"], e["log_level"], e["reason"]) for e in logs]
+    assert said == [("b01_terms_refused", "error", "LookupError")]
+
+
 @pytest.mark.parametrize(
     "bad",
     [{"surprise": 1}, {"source": "rest"}, {"qty": 2}, {"trigger_price": None}],

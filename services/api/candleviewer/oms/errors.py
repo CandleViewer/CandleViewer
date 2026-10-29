@@ -212,6 +212,12 @@ class ProtectionReadingsUnavailable(OmsError):
     Sec.8.12): the consumer logs, counts and pages P1 once per episode (C-2.6)."""
 
 
+class FreezeUnavailable(OmsError):
+    """No foreign-order lockout can freeze an account until E39-T04 (#4208) binds the freeze
+    (`PagingForeignOrderLockout`, 24 Sec.8.12): a finding is recorded and paged, never frozen. A
+    live process refuses to start with that stand-in (`refuse_live_without_freeze`, C-2.21)."""
+
+
 class AckWithoutOrderId(OmsError):
     """An accepted create whose answer names no exchange order id the OMS keeps (`commands`'s id
     shape): an ambiguous outcome (ruling 3 on #3972, 24 Sec.8.3 rule 7), raised so B1 lands the

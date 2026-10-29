@@ -50,6 +50,14 @@ def linear_order(**fields: Any) -> dict[str, Any]:
     return base | fields
 
 
+def linear_execution(**fields: Any) -> dict[str, Any]:
+    """The documented execution row with `fields` changed: derived, not evidence (the 2026-10-28
+    ruling Q1). The transcription is already a linear USDT fill, so a test derives each fill of a
+    multi-row push from it in-test, its ids, quantity, side and times the test's own, never a
+    venue fact; a recorded multi-row push is E29-K01's (#843)."""
+    return row("execution") | fields
+
+
 def usdt_wallet(**fields: Any) -> dict[str, Any]:
     """The documented unified wallet with its coin row as USDT's."""
     account = row("wallet")

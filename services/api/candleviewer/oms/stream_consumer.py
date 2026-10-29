@@ -355,10 +355,15 @@ class StreamConsumer:
         """24 Sec.8.12: the account's disable closed its stream, and its key refuses a subscribe
         until the re-enable lifts it, while health's tracking read in place may still list it. So
         the refresh does not restart it while that read stays in place (a subscribe it would
-        refuse is a defect and pages): health's next read, which lists it again only once it is
-        re-enabled, equal to the last or not, decides. The read is taken here, never the last
-        refresh's, which health may have replaced since; one that fails is this account's defect.
-        Keyed on this status alone, never on a refused subscribe, which still pages."""
+        refuse is a defect and pages): health's next read, equal to the last or not, decides, and
+        a read made after the disable lists it again only once it is re-enabled. The read is
+        taken here, never the last refresh's, which health may have replaced since; one that
+        fails is this account's defect. Keyed on this status alone, never on a refused
+        subscribe, which still pages. Two windows can still page once, on demo or testnet only (a
+        live process fails closed until E29-T06) and with no protection effect, a carry on #848:
+        a health read in flight as the disable commits publishes its set after this hold is
+        taken, which releases it; and a disable while the account has no stream open brings no
+        status to hold on."""
         self._disabled[account_id] = await self._bounded(self._accounts.streamed_accounts())
 
     async def _clock_resynced(self, account_id: AccountId) -> None:
