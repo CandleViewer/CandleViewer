@@ -6987,6 +6987,13 @@ RULED_PIN_TXT = r"""
    plus the
   line drift #4597 caused across the file); the audit tool's `purge_sentences` needles and RULED
   pin table move with them (`--repin-ruled`), with one new mutation for the `before` field.
+  - **Section 6 leftovers (the r5 boards' QA):** `recorder` → `recorder_purge` in the §6 prose
+  ("Purge keeps E16-D02 §6.5's typed dialog with the … step-up (§7)") and in the
+   `JOB/confirm-vacuum`
+  row (PROPOSED — D04-G8, owner approval pending (#2701); "unless the owner assigns the … class
+  (D04-Q1)"): the purge's class is `recorder_purge` (`22` :15035, :15040), and D04-Q1's question
+   names
+  the purge's class, as the §6 action table and BQ-11 already do.
 @ §1#1 ¶1 ‖ heading
   ## 1. Purpose, locked inputs, the rules stated once, the classification
 @ §1 › §1.1#1 ¶1 ‖ heading
@@ -7549,7 +7556,7 @@ RULED_PIN_TXT = r"""
    unless the server answers 403 (D04-CG2). On SCR-140, E16-D02 §6.6 runs the same
    `compactRecorder` as Compact now with no confirmation (:424); this page confirms it (BQ-10
    RULED), and D04-C6 records the divergence for its owner. Purge keeps E16-D02 §6.5's typed dialog
-   with the `recorder` step-up (§7). The vacuum is wholly PROPOSED (D04-G8: no route, no
+   with the `recorder_purge` step-up (§7). The vacuum is wholly PROPOSED (D04-G8: no route, no
    `Job.kind`, `22` :22002–22014; `21` :4332) and appears only as a captioned inset (BQ-11 RULED).
    Stop job (cancel a running job) is PROPOSED (D04-G10: `getJob` is the only job route, `22`
    :12097–12133) and appears only as a captioned carrier on the strip, named Stop job so it never
@@ -7610,9 +7617,9 @@ RULED_PIN_TXT = r"""
    D04-G8; nothing is shipped) | captioned PROPOSED — D04-G8, owner approval pending (#2701):
    CMP-044 standard, title "Vacuum Postgres?" · body "Reclaims space from deleted rows. Nothing is
    deleted. Queries may be slower while it runs." · "This action is audited." · no typed field, no
-   step-up sentence unless the owner assigns the `recorder` class (D04-Q1) | exits Cancel, Esc and
-   the close ✕ (T1) · Vacuum (CMP-001 primary, T1), PROPOSED — D04-G8, owner approval pending
-   (#2701) | T1 | 05 |
+   step-up sentence unless the owner assigns the `recorder_purge` class (D04-Q1) | exits Cancel,
+   Esc and the close ✕ (T1) · Vacuum (CMP-001 primary, T1), PROPOSED — D04-G8, owner approval
+   pending (#2701) | T1 | 05 |
   | `JOB/strip-running` | this client's `202` → `Job.status` running for a compaction
    (`progress_pct` 42) and an import (38) | one `role="status"` region (polite), 2 s polling, the
    text swapped in place · "Compaction running · 42 %" + CMP-023 (`aria-valuetext` equal to the
