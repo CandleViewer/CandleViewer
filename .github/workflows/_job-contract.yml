@@ -10,10 +10,11 @@ name: _job-contract
 #      suite: ws-schema-drift.test.ts, runtime-binary.test.ts,
 #      generated-guard.test.ts) plus the generated-models contract suite
 #      (services/api/tests/contract/test_generate_protocol_models.py).
-#   3. Schemathesis fuzz on /v1 (CONSTITUTION §9 check 6) — deferred until a
-#      real /v1 route exists to fuzz (R0 has none beyond health/metrics);
-#      tracked as a follow-up once E04+ lands the first REST route, so this
-#      step is a documented placeholder rather than a silent no-op.
+#   3. Schemathesis fuzz (CONSTITUTION §9 check 6), in part: E12-Q04 (#420)
+#      fuzzes GET /market/klines and /market/bars in process inside step 1's
+#      pytest run (tests/contract/test_market_schemathesis_contract.py); the
+#      live-instance run over every operation is not wired (23 §16.5). The
+#      E12-Q04 conformance matrix lands in this job's step summary.
 #
 # CI-CON-001 (route/field drift) is raised by
 # candleviewer/api/contract_conformance.py; WS/codec drift codes are owned
@@ -28,6 +29,8 @@ permissions:
 env:
   PYTHONIOENCODING: utf-8
   CV_CI_ALLOWED_HOSTS: ""
+  # E12-Q04: Schemathesis imports the module this names when the contract suite loads; none.
+  SCHEMATHESIS_HOOKS: ""
 
 jobs:
   contract:
@@ -53,6 +56,9 @@ jobs:
         working-directory: services/api
         # tests/contract's perf budgets run here on purpose (and in py-perf): see ON_PURPOSE in
         # scripts/tests/test_workflow_pytest_markers.py.
+        env:
+          # E12-Q04 (#420): where tests/contract/conftest.py writes the conformance report.
+          CV_CONFORMANCE_REPORT_DIR: conformance-report
         run: uv run pytest tests/contract -m "not integration and not fuzz and not harness and not flaky" --no-cov
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -74,7 +80,12 @@ jobs:
         # Also runs the E17-T05 blocking gate error_registry_single_source.
         run: make contracts
 
-      - name: Schemathesis fuzz on /v1 (deferred — no /v1 route exists yet)
-        run: |
-          echo "No REST route beyond /healthz, /readyz, /metrics exists in R0 (services/api/candleviewer/app.py)."
-          echo "Schemathesis fuzz on /v1 activates once the first /v1 route lands; tracked in the owning epic's ticket, not skipped silently."
+      - name: Upload the E12-Q04 conformance report (surface x case x outcome)
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e12-q04-conformance
+          path: services/api/conformance-report/
+          if-no-files-found: warn
+          retention-days: 30

@@ -3282,7 +3282,7 @@ export interface paths {
      *
      *     | bar_type      | param meaning                                   | example        |
      *     |---------------|-------------------------------------------------|----------------|
-     *     | `time`        | interval string, same enum as `/market/klines`  | `5`            |
+     *     | `time`        | interval, as `/market/klines` except `M`        | `5`            |
      *     | `tick`        | trades per bar                                  | `1000`         |
      *     | `volume`      | base-asset volume per bar                       | `50`           |
      *     | `range`       | high-low range in ticks                         | `40`           |
@@ -3313,7 +3313,8 @@ export interface paths {
      *     per response; once it exists, a cursor issued before a swap returns `invalid_cursor`
      *     and the client restarts. A request whose window starts before
      *     `recording_started_at` returns `no_data_recorded` (422) rather than silently
-     *     substituting REST klines, because tick-accurate construction is impossible there.
+     *     substituting REST klines, because tick-accurate construction is impossible there. That
+     *     problem carries `recording_started_at` (`Problem`), null when nothing was recorded.
      *     **Precedence:** when a non-time window both starts before `recording_started_at` and
      *     exceeds a hard window cap, `no_data_recorded` wins — it is the more
      *     specific data-availability fact, and the client cannot fix it by paginating.
@@ -9652,6 +9653,11 @@ export interface components {
       idle_locked_at?: string;
       /** @description Correlation id, `urn:cv:req:{uuid}`; matches the `X-Correlation-Id` header and the audit entry. */
       instance?: string;
+      /**
+       * Format: date-time
+       * @description `no_data_recorded` from `GET /market/bars` only: when recording of the symbol's trade tape began, so the client can offer the first recorded window; null when nothing was ever recorded for the symbol. Optional, additive (C-6.3).
+       */
+      recording_started_at?: string | null;
       required_permissions?: string[];
       retry_after_seconds?: number;
       /**
@@ -12246,6 +12252,8 @@ export interface components {
     EnvironmentQuery: components["schemas"]["Environment"];
     /** @description Inclusive start of the time window (RFC 3339 UTC). */
     From: string;
+    /** @description Inclusive start of the time window (RFC 3339 UTC), required by `/market/klines` and `/market/bars`: a request without it is refused with 400 `validation_failed`. */
+    FromRequired: string;
     HotkeyProfileId: string;
     /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
     IdempotencyKey: string;
@@ -17400,8 +17408,8 @@ export interface operations {
         bar_type: components["schemas"]["BarType"];
         /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (open time is unique there). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
         cursor?: components["parameters"]["MarketCursor"];
-        /** @description Inclusive start of the time window (RFC 3339 UTC). */
-        from?: components["parameters"]["From"];
+        /** @description Inclusive start of the time window (RFC 3339 UTC), required by `/market/klines` and `/market/bars`: a request without it is refused with 400 `validation_failed`. */
+        from: components["parameters"]["FromRequired"];
         include_delta?: boolean;
         include_open?: boolean;
         /** @description Maximum number of bars returned in one page. */
@@ -17640,8 +17648,8 @@ export interface operations {
       query: {
         /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (open time is unique there). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
         cursor?: components["parameters"]["MarketCursor"];
-        /** @description Inclusive start of the time window (RFC 3339 UTC). */
-        from?: components["parameters"]["From"];
+        /** @description Inclusive start of the time window (RFC 3339 UTC), required by `/market/klines` and `/market/bars`: a request without it is refused with 400 `validation_failed`. */
+        from: components["parameters"]["FromRequired"];
         /** @description Attach per-bar delta/CVD/trade-count (requires recorded tape for the window). */
         include_delta?: boolean;
         include_open?: boolean;

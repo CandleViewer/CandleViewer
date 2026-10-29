@@ -1061,7 +1061,7 @@ x-contract-validation:
       asserts: >
         Every operation is exercised against a live instance; responses conform to the
         declared schemas and status codes; all error bodies validate against `Problem`.
-      status: passing
+      status: partial # getKlines + getBars in process (E12-Q04); the live-instance run is not wired
     - id: runtime_spec_parity
       tool: tools/contracts/check_spec_drift.py
       asserts: >
@@ -4080,7 +4080,7 @@ paths:
           in: query
           required: true
           schema: { $ref: "#/components/schemas/KlineInterval" }
-        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/FromRequired"
         - $ref: "#/components/parameters/To"
         - $ref: "#/components/parameters/BarLimit"
         - $ref: "#/components/parameters/MarketCursor"
@@ -4164,7 +4164,7 @@ paths:
 
         | bar_type      | param meaning                                   | example        |
         |---------------|-------------------------------------------------|----------------|
-        | `time`        | interval string, same enum as `/market/klines`  | `5`            |
+        | `time`        | interval, as `/market/klines` except `M`        | `5`            |
         | `tick`        | trades per bar                                  | `1000`         |
         | `volume`      | base-asset volume per bar                       | `50`           |
         | `range`       | high-low range in ticks                         | `40`           |
@@ -4195,7 +4195,8 @@ paths:
         per response; once it exists, a cursor issued before a swap returns `invalid_cursor`
         and the client restarts. A request whose window starts before
         `recording_started_at` returns `no_data_recorded` (422) rather than silently
-        substituting REST klines, because tick-accurate construction is impossible there.
+        substituting REST klines, because tick-accurate construction is impossible there. That
+        problem carries `recording_started_at` (`Problem`), null when nothing was recorded.
         **Precedence:** when a non-time window both starts before `recording_started_at` and
         exceeds a hard window cap, `no_data_recorded` wins — it is the more
         specific data-availability fact, and the client cannot fix it by paginating.
@@ -4220,7 +4221,7 @@ paths:
           required: true
           description: Bar-type parameter; see the table above.
           schema: { type: string, maxLength: 24, examples: ["1000", "atr:14", "10:3"] }
-        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/FromRequired"
         - $ref: "#/components/parameters/To"
         - $ref: "#/components/parameters/BarLimit"
         - $ref: "#/components/parameters/MarketCursor"
@@ -15358,6 +15359,14 @@ components:
       in: query
       description: Inclusive start of the time window (RFC 3339 UTC).
       schema: { type: string, format: date-time }
+    FromRequired:
+      name: from
+      in: query
+      required: true
+      description: >-
+        Inclusive start of the time window (RFC 3339 UTC), required by `/market/klines` and
+        `/market/bars`: a request without it is refused with 400 `validation_failed`.
+      schema: { type: string, format: date-time }
     To:
       name: to
       in: query
@@ -17174,6 +17183,13 @@ components:
             another session's, never the account's sign-in lockout counter, so it reveals
             nothing beyond what this session has itself been told. A successful step-up starts
             the count again. Optional, additive (C-6.3).
+        recording_started_at:
+          type: ["string", "null"]
+          format: date-time
+          description: >
+            `no_data_recorded` from `GET /market/bars` only: when recording of the symbol's trade
+            tape began, so the client can offer the first recorded window; null when nothing was
+            ever recorded for the symbol. Optional, additive (C-6.3).
     PageMeta:
       type: object
       required: [has_more, count]

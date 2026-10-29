@@ -228,6 +228,12 @@ class Problem(BaseModel):
             le=2,
         ),
     ] = None
+    recording_started_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="`no_data_recorded` from `GET /market/bars` only: when recording of the symbol's trade tape began, so the client can offer the first recorded window; null when nothing was ever recorded for the symbol. Optional, additive (C-6.3).\n"
+        ),
+    ] = None
 
 
 class PageMeta(BaseModel):
