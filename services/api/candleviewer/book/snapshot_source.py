@@ -113,25 +113,45 @@ class BookSnapshotSource[B]:
             return None
         depth = min(sub.topic.depth or eng.depth, eng.depth)
         bids, asks = book.top(depth)
-        ps = _places(steps[0], (lv.price for lv in (*bids, *asks)))
-        qs = _places(steps[1], (lv.qty for lv in (*bids, *asks)))
-        if ps > _MAX_SCALE or qs > _MAX_SCALE:  # before any value is scaled by 10**scale
+        scales = book_scales(steps, bids, asks)
+        if scales is None:
             return None
+        return self.render(eng, depth, bids, asks, eng.last_u, scales)
+
+    def steps(self, symbol: str) -> tuple[Decimal, Decimal] | None:
+        """The symbol's instrument tick and qty step, `None` while unknown."""
+        return self._steps(symbol)
+
+    def render(
+        self,
+        eng: BookEngine,
+        depth: int,
+        bids: tuple[BookLevel, ...],
+        asks: tuple[BookLevel, ...],
+        xu: int,
+        scales: tuple[int, int],
+    ) -> B | None:
+        """The §14.1 body of these levels at `scales` (E21-T01: the book publisher renders the
+        window it holds through it); `None` when a value does not fit its kind-1 field."""
+        xseq = eng.snapshot_cross_seq
+        if xseq is None:
+            return None
+        ps, qs = scales
         records = _records(0, bids, ps, qs) + _records(1, asks, ps, qs)
-        trailer = (eng.last_u, xseq)
+        trailer = (xu, xseq)
         if not _fits(records, trailer):
             return None
-        structured = {"symbol": eng.symbol, "depth": depth, "xu": eng.last_u, "xseq": xseq,
+        structured = {"symbol": eng.symbol, "depth": depth, "xu": xu, "xseq": xseq,
                       "bids": _rows(bids), "asks": _rows(asks)}  # fmt: skip
         return self._body(
-            structured, records, trailer, price_scale=ps, qty_scale=qs, stale=self._is_stale(eng)
+            structured, records, trailer, price_scale=ps, qty_scale=qs, stale=self.is_stale(eng)
         )
 
     def generation(self, sub: BookSub) -> int:
         eng = self._engine(sub)
         if eng is None:
             return 0
-        state = (eng.resync_count, eng.last_u, eng.phase, self._is_stale(eng))
+        state = (eng.resync_count, eng.last_u, eng.phase, self.is_stale(eng))
         seen = self._seen.get(eng)
         if seen is None or seen[0] != state:
             seen = self._seen[eng] = (state, next(self._generations))
@@ -141,14 +161,47 @@ class BookSnapshotSource[B]:
         """Never proven, so every `snapshot: false` attach is forced (see the module docstring)."""
         return False
 
-    def _is_stale(self, eng: BookEngine) -> bool:
+    def is_stale(self, eng: BookEngine) -> bool:
+        """Whether `eng`'s book is behind its freshness SLO (#2487)."""
         return self._stale is not None and self._stale(eng.symbol)
+
+    def engine(self, symbol: str) -> BookEngine | None:
+        """The symbol's active engine."""
+        return self._engines(symbol)
 
     def _engine(self, sub: BookSub) -> BookEngine | None:
         symbol = sub.topic.symbol
         if sub.replay_session_id is not None or symbol is None:
             return None
         return self._engines(symbol)
+
+
+def book_scales(
+    steps: tuple[Decimal, Decimal], bids: tuple[BookLevel, ...], asks: tuple[BookLevel, ...]
+) -> tuple[int, int] | None:
+    """The `(price_scale, qty_scale)` that carry the steps and every level exactly (§3.4), `None`
+    past §14.1's 18: checked before any value is scaled by 10**scale."""
+    ps = _places(steps[0], (lv.price for lv in (*bids, *asks)))
+    qs = _places(steps[1], (lv.qty for lv in (*bids, *asks)))
+    return None if ps > _MAX_SCALE or qs > _MAX_SCALE else (ps, qs)
+
+
+def scaled_records(
+    side: int, levels: Iterable[tuple[Decimal, Decimal]], scales: tuple[int, int]
+) -> tuple[Record, ...] | None:
+    """Kind-1/2 records of `(price, size)` pairs at `scales`, `None` when one is not exact there or
+    does not fit its field (a delta's level then needs a resnapshot at wider scales)."""
+    ps, qs = scales
+    out: list[Record] = []
+    for price, size in levels:
+        p, q = price.scaleb(ps, _EXACT), size.scaleb(qs, _EXACT)
+        if p != p.to_integral_value() or q != q.to_integral_value():
+            return None
+        rec = (side, int(p), int(q))
+        if rec[1] not in _I64 or rec[2] not in _U64:
+            return None
+        out.append(rec)
+    return tuple(out)
 
 
 def _places(step: Decimal, values: Iterable[Decimal]) -> int:
