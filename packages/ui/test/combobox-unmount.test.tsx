@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, type SetStateAction } from "react";
+import type * as ReactModule from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { Combobox, type ComboboxOption } from "../src/index.js";
@@ -10,7 +11,7 @@ import { Combobox, type ComboboxOption } from "../src/index.js";
  */
 const late = vi.hoisted(() => ({ after: false, updates: 0 }));
 vi.mock("react", async (importOriginal) => {
-  const react = await importOriginal<typeof import("react")>();
+  const react = await importOriginal<typeof ReactModule>();
   function useState<S>(initial: S | (() => S)): readonly [S, (next: SetStateAction<S>) => void] {
     const [state, set] = react.useState(initial);
     const counted = react.useCallback(

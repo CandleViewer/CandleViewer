@@ -15,14 +15,18 @@ const REASON = "Read-only while viewing as alex.";
 type HostProps = {
   readonly search?: () => Promise<readonly ComboboxOption[]>;
   readonly prefix?: ReactNode;
+  /** The text the host starts with ("BTC" for the default cell). */
+  readonly initial?: string;
+  /** Local options other than the four symbols (a gated option, a long label). */
+  readonly options?: readonly ComboboxOption[];
 };
 
 /** A host that owns the text, as every consumer does: local symbols, or its own search. */
-function Host({ search, prefix }: HostProps): JSX.Element {
-  const [value, setValue] = useState("");
+function Host({ search, prefix, initial = "", options = SYMBOLS }: HostProps): JSX.Element {
+  const [value, setValue] = useState(initial);
   const source =
     search === undefined
-      ? { options: SYMBOLS }
+      ? { options }
       : { asyncSearch: search, noResultsText: noMatch(value), searchFailedText: FAILED };
   return (
     <FormField label="Symbol">
@@ -58,6 +62,34 @@ const input = (canvasElement: HTMLElement): HTMLElement =>
 const list = (): HTMLElement => page.getByRole("listbox", { name: "Symbol" });
 const statusRow = (text: string): HTMLElement =>
   page.getByText(text, { selector: ".cv-combobox__status span" });
+
+/** Default: "BTC" in the well, the list closed (E05-D02 CMP-048, the default cell). */
+export const Default: Story = {
+  render: () => <Host initial="BTC" />,
+  play: async ({ canvasElement }) => {
+    await expect(input(canvasElement)).toHaveValue("BTC");
+    await expect(input(canvasElement)).toHaveAttribute("aria-expanded", "false");
+  },
+};
+
+/** Hover: the well's hover look; nothing opens. */
+export const Hover: Story = {
+  render: () => <Host initial="BTC" />,
+  play: async ({ canvasElement }) => {
+    await userEvent.hover(input(canvasElement));
+    await expect(input(canvasElement)).toHaveAttribute("aria-expanded", "false");
+  },
+};
+
+/** FocusVisible: reached by Tab, the focus ring on the well; nothing opens. */
+export const FocusVisible: Story = {
+  render: () => <Host initial="BTC" />,
+  play: async ({ canvasElement }) => {
+    await userEvent.tab();
+    await expect(input(canvasElement)).toHaveFocus();
+    await expect(input(canvasElement)).toHaveAttribute("aria-expanded", "false");
+  },
+};
 
 /** Sync: a `search` prefix; local options filter at the settle, the match in body-strong; ↓ leaves it open. */
 export const Sync: Story = {
@@ -115,6 +147,20 @@ export const Invalid: Story = {
   },
 };
 
+/** Disabled (plain): Tab skips the well, and nothing opens. */
+export const Disabled: Story = {
+  render: () => (
+    <FormField label="Symbol">
+      <Combobox options={SYMBOLS} value="BTC" onChange={() => undefined} disabled />
+    </FormField>
+  ),
+  play: async ({ canvasElement }) => {
+    await userEvent.tab();
+    await expect(input(canvasElement)).not.toHaveFocus();
+    await expect(input(canvasElement)).toBeDisabled();
+  },
+};
+
 /** DisabledWithReason: T2 through CMP-079 and CMP-040; the lock leads the value, keys change nothing. */
 export const DisabledWithReason: Story = {
   render: () => (
@@ -131,5 +177,43 @@ export const DisabledWithReason: Story = {
     await expect(input(canvasElement)).toHaveAttribute("aria-expanded", "false");
     await expect(input(canvasElement)).toHaveAccessibleDescription(REASON);
     await expect(within(canvasElement).getByRole("status")).toHaveTextContent(REASON);
+  },
+};
+
+/** A gated option (T2): the lock, the label in the tertiary colour and its reason; reached, never chosen. */
+export const GatedOption: Story = {
+  render: () => (
+    <Host
+      options={[
+        { value: "ETHUSDT", label: "ETHUSDT" },
+        { value: "ETHPERP", label: "ETHPERP", disabledReason: "Not traded on this account." },
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await userEvent.type(input(canvasElement), "eth");
+    await waitFor(() => expect(list()).toBeVisible(), { timeout: 3000 });
+    await expect(page.getByRole("option", { name: "ETHPERP" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  },
+};
+
+/** A long label wraps onto a second line, then truncates. */
+export const LongLabel: Story = {
+  render: () => (
+    <Host
+      options={[
+        {
+          value: "LONG",
+          label: "A long option label that wraps onto a second line and then truncates at the edge",
+        },
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await userEvent.type(input(canvasElement), "long");
+    await waitFor(() => expect(list()).toBeVisible(), { timeout: 3000 });
   },
 };
