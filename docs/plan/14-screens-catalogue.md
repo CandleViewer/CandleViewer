@@ -2733,24 +2733,26 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 
 - **Data:** `GET /api/v1/admin/audit?from&to&actor&action&severity&cursor`, `POST /api/v1/admin/audit/verify` (hash-chain integrity check).
 - **Interactions:** expand a row for the full before/after diff; filter; export CSV/JSON (export is itself audited); jump from any audit row to the related order, rule or user.
-- **States:** loading · empty for filter · integrity verified · **integrity failure** (critical banner: "Audit chain verification failed at 2026-09-10 — contact security"; this is a security incident, not a UI error) · retention notice.
+- **States:** loading · empty for filter · page checked or not fully checked · range verified · **integrity failure** (a critical, non-dismissible banner: "Tamper check FAILED at entry N — treat this as a security incident", with the detection time, the range and how to reach security; this is a security incident, not a UI error, so it offers no retry or dismiss) · new entries · export job (queued, running, ready, failed, lost) · rate-limited · error · retention notice.
 - **Validation:** no edit or delete affordance exists anywhere — the log is append-only by design and this is stated on screen.
 - **A11y:** table semantics; severity in text; diffs rendered as definition lists with before/after labelled.
-- **Performance:** cursor pagination, 200 rows per page, filter round-trip ≤400 ms over 10 M rows.
-- **Audit:** `audit.viewed`, `audit.exported`.
+- **Performance:** keyset pagination with no page number or total, 200 rows per page as `limit=200` (the contract's default is 100, its maximum 500), filter round-trip ≤400 ms over 10 M rows against the server's 4 000 ms stop.
+- **Audit:** `admin.audit_read` (the first read of a filter set: reading the log is itself recorded), `admin.audit_verify`, `admin.audit_export`, `admin.audit_denied`.
 - **Sign-off:** [ ] no mutation affordances [ ] secrets never rendered [ ] integrity failure state designed [ ] export is audited. **Stories:** US-ADMIN-008..010, US-SEC-006.
-- **Components:** CMP-047 DatePicker / DateRangePicker, CMP-049 Table, CMP-087 AdminLayout, CMP-099 PrintExportBar, CMP-173 AuditRow, CMP-174 AuditFilterBar.
+- **Components:** CMP-001 Button, CMP-005 Checkbox, CMP-015 Skeleton, CMP-019 Icon, CMP-023 Progress Bar, CMP-026 EmptyState, CMP-027 ErrorState / InlineError, CMP-028 Callout / Banner, CMP-033 CopyButton, CMP-044 ConfirmDialog, CMP-047 DatePicker / DateRangePicker, CMP-049 Table, CMP-053 Pagination, CMP-079 RbacGate, CMP-087 AdminLayout, CMP-093 AuditActionTrigger, CMP-173 AuditRow, CMP-174 AuditFilterBar.
 - **Stories:** US-ADMIN-008, US-ADMIN-009.
+- **Hi-fi (E42-D04):** columns, filters, keyset paging and new entries, the tamper check and the integrity incident, the signed export as a job, the diff language. See `docs/design/E42/E42-D04.md` §4 and §6–§8.
 - **Design sign-off acceptance checklist:** [ ] columns (time, actor, role, action, target, environment, IP, severity, result) drawn [ ] the before/after diff is reachable from every row [ ] filters (actor, action class, target, severity, date range, environment) and full-text search [ ] the append-only guarantee is stated on the page, with the integrity/verification indicator drawn [ ] export with its own audit event [ ] high-severity rows are distinguishable without colour [ ] empty/filtered-to-nothing state [ ] retention statement
 
 ### SCR-136 — Admin: audit event detail
 
 - **Type:** Drawer. Full event: actor, role at the time, session, IP, user agent, action, target, before/after, request id, correlated events (the same request id across services), and linked artefacts (order, rule version, profile diff).
-- **Components:** CMP-033 CopyButton, CMP-036 KeyValueRow, CMP-046 Drawer, CMP-068 CopyableCodeBlock, CMP-173 AuditRow.
+- **Components:** CMP-001 Button, CMP-019 Icon, CMP-033 CopyButton, CMP-036 KeyValueRow, CMP-046 Drawer, CMP-068 CopyableCodeBlock, CMP-079 RbacGate, CMP-173 AuditRow.
 - **Stories:** US-ADMIN-008, US-ADMIN-010.
 - **A11y:** Detail view is a description list plus a before/after table; the raw record is available in a `<pre>` region with a copy control; severity and result are text.
-- **Performance:** Single-record fetch, <=300 ms; the raw payload is lazily expanded.
-- **Analytics/audit:** `audit.record_viewed` `{recordId}` and `audit.record_exported` - themselves audited, so that reading the audit log is also on the record.
+- **Performance:** No fetch: the drawer renders the entry already on the page (no single-record operation exists); the raw record expands on demand.
+- **Analytics/audit:** opening the drawer calls nothing; the page read that returned the entry was recorded as `admin.audit_read`, so reading the audit log stays on the record.
+- **Hi-fi (E42-D04):** a non-modal drawer with the full field set, the diff as labelled definition lists, links, integrity and the raw record. See `docs/design/E42/E42-D04.md` §5 and §6.
 - **Design sign-off acceptance checklist:** [ ] full field set drawn (actor, role, action, target, before, after, ts, ip, sessionId, environment, correlationId, result) [ ] before/after diff rendering for structured changes [ ] links to the related order, rule, account or user [ ] raw record with copy [ ] 'this record cannot be edited or deleted' stated
 
 ### SCR-137 — Admin: security centre
@@ -2877,13 +2879,14 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 ```
 
 - **Data:** `GET /api/v1/admin/feature-flags`, `PUT /api/v1/admin/feature-flags/{flagKey}`; clients receive changes over `system` and apply them without a reload where possible.
-- **Validation:** `live_trading_enabled` cannot be turned on until the PRR/pen-test gate is satisfied — the toggle is disabled with the blocking reason and a link to SCR-137; turning off a flag that an armed rule depends on lists the affected rules and requires acknowledgement.
+- **Validation:** `trading.live_enabled` has no working control on this screen in either direction: its Change… is disabled with a visible reason (`aria-disabled`, never hidden) and a link to SCR-137, where the live gate lives; turning off a flag that an armed rule depends on lists the affected rules and requires acknowledgement.
 - **States:** applied · rollout in progress (scoped to users/accounts) · blocked by gate · rollback available.
-- **Audit:** `flag.changed` (step-up, high severity). **Stories:** US-ADMIN-012, US-REL-003.
+- **Audit:** `flags.change` (every attempt past RBAC, refused ones included; a success writes an intent and an outcome; severity `warning`), plus `maintenance.enabled|disabled` for `maintenance.mode`. **Stories:** US-ADMIN-012, US-REL-003.
 - **A11y:** Table of flags (key, description, state, scope, last changed by, last changed at); each flag's description explains the user-visible effect in plain language; toggles are labelled with the flag name, not just 'on/off'.
 - **Performance:** Flag changes propagate to all sessions within 2 s over the private channel; flags that require a reload say so and offer a reload action rather than silently taking effect later.
-- **Components:** CMP-004 Toggle, CMP-049 Table, CMP-087 AdminLayout, CMP-093 AuditActionTrigger, CMP-095 FeatureFlagChip, CMP-179 FeatureFlagRow.
+- **Components:** CMP-001 Button, CMP-007 TextInput, CMP-011 Tag / Chip, CMP-015 Skeleton, CMP-019 Icon, CMP-027 ErrorState / InlineError, CMP-028 Callout / Banner, CMP-040 FormField, CMP-044 ConfirmDialog, CMP-049 Table, CMP-054 SearchBox, CMP-079 RbacGate, CMP-087 AdminLayout, CMP-093 AuditActionTrigger, CMP-173 AuditRow, CMP-179 FeatureFlagRow.
 - **Stories:** US-ADMIN-007.
+- **Hi-fi (E42-D04):** the served registry in four groups, one Change per row on the ladder, `trading.live_enabled` blocked with its link, `fail_closed`, `unreadable`, `409` and history. See `docs/design/E42/E42-D04.md` §9.
 - **Design sign-off acceptance checklist:** [ ] every flag with a human description of what it changes [ ] scope (global / per-user / per-account) drawn [ ] risky flags (anything affecting order routing, risk enforcement or audit) are grouped, marked and step-up-gated [ ] the 'requires reload' indicator [ ] change history per flag [ ] search [ ] every toggle confirmed to emit an audit event with before/after
 
 ### SCR-146 — Admin: backups & restore
@@ -2927,10 +2930,11 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 
 - **Type:** Page section + modal. Put the app into maintenance: a banner for all users, new orders blocked, algos paused, recorder optionally kept running; with a scheduled window, a message shown to users, and an explicit statement that native exchange stops remain active.
 - **Audit:** `maintenance.enabled|disabled`. **Stories:** US-REL-004.
-- **A11y:** `role="alertdialog"` for entry; the consequences are a list ('New orders are blocked. Running algos are cancelled. Recording continues. Managers see a maintenance notice.'); typed confirmation.
+- **A11y:** `role="alertdialog"` for entry and exit; the consequences are a list ('New orders are blocked. Running algos are cancelled. Recording continues. Managers see a maintenance notice.'); no typed confirmation (the write has no server-checked token, E42-D02 D15); exit always needs a fresh code.
 - **Performance:** Entering maintenance mode blocks order acceptance server-side within 200 ms and broadcasts the notice to all sessions within 2 s.
-- **Components:** CMP-004 Toggle, CMP-028 Callout / Banner, CMP-044 ConfirmDialog, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
+- **Components:** CMP-001 Button, CMP-007 TextInput, CMP-015 Skeleton, CMP-019 Icon, CMP-027 ErrorState / InlineError, CMP-028 Callout / Banner, CMP-040 FormField, CMP-044 ConfirmDialog, CMP-047 DatePicker / DateRangePicker, CMP-065 FormSection, CMP-079 RbacGate, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
 - **Stories:** US-ADMIN-007, US-ADMIN-011.
+- **Hi-fi (E42-D04):** entry on rung 2 and exit on rung 4, the consequence list and what stays available, the notice for every role, fail-closed. See `docs/design/E42/E42-D04.md` §10.
 - **Design sign-off acceptance checklist:** [ ] entry and exit flows with their own confirmations [ ] the exact consequence list drawn [ ] a scheduled-window option with an advance notice to users [ ] the manager/viewer-facing maintenance notice drawn [ ] open positions and their protection during maintenance stated explicitly [ ] step-up gate
 
 ### SCR-149 — Admin re-authentication gate
