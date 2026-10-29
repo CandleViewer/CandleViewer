@@ -6,13 +6,14 @@ order-flow views a discretionary trader reads (footprint, volume and delta profi
 liquidity heatmap, big trades, Deep Stats). Behind it sits a complete execution loop (order ticket,
 chart and DOM trading, brackets, emulated OCO, iceberg, TWAP and chase, multi-account trade-group
 fan-out), a rule engine, paper trading on Bybit demo, recording and deterministic replay, a journal,
-and RBAC-gated owner and admin screens inside the same web app. It moves real money, so its safety
-properties are numbered invariants in [`CONSTITUTION.md`](CONSTITUTION.md), enforced in code and
-checked in CI.
+and RBAC-gated owner and admin screens inside the same web app. It is built to move real money, so
+its safety properties are numbered invariants in [`CONSTITUTION.md`](CONSTITUTION.md), enforced in
+code and checked in CI. The project is pre-release: no release train has been cut yet (see Status
+and roadmap below).
 
 ![The CandleViewer terminal: LIVE badge, account and workspace pickers, the FLATTEN ALL, CANCEL ALL and FREEZE safety cluster, health chips, a BTCUSDT one-minute candle chart with the symbol and interval switcher open, and the kill switch in the status bar](docs/readme/img/01-workspace-chart.png)
 
-_SCR-020 workspace hosting a SCR-030 chart with the SCR-041 symbol and interval switcher open — E12-D04, frame 2 of board 01 (an approved design board, not a screenshot)._
+_SCR-020 workspace hosting a SCR-030 chart with the SCR-041 symbol and interval switcher open — E12-D04, frame 2 of board 01 (a merged design board, not a screenshot)._
 
 ## What it is, and what it is not
 
@@ -57,7 +58,7 @@ those documents and the Constitution win.
 
 ```mermaid
 flowchart TB
-  subgraph client["Client: browser or Electron, over Tailscale only"]
+  subgraph client["Client: browser or Electron (loopback, or Tailscale when remote)"]
     direction LR
     shell["apps/desktop: Electron shell"] --> spa["apps/web: React + TS SPA"] --> engine["packages/chart-engine: WebGL2 worker"]
   end
@@ -67,8 +68,9 @@ flowchart TB
     edge["api · ws · auth"]
     edge --> exec["oms · risk · rules, paper (planned)"]
     edge <--> bus(["bus"])
-    edge --> platform["statechart · admin · secrets · audit · observability"]
+    edge --> platform["statechart · admin · audit · observability"]
     exec -->|"orders + native stop-loss"| adapter["exchange/bybit: the only Bybit-aware code"]
+    adapter -->|"signs via"| secrets["secrets: sign() and key metadata"]
     bus <--> history["recorder · replay · storage"]
     adapter -->|"normalised events"| market["ingestion · book · bars · orderflow"]
     market --> bus
@@ -104,20 +106,20 @@ flowchart TB
   adapter --> ing["ingestion: sequence checks"]
   ing --> book["book: L2 snapshot + deltas"]
   ing --> bars["bars: time, tick, volume, range, renko"]
-  ing --> rec["recorder: QuestDB, then Parquet"]
   book --> flow["orderflow: footprint, profiles, CVD, heatmap"]
   bars --> flow
   book --> bus(["bus"])
   bars --> bus
   flow --> bus
+  bus --> rec["recorder: QuestDB, then Parquet"]
   bus --> ws["ws: snapshot, then sequenced deltas"]
   ws -->|"binary frames"| client["apps/web WS client"]
   client -->|"transferable typed arrays"| worker["chart engine worker: OffscreenCanvas + WebGL2"]
 ```
 
 - Both hops are snapshot-then-delta with sequence numbers; any gap drops the state and re-snapshots
-  (C-2.5). A slow consumer gets coalesced state or a fresh snapshot, never an unbounded queue
-  (C-2.18).
+  (C-2.5). A slow consumer gets coalesced state or a fresh snapshot, or is disconnected with a
+  reason code, never an unbounded queue (C-2.18).
 - Replay re-emits recorded events into the same book, bars and order-flow code, so a replay is
   byte-identical across runs (C-2.15).
 - The engine has no React, no network and no exchange knowledge (C-2.16). Prices reach it as integer
@@ -148,12 +150,14 @@ Orders come from the ticket, a chart or the DOM; rule actions enter the same OMS
 A trade-group ticket fans out into one such order per selected account, each sized by that
 account's profile and each carrying its own native stop. The gates before the send are direct
 checks, never statecharts (C-2.21); the `orderLinkId` (C-2.10) is minted before the write-ahead
-persist and audit record (C-2.9), and retries reuse it. Live orders go over Bybit's WS trade channel
-and demo orders over REST (C-2.11). The private stream is the source of truth: a send whose outcome
-is unknown is settled by reconciliation (at startup, after a reconnect and periodically), never by a
-blind re-send, and a position whose exchange-side stop does not appear in time gets it re-attached
-or is closed reduce-only. The full sequence, including per-account rate budgets, is
-[`20-architecture.md`](docs/plan/20-architecture.md) §10.2.
+persist and audit record (C-2.9), and retries reuse it. Live orders go over Bybit's WS trade
+channel, with REST as the fallback, and demo orders over REST only
+([`20-architecture.md`](docs/plan/20-architecture.md) §1.1, §7.1). The private stream is the source
+of truth: a send whose outcome is unknown is settled by reconciliation (at startup, after a
+reconnect and periodically), never by a blind re-send, and a position whose exchange-side stop does
+not appear in time gets it re-attached or is closed reduce-only. The step order is the submission
+pipeline of [`24-internal-schemas.md`](docs/plan/24-internal-schemas.md) §8.4; the fan-out and the
+per-account rate budgets are [`20-architecture.md`](docs/plan/20-architecture.md) §10.2.
 
 ### The safety ring
 
@@ -164,15 +168,16 @@ flowchart LR
   wd["C-2.8: no withdrawal or transfer permission, ever"] --- core
   env["C-2.11: demo and live never mix"] --- core
   core --- au["C-2.9: every order, auth and key action audited, append-only"]
-  core --- rbac["C-12.4: RBAC enforced server-side"]
-  core --- sc["C-2.21: statecharts record, synchronous code enforces"]
+  core --- rbac["C-2.12 / C-12.4: RBAC and risk enforced server-side"]
+  core --- rr["C-12.7: a rate-limit reserve for stop, cancel and flatten"]
 ```
 
-No flag, configuration or role can switch any of these off (C-4.14). At startup the backend checks
-every stored key and refuses trading mode if one can withdraw or transfer or lacks an IP allowlist,
-and a Semgrep rule keeps withdrawal endpoints out of the code (C-2.8). API keys are
-envelope-encrypted at rest and exist in plaintext only inside the secrets module, at the moment of
-signing (C-2.7).
+The six are the invariants that [`AGENTS.md`](AGENTS.md) §8 (item 8) forbids removing or bypassing.
+No feature flag can switch off the native stop, RBAC, audit or the withdrawal check (C-4.14). At
+startup the backend checks every stored key and refuses trading mode if one can withdraw or
+transfer or lacks an IP allowlist, and a Semgrep rule keeps withdrawal endpoints out of the code
+(C-2.8). API keys are envelope-encrypted at rest and exist in plaintext only inside the secrets
+module, at the moment of signing (C-2.7).
 
 **Lifecycles as statecharts.** Twenty long-lived lifecycles (orders, trade groups, the emulated
 algos, sessions, the kill switch, reconciliation and more) are JSON statechart contracts in
@@ -186,9 +191,10 @@ aggregation, per-tick rule evaluation) is ever a statechart (C-2.20).
 
 ## The gallery
 
-Approved design boards from [`docs/design/`](docs/design/), drawn in Penpot, cropped here to one
-frame and down-scaled. They are the build contract for screens still being implemented, not
-screenshots of the running app. Screen ids follow
+Merged design boards (their tickets are closed as completed) from [`docs/design/`](docs/design/),
+drawn in Penpot, cropped here to one frame and down-scaled. They are the build contract for screens
+still being implemented, not screenshots of the running app. The footprint, heatmap and DOM screens
+are not shown: they have no merged hi-fi board yet. Screen ids follow
 [`docs/plan/14-screens-catalogue.md`](docs/plan/14-screens-catalogue.md).
 
 ![Chart settings dialog, General tab: nine chart types with one-line descriptions, a live BTCUSDT preview, six bar modes and the apply-to choice](docs/readme/img/02-chart-settings.png)
@@ -199,9 +205,9 @@ _SCR-031 chart settings, General tab: nine chart types, six bar modes and a live
 
 _SCR-053 tape docked beside a SCR-030 chart with the big-trade bubbles on, each heuristic marked (estimated) — E22-D03, frame 1 of board 01._
 
-![Confirm 3 of 4 legs: a LIVE order fanned out to three accounts, each row with its profile, size, leverage, exchange-held stop, risk and margin; the fourth account is excluded with its reason](docs/readme/img/04-fanout-confirm.png)
+![Confirm 3 of 4 legs: a LIVE order fanned out to three accounts, each sent leg with its profile, size, leverage, exchange-held stop, risk and margin; the excluded account shows its reason](docs/readme/img/04-fanout-confirm.png)
 
-_SCR-076 order confirmation for a trade-group fan-out: every leg with its account, size and exchange-held stop before anything is sent — E30-D03, frame 1 of board 03._
+_SCR-076 order confirmation for a trade-group fan-out, before anything is sent: each sent leg with its exchange-held stop; the excluded account shows its reason — E30-D03, frame 1 of board 03._
 
 ![Positions grid grouped by account, with side, size, entry, mark, unrealised and realised PnL, liquidation distance, the stop-loss of each position and a close action](docs/readme/img/05-positions-blotter.png)
 
@@ -263,10 +269,10 @@ walkthrough is [`docs/plan/qa/first-hour-checklist.md`](docs/plan/qa/first-hour-
 `Closes #N`, ideally under 400 changed lines (C-4.8). A PR merges only when every required check is
 green, and the check names and what each enforces live in one place only, CONSTITUTION §9 (C-9.1).
 Coverage stays at or above floors that are never lowered in the PR that fails them (C-9.4). Every
-PR needs two independent approving reviews (C-10.1), a security review on security paths (C-10.2)
-and, for a design PR, the owner's approval; it then squash-merges through the merge queue
-([`docs/plan/01-sdlc-and-branching.md`](docs/plan/01-sdlc-and-branching.md) §7). Tests never touch
-a live exchange: they replay recorded, redacted Bybit fixtures (C-13.5).
+PR needs two independent approving reviews; on a security path one of the two is the security
+review (C-10.1(b), C-10.2), and a design PR also needs the owner's approval. It then squash-merges
+through the merge queue ([`docs/plan/01-sdlc-and-branching.md`](docs/plan/01-sdlc-and-branching.md)
+§7). Tests never touch a live exchange: they replay recorded, redacted Bybit fixtures (C-13.5).
 
 ## Status and roadmap
 
@@ -295,6 +301,9 @@ mechanics, the production readiness review and the live-enablement gate are in
 | R3 Trading on demo | S14–S19 | 2026-12-25 → 2027-02-04 | accounts and keys, ticket, chart and DOM trading, algos, fan-out, rules, journal, admin |
 | R4 Live enablement | S20–S22 | 2027-02-05 → 2027-02-25 | pen-test, PRR, kill switch, key audits, live gating                                     |
 | R5 Hardening / GA  | S23–S26 | 2027-02-26 → 2027-03-25 | performance, accessibility, chaos, docs, GA                                             |
+
+Dates from [`30-release-roadmap.md`](docs/plan/30-release-roadmap.md) §1.1 (source:
+`docs/plan/backlog/_tools/calendar_cv.py`).
 
 **GA target: 2027-03-25.** Live progress is on the
 [sprint board](https://github.com/orgs/CandleViewer/projects/3).
