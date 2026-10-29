@@ -15,6 +15,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
 from uuid import UUID
 
@@ -238,6 +239,22 @@ def _authorship(actor: Actor, at_us: int) -> dict[str, Any]:
     `created_by`, as `_owner_field` reads an owner."""
     by = _owner_field(actor.user_id).get("created_by")
     return {"created_by": by, "created_at": at_us, "updated_at": at_us}
+
+
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _saved_at(ir: Any) -> str | None:
+    """When a stored version was saved, as RFC 3339 UTC to the microsecond with `Z`: the
+    `updated_at` its authorship carries (`_authorship`). None when it holds no readable time."""
+    us = ir.get("updated_at") if isinstance(ir, dict) else None
+    if type(us) is not int:
+        return None
+    try:
+        at = _EPOCH + timedelta(microseconds=us)
+    except OverflowError:
+        return None
+    return at.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 _DRAFT_TO_ARMED = (
@@ -725,16 +742,15 @@ class RulesManager:
         await self._guard_system(row, actor, "update")
         if expected_version != row.latest_version:
             self._metric("rule_save_conflicts_total", {})
+            saved = next((v.ir for v in row.versions if v.version == row.latest_version), None)
+            # The conflict response carries only the version and the time.
             raise RuleError(
                 412,
                 "version_conflict",
-                f"Another editor (session {row.last_session}) saved version "
-                f"{row.latest_version} since you opened this rule. "
+                f"Version {row.latest_version} of this rule was saved since you opened it. "
                 "Reload it and reapply your changes.",
-                conflicting_version=row.latest_version,
-                author=row.last_editor,
-                session=row.last_session,
-                action="reload_and_reapply",
+                version=row.latest_version,
+                updated_at=_saved_at(saved),
                 title="If-Match / ETag precondition failed",  # 22's `PreconditionFailed` (#4674)
             )
         rule, h = self._validated(

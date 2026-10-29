@@ -4,7 +4,8 @@ G-6: an action param naming an account takes the walker's spelling (the catalogu
 the walker reads every value an account key holds wherever an action's params take any JSON. G-10:
 an import keeps each account reference the importer is granted, as written, and refuses a bundle
 naming any other. G-14: a rule's name conflicts only with a rule its caller owns or may read. G-15:
-a quarantined rule's view carries its stored IR only in the form an export carries it.
+a quarantined rule's view carries its stored IR only in the form an export carries it. The conflict
+response carries only the version and the time.
 """
 
 from __future__ import annotations
@@ -218,6 +219,47 @@ async def test_a_name_a_rule_the_caller_may_read_or_owns_holds_is_still_a_confli
         with pytest.raises(RuleError) as taken:
             await m.create(_ir(name=name), actor)
         assert (taken.value.status, taken.value.code) == (409, "name_taken")
+
+
+# ----- the conflict response carries only the version and the time ---------------------------
+SAVED_US, SAVED_AT = 1_790_000_000_123_456, "2026-09-21T14:13:20.123456Z"
+PRECONDITION = "If-Match / ETag precondition failed"  # 22's `PreconditionFailed` title
+
+
+@pytest.mark.parametrize("owner_writes", [True, False])
+async def test_a_conflict_after_another_users_save_carries_only_the_version_and_the_time(
+    owner_writes: bool,
+) -> None:
+    """The conflict response carries only the version and the time: after another user saves a
+    version, a stale save is answered with that version and the time it was saved."""
+    now = [1_000_000]
+    m = RulesManager(InMemoryRuleStore(), default_registry(), now_us=lambda: now[0])
+    owner_a = _manager(USER_A, A)
+    writer, stale_saver = (OWNER, owner_a) if owner_writes else (owner_a, OWNER)
+    rid = (await m.create(_ir(name="mine"), owner_a))["id"]
+    now[0] = SAVED_US
+    await m.update(rid, _ir("2", name="mine"), 1, writer)
+    with pytest.raises(RuleError) as stale:
+        await m.update(rid, _ir("3", name="mine"), 1, stale_saver)
+    assert (stale.value.status, stale.value.code) == (412, "version_conflict")
+    assert stale.value.extra == {"version": 2, "updated_at": SAVED_AT, "title": PRECONDITION}
+    answer = json.dumps([stale.value.message, stale.value.extra])
+    assert writer.user_id not in answer and writer.session_id not in answer
+
+
+@pytest.mark.parametrize("held", [None, "soon", True, 10**18])
+async def test_a_conflict_on_a_version_holding_no_readable_time_carries_none(held: Any) -> None:
+    """A stored version whose `updated_at` is missing, not an integer or out of range answers a
+    stale save with its version and no time."""
+    m, _ = _mgr()
+    rid = (await m.create(_ir(name="t"), OWNER))["id"]
+    await m.update(rid, _ir("2", name="t"), 1, OWNER)
+    row = await m._s.get(rid)
+    assert row is not None
+    row.versions[-1].ir["updated_at"] = held
+    with pytest.raises(RuleError) as stale:
+        await m.update(rid, _ir("3", name="t"), 1, OWNER)
+    assert (stale.value.extra["version"], stale.value.extra["updated_at"]) == (2, None)
 
 
 # ----- G-15: a quarantined rule's view is the export form only --------------------------------

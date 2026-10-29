@@ -138,7 +138,7 @@ async def test_arming_live_is_audited_with_ir_hash_and_broadcast_first() -> None
     assert any(a == "rule.mode_refused" for a, _ in audits)
 
 
-async def test_concurrent_edit_is_rejected_naming_other_session() -> None:
+async def test_concurrent_edit_is_rejected_with_the_saved_version() -> None:
     """Scenario: Concurrent edits never silently overwrite"""
     m, _, _ = _mgr()
     rid = (await m.create(_ir(), OWNER))["id"]
@@ -147,8 +147,7 @@ async def test_concurrent_edit_is_rejected_naming_other_session() -> None:
     with pytest.raises(RuleError) as e:
         await m.update(rid, _ir("3"), 1, other)
     assert e.value.status == 412 and e.value.code == "version_conflict"
-    assert e.value.extra["session"] == "s1"
-    assert e.value.extra["action"] == "reload_and_reapply"
+    assert e.value.extra["version"] == 2
 
 
 async def test_unchanged_save_creates_nothing() -> None:
@@ -412,17 +411,23 @@ class _CopyStore(InMemoryRuleStore):
         return [copy.deepcopy(r) for r in await super().all()]
 
 
-async def test_conflict_names_session_after_service_rebuild_from_store() -> None:
-    """Session A edits; a service rebuilt over the same store still names A on a stale edit."""
+async def test_conflict_carries_the_stored_version_and_time_after_service_rebuild_from_store() -> (
+    None
+):
+    """A version is saved; a service rebuilt over the same store answers a stale edit with that
+    version and the time it was saved."""
     store = _CopyStore()
-    m = RulesManager(store, default_registry())
+    m = RulesManager(store, default_registry(), now_us=lambda: 1_790_000_000_123_456)
     rid = (await m.create(_ir(), OWNER))["id"]
     await m.update(rid, _ir("2"), 1, OWNER)
     rebuilt = RulesManager(store, default_registry())
     other = Actor("u3", "s-other", frozenset(), is_owner=True)
     with pytest.raises(RuleError) as e:
         await rebuilt.update(rid, _ir("3"), 1, other)
-    assert e.value.extra["session"] == "s1"
+    assert (e.value.extra["version"], e.value.extra["updated_at"]) == (
+        2,
+        "2026-09-21T14:13:20.123456Z",
+    )
 
 
 def _res(rid: str, fired: bool, ts: int = 0, **kw: Any) -> Any:
