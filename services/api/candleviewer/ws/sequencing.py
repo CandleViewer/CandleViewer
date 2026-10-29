@@ -41,6 +41,11 @@ import structlog
 
 from candleviewer.auth.generated_permissions import Scope
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
+
+# §16.2 (G-03): the heatmap's column cap has one home, the producer's (#605); re-exported here.
+from candleviewer.orderflow.heatmap import (
+    HEATMAP_SNAPSHOT_MAX_COLUMNS as HEATMAP_SNAPSHOT_MAX_COLUMNS,
+)
 from candleviewer.ws._generated.cvwb_layout import HEADER, KINDS
 from candleviewer.ws.binary import (
     FLAG_COALESCED,
@@ -130,7 +135,6 @@ SP_ROOM: Final = "f" * (2 * SPAN_ID_BYTES)
 #: and the longest `meta.reason`: the width a snapshot envelope is sized at (`_widest`).
 _WIDEST: Final = 2**64
 _LONGEST_REASON: Final = max(SNAP_REASONS, key=len)
-HEATMAP_SNAPSHOT_MAX_COLUMNS: Final = 2000  # §6.1.1
 SNAPSHOT_CACHE_MAX: Final = 4096
 #: §16.1 S5: causal order across private topics for one account event.
 PRIVATE_CAUSAL_ORDER: Final[tuple[str, ...]] = ("executions", "orders", "positions", "trade_groups")

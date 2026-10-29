@@ -329,7 +329,8 @@ def test_book_snapshots_come_from_the_book_module(world: tuple[TestClient, _Kill
     assert isinstance(router._sources["book"], BookTopic)
 
 
-@pytest.mark.parametrize("ch", ["heatmap.BTCUSDT", "book.BTCUSDT.50"])  # a stub; no live book
+# a stub (`profile`, #2197); no live book. `heatmap` is served since #605, behind the byte budget.
+@pytest.mark.parametrize("ch", ["profile.BTCUSDT.volume", "book.BTCUSDT.50"])
 def test_pending_snapshot_adapter_reports_pending_not_crash(
     world: tuple[TestClient, _Kill], ch: str
 ) -> None:

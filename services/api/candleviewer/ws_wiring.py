@@ -63,11 +63,12 @@ from candleviewer.ingestion.metrics import (
 from candleviewer.ingestion.ticker_topic import TickerTopic
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
+from candleviewer.orderflow.heatmap import HeatmapStore, HeatmapTopic
 from candleviewer.recorder.ws_topic import RecorderTopic
 from candleviewer.rules.manager import Actor, RuleRow, rule_visible
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws import permissions as ws_permissions
-from candleviewer.ws.binary import BOOK_DELTA, BOOK_SNAPSHOT, Frame
+from candleviewer.ws.binary import BOOK_DELTA, BOOK_SNAPSHOT, FLAG_ESTIMATED, HEATMAP_COLUMN, Frame
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
 from candleviewer.ws.machines import MachineStateRegistry
@@ -100,7 +101,6 @@ PRINCIPAL_LOAD_TIMEOUT_S: Final = 5.0
 #: Topic family -> owning-module adapter ticket, for families whose adapter has not landed.
 PENDING_ADAPTERS: Final[Mapping[str, str]] = {
     "footprint": "#2197",
-    "heatmap": "#2197",
     "profile": "#2197",
     "metrics": "#2197",
 }
@@ -153,7 +153,7 @@ def ingestion_streams(ctx: AppContext) -> Callable[[str], _Demand | None]:
         ing = ctx.ingestion
         if family in ("trades", "bars", "indicators"):
             return ing.trades
-        if family == "book":
+        if family in ("book", "heatmap"):  # E21-T02: the heatmap samples the book's tier
             return ing.books
         if family == "ticker":
             return ing.tickers
@@ -293,6 +293,54 @@ def book_topic(ctx: AppContext, hub: SequencingHub) -> BookTopic[SnapshotBody]:
         env=ctx.settings.environment.value,
         publish_latency=_observe_publish,
         active=_set_active,
+    )
+
+
+def heatmap_part(
+    ts_ms: int,
+    price_min: int,
+    price_step: int,
+    rows: tuple[tuple[int, int], ...],
+    price_scale: int,
+    qty_scale: int,
+    estimated: bool,
+) -> Frame:
+    """One heatmap column's CVWB kind-6 twin (23 §3.4): one column per frame, its own time base."""
+    return Frame(
+        HEATMAP_COLUMN,
+        rows,
+        FLAG_ESTIMATED if estimated else 0,
+        price_scale,
+        qty_scale,
+        ts_base_ms=ts_ms,
+        prefix=(0, price_min, price_step),
+    )
+
+
+def heatmap_topic(
+    ctx: AppContext,
+    hub: SequencingHub,
+    *,
+    queue_bytes: int,
+    queue_frames: int,
+    store: HeatmapStore | None = None,
+) -> HeatmapTopic:
+    """E21-T02 (#605): the `heatmap` family's engine, leases, snapshot source and publisher over
+    the live book (resolved per call: attached only with the public WS) and its bus topic, with
+    the instrument steps (24 §6.5) and the outbound budget its snapshot bound reads (G-03, 23
+    §6.1); native columns go to `store` (`heatmap_cells`, 21 §4.12). `WsRuntime` runs it."""
+    source = book_snapshot_source(ctx)
+    return HeatmapTopic(
+        hub,
+        engine=source.engine,
+        steps=source.steps,
+        part=heatmap_part,
+        body=SnapshotBody,
+        bus=ctx.bus.bus,
+        env=ctx.settings.environment.value,
+        queue_bytes=queue_bytes,
+        queue_frames=queue_frames,
+        store=store,
     )
 
 

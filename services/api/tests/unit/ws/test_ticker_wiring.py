@@ -19,6 +19,7 @@ from candleviewer.bus.models import Topic
 from candleviewer.domain.events import InstrumentUpdatedEvent, uuid7
 from candleviewer.domain.primitives import EventId
 from candleviewer.ingestion.ticker_topic import TickerTopic
+from candleviewer.orderflow.heatmap import HeatmapTopic
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.trades_publish import TradesTopic
 from candleviewer.ws.upstream import UpstreamRefs
@@ -42,7 +43,9 @@ def test_create_app_serves_ticker_from_the_ingestion_adapter_and_gives_the_runti
     sources = app.state.ws_registry.services.snapshots._sources
     feeds = app.state.ws_runtime.feeds
     assert "ticker" not in PENDING_ADAPTERS and isinstance(sources["ticker"], TickerTopic)
-    assert [type(f) for f in feeds] == [TickerTopic, InstrumentRevisions, TradesTopic, BookTopic]
+    assert [type(f) for f in feeds] == [
+        TickerTopic, InstrumentRevisions, TradesTopic, BookTopic, HeatmapTopic,
+    ]  # fmt: skip
     assert feeds[0] is sources["ticker"] and feeds[3] is sources["book"]  # E21-T01 (#604)
 
 

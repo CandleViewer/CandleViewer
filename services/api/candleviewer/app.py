@@ -332,6 +332,7 @@ from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySi
 from candleviewer.oms.service import OmsService
 from candleviewer.oms_wiring import InterimKillSwitch, OmsAudit, OmsRuntime, build_oms_runtime
 from candleviewer.orderbook_wiring import BookStream
+from candleviewer.orderflow.heatmap_metrics import export_heatmap_metrics
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
 from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
@@ -399,6 +400,7 @@ from candleviewer.storage.cold.observability import LoggingSystemEventSink
 from candleviewer.storage.cold.scrub import ScrubTask
 from candleviewer.storage.cold.watermarks import FileWatermarkStore
 from candleviewer.storage.models import StreamKind, TimeRange
+from candleviewer.storage.questdb.heatmap_store import QuestDbHeatmapStore
 from candleviewer.storage.questdb.wiring import LazyPgWire, QuestDbRowSink
 from candleviewer.storage.repositories.account_access_sqlalchemy import (
     SqlAlchemyAccountAccessStore,
@@ -527,6 +529,7 @@ from candleviewer.ws_wiring import (
     alerts_topic,
     book_topic,
     default_snapshot_router,
+    heatmap_topic,
     ingestion_streams,
     loop_call_later,
     recorder_topic,
@@ -1788,6 +1791,17 @@ def create_app(
     # E21-T01 (#604): the book module's `book` topics, snapped from the window each holds over the
     # live book and published in the publisher's own window per depth; the runtime's, as above.
     ws_book = book_topic(ctx, ws_sequencing)
+    # E21-T02 (#605): the order-flow module's `heatmap` topic, built from the live book every
+    # 100 ms; its native columns go to `heatmap_cells` on the real backend. Served only with the
+    # byte budget on (G-04, `heatmap_off` below); the runtime's, as above.
+    ws_heatmap = heatmap_topic(
+        ctx,
+        ws_sequencing,
+        queue_bytes=resolved.ws_queue_bytes,
+        queue_frames=resolved.ws_queue_frames,
+        store=_build_heatmap_store(resolved),
+    )
+    snapshot_adapters["heatmap"] = ws_heatmap
     ws_revisions = InstrumentRevisions(
         ctx.bus.bus, resolved.environment.value, ws_sequencing.instrument_revision
     )
@@ -1801,6 +1815,7 @@ def create_app(
         series=bars_series,
         indicators=indicators,
         trades=ws_trades,
+        heatmap=ws_heatmap,
         snapshots=default_snapshot_router(
             {"machines": machine_states, "book": ws_book, **snapshot_adapters}
         ),
@@ -1808,6 +1823,7 @@ def create_app(
         bars_off=not resolved.bars_enabled,
         max_deep_book_subs=resolved.ws_max_deep_book_subs,  # E21-T01 (23 §16.2)
         depth_500=resolved.heatmap_depth_500,
+        heatmap_off=not resolved.ws_backpressure_enabled,  # E21-T02 G-04 (23 §6.1)
         machines=machine_states,
         # E17-T06: a span id (`sp`, 23 §3.1) on each sampled frame while latency telemetry is on.
         span_ids=new_span_id if resolved.telemetry_enabled else None,
@@ -1835,7 +1851,7 @@ def create_app(
         ws_upstream,
         resolved,
         machines=machine_states,
-        feeds=(ws_ticker, ws_revisions, ws_trades, ws_book),
+        feeds=(ws_ticker, ws_revisions, ws_trades, ws_book, ws_heatmap),
     )
     # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, off by default. Without a config
     # the gateway keeps its 1 024-frame push bound: the flag swaps the bound, never removes it.
@@ -2216,6 +2232,8 @@ def create_app(
     )
     # E12-T03: bars series (builders + BarBuilderSet) on the scraped registry.
     app.state.bars_metrics = export_bars_metrics(ctx.metrics, env=resolved.environment.value)
+    # E21-T02: the heatmap engine's series (missed columns, emitted, latency, leases).
+    app.state.heatmap_metrics = export_heatmap_metrics(ctx.metrics, env=resolved.environment.value)
     # E13-T02: the indicator engine's series (instances, recomputes, caps).
     app.state.indicator_metrics = export_indicator_metrics(
         ctx.metrics, env=resolved.environment.value
@@ -3673,6 +3691,21 @@ async def _no_rebuild_executor(symbol: str, spec_hash: str, from_us: int, to_us:
     """Stale-`build_version` rebuilds have no executor yet (E12-T02 schedules, nothing runs
     them); logged so a stale series is visible. TODO(#2017): wire the rebuild worker."""
     structlog.get_logger("candleviewer.bars").info("bars_rebuild_unexecuted", spec_hash=spec_hash)
+
+
+def _build_heatmap_store(settings: Settings) -> QuestDbHeatmapStore | None:
+    """E21-T02 (#605): `heatmap_cells` over its own hot-tier ILP writer on the `real` storage
+    backend (21 §4.12); `None` (nothing stored) otherwise. Connects lazily - no I/O here."""
+    if settings.storage_backend != "real":
+        return None
+    return QuestDbHeatmapStore(
+        QuestDbRowSink(
+            settings.questdb_ilp,
+            settings.questdb_pg,
+            settings.questdb_pg_user,
+            settings.questdb_pg_password.get_secret_value(),
+        )
+    )
 
 
 def _build_bars_sink(settings: Settings) -> QuestDbRowSink | None:

@@ -64,9 +64,12 @@ def diff(
 
 def numbers(cell: str) -> list[float]:
     """The quantities a cell states, in order and in base units (`256 KiB` is 262144). References
-    (`§4.4`, `SR-E12-07`, `#2176`), code spans and a bracket's reasoning are not quantities."""
+    (`§4.4`, `SR-E12-07`, `#2176`, a ticket key such as E21-X02), code spans and a bracket's
+    reasoning are not quantities."""
     text = cell.replace("2\u00b3\u00b2\u22121", str(2**32 - 1)).replace("\u202f", " ")
-    text = re.sub(r"`[^`]*`|§\s?[\d.]+|SR-[A-Z0-9-]+|#\d+|\([^)]*§[^)]*\)", " ", text)
+    text = re.sub(
+        r"`[^`]*`|§\s?[\d.]+|SR-[A-Z0-9-]+|\bE\d{2}-[A-Z]\d{2}\b|#\d+|\([^)]*§[^)]*\)", " ", text
+    )
     units = {"KiB": 1024, "MiB": 1024**2}
     return [
         int(m[1].replace(" ", "")) * units.get(m[2] or "", 1)
@@ -176,6 +179,11 @@ def _instance_cap(name: str) -> Callable[[], float]:
     )
 
 
+def _heatmap(name: str) -> Callable[[], float]:
+    """A bound of the heatmap producer (`orderflow/heatmap.py`, #605), which the gateway asks."""
+    return lambda: getattr(importlib.import_module("candleviewer.orderflow.heatmap"), name)
+
+
 def _unthrottled() -> float:
     from candleviewer.ws.topics import FAMILIES
 
@@ -192,6 +200,14 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
     "Max `bars.*` / connection": "limits.MAX_BARS_SUBSCRIPTIONS",
     "Max deep `book.*` / connection": "limits.MAX_DEEP_BOOK_SUBSCRIPTIONS "
     "limits.DEEP_BOOK_MIN_DEPTH",
+    # #605 (E21-T02): the spec caps (G-02) and the snapshot column cap (G-03); the server row's
+    # second quantity is its "x 16 B", a kind-6 row.
+    "Max `heatmap.*` specs / symbol": [_heatmap("HEATMAP_MAX_SPECS_PER_SYMBOL")],
+    "Max `heatmap.*` specs / server": [
+        _heatmap("HEATMAP_MAX_SPECS_PER_SERVER"),
+        _heatmap("ROW_BYTES"),
+    ],
+    "`heatmap` snapshot bound": [_heatmap("HEATMAP_SNAPSHOT_MAX_COLUMNS")],
     "`indicators` server instances": [
         _items("indicators", "instances"),
         _instance_cap("INSTANCE_CAP_PER_USER"),
@@ -240,27 +256,11 @@ def _probe(module: str, word: str) -> Callable[[], bool]:
     )
 
 
-def _heatmap_names(word: str) -> bool:
-    """True once the heatmap producer (`orderflow/heatmap.py`, #605) or `ws.limits` names a cap."""
-    for module in ("candleviewer.orderflow.heatmap", "candleviewer.ws.limits"):
-        try:
-            names = vars(importlib.import_module(module))
-        except ModuleNotFoundError:
-            continue
-        if any(word in n for n in names if n.isupper()):
-            return True
-    return False
-
-
 #: 16.2 rows the contract states and no code enforces yet: the owning ticket, and a probe that is
 #: true once code for it exists (the row must then be mapped above, so this list cannot rot).
-#: The deep-book cap was built by #604 (E21-T01) and is mapped. The heatmap spec caps and snapshot
-#: bound are #605's: their probe fires once `orderflow.heatmap` or `ws.limits` names one.
-CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {
-    "Max `heatmap.*` specs / symbol": ("#605", lambda: _heatmap_names("SPEC")),
-    "Max `heatmap.*` specs / server": ("#605", lambda: _heatmap_names("SPEC")),
-    "`heatmap` snapshot bound": ("#605", lambda: _heatmap_names("SNAPSHOT")),
-}
+#: None is left: the deep-book cap (#604, E21-T01) and the heatmap spec caps and snapshot bound
+#: (#605, E21-T02) are built and mapped.
+CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {}
 #: 3.6 table rows that 16.2 does not repeat: the JSON bounds of SR-184.
 SECTION_3_6_ROWS: Final = {
     "Max inbound JSON nesting depth": "limits.MAX_JSON_DEPTH",
