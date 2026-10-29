@@ -37,10 +37,10 @@ working tree.
    G-SHAPE and G-BOLD the heading levels, code indentation and the ruled clauses' bold.
    G-UNTOUCHED compares committed and uncommitted paths with `git merge-base HEAD origin/main`
    and FAILs when it does not resolve or a git call fails; only this PR's four files may differ,
-   and `14` only by BQ-40's pointer lines. G-EDGE refuses a server-edge cite, a status the base
-   is said to answer or a fix direction on sign-in (round 1 P-1: ids and trackers public, detail
-   private). G-CHARSET, G-CELLS, G-CLOSE, G-PENPOT, G-ENTROPY, G-HANDREF and G-BUDGET close the
-   set.
+   and `14` only by BQ-40's pointer lines. G-EDGE matches patterns, never literals: a cite key
+   the key table does not declare, a server-tree path it does not carry, or a fix-direction
+   wording arm (round 1 P-1: ids and trackers public, detail private). G-CHARSET, G-CELLS,
+   G-CLOSE, G-PENPOT, G-ENTROPY, G-HANDREF and G-BUDGET close the set.
 5. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over EVERY unit of the spec
    (each heading, table row by its lead cell, rule line, prose sentence and fenced block, by
    region and location, NFKC and whitespace-normalised, with a line-shape tag per region) and
@@ -2873,30 +2873,45 @@ def g_ahead(t: Texts) -> list[Finding]:
 
 # ---------------------------------------------------------------------------- the edge
 
-# round 1 P-1 / P-2 (ids, status and trackers public, detail private): no cite into the server's
-# sign-in edge or the client's API module, no status the base is said to answer on sign-in, no
-# fix direction; the client rule stays, stated neutrally (§4.1)
-EDGE = re.compile(
-    r"\b(?:APIAUTH|LOGINSVC|AUTHAPI|HEALTH) ?:\s*\d|api/(?:auth|health)\.py|auth/login_service"
-    r"|auth/authApi\.ts|`?\b423\b`?|until (?:it|the edge|the server) aligns|align\w* the edge"
-    r"|\b(?:the )?(?:shipped )?(?:login |sign.?in )?edge(?:'s)? (?:answers|returns|still)"
-    r"|the shipped (?:login |sign.?in )?edge|\bthe edge's\b|\bat the base the edge\b",
+# round 1 P-1 / P-2 (ids, status and trackers public, detail private): patterns only, never the
+# literals they refuse. An all-caps cite key the key table does not declare, a server-tree path the
+# key table does not carry, or a fix-direction wording arm; the default-deny pins hold the rows,
+# so no answer needs a literal here (§4.1)
+CITE_LIKE = re.compile(r"\b([A-Z][A-Z0-9]+) ?:\s*\d")
+SERVER_PATH = re.compile(r"\bservices/[\w./-]*\w")
+EDGE_WORDS = re.compile(
+    r"until (?:it|the edge|the server|the base) aligns|\balign\w* (?:the|its) (?:edge|server)"
+    r"|\b(?:the )?(?:shipped )?(?:log.?in |sign.?in )?edge(?:'s)? (?:answers|returns|still)"
+    r"|the shipped (?:log.?in |sign.?in )?edge|\bthe edge's\b|\bat the base the edge\b"
+    r"|\bonce the (?:edge|server) (?:is )?(?:aligned|fixed|corrected)",
     re.IGNORECASE,
 )
+
+
+def edge_hit(text: str) -> str | None:
+    """The first undeclared cite key, undeclared server-tree path or wording arm in text."""
+    for m in CITE_LIKE.finditer(text):
+        if m[1] not in CITE_FILES:
+            return m[0]
+    for m in SERVER_PATH.finditer(text):
+        if m[0] not in CITE_FILES.values():
+            return m[0]
+    w = EDGE_WORDS.search(text)
+    return w[0].strip() if w else None
 
 
 def g_edge(t: Texts) -> list[Finding]:
     """Round 1 P-1: no line of the spec or the deck cites the sign-in edge or its answers."""
     bad: list[Finding] = []
     for i, line in enumerate(t.spec.split("\n"), 1):
-        m = EDGE.search(strip_comments(line))
-        if m:
-            msg = f"spec:{i} an edge cite or answer ({m[0].strip()})"
+        hit = edge_hit(strip_comments(line))
+        if hit:
+            msg = f"spec:{i} an edge cite or answer ({hit})"
             bad.append(F("G-EDGE", msg, "spec", h2_at(t.spec, i)))
     for key, e in deck_strings(t.deck).items():
-        m = EDGE.search(json.dumps(e, ensure_ascii=False))
-        if m:
-            bad.append(F("G-EDGE", f"deck {key}: an edge cite or answer ({m[0]})", "deck", key))
+        hit = edge_hit(json.dumps(e, ensure_ascii=False))
+        if hit:
+            bad.append(F("G-EDGE", f"deck {key}: an edge cite or answer ({hit})", "deck", key))
     return bad
 
 
@@ -4210,8 +4225,8 @@ MUTATIONS = (
     Mutation(
         "M-101",
         "G-EDGE",
-        "an edge cite returns (round 1 P-1)",
-        spec=after_line(S51, "- The base's sign-in answers: see APIAUTH:635."),
+        "a fix-direction wording returns (round 1 P-1)",
+        spec=after_line(S51, "- Until the server aligns, the client keeps its generic wording."),
     ),
     # X-n: paraphrases, re-pinned, so only the lexicon gate may catch them
     Mutation(
