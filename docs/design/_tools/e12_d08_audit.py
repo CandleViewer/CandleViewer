@@ -72,7 +72,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "772f1f07cad1f7818151ffedf9f77720eaba399e"  # #4905's merge: every cite was re-read here
+BASE = "b1df4b74173ce00b4109abc08bc64b3239ff1189"  # #4938's merge: every cite was re-read here
 HEAD_REF = "origin/main"  # a cited line that differs here FAILs (G-VERSION)
 SPEC_REL = "docs/design/E12/E12-D08.md"
 TOOL_REL = "docs/design/_tools/e12_d08_audit.py"
@@ -1361,10 +1361,12 @@ PCT = re.compile(
     # the delta's MJ-2: a share as a fraction in words, and a time to go without a unit
     r"|\bto go\b|\bof the way\b|\b(?:halves|thirds|quarters|fifths|sixths|eighths|tenths)\b"
     # round 3's MJ-3: a hyphen in the word fraction, every ordinal to a tenth, and a count over
-    # the total ("1.24 M of 3.1 M prints", "out of", "of the total", "of all")
+    # the total ("1.24 M of 3.1 M prints", "out of", "of the total", "of all"); the delta's m-4 Q3:
+    # the count over the total also reads with "/" or "in" ("1.24 M / 3.1 M prints")
     r"|\b(?:a|one|two|three|four|five|six|seven|eight|nine)[ -](?:half|third|quarter|fifth"
     r"|sixth|seventh|eighth|ninth|tenth)s?\b|\bhalf(?:way| done| built)\b"
-    r"|\b(?:sevenths|ninths)\b|\b[\d.]+\s?[KM]? of [\d.]+\s?[KM]?(?![\w.])"
+    r"|\b(?:sevenths|ninths)\b"
+    r"|\b[\d.]+\s?[KM]?(?: (?:of|in) |\s?/\s?)[\d.]+\s?[KM]?(?![\w.])"
     r"|\bof the total\b|\bof all\b|\bout of\b",
     re.IGNORECASE,
 )
@@ -1379,8 +1381,9 @@ ELAPSED_FIG = re.compile(
     r"|\b(?:\d+ min )?\d+ (?:min|s) elapsed\b|\b\d+:\d\d elapsed\b",
     re.IGNORECASE,
 )
-# round 3's m-2: a nearness, an expected end, most of the prints or a predicted time, read only
-# in a deck string or a Shows cell of a `-unknown` phase (the spec's prose keeps PCT alone)
+# round 3's m-2: a nearness, an expected end, most of the prints or a predicted time, read in a
+# deck string or a Shows cell of a `-unknown` phase, and (the delta's m-5) in any other phase's
+# deck strings through `shares()` in g_progress's elif branch (the spec's prose keeps PCT alone)
 NEAR = re.compile(
     r"\b(?:nearly|almost|close to|about) (?:there|done|built|finished|complete)\b"
     r"|\bexpected (?:end|finish|time)\b|\bmost (?:of the )?prints\b"
@@ -3916,6 +3919,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         swap(
             '2 min 10 s elapsed · total unknown · taking longer than estimated"',
             '2 min 10 s elapsed · total unknown · most prints built"',
+        ),
+        tag="X",
+    ),
+    Mutation(
+        "G-PROGRESS",
+        "orch r1 delta r4 m-4 Q3: W-45 shows the count over the total with a slash",
+        swap(
+            '2 min 10 s elapsed · total unknown · taking longer than estimated"',
+            '2 min 10 s elapsed · total unknown · 1.24 M / 3.1 M prints"',
         ),
         tag="X",
     ),
