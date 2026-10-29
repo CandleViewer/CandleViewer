@@ -273,9 +273,10 @@ def test_the_trading_board_shows_the_profile_save_series() -> None:
 
 def test_the_trading_board_shows_the_trade_group_and_sizer_series() -> None:
     """#909 (E28-T05): the Trade groups row draws the preview's three series, the widenings
-    refused by cap and E28-T03's four sizer series, each env-filtered and summed by its own labels
-    alone (outcome, reason or cap), never per account, profile or principal; the preview p95 draws
-    SCR-061's 300 ms and the sizing p95 the 1 ms per-leg budget as dashed lines."""
+    refused by cap, E28-T03's four sizer series and the `trade_groups` topic's two (S4b), each
+    env-filtered and summed by its own labels alone (outcome, reason, cap or kind), never per
+    account, profile or principal; the preview p95 draws SCR-061's 300 ms and the sizing p95 the
+    1 ms per-leg budget as dashed lines."""
     d = json.loads((G / "dashboards" / "trading.json").read_text("utf-8"))
     at = next(i for i, p in enumerate(d["panels"]) if p["title"] == "Trade groups")
     ours = []
@@ -292,6 +293,8 @@ def test_the_trading_board_shows_the_trade_group_and_sizer_series() -> None:
         "cv_sizer_outcomes_total": "outcome, reason",
         "cv_sizer_clamped_total": "cap",
         "cv_sizer_stop_fallback_total": "",  # one series: summed over replicas
+        "cv_tradegroup_ws_frames_total": "kind",
+        "cv_tradegroup_ws_seed_failures_total": "",  # one series, as the fallbacks
     }
     drawn = {}
     for p in ours:
@@ -303,10 +306,11 @@ def test_the_trading_board_shows_the_trade_group_and_sizer_series() -> None:
         summed = f"sum by ({by}) (" if by else "sum(rate("
         assert summed in expr and expr.count("by (") == (1 if by else 0), expr
         drawn[metric] = p
-    assert (len(ours), sorted(drawn)) == (8, sorted(sums_by))
-    # previews/s, its p95, skipped legs/s, refusals/s, sizing p95, sized legs/s, clamps/s, falls/s
+    assert (len(ours), sorted(drawn)) == (10, sorted(sums_by))
+    # previews/s, its p95, skipped legs/s, refusals/s, sizing p95, sized legs/s, clamps/s, falls/s,
+    # the topic's frames/s and its failed seeds/s
     units = [p["fieldConfig"]["defaults"]["unit"] for p in ours]
-    assert units == ["ops", "s", "ops", "ops", "s", "ops", "ops", "ops"]
+    assert units == ["ops", "s", "ops", "ops", "s", "ops", "ops", "ops", "ops", "ops"]
     assert all(m.removesuffix("_bucket") in lint.catalogue_names() for m in sums_by)
     for metric, budget in (
         ("cv_tradegroup_preview_seconds_bucket", 0.3),

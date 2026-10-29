@@ -836,8 +836,9 @@ def trading() -> Board:
     )
     # #909 (E28-T05): the trade-group preview's answers by outcome, its p95 against SCR-061's
     # 300 ms (a dashed line), its skipped legs by reason and the widenings refused by cap; then
-    # the leg sizer's four series, which E28-T03 (#907) left to this ticket. Per outcome, reason
-    # or cap, never per account, profile or principal.
+    # the leg sizer's four series, which E28-T03 (#907) left to this ticket; then the
+    # `trade_groups` topic's frames by kind and its failed seeds. Per outcome, reason, cap or
+    # kind, never per account, profile or principal.
     b.row("Trade groups")
     b.ts(
         "Trade-group previews/s by outcome",
@@ -913,6 +914,28 @@ def trading() -> Board:
         b,
         "Legs whose ATR stop fell back to the profile's fallback offset. A steady rate means the "
         "ATR feed is not reaching the sizer.",
+    )
+    b.ts(
+        "Trade-group topic frames/s by kind",
+        rate("cv_tradegroup_ws_frames_total", "kind"),
+        "ops",
+        legend="{{kind}}",
+    )
+    _describe(
+        b,
+        "Frames the trade_groups topic sent: snapshot, a body built for one subscription, or "
+        "delta, one subscription a publish reached.",
+    )
+    b.ts(
+        "Failed trade-group seeds/s (topic unseeded until restart)",
+        f"sum(rate(cv_tradegroup_ws_seed_failures_total{{{E}}}[{RI}]))",
+        "ops",
+    )
+    _describe(
+        b,
+        "OMS startups whose trade_groups seed failed every read before ready. Any non-zero rate "
+        "is a start whose topic stays unseeded, its subscriptions waiting for a snapshot, until "
+        "the next restart; the start logged oms_trade_groups_unseeded at critical.",
     )
     b.flush()
     return b

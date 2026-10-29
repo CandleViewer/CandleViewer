@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
-from candleviewer.observability.tracing import CREDENTIAL_SPANS, ORDER_PATH_SPANS
+from candleviewer.observability.tracing import CREDENTIAL_SPANS, ORDER_PATH_SPANS, PREVIEW_SPANS
 
 PLAN = OPENAPI_SPEC_PATH.parent
 PACKAGE = Path(__file__).resolve().parents[2] / "candleviewer"
@@ -139,9 +139,12 @@ def test_tracing_holds_20s_order_path_names_and_the_code_starts_each_where_20_sa
     Sec.12.3 gives the order path, so a name added in one place only fails here; and each is
     started where 20 and 24 Sec.8.2 put it: the route's `http.request`, the pipeline's
     `oms.submit` family, the command port's `exchange.place_order`, the facade's one span,
-    `private_ws.fill`, and the broker's borrow. `oms.fanout` is E34-S02's, started nowhere yet."""
+    `private_ws.fill`, and the broker's borrow. `oms.fanout` is E34-S02's, started nowhere yet.
+    20 Sec.12.3 also names the trade-group preview's two (`PREVIEW_SPANS`, E28-T05 #909 S3d)."""
     named = set(re.findall(r"`([a-z_]+\.[a-z_]+)`", _tracing()))
-    assert named - {"tracing.py"} == set(ORDER_PATH_SPANS) | set(CREDENTIAL_SPANS)
+    assert named - {"tracing.py"} == (
+        set(ORDER_PATH_SPANS) | set(CREDENTIAL_SPANS) | set(PREVIEW_SPANS)
+    )
     path_names = set(ORDER_PATH_SPANS) | set(CREDENTIAL_SPANS)
     started = {
         module.relative_to(PACKAGE).as_posix(): names

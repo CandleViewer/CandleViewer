@@ -72,7 +72,10 @@ def world(pg_dsn: str) -> Iterator[Wired]:
         mp.setattr(appmod, "wire_profiles", wired)
         mp.setattr(appmod, "definition_store", store)
         mp.setattr(appmod, "definition_writes", writes)
-        mp.setattr(appmod, "TradeGroupsGate", lambda _flag: TradeGroupsGate(lambda: True))
+        # the flag on; the root's own `preview_ready` (S3c) passed through
+        mp.setattr(
+            appmod, "TradeGroupsGate", lambda _flag, **built: TradeGroupsGate(lambda: True, **built)
+        )
         yield rbac.build_world(mp), pools
 
 

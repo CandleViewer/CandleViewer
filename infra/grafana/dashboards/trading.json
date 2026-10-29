@@ -1312,6 +1312,92 @@
       ],
       "title": "Stop fallbacks/s (no warm ATR reading)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Frames the trade_groups topic sent: snapshot, a body built for one subscription, or delta, one subscription a publish reached.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 95
+      },
+      "id": 33,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (kind) (rate(cv_tradegroup_ws_frames_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Trade-group topic frames/s by kind",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "OMS startups whose trade_groups seed failed every read before ready. Any non-zero rate is a start whose topic stays unseeded, its subscriptions waiting for a snapshot, until the next restart; the start logged oms_trade_groups_unseeded at critical.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 95
+      },
+      "id": 34,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum(rate(cv_tradegroup_ws_seed_failures_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed trade-group seeds/s (topic unseeded until restart)",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

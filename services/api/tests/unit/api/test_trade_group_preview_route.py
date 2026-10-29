@@ -638,9 +638,10 @@ def test_an_unrecorded_answer_counts_no_field_and_no_skipped_leg(world: World) -
     sent = (body((A, big), (B, big)), body(A, (B, {"skip": True})))
     world.fail = PREVIEWED
     assert [world.post(each).status_code for each in sent] == [503, 503]
+    names = ("cv_override_refused_total", "cv_tradegroup_legs_skipped_total")
+    assert [sum(series(world, name).values()) for name in names] == [0, 0]  # neither counted
     world.fail = None
     assert [world.post(each).status_code for each in sent] == [403, 200]
-    names = ("cv_override_refused_total", "cv_tradegroup_legs_skipped_total")
     counts = [{label: n for label, n in series(world, name).items() if n} for name in names]
     assert counts == [{"max_daily_loss": 1}, {"skipped": 1}]
 
