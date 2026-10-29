@@ -399,8 +399,10 @@ sign_in() {
   case $STATUS in
     200) ;;
     000) unreachable ;;
-    401) die "the sign-in was refused: wrong username, email or password" ;;
-    423) die "the account is locked for now: wait, then run again with --skip-invite" ;;
+    401)
+      die "the sign-in was refused: check the username, email and password, or wait out a lock" \
+        "(15 minutes at most), then run again with --skip-invite"
+      ;;
     *) refused "the sign-in" ;;
   esac
   get .status .mfa_token

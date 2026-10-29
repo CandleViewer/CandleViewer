@@ -588,7 +588,8 @@ def make_auth_router(
             # records written ahead are followed by the refusal, counted and audited like login's
             # refusal of a disabled account (SR-125), then the one answer of every failed sign-in
             # (SR-014, #4961): never a 500. Its row voids the session that `auth.session_created`
-            # announced (C-2.9).
+            # announced (C-2.9). Decided after `login()` returned, it is answered without the
+            # service's hold: the residual accepted on #4961.
             auth_login_failures_total.labels(method="password").inc()
             voided = {"voids_session_created": str(session_id)}
             await _audit_refusal(request, user_id, session_id=session_id, after_state=voided)

@@ -74,12 +74,23 @@ each refusal also counts toward the five failed unlocks that revoke the session.
    as `abc***(len=9)`) per refused login attempt, and one with reason `unlock_failed` and the user
    id as actor when a wrong `POST /auth/unlock` password applied the lock. Before any refused
    attempt, the lock shows only as `users.locked_until` and a rise of `auth_lockouts_total` (below).
+   To list the accounts locked now (`psql` runs inside the `postgres` container, in a read-only
+   session):
+
+   ```bash
+   docker compose -f infra/compose/docker-compose.yml --profile core exec -T \
+     -e PGOPTIONS='-c default_transaction_read_only=on' postgres \
+     sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+   SELECT id, username, failed_login_count, locked_until FROM users
+   WHERE locked_until > now() ORDER BY locked_until;
+   SQL
+   ```
 
 2. Wait out the lock: at most 15 minutes after it was set. Do not attempt a login
    meanwhile. **Warning:** `failed_login_count` is reset only by a _successful_ login, so a single wrong
    password after the lock expires re-locks the account for another 15 minutes. Use the correct
    password on the first attempt.
-3. Verify: repeat the login `curl` above with the correct password. Expected `200` with
+3. Verify: the user signs in (`POST $API/auth/login`) with the correct password. Expected `200` with
    `{"status":"mfa_required","mfa_token":"...","methods":["totp"],"expires_in":...}`; the user then
    completes `POST $API/auth/mfa/verify`. Confirm with
    `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.login"`: expect an
@@ -127,7 +138,8 @@ in one burst arrive as one message (grouped by alert, component and environment)
 Telemetry for failed logins: counter `auth_login_failures_total{method}` rises by 1 per failed
 authentication on the `/auth` routes, `method` being the factor that failed: `password` per
 `auth.login_failed` row written by `POST /auth/login` (wrong password, unknown identifier,
-per-address throttle, or a disabled account after a correct password); `totp`, `webauthn` or
+per-address throttle, or, after a correct password, a disabled account or one whose MFA flag is off,
+reason `mfa_not_required`, a state C-12.2 forbids); `totp`, `webauthn` or
 `recovery_code` (as named in the request) per `auth.mfa_failed` row of `POST /auth/mfa/verify`, and
 per `auth.login_failed` row (reason `user_disabled`) of the same route when the code was right but
 the user was disabled since the password step (#3054); `recovery_code` also per `auth.mfa_failed`,
@@ -290,8 +302,9 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    in again. Verify: audit `auth.session_created` with `enrolment_only: true`, then
    `auth.mfa_enrolled` and `auth.recovery_codes_regenerated` for the user; counter
    `auth_enrolments_total{result="completed"}` rises by 1 (`refused` counts wrong codes). A sign-in
-   whose user was disabled since the password check gets `403`: its `auth.login_failed` row carries
-   `session_id` and `after_state.voids_session_created`, so its `auth.session_created` row is void.
+   whose user was disabled since the password check gets the one `401` of every failed sign-in
+   (SR-014): its `auth.login_failed` row carries `session_id` and
+   `after_state.voids_session_created`, so its `auth.session_created` row is void.
    A confirm whose transaction did not commit changed nothing (the method is still pending, the
    codes and sessions are as they were): the error log `auth.enrolment.commit_failed` names the user
    and the new session, and the refusal row voids that session's `auth.session_created` the same

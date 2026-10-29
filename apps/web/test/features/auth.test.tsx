@@ -74,6 +74,24 @@ describe("LoginScreen (SCR-001)", () => {
     }
   });
 
+  it("a 5xx is unreachable, whatever its body", async () => {
+    for (let status = 500; status < 600; status += 1) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(status, { code: "any_code" })));
+      expect(await login("ann", "pw"), String(status)).toEqual({ kind: "unreachable" });
+    }
+  });
+
+  it("a 429 without a usable Retry-After counts down from 15 minutes", async () => {
+    for (const header of [undefined, "0", "-5", "soon"]) {
+      const headers: Record<string, string> = header === undefined ? {} : { "Retry-After": header };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(429, {}, headers)));
+      expect(await login("ann", "pw"), String(header)).toEqual({
+        kind: "rate_limited",
+        retryAfterS: 15 * 60,
+      });
+    }
+  });
+
   it("a 429 shows the remaining time and blocks submit", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(429, {}, { "Retry-After": "872" })));
     render(<LoginScreen />);

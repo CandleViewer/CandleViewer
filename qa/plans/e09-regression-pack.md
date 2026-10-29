@@ -32,6 +32,7 @@ The marker selects every test under these paths except the `perf`, `fuzz`, `harn
 - `tests/unit/ws/`
 - `tests/unit/test_ws_permissions.py`
 - `tests/contract/rbac/`
+- `tests/contract/test_login_failure_answer_contract.py` (every failed sign-in's one answer, SR-014)
 - `tests/security/auth/`
 - `tests/qa/test_e09_dryrun_group_a.py` (E09-Q01 dry run)
 - `tests/chaos/auth/`
