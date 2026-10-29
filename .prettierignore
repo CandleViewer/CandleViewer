@@ -106,3 +106,6 @@ docs/design/_tools/sheets/e42-d04/v4/
 # their sha256, and prettier would fold the reports' arrays on a commit
 packages/chart-engine/bench/matrix/results/**/*.json
 packages/chart-engine/bench/matrix/results/**/adr-0011-table.md
+# E06-T02 (#221): the CI matrix baselines are the unmodified report JSON of a CI artefact of `main`
+# (the baseline policy in packages/chart-engine/README.md); prettier would refold their arrays
+packages/chart-engine/bench/matrix/baselines/*.json
