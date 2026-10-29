@@ -2,14 +2,17 @@
 names Schemathesis for a REST provider test): the partial run of 22's `schemathesis_fuzz` gate
 (23 §16.5). The two operations come from 22 itself with every component kept; each case reaches
 `_market_world`'s app through Schemathesis's ASGI client, with no socket (the network guard stays
-on). The only hook is the session `x-rbac` grants (`Bearer reader`), so `ignored_auth` probes the
-401 path; no hook maps or filters a query.
+on). The only hook is the session `x-rbac` grants (`Bearer reader`); no hook maps or filters a
+query. `ignored_auth` resends a request without its token only after a 2xx, which getKlines gives
+and getBars does not (no generated request reaches a served bar series).
 
 Every built-in check runs but `positive_data_acceptance`: a request 22's schema accepts is often,
 and correctly, refused, since 22 cannot express what a served request also needs (a listed symbol,
 the per-type `param`, the window caps, an issued cursor); that exclusion is recorded on #420.
-`negative_data_rejection` expects the refusals the operations declare. The examples, coverage and
-fuzzing phases run, 25 fuzzed examples per operation, derandomized with a fixed seed.
+`negative_data_rejection` expects 400 or 422 for a parameter outside the schema, and 401 for a
+request whose `Authorization` header the negative cases drop or mangle; no case earns a 403. The
+examples, coverage and fuzzing phases run, 25 fuzzed examples per operation, derandomized with a
+fixed seed.
 """
 
 from __future__ import annotations
@@ -27,14 +30,21 @@ from tests.contract._market_world import OPERATIONS, READER, MarketWorld, operat
 #: In code, never a `schemathesis.toml` beside the suite: a fixed seed, and the refusals a
 #: request outside the schema may get (each declared by both operations).
 _CONFIG: Final = schemathesis.Config.from_str(
-    "seed = 420\n[checks]\nnegative_data_rejection.expected-statuses = [400, 401, 403, 422]\n"
+    "seed = 420\n[checks]\nnegative_data_rejection.expected-statuses = [400, 401, 422]\n"
 )
-_PATHS: Final = [operation(op)[0] for op in OPERATIONS]
-#: Schemathesis rewrites what it loads: it gets its own copy of 22, cut to the two paths.
-schema: Final = schemathesis.openapi.from_dict(
-    {**copy.deepcopy(SPEC), "paths": {path: copy.deepcopy(SPEC["paths"][path]) for path in _PATHS}},
-    config=_CONFIG,
-).include(operation_id=list(OPERATIONS))
+
+
+def _two_operations() -> dict[str, Any]:
+    """22, copied once (Schemathesis rewrites what it loads) and cut to the two paths."""
+    spec: dict[str, Any] = copy.deepcopy(SPEC)
+    paths = [operation(op)[0] for op in OPERATIONS]
+    spec["paths"] = {path: spec["paths"][path] for path in paths}
+    return spec
+
+
+schema: Final = schemathesis.openapi.from_dict(_two_operations(), config=_CONFIG).include(
+    operation_id=list(OPERATIONS)
+)
 #: The server, as `from_asgi` would bind it: every case and every check's probe (`ignored_auth`
 #: resends one without the token) reaches it in process. Its routes sit at the root, not under
 #: 22's `/api/v1` servers, hence the base URL.
@@ -57,5 +67,5 @@ class _Reader:
 @settings(max_examples=25, derandomize=True, deadline=None, database=None)
 def test_contract_market_schemathesis_fuzz(case: schemathesis.Case[Any]) -> None:
     """Each generated request is answered with a status the operation declares, in its declared
-    media type and schema, and a request outside the schema is refused (400, 401, 403 or 422)."""
+    media type and schema, and a request outside the schema is refused (400, 401 or 422)."""
     case.call_and_validate(base_url=_BASE_URL, excluded_checks=[positive_data_acceptance])
