@@ -4,13 +4,13 @@
   F-, RA-, CP-, CD-, AD- and OQ- ids refer to it, as do the `path:line` pin and shorthand (report front matter), and a
   bare "§n" is a section of this file.
 - **Status:** not yet run, and running it is an optional post-GA line, not a gate: the report is the research of
-  record (#2701 ledger 1, 2026-10-29; rows 18 / 61 / 106). Every duration below is an allocation inside a 45-minute session, not an observation; no
-  participant, timing, count or quote exists. Synthesised findings, never a participant's real key practice, are
-  appended to the report as a dated addendum (§8).
+  record (#2701 ledger 1, 2026-10-29; rows 18 / 61 / 106). Every duration below is an allocation inside a 45-minute
+  session, not an observation; no participant, timing, count or quote exists. Synthesised findings, never a
+  participant's real key practice, are appended to the report as a dated addendum (§8).
 - **Ready to run: partly.** The interview (part A) and the comprehension probes (part C) can run on paper today. The
   think-aloud tasks (part B) need the report's board 06 and figures in a keyboard-operable medium, and none exists yet
-  (report §1 and OQ-15, ruled on #732 in comment 6364262239: an HTML click-through built in the boards PR). Until one
-  exists, part B runs as a paper walkthrough the moderator drives, and the keyboard-only pass (§6) waits.
+  (report §1 and OQ-15, ruled on #732 in comment 6364262239: an HTML click-through, specified and built on request).
+  Until one exists, part B runs as a paper walkthrough the moderator drives, and the keyboard-only pass (§6) waits.
 - **Roles:** the moderator is never the participant. The owner is tagged **P1** on every sheet, because the owner also
   approves the report; someone else moderates the owner's session. An agent may read the prompts aloud but receives no
   answer: the owner answers to a human note-taker, and no answer reaches an agent, a chat or this repository (§2).
