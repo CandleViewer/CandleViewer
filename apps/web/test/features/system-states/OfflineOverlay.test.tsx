@@ -648,7 +648,7 @@ describe("SCR-159 beside CMP-077 in the shell layout", () => {
       listeners.forEach((listener) => listener());
     });
   const UP = [connecting, authOk(OFF), stream("live")].reduce(reduce, INITIAL_WS_STATE);
-  /** The shell announcer's assertive region: rendered last, after CMP-092's own pair. */
+  /** The shell announcer's assertive region: rendered last, after the banner slot. */
   const announcer = (): Element =>
     [...document.querySelectorAll('[aria-live="assertive"]')].at(-1) as Element;
 
