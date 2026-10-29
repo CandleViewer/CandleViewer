@@ -11,12 +11,16 @@ sits beside, so the two keep one vocabulary.
 
 from __future__ import annotations
 
+import inspect
 import re
+from typing import get_args
 
 import pytest
 
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
-from candleviewer.oms.stream_consumer import REAPPLY_TIMEOUT_S
+from candleviewer.oms import stream_consumer
+from candleviewer.oms.stream_consumer import REAPPLY_TIMEOUT_S, Outcome
+from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW
 
 _PLAN = OPENAPI_SPEC_PATH.parent
 _DOC = (_PLAN / "21-database-schema.md").read_text(encoding="utf-8")
@@ -672,7 +676,7 @@ def test_8_12_says_the_runtime_runs_the_consumer_and_logs_it_as_19_51() -> None:
         "or not, so the consumer tells one read from the next (a disabled account, below).",
         "a disabled account waits for health's next tracking read (below)",
         "So the consumer takes that read as the status comes and does not restart the account "
-        "while it stays in place: no refused subscribe counts a defect or pages.",
+        "while it stays in place: while it holds, no refused subscribe counts a defect or pages.",
         "The hold is keyed on that status alone, never on a refused subscribe, which stays a "
         "defect and pages",
     )
@@ -689,4 +693,68 @@ def test_8_12_says_the_runtime_runs_the_consumer_and_logs_it_as_19_51() -> None:
         "an account its disable closed (`closed`, `account_disabled`) is not restarted while the "
         "health tracking read taken as the status comes stays in place,",
         "The hold is keyed on that status, never on a refused subscribe.",
+    )
+
+
+def test_8_12_names_the_wallet_clock_the_stand_ins_signals_and_the_holds_windows() -> None:
+    """E29-T05 S9 (#848): 24 section 8.12 as built. A wallet row is refused once it is dated more
+    than the position store's future skew ahead of the exchange-synced clock, never the host's,
+    and counted `wallet_ahead`; the stand-in reconciliation's refusal is named by the log, the
+    count and the page the consumer gives it, never `oms_reconciliation_unavailable`, which nothing
+    emits; and a disable's hold is never called absolute: the paragraph and `_hold`'s docstring
+    name its two windows, a carry on #848. Its section 19 entry is found by its title, whatever
+    number it lands as."""
+    head = "### 8.12 The private-stream consumer (E29-T05)"
+    section = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n---\n", 1)[0])
+    skew = f"{MAX_FUTURE_SKEW.total_seconds():g} s"
+    assert "not dated ahead of the host clock" not in section
+    assert "oms_reconciliation_unavailable" not in section
+    assert "it lists the account only once it is enabled again" not in section
+    assert not _missing(
+        section,
+        f"| `wallet` | dated no more than {skew} (`MAX_FUTURE_SKEW`) ahead of the exchange-synced "
+        "clock (`ExchangeWallClock`) |",
+        "one dated further ahead is refused before it, logged and counted (`wallet_ahead`),",
+        "the consumer logs it (`stream_resync_refused`), counts it "
+        '(`oms_stream_outcomes_total{stage="consumer",outcome="reconciliation_unavailable"}`) '
+        'and pages once per episode ("an account\'s reconciliation request was refused"),',
+        "a read made after the disable lists the account only once it is enabled again,",
+        "Two windows remain, each of which can page once, on demo or testnet only and with no "
+        "protection effect, as a live process fails closed until E29-T06; their fix is a carry "
+        "on #848.",
+        "A health read already in flight when the disable commits publishes a set made before it "
+        "once the hold is taken, which releases the hold.",
+        "brings no `account_disabled` status to hold on, so the restart before health's next "
+        "read meets the closed key.",
+    )
+    held = _words(inspect.getdoc(stream_consumer.StreamConsumer._hold) or "")
+    assert not _missing(
+        held,
+        "Two windows can still page once, on demo or testnet only",
+        "a carry on #848: a health read in flight as the disable commits publishes its set after "
+        "this hold is taken, which releases it; and a disable while the account has no stream "
+        "open brings no status to hold on.",
+    )
+    assert {"wallet_ahead", "reconciliation_unavailable"} <= set(get_args(Outcome.__value__))
+    source = inspect.getsource(stream_consumer)
+    assert '"stream_resync_refused"' in source
+    assert '"an account\'s reconciliation request was refused"' in source
+    title = (
+        r"^### 19\.\d+ 2026-10-29 — §8\.12: the wallet row's clock, the stand-in "
+        r"reconciliation's signals and the disable hold's windows, as built \(E29-T05, #848\)$"
+    )
+    found = re.search(title, _INTERNAL_DOC, re.MULTILINE)
+    assert found is not None
+    entry = _words(_INTERNAL_DOC.split(found.group(0), 1)[1].split("\n### ", 1)[0])
+    assert not _missing(
+        entry,
+        f"a wallet row is refused when it is dated more than {skew} (`MAX_FUTURE_SKEW`) ahead of "
+        "the exchange-synced clock (`ExchangeWallClock`:",
+        "not ahead of the host clock, and the refusal is logged and counted (`wallet_ahead`).",
+        "the log `stream_resync_refused`, the count "
+        '`oms_stream_outcomes_total{stage="consumer",outcome="reconciliation_unavailable"}` and '
+        'the page "an account\'s reconciliation request was refused", once per episode,',
+        "the paragraph no longer calls the hold absolute but names its two windows,",
+        "Their fix is a carry on #848; `StreamConsumer._hold`'s docstring says the same.",
+        "No REST, WS, table, column, chart or `machine_hash` change.",
     )
