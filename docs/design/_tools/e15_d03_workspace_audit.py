@@ -7,7 +7,7 @@ Standalone, offline, stdlib only; it executes no repo code. It reads the token J
 
 1. **Cites.** Every `NN`:line, `D02`:line, `E10-D03`:line, `CONSTITUTION.md`:line and
    `E15-D02.md:N` "fragment" cite in the spec and the hand-off is read at the pinned base
-   (`git show 76edb9470f:<path>`): OK when the line exists (and holds the fragment, if quoted);
+   (`git show 0a1151f325:<path>`): OK when the line exists (and holds the fragment, if quoted);
    WARN when the same line reads differently at `origin/main` (drifted since the base); FAIL when
    the file or line is gone at the base, the line is blank, or a fragment is absent or ambiguous.
    `T:`n (the issue body of #319) is not in the repo and is counted, not checked.
@@ -18,7 +18,10 @@ Standalone, offline, stdlib only; it executes no repo code. It reads the token J
    widths are measured inside the frame from tokens, reported beside the parent's, and each
    minimum + 2 × the frame is gated to fit its column on every §6.2 frame that names one, the
    comfortable frames with the comfortable minimums: their `size.icon.md` grip and
-   `size.control.comfortable` buttons; the step each such frame draws is a value too); contrast
+   `size.control.comfortable` buttons; the step each such frame draws is a value too; the
+   Measurement correction (declared, #319): the DOM's minimum is step 6 with UNKNOWN + DEMO, step
+   6 with ARMED + LIVE stays §3.6's row and the splits' basis, and below the minimum the arm word
+   collapses to its glyph, step 7, the DOM's floor in the fit gate); contrast
    with the WCAG 2.x formula over the token JSON per theme
    (`lo` = against the darkest, `hi` = against the lightest background of the row's set); CVD as
    CIELAB ΔE76 after the Machado, Oliveira & Fernandes (2009) severity-1.0 sRGB matrices (the
@@ -79,7 +82,7 @@ DESIGN = ROOT / "docs" / "design"
 D02 = DESIGN / "E15" / "E15-D02.md"
 SPEC = DESIGN / "E15" / "E15-D03.md"
 HANDOFF = DESIGN / "E15" / "E15-D03-handoff.md"
-BASE = "76edb9470f"  # every cite was read here (the spec's Key)
+BASE = "0a1151f325"  # every cite was read here (the spec's Key; re-pinned from 76edb9470f)
 HEAD = "origin/main"  # drift is reported against this ref (WARN, never FAIL)
 MULTI = re.MULTILINE
 PRIM, DARK, LIGHT, HC = (
@@ -157,6 +160,8 @@ REQUIRED_STRINGS = (
     "`rbac.view_as`",
     "`rbac.account`",
     '`E15-D02.md:659` "`layout.limit.panels`"',
+    "Measurement correction (declared)",  # F-1 / F-2 (#319): the heading and the collapse rule
+    "collapses to its glyph (CMP-229 `unlock`, J23)",
 )
 # Tokens a spec may name that are not in the JSON at the base, each with its owner.
 PENDING_TOKENS = {"color.sync.*": "E15-D06 (#360)"}
@@ -467,6 +472,11 @@ HDR_CHART_TOOLS = ("Candle", "FP", "Ind", "Draw")  # CMP-221's row: a picker, th
 HDR_PROV_FULL, HDR_PROV_SHORT = "· symbol set by sync group A", "via A"
 HDR_ARM_FULL, HDR_ARM_SHORT = "ARMED 4:32", "ARMED"
 HDR_ENV = "LIVE"
+# Measurement correction (declared; F-1 / F-2, #319, ruled 2026-10-29): the DOM minimum is measured
+# with the widest arm-state word and the DEMO badge, which co-occur; below it the arm word collapses
+# to its glyph (CMP-229 `unlock`, J23), the word kept in the accessible name: step 7 (width only)
+MC_ARM_WORDS, MC_ENV_WORDS = ("ARMED", "LOCKED", "UNKNOWN"), ("LIVE", "DEMO")
+MC_WIDEST = ("UNKNOWN", "DEMO")
 
 
 def char_em(ch: str) -> float:
@@ -602,6 +612,28 @@ def header_width(els: list[Element], step: int, inset: int, handle: int, gap: in
     return 2 * inset + handle + sum(widths) + gap * len(widths)
 
 
+def arm_env_widths(t: dict[str, object]) -> dict[str, int]:
+    """The arm-state pills and env badges of the correction, as header_elements measures them:
+    `<word>.text` and `arm.<word>` / `env.<word>`, plus `arm.glyph` (the pill with its glyph only).
+    """
+    s1, s2 = px(t, "space.1"), px(t, "space.2")
+    label = font_px(t, "type.ui.label")
+    medium, semibold = px(t, "font.weight.medium"), px(t, "font.weight.semibold")
+    pill_pad, icon_sm, icon_md = (
+        px(t, "space.inset.sm"),
+        px(t, "size.icon.sm"),
+        px(t, "size.icon.md"),
+    )
+    out: dict[str, int] = {"arm.glyph": 2 * pill_pad + icon_sm}
+    for w in MC_ARM_WORDS:
+        out[f"{w}.text"] = math.ceil(line_w(w, label, medium, False))
+        out[f"arm.{w}"] = 2 * pill_pad + out[f"{w}.text"]
+    for w in MC_ENV_WORDS:
+        out[f"{w}.text"] = math.ceil(line_w(w, label, semibold, False))
+        out[f"env.{w}"] = 2 * s2 + out[f"{w}.text"] + 2 + s1 + icon_md  # CMP-075, as `env`
+    return out
+
+
 def budget(
     t: dict[str, object], f: dict[str, float], cells: dict[str, str]
 ) -> tuple[dict[str, str], dict[str, object], list[str], list[str]]:
@@ -731,14 +763,42 @@ def budget(
         extra[f"hdr.{kind}.{step}.parent"] = want
         extra[f"hdr.{kind}.{step}.delta"] = got - want
     v["BUDGET:hdr.dom.min.parent"] = str(int(f["dom.min"]))
-    v["BUDGET:hdr.dom.min.framed"] = str(mins["compact"]["dom"] + 2 * frame_focused)
     extra["hdr.chart.min.framed"] = mins["compact"]["chart"] + 2 * frame_focused
     for kind in STEPS:
         extra[f"hdr.{kind}.min.comfortable.framed"] = mins["comfortable"][kind] + 2 * frame_focused
-    for kind in ("dom", "tape"):  # c-4: §3.3 states the comfortable 1280 split from these
-        v[f"BUDGET:hdr.{kind}.min.comfortable.framed"] = str(
-            mins["comfortable"][kind] + 2 * frame_focused
-        )
+    # c-4: §3.3 states the comfortable 1280 split from these (the DOM's step 6, ARMED + LIVE)
+    v["BUDGET:hdr.tape.min.comfortable.framed"] = str(
+        mins["comfortable"]["tape"] + 2 * frame_focused
+    )
+    # Measurement correction (declared): step 6 above is ARMED + LIVE (§3.6's row, the splits'
+    # basis); the minimum is step 6 with UNKNOWN + DEMO; step 7 is the arm word as its glyph
+    aw = arm_env_widths(t)
+    for word in MC_ARM_WORDS:
+        v[f"BUDGET:mc.arm.{word}.text"] = str(aw[f"{word}.text"])
+        v[f"BUDGET:mc.arm.{word}.pill"] = str(aw[f"arm.{word}"])
+    for word in MC_ENV_WORDS:
+        v[f"BUDGET:mc.env.{word}.text"] = str(aw[f"{word}.text"])
+        v[f"BUDGET:mc.env.{word}.badge"] = str(aw[f"env.{word}"])
+    v["BUDGET:mc.arm.glyph.pill"] = str(aw["arm.glyph"])
+    corrected: dict[str, int] = {}
+    floor7: dict[str, int] = {}
+    for d in DENSITIES:
+        sfx = "" if d == "compact" else f".{d}"
+        s6 = step_w[d]["dom"][6]
+        rest = s6 - aw[f"arm.{HDR_ARM_SHORT}"] - aw[f"env.{HDR_ENV}"]
+        for arm, env_w in itertools.product(MC_ARM_WORDS, MC_ENV_WORDS):
+            width = rest + aw[f"arm.{arm}"] + aw[f"env.{env_w}"]
+            v[f"BUDGET:mc.dom.{arm}.{env_w}.{d}"] = str(width)
+            v[f"BUDGET:mc.dom.{arm}.{env_w}.{d}.framed"] = str(width + 2 * frame_focused)
+        corrected[d] = rest + aw[f"arm.{MC_WIDEST[0]}"] + aw[f"env.{MC_WIDEST[1]}"]
+        floor7[d] = rest + aw["arm.glyph"] + aw[f"env.{MC_WIDEST[1]}"]
+        step_w[d]["dom"][7] = floor7[d]
+        v[f"BUDGET:hdr.dom.s6{sfx}"] = str(s6)
+        v[f"BUDGET:hdr.dom.min{sfx}"] = str(corrected[d])
+        v[f"BUDGET:hdr.dom.min{sfx}.framed"] = str(corrected[d] + 2 * frame_focused)
+        v[f"BUDGET:hdr.dom.s7{sfx}"] = str(floor7[d])
+        v[f"BUDGET:hdr.dom.s7{sfx}.framed"] = str(floor7[d] + 2 * frame_focused)
+    v["BUDGET:hdr.dom.s6.comfortable.framed"] = str(mins["comfortable"]["dom"] + 2 * frame_focused)
     for vp, (vw, vh) in VIEWPORTS.items():
         cw = vw - int(f["navrail"]) - int(f["rightrail"])
         ch = vh - topbar - statusbar
@@ -799,16 +859,20 @@ def budget(
                 for kind, col in colmap.items():
                     # the step the frame draws: the first whose width fits inside the frame (§3.6)
                     inside = col - 2 * frame_focused
-                    shown = [st for st, w in step_w[d][kind].items() if w <= inside]
+                    shown = [st for st, w in step_w[d][kind].items() if w <= inside and st != 7]
+                    if kind == "dom" and inside < corrected[d]:  # width only (the correction)
+                        shown = [7] if floor7[d] <= inside else []
                     if drawn:
                         v[f"BUDGET:step.{layout}.{vp}.{d}.{kind}"] = (
                             str(shown[0]) if shown else "compact view"
                         )
-                    got = mins[d][kind] + 2 * frame_focused
+                    floor = floor7[d] if kind == "dom" else mins[d][kind]  # the DOM: step 7
+                    got = floor + 2 * frame_focused
                     extra[f"fit.{layout}.{vp}.{d}.{kind}"] = f"{got} ≤ {col}"
                     if got > col:  # c-4: every split the spec states, drawn or not
+                        fkey = "dom.s7" if kind == "dom" else f"{kind}.min"
                         bad.append(
-                            f"fit: hdr.{kind}.min + 2 × frame = {got} px > the {layout} {kind} "
+                            f"fit: hdr.{fkey} + 2 × frame = {got} px > the {layout} {kind} "
                             f"column {col} px ({label})"
                         )
             dom_w, dom_h = avail - chart_w, round((dh - gutter) * f["scalping.col"])
@@ -1119,12 +1183,14 @@ def fit_gates(spec: str) -> list[str]:
             bad.append(f"fit: the {layout}.split.{vp}.{d} anchor is missing")
             continue
         for kind, col in zip(("chart", "dom", "tape"), cols, strict=False):
-            mn = anchored_ints(spec, f"BUDGET:hdr.{kind}.min{suffix}")
+            # the DOM's floor is step 7, the arm word as its glyph (the Measurement correction)
+            key = f"hdr.{'dom.s7' if kind == 'dom' else kind + '.min'}{suffix}"
+            mn = anchored_ints(spec, f"BUDGET:{key}")
             if not mn:
-                bad.append(f"fit: the hdr.{kind}.min{suffix} anchor is missing")
+                bad.append(f"fit: the {key} anchor is missing")
             elif mn[0] + 2 * frame[0] > col:
                 bad.append(
-                    f"fit: hdr.{kind}.min{suffix} {mn[0]} + 2 × {frame[0]} px > the {kind} column "
+                    f"fit: {key} {mn[0]} + 2 × {frame[0]} px > the {kind} column "
                     f"{col} px "
                     f"of {label}"
                 )
@@ -1586,23 +1652,23 @@ PENDING_KEY = "PROPOSED-PENDING via CMP-022"
 
 
 def dom_min_over_column(text: str) -> str:
-    """hdr.dom.min written 1 px over the dense 1280 DOM column less the frame (ruling (1))."""
+    """hdr.dom.s7 (the DOM's floor) written 1 px over the dense 1280 DOM column less the frame."""
     cols = anchored_ints(text, "BUDGET:dense.split.1280.compact")
     frame = anchored_ints(text, "BUDGET:focus.frame-px")
     if not cols or not frame:
         return text
     over = cols[1] - 2 * frame[0] + 1
-    return re.sub(r"\d+(<!--=BUDGET:hdr\.dom\.min-->)", rf"{over}\1", text)
+    return re.sub(r"\d+(<!--=BUDGET:hdr\.dom\.s7-->)", rf"{over}\1", text)
 
 
 def comfortable_min_over_column(text: str) -> str:
-    """hdr.dom.min.comfortable written 1 px over the comfortable 1280 DOM column less the frame."""
+    """hdr.dom.s7.comfortable written 1 px over the comfortable 1280 DOM column less the frame."""
     cols = anchored_ints(text, "BUDGET:scalping.split.1280.comfortable")
     frame = anchored_ints(text, "BUDGET:focus.frame-px")
     if not cols or not frame:
         return text
     over = cols[1] - 2 * frame[0] + 1
-    return re.sub(r"\d+(<!--=BUDGET:hdr\.dom\.min\.comfortable-->)", rf"{over}\1", text)
+    return re.sub(r"\d+(<!--=BUDGET:hdr\.dom\.s7\.comfortable-->)", rf"{over}\1", text)
 
 
 def comfortable_parent_split(text: str) -> str:
@@ -1617,6 +1683,12 @@ def comfortable_parent_split(text: str) -> str:
 MUTATIONS: tuple[tuple[str, str, Callable[[str], str], str], ...] = (
     # (gate class, name, mutation, expected outcome)
     ("fit", "a header minimum written 1 px over its column", dom_min_over_column, "FAIL"),
+    (
+        "4 strings",
+        "the Measurement correction's collapse rule dropped",
+        re_sub(r"collapses to its glyph \(CMP-229 `unlock`, J23\)", "collapses", count=0),
+        "FAIL",
+    ),
     (
         "fit",
         "a comfortable minimum written 1 px over its column",
