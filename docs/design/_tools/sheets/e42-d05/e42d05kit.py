@@ -3565,7 +3565,8 @@ def restore_step3(
     """Step 3 (RW-6; rung 4 inside the step, D24): restore.confirm.title, "Postgres full (pg_basebackup) · 820 MB",
     the token with its note (D23), Why? (restore.confirm.reason_replaced while postgres is in scope and CG-7 is open,
     else restore.confirm.reason), restore.confirm.stepup, the marker (restore.confirm.marker_replaced, or "Recorded in
-    the audit log · Backup restored (backup.restore)"), [Back] [Restore from {time}] (form validity). refused= a
+    the audit log · Backup restored (backup.restore)"), [Cancel restore] [Back] [Restore from
+    {time}] (form validity). refused= a
     restore.refused.* key (RW-8): the rule in words + D02:708's spent-code sentence, inputs kept, [Try again].
     """
     bw = SIZES[px].inner - STEPPER_W - PX[INSET_XL]
@@ -3633,6 +3634,7 @@ def restore_step3(
     conf = label("Restore from {time}", L_STEPS + 7, "the confirm")
     conf_txt = conf.replace("{time}", b.when)
     return kids, [
+        cancel_restore(),  # D24, §8.1, §8.3: "Cancel restore" on steps 1-3 (boards review round 1, M-1)
         button("Back", "secondary"),
         validity(conf_txt, None) if not refused else button(conf_txt, "destructive"),
     ]

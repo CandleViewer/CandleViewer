@@ -243,3 +243,18 @@ The live check fixed these on the boards; the next regeneration fixes them in th
   scroll): recorded, not a defect.
 - Annotations: SCR-144's note on boards 01 and 03 gains "A virtualised CMP-049 keeps `aria-rowindex` (`15:498`)";
   SCR-146's on board 07 gains the APG-grid line (row actions reached by ← →; Enter acts once). Both were added live.
+
+## Boards review round 1 (2026-10-29): live patches and their sheet fixes
+
+- M-1, board 06, RW-6 at 1280 and 2560: the step-3 footer gains the ghost "Cancel restore" before [Back] (D24, §8.1,
+  §8.3), built like RW-3's; `restore_step3` now returns [Cancel restore, Back, confirm] (the committed sidecar sheets
+  predate it). RW-6's keyboard annotation lists Tab … → Back → [Restore …] → Cancel restore, as RW-1, RW-3 and RW-4
+  do, with "Esc = Cancel restore".
+- M-3, board 01: E04-D01's own PNGs (`docs/design/E04/img/scr-143-all-green.png`, `scr-143-degraded-outage.png`,
+  `scr-143-unreachable-backend.png`, `scr-144-incident-log.png`, each 1440 × 900) are placed at 1:1 as image fills in
+  the four slots (each slot 1440 wide, image then caption). The board grows to 6640 wide (x −640 so board 02 keeps its
+  place); the annotation column moves to x 6160. A sheet cannot carry an image fill: a regeneration needs the same
+  live upload step (`penpot.uploadMediaData`, one PNG per call).
+- M-2, board 02: the light and high-contrast columns are exported under their own themes (`semantic-light`,
+  `semantic-hc`) and composited column by column into the one PNG; each column passes its own theme's text-colour
+  check. The board itself is unchanged.
