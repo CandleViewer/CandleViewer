@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { act, type SetStateAction } from "react";
+import { act, type JSX, type SetStateAction } from "react";
 import type * as ReactModule from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it, vi } from "vitest";
-import { Combobox, type ComboboxOption } from "../src/index.js";
+import { fireEvent } from "storybook/test";
+import { afterEach, expect, it, vi } from "vitest";
+import { Combobox, SymbolSearchInput, type ComboboxOption } from "../src/index.js";
 
 /**
  * React drops a state update on an unmounted component without a word, so this file counts updates: every
@@ -27,6 +28,10 @@ vi.mock("react", async (importOriginal) => {
 });
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+// A failed assertion must not leave fake timers to the next test.
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 it("an unmount aborts the search in flight, and its late answer sets no state", async () => {
   const flight: {
@@ -59,4 +64,30 @@ it("an unmount aborts the search in flight, and its late answer sets no state", 
   late.after = true;
   await act(async () => flight.answer?.([{ value: "btc", label: "BTCUSDT" }]));
   expect(late.updates).toBe(0);
+});
+
+const noop = (): void => undefined;
+it.each<[string, () => JSX.Element]>([
+  [
+    "CMP-048",
+    () => <Combobox aria-label="Symbol" options={[]} value="b" onChange={noop} settleMs={300} />,
+  ],
+  ["CMP-160", () => <SymbolSearchInput value="b" onChange={noop} onSelect={noop} items={[]} />],
+])("%s: a settle still pending at unmount sets no state when its time comes", async (_id, ui) => {
+  vi.useFakeTimers();
+  late.after = false;
+  late.updates = 0;
+  const root = createRoot(document.body.appendChild(document.createElement("div")));
+  await act(async () => root.render(ui()));
+  await act(
+    async () =>
+      void fireEvent.change(document.querySelector("input") ?? document.body, {
+        target: { value: "bt" },
+      }),
+  );
+  expect(vi.getTimerCount()).toBeGreaterThan(0); // the settle is pending
+  await act(async () => root.unmount());
+  late.after = true;
+  await act(async () => vi.advanceTimersByTimeAsync(1000).then(noop));
+  expect([late.updates, vi.getTimerCount()]).toEqual([0, 0]);
 });

@@ -290,7 +290,7 @@ describe("EmptyState actions (E08-D05 A-D05-5)", () => {
     expect(bare.querySelector(".cv-empty-state__ref")).toBeNull(); // no reference, no Ref line
   });
 
-  it("type: one or two actions; reference and live are the error variant's", () => {
+  it("type: one or two actions, a sole one never gated; reference and live are the error variant's", () => {
     const { clear } = fresh();
     // @ts-expect-error at most two actions (A-D05-5)
     const three = <EmptyState title="x" actions={[clear, clear, clear]} />;
@@ -300,6 +300,9 @@ describe("EmptyState actions (E08-D05 A-D05-5)", () => {
     const ref = <EmptyState title="x" reference="r" />;
     // @ts-expect-error the politeness is an error's
     const live = <EmptyState title="x" live="assertive" />;
-    expect([three, none, ref, live]).toHaveLength(4);
+    // @ts-expect-error a sole gated action is the sentence form (E09-D09 §8): the reason as the description
+    const sole = <EmptyState title="x" actions={[fresh().check]} />;
+    const pair = <EmptyState title="x" actions={[clear, fresh().check]} />; // either of two may be gated
+    expect([three, none, ref, live, sole, pair]).toHaveLength(6);
   });
 });
