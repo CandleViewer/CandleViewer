@@ -7,7 +7,7 @@ Standalone, offline, stdlib only; it executes no repo code. It reads the token J
 
 1. **Cites.** Every `NN`:line, `D02`:line, `E10-D03`:line, `CONSTITUTION.md`:line and
    `E15-D02.md:N` "fragment" cite in the spec and the hand-off is read at the pinned base
-   (`git show 0a1151f325:<path>`): OK when the line exists (and holds the fragment, if quoted);
+   (`git show 1866642820:<path>`): OK when the line exists (and holds the fragment, if quoted);
    WARN when the same line reads differently at `origin/main` (drifted since the base); FAIL when
    the file or line is gone at the base, the line is blank, or a fragment is absent or ambiguous.
    `T:`n (the issue body of #319) is not in the repo and is counted, not checked.
@@ -47,10 +47,10 @@ Standalone, offline, stdlib only; it executes no repo code. It reads the token J
    "drawn on request"); every backticked token name exists; no hex colour. Whole-text gates on
    the spec and the hand-off: no lock / T2 on a splitter or ×; no gated Esc; E15-D04 never pinned
    by a sha or quoted; issuecomment-6391925285 only as "the BQ list", the RULED heading on the
-   ruling issuecomment-6391960363; every line naming BQ-3 / BQ-4 carries "owner approval pending
-   (#2701)". **Keymap (MJ-4):** every §12.1 / Table K row names its `keymap.json` id (read at the
-   base), or is PROPOSED-PENDING via CMP-022 with a shipped path, or is a component / reserved
-   key; a chord already bound in `keymap.json` names that command.
+   ruling issuecomment-6391960363; every line naming BQ-3 / BQ-4 carries "RULED (orchestrator,
+   2026-10-29, #2701 ledger 1 row N)". **Keymap (MJ-4):** every §12.1 / Table K row names its
+   `keymap.json` id (read at the base), or is PROPOSED-PENDING via CMP-022 with a shipped path,
+   or is a component / reserved key; a chord already bound in `keymap.json` names that command.
 5. **--selftest** applies one or more in-memory mutations per gate class to the filled spec; each
    must add a FAIL (or, for the drift case, a WARN) that the unmutated text does not have.
 
@@ -82,7 +82,7 @@ DESIGN = ROOT / "docs" / "design"
 D02 = DESIGN / "E15" / "E15-D02.md"
 SPEC = DESIGN / "E15" / "E15-D03.md"
 HANDOFF = DESIGN / "E15" / "E15-D03-handoff.md"
-BASE = "0a1151f325"  # every cite was read here (the spec's Key; re-pinned from 76edb9470f)
+BASE = "1866642820"  # every cite was read here (the spec's Key; re-pinned from 0a1151f325)
 HEAD = "origin/main"  # drift is reported against this ref (WARN, never FAIL)
 MULTI = re.MULTILINE
 PRIM, DARK, LIGHT, HC = (
@@ -1647,7 +1647,7 @@ NEGATED = re.compile(r"\b(?:never|no|not|without)\b|n't\b")
 D04_QUOTE = re.compile(r"[\"“”][^.|;]{0,80}\bE15-D04|\bE15-D04\b[^.|]{0,80}[\"“”]")
 ESC_GATED = re.compile(r"`?Esc`?\b(?:(?!never|not\b|\|)[^.;|]){0,40}\bgated\b", re.IGNORECASE)
 RULING, BQ_LIST = "6391960363", "6391925285"  # the orchestrator's ruling; the lane's BQ list
-OWNER_MARK = "owner approval pending (#2701)"
+OWNER_MARK = "ruled (orchestrator, 2026-10-29, #2701 ledger 1 row"
 PENDING_KEY = "PROPOSED-PENDING via CMP-022"
 
 
@@ -2081,7 +2081,10 @@ MUTATIONS: tuple[tuple[str, str, Callable[[str], str], str], ...] = (
     (
         "4 strings",
         "MJ-3 the #2701 marker dropped from D-14 (BQ-3)",
-        re_sub(r"\(BQ-3; owner approval pending \(#2701\)\)\.\*\*", "(BQ-3).**"),
+        re_sub(
+            r"\(BQ-3; RULED \(orchestrator, 2026-10-29, #2701 ledger 1 row 36\)\)\.\*\*",
+            "(BQ-3).**",
+        ),
         "FAIL",
     ),
     (
