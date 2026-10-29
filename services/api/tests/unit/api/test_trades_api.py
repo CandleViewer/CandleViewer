@@ -233,6 +233,10 @@ def test_get_trades_keeps_its_bounds_at_their_edges() -> None:
     assert c.get("/market/trades", params={**edge, "min_size": "0.001"}).status_code == 200
     for params in ({"limit": 501}, {"cluster_window_ms": 5001}, {"cluster_tolerance_ticks": 21}):
         assert c.get("/market/trades", params={"symbol": "BTCUSDT", **params}).status_code == 422
+    at_cap = "1." + "0" * 30  # 32 characters
+    assert c.get("/market/trades", params={**edge, "min_size": at_cap}).status_code == 200
+    r = c.get("/market/trades", params={**edge, "min_size": at_cap + "0"})
+    assert r.status_code == 422
 
 
 def test_get_trades_floor_unknown_refuses_a_min_size() -> None:

@@ -41,7 +41,10 @@ _UUID_RE: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 _SESSION_RE: Final = re.compile(r"[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
 #: §6.1 (22 `PaneIntervalCode`: one spelling per value): a whole number has no leading zeros.
 _WHOLE_RE: Final = re.compile(r"0|[1-9][0-9]*")
-_DECIMAL_RE: Final = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
+#: A decimal option's longest text (E22 security lens): 32 characters, sign and point included,
+#: so a crafted `min_size` or `min_notional_usd` cannot make the parse or the compare costly.
+MAX_DECIMAL_TEXT: Final = 32
+_DECIMAL_RE: Final = re.compile(rf"^(?=.{{1,{MAX_DECIMAL_TEXT}}}$)-?[0-9]+(\.[0-9]+)?$")
 #: Accepted characters of a bars/footprint `param`; dots are illegal (§6.1, use a colon).
 _PARAM_RE: Final = re.compile(r"^[A-Za-z0-9:]{1,24}$")
 _SEGMENT_RE: Final = re.compile(r"^[A-Za-z0-9:_]+$")

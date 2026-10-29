@@ -57,6 +57,8 @@ class TradeReader(Protocol):
 
 
 DEMAND_CONSUMER = "rest-tape"
+#: `min_size`'s longest text (E22 security lens), as the WS decimal options (`ws/topics.py`).
+MIN_SIZE_MAX_TEXT: Final = 32
 #: Memoised pages per router (module docstring): 64 keys of at most 1 000 items each.
 PAGE_CACHE_MAX: Final = 64
 
@@ -171,7 +173,7 @@ def make_trades_router(
         cursor: str | None = Query(default=None, max_length=512),
         limit: int = Query(default=100, ge=1, le=L.TRADES_MAX_LIMIT),
         side: Literal["buy", "sell"] | None = None,
-        min_size: str | None = None,
+        min_size: str | None = Query(default=None, max_length=MIN_SIZE_MAX_TEXT),
         cluster_window_ms: int = Query(default=0, ge=0, le=L.CLUSTER_WINDOW_MS_MAX_REST),
         cluster_tolerance_ticks: int = Query(default=0, ge=0, le=L.CLUSTER_TOLERANCE_TICKS_MAX),
     ) -> JSONResponse:
@@ -256,6 +258,7 @@ def _window_refusal(start: int | None, end: int | None, cluster_window_ms: int) 
 
 
 __all__ = [
+    "MIN_SIZE_MAX_TEXT",
     "PAGE_CACHE_MAX",
     "Page",
     "PageCache",

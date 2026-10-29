@@ -252,6 +252,20 @@ def test_trades_out_of_range_options_are_refused_and_nothing_is_held(
     assert _value(cv_ws_trades_subscribe_rejected_total, reason=reason) - before == 1
 
 
+def test_trades_a_decimal_option_longer_than_32_characters_is_refused() -> None:
+    """E22 security lens: a decimal option's text is capped (`MAX_DECIMAL_TEXT`), so a crafted
+    `min_size` is refused by the registry before it is parsed or compared."""
+    w = World()
+    at_cap = "1." + "0" * 30  # 32 characters: accepted
+    result, sub = w.sub(w.conn(), {"min_size": at_cap})
+    assert result["ok"] is True and sub is not None
+    conn = w.conn()
+    result, sub = w.sub(conn, {"min_size": at_cap + "0"})
+    assert sub is None and result["ok"] is False
+    assert (result["error"]["code"], result["error"]["field"]) == ("invalid_options", "min_size")
+    assert conn.authz.by_id == {}
+
+
 def test_trades_ack_echoes_the_options_and_the_engine_threshold() -> None:
     w = World(config=BigTradeConfig())
     conn = w.conn()
