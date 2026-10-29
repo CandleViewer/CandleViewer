@@ -20,7 +20,10 @@ const SRC = resolve(import.meta.dirname, "../src");
 const ENTRY = join(SRC, "main.tsx");
 
 /** slice -> reason + ticket. Stale entries (slice now reachable) fail. */
-const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {};
+const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
+  "symbol-search":
+    "#4703 (E08-S09): PR A ships the index and ranking; PR C mounts SCR-102 and drops this entry",
+};
 
 interface ParsedImports {
   /** relative specifiers (static, re-export and dynamic `import()`) */
