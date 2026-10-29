@@ -6239,3 +6239,9 @@ This number follows `main`'s last entry, §19.50; an entry that lands first take
 This number follows `main`'s last entry, §19.51; an entry that lands first takes it, and this one moves to the next free number.
 
 - §15.5: `api_key.revoked` loses "not registered yet, B3": the closing B3 slice registers it in `audit/actions.py` with `revokeApiKey`, which writes it keyed by the key's id, once per revoke. No chart or `machine_hash` change.
+
+### 19.53 2026-10-29 — 22 `/rules` saves: no account outside `ir`, and closed save bodies (E35, #4835)
+
+This number follows `main`'s last entry, §19.52; an entry that lands first takes it, and this one moves to the next free number.
+
+- 22 `createRule` and `updateRule`: no member outside `ir` names an account; a save sends a rule's accounts in `ir.scope.account_ids`, and inside `ir` `RuleMetricRef.account_id` may also name one (IR grammar, grant-checked at save). `RuleIr` gains a required `scope` (`RuleIrScope`, closed), the server's own scope of §11.2, and `Rule.scope` is its level only; the body's top-level `scope` is not read beside it (a value that differs is ignored, neither refused nor stored), and a later delta removes it. `RuleInput` drops `bindings`, and `updateRule` takes `RuleUpdateInput`: `RuleInput`'s members plus `expected_version`, which its `If-Match` text already names. A member outside `ir` holding an account key (compared case-insensitively, with or without the underscore) is refused with `errors[].rule` `accounts_outside_scope`, and any other member a body does not name with `unknown_field`: an audited `422 rule_ir_invalid` naming each member in `field` (example `memberOutsideIr`), and nothing is stored. A save stores `name`, and `note` as the version's note; it does not store `description`, `editor`, `tags` or `graph_layout` yet. `Rule.bindings` is never emitted. The audit shapes of §15.5 and the IR grammar of §11 are unchanged. No WS, table, column, chart or `machine_hash` change.

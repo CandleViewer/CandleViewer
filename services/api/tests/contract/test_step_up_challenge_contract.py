@@ -215,7 +215,7 @@ def test_problem_declares_the_step_up_challenge_field(
         (
             "action_summary",
             "Naming a rule this way is provisional: two rules can share a label and environments, "
-            "and `rules:write` can rename a rule and change its scope, bindings and active version "
+            "and `rules:write` can rename a rule and change its scope and its active version "
             "without a step-up",
         ),
         (
