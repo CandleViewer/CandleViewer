@@ -358,3 +358,38 @@ async def test_a_source_that_cannot_catch_up_is_never_spread() -> None:
     conn.emitter.turn_s = 0.0
     sub = _sub(conn)
     assert conn.emitter.snapshot(sub, "initial") and conn.out and not conn.emitter._jobs
+
+
+async def test_a_request_once_the_turns_budget_is_spent_waits_for_a_later_turn() -> None:
+    """m-C: a request's inline slice runs only while the loop turn's shared budget has room;
+    once it is spent, a later request of that turn runs nothing inline and takes its steps in a
+    later turn. The budget is the turn's: in the next turn a request is emitted at once."""
+    from candleviewer.ws import sequencing
+
+    conn = _conn(_big(columns=2, rows=4), turn_s=10.0)
+    turns = sequencing._Turns.of(asyncio.get_running_loop())
+    turns.charge(10.0)  # this turn's budget, spent by what ran before
+    sub = _sub(conn)
+    assert conn.emitter.snapshot(sub, "initial") is True
+    assert conn.out == [] and sub.snapshot_pending and sub.sub_id in conn.emitter._jobs
+    await asyncio.sleep(0)  # the next turn: the budget is reset, then the job steps
+    assert len(conn.out) == 1 and conn.out[0]["s"] == 1 and not conn.emitter._jobs
+    assert turns.remaining(10.0) > 0
+    late = _conn(_big(columns=2, rows=4), turn_s=10.0)
+    other = _sub(late)
+    await asyncio.sleep(0)
+    assert late.emitter.snapshot(other, "initial") and len(late.out) == 1  # room again: inline
+
+
+async def test_a_source_that_cannot_catch_up_is_synchronous_whatever_the_turns_budget() -> None:
+    """m-C: only a source with `catch_up` waits for room; any other's snapshot is emitted in
+    the call, as before #605, even when the turn's budget is spent."""
+    from candleviewer.ws import sequencing
+
+    source = Source()
+    source.bodies["heatmap"] = _big(columns=2, rows=4)
+    conn = Conn(source, cache=SnapshotCache())
+    sequencing._Turns.of(asyncio.get_running_loop()).charge(10.0)
+    sub = _sub(conn)
+    assert conn.emitter.snapshot(sub, "initial") and len(conn.out) == 1
+    assert not conn.emitter._jobs

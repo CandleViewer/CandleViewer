@@ -702,10 +702,13 @@ class _SnapJob:
 
 
 class _Turns:
-    """#605 (m-C): the snapshot jobs under way on one loop, every emitter's: one callback a loop
-    turn steps them round-robin, one step each in turn, until the budget (the smallest `turn_s`
-    among them) is spent, so they share it whatever their number. Jobs left over continue in the
-    next turn."""
+    """#605 (m-C): the snapshot jobs under way on one loop, every emitter's, and the CPU budget of
+    the loop's current turn they share. One callback a loop turn steps the jobs round-robin, one
+    step each in turn, until the budget (the smallest `turn_s` among them) is spent, so they share
+    it whatever their number; jobs left over continue in the next turn. A request's own inline
+    slice (`TopicEmitter.snapshot`) is charged to the same budget, and runs only while it has
+    room. The turn ends at a `call_soon` callback (`_reset`): it is scheduled before the stepping
+    callback, so that one always sees its own turn's charges."""
 
     _BY_LOOP: Final[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _Turns]] = (
         weakref.WeakKeyDictionary()
@@ -715,6 +718,9 @@ class _Turns:
         self.loop = loop
         self.jobs: deque[tuple[TopicEmitter, _SnapJob]] = deque()
         self.armed = False
+        #: CPU seconds charged in the loop's current turn, zeroed by `_reset` at its end.
+        self.spent = 0.0
+        self.resetting = False
 
     @classmethod
     def of(cls, loop: asyncio.AbstractEventLoop) -> _Turns:
@@ -723,6 +729,24 @@ class _Turns:
             turns = cls._BY_LOOP[loop] = cls(loop)
         return turns
 
+    def remaining(self, budget: float) -> float:
+        """What is left of `budget` in this loop turn."""
+        return budget - self.spent
+
+    def charge(self, seconds: float) -> None:
+        """`seconds` of snapshot CPU spent in this loop turn."""
+        self.spent += seconds
+        self._end_turn()
+
+    def _end_turn(self) -> None:
+        if not self.resetting:
+            self.resetting = True
+            self.loop.call_soon(self._reset)
+
+    def _reset(self) -> None:
+        self.resetting = False
+        self.spent = 0.0
+
     def add(self, emitter: TopicEmitter, job: _SnapJob) -> None:
         self.jobs.append((emitter, job))
         self._arm()
@@ -730,9 +754,12 @@ class _Turns:
     def _arm(self) -> None:
         if not self.armed:
             self.armed = True
+            self._end_turn()  # its reset runs first in the next turn
             self.loop.call_soon(self._turn)
 
     def _turn(self) -> None:
+        """Step the jobs while the turn's budget has room, at least one step (so a job always
+        progresses, whatever the requests of a turn charged)."""
         self.armed = False
         if not self.jobs:
             return
@@ -743,9 +770,10 @@ class _Turns:
                 emitter, job = self.jobs.popleft()
                 if emitter._step(job):
                     self.jobs.append((emitter, job))
-                if time.perf_counter() - began >= budget:
+                if self.spent + time.perf_counter() - began >= budget:
                     break
         finally:
+            self.charge(time.perf_counter() - began)
             if self.jobs:
                 self._arm()
 
@@ -979,10 +1007,11 @@ class TopicEmitter:
         until a later flush succeeds. Nothing once it has ended (§8.4 Lanes, defence in depth).
         Once its frames are queued, `on_snapshot` is told.
 
-        #605 (M-1, m-C): the work runs in steps. This call runs up to `turn_s` of them inline, the
-        request's own slice, so a small snapshot is emitted here, as before; the rest of a large
-        one runs in later loop turns under one CPU budget a turn shared by every snapshot job of
-        the process (`_Turns`, round-robin over the jobs), and this returns True. Only a source
+        #605 (M-1, m-C): the work runs in steps. This call runs some inline, the request's own
+        slice, while the loop turn's CPU budget (`turn_s`, shared by every snapshot of the
+        process, `_Turns`) has room, so a small snapshot is emitted here, as before; the rest, or
+        all of it once the turn's budget is spent, runs in later loop turns under that budget,
+        round-robin over the jobs, and this returns True. Only a source
         that can tell what changed meanwhile (`catch_up`) is spread so; any other's snapshot
         finishes in this call, as before. Its frames are all queued in its last step, in order, the
         last with `s` (§3.6); until then it stays `snapshot_pending`, so no `d` of it precedes them
@@ -1005,14 +1034,19 @@ class TopicEmitter:
             return bool(_finish(job.steps))
         if not self._spreads(sub):  # its source cannot give what changed meanwhile: as before
             return bool(_finish(job.steps))
-        began = time.perf_counter()  # the request's own slice, so a small one is emitted here
-        while True:
+        room = turns.remaining(self.turn_s)
+        if room > 0:  # the request's own slice, while the turn's shared budget has room
+            began = time.perf_counter()
             try:
-                next(job.steps)
-            except StopIteration as done:
-                return bool(done.value)
-            if time.perf_counter() - began >= self.turn_s:
-                break
+                while True:
+                    try:
+                        next(job.steps)
+                    except StopIteration as done:
+                        return bool(done.value)
+                    if time.perf_counter() - began >= room:
+                        break
+            finally:
+                turns.charge(time.perf_counter() - began)
         job.key = self._job_key(sub, reason)
         self._jobs[sub.sub_id] = job
         turns.add(self, job)
