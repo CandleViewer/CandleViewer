@@ -17,7 +17,7 @@
  *   | Deep links                                      | `deepLinks.*`, `caps.deepLinks` |
  *   | Tray                                             | `tray.*`, `caps.tray` |
  *   | OS notifications                                | `notifications.*`, `caps.osNotifications` |
- *   | GPU info / flags, GPU-process crash (F15)       | `gpu.info`, `gpu.onCrashed`, `gpu.retry`, `caps.gpuInfo` |
+ *   | GPU info / flags, GPU-process crash (F15)       | `gpu.info`, `gpu.onCrashed`, `gpu.retry`, `gpu.keepSoftware`, `caps.gpuInfo` |
  *   | Crash log                                        | `crashLog.append`, `caps.crashLog` |
  *   | Playwright-drivability                          | not a runtime capability — verified by `apps/desktop/e2e` |
  *
@@ -93,9 +93,10 @@ export interface GpuCrash {
   readonly reason: GpuCrashReason;
 }
 
-/** `GpuInfo.lastCrash`: the crash as it was pushed, and whether a retry was accepted after it. */
+/** `GpuInfo.lastCrash`: the crash as it was pushed, and whether a retry or a keep came after it. */
 export interface GpuLastCrash extends GpuCrash {
   readonly retried: boolean;
+  readonly kept: boolean;
 }
 
 export interface DeepLinkPayload {
@@ -161,10 +162,13 @@ export interface ShellPort {
     info(): Promise<GpuInfo>;
     /**
      * Each GPU-process crash in the desktop shell, the last one before the subscription included
-     * (`GpuInfo.lastCrash`, read once) unless a retry answered it; a no-op subscription in a tab.
+     * (`GpuInfo.lastCrash`, read once, with its `kept`) unless a retry answered it; a no-op
+     * subscription in a tab.
      */
     onCrashed(handler: (crash: GpuCrash) => void): () => void;
     /** Relaunches the desktop app with the GPU allowed again; refused in a browser tab. */
     retry(): Promise<void>;
+    /** Marks the desktop shell's last GPU crash kept for this launch (#306); a no-op in a tab. */
+    keepSoftware(): Promise<void>;
   };
 }

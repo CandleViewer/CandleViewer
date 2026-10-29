@@ -65,6 +65,8 @@ const cv = Object.freeze({
   },
   // No caller argument crosses; main relaunches only after a GPU crash, and rate-limits it.
   gpuRetry: () => invokeAllowed("cv:gpu:retry"),
+  // No caller argument crosses; main keeps this launch's last GPU crash, refused before one.
+  gpuKeepSoftware: () => invokeAllowed("cv:gpu:keepSoftware"),
   // Each GPU-process crash (F15), as a fresh copy checked here again.
   onGpuCrashed: (listener: (crash: GpuCrash) => void) => {
     if (typeof listener !== "function") {
