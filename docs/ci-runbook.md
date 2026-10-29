@@ -736,6 +736,20 @@ index alone, removing nothing.
   with a review date between today and today + 180 days (farther is
   `CI-SEC-006 expiry too far`). Fix the comment or fix the code; see
   `docs/plan/04-security-program.md` 12.2.
+- **The `Semgrep OSS` and `Bandit` code-scanning checks** (not required) read the
+  SARIF the `semgrep-bandit` job uploads. GitHub code scanning ignores SARIF
+  `suppressions`, so the job uploads the gate's copy, written by its
+  `--sarif-out` flag. The copy leaves out each result the gate cleared: one with a
+  justified in-source suppression (CI-SEC-006), or one an unexpired accepted-risk
+  entry let through. Clearance is per result, so a blocked result that shares an
+  id with a cleared one stays. The job log names each result it leaves out
+  (`code-scanning copy: dropped …`). Each step first deletes any `*.gate.sarif`
+  in the checkout (they are git-ignored), so only this run's gate can write the
+  copy. When the gate wrote none (a CI-SEC-005 failure), the raw report is
+  uploaded instead, which can only over-report. These checks disagree with the
+  required gate only when the gate itself failed (#1882). An alert they still
+  raise is a finding the gate blocks too: fix it as CI-SEC-001 or CI-SEC-006
+  says. Never dismiss it to turn a check green.
 
 ### CI-COV-* — coverage gate (`tools/ci/coverage_gate.py`)
 

@@ -223,16 +223,23 @@ class GateResult:
 
 
 def evaluate_findings(
-    findings: list[Finding], risks: list[AcceptedRisk], *, run_date: date
+    findings: list[Finding],
+    risks: list[AcceptedRisk],
+    *,
+    run_date: date,
+    cleared: set[int] | None = None,
 ) -> GateResult:
     """Apply the single blocking policy described in the ticket's Technical
     notes: every tool reduces to {CRITICAL, HIGH, MEDIUM, LOW}; this is the
-    one place "what blocks" is decided.
+    one place "what blocks" is decided. `cleared`, when given, collects the
+    positions in `findings` an unexpired accepted-risk entry let through (the
+    code-scanning copy, #1882): positions, not ids, since two results can share an
+    id and only one of them be cleared.
     """
     messages: list[str] = []
     blocking_code: str | None = None
 
-    for finding in findings:
+    for n, finding in enumerate(findings):
         threshold = _BLOCKING_THRESHOLD.get(finding.tool)
 
         # gitleaks: ANY finding blocks, no accepted-risk exception possible
@@ -288,6 +295,8 @@ def evaluate_findings(
             continue
         # Unexpired, matching accepted-risk entry: does not block, but is always
         # reported so an accepted risk is never silent (C-12.3).
+        if cleared is not None:
+            cleared.add(n)
         messages.append(
             f"accepted risk: {finding.tool} finding {finding.finding_id} "
             f"({finding.severity}) until {risk.expires.isoformat()} - {risk.reason}"
@@ -614,6 +623,7 @@ def parse_sarif(
     *,
     source_root: Path | None = None,
     today: date | None = None,
+    kept: dict[tuple[int, int], int] | None = None,
 ) -> list[Finding]:
     """Parse a SARIF 2.1.0 file into normalised findings.
 
@@ -638,6 +648,10 @@ def parse_sarif(
     malformed, not the default MEDIUM (which the codeql policy never blocks).
     CI-SEC-005 rather than a guessed HIGH: its real severity is unknown, and an
     accepted-risk entry can clear a HIGH but never a malformed SARIF.
+
+    `kept`, when given, maps each (run, result) position that became a finding to
+    that finding's index in the returned list; a result a justified in-source
+    suppression skips is not in it.
     """
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
@@ -688,6 +702,8 @@ def parse_sarif(
                     suppression_note = f"CI-SEC-006: unjustified in-source suppression ({problem}) "
 
             severity = _rule_severity(rule, result)
+            if kept is not None:
+                kept[(i, k)] = len(findings)
 
             message = result.get("message", {}).get("text", "")
             findings.append(
@@ -1500,6 +1516,52 @@ def parse_license_report(path: Path) -> list[LicenseFinding]:
     ]
 
 
+def write_gate_sarif(
+    report: Path,
+    out: Path,
+    findings: list[Finding],
+    kept: dict[tuple[int, int], int],
+    cleared: set[int],
+) -> list[str]:
+    """Write the SARIF code scanning receives: the report without the results this gate cleared.
+
+    GitHub code scanning reads raw SARIF and ignores `suppressions`, so the results a justified
+    in-source suppression (CI-SEC-006) or an unexpired accepted-risk entry cleared would open
+    alerts the required gate has already decided (#1882). They are removed here, each one named
+    in the job log, so code scanning shows what the gate shows and nothing goes silently.
+    Everything else in the report is kept as written. Clearance is per result (its
+    position), never per id: a result whose id twin was cleared is kept unless it was too.
+    """
+    doc = json.loads(report.read_text(encoding="utf-8"))
+    dropped: list[str] = []
+    for i, run in enumerate(doc["runs"]):
+        results = []
+        for k, result in enumerate(run["results"]):
+            n = kept.get((i, k))
+            if n is not None and n not in cleared:
+                results.append(result)
+                continue
+            if n is not None:
+                what = f"{findings[n].finding_id} (accepted risk)"
+            else:
+                locs = result.get("locations") or []
+                phys = locs[0].get("physicalLocation", {}) if locs else {}
+                uri = phys.get("artifactLocation", {}).get("uri", "")
+                line = phys.get("region", {}).get("startLine", "")
+                where = f" at {uri}:{line}" if uri else ""
+                rule = result.get("ruleId", "unknown-rule")
+                what = f"{rule}{where} (justified in-source suppression)"
+            dropped.append(f"code-scanning copy: dropped {what}")
+        run["results"] = results
+    try:
+        out.write_text(json.dumps(doc), encoding="utf-8")
+    except OSError as exc:
+        raise SecurityGateError(
+            "CI-SEC-005", f"cannot write the code-scanning copy {out}: {exc}"
+        ) from exc
+    return dropped
+
+
 _PARSERS: dict[str, Any] = {
     "codeql": lambda p: parse_sarif(p, "codeql"),
     "semgrep": lambda p: parse_sarif(p, "semgrep"),
@@ -1549,6 +1611,13 @@ def main(argv: list[str] | None = None) -> int:
         help="required with --tool semgrep: its --json-output report, the one that says which "
         "targets a rule did not analyse (#3549)",
     )
+    parser.add_argument(
+        "--sarif-out",
+        type=Path,
+        default=None,
+        help="with --tool semgrep or bandit: write the SARIF for code scanning there, without the "
+        "results this gate cleared (#1882)",
+    )
     args = parser.parse_args(argv)
 
     run_date = (
@@ -1559,6 +1628,8 @@ def main(argv: list[str] | None = None) -> int:
 
     notes: list[str] = []
     lost: SecurityGateError | None = None  # a Semgrep scan's gap, reported after its findings
+    kept: dict[tuple[int, int], int] = {}
+    cleared: set[int] = set()
     try:
         risks = load_accepted_risks(args.accepted_risks)
         if args.tool == "license-scan":
@@ -1580,7 +1651,7 @@ def main(argv: list[str] | None = None) -> int:
             result = GateResult(judged.blocked, judged.code, fixed + judged.messages)
         else:
             if args.tool == "semgrep":
-                findings = parse_sarif(args.report, "semgrep", today=run_date)
+                findings = parse_sarif(args.report, "semgrep", today=run_date, kept=kept)
                 if args.semgrep_json is None:
                     raise SecurityGateError(
                         "CI-SEC-005",
@@ -1591,9 +1662,17 @@ def main(argv: list[str] | None = None) -> int:
                     notes = check_semgrep_coverage(args.semgrep_json)
                 except SecurityGateError as exc:
                     lost = exc  # the findings still print, so one run shows both
+            elif args.tool == "bandit":
+                findings = parse_sarif(args.report, "bandit", kept=kept)
             else:
                 findings = _PARSERS[args.tool](args.report)
-            result = evaluate_findings(findings, risks, run_date=run_date)
+            result = evaluate_findings(findings, risks, run_date=run_date, cleared=cleared)
+            if args.sarif_out is not None:
+                if args.tool not in ("semgrep", "bandit"):
+                    raise SecurityGateError(
+                        "CI-SEC-005", f"--sarif-out is for semgrep and bandit, not {args.tool}"
+                    )
+                notes.extend(write_gate_sarif(args.report, args.sarif_out, findings, kept, cleared))
     except SecurityGateError as exc:
         print(f"{exc.code}: {exc.message}", file=sys.stderr)
         return 1

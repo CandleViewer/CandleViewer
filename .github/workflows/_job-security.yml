@@ -188,6 +188,9 @@ jobs:
         timeout-minutes: 15
         run: |
           set -euo pipefail
+          # Only this run's gate writes the copy code scanning receives (#1882): a committed one
+          # would be uploaded if the gate failed before writing its own.
+          rm -f semgrep.gate.sarif bandit.gate.sarif
           python -m venv "$RUNNER_TEMP/semgrep-venv"
           export PATH="$RUNNER_TEMP/semgrep-venv/bin:$PATH"
           pip install --require-hashes --only-binary=:all: -r tools/ci/requirements-semgrep.txt
@@ -214,7 +217,8 @@ jobs:
             echo "CI-SEC-005: semgrep exited $status (engine/config error) — scanner infrastructure failure" >&2
             exit "$status"
           fi
-          python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif --semgrep-json semgrep.json
+          python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif --semgrep-json semgrep.json \
+            --sarif-out semgrep.gate.sarif
 
       # E14-X03 (#549): the statements the drawings rules report with `nosemgrep` disabled are the
       # sites of tools/ci/drawings-exception-sites.json, so a fifth annotation, or one moved to
@@ -232,10 +236,13 @@ jobs:
         # Upload only when the scanner wrote a report; the semgrep step (not this upload)
         # decides pass/fail. Code scanning is on: run 39041114804 posted the Semgrep OSS and
         # Bandit check runs. continue-on-error and no `id` keep an upload outage out of the verdict.
+        # The gate's copy (--sarif-out) leaves out what the gate cleared, since code scanning
+        # ignores SARIF suppressions (#1882); when the gate wrote none, the raw report goes,
+        # which can only over-report.
         if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' }}
         continue-on-error: true
         with:
-          sarif_file: semgrep.sarif
+          sarif_file: ${{ hashFiles('semgrep.gate.sarif') != '' && 'semgrep.gate.sarif' || 'semgrep.sarif' }}
           category: semgrep
 
       - name: bandit (services/api, SARIF)
@@ -249,18 +256,19 @@ jobs:
         # sibling package (#2893, ADR-0036): never shipped, but it runs in a dev stack.
         run: |
           set -euo pipefail
+          rm -f bandit.gate.sarif # as in the semgrep step: only this run's gate writes it
           python -m venv "$RUNNER_TEMP/bandit-venv"
           export PATH="$RUNNER_TEMP/bandit-venv/bin:$PATH"
           pip install -r scripts/requirements-ci.txt "bandit[sarif]==1.8.6"
           bandit -c services/api/pyproject.toml -r services/api/candleviewer services/api/cvdev -f sarif -o bandit.sarif -ll || true
-          python tools/ci/security_gate.py --tool bandit --report bandit.sarif
+          python tools/ci/security_gate.py --tool bandit --report bandit.sarif --sarif-out bandit.gate.sarif
 
       - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         # As the semgrep upload above: the bandit step decides, the upload never gates.
         if: ${{ !cancelled() && hashFiles('bandit.sarif') != '' }}
         continue-on-error: true
         with:
-          sarif_file: bandit.sarif
+          sarif_file: ${{ hashFiles('bandit.gate.sarif') != '' && 'bandit.gate.sarif' || 'bandit.sarif' }}
           category: bandit
 
       # `ci-required` judges this job's result (the `security` lane); this keeps it honest per scan.
