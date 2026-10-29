@@ -74,14 +74,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "GET /executions": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "GET /executions/closed-pnl": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "GET /journal/analytics": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -142,27 +134,7 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "GET /orders": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "GET /orders/{orderId}": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "GET /orders/{orderId}/diagnostics": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "GET /permissions": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "GET /positions": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "GET /positions/{positionId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
