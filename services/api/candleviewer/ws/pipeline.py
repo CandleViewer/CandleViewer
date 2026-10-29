@@ -294,6 +294,9 @@ class ConnectionPipeline:
         go through from now on (this pipeline is the connection's sink, module docstring). The
         first classification is one interval on; `notify` queues its notices on `system`."""
         self._live, pacer = authz.by_id, Pacer(emitter, self._interval_s, stalled=self._stalled)
+        # #605: a large snapshot's frames are encoded across loop turns, as this queue encodes.
+        emitter.push_encoded, emitter.encode_payload = self.push_encoded, self._dumps
+        emitter.wire = "msgpack" if self._msgpack else "json"
         pacer.on_error = partial(self._failed, "update", pacer)
         pacer.on_arm = self._wake_for
         self.ladder = Backpressure(self.queue, pacer, partial(self._snapshot, emitter))
@@ -304,16 +307,38 @@ class ConnectionPipeline:
         self._classify_at = emitter.clock() + self._interval_s
         self._count_as(pacer.cls)
 
-    def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
+    def push_encoded(
+        self,
+        frame: Mapping[str, Any],
+        payload: str | bytes,
+        received: float | None = None,
+        *,
+        encode_s: float | None = None,
+    ) -> None:
+        """`push` of a frame its sender already encoded with this queue's encoder (#605), with
+        the seconds that encode took when the sender timed it (a stamped frame, E17-T06)."""
+        self.push(frame, received, payload=payload, encode_s=encode_s)
+
+    def push(
+        self,
+        frame: Mapping[str, Any],
+        received: float | None = None,
+        *,
+        payload: str | bytes | None = None,
+        encode_s: float | None = None,
+    ) -> None:
         """Queue one frame; nothing once a close or `release` happened (WS-D01). A frame the hub
         stamped (`received`) has its encode timed and sized here, once, its size without its `sp`
-        (23 §3.1; module docstring)."""
+        (23 §3.1; module docstring); one that came encoded (`payload`) is sized here and its
+        encode time is the sender's (`encode_s`), when it timed it."""
         if self.terminal is not None or self.released or (self._skips and self._skipped(frame)):
             return
         try:
-            item = encode(
-                frame, self._dumps if received is None else self._timed_dumps, received=received
-            )
+            dumps = self._dumps if received is None or payload is not None else self._timed_dumps
+            if payload is None:
+                item = encode(frame, dumps, received=received)
+            else:  # already encoded (#605): classified only
+                item = encode(frame, dumps, received=received, payload=payload)
         except Exception as exc:  # whatever the encoder raises: never into the fan-out (§10.1)
             if self._recovers(frame, exc):
                 return
@@ -325,7 +350,10 @@ class ConnectionPipeline:
             return
         if received is not None:  # E17-T06: the stamped frame's encode time and wire bytes
             seconds, size = self._cost
-            seconds.observe(self._encode_s, SAMPLE_EVERY)
+            if payload is None:
+                seconds.observe(self._encode_s, SAMPLE_EVERY)
+            elif encode_s is not None:  # encoded by its sender, which timed it (#605)
+                seconds.observe(encode_s, SAMPLE_EVERY)
             sp = frame.get("sp")  # left out of the size (23 §3.1)
             size.observe(frame_bytes(item.payload, sp, msgpack=self._msgpack), SAMPLE_EVERY)
         if item.size > MAX_OUTBOUND_FRAME_BYTES:  # #2818: logged and sent, never refused

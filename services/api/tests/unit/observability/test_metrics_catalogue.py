@@ -70,6 +70,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "cv_ws_queue_frames",
         "replay_budget_waiters",  # a gauge of waiting lanes, named by the #2668 plan
         "book_subscriptions_active",  # named by the E21-T01 ruling (BQ-6, #604)
+        "heatmap_subscriptions_active",  # named by the E21-T02 ticket's Observability (#605)
     }
 )
 
@@ -455,6 +456,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.ingestion.metrics import BOOK_EXPORTED_NAMES as BOOK_NAMES
     from candleviewer.net.metrics import NET_EXPORTED_NAMES
     from candleviewer.observability.audit_query_metrics import EXPORTED_NAMES as AUDIT_NAMES
+    from candleviewer.orderflow.heatmap_metrics import EXPORTED_NAMES as HEATMAP_NAMES
     from candleviewer.orderflow.indicators.metrics import EXPORTED_NAMES as INDICATOR_NAMES
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
     from candleviewer.replay.metrics import EXPORTED_NAMES as REPLAY_NAMES
@@ -479,6 +481,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     others |= REPLAY_NAMES
     others |= INDICATOR_NAMES
     others |= BOOK_NAMES
+    others |= HEATMAP_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
@@ -494,6 +497,29 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
         assert missing == []
         for name in EXPORTED_NAMES:
             assert f"# HELP {name} " in text, name
+    finally:
+        collector.close()
+
+
+def test_exported_heatmap_metrics_served_with_env() -> None:
+    """E21-T02 (#605): the heatmap series are `live` and exported, served by
+    `export_heatmap_metrics` with `env`, `state` bound to its closed set."""
+    from candleviewer.orderflow.heatmap_metrics import (
+        EMITTED,
+        EXPORTED_NAMES,
+        STATES,
+        export_heatmap_metrics,
+    )
+
+    assert {s.name for s in live_specs() if s.exported} >= EXPORTED_NAMES
+    assert set(EMITTED) == set(STATES) == {"live", "estimated"}
+    m = Metrics("demo")
+    collector = export_heatmap_metrics(m.registry, env="demo")
+    try:
+        text = generate_latest(m.registry).decode()
+        for name in EXPORTED_NAMES:
+            assert f"# HELP {name} " in text, name
+        assert 'heatmap_columns_emitted_total{env="demo",state="estimated"}' in text
     finally:
         collector.close()
 

@@ -20,7 +20,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.ws.backpressure_config import BackpressureConfig
-from candleviewer.ws.binary import BOOK_DELTA, HEATMAP_COLUMN, Frame
+from candleviewer.ws.binary import BOOK_DELTA, HEATMAP_COLUMN, Frame, decode_b64
 from candleviewer.ws.coalescing import CoalescingQueue
 from candleviewer.ws.metrics import cv_ws_malformed_updates_total
 from candleviewer.ws.pacing import Pacer
@@ -1019,7 +1019,13 @@ def test_a_bucket_complete_in_the_snapshot_is_never_sent_again(
     hub.publish(_HEATMAP, {**head, "columns": columns}, part=live_part)
     [delta] = _queued(pipe)
     # `e` first: a binary frame's `p` is a string. Whole frames: the part is dropped with the
-    # column. Merging: heatmap has no window encoder yet, so the merged window is structured.
+    # column. Merging, binary: the window's encoder (#605) re-encodes the column it kept as kind 6
+    # (§3.6, one column a `d`), never the dropped one.
+    if encoding == "binary" and coalesce:
+        assert delta["e"] == "b64"
+        assert decode_b64(delta["p"]).prefix == (0, 1, 1)
+        assert decode_b64(delta["p"]).ts_base_ms == 1500
+        return
     assert delta["e"] == "j"
     assert [col["t_ms"] for col in delta["p"]["columns"]] == [1500]
 

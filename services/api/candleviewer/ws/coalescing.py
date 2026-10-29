@@ -53,9 +53,18 @@ from dataclasses import dataclass, replace
 from decimal import Context, Decimal, Inexact
 from typing import Any, Final, Literal
 
+from candleviewer.orderflow.heatmap import scaled_size
 from candleviewer.ws.bar_coalescer import BarCoalescer, BarKey, bar_key
 from candleviewer.ws.bars_wire import item_frames
-from candleviewer.ws.binary import BARS, BOOK_DELTA, FLAG_COALESCED, FLAG_ESTIMATED, TRADES, Frame
+from candleviewer.ws.binary import (
+    BARS,
+    BOOK_DELTA,
+    FLAG_COALESCED,
+    FLAG_ESTIMATED,
+    HEATMAP_COLUMN,
+    TRADES,
+    Frame,
+)
 from candleviewer.ws.topics import FAMILIES
 
 Payload = Mapping[str, Any]
@@ -90,8 +99,14 @@ _DISCLOSURE: Final = frozenset({"coalesced", "coalesced_count"})
 _SUMMED_DECIMALS: Final = ("bid_volume", "ask_volume", "delta", "total_volume")
 _SUMMED_COUNTS: Final = ("trades",)
 #: §3.4: the body kind a merged window keeps while every update in it carried a part of it (#3353).
-#: Footprint (5, #593) and heatmap (6, #605) have none yet; each kind also needs an `_encoded` arm.
-_BODY_KINDS: Final[Mapping[str, int]] = {"book": BOOK_DELTA, "trades": TRADES, "bars": BARS}
+#: Footprint (5, #593) has none yet; each kind also needs an `_encoded` arm. Heatmap (6, #605)
+#: leaves as one kind-6 `d` per column (§3.6).
+_BODY_KINDS: Final[Mapping[str, int]] = {
+    "book": BOOK_DELTA,
+    "trades": TRADES,
+    "bars": BARS,
+    "heatmap": HEATMAP_COLUMN,
+}
 #: Every `ts_offset_ms` is a u32 (§3.4).
 _MAX_OFFSET_MS: Final = 2**32 - 1
 
@@ -457,12 +472,15 @@ class _HeatmapMerge(_KeyedMerge):
     """§8.2 `heatmap`: per time-bucket column, last write wins; once a bucket's complete column
     was sent, any later column for that bucket is dropped, so a final column is never re-sent or
     regressed, unless the update also changes a root field (e.g. `max_value`). Columns leave in
-    time order. A frame queued whole (`coalesce: false`) loses such columns too (`unsent`)."""
+    time order. A frame queued whole (`coalesce: false`) loses such columns too (`unsent`). A
+    window that merged an `estimated` update stays `estimated` (#605): its root says it for every
+    column it carries, as kind 6's window-wide bit does (§3.4)."""
 
     def __init__(self, limit: int) -> None:
         super().__init__(limit, "columns", _t_key)
         self.sent: dict[int, None] = {}
         self.known: dict[str, Any] = {}  # root fields as last seen, across emissions
+        self.estimated = False  # an update merged into this window was estimated
 
     def add(self, body: Payload) -> bool:
         root = {k: v for k, v in body.items() if k not in self.lists}
@@ -475,9 +493,16 @@ class _HeatmapMerge(_KeyedMerge):
         if len(self.known) > self.limit:  # bounded like every other buffer here
             raise _BufferFullError
         if changed:
+            self.estimated = self.estimated or root.get("estimated") is True
             self.root.update(root)
+            if self.estimated:
+                self.root["estimated"] = True
             self.root_bytes = _size(self.root)
         return changed
+
+    def reset(self) -> None:
+        super().reset()
+        self.estimated = False
 
     def is_final(self, key: Hashable) -> bool:
         """The bucket's complete column was sent, by a window, a whole frame or the snapshot that
@@ -909,6 +934,8 @@ class CoalescingQueue:
         try:
             if like.body_kind == BARS:
                 return _bars_parts(body, like, self._meta)
+            if like.body_kind == HEATMAP_COLUMN:
+                return _heatmap_parts(body, like)
             if like.body_kind == TRADES:  # kind 3 has no `dropped` field: never lose it silently
                 # (an update with a cluster or a new threshold came without a part: `_carry`)
                 dropped = body.get("dropped", 0) > 0
@@ -1044,6 +1071,58 @@ def _bars_parts(
         out.append(({**body, "bars": items[start:stop]}, replace(frame, flags=flags)))
         start = stop
     return out or [(body, None)]
+
+
+#: §14.5: a column that carries any of these is not complete in BQ-8's sense, and kind 6 has no
+#: field for them (§3.4): its window leaves structured.
+_HEATMAP_STRUCTURED_ONLY: Final = ("samples", "off_window_bid_qty", "off_window_ask_qty")
+
+
+def _heatmap_parts(body: dict[str, Any], like: Frame) -> list[tuple[dict[str, Any], Frame | None]]:
+    """The merged columns as consecutive kind-6 frames, one per column, oldest bucket first, each
+    flagged `coalesced` and `estimated` if any update of the window was (§3.6, §8.6), at `like`'s
+    scales: `price_min` and `price_step` exact, sizes rounded half to even (24 §6.5). Structured,
+    as one frame, when a column is not complete or carries an off-window total (§14.5, BQ-8), or a
+    value does not fit its field."""
+    columns = body["columns"]
+    if not columns or any(k in col for col in columns for k in _HEATMAP_STRUCTURED_ONLY):
+        return [(body, None)]
+    flags = like.flags & FLAG_ESTIMATED | FLAG_COALESCED
+    out: list[tuple[dict[str, Any], Frame | None]] = []
+    for col in columns:
+        price_min, step = (
+            _scaled(col["price_min"], like.price_scale),
+            _scaled(col["price_step"], like.price_scale),
+        )
+        bids, asks = col["bids"], col["asks"]
+        if price_min is None or step is None or len(bids) != len(asks):
+            return [(body, None)]
+        rows = []
+        for bid, ask in zip(bids, asks, strict=True):
+            b, a = _half_even(bid, like.qty_scale), _half_even(ask, like.qty_scale)
+            if b is None or a is None:
+                return [(body, None)]
+            rows.append((b, a))
+        if not (-(2**63) <= price_min < 2**63 and 0 < step < 2**63):
+            return [(body, None)]
+        frame = replace(
+            like,
+            records=tuple(rows),
+            flags=flags,
+            ts_base_ms=int(col["t_ms"]),
+            prefix=(0, price_min, step),
+            raw=None,  # a packed producer part holds its own column: this one is rebuilt
+        )
+        out.append(({**body, "columns": [col]}, frame))
+    return out
+
+
+def _half_even(value: Any, scale: int) -> int | None:
+    """A §14.5 size as a kind-6 `u64`: the producer's own rounding (24 §6.5, `scaled_size`, ties
+    to even from the number's exact value), so a merged window and an unmerged column agree."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return scaled_size(float(value), scale)
 
 
 def _book_delta(body: Payload, like: Frame) -> Frame | None:

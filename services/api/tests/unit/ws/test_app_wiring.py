@@ -329,7 +329,8 @@ def test_book_snapshots_come_from_the_book_module(world: tuple[TestClient, _Kill
     assert isinstance(router._sources["book"], BookTopic)
 
 
-@pytest.mark.parametrize("ch", ["heatmap.BTCUSDT", "book.BTCUSDT.50"])  # a stub; no live book
+# a stub (`profile`, #2197); no live book. `heatmap` is served since #605, behind the byte budget.
+@pytest.mark.parametrize("ch", ["profile.BTCUSDT.volume", "book.BTCUSDT.50"])
 def test_pending_snapshot_adapter_reports_pending_not_crash(
     world: tuple[TestClient, _Kill], ch: str
 ) -> None:
@@ -357,6 +358,15 @@ def test_router_turns_pending_into_none_and_no_continuity() -> None:
     assert router.generation(sub) == 0 and router.continuity(sub, None) is False
     other: Any = SimpleNamespace(topic=SimpleNamespace(family=SimpleNamespace(family="trades")))
     assert router.build(other) is None and router.continuity(other, 1) is False
+
+
+def test_router_cacheable_is_the_family_adapters_and_yes_without_one() -> None:
+    """#605: the router forwards a family adapter's `cacheable`; one without it is cached."""
+    sub: Any = SimpleNamespace(topic=SimpleNamespace(family=SimpleNamespace(family="heatmap")))
+    other: Any = SimpleNamespace(topic=SimpleNamespace(family=SimpleNamespace(family="trades")))
+    uncached = SimpleNamespace(cacheable=lambda _sub: False)
+    router = SnapshotRouter({"heatmap": uncached, "trades": PendingSnapshotSource("t", "#1")})
+    assert router.cacheable(sub) is False and router.cacheable(other) is True
 
 
 class _Stream:

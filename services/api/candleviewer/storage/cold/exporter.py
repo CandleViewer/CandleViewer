@@ -71,6 +71,15 @@ ALLOWED_ADDITIONS: Final[Mapping[str, Mapping[str, pa.DataType]]] = MappingProxy
             {"prev_update_id": pa.int64(), "ts_match": _UTC_MICROS}
         ),
         StreamKind.ORDERBOOK_SNAPSHOT.value: MappingProxyType({"ts_match": _UTC_MICROS}),
+        # QuestDB 0007 (E21-T02, #605, 21 Sec.4.12): the heatmap column's own fields.
+        StreamKind.HEATMAP_CELLS.value: MappingProxyType(
+            {
+                "estimated": pa.bool_(),
+                "samples": pa.int32(),
+                "off_window_bid_qty": pa.float64(),
+                "off_window_ask_qty": pa.float64(),
+            }
+        ),
     }
 )
 _NO_ADDITIONS: Final[Mapping[str, pa.DataType]] = MappingProxyType({})

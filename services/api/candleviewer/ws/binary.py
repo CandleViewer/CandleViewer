@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import itertools
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Final
 
@@ -92,6 +93,11 @@ class Frame:
       ``cell_count`` derived;
     * kind 6: ``prefix`` = ``(ts_offset_ms, price_min, price_step)``, ``records`` = rows,
       ``row_count`` derived; header ``record_count`` is 1 (one column).
+
+    ``raw`` is a packed frame (`pack`, #605): its own encoding, the body held as bytes instead of
+    records, prefix, trailer or groups (which are then empty). It encodes to the same bytes as
+    the frame it was packed from, with this frame's header ``flags``, scales and
+    ``ts_base_ms``, so a part reused across subscriptions and snapshots is encoded once.
     """
 
     body_kind: int
@@ -103,6 +109,13 @@ class Frame:
     trailer: Record | None = None
     prefix: Record | None = None
     groups: tuple[Group, ...] | None = None
+    raw: bytes | None = None
+
+    def __post_init__(self) -> None:
+        if self.raw is not None and (
+            self.records or self.prefix is not None or self.trailer is not None or self.groups
+        ):
+            raise FrameEncodeError("a packed frame holds its body as bytes only")
 
     @property
     def format_version(self) -> int:
@@ -128,6 +141,35 @@ def _body_size(frame: Frame, kind: Kind) -> int:
     return size
 
 
+def pack(frame: Frame) -> Frame:
+    """``frame`` as a packed frame (``Frame.raw``): encoded once, the same bytes on every later
+    `encode`, which then only rewrites the header's flags, scales and time base."""
+    if frame.raw is not None:
+        return frame
+    raw = encode(frame)
+    return Frame(
+        frame.body_kind,
+        flags=frame.flags,
+        price_scale=frame.price_scale,
+        qty_scale=frame.qty_scale,
+        ts_base_ms=frame.ts_base_ms,
+        raw=raw,
+    )
+
+
+def _encode_packed(frame: Frame, kind: Kind, raw: bytes) -> bytearray:
+    if len(raw) < HEADER.size or raw[5] != kind.id:
+        raise FrameEncodeError(f"{kind.name}: a packed frame's bytes are not of its kind")
+    out = bytearray(raw)
+    count = int.from_bytes(raw[12:16], "little")
+    try:
+        _HEADER.pack_into(out, 0, MAGIC, kind.format_version, kind.id, frame.flags,
+                          frame.price_scale, frame.qty_scale, count, frame.ts_base_ms)  # fmt: skip
+    except struct.error as exc:
+        raise FrameEncodeError(f"{kind.name}: value out of range for section 3.4: {exc}") from exc
+    return out
+
+
 def _header_count(frame: Frame, kind: Kind) -> int:
     if kind.group_prefix is not None:
         return len(frame.groups or ())
@@ -145,6 +187,8 @@ def encode(frame: Frame, weight: int = 0) -> bytes:
     began = perf_counter() if weight else 0.0
     if frame.flags & ~_KNOWN_FLAGS:
         raise FrameEncodeError(f"unknown header flag bits 0x{frame.flags:x}")
+    if frame.raw is not None:
+        return _encoded(kind, bytes(_encode_packed(frame, kind, frame.raw)), weight, began)
     if (kind.trailer is None) != (frame.trailer is None):
         raise FrameEncodeError(f"{kind.name}: trailer must be given iff the kind declares one")
     if (kind.body_prefix is None) != (frame.prefix is None):
@@ -183,27 +227,31 @@ def encode(frame: Frame, weight: int = 0) -> bytes:
                 for cell in cells:
                     rec.pack_into(out, off, *cell)
                     off += kind.record.size
-        for r in frame.records:
-            _check_enums(kind.record, r)
-            rec.pack_into(out, off, *r)
-            off += kind.record.size
+        off = _pack_records(out, off, kind.record, rec, frame.records)
         if kind.trailer is not None and frame.trailer is not None:
             _st(kind.trailer).pack_into(out, off, *frame.trailer)
     except struct.error as exc:
         raise FrameEncodeError(f"{kind.name}: value out of range for section 3.4: {exc}") from exc
     except TypeError as exc:  # a record that is not a tuple: `*record` cannot expand it
         raise FrameEncodeError(f"{kind.name}: a record is not a tuple of ints: {exc}") from exc
-    encoded = bytes(out)
+    return _encoded(kind, bytes(out), weight, began)
+
+
+def _encoded(kind: Kind, encoded: bytes, weight: int, began: float) -> bytes:
+    _observed(kind, len(encoded), weight, began)
+    return encoded
+
+
+def _observed(kind: Kind, size: int, weight: int, began: float) -> None:
     # Success path only, O(1) per frame, on the loop thread where the hub calls it (the
     # histograms have a single writer). The timer stops here: the counters are not encode time.
     if weight:
         seconds, sizes = ENCODE_COST[kind.id]
         seconds.observe(perf_counter() - began, weight)
-        sizes.observe(len(encoded), weight)
+        sizes.observe(size, weight)
     frames, nbytes = ENCODED[kind.id]
     frames.inc()
-    nbytes.inc(len(encoded))
-    return encoded
+    nbytes.inc(size)
 
 
 def _count_at(part: Part) -> int:
@@ -235,6 +283,26 @@ def _check_groups(groups: object, part: Part, name: str) -> None:
             raise FrameEncodeError(f"{name}: reserved group flag bits are 0 on send, got {flags}")
 
 
+def _pack_records(
+    out: bytearray, off: int, part: Part, rec: struct.Struct, records: tuple[Record, ...]
+) -> int:
+    """Pack `records` at `off`; the next offset. A layout with no enum field packs every record
+    in one call (#605: a 512-row heatmap column took 0.45 ms record by record), the same bytes,
+    once each record has the layout's width (a record with no length raises `TypeError`, as
+    `*record` does); else one record a call, checked."""
+    width = len(part.fields)
+    if records and not part.enums and all(map(width.__eq__, map(len, records))):
+        struct.pack_into(
+            "<" + part.fmt[1:] * len(records), out, off, *itertools.chain.from_iterable(records)
+        )
+        return off + part.size * len(records)
+    for r in records:
+        _check_enums(part, r)
+        rec.pack_into(out, off, *r)
+        off += part.size
+    return off
+
+
 def _check_enums(part: Part, record: Record) -> None:
     for name, allowed in part.enums.items():
         value = record[part.fields.index(name)]
@@ -242,10 +310,25 @@ def _check_enums(part: Part, record: Record) -> None:
             raise FrameEncodeError(f"{name}={value} not in {allowed}")
 
 
-def encode_b64(frame: Frame, weight: int = 0) -> str:
+def encode_b64(
+    frame: Frame,
+    weight: int = 0,
+    *,
+    flags: int | None = None,
+    price_scale: int | None = None,
+    qty_scale: int | None = None,
+) -> str:
     """``cv.v1.json`` wrapping (section 3.2): the frame bytes as base64, sent with ``e: "b64"``.
-    ``weight`` is `encode`'s."""
-    return base64.b64encode(encode(frame, weight)).decode("ascii")
+    ``weight`` is `encode`'s. ``flags`` and the scales, when given, replace the frame's own (the
+    snapshot render's and a `d`'s per-subscription header). A packed frame (`pack`) is its bytes
+    with that header rewritten, never re-encoded record by record: the same text as encoding the
+    frame it was packed from with that header."""
+    fl = frame.flags if flags is None else flags
+    ps = frame.price_scale if price_scale is None else price_scale
+    qs = frame.qty_scale if qty_scale is None else qty_scale
+    same = flags is None and price_scale is None and qty_scale is None
+    target = frame if same else replace(frame, flags=fl, price_scale=ps, qty_scale=qs)
+    return base64.b64encode(encode(target, weight)).decode("ascii")
 
 
 def _fits(count: int, stride: int, available: int, what: str) -> None:
@@ -351,4 +434,5 @@ __all__ = [
     "decode_b64",
     "encode",
     "encode_b64",
+    "pack",
 ]

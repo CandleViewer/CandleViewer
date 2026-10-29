@@ -37,7 +37,7 @@ import contextlib
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Final, Protocol
@@ -63,11 +63,19 @@ from candleviewer.ingestion.metrics import (
 from candleviewer.ingestion.ticker_topic import TickerTopic
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
+from candleviewer.orderflow.heatmap import HeatmapStore, HeatmapTopic
 from candleviewer.recorder.ws_topic import RecorderTopic
 from candleviewer.rules.manager import Actor, RuleRow, rule_visible
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws import permissions as ws_permissions
-from candleviewer.ws.binary import BOOK_DELTA, BOOK_SNAPSHOT, Frame
+from candleviewer.ws.binary import (
+    BOOK_DELTA,
+    BOOK_SNAPSHOT,
+    FLAG_ESTIMATED,
+    HEATMAP_COLUMN,
+    Frame,
+    pack,
+)
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
 from candleviewer.ws.machines import MachineStateRegistry
@@ -100,7 +108,6 @@ PRINCIPAL_LOAD_TIMEOUT_S: Final = 5.0
 #: Topic family -> owning-module adapter ticket, for families whose adapter has not landed.
 PENDING_ADAPTERS: Final[Mapping[str, str]] = {
     "footprint": "#2197",
-    "heatmap": "#2197",
     "profile": "#2197",
     "metrics": "#2197",
 }
@@ -153,7 +160,7 @@ def ingestion_streams(ctx: AppContext) -> Callable[[str], _Demand | None]:
         ing = ctx.ingestion
         if family in ("trades", "bars", "indicators"):
             return ing.trades
-        if family == "book":
+        if family in ("book", "heatmap"):  # E21-T02: the heatmap samples the book's tier
             return ing.books
         if family == "ticker":
             return ing.tickers
@@ -198,6 +205,47 @@ class SnapshotRouter:
             return source.build(sub)
         except NotImplementedError:
             return None
+
+    def build_steps(self, sub: Subscription) -> Generator[None, None, SnapshotBody | None]:
+        """`build`, in the family adapter's own steps when it offers them (#605)."""
+        source = self._source(sub)
+        steps = getattr(source, "build_steps", None)
+        if steps is None:
+            return self.build(sub)
+        built: SnapshotBody | None = yield from steps(sub)
+        return built
+
+    def spreads(self, sub: Subscription) -> bool:
+        """Whether the family adapter can tell what changed during a snapshot spread across
+        loop turns (`catch_up`): only then is it spread (#605)."""
+        return getattr(self._source(sub), "catch_up", None) is not None
+
+    def cacheable(self, sub: Subscription) -> bool:
+        """Whether the family adapter's snapshot may enter the shared cache (#605): yes
+        unless it says no (`cacheable`)."""
+        cacheable = getattr(self._source(sub), "cacheable", None)
+        return cacheable is None or bool(cacheable(sub))
+
+    def catch_up(self, sub: Subscription, since: int) -> Iterable[tuple[Any, Any] | None] | None:
+        """The family adapter's `catch_up` (#605: the `d` frames a snapshot spread across loop
+        turns missed, built as they are read), or None, which takes the snapshot again, when it
+        has none."""
+        catch_up = getattr(self._source(sub), "catch_up", None)
+        if catch_up is None:
+            return None
+        missed: Iterable[tuple[Any, Any] | None] | None = catch_up(sub, since)
+        return missed
+
+    def catch_up_trim(
+        self, sub: Subscription, since: int, held: tuple[int, ...], binary: bool
+    ) -> int | None:
+        """The family adapter's `catch_up_trim` (#605: the snapshot's oldest columns to leave
+        out so it and its catch-up share half the queue); 0 without one."""
+        trim = getattr(self._source(sub), "catch_up_trim", None)
+        if trim is None:
+            return 0
+        kept: int | None = trim(sub, since, held, binary)
+        return kept
 
     def generation(self, sub: Subscription) -> int:
         source = self._source(sub)
@@ -293,6 +341,80 @@ def book_topic(ctx: AppContext, hub: SequencingHub) -> BookTopic[SnapshotBody]:
         env=ctx.settings.environment.value,
         publish_latency=_observe_publish,
         active=_set_active,
+    )
+
+
+def heatmap_part(
+    ts_ms: int,
+    price_min: int,
+    price_step: int,
+    rows: tuple[tuple[int, int], ...],
+    price_scale: int,
+    qty_scale: int,
+    estimated: bool,
+) -> Frame:
+    """One heatmap column's CVWB kind-6 twin (23 §3.4): one column per frame, its own time base,
+    packed (`binary.pack`): encoded once here, at the column's close, so a snapshot or a fan-out
+    of it re-encodes only the header (#605)."""
+    return pack(
+        Frame(
+            HEATMAP_COLUMN,
+            rows,
+            FLAG_ESTIMATED if estimated else 0,
+            price_scale,
+            qty_scale,
+            ts_base_ms=ts_ms,
+            prefix=(0, price_min, price_step),
+        )
+    )
+
+
+class HeatmapDepthDemand:
+    """E21-T02: a depth-500 heatmap spec's demand on the symbol's deep tier, through the live
+    `BookStream` (resolved per call; without one, nothing is demanded and the spec stays
+    pending), as a `book.X.500` reference demands it (`IngestionUpstreamSink`)."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        self._ctx = ctx
+
+    def _books(self) -> BookStream | None:
+        books = self._ctx.ingestion.books
+        return books if isinstance(books, BookStream) else None
+
+    def acquire_depth(self, consumer: str, symbol: str, depth: int) -> None:
+        if (books := self._books()) is not None:
+            books.acquire_depth(consumer, symbol, depth)
+
+    def release(self, consumer: str, symbol: str) -> None:
+        if (books := self._books()) is not None:
+            books.release(consumer, symbol)
+
+
+def heatmap_topic(
+    ctx: AppContext,
+    hub: SequencingHub,
+    *,
+    queue_bytes: int,
+    queue_frames: int,
+    store: HeatmapStore | None = None,
+) -> HeatmapTopic:
+    """E21-T02 (#605): the `heatmap` family's engine, leases, snapshot source and publisher over
+    the live book (resolved per call: attached only with the public WS) and its bus topic, with
+    the instrument steps (24 §6.5) and the outbound budget its snapshot bound reads (G-03, 23
+    §6.1); native columns go to `store` (`heatmap_cells`, 21 §4.12). `WsRuntime` runs it."""
+    source = book_snapshot_source(ctx)
+    return HeatmapTopic(
+        hub,
+        engine=source.engine,
+        steps=source.steps,
+        part=heatmap_part,
+        body=SnapshotBody,
+        bus=ctx.bus.bus,
+        env=ctx.settings.environment.value,
+        queue_bytes=queue_bytes,
+        queue_frames=queue_frames,
+        store=store,
+        demand=HeatmapDepthDemand(ctx),
     )
 
 

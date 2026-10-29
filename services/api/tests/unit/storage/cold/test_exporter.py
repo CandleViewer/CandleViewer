@@ -519,3 +519,113 @@ async def test_a_cancelled_worker_is_not_logged_as_a_failure() -> None:
     with capture_logs() as logs:
         cold_exporter._log_worker_failure(fut)  # a cancelled future has no exception to read
     assert logs == []
+
+
+# --- schema widening: the heatmap column fields of QuestDB 0007 (E21-T02, #605) -------------------
+
+HEATMAP_COLUMNS = frozenset({"estimated", "samples", "off_window_bid_qty", "off_window_ask_qty"})
+
+
+def _cells(n: int, h: int = 0, **extra: pa.Array) -> pa.Table:
+    """`heatmap_cells` rows of hour `h` as the hot tier serves them; `extra` adds columns."""
+    start = _hour(h).start_us
+    table = pa.table(
+        {
+            "ts": pa.array([start + i for i in range(n)], type=pa.int64()),
+            "symbol": ["BTCUSDT"] * n,
+            "price": [63118.0 + i for i in range(n)],
+            "bid_size": [1.5] * n,
+            "ask_size": [0.0] * n,
+            "bid_age_ms": pa.nulls(n, type=pa.int64()),
+            "ask_age_ms": pa.nulls(n, type=pa.int64()),
+            "refill_count": pa.nulls(n, type=pa.int32()),
+        }
+    )
+    for name, column in extra.items():
+        table = table.append_column(name, column)
+    return table
+
+
+def _heatmap_columns(n: int) -> dict[str, pa.Array]:
+    """The 0007 columns as PGWire returns them: BOOLEAN, INT and two DOUBLEs."""
+    return {
+        "estimated": pa.array([i % 2 == 1 for i in range(n)]),
+        "samples": pa.array([1] * n, type=pa.int32()),
+        "off_window_bid_qty": pa.array([2.5] * n),
+        "off_window_ask_qty": pa.array([0.0] * n),
+    }
+
+
+async def _export_cells(root: Path, table: pa.Table, h: int = 0) -> ExportRun:
+    return await _exporter(root, FakeHotSource(table)).export_partition(
+        "BTCUSDT", StreamKind.HEATMAP_CELLS, _hour(h), partition_extra={"hour": f"{h:02d}"}
+    )
+
+
+def _cells_registered(root: Path) -> frozenset[str] | None:
+    return SchemaRegistry(root / "_manifests" / "schema-registry.json").columns_for(
+        StreamKind.HEATMAP_CELLS.value
+    )
+
+
+def _cells_parts(root: Path, h: int) -> list[Path]:
+    return [p for p in root.rglob(f"hour={h:02d}/*") if "heatmap" in str(p)]
+
+
+def _cells_written(root: Path, h: int) -> pa.Table:
+    [part] = [p for p in _cells_parts(root, h) if p.name == "part-0000.parquet"]
+    return pq.read_table(part)
+
+
+async def test_the_0007_heatmap_columns_widen_the_registry_typed(tmp_path: Path) -> None:
+    await _export_cells(tmp_path, _cells(2))
+    before = _cells_registered(tmp_path)
+    assert before is not None and not before & HEATMAP_COLUMNS
+
+    run = await _export_cells(tmp_path, _cells(3, 1, **_heatmap_columns(3)), 1)
+
+    assert run.row_count == 3 and _cells_registered(tmp_path) == before | HEATMAP_COLUMNS
+    written = _cells_written(tmp_path, 1)
+    assert [written.schema.field(c).type for c in sorted(HEATMAP_COLUMNS)] == [
+        pa.bool_(), pa.float64(), pa.float64(), pa.int32(),
+    ]  # fmt: skip
+    assert written.column("estimated").to_pylist() == [False, True, False]
+
+
+async def test_all_null_0007_heatmap_columns_are_written_with_their_declared_types(
+    tmp_path: Path,
+) -> None:
+    """Rows recorded before 0007 hold NULL in all four (Arrow `null`); the part still carries
+    bool, int32 and float64, so a later part can merge or union with it."""
+    nulls = {c: pa.nulls(3) for c in HEATMAP_COLUMNS}
+    await _export_cells(tmp_path, _cells(3, **nulls))
+
+    written = _cells_written(tmp_path, 0)
+    assert written.schema.field("estimated").type == pa.bool_()
+    assert written.schema.field("samples").type == pa.int32()
+    assert written.schema.field("off_window_bid_qty").type == pa.float64()
+    assert all(written.column(c).null_count == 3 for c in HEATMAP_COLUMNS)
+
+
+@pytest.mark.parametrize(
+    ("column", "values"),
+    [
+        ("estimated", pa.array([1, 0], type=pa.int8())),
+        ("samples", pa.array([1.5, 2.5])),
+        ("off_window_bid_qty", pa.array(["2.5", "0"])),
+        ("off_window_ask_qty", pa.array([1, 2], type=pa.int64())),
+    ],
+    ids=["bool-as-int", "int-as-double", "double-as-text", "double-as-long"],
+)
+async def test_a_retyped_0007_heatmap_column_fails_closed_before_the_registry_widens(
+    tmp_path: Path, column: str, values: pa.Array
+) -> None:
+    await _export_cells(tmp_path, _cells(2))
+    before = _cells_registered(tmp_path)
+    retyped = _cells(2, 1, **(_heatmap_columns(2) | {column: values}))
+
+    with pytest.raises(StorageSchemaDrift, match=column):
+        await _export_cells(tmp_path, retyped, 1)
+
+    assert _cells_registered(tmp_path) == before
+    assert not _cells_parts(tmp_path, 1)

@@ -41,6 +41,9 @@ from tests.unit.ws.test_pipeline_outbound import (
 from tests.unit.ws.test_revocation_fanout import NONE, PEER, THIRD, _principal, _Sink, _World
 
 _HEATMAP = "heatmap.BTCUSDT"
+#: A family with a re-snapshotting `ctl` option that a replay session may subscribe (#605 refuses
+#: a replay `heatmap.*`: no replay producer serves it yet).
+_PROFILE = "profile.BTCUSDT.volume"
 _RS = "bb000000-0000-4000-8000-000000000001"
 _STRUCTURED = {"encoding": "structured"}
 
@@ -197,24 +200,28 @@ async def test_unsub_drops_the_topics_queued_frames_before_unsub_ok(
 
 
 async def _heatmap_ctl(monkeypatch: pytest.MonkeyPatch, *, replay: bool) -> list[dict[str, Any]]:
-    """Two deltas of `heatmap.BTCUSDT` queued (and two of a replay session's subscription to it),
-    then a `ctl` that changes the live one's `time_bucket_ms`, a re-snapshot (§5.4)."""
+    """Two deltas of `heatmap.BTCUSDT` queued (with a replay session: of `profile.BTCUSDT.volume`
+    and two of a replay session's subscription to it), then a `ctl` that changes the live one's
+    `time_bucket_ms` (`price_grouping`), a re-snapshot (§5.4)."""
+    ch = _PROFILE if replay else _HEATMAP
+    ctl = {"price_grouping": 5} if replay else {"time_bucket_ms": 1000}
     rig, sock = _Rig(BackpressureConfig()), _Wire()
     rig.source.bodies["heatmap"] = SnapshotBody({"symbol": "BTCUSDT", "columns": []})
+    rig.source.bodies["profile"] = SnapshotBody({"symbol": "BTCUSDT"})
     async with _connected(rig, sock) as conn:
-        await rig.sub(sock, _HEATMAP)
+        await rig.sub(sock, ch)
         if replay:
-            entry = {"ch": _HEATMAP, "opts": _STRUCTURED}
+            entry = {"ch": ch, "opts": _STRUCTURED}
             sock.feed({"t": "sub", "id": "r", "p": {"topics": [entry], "replay_session_id": _RS}})
             await sock.next(2)
         await _held(rig, sock)
         for i in range(2):
-            rig.clock.now += 1.0  # S3: past the 500 ms window, so each delta leaves at once
-            rig.sequencing.publish(_HEATMAP, {"symbol": "BTCUSDT", "n": i})
+            rig.clock.now += 1.5  # S3: past the window (500 / 1 000 ms): each delta leaves at once
+            rig.sequencing.publish(ch, {"symbol": "BTCUSDT", "n": i})
             if replay:
-                rig.sequencing.publish(_HEATMAP, {"n": i}, replay_session_id=_RS)
+                rig.sequencing.publish(ch, {"n": i}, replay_session_id=_RS)
         snapped = _on_push(conn, "snap", monkeypatch)
-        sock.feed({"t": "ctl", "id": "c", "ch": _HEATMAP, "p": {"time_bucket_ms": 1000}})
+        sock.feed({"t": "ctl", "id": "c", "ch": ch, "p": ctl})
         await snapped.wait()
         return await _released(sock, conn, 5 if replay else 3)
 

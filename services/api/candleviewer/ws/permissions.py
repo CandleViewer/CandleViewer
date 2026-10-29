@@ -58,6 +58,7 @@ from candleviewer.orderflow.errors import (
     InstanceRefusedError,
     RecomputeRefusedError,
 )
+from candleviewer.orderflow.heatmap import HeatmapLease, HeatmapSpec, HeatmapSpecCapError, spec_of
 from candleviewer.orderflow.indicators.engine import Requested, resolve_instances
 from candleviewer.ws.errors import WsError, build_ws_error, topic_error
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
@@ -271,6 +272,19 @@ class TradesLeases(Protocol):
     def echo(self, symbol: str) -> dict[str, Any]: ...
 
 
+class HeatmapLeases(Protocol):
+    """`HeatmapTopic` (E21-T02, #605): a live `heatmap.*` subscription holds a lease on its spec
+    (`orderflow/heatmap.py`); a G-02 cap refuses it with `HeatmapSpecCapError`."""
+
+    def hold(self, consumer: str, spec: HeatmapSpec) -> HeatmapLease: ...
+
+    def check_retune(self, lease: HeatmapLease, spec: HeatmapSpec) -> None: ...
+
+    def retune(self, lease: HeatmapLease, spec: HeatmapSpec) -> HeatmapLease: ...
+
+    def release(self, lease: HeatmapLease) -> None: ...
+
+
 @dataclass
 class SubscriptionServices:
     """Process-wide collaborators shared by every connection (injected; never a global)."""
@@ -283,6 +297,8 @@ class SubscriptionServices:
     indicators: IndicatorInstances | None = None
     #: E22-T02: the `trades` tapes a live `trades.*` subscription leases; None: it holds none.
     trades: TradesLeases | None = None
+    #: E21-T02: the heatmap spec a live `heatmap.*` subscription leases; None: it holds none.
+    heatmap: HeatmapLeases | None = None
     audit: AuditSink | None = None
     clock: Callable[[], float] = time.monotonic
     instrument_known: Callable[[str], bool] | None = None
@@ -301,6 +317,10 @@ class SubscriptionServices:
     #: is offered (`heatmap_depth_500`, C-4.13, off: `book.*.500` is `invalid_topic_format`).
     max_deep_book_subs: int = MAX_DEEP_BOOK_SUBSCRIPTIONS
     depth_500: bool = False
+    #: E21-T02 (G-04, §6.1): `heatmap.*` is served only with the byte budget on
+    #: (`CV_WS_BACKPRESSURE_ENABLED`); the app sets this from it, and while it is True every
+    #: `heatmap.*` `sub`, live and replay, is refused `unknown_topic`.
+    heatmap_off: bool = False
     #: E17-T08: the `machines.{entity}.state` entries `sub` is authorised against (§6.4); `None`
     #: means no entity has an entry.
     machines: EntityScopes | None = None
@@ -385,6 +405,8 @@ class Subscription:
     indicator_keys: tuple[str, ...] = ()
     #: A live `trades.*` one's lease on its tape and option set (E22-T02).
     trades_lease: TradesLease | None = None
+    #: A live `heatmap.*` one's lease on its spec (E21-T02).
+    heatmap_lease: HeatmapLease | None = None
     #: §7.4 reason the pending `snap` will carry (E17-S03).
     pending_reason: SnapReason = "initial"
     #: §6.4 `machines`: the entity's scope, read from its entry at `sub`, so every RBAC change
@@ -447,6 +469,8 @@ def _indicator_history(sub: Subscription) -> int:
 
 #: `unknown_topic` for a topic in the catalogue that this server does not serve (§6.1, §10.2).
 _UNSERVED: Final = "This topic is not available on this server."
+#: E21-T02: the `heatmap` options a spec is keyed by (§6.1, G-02); a `ctl` of one moves the lease.
+_HEATMAP_SPEC: Final = frozenset({"depth", "price_grouping", "time_bucket_ms"})
 #: One message per refusal code, whatever the cause: `account_scope_denied` carries §6.2's.
 _REFUSED: Final = {
     "forbidden": "Missing permission for this topic.",
@@ -905,6 +929,10 @@ class ConnectionAuthz:
         elif family == "book" and (refused := self._book_refusal(sub)) is not None:
             self._drop(sub)
             return refused
+        # E21-T02: G-04, then the flag-off depth 500, before anything is held (live and replay).
+        elif family == "heatmap" and (refused := self._heatmap_refusal(sub)) is not None:
+            self._drop(sub)
+            return refused
         # The topic has a `bar_type` segment (`bars`, `footprint`): its spec is bounded and, where a
         # builder serves it, leased. A series that only an option names (`metrics`) is not seen.
         elif sub.topic.bar_type is not None:
@@ -922,6 +950,9 @@ class ConnectionAuthz:
         engine = self.services.indicators if requested else None  # `indicators.*` alone has any
         history = _indicator_history(sub) if engine is not None else 0
         try:
+            heatmap = self.services.heatmap
+            if family == "heatmap" and heatmap is not None:  # E21-T02 G-02: before anything else
+                sub.heatmap_lease = heatmap.hold(consumer, spec_of(symbol or "", sub.opts))
             if engine is not None and spec is not None:  # before anything is held
                 engine.check(symbol or "", spec, requested, user, history=history)
             bars = self.services.bars
@@ -945,6 +976,9 @@ class ConnectionAuthz:
         except TopicError as exc:  # E22-T02: a `trades` bound (SR-E22-03/06/07)
             self._drop(sub)
             return _fail(sub.ch, exc.code, exc.message, exc.field)
+        except HeatmapSpecCapError as exc:  # E21-T02 G-02, naming the cap
+            self._drop(sub)
+            return _fail(sub.ch, "subscription_limit", str(exc))
         except SpecCapExceeded:
             self._drop(sub)
             return _fail(sub.ch, "subscription_limit", "Too many distinct bar series.")
@@ -997,6 +1031,18 @@ class ConnectionAuthz:
                 "subscription_limit",
                 f"At most {MAX_BARS_SUBSCRIPTIONS} bars subscriptions per connection.",
             )
+        return None
+
+    def _heatmap_refusal(self, sub: Subscription) -> dict[str, Any] | None:
+        """E21-T02 (§6.1, §10.2): `unknown_topic` while the byte budget is off (G-04), live and
+        replay alike, never `snapshot_pending`; `unknown_topic` too for a replay one while no
+        replay producer serves the family (§10.2's "topic not served"), never pending for good;
+        then depth 500 is `invalid_topic_format` while `heatmap_depth_500` is off (#604 BQ-9).
+        The spec caps (G-02) come at the lease."""
+        if self.services.heatmap_off or sub.replay_session_id is not None:
+            return _fail(sub.ch, "unknown_topic", _UNSERVED)
+        if int(sub.opts.get("depth", 0)) >= 500 and not self.services.depth_500:
+            return _fail(sub.ch, "invalid_topic_format", "Heatmap depth 500 is not offered.")
         return None
 
     def _book_refusal(self, sub: Subscription) -> dict[str, Any] | None:
@@ -1069,6 +1115,9 @@ class ConnectionAuthz:
         lease, sub.trades_lease = sub.trades_lease, None
         if lease is not None and self.services.trades is not None:  # before a raise below
             self.services.trades.release(lease)
+        held_spec, sub.heatmap_lease = sub.heatmap_lease, None
+        if held_spec is not None and self.services.heatmap is not None:
+            self.services.heatmap.release(held_spec)
         keys, sub.indicator_keys = sub.indicator_keys, ()
         if keys and self.services.indicators is not None:
             self.services.indicators.release(sub.topic.symbol or "", keys, consumer)
@@ -1132,6 +1181,7 @@ class ConnectionAuthz:
         retune = self._retune(sub, changes["instances"]) if "instances" in changes else None
         opts = {**sub.opts, **{k: v for k, v in changes.items() if k != "paused"}}
         moved = self._retune_trades(sub, opts) if "min_size" in changes else None
+        respec = self._retune_heatmap(sub, opts) if _HEATMAP_SPEC.intersection(changes) else None
         effective = effective_options(sub.topic, opts)
         if sub.topic.family.family == "indicators":  # the canonical echo, never the raw entries
             effective["instances"] = sub.effective.get("instances") if retune is None else retune[2]
@@ -1154,6 +1204,8 @@ class ConnectionAuthz:
                 raise TopicError("resync_rate_limited", f"{spent}; nothing was changed.")
         if retune is not None and effective["instances"] != sub.effective.get("instances"):
             self._hold_instances(sub, retune[0], retune[1])
+        if respec is not None and self.services.heatmap is not None:  # E21-T02: after the budget
+            sub.heatmap_lease = self.services.heatmap.retune(respec[0], respec[1])
         if sub.topic.family.family == "trades":  # E22-T02: the threshold echo stays (§6.1)
             if moved is not None and self.services.trades is not None:
                 sub.trades_lease = self.services.trades.retune(moved[0], moved[1])
@@ -1190,6 +1242,25 @@ class ConnectionAuthz:
         options = options_of(opts)
         trades.check_retune(lease, options)
         return lease, options
+
+    def _retune_heatmap(
+        self, sub: Subscription, opts: Mapping[str, Any]
+    ) -> tuple[HeatmapLease, HeatmapSpec] | None:
+        """A `ctl` of `depth`, `price_grouping` or `time_bucket_ms` on a held `heatmap.*` one
+        (§5.4, E21-T02): depth 500 while `heatmap_depth_500` is off is `invalid_topic_format`, and
+        a new spec past a G-02 cap `subscription_limit`, both before anything changes; the commit's
+        `retune` moves the lease. None when it holds no lease (a replay one, or none wired)."""
+        lease, heatmap = sub.heatmap_lease, self.services.heatmap
+        if lease is None or heatmap is None:
+            return None
+        spec = spec_of(lease.spec.symbol, opts)
+        if spec.depth >= 500 and not self.services.depth_500:
+            raise TopicError("invalid_topic_format", "Heatmap depth 500 is not offered.", "depth")
+        try:
+            heatmap.check_retune(lease, spec)
+        except HeatmapSpecCapError as exc:
+            raise TopicError("subscription_limit", str(exc)) from None
+        return lease, spec
 
     def _retune(
         self, sub: Subscription, raw: list[dict[str, Any]]

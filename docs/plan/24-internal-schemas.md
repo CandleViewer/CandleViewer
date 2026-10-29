@@ -991,7 +991,7 @@ class HeatmapColumn(BaseModel):
     off_window_bid_qty: float      # resting bid size outside the window (§6.2 step 4)
     off_window_ask_qty: float
     estimated: bool                # True when built from a partial/resyncing book
-    samples: int                   # book states aggregated; complete = time_bucket_ms / column_ms (23 §14.5)
+    samples: int                   # book states aggregated; complete = the bucket's native deadlines (23 §14.5)
 
 class HeatmapGridSpec(BaseModel):
     column_ms: int = 100           # matches depth-200 cadence
@@ -1014,13 +1014,13 @@ class HeatmapGridSpec(BaseModel):
 
 ### 6.3 Edge cases
 
-| Case                                        | Behaviour                                                                                                                                                  |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Book resyncing                              | Columns produced during `Resyncing` are marked `estimated=True`, rendered at 40 % opacity with a hatch, and excluded from any rule-engine liquidity metric |
-| Price gap larger than the window            | Window re-centres on the new mid; the intervening columns are emitted as empty (`samples=0`) rather than stretched                                         |
-| `price_step_ticks` change                   | Re-bucketing is done from stored native-step columns when the stored step divides the new one; otherwise the range is rebuilt from recorded book deltas    |
-| Very wide instrument range at deep zoom-out | `rows` cap forces `price_step_ticks` up via auto mode; the UI shows the effective step in the legend                                                       |
-| Missing column (engine stall)               | Emitted with `samples=0`; the renderer draws a vertical grey stripe. `heatmap_missing_columns_total` alerts above 1 %/min                                  |
+| Case                                        | Behaviour                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Book resyncing                              | Columns produced during `Resyncing` are marked `estimated=True`, rendered at 40 % opacity with a hatch, and excluded from any rule-engine liquidity metric. The last levels read before the desync stand in for at most 5 s (`RESYNC_ESTIMATE_MS`); after that the columns read `samples=0`, still `estimated=True`, until the book is live again |
+| Price gap larger than the window            | Window re-centres on the new mid; the intervening columns are emitted as empty (`samples=0`) rather than stretched                                                                                                                                                                                                                                |
+| `price_step_ticks` change                   | Re-bucketing is done from stored native-step columns when the stored step divides the new one; otherwise the range is rebuilt from recorded book deltas; in v1 (E21-T02) the new spec starts empty and fills forward, older columns coming from REST (E21-T03)                                                                                    |
+| Very wide instrument range at deep zoom-out | `rows` cap forces `price_step_ticks` up via auto mode; the UI shows the effective step in the legend                                                                                                                                                                                                                                              |
+| Missing column (engine stall)               | Emitted with `samples=0`; the renderer draws a vertical grey stripe. `heatmap_missing_columns_total` alerts above 1 %/min                                                                                                                                                                                                                         |
 
 ### 6.4 Liquidation heatmap (realized)
 

@@ -667,14 +667,50 @@ def _topic_cells() -> list[Any]:
     ]
 
 
+def _ws_expected(world: World, family: str, actor: str) -> str:
+    """The matrix's outcome, except that `heatmap.*` is `unknown_topic` to an actor the matrix
+    lets in while the app's own settings keep the WS byte budget off (G-04, 23 §6.1: the family
+    is not served without it). The matrix is the flag-on answer, checked by the cells below."""
+    from tests.contract.rbac.test_route_matrix import _TOPICS
+
+    expected: str = _TOPICS[family]["outcomes"][actor]
+    settings = world.app.state.app_context.settings
+    if family == "heatmap" and expected == "sub_ok" and not settings.ws_backpressure_enabled:
+        return "unknown_topic"
+    return expected
+
+
 @pytest.mark.parametrize(("family", "actor"), _topic_cells())
 def test_every_topic_family_x_actor_matches_the_matrix(
     world: World, family: str, actor: str
 ) -> None:
+    _ws_cell(world, family, actor)
+
+
+def test_heatmap_with_the_byte_budget_on_matches_the_matrix(world: World, tmp_path: Path) -> None:
+    """G-04 (23 §6.1): with the WS byte budget on, `heatmap.*` answers as the matrix says, for an
+    owner and a viewer. The flag-on world lives in this test only: `build_world`'s patches and
+    its CSRF codec would otherwise reach the module world's cells. The module world comes first,
+    so its codec is the one put back."""
+    from tests.contract.rbac import rbac_harness
+
+    codec = list(rbac_harness._CSRF_CODEC)
+    mp = pytest.MonkeyPatch()
+    try:
+        on = build_world(mp, bars_state_root=tmp_path, ws_backpressure=True)
+        assert on.app.state.app_context.settings.ws_backpressure_enabled
+        for actor in ("owner", "viewer"):
+            _ws_cell(on, "heatmap", actor)
+    finally:
+        mp.undo()
+        rbac_harness._CSRF_CODEC[:] = codec
+
+
+def _ws_cell(world: World, family: str, actor: str) -> None:
     from tests.contract.rbac.test_route_matrix import _TOPICS
 
     row = _TOPICS[family]
-    expected = row["outcomes"][actor]
+    expected = _ws_expected(world, family, actor)
     machine = family.startswith("machines.")  # §6.4: scoped by its entity, not by options
     account = GRANTED if row["scope"] == "granted_accounts" and not machine else None
     if machine:
