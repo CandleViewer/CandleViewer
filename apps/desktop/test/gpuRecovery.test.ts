@@ -4,6 +4,7 @@ import { parseGpuCrash } from "../src/main/gpuCrash";
 import {
   GPU_RELAUNCH_MARKER,
   GPU_RETRY_INTERVAL_MS,
+  GpuKeepRefusedError,
   GpuRetryRefusedError,
   createGpuRecovery,
 } from "../src/main/gpuRecovery";
@@ -121,30 +122,80 @@ describe("createGpuRecovery: cv:gpu:info's lastCrash (#4951)", () => {
     recovery.childProcessGone({ ...GPU_GONE, type: "Utility" });
     expect(recovery.lastCrash()).toBeNull();
     const first = recovery.childProcessGone(GPU_GONE);
-    expect(recovery.lastCrash()).toEqual({ ...first, retried: false });
+    expect(recovery.lastCrash()).toEqual({ ...first, retried: false, kept: false });
     clock.now = AT + 5;
     const second = recovery.childProcessGone({ ...GPU_GONE, reason: "oom" });
-    expect(recovery.lastCrash()).toEqual({ ...second, retried: false });
+    expect(recovery.lastCrash()).toEqual({ ...second, retried: false, kept: false });
   });
 
   it("is retried once a retry is accepted after it; a refused retry or a newer crash is not", () => {
     const { clock, recovery } = setup();
     const first = recovery.childProcessGone(GPU_GONE);
     recovery.retry();
-    expect(recovery.lastCrash()).toEqual({ ...first, retried: true });
+    expect(recovery.lastCrash()).toEqual({ ...first, retried: true, kept: false });
     const second = recovery.childProcessGone(GPU_GONE);
     expect(() => recovery.retry()).toThrow(GpuRetryRefusedError); // rate-limited
-    expect(recovery.lastCrash()).toEqual({ ...second, retried: false });
+    expect(recovery.lastCrash()).toEqual({ ...second, retried: false, kept: false });
     clock.now = AT + GPU_RETRY_INTERVAL_MS;
     recovery.retry();
-    expect(recovery.lastCrash()).toEqual({ ...second, retried: true });
+    expect(recovery.lastCrash()).toEqual({ ...second, retried: true, kept: false });
   });
 
   it("a relaunched launch has none until its own crash, which no retry has answered", () => {
     const { recovery } = setup([GPU_RELAUNCH_MARKER]);
     expect(recovery.lastCrash()).toBeNull();
     const crash = recovery.childProcessGone(GPU_GONE);
-    expect(recovery.lastCrash()).toEqual({ ...crash, retried: false });
+    expect(recovery.lastCrash()).toEqual({ ...crash, retried: false, kept: false });
+  });
+});
+
+describe("createGpuRecovery: cv:gpu:keepSoftware marks the last crash kept (#306)", () => {
+  it("refuses before any GPU crash this launch, audits the reason only, and keeps nothing", () => {
+    const { recovery, audit } = setup();
+    recovery.childProcessGone({ ...GPU_GONE, type: "Utility" });
+    expect(() => recovery.keepSoftware()).toThrow(GpuKeepRefusedError);
+    expect(recovery.lastCrash()).toBeNull();
+    expect(audit.mock.calls).toEqual([["gpu-keep-refused", { reason: "no-crash" }]]);
+    expect(String(new GpuKeepRefusedError())).toBe("GpuKeepRefusedError: GPU keep refused");
+  });
+
+  it("keeps the last crash once: a second keep changes nothing and audits nothing", () => {
+    const { recovery, audit } = setup();
+    const crash = recovery.childProcessGone(GPU_GONE);
+    recovery.keepSoftware();
+    recovery.keepSoftware();
+    expect(recovery.lastCrash()).toEqual({ ...crash, retried: false, kept: true });
+    expect(audit.mock.calls.slice(1)).toEqual([["gpu-software-kept", { restartCount: 1 }]]);
+  });
+
+  it("a newer crash is not kept, and a relaunched launch has none to keep", () => {
+    const { clock, recovery } = setup();
+    recovery.childProcessGone(GPU_GONE);
+    recovery.keepSoftware();
+    clock.now = AT + 5;
+    const newer = recovery.childProcessGone({ ...GPU_GONE, reason: "oom" });
+    expect(recovery.lastCrash()).toEqual({ ...newer, retried: false, kept: false });
+    const relaunched = setup([GPU_RELAUNCH_MARKER]).recovery;
+    expect(() => relaunched.keepSoftware()).toThrow(GpuKeepRefusedError);
+    expect(relaunched.lastCrash()).toBeNull();
+  });
+
+  it("bounds its refusal audits per reason per window, then writes one summary, as retry's are", () => {
+    const { clock, recovery, audit } = setup();
+    const flood = 50;
+    for (let i = 0; i < flood; i += 1) {
+      expect(() => recovery.keepSoftware()).toThrow(GpuKeepRefusedError);
+    }
+    const refused = ["gpu-keep-refused", { reason: "no-crash" }];
+    expect(audit.mock.calls).toEqual(Array.from({ length: CRASH_LOG_AUDIT_BURST }, () => refused));
+    clock.now = AT + CRASH_LOG_AUDIT_WINDOW_MS;
+    expect(() => recovery.keepSoftware()).toThrow(GpuKeepRefusedError);
+    const suppressed = flood - CRASH_LOG_AUDIT_BURST;
+    const summary = { event: "gpu-keep-refused", reason: "no-crash", suppressed };
+    expect(audit.mock.calls.slice(CRASH_LOG_AUDIT_BURST)).toEqual([
+      ["gpu-keep-audit-suppressed", summary],
+      refused,
+    ]);
   });
 });
 

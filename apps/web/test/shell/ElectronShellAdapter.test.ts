@@ -24,6 +24,7 @@ function makeStubBridge(): CvBridge {
       webgl2CapabilityParity: true,
     }),
     gpuRetry: vi.fn().mockResolvedValue(undefined),
+    gpuKeepSoftware: vi.fn().mockResolvedValue(undefined),
     onGpuCrashed: vi.fn().mockReturnValue(() => {}),
     onDeepLink: vi.fn().mockReturnValue(() => {}),
   };
@@ -90,6 +91,9 @@ describe("createElectronShellAdapter", () => {
     await adapter.gpu.retry();
     expect(bridge.gpuRetry).toHaveBeenCalledTimes(1);
 
+    await adapter.gpu.keepSoftware();
+    expect(bridge.gpuKeepSoftware).toHaveBeenCalledTimes(1);
+
     const handleCrash = vi.fn();
     const stopCrashes = adapter.gpu.onCrashed(handleCrash);
     expect(bridge.onGpuCrashed).toHaveBeenCalledWith(handleCrash);
@@ -131,6 +135,7 @@ describe("ShellPort <-> preload allow-list type sync", () => {
       "crashLogAppend",
       "gpuInfo",
       "gpuRetry",
+      "gpuKeepSoftware",
       "onGpuCrashed",
       "onDeepLink",
     ];

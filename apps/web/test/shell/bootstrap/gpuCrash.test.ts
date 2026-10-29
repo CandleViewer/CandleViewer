@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CvBridge } from "../../../src/shell/ElectronShellAdapter.js";
 import type * as ElectronAdapterModule from "../../../src/shell/ElectronShellAdapter.js";
 import type { GpuCrash, GpuInfo, GpuLastCrash, ShellPort } from "../../../src/shell/ShellPort.js";
-import { retryGpuNow, watchGpu } from "../../../src/shell/bootstrap/gpuCrash.js";
+import { keepSoftwareNow, retryGpuNow, watchGpu } from "../../../src/shell/bootstrap/gpuCrash.js";
 import {
   getShellState,
   keepSoftwareRendering,
@@ -20,7 +20,7 @@ vi.mock("../../../src/shell/ElectronShellAdapter.js", async (importOriginal) => 
   const real = await importOriginal<typeof ElectronAdapterModule>();
   const createElectronShellAdapter = (): ShellPort => {
     const port = real.createElectronShellAdapter();
-    const { onCrashed, retry } = port.gpu;
+    const { onCrashed, retry, keepSoftware } = port.gpu;
     viaAdapter.push("created");
     const gpu: ShellPort["gpu"] = {
       ...port.gpu,
@@ -32,6 +32,10 @@ vi.mock("../../../src/shell/ElectronShellAdapter.js", async (importOriginal) => 
         viaAdapter.push("retry");
         return retry();
       },
+      keepSoftware: () => {
+        viaAdapter.push("keepSoftware");
+        return keepSoftware();
+      },
     };
     return { ...port, gpu };
   };
@@ -39,8 +43,13 @@ vi.mock("../../../src/shell/ElectronShellAdapter.js", async (importOriginal) => 
 });
 
 const CRASH: GpuCrash = { crashedAtMs: 1_000, restartCount: 1, reason: "crashed" };
+/** cv:gpu:info's lastCrash for CRASH: no retry answered it, and the user has not kept it (#306). */
+const LAST: GpuLastCrash = { ...CRASH, retried: false, kept: false };
+const KEEP_FAILED = "keepSoftwareNow: main did not keep the GPU crash";
 const listeners = new Set<(crash: GpuCrash) => void>();
 const gpuRetry = vi.fn(async () => undefined);
+const gpuKeepSoftware = vi.fn(async () => undefined);
+const keepNothing = async (): Promise<void> => undefined;
 const onGpuCrashed = (listener: (crash: GpuCrash) => void): (() => void) => {
   listeners.add(listener);
   return () => void listeners.delete(listener);
@@ -70,6 +79,7 @@ beforeEach(() => {
   events.length = 0;
   viaAdapter.length = 0;
   gpuRetry.mockClear();
+  gpuKeepSoftware.mockClear();
   window.addEventListener(THEME_ANALYTICS_EVENT, listen);
   vi.stubGlobal(
     "fetch",
@@ -130,7 +140,7 @@ describe("SCR-159's GPU crashes, from the shell's start to its stop", () => {
   it("watches the port it is given, not the shell's: a test's fake, though the preload ran", async () => {
     desktop({ onGpuCrashed, gpuRetry });
     const retry = vi.fn(async () => undefined);
-    const stop = watchGpu({ onCrashed: () => () => undefined, retry });
+    const stop = watchGpu({ onCrashed: () => () => undefined, retry, keepSoftware: keepNothing });
     await retryGpuNow();
     stop();
     expect([retry.mock.calls.length, viaAdapter, gpuRetry.mock.calls.length]).toEqual([1, [], 0]);
@@ -167,13 +177,13 @@ describe("SCR-159's GPU crashes, from the shell's start to its stop", () => {
     };
     const none = (): (() => void) => () => undefined;
     const reached = new Promise<void>((resolve) => (asked = resolve));
-    const stop = watchGpu({ onCrashed: none, retry: ask });
+    const stop = watchGpu({ onCrashed: none, retry: ask, keepSoftware: keepNothing });
     const open = retryGpuNow();
     await reached;
     const refuseOld = refuse;
     stop();
     const reachedAgain = new Promise<void>((resolve) => (asked = resolve));
-    const again = watchGpu({ onCrashed: none, retry: ask });
+    const again = watchGpu({ onCrashed: none, retry: ask, keepSoftware: keepNothing });
     const next = retryGpuNow();
     expect(next).not.toBe(open);
     await reachedAgain; // its own port was asked
@@ -181,6 +191,36 @@ describe("SCR-159's GPU crashes, from the shell's start to its stop", () => {
     await open.catch(() => undefined);
     expect(retryGpuNow()).toBe(next); // and leaves the new one alone: one try at a time
     again();
+  });
+
+  it("Keep software rendering takes the page down first, then asks main once, through the adapter", () => {
+    const pageAtKeep: unknown[] = [];
+    gpuKeepSoftware.mockImplementationOnce(
+      async () => void pageAtKeep.push(getShellState().gpuCrash),
+    );
+    desktop({ onGpuCrashed, gpuRetry, gpuKeepSoftware });
+    const shell = started();
+    emit(CRASH);
+    keepSoftwareNow(); // SCR-159's Keep software rendering (#306)
+    expect([pageAtKeep, viaAdapter]).toEqual([[null], ["created", "onCrashed", "keepSoftware"]]);
+    expect(getShellState().degraded.asserted.gpuFallback).toBe(1);
+    shell.stop();
+  });
+
+  it.each([
+    ["main refuses it", { gpuKeepSoftware: async () => Promise.reject(new Error("refused")) }],
+    ["the bridge has no keep (an older preload)", {}],
+  ])("a keep that fails (%s) is one fixed line, and the page stays down", async (_label, keep) => {
+    const said = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    desktop({ onGpuCrashed, gpuRetry, ...keep });
+    const shell = started();
+    emit(CRASH);
+    keepSoftwareNow();
+    await vi.waitFor(() => expect(said).toHaveBeenCalledWith(KEEP_FAILED));
+    const logged = said.mock.calls.filter((call) => call.includes(KEEP_FAILED));
+    expect([logged, getShellState().gpuCrash]).toEqual([[[KEEP_FAILED]], null]);
+    expect(getShellState().degraded.asserted.gpuFallback).toBe(1);
+    shell.stop();
   });
 });
 
@@ -199,7 +239,7 @@ describe("SCR-159's GPU crash from before the shell's start (cv:gpu:info's lastC
   }
 
   it("shows it once, read as the watcher subscribes; main's push of the same crash adds nothing", async () => {
-    const gpuInfo = answering({ ...CRASH, retried: false });
+    const gpuInfo = answering(LAST);
     desktop({ onGpuCrashed, gpuRetry, gpuInfo });
     const shell = started();
     expect(gpuInfo).toHaveBeenCalledTimes(1);
@@ -219,7 +259,7 @@ describe("SCR-159's GPU crash from before the shell's start (cv:gpu:info's lastC
     desktop({ onGpuCrashed, gpuRetry, gpuInfo });
     const shell = started();
     emit(pushed);
-    answer({ ...INFO, lastCrash: { ...CRASH, retried: false } }); // older than a newer `pushed`
+    answer({ ...INFO, lastCrash: LAST }); // older than a newer `pushed`
     await gpuInfo.mock.results[0]?.value;
     expect([gpuInfo.mock.calls.length, getShellState().gpuCrash, events]).toEqual([
       1,
@@ -230,7 +270,7 @@ describe("SCR-159's GPU crash from before the shell's start (cv:gpu:info's lastC
   });
 
   it.each([
-    ["a crash a retry answered (the relaunch is under way)", { ...CRASH, retried: true }],
+    ["a crash a retry answered (the relaunch is under way)", { ...LAST, retried: true }],
     ["no crash this session (a relaunched one)", null],
   ])("shows nothing for %s", async (_label, lastCrash) => {
     const gpuInfo = answering(lastCrash);
@@ -256,13 +296,13 @@ describe("SCR-159's GPU crash from before the shell's start (cv:gpu:info's lastC
     const { gpuInfo, answer } = held();
     desktop({ onGpuCrashed, gpuRetry, gpuInfo });
     started().stop();
-    answer({ ...INFO, lastCrash: { ...CRASH, retried: false } });
+    answer({ ...INFO, lastCrash: LAST });
     await gpuInfo.mock.results[0]?.value;
     expect([gpuInfo.mock.calls.length, getShellState().gpuCrash, events]).toEqual([1, null, []]);
   });
 
   it("holds SCR-153's GPU row, not the page, for a crash the user kept software rendering for", async () => {
-    const gpuInfo = answering({ ...CRASH, retried: false });
+    const gpuInfo = answering(LAST);
     desktop({ onGpuCrashed, gpuRetry, gpuInfo });
     const first = started();
     await vi.waitFor(() => expect(getShellState().gpuCrash).toEqual(CRASH));
@@ -275,5 +315,19 @@ describe("SCR-159's GPU crash from before the shell's start (cv:gpu:info's lastC
     expect(getShellState().degraded.asserted.gpuFallback).toBe(1);
     expect(events).toEqual([REPORTED]);
     again.stop();
+  });
+
+  it("lands a crash main says the user kept as SCR-153's row: no page, no report; its push adds nothing", async () => {
+    const gpuInfo = answering({ ...LAST, kept: true }); // a reload, or a new window (#306)
+    desktop({ onGpuCrashed, gpuRetry, gpuInfo });
+    const shell = started();
+    await vi.waitFor(() => expect(getShellState().degraded.asserted.gpuFallback).toBe(1));
+    emit(CRASH); // main's push of the same crash, late
+    const seen = () => [getShellState().gpuCrash, getShellState().degraded.asserted.gpuFallback];
+    expect([...seen(), events]).toEqual([null, 1, []]);
+    const newer = { ...CRASH, crashedAtMs: 2_000, restartCount: 2 };
+    emit(newer); // a newer crash is a page of its own, and the row yields to it
+    expect([...seen(), events]).toEqual([newer, undefined, [REPORTED]]);
+    shell.stop();
   });
 });

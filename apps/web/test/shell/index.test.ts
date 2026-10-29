@@ -31,6 +31,7 @@ describe("createShellPort", () => {
         webgl2CapabilityParity: true,
       }),
       gpuRetry: async () => {},
+      gpuKeepSoftware: async () => {},
       onGpuCrashed: () => () => {},
       onDeepLink: () => () => {},
     };

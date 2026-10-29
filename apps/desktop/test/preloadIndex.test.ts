@@ -26,7 +26,7 @@ describe("preload bridge", () => {
     exposeInMainWorldMock.mockClear();
   });
 
-  it("exposes exactly window.cv with the six named methods, no generic invoke or on", async () => {
+  it("exposes exactly window.cv with the seven named methods, no generic invoke or on", async () => {
     await import("../src/preload/index");
     expect(exposeInMainWorldMock).toHaveBeenCalledTimes(1);
     const [name, cv] = exposeInMainWorldMock.mock.calls[0] as [string, Record<string, unknown>];
@@ -34,6 +34,7 @@ describe("preload bridge", () => {
     expect(Object.keys(cv).sort()).toEqual([
       "crashLogAppend",
       "gpuInfo",
+      "gpuKeepSoftware",
       "gpuRetry",
       "keychainGetKekHandle",
       "onGpuCrashed",
@@ -96,6 +97,13 @@ describe("preload bridge", () => {
     expect(invokeMock.mock.calls).toEqual([["cv:gpu:retry"]]);
   });
 
+  it("gpuKeepSoftware() invokes exactly cv:gpu:keepSoftware and passes no caller argument (#306)", async () => {
+    await import("../src/preload/index");
+    const [, cv] = exposeInMainWorldMock.mock.calls[0] as [string, Record<string, Append>];
+    await cv["gpuKeepSoftware"]?.({ restartCount: 99 });
+    expect(invokeMock.mock.calls).toEqual([["cv:gpu:keepSoftware"]]);
+  });
+
   /** Subscribes a listener through window.cv.onGpuCrashed; returns what the preload wired. */
   async function subscribeGpuCrashes() {
     await import("../src/preload/index");
@@ -106,6 +114,7 @@ describe("preload bridge", () => {
     return { listener, unsubscribe, channel, forward };
   }
   const CRASH = { crashedAtMs: 1, restartCount: 1, reason: "crashed" };
+  const LAST = { ...CRASH, retried: false, kept: false };
   const IPC_EVENT = { sender: { invoke: invokeMock } };
 
   /** window.cv.gpuInfo, once main has answered cv:gpu:info with `answer`. */
@@ -121,7 +130,7 @@ describe("preload bridge", () => {
       ...INFO,
       lastCrash: null,
     });
-    const lastCrash = { ...CRASH, retried: false };
+    const lastCrash = { ...LAST, kept: true }; // the user kept software rendering (#306)
     const info = (await gpuInfoAnswering({ ...INFO, lastCrash })) as { lastCrash: unknown };
     expect(info).toEqual({ ...INFO, lastCrash });
     expect(info.lastCrash).not.toBe(lastCrash);
@@ -130,10 +139,13 @@ describe("preload bridge", () => {
 
   it.each([
     ["no lastCrash", INFO],
-    ["a lastCrash without retried", { ...INFO, lastCrash: CRASH }],
-    ["a string retried", { ...INFO, lastCrash: { ...CRASH, retried: "no" } }],
-    ["a negative count", { ...INFO, lastCrash: { ...CRASH, restartCount: -1, retried: false } }],
-    ["platform text", { ...INFO, lastCrash: { ...CRASH, reason: "C:\\gpu.dll", retried: true } }],
+    ["a lastCrash without retried", { ...INFO, lastCrash: { ...CRASH, kept: false } }],
+    ["a string retried", { ...INFO, lastCrash: { ...LAST, retried: "no" } }],
+    ["a lastCrash without kept", { ...INFO, lastCrash: { ...CRASH, retried: false } }],
+    ["a string kept", { ...INFO, lastCrash: { ...LAST, kept: "yes" } }],
+    ["a numeric kept", { ...INFO, lastCrash: { ...LAST, kept: 1 } }],
+    ["a negative count", { ...INFO, lastCrash: { ...LAST, restartCount: -1 } }],
+    ["platform text", { ...INFO, lastCrash: { ...LAST, reason: "C:\\gpu.dll", retried: true } }],
     ["no object at all", "ok"],
   ])("gpuInfo() refuses an answer with %s", async (_label, answer) => {
     await expect(gpuInfoAnswering(answer)).rejects.toThrow("GPU info refused");

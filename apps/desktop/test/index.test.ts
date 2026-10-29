@@ -6,6 +6,7 @@ import { buildCsp } from "../src/main/csp";
 import { resolveDevServerUrl, type DevServerUrl } from "../src/main/devServer";
 import { logAuditEvent } from "../src/main/logger";
 import { CrashLogRefusedError } from "../src/main/crashLog";
+import { GpuKeepRefusedError } from "../src/main/gpuRecovery";
 import type * as CrashLogModule from "../src/main/crashLog";
 
 // src/main/index.ts calls app.on(...) / app.whenReady() at module scope, so
@@ -438,6 +439,7 @@ const IPC_CHANNELS = [
   "cv:updates:check",
   "cv:crashLog:append",
   "cv:gpu:retry",
+  "cv:gpu:keepSoftware",
 ] as const;
 
 /** The listener the shell registered for `channel` at startup (no dev server set). */
@@ -504,6 +506,8 @@ describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", ()
       state: "error",
       reason: "UPDATE_CHANNEL_DISABLED",
     });
+    // Nor a crash to keep: refused with a fixed message (#306).
+    expect(() => ipcListener("cv:gpu:keepSoftware")(from)).toThrow(GpuKeepRefusedError);
   });
 
   it.each([
@@ -642,7 +646,7 @@ describe("the GPU-process crash signal and its relaunch (F15, E10-S04)", () => {
     const [[, sent]] = shell.webContents.send.mock.calls as [[string, object]];
     const from = invokeFrom("app://candleviewer/terminal", "main");
     const info = (await ipcListener("cv:gpu:info")(from)) as { lastCrash: unknown };
-    expect(info.lastCrash).toEqual({ ...sent, retried: false });
+    expect(info.lastCrash).toEqual({ ...sent, retried: false, kept: false });
   });
 
   it("listens from module load, before whenReady is even called, so a pre-ready crash counts", () => {
@@ -650,6 +654,22 @@ describe("the GPU-process crash signal and its relaunch (F15, E10-S04)", () => {
     const listenedAt = (app.on as unknown as Mock).mock.invocationCallOrder[at] ?? Infinity;
     const [readyAsked] = vi.mocked(app.whenReady).mock.invocationCallOrder;
     expect(listenedAt).toBeLessThan(readyAsked ?? 0);
+  });
+
+  it("cv:gpu:keepSoftware marks the last crash kept for cv:gpu:info, until a newer one (#306)", async () => {
+    getAllWindows.mockReturnValue([]);
+    childProcessGone("GPU");
+    const from = invokeFrom("app://candleviewer/terminal", "main");
+    const keep = ipcListener("cv:gpu:keepSoftware");
+    const lastCrash = async (): Promise<unknown> =>
+      ((await ipcListener("cv:gpu:info")(from)) as { lastCrash: unknown }).lastCrash;
+    expect(() => keep(invokeFrom("https://evil.test/", "main"))).toThrow(IpcSenderRefusedError);
+    await expect(lastCrash()).resolves.toMatchObject({ kept: false });
+    expect(keep(from, { kept: false })).toBeUndefined(); // no renderer argument is read
+    expect(keep(from)).toBeUndefined(); // and a second keep changes nothing
+    await expect(lastCrash()).resolves.toMatchObject({ retried: false, kept: true });
+    childProcessGone("GPU");
+    await expect(lastCrash()).resolves.toMatchObject({ retried: false, kept: false });
   });
 
   it("cv:gpu:retry after a crash relaunches the app, then exits it with 0", async () => {
