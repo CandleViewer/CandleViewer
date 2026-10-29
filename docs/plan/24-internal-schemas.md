@@ -471,7 +471,8 @@ the table's family→stream mapping is otherwise unchanged. Implemented today: `
 (snapshot + delta + `BookStatus`), `ticker`, `gap` (trade-tape `GapEvent`), feed health
 (`{env}.health.feed`), and instrument metadata changes on `{env}.instruments.{symbol}.updated`
 (`InstrumentUpdatedEvent`, published by the catalogue refresh since #1633; listed by E08-Q06,
-#283).
+#283). E21-T01 (#604) adds `BestQuoteEvent` on `{env}.md.{symbol}.quote` and `BookDesyncEvent` on
+`{env}.health.{symbol}.book_desync`, both from the book stream.
 
 **Envelope of the E08 control events (#3876, drift D1).** `BookStatus`, `GapEvent` and
 `FeedHealthEvent` carry the §1.4 envelope (C6) with `schema_version = 1` and `source = "live"`.

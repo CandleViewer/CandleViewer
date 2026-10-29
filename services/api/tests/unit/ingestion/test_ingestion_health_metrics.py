@@ -87,18 +87,18 @@ def _status(state: BookPhase, reason: str, symbol: str = "BTCUSDT") -> BookStatu
 
 def test_book_status_drives_live_gauge_and_resync_counter() -> None:
     reset_symbol_universe()
-    before = _val(ingest_book_resyncs_total, symbol="BTCUSDT", reason="sequence_gap")
+    before = _val(ingest_book_resyncs_total, symbol="BTCUSDT", reason="sequence_gap", depth="200")
     _observe_book_status(_status(BookPhase.LIVE, "subscribe"))
     assert _val(ingest_book_live, symbol="BTCUSDT") == 1.0
     _observe_book_status(_status(BookPhase.DESYNCED, "sequence_gap"))
     assert _val(ingest_book_live, symbol="BTCUSDT") == 0.0
-    after = _val(ingest_book_resyncs_total, symbol="BTCUSDT", reason="sequence_gap")
+    after = _val(ingest_book_resyncs_total, symbol="BTCUSDT", reason="sequence_gap", depth="200")
     assert after - before == 1
 
 
 def test_book_status_free_text_reason_and_symbol_never_become_labels() -> None:
     reset_symbol_universe()
-    before = _val(ingest_book_resyncs_total, symbol=OTHER_SYMBOL, reason="other")
+    before = _val(ingest_book_resyncs_total, symbol=OTHER_SYMBOL, reason="other", depth="200")
     _observe_book_status(_status(BookPhase.DESYNCED, "user typed <script>", symbol="bad sym"))
-    after = _val(ingest_book_resyncs_total, symbol=OTHER_SYMBOL, reason="other")
+    after = _val(ingest_book_resyncs_total, symbol=OTHER_SYMBOL, reason="other", depth="200")
     assert after - before == 1

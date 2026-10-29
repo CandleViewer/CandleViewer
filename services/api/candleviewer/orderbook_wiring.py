@@ -16,6 +16,16 @@ Wires the venue-neutral `book` module to ingestion. Rules:
 * A released symbol's grace (US-MKT-005) ends on the stream's own tick or its
   next frame, whichever comes first: the topic is dropped and the book
   forgotten, so a later acquire is served from a fresh snapshot (#3807).
+* Tiers (E21-T01, BQ-1): one active tier per symbol, 200 by default. Demand is
+  kept per (symbol, depth); a 500 demand moves the tier to 500 only with
+  `heatmap_depth_500` on (C-4.13, default off), and the tier returns to the
+  default once no 500 demand is left (the WS references' grace has run by then).
+  The stream's tick applies a tier change, built muted and swapped in whole.
+* E21-T01: `BestQuoteEvent` on `{env}.md.{symbol}.quote` after each event the
+  active tier applied, only on change (`book.quote`); each resync incident's
+  `BookDesyncEvent` on `{env}.health.{symbol}.book_desync` with its structured
+  log; `book_apply_latency_ms`, `book_crossed_total` and the resync counter's
+  `depth` (the active tier).
 
 Plain code on the hot path (catalogue 1.2, C-2.20): this module never imports
 the statechart package. B14 health supervision is an injected
@@ -35,13 +45,16 @@ from typing import Any, Literal, Protocol
 
 import structlog
 
-from candleviewer.book.models import BookPhase, BookStatus
-from candleviewer.book.resync import BookEngine, HealthSink
+from candleviewer.book.models import BestQuoteEvent, BookDesyncEvent, BookPhase, BookStatus
+from candleviewer.book.quote import QuoteTracker
+from candleviewer.book.resync import BookEngine, HealthSink, Published
 from candleviewer.book.tiers import DEFAULT_DEPTH, TieredBook
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy, Topic, TopicPattern
 from candleviewer.exchange.base.models import BookDelta, BookSnapshot
 from candleviewer.ingestion.metrics import (
+    book_apply_latency_ms,
+    book_crossed_total,
     book_writes_dropped_total,
     ingest_book_live,
     ingest_book_resyncs_total,
@@ -125,7 +138,26 @@ def _observe_book_status(status: BookStatus) -> None:
     ingest_book_live.labels(symbol=sym).set(1.0 if live else 0.0)
     if status.state is BookPhase.DESYNCED:
         reason = status.reason if status.reason in _RESYNC_REASONS else "other"
-        ingest_book_resyncs_total.labels(symbol=sym, reason=reason).inc()
+        ingest_book_resyncs_total.labels(symbol=sym, reason=reason, depth=str(status.depth)).inc()
+
+
+#: The tier a 500 demand moves a symbol to, with `heatmap_depth_500` on (BQ-1).
+DEEP_TIER = 500
+
+
+def _observe_desync(ev: BookDesyncEvent) -> None:
+    """E21-T01: the incident's structured log (no level, no price) and `book_crossed_total`."""
+    logger().warning(
+        "book_desync",
+        symbol=ev.symbol,
+        depth=ev.depth,
+        reason=ev.reason,
+        prev_update_id=ev.prev_update_id,
+        got_update_id=ev.got_update_id,
+        resync_count=ev.resync_count,
+    )
+    if ev.reason == "crossed":
+        book_crossed_total.labels(symbol=symbol_label(ev.symbol)).inc()
 
 
 class BookWriter(Protocol):
@@ -175,8 +207,15 @@ class BookStream:
         write_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         tick_size: Callable[[str], Decimal | None] | None = None,
+        depth_500: bool = False,
+        perf: Callable[[], float] = time.perf_counter,
     ) -> None:
         self._clock, self._rand = clock, rand
+        #: E21-T01: whether a 500 demand may move a symbol's tier (`heatmap_depth_500`), the
+        #: depth each consumer of a symbol asked for, the quotes last published and the timer
+        #: `book_apply_latency_ms` reads.
+        self._depth_500, self._wants, self._perf = depth_500, dict[str, dict[str, int]](), perf
+        self._quotes = QuoteTracker()
         #: #3806: the catalogue's tick size (the one `parse_frame` reads), and the grid each
         #: (symbol, depth) book was last snapshotted on. Without it the grid check is off.
         self._tick_size = tick_size
@@ -226,9 +265,41 @@ class BookStream:
         self._demand.acquire(consumer, symbol)
         self.sync()
 
+    def acquire_depth(self, consumer: str, symbol: str, depth: int) -> None:
+        """`acquire`, naming the topic depth the consumer reads (E21-T01): the tier's demand."""
+        if not self._is_listed(symbol):
+            raise UnknownSymbolError(symbol)
+        self._wants.setdefault(symbol, {})[consumer] = depth
+        self.acquire(consumer, symbol)
+
     def release(self, consumer: str, symbol: str) -> None:
         self._demand.release(consumer, symbol)
+        wants = self._wants.get(symbol)
+        if wants is not None:
+            wants.pop(consumer, None)
+            if not wants:
+                del self._wants[symbol]
         self.sync()
+
+    def tier(self, symbol: str) -> int:
+        """The tier `symbol`'s demand asks for (BQ-1): 500 while a consumer reads 500 and
+        `heatmap_depth_500` is on, else the default."""
+        wants = self._wants.get(symbol, {})
+        deep = self._depth_500 and any(d >= DEEP_TIER for d in wants.values())
+        return DEEP_TIER if deep else self._depth
+
+    async def apply_tiers(self) -> int:
+        """Start the tier change of each symbol whose active tier is not the one its demand asks
+        for and that is not already warming one; the changes started."""
+        n = 0
+        for symbol, tb in list(self._books.items()):
+            want = self.tier(symbol)
+            if tb.warming is None and tb.active.depth != want:
+                await tb.change_depth(want)
+                n += 1
+        if n:
+            self.sync()
+        return n
 
     def is_listed(self, symbol: str) -> bool:
         return self._is_listed(symbol)
@@ -238,7 +309,7 @@ class BookStream:
         topics: set[str] = set()
         for sym in wanted:
             tb = self._books.get(sym)
-            depths = {self._depth} if tb is None else {tb.active.depth}
+            depths = {self.tier(sym)} if tb is None else {tb.active.depth}
             if tb is not None and tb.warming is not None:
                 depths.add(tb.warming.depth)
             topics |= {self._topic_for(sym, d) for d in depths}
@@ -273,6 +344,7 @@ class BookStream:
         self._deferred.discard(symbol)
         self._not_live_since.pop(symbol, None)
         self._applied_at.pop(symbol, None)
+        self._quotes.forget(symbol)
         ingest_book_live.labels(symbol=symbol_label(symbol)).set(0.0)  # forgotten: not LIVE
 
     def out_of_live(self, slo_s: float = RESYNC_BACKOFF_CAP_S) -> tuple[str, ...]:
@@ -332,7 +404,7 @@ class BookStream:
     # ---- engines ----------------------------------------------------------
     def _make_engine(self, symbol: str) -> Callable[[int, bool], BookEngine]:
         def make(depth: int, muted: bool) -> BookEngine:
-            async def publish(obj: BookSnapshot | BookDelta | BookStatus) -> None:
+            async def publish(obj: Published) -> None:
                 await self._publish(symbol, obj)
 
             async def resub() -> None:
@@ -345,14 +417,19 @@ class BookStream:
                     # Cooling down: stay desynced/stale, retry from the tick loop.
                     self._deferred.add(symbol)
                     ingest_book_resyncs_total.labels(
-                        symbol=symbol_label(symbol), reason="backoff"
+                        symbol=symbol_label(symbol), reason="backoff", depth=str(depth)
                     ).inc()
                     return
                 self._deferred.discard(symbol)
                 await self._resub(self._topic_for(symbol, depth))
 
             eng = BookEngine(
-                symbol=symbol, depth=depth, publish=publish, resubscribe=resub, now_us=self._now_us
+                symbol=symbol,
+                depth=depth,
+                publish=publish,
+                resubscribe=resub,
+                now_us=self._now_us,
+                incidents=True,  # E21-T01: each incident's `BookDesyncEvent`
             )
             eng.muted = muted
             return eng
@@ -363,7 +440,7 @@ class BookStream:
         tb = self._books.get(symbol)
         if tb is not None:
             return tb
-        tb = TieredBook(self._make_engine(symbol), self._depth)
+        tb = TieredBook(self._make_engine(symbol), self.tier(symbol))
         self._books[symbol] = tb
         self._not_live_since[symbol] = self._clock()
         if self._supervisor is not None:
@@ -373,14 +450,28 @@ class BookStream:
         await tb.start()
         return tb
 
-    async def _publish(self, symbol: str, obj: BookSnapshot | BookDelta | BookStatus) -> None:
+    async def _publish(self, symbol: str, obj: Published) -> None:
+        if isinstance(obj, BookDesyncEvent):
+            await self._publish_desync(symbol, obj)
+        else:
+            await self._publish_book(symbol, obj)
+
+    async def _publish_desync(self, symbol: str, ev: BookDesyncEvent) -> None:
+        """24 §2.9 (E21-T01): the incident on `{env}.health.{symbol}.book_desync`, logged."""
+        _observe_desync(ev)
+        health = Topic(env=self._env, domain="health", symbol=symbol, detail="book_desync")
+        await self._bus.publish(health, ev)
+
+    async def _publish_book(self, symbol: str, obj: BookSnapshot | BookDelta | BookStatus) -> None:
         topic = Topic(env=self._env, domain="md", symbol=symbol, detail="book")
         await self._bus.publish(topic, obj)
         if isinstance(obj, BookStatus):
             _observe_book_status(obj)
             if obj.state is BookPhase.LIVE:
                 self._not_live_since.pop(symbol, None)
-            elif symbol in self._books:
+            else:
+                self._quotes.forget(symbol)
+            if obj.state is not BookPhase.LIVE and symbol in self._books:
                 self._not_live_since.setdefault(symbol, self._clock())
             if obj.state is BookPhase.LIVE:  # stable-LIVE for RESYNC_STABLE_S resets it
                 bo = self._backoff.get(symbol)
@@ -413,6 +504,7 @@ class BookStream:
 
     # ---- frames -----------------------------------------------------------
     async def handle_frame(self, frame: str) -> None:
+        received = self._perf()
         try:
             ev = self._parse(frame)
         except (ValueError, RecursionError) as exc:
@@ -443,8 +535,18 @@ class BookStream:
             await tb.active.invalidate("grid")
             return
         await tb.on_event(ev)
-        if ev.depth == tb.active.depth and tb.active.phase is BookPhase.LIVE:
+        active = tb.active
+        if ev.depth == active.depth and active.phase is BookPhase.LIVE and active.book is not None:
             self._applied_at[ev.symbol] = self._clock()  # applied: what `is_stale` ages
+            if isinstance(ev, BookDelta):
+                book_apply_latency_ms.labels(symbol=symbol_label(ev.symbol)).observe(
+                    (self._perf() - received) * 1000.0
+                )
+            quote: BestQuoteEvent | None = self._quotes.update(active.book, ev)
+            if quote is not None:
+                await self._bus.publish(
+                    Topic(env=self._env, domain="md", symbol=ev.symbol, detail="quote"), quote
+                )
         if tb.warming is None:
             self.sync()  # a completed tier swap retires the old topic
 
@@ -532,6 +634,7 @@ class BookStream:
         while True:
             await self._sleep(_TICK_S)
             self.sync()  # #3807: a released symbol's grace ends here, demand change or not
+            await self.apply_tiers()
             await self.check_timeouts()
 
     async def start(self) -> None:

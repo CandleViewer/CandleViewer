@@ -52,7 +52,7 @@ from candleviewer.api._generated.openapi_models import (
 )
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.instruments import InstrumentsPrincipal, make_instruments_router
-from candleviewer.book.models import BookStatus
+from candleviewer.book.models import BestQuoteEvent, BookDesyncEvent, BookStatus
 from candleviewer.book.tiers import DEFAULT_DEPTH
 from candleviewer.domain.events import (
     DomainEvent,
@@ -110,6 +110,7 @@ E08_BUS_PAYLOADS: Final = frozenset(
     {TradeEvent, BookSnapshot, BookDelta, TickerEvent}  # 24 §2.1-2.3, parsed by the adapter
     | {BookStatus, GapEvent, FeedHealthEvent}  # E08's control events (drift D1)
     | {InstrumentUpdatedEvent}  # 24 §2.8, from the catalogue refresh
+    | {BestQuoteEvent, BookDesyncEvent}  # 24 §2.8, from the book stream (E21-T01, #604)
 )
 C6_FIELDS: Final = ("schema_version", "event_id", "ts_event", "ts_ingest")
 # (domain, detail) of every bus topic E08 publishes -> how 24 §2.9 "As shipped" spells it.
@@ -120,6 +121,8 @@ E08_BUS_TOPICS: Final[Mapping[tuple[str, str], str]] = {
     ("md", "gap"): "`gap`",
     ("health", "feed"): "`{env}.health.feed`",
     ("instruments", "updated"): "`{env}.instruments.{symbol}.updated`",
+    ("md", "quote"): "`{env}.md.{symbol}.quote`",  # E21-T01 (#604)
+    ("health", "book_desync"): "`{env}.health.{symbol}.book_desync`",
 }
 E08_DOMAINS: Final = frozenset(domain for domain, _ in E08_BUS_TOPICS)
 E08_MODULES: Final = ("ingestion/", "book/", "orderbook_wiring.py")
