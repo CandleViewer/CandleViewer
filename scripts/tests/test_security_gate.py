@@ -2017,6 +2017,9 @@ _CODEQL_LINE_PINS = {
     "services/api/candleviewer/migrations/versions/0002_rbac_seed.py": (
         "print(message, file=sys.stdout)"
     ),
+    "py/clear-text-logging-sensitive-data:docs/design/_tools/e09_d05_password_audit.py": (
+        'print(json.dumps({"values": values, "extra": extra}, ensure_ascii=False, indent=1))'
+    ),
 }
 _MFA_TOKEN_ENTRY = (
     "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:123"
