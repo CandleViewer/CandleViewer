@@ -7,8 +7,8 @@ Per `docs/plan/16-design-system-brief.md` §11.4 and §13.3 item 8 (`02` §4.2):
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: PENDING the boards PR. Page `E14-D07 Object tree drawings and sync` (id pinned once created; never a URL, host, team or file id); planned PNGs `docs/design/E14/img/E14-D07-01-branch-anatomy-20.png`, `-02-row-states-dark.png`, `-03-row-states-light.png`, `-06-scale-0-20-500.png`, `-07-sync-and-coupling-dark.png`, `-08-sync-and-coupling-light.png`, `-09-a11y-contrast-storybook.png`
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §4's 25 state rows as `SCR-036/drawings-<state>` frames across boards 02, 03, 04 / 05 (`drawings-restored-reduced`), 06, 07, 08, 09)
+- [x] **Final Penpot link** — page `E14-D07 Object tree drawings and sync` · id `f5d056cd-3de8-808d-8008-dc6e3c71e055` (never a URL, host, team or file id), drawn from the board script (r8; boards 04 / 05 at its declared patch r10 — spec §0) by the design lane and exported at 1:1 in this boards PR; PNGs `docs/design/E14/img/E14-D07-01-branch-anatomy-20.png`, `-02-row-states-dark.png`, `-03-row-states-light.png`, `-06-scale-0-20-500.png`, `-07-sync-and-coupling-dark.png`, `-08-sync-and-coupling-light.png`, `-09-a11y-contrast-storybook.png`
+- [x] **Variants × States matrix** — Table 1, drawn in this boards PR (spec §4's 25 state rows as `SCR-036/drawings-<state>` frames across boards 02, 03, 04 / 05 (`drawings-restored-reduced`), 06, 07, 08, 09)
 - [x] **Keyboard table** — Table 2: E13-D02 D25 cited row by row (never re-typed), with this ticket's rows marked — `Enter` on the sync row (SCR-023), `Esc` in the filter clearing first (spec C-17), the T2 and the locked-row keys; the eye, lock and tag buttons are pointer targets with key twins (D25: one roving stop); no key added, the tool's lint gate (spec §9.1)
 - [x] **Accessible name / role table** — Table 3: the shell's names cited (E13-D02 §11.3) plus the drawings-only rows — the row's name = the template label untruncated + the state words + the position from `aria-posinset` / `aria-setsize`; the tag button "Off-screen — reveal on chart" (a pointer target); the sync row "Shared with every BTCUSDT pane in this layout · Sync group" (a level-2 `treeitem`); the sub-group row "Lines (7)" with `aria-expanded`; the T2 surfaces compose CMP-079 RbacGate (the role legs, view-as first then `workspaces:write`; the locked state leg is not wrapped) and CMP-019 Icon `lock` (`decorative=false`, "Not available") — the 8 px badge on the T2 eye / lock buttons and the glyph leading the T2 menu items (spec §9.3, §9.4, §11; A-2 adds both ids to `14` SCR-036's Components line)
 - [x] **Live data** — Table 5: the anchor read-out updates on commit (the 500 ms drag debounce of `batchUpsertDrawings`, `22` 8812), never per frame; the group and sub-group counts; the hide-all count; none announced per change beyond E13-D02 §11.4's rows (spec §5.1, §9.5)
@@ -17,7 +17,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none (24 × 24 is the floor; the tag button has a 24 px hit box)
 - [x] **Tokens used** — spec §3, §4, §10: `color.surface.overlay`, `color.surface.hover`, `color.surface.selected`, `color.surface.raised`, `color.surface.canvas`, `color.text.primary`, `color.text.secondary`, `color.text.tertiary`, `color.action.secondary.default` (the CMP-001 secondary face of the toast's Undo), `color.border.default`, `color.focus.ring`, `color.status.warning.subtle`, `color.status.warning.strong`, `color.status.danger.strong`, `type.ui.label`, `type.ui.caption`, `size.icon.sm`, `radius.xs`, `space.1`, `motion.duration.normal`, `motion.duration.instant`, `motion.easing.standard`; none invented (CMP-011's `color.chip.*` does not exist — spec G-4, PROPOSED); Penpot token sets = `packages/ui/tokens` at the base `698276854abd6f1dd3dba5c0005746257ef8b9b7`
 - [x] **Data contract confirmed** — `22` `listDrawings` (the rows; `limit` ≤ 500 per page, spec G-7), `updateDrawing` (`DrawingInput.visible` / `.locked` / `label` / `z_index`), `deleteDrawing`, `createDrawing` (Duplicate), `batchUpsertDrawings` (the bulk legs); the off-screen test is the engine's viewport intersection over `26` §3.9's object index — `22`'s `Drawing` carries `geometry.points` only (spec G-12); the sync state against PROPOSED fields (spec G-1, G-2) — read as text, never edited
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (35 pairs × 3 themes, FAIL 0; 33 CVD rows, 6 fill or same-token collapses carrying no meaning alone) and the 10 PROPOSED `pairs.mjs` rows are spec §10
+- [x] **Contrast and CVD** — the measured matrix and the CVD rows are on board 09, the CVD renders of boards 02 and 03 (greyscale, deuteranopia, protanopia) beside the PNGs (spec §0); the tool's numbers (35 pairs × 3 themes, FAIL 0; 33 CVD rows, 6 fill or same-token collapses carrying no meaning alone) and the 10 PROPOSED `pairs.mjs` rows are spec §10
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#351)
 
@@ -26,8 +26,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: PENDING the boards PR. Page `E14-D07 Object tree drawings and sync`; planned PNGs `docs/design/E14/img/E14-D07-04-bulk-confirms-undo-dark.png`, `-05-bulk-confirms-undo-light.png`, `-06-scale-0-20-500.png`
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §7: drawings-only selection · mixed · indicator-only (E13's, cited) · Viewer · view-as · a locked drawing in the selection, on boards 04 / 05 / 06)
+- [x] **Final Penpot link** — page `E14-D07 Object tree drawings and sync` · id `f5d056cd-3de8-808d-8008-dc6e3c71e055` (never a URL, host, team or file id), drawn and exported at 1:1 in this boards PR (boards 04 / 05 at the board script's declared patch r10, spec §0); PNGs `docs/design/E14/img/E14-D07-04-bulk-confirms-undo-dark.png`, `-05-bulk-confirms-undo-light.png`, `-06-scale-0-20-500.png`
+- [x] **Variants × States matrix** — Table 1, drawn in this boards PR (spec §7: drawings-only selection · mixed · indicator-only (E13's, cited) · Viewer · view-as · a locked drawing in the selection, on boards 04 / 05 / 06; the two `alertdialog`s with the close `×` on 04 / 05)
 - [x] **Keyboard table** — Table 2: the bar is one Tab stop after the tree (E13-D02 §11.1), a `role="toolbar"` whose arrows move along its actions (E13-D02 G-4); `Enter` / `Space` on Delete opens the confirm (Cancel focused); a T2 press re-shows the reason under the pressed action (the notice's sentence; the header notice stays); no key added (spec §7, §9.4)
 - [x] **Accessible name / role table** — Table 3: "Delete 7 drawings…" with `aria-describedby` "destructive action" (the removable count of the 9 selected); the T2 legs' `aria-describedby` on the drawer-header notice — composed of CMP-079 RbacGate (the role legs) and CMP-019 Icon `lock` (`decorative=false`, "Not available") leading the T2 Hide / Show / Lock / Unlock / Delete (spec §9.4, §11); no Apply template entry (absent until E14-D04 — spec C-23) (spec §9.3)
 - [x] **Live data** — Table 5: the count "9 selected" changes per selection change, never per tick; no live region of its own (E13-D02 §11.4's "3 selected" announces)
@@ -36,7 +36,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — spec §7: `color.surface.hover` (the bar), `color.text.tertiary` (the 1 px edge and the separator), `color.action.secondary.default` (the CMP-001 secondary face), `color.text.primary` (the words), `color.status.danger.strong` (the trash glyph), `color.surface.raised` + `color.border.default` (the T2 fill and hairline), `color.text.secondary` (the reason); never `color.status.danger.default` as a word's ink (2.92 in dark, spec §10.1) and never a red button face
 - [x] **Data contract confirmed** — `batchUpsertDrawings` for Hide / Show / Lock / Unlock / Delete over the selected drawings (`operations` ≤ 200 per call; E14-T02 chunks; Delete skips the locked ones — spec C-21); the indicator part of a mixed selection is E13's session state (E13-D03 G-11, merged as #4212)
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; spec §10.1 — the words 12.22 / 14.37 / 13.83 on the bar, the button labels 10.17 / 12.82 / 11.51 on the secondary face, the trash glyph 6.60 / 3.37 / 6.60 on it, the edge 4.79 / 5.44 / 9.54, the ring 5.66 / 5.39 / 14.72
+- [x] **Contrast and CVD** — on the exports of boards 04 / 05 (dark / light) and the measured matrix on board 09; spec §10.1 — the words 12.22 / 14.37 / 13.83 on the bar, the button labels 10.17 / 12.82 / 11.51 on the secondary face, the trash glyph 6.60 / 3.37 / 6.60 on it, the edge 4.79 / 5.44 / 9.54, the ring 5.66 / 5.39 / 14.72
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#351)
 
@@ -45,7 +45,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: PENDING the boards PR. Page `E14-D07 Object tree drawings and sync`; the templates card is on board 01 (`docs/design/E14/img/E14-D07-01-branch-anatomy-20.png`)
+- [x] **Final Penpot link** — page `E14-D07 Object tree drawings and sync` · id `f5d056cd-3de8-808d-8008-dc6e3c71e055` (never a URL, host, team or file id), drawn and exported at 1:1 in this boards PR; the templates card is on board 01 (`docs/design/E14/img/E14-D07-01-branch-anatomy-20.png`)
 - [x] **Variants × States matrix** — the 25 templates of spec §2.2 (one per `DrawingTool`, the tool's section 1 renders every example and gates the spec's table); the fragment-drop ladder per drawer width (spec §2.4); Table 1 below lists them by arity class
 - [x] **Keyboard table** — N/A for a text contract: type-ahead by the type word that opens every label (E13-D02 D25); Table 2 row
 - [x] **Accessible name / role table** — Table 3: the row's name = the template untruncated + the state words, set as a text node (threat model DR7), the user label last; the collision ordinal "(2)" (spec §2.5)
@@ -55,7 +55,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — `type.ui.label`, `color.text.primary` / `color.text.secondary` / `color.text.tertiary` (the label by state); none invented
 - [x] **Data contract confirmed** — `22` `DrawingTool` (the 25 values; the point counts 1 / 2 / 3 / n = 4 / 13 / 6 / 2), `DrawingPoint` (`t` RFC 3339, `p` a decimal string), `DrawingGeometry.levels` / `.bands` / `.text`, `DrawingInput.label` ≤ 120 code points — read as text
-- [ ] N/A — **Contrast and CVD**: the label's inks are the row's (block 1); PENDING on the exports
+- [x] **Contrast and CVD** — the label's inks are the row's (block 1), on the exports of boards 01–03 in this boards PR
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#351)
 
@@ -139,13 +139,13 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 **Tokens & visual**
 
 - [x] Uses only published Tier-2 / Tier-3 tokens — spec §3, §10 bind existing names (resolved by the tool); the one missing family CMP-011 names (`color.chip.*`) is a PROPOSED DS request (spec G-4); zero hard-coded hex or px beyond the measured tables and E13-D02's px, which stand.
-- [~] Verified in all three themes at both density modes — the matrix is measured in all three themes (spec §10.1); the frames are planned dark compact with the comfortable column and three light twins; PENDING until the boards exist.
+- [x] Verified in all three themes at both density modes — the matrix is measured in all three themes (spec §10.1); the boards are dark compact with the comfortable column (01, 02) and the three light twins (03, 05, 08), the hc specimens on board 09 (this boards PR).
 - [x] Passes the automated contrast-matrix check for every pair it introduces or touches — the tool: 36 pairs × 3 themes, 26 gated, FAIL 0 (the 11 `pairs.mjs` rows themselves are the DS request of spec §10.4).
-- [~] CVD simulation reviewed for any new colour-carrying state — computed now (33 rows, 6 fill or same-token collapses, none carrying meaning alone; spec §10.3); the `cvd_sim.py` run on the exports follows the boards.
+- [~] CVD simulation reviewed for any new colour-carrying state — computed now (33 rows, 6 fill or same-token collapses, none carrying meaning alone; spec §10.3); the `cvd_sim.py` renders of boards 02 and 03 (greyscale, deuteranopia, protanopia) are beside the PNGs (spec §0).
 
 **Behaviour & states**
 
-- [~] Every documented State has a corresponding Penpot variant and Storybook story — the states are specified (spec §4; Table 1) and the stories named (spec §12.1); the Penpot frames are PENDING.
+- [x] Every documented State has a corresponding Penpot variant and Storybook story — the states are specified (spec §4; Table 1) and drawn as `SCR-036/drawings-<state>` frames on boards 02 / 03 (with `drawings-restored-reduced` on 04 / 05 and the hc / forced-colors / zoom-200 frames on 09; this boards PR); the stories named (spec §12.1).
 - [x] Disabled states use the disabled-with-reason pattern (CMP-079), never a bare disabled control — every role / session leg is E09-D09's T2 under the one drawer-header notice by row kind (spec §9.4); a locked drawing's moves and removal are the state leg (T2 without CMP-079 under PROPOSED `drawing.locked`; its eye and `F2` stay T1); the deferred Apply template entry is absent, never a disabled control (the lane ruling; spec C-23); form validity applies to no control (spec §1.4).
 - [x] Loading / empty / error states are explicitly designed — loading is the shell's skeleton (cited); the empty line in both forms, the filtered-empty row, the unsaved and conflict tags (spec §4, §5.4).
 
