@@ -7,7 +7,7 @@ Per `docs/plan/16-design-system-brief.md` §11.4 and §13.3 item 8 (`02` §4.2):
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E14-D04 Drawing properties and templates` · id `89e562fa-ff64-8020-8008-dc9b4e07497f` in the file `E14-D04 boards` (never a URL, host, team or file id), drawn from the board script (r9; boards 03 / 08 at r8 — spec §0) by the design lane and exported at 1:1 in this boards PR; PNGs `docs/design/E14/img/E14-D04-01-popover-anatomy-1280.png` … `E14-D04-10-multiselect-a11y-zoom.png` (ten; spec §0)
+- [x] **Final Penpot link** — page `E14-D04 Drawing properties and templates` · id `89e562fa-ff64-8020-8008-dc9b4e07497f` in the file `E14-D04 boards` (never a URL, host, team or file id), drawn from the board script (r12 for boards 02 and 03; r11 for 05, 06, 09 and 10; r10 for 01, 04 and 07; r8 for 08 — spec §0) by the design lane and exported at 1:1 in this boards PR; PNGs `docs/design/E14/img/E14-D04-01-popover-anatomy-1280.png` … `E14-D04-10-multiselect-a11y-zoom.png` (ten; spec §0)
 - [x] **Variants × States matrix** — Table 1, drawn in this boards PR (spec §8: 35 `SCR-037/popover-<state>` rows — 33 with a nested frame; `alert-live` and `alert-over-quota` are text only, Q11 — across 81 nested frames)
 - [x] **Keyboard table** — Table 2 (spec §9): E14-D02 §7.3 Table 2 cited row by row plus the rows this spec adds (the swatch radiogroup, the stepper / slider, the selects, the checkboxes, the note, the level list, the Anchors and Templates disclosures, the two CMP-043 dialogs, Save as default / Clone / Delete, Dismiss, Apply to the rest, Unlock, Show in object tree, the flatten switch; a T2 text field is `readonly`, so a keystroke re-shows the notice); no key added (the keymap's 71 commands and `lint_keymap` at 0 errors are cited); no view-local override of a global or navigation binding; `Esc` / `Ctrl+K` untouched
 - [x] **Accessible name / role table** — Table 3: E14-D02 §7.3 Table 3 cited (the `dialog` `aria-modal="false"`, the swatches, the alert `switch`, Send to ticket, the note) plus the added rows (spec §9.2)
@@ -26,7 +26,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E14-D04 Drawing properties and templates` · id `89e562fa-ff64-8020-8008-dc9b4e07497f` in the file `E14-D04 boards` (never a URL, host, team or file id), drawn from the board script (r9; boards 03 / 08 at r8 — spec §0) by the design lane and exported at 1:1 in this boards PR; PNGs `docs/design/E14/img/E14-D04-02-shared-fields-dark.png` and `-03-shared-fields-light.png`
+- [x] **Final Penpot link** — page `E14-D04 Drawing properties and templates` · id `89e562fa-ff64-8020-8008-dc9b4e07497f` in the file `E14-D04 boards` (never a URL, host, team or file id), drawn from the board script (r12 for boards 02 and 03; r11 for 05, 06, 09 and 10; r10 for 01, 04 and 07; r8 for 08 — spec §0) by the design lane and exported at 1:1 in this boards PR; PNGs `docs/design/E14/img/E14-D04-02-shared-fields-dark.png` and `-03-shared-fields-light.png`
 - [x] **Variants × States matrix** — Table 1, drawn on boards 02 / 03 in this boards PR (the picker's nine radios in default · hover · focus · selected · focused-and-selected · Mixed · Custom colour · T2 (view-as / Viewer / locked: the CMP-019 `lock` leading the group name, the checked radio keeping its check; CMP-079 RbacGate on the role legs), dark and light)
 - [x] **Keyboard table** — Table 2: the APG radio-group keys (`←` / `→`, `Home` / `End` rove, `Space` picks); T2: `aria-disabled` on the group and each radio, an arrow moves nothing and re-shows the notice once (E09-D09 §9.3); the CMP-019 `lock` leads the group name, the checked radio keeps its check in `color.text.tertiary`, CMP-079 RbacGate wraps the role legs; nothing global overridden
 - [x] **Accessible name / role table** — Table 3: `radiogroup` "Colour" / "Fill colour"; each `radio` named by its ordinal, the hue word of the active theme and its token ("Slot 2, cyan — color.drawing.palette.2", E13-D03 §13's grammar); the legend row names the focused radio as visible text, or reads "Mixed" / "Custom colour"
@@ -45,7 +45,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [x] **Final Penpot link** — page `E14-D04 Drawing properties and templates` · id `89e562fa-ff64-8020-8008-dc9b4e07497f` in the file `E14-D04 boards` (never a URL, host, team or file id), drawn from the board script (r9; boards 03 / 08 at r8 — spec §0) by the design lane and exported at 1:1 in this boards PR; PNG `docs/design/E14/img/E14-D04-10-multiselect-a11y-zoom.png`
+- [x] **Final Penpot link** — page `E14-D04 Drawing properties and templates` · id `89e562fa-ff64-8020-8008-dc9b4e07497f` in the file `E14-D04 boards` (never a URL, host, team or file id), drawn from the board script (r12 for boards 02 and 03; r11 for 05, 06, 09 and 10; r10 for 01, 04 and 07; r8 for 08 — spec §0) by the design lane and exported at 1:1 in this boards PR; PNG `docs/design/E14/img/E14-D04-10-multiselect-a11y-zoom.png`
 - [x] **Variants × States matrix** — Table 1, drawn on board 10 in this boards PR (`SCR-037/popover-multiselect-mixed`: the indeterminate boxes, the "Mixed" stepper, slider and select)
 - [x] **Keyboard table** — Table 2: CMP-005 `Space` on a mixed box sets every member on, the second press off; CMP-008 / CMP-010 arrows step from the first object's value and clear the mixed state on the first step; nothing global overridden
 - [x] **Accessible name / role table** — Table 3: `checkbox` `aria-checked="mixed"` with the visible word "Mixed"; `spinbutton` / `slider` with `aria-valuetext="Mixed"` until touched; the select's trigger text "Mixed"
@@ -147,7 +147,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Demo / Live context unambiguous wherever a trading action can fire (none fires here; the position slot's "Sized for Main · DEMO" line is E14-D02's / E14-D06's).
 - [x] Reuses existing CMP ids; no near-duplicate requested (the popover is a composition; G-T9 asks whether it becomes an organism).
 - [ ] N/A — Storybook stories match the matrix: the implementing ticket's (E14-S10).
-- [~] composes only published-library components in Penpot — the boards paint literal colours resolved from the token JSON with the token name in plugin data (the THEME-WINDOW export rule; spec §0); the DS library entries are E13-D04 / E05's.
+- [ ] N/A — composes only published-library components in Penpot: the boards paint literal colours resolved from the token JSON with the token name in plugin data (the THEME-WINDOW export rule; spec §0); the DS library entries are E13-D04 / E05's.
 
 ## §B — Accessibility acceptance criteria (`05` §10), filled per surface
 
