@@ -32,6 +32,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms import positions as position_stage
 from candleviewer.oms import stream_consumer, stream_push
 from candleviewer.oms.errors import (
+    FreezeUnavailable,
     OmsNotReady,
     ProtectionReadingsUnavailable,
     ReconciliationUnavailable,
@@ -73,6 +74,7 @@ from candleviewer.oms_stream_wiring import (
     account_notice,
     build_stream_consumer,
     checked_notice,
+    refuse_live_without_freeze,
 )
 from candleviewer.oms_wiring import (
     SYSTEM_ACTOR,
@@ -262,19 +264,30 @@ def test_each_stand_in_is_announced_with_its_label() -> None:
     assert w.consumer._recon is w.reconciliation is w.stand_ins["reconciliation"]
 
 
+class RealPass:
+    """A reconciliation port that is no stand-in."""
+
+    async def request_reconciliation(self, account_id: UUID, *, reason: str) -> None:
+        return None
+
+
+class RealFreeze:
+    """A foreign-order lockout that is no stand-in (E39-T04's freeze)."""
+
+    async def open(self, account_id: AccountId, *, finding: str, key: str) -> None:
+        return None
+
+
 def test_a_real_port_named_in_place_of_a_stand_in_is_announced_at_zero() -> None:
     world = World()
-
-    class Real:
-        async def request_reconciliation(self, account_id: UUID, *, reason: str) -> None:
-            return None
-
     with capture_logs() as logs:
-        w = world.build(reconciliation=Real())
+        w = world.build(reconciliation=RealPass(), lockout=RealFreeze())
     assert _gauge(world.metrics, INTERIM_PORTS_METRIC, port="reconciliation") == 0.0
     assert "reconciliation" not in [log.get("port") for log in logs]
-    w.refuse_live(ProcessEnvironment.LIVE)  # a real pass and the projection: a live start runs
-    live = World().build(reconciliation=Real(), environment=ProcessEnvironment.LIVE)
+    w.refuse_live(ProcessEnvironment.LIVE)  # a real pass and freeze, the projection: it runs
+    live = World().build(
+        reconciliation=RealPass(), lockout=RealFreeze(), environment=ProcessEnvironment.LIVE
+    )
     assert isinstance(live, StreamWiring)
 
 
@@ -283,6 +296,21 @@ def test_a_live_build_with_a_stand_in_that_refuses_live_is_refused() -> None:
         World().build(environment=ProcessEnvironment.LIVE)
     for env in (ProcessEnvironment.DEMO, ProcessEnvironment.TESTNET):
         World().build(environment=env)
+
+
+def test_a_live_build_refuses_the_paging_lockout_even_with_a_real_pass() -> None:
+    """The security sign-off on #848, condition M1: the paging foreign-order lockout records and
+    pages a finding but cannot freeze its account (SR-E27-19), so a live build refuses it on the
+    binding as bound, even where a real reconciliation pass leaves no other refusal before it;
+    demo and testnet compose with it. The environment compares by value."""
+    with pytest.raises(FreezeUnavailable):  # never a consumer to start
+        World().build(reconciliation=RealPass(), environment=ProcessEnvironment.LIVE)
+    for env in (ProcessEnvironment.DEMO, ProcessEnvironment.TESTNET):
+        World().build(reconciliation=RealPass(), environment=env)
+    paging = World().build().stand_ins["foreign_order_lockout"]
+    with pytest.raises(FreezeUnavailable):
+        refuse_live_without_freeze(cast(Any, "live"), paging)
+    refuse_live_without_freeze(ProcessEnvironment.LIVE, RealFreeze())
 
 
 # --- the lockout's stand-in and the exchange-placed records -------------------------------------

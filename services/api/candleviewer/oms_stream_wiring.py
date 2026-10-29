@@ -76,6 +76,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms import positions as position_stage
 from candleviewer.oms import stream_consumer as consumer_stage
 from candleviewer.oms import stream_push as push_stage
+from candleviewer.oms.errors import FreezeUnavailable
 from candleviewer.oms.ports import (
     AccountNoticeReason,
     CredentialRejections,
@@ -407,6 +408,18 @@ class PagingForeignOrderLockout(_PagedOnce, Interim):
         await self._once(account_id, finding, key, placed=False)
 
 
+def refuse_live_without_freeze(environment: ProcessEnvironment, lockout: object) -> None:
+    """The live start-up self-check of the foreign-order lockout, beside
+    `ports.refuse_live_without_reconciliation` and
+    `stream_consumer.refuse_live_without_position_rows`, run on the binding as bound: a live
+    process with `PagingForeignOrderLockout` would record and page a fill with no OMS intent but
+    never freeze its account (SR-E27-19), so it is `FreezeUnavailable` until E39-T04 (#4208) binds
+    the freeze: an interim port fails closed on live (#913's ruling R4; the security sign-off on
+    #848, condition M1). The environment compares by value."""
+    if environment == ProcessEnvironment.LIVE and isinstance(lockout, PagingForeignOrderLockout):
+        raise FreezeUnavailable("a live process needs E39-T04's foreign-order freeze")
+
+
 class PagedNoIntentRecords(_PagedOnce):
     """`NoIntentRecords`: an exchange-placed order or fill, which never reaches the lockout, gets
     the record with `exchange_placed: true`, then a P1 page."""
@@ -709,10 +722,12 @@ class StreamWiring:
 
     def refuse_live(self, environment: ProcessEnvironment) -> None:
         """The live start-up self-checks, on the bindings as bound, before any wrapper (24
-        Sec.8.12): `NoReconciliation` and `NoPositionRows` each refuse a live start.
-        `build_stream_consumer` runs them on its own environment before it returns."""
+        Sec.8.12): `NoReconciliation`, `NoPositionRows` and the paging foreign-order lockout,
+        which cannot freeze, each refuse a live start. `build_stream_consumer` runs them on its
+        own environment before it returns."""
         refuse_live_without_reconciliation(environment, self.reconciliation)
         refuse_live_without_position_rows(environment, self.positions)
+        refuse_live_without_freeze(environment, self.stand_ins["foreign_order_lockout"])
 
     def start(self) -> None:
         """S8b, on the loop that consumes (the order lane): the consumer starts, and from then the
