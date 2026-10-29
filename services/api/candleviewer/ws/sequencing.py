@@ -994,6 +994,9 @@ class TopicEmitter:
         self.turn_s = SNAPSHOT_TURN_S
         self.step_s = SNAPSHOT_STEP_S
         self._jobs: dict[str, _SnapJob] = {}
+        #: #605 (M-F): subscriptions whose spread snapshot is followed by its catch-up `d` frames,
+        #: a step each: until it ends no live `d` reaches them (§7.1); they are its tail.
+        self._catching: set[str] = set()
         #: #605: with the flag on, the pipeline's: queue a frame already encoded with
         #: `encode_payload` in `wire` (`ConnectionPipeline.attach`). None: frames go as dicts.
         self.push_encoded: Callable[[dict[str, Any], str | bytes, float | None], None] | None = None
@@ -1077,7 +1080,7 @@ class TopicEmitter:
         job = self._jobs.pop(sub_id, None)
         if job is not None:
             job.dropped = True
-            job.steps.close()
+            job.steps.close()  # a catch-up under way ends with it (`_catch_up_steps`)
 
     def _step(self, job: _SnapJob) -> bool:
         """One step of a job under way (`_Turns`); False once it is done, dropped or failed."""
@@ -1144,6 +1147,13 @@ class TopicEmitter:
         frames = yield from self._frame_steps(base, rendered)
         stamped = received is not None and self.push_data is not None
         sized = yield from self._prepare_steps(frames, stamped)
+        spread = gen0 is not None and self._jobs.get(sub.sub_id) is not None
+        if spread and gen0 is not None and source.generation(sub) != gen0:
+            trimmed = self._trim(sub, source, gen0, rendered, frames, sized)
+            if trimmed is None:  # the source can no longer tell what changed: taken again
+                self._restart(sub)
+                return False
+            rendered, frames, sized = trimmed
         sub.seq, sub.snapshot_pending = seq, False
         total = 0
         for (frame, _), (size, payload) in zip(frames, sized, strict=True):
@@ -1178,27 +1188,90 @@ class TopicEmitter:
                 _log().info("ws resync", **fields)
         if self.on_snapshot is not None:
             self.on_snapshot(sub, rendered)
-        if gen0 is not None and self._jobs.get(sub.sub_id) is not None:  # it was spread
-            self._catch_up(sub, source, gen0)
+        if spread and gen0 is not None:
+            yield from self._catch_up_steps(sub, source, gen0)
         return True
 
-    def _catch_up(self, sub: Subscription, source: SnapshotSource, gen0: int) -> None:
-        """m-A (§7.1): a snapshot spread across turns was built from the state at its start, and
+    def _restart(self, sub: Subscription) -> None:
+        """Its source could not tell what changed: once this job ends, the snapshot is taken
+        again (`_step`), and until then the subscription is pending."""
+        job = self._jobs.get(sub.sub_id)
+        if job is not None:
+            job.restart = True
+            sub.snapshot_pending = True
+
+    def _catch_up_steps(
+        self, sub: Subscription, source: SnapshotSource, gen0: int
+    ) -> Generator[None, None, None]:
+        """m-A, M-F (§7.1): a snapshot spread across turns was built from the state at `gen0`, and
         the `d` frames of what changed meanwhile were refused while it was pending: they follow it
-        now, from the source's `catch_up(sub, since)` (a list of `(body, part)`), or, when it has
-        none or cannot, the snapshot is taken again."""
-        if source.generation(sub) == gen0:
-            return
+        now, from the source's `catch_up(sub, since)` (`(body, part)` items, built as they are
+        read; None for one it can no longer tell), one per step after the snapshot's own, so the
+        writer drains between them and no step outgrows the budget. Until the last, no live `d`
+        reaches the subscription (`_catching`): what closes meanwhile is read as its tail. When
+        the source has none or cannot tell, the snapshot is taken again."""
         catch_up = getattr(source, "catch_up", None)
-        missed = None if catch_up is None else catch_up(sub, gen0)
-        if missed is None:
-            job = self._jobs.get(sub.sub_id)
-            if job is not None:
-                job.restart = True
-                sub.snapshot_pending = True
-            return
-        for body, part in missed:
-            self.delta(sub, body, part=part)
+        since = gen0
+        self._catching.add(sub.sub_id)
+        try:
+            while (gen := source.generation(sub)) != since:
+                missed = None if catch_up is None else catch_up(sub, since)
+                if missed is None:
+                    self._restart(sub)
+                    return
+                for item in missed:
+                    yield  # the snapshot's frames, then each `d`, in their own steps
+                    if item is None or sub.ended:
+                        if item is None:
+                            self._restart(sub)
+                        return
+                    body, part = item
+                    self.delta(sub, body, part=part, catch_up=True)
+                since = gen
+        finally:
+            self._catching.discard(sub.sub_id)
+
+    def _trim(
+        self,
+        sub: Subscription,
+        source: SnapshotSource,
+        gen0: int,
+        rendered: Rendered,
+        frames: list[tuple[dict[str, Any], _Chunk | None]],
+        sized: list[tuple[int | None, str | bytes | None]],
+    ) -> (
+        tuple[
+            Rendered,
+            list[tuple[dict[str, Any], _Chunk | None]],
+            list[tuple[int | None, str | bytes | None]],
+        ]
+        | None
+    ):
+        """M-F (23 §6.1, G-03): a heatmap snapshot and the catch-up that follows it share half
+        the queue. The source names how many of the snapshot's oldest columns to leave out so
+        the two fit (`catch_up_trim`); the frames holding them are dropped, never the last (it
+        carries `s`). None when the source can no longer tell what changed."""
+        trim = getattr(source, "catch_up_trim", None)
+        if sub.topic.family.family != "heatmap" or trim is None:
+            return rendered, frames, sized
+        want: int | None = trim(sub, gen0, rendered.complete, bool(rendered.parts))
+        if want is None:
+            return None
+        dropped, cut = 0, 0
+        while dropped < want and cut < len(frames) - 1:
+            p = frames[cut][0]["p"]
+            cols = p.get("columns") if isinstance(p, Mapping) else None
+            dropped += len(cols) if isinstance(cols, list) else 1  # a kind-6 part: one column
+            cut += 1
+        # A structured snapshot drops whole chunks: its last may hold columns `want` named, so
+        # the pair can exceed half the queue by at most that one frame.
+        if not cut:
+            return rendered, frames, sized
+        frames, sized = frames[cut:], sized[cut:]
+        if len(frames) == 1 and "id" in frames[0][0]:
+            del frames[0][0]["id"]  # a single-frame snap needs no chunk correlation id
+            sized = [(None, None)]  # re-encoded by the queue, without it
+        return replace(rendered, complete=rendered.complete[dropped:]), frames, sized
 
     def _frame_steps(
         self, base: dict[str, Any], rendered: Rendered
@@ -1267,6 +1340,7 @@ class TopicEmitter:
         coalesced_count: int = 1,
         ts_ms: int | None = None,
         meta: Mapping[str, Any] | None = None,
+        catch_up: bool = False,
     ) -> bool:
         """Emit one `d` consuming exactly one sequence number. Suppressed (False) while the
         subscription awaits its `snap` or is paused, so no delta crosses a gap (§7.1). A frame whose
@@ -1284,6 +1358,8 @@ class TopicEmitter:
             raise ValueError(refusal)
         if sub.snapshot_pending or sub.effective.get("paused") is True or sub.ended:
             return False
+        if not catch_up and sub.sub_id in self._catching:
+            return False  # #605 (M-F): its catch-up is under way; this column joins its tail
         sub.seq += 1
         received = None if sub.seq & SAMPLE_MASK else self.clock()
         now = self.wall_ms()

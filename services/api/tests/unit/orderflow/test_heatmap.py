@@ -7,6 +7,7 @@ recorded captures (`packages/fixtures/bybit/2026-10-05`, C-13.5); no network."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import itertools
 import json
 from array import array
@@ -1057,7 +1058,7 @@ async def test_a_column_closing_mid_snapshot_follows_it_as_a_d(
     w.at(6 * COLUMN_MS)  # a column closes while the snapshot is under way
     for _ in range(10_000):
         await asyncio.sleep(0)
-        if out:
+        if not emitter._jobs:  # the snapshot, then its catch-up, a `d` a step
             break
     snap, *rest = out
     held = [c["t_ms"] - T0 for c in snap["p"]["columns"]]
@@ -1107,7 +1108,9 @@ async def test_a_spread_snapshot_at_capacity_is_the_copy_of_its_first_step() -> 
     assert times == list(range(newest - 100 * (len(times) - 1), newest + 1, 100))
     missed = w.topic.catch_up(sub, gen0)
     assert missed is not None
-    assert [b["columns"][0]["t_ms"] for b, _ in missed] == closed
+    items = list(missed)  # binary: the part only, built as read
+    assert all(i is not None and i[1] is not None for i in items)
+    assert [i[1].ts_base_ms for i in items if i is not None] == closed
 
 
 async def test_many_spread_snapshots_over_a_moving_spec_all_end_and_none_restarts(
@@ -1126,15 +1129,13 @@ async def test_many_spread_snapshots_over_a_moving_spec_all_end_and_none_restart
     lease = w.hold(spec).heatmap_lease
     state = _full(w, spec, 64)
     restarts: list[str] = []
-    real = TopicEmitter._catch_up
+    real = TopicEmitter._restart
 
-    def counted(self: Any, sub: Any, source: Any, gen0: int) -> None:
-        real(self, sub, source, gen0)
-        job = self._jobs.get(sub.sub_id)
-        if job is not None and job.restart:
-            restarts.append(sub.sub_id)
+    def counted(self: Any, sub: Any) -> None:
+        restarts.append(sub.sub_id)
+        real(self, sub)
 
-    monkeypatch.setattr(TopicEmitter, "_catch_up", counted)
+    monkeypatch.setattr(TopicEmitter, "_restart", counted)
     parsed = parse_topic(f"heatmap.{SYM}")
     opts = {"encoding": "binary", "window_seconds": 900}
     emitters: list[tuple[TopicEmitter, list[dict[str, Any]]]] = []
@@ -1160,3 +1161,73 @@ async def test_many_spread_snapshots_over_a_moving_spec_all_end_and_none_restart
     for _, out in emitters:
         snaps = [f for f in out if f["t"] == "snap" and f["s"] is not None]
         assert len(snaps) == 1
+
+
+async def test_a_catch_up_of_300_columns_runs_a_d_a_step_within_half_the_queue() -> None:
+    """Fable M-F (23 §6.1, §7.1, G-03): 300 columns close while a full binary snapshot is under
+    way. The snapshot leaves out its oldest columns so it and the 300 `d` frames after it cost at
+    most half the queue's bytes at G-03 sizes (the encoded total stays under the whole queue: no
+    `slow_consumer`); each `d` is its own step (its CPU, a `d`'s build, is the bench's
+    `catch_up_step_cpu_max_ms`); the `d` frames follow the snapshot's last column with no gap,
+    no duplicate and consecutive `s`."""
+    from candleviewer.ws.outbound import json_payload
+    from candleviewer.ws.permissions import Subscription
+    from candleviewer.ws.sequencing import SnapshotCache, TopicEmitter
+    from candleviewer.ws.topics import effective_options, parse_topic
+
+    w = World()
+    await live(w)
+    spec = HeatmapSpec(SYM, time_bucket_ms=100)
+    lease = w.hold(spec).heatmap_lease
+    state = _full(w, spec, ROWS)
+    out: list[dict[str, Any]] = []
+    encoded: list[int] = []
+
+    def queued(frame: dict[str, Any], payload: str | bytes, _r: float | None) -> None:
+        out.append(frame)
+        encoded.append(len(payload))
+
+    emitter = TopicEmitter(out.append, connection_id="t", wall_ms=lambda: T0, clock=lambda: 0.0,
+                           source=cast(Any, w.topic), cache=SnapshotCache())  # fmt: skip
+    emitter.push_encoded, emitter.encode_payload, emitter.wire = queued, json_payload, "json"
+    emitter.step_s = 0.0  # a job step is one of its own steps: a `d` each, nothing batched
+    parsed = parse_topic(f"heatmap.{SYM}")
+    opts = {"encoding": "binary", "window_seconds": 900}
+    sub = Subscription("s1", parsed, opts, effective_options(parsed, opts))
+    sub.heatmap_lease = lease
+    emitted: list[int] = []  # the `d` frames each job step queued
+    real = TopicEmitter._step
+
+    def counted(self: TopicEmitter, job: Any) -> bool:
+        before = sum(f["t"] == "d" for f in out)
+        try:
+            return real(self, job)
+        finally:
+            emitted.append(sum(f["t"] == "d" for f in out) - before)
+
+    TopicEmitter._step = counted  # type: ignore[method-assign]  # restored below
+    try:
+        assert emitter.snapshot(sub, "initial")
+        closed: list[int] = []
+        for _ in range(1_000_000):
+            if not emitter._jobs:
+                break
+            if sub.snapshot_pending and len(closed) < 300:
+                closed += [_close_one(state, ROWS) for _ in range(5)]
+            await asyncio.sleep(0)
+    finally:
+        TopicEmitter._step = real  # type: ignore[method-assign]
+    assert len(closed) == 300 and not emitter._jobs
+    snaps = [f for f in out if f["t"] == "snap"]
+    deltas = [f for f in out if f["t"] == "d"]
+    assert len(deltas) == 300 and out[: len(snaps)] == snaps  # the `d` frames follow the snapshot
+    assert [f["s"] for f in deltas] == list(range(2, 302))
+    held = [decode(base64.b64decode(f["p"])).ts_base_ms for f in snaps]
+    ts = [decode(base64.b64decode(f["p"])).ts_base_ms for f in deltas]
+    assert ts == closed and held[-1] + 100 == ts[0]
+    assert held == list(range(held[0], held[-1] + 1, 100))
+    per = H.COLUMN_FRAME_BYTES + H.ROW_BYTES * ROWS
+    assert (len(snaps) + len(deltas)) * per <= QUEUE_BYTES // 2 < (len(snaps) + 301) * per
+    total = sum(encoded) + sum(len(json_payload(f)) for f in out[len(encoded) :])
+    assert total <= QUEUE_BYTES  # nothing drained, and still no `slow_consumer` (§8.4)
+    assert max(emitted) == 1 and sum(emitted) == 300  # a `d` a step, the writer between

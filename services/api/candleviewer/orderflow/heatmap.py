@@ -608,6 +608,32 @@ class _Ring:
     def any_estimated(self, span: range) -> bool:
         return bool(self._estimated[self._slots(span)].any())
 
+    def rows_at(self, times: Sequence[int]) -> np.ndarray[Any, _I64]:
+        """The rows of the columns whose `ts_ms` are `times`, `ROWS` for one it does not hold
+        (oldest first; its `ts_ms` rise)."""
+        held = self._t_ms[self._slots(range(self._count))]
+        want = np.asarray(times, dtype=np.int64)
+        at = np.clip(np.searchsorted(held, want), 0, max(0, self._count - 1))
+        if not self._count:
+            return np.full(len(want), ROWS, dtype=np.int64)
+        rows = self._rows[self._slots(range(self._count))][at]
+        return np.where(held[at] == want, rows, ROWS)
+
+    def costs(self, span: range, *, binary: bool) -> np.ndarray[Any, _I64]:
+        """Each column's G-03 size as a `d` (23 §6.1): kind 6's when `binary` and it can say
+        everything (complete, no off-window total), else its §14.5 JSON bound."""
+        slots = self._slots(span)
+        rows = self._rows[slots]
+        whole = (
+            (self._samples[slots] >= self._expected[slots])
+            & (self._bids_off[slots] == 0)
+            & (self._asks_off[slots] == 0)
+        )
+        kind6 = COLUMN_FRAME_BYTES + ROW_BYTES * rows
+        json = STRUCTURED_COLUMN_BYTES + STRUCTURED_ROW_BYTES * rows
+        out: np.ndarray[Any, _I64] = np.where(whole & binary, kind6, json)
+        return out
+
     def newest_fitting(self, per_column: int, per_row: int, limit: int, budget: int) -> range:
         """The newest columns, at most `limit`, whose sizes (`per_column + per_row x rows` each)
         sum to at most `budget`: their indices, oldest first. Vectorised (G-03's walk)."""
@@ -1298,23 +1324,72 @@ class HeatmapTopic:
                           estimated=ring.any_estimated(picked),
                           size_hint=hint)  # fmt: skip
 
-    def catch_up(self, sub: HeatmapSub, since: int) -> list[tuple[dict[str, Any], Any]] | None:
-        """The `d` frames of the columns that closed since generation `since` (m-A, M-E, 23 §7.1):
-        a snapshot spread across loop turns holds a copy of the ring's newest columns at `since`
-        (`build_steps`), and these follow it. A ready spec's generation moves by one a closed
-        column (`_close`), so they are the ring's newest `version - since`. None only when more
-        closed than the ring holds (2 000 columns), which no snapshot waits for."""
+    def catch_up(
+        self, sub: HeatmapSub, since: int
+    ) -> Iterator[tuple[dict[str, Any], Any] | None] | list[Any] | None:
+        """The `d` frames of the columns that closed since generation `since` (m-A, M-E, M-F,
+        23 §7.1): a snapshot spread across loop turns holds a copy of the ring's newest columns
+        at `since` (`build_steps`), and these follow it. A ready spec's generation moves by one a
+        closed column (`_close`), so they are the columns of generations `since + 1` to now.
+        Each is built when it is read (the gateway reads one a step), and found by its distance
+        from the newest, so columns closing meanwhile do not move it; None for one the ring no
+        longer holds. Only what the subscription's encoding sends is built. None when more closed
+        than the ring holds (2 000 columns), which no snapshot waits for."""
         held = self._held(sub)
         if held is None:
             return None
         _, state, steps = held
-        missed = state.version - since
+        target = state.version
+        missed = target - since
         if missed <= 0:
             return []
         if missed > len(state.ring):
             return None
-        columns = [state.ring[i] for i in range(len(state.ring) - missed, len(state.ring))]
-        return [self._delta(state.spec, column, steps) for column in columns]
+        binary = sub.effective.get("encoding") == "binary"
+
+        def columns() -> Iterator[tuple[dict[str, Any], Any] | None]:
+            for generation in range(since + 1, target + 1):
+                newer = state.version - generation
+                if newer >= len(state.ring):
+                    yield None
+                    return
+                column = state.ring[len(state.ring) - 1 - newer]
+                part = self._frame(column, steps) if binary and column.binary_ok else None
+                yield ({}, part) if part is not None else self._delta(state.spec, column, steps)
+
+        return columns()
+
+    def catch_up_trim(
+        self, sub: HeatmapSub, since: int, held: tuple[int, ...], binary: bool
+    ) -> int | None:
+        """M-F (23 §6.1, G-03): how many of the snapshot's oldest columns (`held`, their `t_ms`,
+        oldest first) to leave out so it and the columns closed since `since` cost at most half
+        the queue's bytes and frames together, each at its G-03 size: kind 6's, or the bound on
+        its §14.5 JSON. A snapshot column the ring no longer holds counts at `ROWS` rows. At most
+        all but its newest; None only when more closed than the ring holds."""
+        found = self._held(sub)
+        if found is None:
+            return 0
+        _, state, _ = found
+        missed = state.version - since
+        if missed <= 0:
+            return 0
+        if missed > len(state.ring):
+            return None
+        ring = state.ring
+        wants_binary = sub.effective.get("encoding") == "binary"
+        late = ring.costs(range(len(ring) - missed, len(ring)), binary=wants_binary)
+        rows = ring.rows_at(held)
+        per = (COLUMN_FRAME_BYTES, ROW_BYTES) if binary else (STRUCTURED_COLUMN_BYTES,
+                                                               STRUCTURED_ROW_BYTES)  # fmt: skip
+        snap = per[0] + per[1] * rows
+        excess = int(snap.sum()) + int(late.sum()) - self._queue_bytes // 2
+        by_bytes = 0 if excess <= 0 else int(np.searchsorted(np.cumsum(snap), excess)) + 1
+        by_frames = max(0, len(held) + missed - self._queue_frames // 2)
+        # The snapshot keeps its newest column (its last frame carries `s`): past half the queue
+        # the catch-up alone is paced a `d` a step, the writer draining between, rather than the
+        # snapshot taken again (a restart a slow snapshot would repeat, M-E).
+        return min(max(by_bytes, by_frames), max(0, len(held) - 1))
 
     def cacheable(self, sub: HeatmapSub) -> bool:
         """m-D: never in the shared snapshot cache. Its generation moves every bucket, so an

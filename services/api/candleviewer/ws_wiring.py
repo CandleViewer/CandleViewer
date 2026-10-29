@@ -37,7 +37,7 @@ import contextlib
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Final, Protocol
@@ -226,14 +226,26 @@ class SnapshotRouter:
         cacheable = getattr(self._source(sub), "cacheable", None)
         return cacheable is None or bool(cacheable(sub))
 
-    def catch_up(self, sub: Subscription, since: int) -> list[tuple[Any, Any]] | None:
+    def catch_up(self, sub: Subscription, since: int) -> Iterable[tuple[Any, Any] | None] | None:
         """The family adapter's `catch_up` (#605: the `d` frames a snapshot spread across loop
-        turns missed), or None, which takes the snapshot again, when it has none."""
+        turns missed, built as they are read), or None, which takes the snapshot again, when it
+        has none."""
         catch_up = getattr(self._source(sub), "catch_up", None)
         if catch_up is None:
             return None
-        missed: list[tuple[Any, Any]] | None = catch_up(sub, since)
+        missed: Iterable[tuple[Any, Any] | None] | None = catch_up(sub, since)
         return missed
+
+    def catch_up_trim(
+        self, sub: Subscription, since: int, held: tuple[int, ...], binary: bool
+    ) -> int | None:
+        """The family adapter's `catch_up_trim` (#605 M-F: the snapshot's oldest columns to leave
+        out so it and its catch-up share half the queue); 0 without one."""
+        trim = getattr(self._source(sub), "catch_up_trim", None)
+        if trim is None:
+            return 0
+        kept: int | None = trim(sub, since, held, binary)
+        return kept
 
     def generation(self, sub: Subscription) -> int:
         source = self._source(sub)

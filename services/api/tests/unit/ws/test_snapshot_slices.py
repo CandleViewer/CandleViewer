@@ -435,3 +435,79 @@ async def test_a_job_step_is_a_batch_of_its_own_steps_up_to_step_s(
     monkeypatch.setattr(sequencing.TopicEmitter, "_step", counted)
     await asyncio.sleep(0)
     assert len(calls) == 1 and conn.out and conn.out[-1]["s"] == 1
+
+
+T_MS = 1_700_000_000_000
+
+
+def _column_body(g: int) -> dict[str, Any]:
+    """One §14.5 column's `d` body, its `t_ms` naming generation `g`."""
+    col = {"t_ms": T_MS + g, "price_min": "100.0", "price_step": "0.1", "bids": [1.0],
+           "asks": [2.0], "complete": True}  # fmt: skip
+    return {"symbol": "BTCUSDT", "time_bucket_ms": 100, "columns": [col]}
+
+
+class _Following(Source):
+    """A source whose state moves while its snapshot is under way and that tells what: each
+    generation is one `d` body, built when read; what moves during the catch-up is its tail."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.read: list[int] = []
+
+    def catch_up(self, sub: Any, since: int) -> Any:
+        def items() -> Any:
+            for g in range(since + 1, self.gen + 1):
+                self.read.append(g)
+                yield _column_body(g), None
+
+        return items()
+
+
+async def test_a_catch_up_runs_a_d_a_step_and_no_live_d_crosses_it() -> None:
+    """M-F (§7.1): the catch-up's `d` frames follow the snapshot one per step, in order with
+    consecutive `s`; a live `d` meanwhile is refused (its change is read as the tail), and the
+    subscription takes live `d` frames again once the catch-up ends."""
+    source = _Following()
+    source.bodies["heatmap"] = _big()
+    conn = Conn(source, cache=SnapshotCache(), max_frame_bytes=64_000)
+    conn.emitter.turn_s, conn.emitter.step_s = 0.0, 0.0
+    sub = _sub(conn)
+    assert conn.emitter.snapshot(sub, "initial") and conn.out == []
+    await asyncio.sleep(0)
+    source.gen = 3  # three changes while it is under way
+    for _ in range(100_000):  # one loop turn each: the job's steps
+        if conn.out:
+            break
+        await asyncio.sleep(0)
+    assert conn.out[-1]["s"] == 1 and sub.sub_id in conn.emitter._catching
+    assert not conn.emitter.delta(sub, _column_body(99))  # refused: the catch-up is under way
+    source.gen = 4  # one more: its tail
+    for _ in range(100):
+        await asyncio.sleep(0)
+        if not conn.emitter._jobs:
+            break
+    deltas = [f for f in conn.out if f["t"] == "d"]
+    assert [f["p"]["columns"][0]["t_ms"] - T_MS for f in deltas] == [1, 2, 3, 4]
+    assert source.read == [1, 2, 3, 4]
+    assert [f["s"] for f in deltas] == [2, 3, 4, 5] and not conn.emitter._catching
+    assert conn.emitter.delta(sub, _column_body(99)) and conn.out[-1]["s"] == 6
+
+
+async def test_a_job_dropped_mid_catch_up_lets_live_d_frames_through_again() -> None:
+    """M-F: a snapshot replacing one in its catch-up (or the end of the subscription) ends that
+    catch-up, and nothing of it holds the subscription's live `d` frames back."""
+    source = _Following()
+    source.bodies["heatmap"] = _big()
+    conn = Conn(source, cache=SnapshotCache(), max_frame_bytes=64_000)
+    conn.emitter.turn_s, conn.emitter.step_s = 0.0, 0.0
+    sub = _sub(conn)
+    assert conn.emitter.snapshot(sub, "initial")
+    await asyncio.sleep(0)
+    source.gen = 50
+    for _ in range(100_000):
+        if sub.sub_id in conn.emitter._catching:
+            break
+        await asyncio.sleep(0)
+    conn.emitter._drop_job(sub.sub_id)
+    assert not conn.emitter._catching and conn.emitter.delta(sub, _column_body(99))
