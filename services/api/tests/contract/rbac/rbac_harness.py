@@ -704,11 +704,14 @@ def audit_adapter(sink: _AuditSink) -> Any:
     return _audit
 
 
-def world_env(bars_state_root: Path | None) -> dict[str, str]:
+def world_env(bars_state_root: Path | None, *, ws_backpressure: bool = False) -> dict[str, str]:
     """The environment `build_world` sets through its `MonkeyPatch` (`create_app()` reads
     `get_settings()`). `WORLD_ENV` holds its names: the leak guard checks each one is restored.
-    Without a `bars_state_root` the world keeps bars off, as it was before #399 slice E."""
+    Without a `bars_state_root` the world keeps bars off, as it was before #399 slice E. With
+    `ws_backpressure` the WS byte budget is on, so `heatmap.*` is served (G-04, 23 §6.1)."""
     env = {"CV_ALLOWED_ORIGINS": WS_ORIGIN}
+    if ws_backpressure:
+        env["CV_WS_BACKPRESSURE_ENABLED"] = "true"
     if bars_state_root is not None:
         # `bars.*` answers `unknown_topic` while the feature is off (23 §6.1, #399 slice E), but
         # the matrix asserts its authorization outcome, so the pack runs with the feature on.
@@ -720,10 +723,12 @@ def world_env(bars_state_root: Path | None) -> dict[str, str]:
     return env
 
 
-WORLD_ENV = tuple(world_env(Path()))  # the names only
+WORLD_ENV = tuple(world_env(Path(), ws_backpressure=True))  # the names only
 
 
-def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) -> World:
+def build_world(
+    mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None, ws_backpressure: bool = False
+) -> World:
     """Build the app. With a `bars_state_root` the world runs with bars on and keeps their builder
     state there; without one bars stay off. The attribute patches and `world_env` are applied
     through `mp` and live as long as the caller's context (the alert repository is resolved per
@@ -758,7 +763,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     # E42-T05 BK-10: a catalogue and artefact store stand-in, so the link issue reaches its gate.
     mp.setattr(appmod, "build_admin_backups", lambda *_a, **_k: BackupCatalogue(_Backups()))
     mp.setattr(appmod, "build_backup_downloads", _backup_downloads)
-    for name, value in world_env(bars_state_root).items():
+    for name, value in world_env(bars_state_root, ws_backpressure=ws_backpressure).items():
         mp.setenv(name, value)
     app = appmod.create_app(
         principal_resolver=resolver,

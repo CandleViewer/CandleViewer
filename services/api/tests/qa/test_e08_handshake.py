@@ -133,6 +133,7 @@ E08_FED_FAMILIES: Final = {
     "indicators": "trades",  # E13-T02 (#426): its series' builder feeds on the tape, as `bars` does
     "book": "books",
     "ticker": "tickers",
+    "heatmap": "books",  # E21-T02 (#605): the heatmap samples the book's tier
 }
 
 
