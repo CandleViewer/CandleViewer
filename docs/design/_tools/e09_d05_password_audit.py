@@ -2,7 +2,7 @@
 """E09-D05 (#188) audit: SCR-004, the forced password change, and the SCR-112 password section.
 
 Standalone, offline, stdlib only; it executes no repo code and runs under `python3 -I`. It reads,
-AS TEXT at the pinned base `772f1f07ca` (`git show`): the token JSON (dark = primitives +
+AS TEXT at the pinned base `92728adee4` (`git show`): the token JSON (dark = primitives +
 semantic-dark, light = + semantic-light, hc = + semantic-hc), the plan texts the spec cites, the
 merged E09 design docs, the as-built auth code, the interim SCR-004, the audit registry, the CVD
 script's constants and the ticket JSON (`E09.json`); then this ticket's spec and hand-off from the
@@ -80,7 +80,7 @@ from fractions import Fraction
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "772f1f07ca"  # every cite was read here (the spec's Inputs line; re-based from 81dcf838aa)
+BASE = "92728adee4"  # every cite was read here (the Inputs line; from 772f1f07ca, 81dcf838aa)
 HEAD = "origin/main"  # G-VERSION: a cited range edited at origin/main FAILs
 MULTI = re.MULTILINE
 
@@ -137,11 +137,19 @@ RULING_ID = "6489306947"
 BQ_LIST_ID = "6489179256"
 # the allow-list of comment ids the docs may cite: the ruling, the BQ list, the reassignment, the
 # claim
-RULED_IDS = (RULING_ID, BQ_LIST_ID, "6488249707", "6488724738")
-OWNER_PENDING = "PROPOSED, owner approval pending (#2701)"  # BQ-7, BQ-8, BQ-33
+LEDGER_ID = "6491680793"  # #2701 ledger 1 (2026-10-29): rows 7, 8, 9 rule BQ-7, BQ-8, BQ-33
+RULED_IDS = (RULING_ID, BQ_LIST_ID, "6488249707", "6488724738", LEDGER_ID)
+LEDGER_ROWS = {"BQ-7": 7, "BQ-8": 8, "BQ-33": 9}  # the owner items ledger 1 ruled as proposed
+
+
+def stamp(q: str) -> str:
+    """Ledger 1's stamp for an owner item, in place of "PROPOSED, owner approval pending"."""
+    return f"RULED (orchestrator, 2026-10-29, #2701 ledger 1 row {LEDGER_ROWS[q]})"
+
+
 MAX_BOARDS = 10  # RULED BQ-5 (lever 4): at most ten boards
 TWIN_SHARE = Fraction(1, 3)  # twins at most a third of the boards (lever 4)
-SPEC_LINE_BUDGET = 625  # "about 600 lines at most"; the lens fold's 23 mutation rows (§15.2)
+SPEC_LINE_BUDGET = 640  # "about 600"; 23 lens-fold M-rows; PR 2: C-28, M-93..M-97, 3 headings
 HAND_LINE_BUDGET = 150  # "about 150 lines at most"
 MAX_WALK = 10  # RULED BQ-32: the owner walkthrough, at most ten items
 REPORT_WIDTH = 100  # the self-test report: ASCII, at most 100 characters a line
@@ -149,6 +157,7 @@ REPORT_WIDTH = 100  # the self-test report: ASCII, at most 100 characters a line
 RULED_VALUES = {"RULED:sr.char": "200", "RULED:sr.pause": "2"}
 # the version line (spec **Start.**): every merged input's sha, in order
 VERSION_SHAS = (
+    "92728adee4",
     "772f1f07ca",
     "b1425624b9",
     "ff8933a1c2",
@@ -2165,7 +2174,8 @@ def plain(line: str, values: Values, blank: dict[str, tuple[int, ...]]) -> str:
     work = QUOTED.sub(" ", CODE.sub(" ", work))
     work = CITE_GROUP.sub(" ", work)
     work = re.sub(
-        r"\(#\d+\)|#\d+|\b\d{4}-\d{2}-\d{2}\b|\b[A-Z][A-Za-z0-9]*-\d+(?:\.\d+)?\b|\(\d\)",
+        r"\(#\d+\)|#\d+|\b\d{4}-\d{2}-\d{2}\b|\b[A-Z][A-Za-z0-9]*-\d+(?:\.\d+)?\b|\(\d\)"
+        r"|\bledger \d+ rows? (?:\d+|N)\b|\bledger \d+\b",  # ledger 1's stamp names its row
         " ",
         work,
     )
@@ -2381,7 +2391,7 @@ def g_quote(t: Texts) -> list[Finding]:
                     bad.append(F("G-QUOTE", f"{doc}:{i} `{name}` is in no cited text", doc, sec))
             for q in QUOTED.finditer(CODE.sub(" ", rendered)):
                 s = q[0][1:-1]
-                if len(s) < QUOTE_MIN or pool.loose_has(loose(s)) or s == OWNER_PENDING:
+                if len(s) < QUOTE_MIN or pool.loose_has(loose(s)) or s in map(stamp, LEDGER_ROWS):
                     continue
                 if any(loose(s) in x for x in img) or any(p.fullmatch(s) for p in pats):
                     continue
@@ -2526,8 +2536,8 @@ AS_WRITTEN = (
 
 def g_ruled(t: Texts) -> list[Finding]:
     """The RULED paragraph: the ruling and the list by id, the nine confirmations, the accepted
-    list, the three owner items PROPOSED, the riders, D1 to D3; every comment id cited is one of
-    RULED_IDS."""
+    list, the three owner items with ledger 1's stamps, the riders, D1 to D3; every comment id
+    cited is one of RULED_IDS."""
     head = "The questions BQ-1"
     sec = spec_sec(t, head)
     body = section(t.spec, head)
@@ -2539,7 +2549,7 @@ def g_ruled(t: Texts) -> list[Finding]:
         if not re.search(rf"\b{q}\b", para):
             bad.append(F("G-RULED", f"the RULED paragraph lacks {q}", "spec", sec))
     for need in (
-        OWNER_PENDING,
+        *(f"{q} {stamp(q)}" for q in LEDGER_ROWS),
         "Riders (a) to (d)",
         "Deviations D1 to D3",
         "name each doc's last touch at the base (C-27)",
@@ -2556,13 +2566,19 @@ def g_ruled(t: Texts) -> list[Finding]:
 
 
 def g_owner(t: Texts) -> list[Finding]:
-    """BQ-7, BQ-8, BQ-33: each owner item carries the PROPOSED marker where it is built."""
+    """BQ-7, BQ-8, BQ-33: each owner item carries ledger 1's stamp, its own row, where it is
+    built; no "owner approval pending (#2701)" stamp survives on them."""
     bad: list[Finding] = []
-    for head in ("3.1 The reasons", "3.2 What an owner reset"):
+    for head, q in (("3.1 The reasons", "BQ-7"), ("3.2 What an owner reset", "BQ-8")):
         line = next((ln for ln in t.spec.split("\n") if ln.startswith(f"### {head}")), "")
-        if OWNER_PENDING not in line:
-            msg = f"§{head[:3]} lacks the PROPOSED marker"
+        if f"{q}: {stamp(q)}" not in line:
+            msg = f"§{head[:3]} lacks {q}'s ledger 1 stamp"
             bad.append(F("G-OWNER", msg, "spec", spec_sec(t, REASONS_HEAD)))
+    for doc, text in (("spec", t.spec), ("hand", t.hand)):
+        for i, ln in enumerate(text.split("\n"), 1):
+            if re.search(r"\bBQ-(?:7|8|33)\b", ln) and "owner approval pending (#2701)" in ln:
+                msg = f"{doc}:{i} keeps an owner-pending stamp on a ledger 1 item"
+                bad.append(F("G-OWNER", msg, doc, h2_at(text, i)))
     for head, need in (
         (REASONS_HEAD, "becomes a two-way one"),
         ("3.2 What an owner reset", "does nothing against a compromised password"),
@@ -2573,15 +2589,15 @@ def g_owner(t: Texts) -> list[Finding]:
             msg = f"§{head.split(' ')[0]} lacks its trade-off ({need[:30]!r})"
             bad.append(F("G-OWNER", msg, "spec", spec_sec(t, head)))
     deltas = section(t.spec, "18.2 Hand-offs")
-    if "BQ-33, " + OWNER_PENDING not in deltas:
-        msg = "§18.2's delta lacks BQ-33's marker"
+    if "BQ-33, " + stamp("BQ-33") not in deltas:
+        msg = "§18.2's delta lacks BQ-33's stamp"
         bad.append(F("G-OWNER", msg, "spec", spec_sec(t, "18.2 Hand-offs")))
-    for q in ("Q-1", "Q-2", "Q-3"):
+    for q, bq in (("Q-1", "BQ-7"), ("Q-2", "BQ-8"), ("Q-3", "BQ-33")):
         row = next((r for r in rows_of(t.spec, QROW_HEAD) if r[0] == q), [])
-        if OWNER_PENDING not in " | ".join(row):
-            bad.append(
-                F("G-OWNER", f"{q} lacks the PROPOSED marker", "spec", spec_sec(t, QROW_HEAD))
-            )
+        if stamp(bq) not in " | ".join(row):
+            bad.append(F("G-OWNER", f"{q} lacks {bq}'s stamp", "spec", spec_sec(t, QROW_HEAD)))
+    if "Who carries it is BQ-33: " + stamp("BQ-33") not in section(t.hand, "§D The delta"):
+        bad.append(F("G-OWNER", "§D lacks BQ-33's stamp", "hand", h2_of(t.hand, "§D The delta")))
     return bad
 
 
@@ -2711,7 +2727,7 @@ def g_hosts(t: Texts) -> list[Finding]:
 
 
 def g_reasons(t: Texts) -> list[Finding]:
-    """BQ-7 (PROPOSED): two reasons drawn; aged out is not; no third variant drawn."""
+    """BQ-7 (RULED, ledger 1 row 7): two reasons drawn; aged out is not; no third variant drawn."""
     sec = spec_sec(t, REASONS_HEAD)
     rows = rows_of(t.spec, REASONS_HEAD)
     bad: list[Finding] = []
@@ -2738,7 +2754,8 @@ def g_reasons(t: Texts) -> list[Finding]:
 
 
 def g_reset(t: Texts) -> list[Finding]:
-    """BQ-8 (PROPOSED): the reset marks must-change and keeps the password; the trade-off."""
+    """BQ-8 (RULED, ledger 1 row 8): the reset marks must-change and keeps the password; the
+    trade-off."""
     body = norm_text(section(t.spec, "3.2 What an owner reset"))
     sec = spec_sec(t, "3.2 What an owner reset")
     bad = [
@@ -2836,8 +2853,12 @@ def g_checklist(t: Texts) -> list[Finding]:
             "never the whole list",
             "every item's line exists at mount",
             "item 3 is drawn only once the server enforces a reuse rule",
+            "**A server item follows the server** (PROPOSED, C-28; R-1",
         ),
     )(t)
+    c28 = " | ".join(next((r for r in rows_of(t.spec, CROW_HEAD) if r[0] == "C-28"), []))
+    if not all(n in c28 for n in ("BQ-12", "R-1", "item 3 is drawn only once", "the owner on")):
+        bad.append(F("G-CHECKLIST", "C-28 lacks BQ-12 against R-1", "spec", spec_sec(t, CROW_HEAD)))
     bad += as_findings(
         "G-CHECKLIST",
         "a live list or a whole-list announcement",
@@ -3191,6 +3212,13 @@ def g_detail(t: Texts) -> list[Finding]:
         bad.append(
             F("G-DETAIL", "§6.1 lacks the no-raw-detail rule", "spec", spec_sec(t, ERR_HEAD))
         )
+    # the lens's M1: `15`:320 lets CMP-027 show the problem's `detail`; the rule is BQ-21's
+    rule = "`detail` (RULED BQ-21, stricter than `15`:320; C-12)"
+    c12 = " | ".join(next((r for r in rows_of(t.spec, CROW_HEAD) if r[0] == "C-12"), []))
+    if rule not in section(t.spec, ERR_HEAD) or "`15`:320" not in c12 or "BQ-21" not in c12:
+        bad.append(F("G-DETAIL", "the never-rule is not BQ-21's", "spec", spec_sec(t, ERR_HEAD)))
+    if "A server `detail` rendered raw (RULED BQ-21; C-12)." not in section(t.spec, NEVER_HEAD):
+        bad.append(F("G-DETAIL", "§11.2's detail item is not BQ-21's", "spec", "11. Copy deck"))
     return bad
 
 
@@ -3688,7 +3716,7 @@ def g_rows(t: Texts, head: str, prefix: str, n: int, tag: str, due_col: int) -> 
 
 def g_crows(t: Texts) -> list[Finding]:
     """BQ-34: the C-rows, numbered, each with its reading and an owner lane, never an agent."""
-    return g_rows(t, CROW_HEAD, "C", 27, "G-CROWS", 0)
+    return g_rows(t, CROW_HEAD, "C", 28, "G-CROWS", 0)
 
 
 def g_grows(t: Texts) -> list[Finding]:
@@ -3884,6 +3912,10 @@ def g_walk(t: Texts) -> list[Finding]:
     if not 0 < len(walk) <= MAX_WALK:
         msg = f"the owner walkthrough has {len(walk)} items, not 1 to {MAX_WALK}"
         bad.append(F("G-WALK", msg, "hand", h2_of(t.hand, WALKTHROUGH_HEAD)))
+    if not any(x.startswith("- [ ] C-28 (board 02):") for x in walk):  # the lens's M2
+        bad.append(
+            F("G-WALK", "no walkthrough line for C-28", "hand", h2_of(t.hand, WALKTHROUGH_HEAD))
+        )
     for item in walk:
         if not re.search(r"\(boards? \d|no board\)|; no board\)", item):
             msg = f"walkthrough item {item[6:40]!r} names no board"
@@ -4033,17 +4065,20 @@ def g_deviations(t: Texts) -> list[Finding]:
 
 
 def g_version(t: Texts) -> list[Finding]:
-    """The version line's semantics: v1 at the base; every sha in order and under the base; each
-    pinned doc at its last touch at the base; #2110 open at the base (ALLOW still lists the route
-    as unmounted), else a late change must be recorded."""
+    """The version line's semantics: v1.1 at the base, ledger 1 its late change; every sha in
+    order and under the base; each pinned doc at its last touch at the base; #2110 open at the
+    base (ALLOW still lists the route as unmounted), else a late change must be recorded."""
     lines = t.spec.split("\n")
     bad: list[Finding] = []
     i = next((n for n, ln in enumerate(lines) if ln.startswith("**Start.**")), None)
     if i is None:
         return [F("G-VERSION", "no **Start.** line", "spec", "(top)")]
     line, sec = lines[i], h2_at(t.spec, i + 1)
-    if f"**v1 at base `{BASE}`.**" not in line:
-        bad.append(F("G-VERSION", "the version line does not name v1 at the base", "spec", sec))
+    if f"**v1.1 (PR 2) at base `{BASE}`.**" not in line:
+        bad.append(F("G-VERSION", "the version line does not name v1.1 at the base", "spec", sec))
+    late = line.split("**Late changes:**", 1)[-1].split("**", 1)[0]
+    if f"ledger 1 on #2701 (comment {LEDGER_ID})" not in late or "(rows 7, 8, 9)" not in late:
+        bad.append(F("G-VERSION", "the late changes do not record ledger 1", "spec", sec))
     got = tuple(re.findall(r"`([0-9a-f]{10})`", line))
     if got != VERSION_SHAS:
         msg = f"the version line carries {len(got)} shas, not the {len(VERSION_SHAS)}"
@@ -4380,10 +4415,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-19",
         "G-OWNER",
-        "BQ-8: PROPOSED, owner approval pending",
-        spec=sub_in(
-            "3.2 What an owner reset", "(PROPOSED, owner approval pending (#2701); BQ-8)", "(BQ-8)"
-        ),
+        "BQ-8: RULED, ledger 1 row 8",
+        spec=sub_in("3.2 What an owner reset", f"(BQ-8: {stamp('BQ-8')})", "(BQ-8)"),
     ),
     Mutation(
         "M-20",
@@ -4689,7 +4722,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-70",
         "G-PROTOCOL",
-        "BQ-32, `05`:219-224: the Electron shell",
+        "BQ-32, `05` §8.1: the Electron shell",
         spec=sub_in(P172, "VoiceOver with the Electron shell", "VoiceOver with Safari"),
     ),
     Mutation(
@@ -4701,7 +4734,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-72",
         "G-DELTA",
-        "BQ-6: the strength-source delta",
+        "BQ-6: every delta listed",
         hand=drop_row_prefix("§D The delta", "strength"),
     ),
     Mutation(
@@ -4739,7 +4772,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-78",
         "G-REASONS",
-        "BQ-9: a new user on the embedded step",
+        "BQ-9: the embedded step",
         hand=row_edit(
             TABLE_A_HEAD,
             "A-1",
@@ -4765,50 +4798,50 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-81",
         "G-WALK",
-        "BQ-32: each walkthrough item its board",
+        "BQ-32: each item its board",
         hand=sub_in(WALKTHROUGH_HEAD, "- [ ] W-12 (board 04):", "- [ ] W-12:"),
     ),
     Mutation(
         "M-82",
         "G-RULED",
-        "BQ-34: the corrected version pins said",
+        "BQ-34: the corrected pins said",
         spec=sub_in("The questions BQ-1", "last touch at the base (C-27)", "last touch"),
     ),
     Mutation(
         "M-83",
         "G-VERSION",
-        "brief: `14`:88 read after an and",
+        "brief: every cite of a group read",
         spec=line_edit("**Inputs pinned.**", "`14`:85, :88", "`14`:85 and :88"),
         patch=pristine_drift("14", 88, "8. **Audit.** changed."),
     ),
     Mutation(
         "M-84",
         "G-VERSION",
-        "brief: a repeated cited line where it stood",
+        "brief: a cited line where it stood",
         patch=pristine_drift("22", 17678, "        user: { $ref: UserSummary }"),
     ),
     Mutation(
         "M-85",
         "G-CHECKLIST",
-        "BQ-11: a server item follows the server",
+        "BQ-11: never claims a server rule",
         spec=sub_in(S42, "drawn only once the server enforces a reuse rule", "drawn at mount"),
     ),
     Mutation(
         "M-86",
         "G-RESET",
-        "BQ-8: the password is not reset",
+        "BQ-8: neither cleared nor set",
         spec=row_edit(DECK_HEAD, "W-23", 2, to('"Your password was reset by an owner."')),
     ),
     Mutation(
         "M-87",
         "G-SUCCESS",
-        "BQ-18: an unmounted route does nothing",
+        "BQ-18: the route is unmounted",
         spec=sub_in("7.1 Success", "offers `revoke_all` an exclusion for", "keeps"),
     ),
     Mutation(
         "M-88",
         "G-AUDIT",
-        "BQ-27: the rotation pair",
+        "BQ-27: the rotation's records",
         spec=sub_in("12. Audit", "an `auth.session_created` with `rotated_from`", "a new session"),
     ),
     Mutation(
@@ -4828,14 +4861,44 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-91",
         "G-SECURITY",
-        "BQ-30: tick-box (8)",
+        "BQ-30: the Fable lens's fold",
         spec=in_lines("14. Security", drop_line("- [ ] (8)")),
     ),
     Mutation(
         "M-92",
         "G-RULES",
-        "BQ-11: item 5's predicate",
+        "BQ-11: item 5's predicate pinned",
         spec=sub_in(RULES_HEAD, "nor the email's local part", "nor the email"),
+    ),
+    Mutation(
+        "M-93",
+        "G-OWNER",
+        "ledger 1: each stamp its own row",
+        spec=sub_in("18.2 Hand-offs", "ledger 1 row 9)", "ledger 1 row 8)"),
+    ),
+    Mutation(
+        "M-94",
+        "G-DETAIL",
+        "BQ-21: the never-rule re-sourced (C-12)",
+        spec=sub_in(ERR_HEAD, "(RULED BQ-21, stricter than `15`:320; C-12)", "(`15`:320)"),
+    ),
+    Mutation(
+        "M-95",
+        "G-CHECKLIST",
+        "BQ-12 against R-1: labelled (C-28)",
+        spec=sub_in(S42, "(PROPOSED, C-28; R-1;", "(R-1;"),
+    ),
+    Mutation(
+        "M-96",
+        "G-WALK",
+        "BQ-32: C-28's walkthrough line",
+        hand=in_lines(WALKTHROUGH_HEAD, drop_line("- [ ] C-28")),
+    ),
+    Mutation(
+        "M-97",
+        "G-VERSION",
+        "v1.1: ledger 1 the late change",
+        spec=line_edit("**Start.**", "(rows 7, 8, 9)", "(rows 7 to 9)"),
     ),
 )
 # ADVERSARY: the lens-2 paraphrases that passed every gate after a re-pin (2026-10-29), applied
@@ -5196,11 +5259,11 @@ def selftest(spec: str, hand: str, paths: tuple[Path, ...]) -> tuple[bool, list[
     lines += [f"    {x}" for x in probe]
     ok = ok and not probe
     listed = [
-        (r[0], r[2].split(":")[0])
+        (r[0], *r[2].split(": ", 1))
         for r in table_rows(section(spec_f, MUTATION_HEAD))
         if r[0].startswith("M-") and len(r) > 2
     ]
-    built = [(mu.mid, mu.gate) for mu in MUTATIONS if mu.mid.startswith("M-")]
+    built = [(mu.mid, mu.gate, mu.ruled) for mu in MUTATIONS if mu.mid.startswith("M-")]
     if listed != built:
         ok = False
         lines.append(f"  section 15.2 lists {len(listed)} M-rows, the tool builds {len(built)}")
