@@ -22197,7 +22197,7 @@ components:
       type: object
       properties:
         overall: { $ref: "#/components/schemas/ComponentState" }
-        version: { type: string }
+        version: { type: string, minLength: 1, maxLength: 32, pattern: "^[!-~](?:[ -~]*[!-~])?$" }
         git_sha: { type: string }
         environment: { type: string }
         uptime_seconds: { type: integer }
@@ -23604,7 +23604,7 @@ components:
       type: object
       required: [version, commit, built_at]
       properties:
-        version: { type: string }
+        version: { type: string, minLength: 1, maxLength: 32, pattern: "^[!-~](?:[ -~]*[!-~])?$" }
         commit: { type: string }
         built_at: { type: string, format: date-time }
         api_version: { type: string }
