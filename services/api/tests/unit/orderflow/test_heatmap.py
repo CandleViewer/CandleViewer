@@ -1190,7 +1190,10 @@ async def test_a_catch_up_of_300_columns_runs_a_d_a_step_within_half_the_queue()
     emitter = TopicEmitter(out.append, connection_id="t", wall_ms=lambda: T0, clock=lambda: 0.0,
                            source=cast(Any, w.topic), cache=SnapshotCache())  # fmt: skip
     emitter.push_encoded, emitter.encode_payload, emitter.wire = queued, json_payload, "json"
-    emitter.step_s = 0.0  # a job step is one of its own steps: a `d` each, nothing batched
+    # No CPU budget: each loop turn runs exactly one step of the job (`_Turns` takes at least
+    # one), so how many columns close during the snapshot is counted in turns, never in time
+    # (C-13.7), and a job step is one of its own steps: a `d` each, nothing batched.
+    emitter.turn_s, emitter.step_s = 0.0, 0.0
     parsed = parse_topic(f"heatmap.{SYM}")
     opts = {"encoding": "binary", "window_seconds": 900}
     sub = Subscription("s1", parsed, opts, effective_options(parsed, opts))
@@ -1207,7 +1210,11 @@ async def test_a_catch_up_of_300_columns_runs_a_d_a_step_within_half_the_queue()
 
     TopicEmitter._step = counted  # type: ignore[method-assign]  # restored below
     try:
-        assert emitter.snapshot(sub, "initial")
+        assert emitter.snapshot(sub, "initial")  # no budget: nothing inline, the job queued
+        # One turn: the loop runs its callbacks in order, so the job's first step, which copies
+        # the span, runs before this resumes; every close below comes after the copy.
+        await asyncio.sleep(0)
+        assert sub.sub_id in emitter._jobs and sub.snapshot_pending
         closed: list[int] = []
         for _ in range(1_000_000):
             if not emitter._jobs:

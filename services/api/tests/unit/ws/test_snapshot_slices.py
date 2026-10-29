@@ -126,7 +126,7 @@ def _sub(conn: Conn) -> Any:
 async def test_a_slow_snapshot_finishes_in_later_turns_with_the_same_frames() -> None:
     """Whatever the slicing, the frames are the ones one call emits, queued in one turn, in
     order, the last with `s`; in between the subscription is pending and refuses every `d`."""
-    whole = _conn(_big(), turn_s=10.0, max_frame_bytes=64_000)
+    whole = _conn(_big(), turn_s=math.inf, max_frame_bytes=64_000)  # no bound: all at once
     sub_whole = _sub(whole)
     assert whole.emitter.snapshot(sub_whole, "initial") and len(whole.out) > 1
     sliced = _conn(_big(), turn_s=0.0, max_frame_bytes=64_000)  # every step its own turn
@@ -176,7 +176,7 @@ async def test_a_subscription_that_ends_mid_snapshot_gets_nothing() -> None:
 
 
 async def test_a_snapshot_that_fits_a_slice_is_emitted_at_once() -> None:
-    conn = _conn(_big(columns=2, rows=4), turn_s=10.0)
+    conn = _conn(_big(columns=2, rows=4), turn_s=math.inf)
     sub = _sub(conn)
     assert conn.emitter.snapshot(sub, "initial")
     assert len(conn.out) == 1 and conn.out[0]["s"] == 1 and not conn.emitter._jobs
@@ -234,7 +234,7 @@ async def test_a_large_snapshot_queues_frames_encoded_as_the_queue_would_encode_
 
 
 def test_a_small_snapshot_is_left_to_the_queues_encoder() -> None:
-    conn = _conn(_big(columns=2, rows=4), turn_s=10.0)
+    conn = _conn(_big(columns=2, rows=4), turn_s=math.inf)
     queued: list[Any] = []
     conn.emitter.push_encoded = lambda f, p, r: queued.append(p)
     conn.emitter.encode_payload, conn.emitter.wire = json_payload, "json"
@@ -372,10 +372,11 @@ async def test_a_request_once_the_turns_budget_is_spent_waits_for_a_later_turn()
     sub = _sub(conn)
     assert conn.emitter.snapshot(sub, "initial") is True
     assert conn.out == [] and sub.snapshot_pending and sub.sub_id in conn.emitter._jobs
+    conn.emitter.turn_s = math.inf  # unbounded from here: the next turn finishes it, whatever
     await asyncio.sleep(0)  # the next turn: the budget is reset, then the job steps
     assert len(conn.out) == 1 and conn.out[0]["s"] == 1 and not conn.emitter._jobs
     assert turns.remaining(10.0) > 0
-    late = _conn(_big(columns=2, rows=4), turn_s=10.0)
+    late = _conn(_big(columns=2, rows=4), turn_s=math.inf)
     other = _sub(late)
     await asyncio.sleep(0)
     assert late.emitter.snapshot(other, "initial") and len(late.out) == 1  # room again: inline
@@ -424,7 +425,7 @@ async def test_a_job_step_is_a_batch_of_its_own_steps_up_to_step_s(
     conn = _conn(_big(), turn_s=0.0, max_frame_bytes=64_000)  # no inline slice: all deferred
     sub = _sub(conn)
     assert conn.emitter.snapshot(sub, "initial") and conn.out == []
-    conn.emitter.turn_s, conn.emitter.step_s = 10.0, 10.0
+    conn.emitter.turn_s, conn.emitter.step_s = math.inf, math.inf
     calls: list[int] = []
     real = sequencing.TopicEmitter._step
 
