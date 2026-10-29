@@ -921,6 +921,23 @@ async def test_the_streamed_accounts_stand_in_raises_its_error_and_keeps_its_acc
     assert (accounts.reads, accounts.accounts) == (1, {ACCOUNT})
 
 
+async def test_the_streamed_accounts_stand_in_keeps_one_set_per_read() -> None:
+    """24 Sec.8.12, as account health's read in place: one set object until the stand-in's
+    accounts change or health reads again (`new_read`), equal or not, which is how the consumer
+    tells one read from the next (its hold on a disabled account)."""
+    accounts = InMemoryStreamedAccounts(ACCOUNT)
+    first = await accounts.streamed_accounts()
+    assert await accounts.streamed_accounts() is first
+    accounts.new_read()
+    again = await accounts.streamed_accounts()
+    assert again == first and again is not first  # health's next read, equal to the last
+    other = AccountId(UUID(int=8))
+    accounts.accounts.add(other)
+    changed = await accounts.streamed_accounts()
+    assert changed == {ACCOUNT, other} and changed is not again
+    assert await accounts.streamed_accounts() is changed
+
+
 async def test_the_reconciliation_stand_in_keeps_each_request_in_order() -> None:
     other = AccountId(UUID(int=8))
     requests = InMemoryReconciliationRequests()
