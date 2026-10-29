@@ -224,7 +224,7 @@ def test_each_shard_reports_its_duration_and_the_judge_tabulates_them() -> None:
 def test_each_job_sets_its_own_timeout_from_the_measured_durations() -> None:
     jobs = _jobs()
     # The heaviest shard at the slowest measured run's pace, plus the job's overhead, plus 10.
-    assert jobs["integration-shard"]["timeout-minutes"] == ints.timeout_minutes(_total()) == 19
+    assert jobs["integration-shard"]["timeout-minutes"] == ints.timeout_minutes(_total()) == 20
     assert jobs["integration-stack"]["timeout-minutes"] == 13  # about 3 minutes measured, plus 10
     assert jobs["integration"]["timeout-minutes"] == 5
     assert all("vars." not in str(job["timeout-minutes"]) for job in jobs.values())
