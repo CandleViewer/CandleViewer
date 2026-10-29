@@ -181,9 +181,9 @@ async def test_a_gap_publishes_one_desync_event_with_its_structured_log() -> Non
         1,
     )
     assert ev.prev_update_id == json.loads(RAW[2699])["data"]["u"]
-    line = [entry for entry in logs if entry["event"] == "book_desync"]
-    assert len(line) == 1
-    assert {k: line[0][k] for k in ("prev_update_id", "got_update_id", "resync_count")} == {
+    logged = [entry for entry in logs if entry["event"] == "book_desync"]
+    assert len(logged) == 1
+    assert {k: logged[0][k] for k in ("prev_update_id", "got_update_id", "resync_count")} == {
         "prev_update_id": ev.prev_update_id, "got_update_id": hole, "resync_count": 1,
     }  # fmt: skip
     assert resyncs("sequence_gap") == before + 1
@@ -202,9 +202,9 @@ async def test_a_crossed_book_counts_book_crossed_total() -> None:
                  "u": engine.last_u + 1, "seq": 1},
     }  # fmt: skip
     child = book_crossed_total.labels(symbol=symbol_label(SYM))
-    before = float(child._value.get())  # type: ignore[attr-defined]
+    before = float(child._value.get())
     await r.stream.handle_frame(json.dumps(crossing))
-    assert float(child._value.get()) == before + 1  # type: ignore[attr-defined]
+    assert float(child._value.get()) == before + 1
     assert [e.reason for e in drain(r.desyncs)] == ["crossed"]
     assert r.stream.phase(SYM) is BookPhase.SNAPSHOT_PENDING
 
