@@ -63,6 +63,7 @@ import uuid
 from collections import Counter
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -74,8 +75,14 @@ from websockets.typing import Origin, Subprotocol
 import candleviewer.ws.gateway as gateway
 from candleviewer.observability.context import spawn
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+from candleviewer.ws.codec import MAX_MSGPACK_VALUES
 from candleviewer.ws.lifecycle import MAX_CONNECTIONS_PER_USER, RATE_PER_MINUTE, RATE_PER_SECOND
-from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_JSON_CONTAINERS
+from candleviewer.ws.limits import (
+    MAX_INBOUND_FRAME_BYTES,
+    MAX_JSON_CONTAINERS,
+    inbound_frame_weight,
+    json_values_over_count,
+)
 from tests.chaos.ws._proxy import HOST
 from tests.chaos.ws._server import BOOK, SEED, Stack, flag_on
 from tests.contract.ws._support import ORIGIN
@@ -449,52 +456,86 @@ async def test_x02_ac_19_isolation_clause_at_sustained_pace_book_stream_stays_in
     assert max(beside) <= STALL_MS, f"an update took {max(beside):.2f} ms, past {STALL_MS} ms"
 
 
-# -- frames at the inbound caps, at the per-socket limits (#4924) -------------------------------
+# -- frames at the inbound caps, as fast as the inbound rate admits them (#4924) ---------------
 #
-# The same user's eight sockets each send `ping`s at the inbound caps: as many shallow containers
-# as the container cap admits, padded to the frame cap with one string. Seven send one on every
-# `HEAVY_EVERY`-th update, about the 300-a-minute pace; the eighth sends `HEAVY_BURST` at once,
-# past the 30 a second. Every frame is charged against its socket's inbound rate before it is
-# decoded: the paced frames are all admitted and answered, the burst's first 30 too, and the two
-# the rate refuses are never decoded (a spy on `_Connection._parse`), get their `err` with no
-# `id` and the `4429` close, and move the metrics. The other user's stream is timed as above. The
-# refusal's audit row is the close's (`test_limits_abuse.py`).
+# The same user's eight sockets, the per-user cap, each send `ping`s at every inbound cap at once:
+# the frame cap, the container cap and the value bound (`codec.MAX_MSGPACK_VALUES`, over-counted
+# on the text), in three shapes: values that are numbers, values that are short escaped strings,
+# or one string. Each frame takes `inbound_frame_weight` tokens of its socket's inbound rate. Seven
+# send them as often as that rate admits over the run (`paced_every`), and twice a frame of
+# numbers up to the frame cap, past the value bound; the eighth spends a second's tokens at once
+# and sends two more. Every frame is charged before it is decoded, and none past the bound is
+# decoded (a spy on the JSON decoder): each gets `frame_malformed` with no `id`, a strike of three.
+# The paced frames and the burst's first are admitted and answered; the two the rate refuses are
+# never decoded, get their `err` with no `id` and the `4429` close, and move the metrics. The
+# other user's stream is timed as above. The refusals' audit row is the close's
+# (`test_limits_abuse.py`).
 
-HEAVY_EVERY = 3  # a paced socket sends on every third update: 5.3 a second, as the cap legs above
-HEAVY_BURST, HEAVY_AT = 40, 200  # the eighth socket's frames in one go, and the update before it
+HEAVY_AT = 200  # the update before which the eighth socket spends its second
+OVER_AT = (100, 300)  # the updates before which each paced socket sends a frame past the bound
 HEAVY_MIN = MAX_INBOUND_FRAME_BYTES // 2  # what the `_parse` spy counts as one of these frames
+#: The tokens each frame here takes: they are all at the frame cap.
+WEIGHT = inbound_frame_weight(MAX_INBOUND_FRAME_BYTES)
+#: The burst socket's frames the rate admits in one second.
+BURST_ADMITTED = RATE_PER_SECOND // WEIGHT
 
 
-def heavy(id: str) -> str:
-    """A `ping` at the frame and container caps: `MAX_JSON_CONTAINERS` `[` and `{` in all (the
-    envelope, `p` and its list hold three), then one string up to the frame cap."""
-    head, tail = f'{{"t":"ping","id":"{id}","p":{{"pad":[', "]}}"
-    lists = ",".join(["[]"] * (MAX_JSON_CONTAINERS - 3))
-    pad = "x" * (MAX_INBOUND_FRAME_BYTES - len(head) - len(lists) - len(tail) - 3)
-    text = f'{head}{lists},"{pad}"{tail}'
+def paced_every() -> int:
+    """The fewest updates between a paced socket's frames that its inbound rate admits for the
+    whole run (all of it inside one minute): the minute's tokens, less `hello`, `auth` and the
+    frames past the bound, spread over the N updates, and never past the second's tokens."""
+    run_s = N * TICK_S
+    assert run_s < 60.0  # one window of the minute holds the run
+    frames = (RATE_PER_MINUTE - 2 - len(OVER_AT) * WEIGHT) // WEIGHT
+    return max(math.ceil(N / frames), math.ceil(WEIGHT / (RATE_PER_SECOND * TICK_S)))
+
+
+SHAPES = {"numbers": "123456789", "escaped-strings": '"\\u00e9x"', "one-string": None}
+
+
+def heavy(id: str, value: str | None) -> str:
+    """A `ping` at the frame cap with `MAX_JSON_CONTAINERS` `[` and `{` in all (the envelope, `p`
+    and its list hold three), then `value`s up to the value bound if any, then one string up to the
+    frame cap."""
+    head, tail = f'{{"t":"ping","id":"{id}","p":{{"pad":[', ',""]}}'
+    body = ",".join(["[]"] * (MAX_JSON_CONTAINERS - 3))
+    if value is not None:
+        body += f",{value}" * (MAX_MSGPACK_VALUES - json_values_over_count(head + body + tail))
+    pad = "x" * (MAX_INBOUND_FRAME_BYTES - len(head + body + tail))
+    text = f'{head}{body},"{pad}"]}}}}'
     assert text.count("[") + text.count("{") == MAX_JSON_CONTAINERS
     assert len(text) == MAX_INBOUND_FRAME_BYTES
+    assert (json_values_over_count(text) == MAX_MSGPACK_VALUES) is (value is not None)
+    return text
+
+
+def over(id: str) -> str:
+    """A `ping` of numbers up to the frame cap: within the container cap, past the value bound."""
+    head, tail = f'{{"t":"ping","id":"{id}","p":{{"pad":[0', "]}}"
+    text = head + ",0" * ((MAX_INBOUND_FRAME_BYTES - len(head + tail)) // 2) + tail
+    assert json_values_over_count(text) > MAX_MSGPACK_VALUES
     return text
 
 
 @dataclass
 class HeavyFlood:
     """The flooding user's sockets: `paced` at the per-socket pace, `burst` past the per-second
-    limit once. `sent` counts what each paced socket sent."""
+    limit once. `sent` counts the frames each paced socket sent that are answered with a `pong`."""
 
     paced: list[Raw]
     burst: Raw
+    value: str | None
     sent: Counter[Raw] = field(default_factory=Counter)
 
     @classmethod
-    async def open(cls, stack: Stack) -> HeavyFlood:
+    async def open(cls, stack: Stack, value: str | None) -> HeavyFlood:
         token = (await stack.sessions.mint(str(FLOODER))).access_token
         async with contextlib.AsyncExitStack() as dialled:  # a dial that fails closes the earlier
             sockets = list[Raw]()
             for _ in range(MAX_CONNECTIONS_PER_USER):
                 sockets.append(raw := await dial(stack, token))
                 dialled.push_async_callback(raw.close)
-            flood = cls(sockets[:-1], sockets[-1])
+            flood = cls(sockets[:-1], sockets[-1], value)
             dialled.pop_all()  # the flood owns them now: `close`
         return flood
 
@@ -505,12 +546,15 @@ class HeavyFlood:
     async def tick(self, i: int) -> None:
         """What the flood sends ahead of update `i`. The burst is handled before the update: it
         ends in the socket's close, which the reader of the client waits for."""
+        every = paced_every()
         for k, raw in enumerate(self.paced):
-            if i % HEAVY_EVERY == k % HEAVY_EVERY and await send(raw, heavy(f"h{i}")):
+            if i % every == k % every and await send(raw, heavy(f"h{i}", self.value)):
                 self.sent[raw] += 1
+            if i in OVER_AT:
+                await send(raw, over(f"o{i}"))
         if i == HEAVY_AT:
-            for n in range(HEAVY_BURST):  # the second refusal closes the socket: the rest are moot
-                if not await send(self.burst, heavy(f"b{n}")):
+            for n in range(BURST_ADMITTED + 2):  # the second refusal closes the socket
+                if not await send(self.burst, heavy(f"b{n}", self.value)):
                     break
             await self.burst.until(lambda: self.burst.count("bye") == 1, "the burst's close")
 
@@ -520,34 +564,43 @@ class HeavyFlood:
             await raw.until(lambda raw=raw: raw.count("pong") == self.sent[raw], "pongs")
 
 
-async def test_heavy_frames_at_the_per_socket_limits_are_charged_before_decode_in_budget(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("value", list(SHAPES.values()), ids=list(SHAPES))
+async def test_heavy_frames_from_every_socket_as_fast_as_admitted_stay_in_budget(
+    monkeypatch: pytest.MonkeyPatch, value: str | None
 ) -> None:
-    sent = math.ceil(N / HEAVY_EVERY) + 2  # `hello` and `auth` too
-    assert sent <= RATE_PER_MINUTE, f"N = {N}: {sent} frames from a socket, over {RATE_PER_MINUTE}"
-    parsed = list[int]()
-    parse = gateway._Connection._parse
+    tokens = (math.ceil(N / paced_every()) + len(OVER_AT)) * WEIGHT + 2  # `hello` and `auth`
+    assert tokens <= RATE_PER_MINUTE, f"{tokens} tokens from a socket, over {RATE_PER_MINUTE}"
+    parsed, decoded = list[int](), list[int]()
+    parse, loads = gateway._Connection._parse, json.loads
 
-    def spy(conn: gateway._Connection, raw: str | bytes, values: int) -> Any:
+    def spy_parse(conn: gateway._Connection, raw: str | bytes, values: int) -> Any:
         if len(raw) > HEAVY_MIN:
             parsed.append(len(raw))
         return parse(conn, raw, values)
+
+    def spy_loads(text: str) -> Any:
+        decoded.append(json_values_over_count(text))
+        return loads(text)
 
     async with nodelay_stack() as quiet:
         alone, bodies = await measure(quiet, None)
     errors = delta("cv_ws_errors_total", code="client_rate_limited")
     closes = delta("cv_ws_closes_total", reason="client_rate_limited")
-    monkeypatch.setattr(gateway._Connection, "_parse", spy)
+    malformed = delta("cv_ws_errors_total", code="frame_malformed")
+    monkeypatch.setattr(gateway._Connection, "_parse", spy_parse)
+    monkeypatch.setattr(gateway, "json", SimpleNamespace(loads=spy_loads, dumps=json.dumps))
     async with nodelay_stack() as loud:
-        flood = await HeavyFlood.open(loud)
+        flood = await HeavyFlood.open(loud, value)
         try:
             beside, same = await measure(loud, flood)
-            print(f"#4924: alone {figures(alone)}; beside the heavy flood {figures(beside)}")
-            for raw in flood.paced:  # every paced frame admitted and answered, none refused
+            print(f"#4924 {value}: alone {figures(alone)}; beside the flood {figures(beside)}")
+            unread = err(None, ErrorCode.FRAME_MALFORMED)
+            for raw in flood.paced:  # every paced frame within the bounds admitted and answered
                 assert raw.count("pong") == flood.sent[raw] > 0
-                assert raw.frames(of="err") == raw.frames(of="bye") == []
+                assert [whole(x) for x in raw.frames(of="err")] == [unread] * len(OVER_AT)
+                assert raw.frames(of="bye") == []
             pongs = [x["id"] for x in flood.burst.frames(of="pong")]
-            assert pongs == [f"b{n}" for n in range(RATE_PER_SECOND)]  # 30 in the second
+            assert pongs == [f"b{n}" for n in range(BURST_ADMITTED)]  # the second's tokens
             refusals = [whole(x) for x in flood.burst.frames() if x["t"] in {"err", "bye"}]
             limited = bye(
                 "client_rate_limited", "Inbound frame rate exceeded.", retry_after_ms=1000
@@ -556,9 +609,12 @@ async def test_heavy_frames_at_the_per_socket_limits_are_charged_before_decode_i
             assert flood.burst.ws.close_code == 4429
         finally:
             await flood.close()
-    # Charged before decode: what was admitted was decoded, and the two refused frames never were.
-    assert len(parsed) == sum(flood.sent.values()) + RATE_PER_SECOND
-    assert (errors(), closes()) == (1, 1)
+    # Charged before decode: the two frames the rate refused never reached `_parse`, and no frame
+    # past the value bound reached the decoder.
+    over_bound = len(OVER_AT) * len(flood.paced)
+    assert len(parsed) == sum(flood.sent.values()) + over_bound + BURST_ADMITTED
+    assert max(decoded) <= MAX_MSGPACK_VALUES
+    assert (errors(), closes(), malformed()) == (1, 1, over_bound)
     assert same == bodies  # the same bodies, in the same order, as without the flood
     assert p95(beside) <= BUDGET_MS, f"p95 {p95(beside):.2f} ms past budget #6 ({BUDGET_MS} ms)"
     added = statistics.median(beside) - statistics.median(alone)
