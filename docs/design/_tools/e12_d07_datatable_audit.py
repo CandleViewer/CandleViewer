@@ -15,8 +15,9 @@ E33-D06 tools (the same modes, the anchored values, the default-deny pins and th
    (G-MARKER). `--fill` also writes the ruled paragraphs ({{RULING}}) and the mutation rows
    ({{MUTATIONS}}) from this file's constants.
 2. **Cites.** Every `NN`:line and KEY:line cite of both documents resolves to a non-blank line at
-   the base (G-CITE); every "verbatim" copy string occurs on its cited line (G-QUOTE); every Old
-   fragment of the hand-off's A-rows occurs verbatim on its cited line (G-AROW).
+   the base, E12-D08's at its merge commit (G-CITE); every "verbatim" copy string occurs on its
+   cited line (G-QUOTE); every Old fragment of the hand-off's A-rows occurs verbatim on its cited
+   line (G-AROW).
 3. **Gates.** One FAIL line per gate: G-RULED (the ruling's paragraphs verbatim in the RULED
    section), G-PENDING (BQ-13 and D07-Q1 carry the later RULED stamp), G-BOARDS (at most ten
    boards, at most three light twins, every board PENDING, P&F and Heikin-Ashi on no board),
@@ -87,11 +88,14 @@ CITE_FILES = {
     "D03": "docs/design/E12/E12-D03.md",
     "D05": "docs/design/E12/E12-D05.md",
     "D06": "docs/design/E12/E12-D06.md",
+    "D08": "docs/design/E12/E12-D08.md",
     "D09": "docs/design/E12/E12-D09.md",
     "E12J": "docs/plan/backlog/E12.json",
     "E11J": "docs/plan/backlog/E11.json",
 }
-UNMERGED_PATHS = ("E12-D08.md", "E12-D10.md", "E12-D11.md")
+UNMERGED_PATHS = ("E12-D10.md", "E12-D11.md")
+# E12-D08 merged after the base (#4933): its cites are read at its merge commit, every other at BASE.
+FILE_BASE = {"docs/design/E12/E12-D08.md": "80e45841d"}
 DS_SRC_REL = "packages/ui/tokens"
 THEMES: dict[str, tuple[str, ...]] = {
     "dark": ("primitives", "semantic-dark"),
@@ -191,7 +195,7 @@ def git(*args: str) -> str:
 
 @functools.lru_cache(maxsize=64)
 def at_base(rel: str) -> str:
-    return git("show", f"{BASE}:{rel}")
+    return git("show", f"{FILE_BASE.get(rel, BASE)}:{rel}")
 
 
 @functools.lru_cache(maxsize=64)
@@ -592,7 +596,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-9",
-        "cut the RULED stamp from BQ-13's line",
+        "cut the date and time from BQ-13's RULED stamp",
         "G-PENDING",
         "spec",
         "## The questions",
@@ -628,12 +632,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-13",
-        "link E12-D08's unmerged file in §10",
+        "link E12-D10's unmerged file in the start line",
         "G-UNMERGED",
         "spec",
-        "## 10.",
-        "E12-D08 merges",
-        "docs/design/E12/E12-D08.md merges",
+        "",
+        "E12-D10 (#245)",
+        "docs/design/E12/E12-D10.md (#245)",
     ),
     Mutation(
         "M-14",
@@ -789,7 +793,7 @@ def g_marker(t: Texts) -> list[Finding]:
 
 
 CITE_RE = re.compile(
-    r"(?:`(\d\d)`|\b(D04E11|D07E11|D02|D03|D05|D06|D09|E12J|E11J))"
+    r"(?:`(\d\d)`|\b(D04E11|D07E11|D02|D03|D05|D06|D08|D09|E12J|E11J))"
     r"(:\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
 )
 
