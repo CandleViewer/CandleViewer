@@ -172,7 +172,7 @@ class Problem(BaseModel):
     idle_locked_at: Annotated[
         AwareDatetime | None,
         Field(
-            description="`session_idle_locked` only: the session's `idle_deadline`, which is when it idle-locked, unless `POST /auth/lock` locked it first (its lock moment is then the `auth.session_locked` audit row's time).\n"
+            description="`session_idle_locked` only: the session's `idle_deadline`, which is when it idle-locked, unless `POST /auth/lock` locked it first (the lock moment is then the `auth.session_locked` audit row's time), so it may be later than `server_time`. Read the problem code or `session.locked`, never this time, to tell that a session is locked.\n"
         ),
     ] = None
     revoked_reason: Annotated[
@@ -433,13 +433,13 @@ class SessionState(BaseModel):
     expires_at: Annotated[
         AwareDatetime,
         Field(
-            description="End of the 12 h absolute lifetime. Refresh, extend and unlock never move it."
+            description="End of the 12 h absolute lifetime. Refresh, extend, lock and unlock never move it.\n"
         ),
     ]
     idle_deadline: Annotated[
         AwareDatetime,
         Field(
-            description="When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked, unless `POST /auth/lock` locked the session first: lock never moves it, and its moment is the `auth.session_locked` audit row's time.\n"
+            description="When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked, unless `POST /auth/lock` locked the session first: lock never moves it, and the lock moment is the `auth.session_locked` audit row's time. So after a lock by request it may be later than `server_time`: read `session.locked`, never this time, to tell that the session is locked.\n"
         ),
     ]
     idle_timeout_s: Annotated[

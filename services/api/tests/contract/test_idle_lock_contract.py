@@ -13,6 +13,7 @@ moving it, a locked one answers `200` again, and a revoked or expired one `401 s
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -25,6 +26,7 @@ from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.auth.session_service import MAX_IDLE_TIMEOUT_S, MIN_IDLE_TIMEOUT_S
 from candleviewer.statechart.registry import default_registry
+from tests.contract._admin_support import ROOT
 
 _BASE = "urn:cv:openapi"
 _SESSION_FIELDS = {"id", "issued_at", "expires_at", "idle_deadline", "idle_timeout_s", "locked"}
@@ -315,6 +317,8 @@ def test_only_refresh_and_the_locked_session_operations_accept_the_refresh_cooki
         and any("refreshCookie" in r for r in op.get("security", spec["security"]))
     }
     assert accepting == {("post", "/auth/refresh"), *_LOCKED_OK}
+    scheme = _flat(spec["components"]["securitySchemes"]["refreshCookie"]["description"])
+    assert all(f"`{method.upper()} {path}`" in scheme for method, path in _LOCKED_OK)
     no_expired = "No other operation accepts the cookie, and none, unlock included, accepts an"
     assert f"{no_expired} expired access token." in _idle_lock_section(spec)
 
@@ -438,7 +442,7 @@ def test_lock_contract_locks_as_if_the_idle_deadline_fell_due(spec: dict[str, An
 
 def test_lock_contract_never_moves_the_idle_deadline(spec: dict[str, Any]) -> None:
     # BQ-5: `last_seen_at` never moves (SCR-112 would show a false time), so the deadline and a
-    # later `idle_locked_at` keep `last_seen_at + idle_timeout_s`, and no field holds the moment.
+    # later `idle_locked_at` keep `last_seen_at + idle_timeout_s`; the audit row has the moment.
     description = _flat(_op(spec, "post", _LOCK)["description"])
     assert "The deadline itself does not move" in description
     assert "still give `last_seen_at + idle_timeout_s`" in description
@@ -451,9 +455,12 @@ def test_lock_contract_never_moves_the_idle_deadline(spec: dict[str, Any]) -> No
     state = _schema(spec, "SessionState")["properties"]
     deadline = _flat(state["idle_deadline"]["description"])
     assert "unless `POST /auth/lock` locked the session first: lock never moves it" in deadline
+    assert "may be later than `server_time`: read `session.locked`, never this time" in deadline
+    assert "lock and unlock never move it." in state["expires_at"]["description"]
     assert "or `POST /auth/lock` locked the session" in _flat(state["locked"]["description"])
     problem = _schema(spec, "Problem")["properties"]["idle_locked_at"]["description"]
     assert "unless `POST /auth/lock` locked it first" in _flat(problem)
+    assert "later than `server_time`. Read the problem code or `session.locked`" in _flat(problem)
 
 
 def test_lock_contract_answers_session_info_locked_with_no_elevation(
@@ -516,13 +523,35 @@ def test_lock_contract_is_recorded_ahead_and_by_b16_never_by_a_request(
     )
 
 
-def test_lock_is_a_viewers_own_operation_and_never_refused_read_only(spec: dict[str, Any]) -> None:
-    # BQ-3 and BQ-4: lock acts on the caller's own session and only reduces risk.
+def test_24_lists_the_lock_record_until_the_implementation_registers_it() -> None:
+    """24 section 15.5 and its change-log entry: the implementation PR registers the action, which
+    flips both halves of the marker check (as `test_trade_group_contract_threat_model.py` does)."""
+    internal = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
+    vocabulary = _flat(internal.split("### 15.5 ", 1)[1].split("### 15.6 ", 1)[0])
+    assert "`auth.session_locked` (not registered yet, E09-S03-F1)" in vocabulary
+    assert "auth.session_locked" not in AUDIT_ACTIONS
+    assert "There is one record per lock" in vocabulary
+    assert "nothing sends B16 a `REQUEST`" in vocabulary
+    title = r"^### 19\.\d+ .* the `auth\.session_locked` action \(E09-S03-F1, #4743\)$"
+    found = re.search(title, internal, re.MULTILINE)
+    assert found is not None
+    entry = _flat(internal[found.end() :].split("\n### ", 1)[0])
+    assert "this contract adds no column; how the lock is stored is the implementation's" in entry
+
+
+def test_lock_is_one_of_the_viewers_own_operations(spec: dict[str, Any]) -> None:
+    # BQ-3: lock acts on the viewer's own session, as the viewer, so view-as never refuses it.
     description = _flat(_op(spec, "post", _LOCK)["description"])
-    assert "neither a read-only downgrade nor a view-as context refuses it" in description
+    assert "it is one of the viewer's own operations" in description
     text = spec["info"]["description"]
     own = text.split("**The viewer's own operations.**", 1)[1].split("None of the rules", 1)[0]
     assert "`POST /auth/lock`" in own
+
+
+def test_a_read_only_downgrade_never_refuses_lock(spec: dict[str, Any]) -> None:
+    # BQ-4: lock acts on no data and only reduces risk, as extend acts on none.
+    description = _flat(_op(spec, "post", _LOCK)["description"])
+    assert "neither a read-only downgrade nor a view-as context refuses it" in description
     read_only = "Nor does it refuse lock, which acts on no data either and only reduces risk."
     assert read_only in _idle_lock_section(spec)
     step_up = _flat(_op(spec, "post", "/auth/step-up")["description"])

@@ -9709,7 +9709,7 @@ export interface components {
       failures_remaining?: number;
       /**
        * Format: date-time
-       * @description `session_idle_locked` only: the session's `idle_deadline`, which is when it idle-locked, unless `POST /auth/lock` locked it first (its lock moment is then the `auth.session_locked` audit row's time).
+       * @description `session_idle_locked` only: the session's `idle_deadline`, which is when it idle-locked, unless `POST /auth/lock` locked it first (the lock moment is then the `auth.session_locked` audit row's time), so it may be later than `server_time`. Read the problem code or `session.locked`, never this time, to tell that a session is locked.
        */
       idle_locked_at?: string;
       /** @description Correlation id, `urn:cv:req:{uuid}`; matches the `X-Correlation-Id` header and the audit entry. */
@@ -11013,7 +11013,7 @@ export interface components {
     SessionState: {
       /**
        * Format: date-time
-       * @description End of the 12 h absolute lifetime. Refresh, extend and unlock never move it.
+       * @description End of the 12 h absolute lifetime. Refresh, extend, lock and unlock never move it.
        */
       expires_at: string;
       /**
@@ -11023,7 +11023,7 @@ export interface components {
       id: string;
       /**
        * Format: date-time
-       * @description When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked, unless `POST /auth/lock` locked the session first: lock never moves it, and its moment is the `auth.session_locked` audit row's time.
+       * @description When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked, unless `POST /auth/lock` locked the session first: lock never moves it, and the lock moment is the `auth.session_locked` audit row's time. So after a lock by request it may be later than `server_time`: read `session.locked`, never this time, to tell that the session is locked.
        */
       idle_deadline: string;
       /** @description Idle timeout of this session in seconds (per user, 5 to 60 minutes). */
