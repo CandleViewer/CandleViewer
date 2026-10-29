@@ -59,7 +59,7 @@ import time
 from array import array
 from collections import deque
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_EVEN, Context, Decimal
 from typing import Any, Final, Protocol
 
@@ -113,6 +113,9 @@ STORE_CELLS_MAX: Final = 262_144
 STORE_TIMEOUT_S: Final = 5.0
 #: Bound on draining the store queue at `stop`.
 STOP_DRAIN_S: Final = 5.0
+#: Columns a snapshot spread across loop turns may have missed and still sends as `d` frames
+#: (`catch_up`); more is a fresh snapshot. 64 is 6.4 s of 100 ms columns.
+CATCH_UP_MAX: Final = 64
 #: CPU a loop turn spends re-bucketing seeds, so a turn stays inside budget #6 (20 ms).
 SEED_TURN_S: Final = 0.005
 _U64_MAX: Final = 2**64 - 1
@@ -270,20 +273,44 @@ def window_column(
 def rebucket(column: HeatmapColumn, step: int) -> HeatmapColumn:
     """`column` on the coarser `step`, which its own step divides (24 §6.3): each row summed into
     the row of its price, re-centred on the column's mid; what leaves the window joins the
-    off-window totals."""
+    off-window totals. Vectorised (m-B): one `bincount` a side."""
     if step % column.price_step_ticks:
         raise ValueError("the column's step does not divide the new step")
-    rows = range(column.rows)
-    prices = [column.price_origin_ticks + i * column.price_step_ticks for i in rows]
-    return window_column(
-        ts_ms=column.ts_ms, bucket_ms=column.bucket_ms, step=step,
-        bids=dict(zip(prices, column.bid_sizes, strict=True)),
-        asks=dict(zip(prices, column.ask_sizes, strict=True)),
-        best_bid=column.best_bid_ticks, best_ask=column.best_ask_ticks,
-        estimated=column.estimated, samples=column.samples, expected=column.expected,
-        off_bid=column.off_window_bid_qty, off_ask=column.off_window_ask_qty,
-        origin_hint=column.price_origin_ticks,
-    )  # fmt: skip
+    mid = _mid(column.best_bid_ticks, column.best_ask_ticks)
+    origin = _origin(mid, step) if mid is not None else (column.price_origin_ticks // step) * step
+    if column.samples == 0 or column.rows == 0:
+        return replace(column, price_origin_ticks=max(0, origin), price_step_ticks=step,
+                       bid_sizes=array("d"), ask_sizes=array("d"))  # fmt: skip
+    prices = column.price_origin_ticks + np.arange(column.rows, dtype=np.int64) * (
+        column.price_step_ticks
+    )
+    index = (prices - origin) // step
+    inside = (index >= 0) & (index < ROWS)
+    sides: list[np.ndarray[Any, np.dtype[np.float64]]] = []
+    off: list[float] = []
+    for sizes, held in ((column.bid_sizes, column.off_window_bid_qty),
+                        (column.ask_sizes, column.off_window_ask_qty)):  # fmt: skip
+        values = np.frombuffer(sizes, dtype=np.float64)
+        sides.append(np.bincount(index[inside], weights=values[inside], minlength=ROWS))
+        off.append(held + float(values[~inside].sum()))
+    populated = np.flatnonzero((sides[0] != 0) | (sides[1] != 0))
+    if populated.size == 0:
+        first, last = 0, -1
+    else:
+        first, last = int(populated[0]), int(populated[-1])
+    lowest = origin + first * step if first <= last else max(0, origin)
+    bids, asks = array("d"), array("d")
+    bids.frombytes(sides[0][first : last + 1].tobytes())
+    asks.frombytes(sides[1][first : last + 1].tobytes())
+    return replace(
+        column,
+        price_origin_ticks=lowest,
+        price_step_ticks=step,
+        bid_sizes=bids,
+        ask_sizes=asks,
+        off_window_bid_qty=off[0],
+        off_window_ask_qty=off[1],
+    )
 
 
 #: Below this a float product `size * 10^scale` is within one part in 2^52 of the exact one, so
@@ -455,13 +482,11 @@ class _Integrator:
 
 @dataclass(slots=True)
 class _Entry:
-    """A ring column with its kind-6 part, built (and packed: encoded once) per instrument steps.
-    The §14.5 form is not kept: 1 024 floats a column as Python objects are ~32 KiB, four times the
-    packed part, so it is built when a structured reader asks (23 §6.1, budget #8)."""
+    """A ring column. Nothing derived from it is kept (M-B, 23 §6.1, §16.2: a spec's state is its
+    columns' sizes, 16 B a row): its kind-6 part and §14.5 form are built when a reader asks, a
+    column per step of a snapshot (`build_steps`), and once for its `d` at its close."""
 
     column: HeatmapColumn
-    steps: tuple[Decimal, Decimal] | None = None
-    part: Any = None
 
 
 @dataclass(slots=True)
@@ -772,14 +797,12 @@ class HeatmapTopic:
                 seed = state.seed
                 if seed is None:
                     continue
-                steps = self._steps(st.symbol)
                 while seed and len(state.ring) < (state.ring.maxlen or 0):
                     if done and time.perf_counter() - began > self._seed_turn_s:
                         return done
-                    entry = _Entry(rebucket(seed.popleft(), state.spec.price_grouping))
-                    if steps is not None:
-                        self._fill(entry, steps)
-                    state.ring.appendleft(entry)
+                    state.ring.appendleft(
+                        _Entry(rebucket(seed.popleft(), state.spec.price_grouping))
+                    )
                     done += 1
                 state.seed = None
                 state.version += 1
@@ -938,29 +961,26 @@ class HeatmapTopic:
         state.version += 1
         return self._publish(st, state, entry, now)
 
-    def _fill(self, entry: _Entry, steps: tuple[Decimal, Decimal]) -> None:
-        """Build the entry's kind-6 part once for these steps (columns never change; an
-        instrument revision changes the steps and rebuilds it)."""
-        if entry.steps == steps:
-            return
-        column = entry.column
-        entry.part = self._frame(column, steps) if column.binary_ok else None
-        entry.steps = steps
-
-    def _publish(self, st: _SymbolState, state: _SpecState, entry: _Entry, now: float) -> int:
-        steps = self._steps(st.symbol)
-        if steps is None or not state.consumers:
-            return 0  # its subscriptions wait for the steps (`build`), then snap
-        self._fill(entry, steps)
-        spec, column = state.spec, entry.column
+    def _delta(
+        self, spec: HeatmapSpec, column: HeatmapColumn, steps: tuple[Decimal, Decimal]
+    ) -> tuple[dict[str, Any], Any | None]:
+        """One column's `d`: its §14.5 body and, when kind 6 can say everything, its part."""
         body = {
             "symbol": spec.symbol, "time_bucket_ms": spec.time_bucket_ms,
             "price_grouping": spec.price_grouping, "depth": spec.depth,
             "columns": [wire_column(column, steps[0])], "estimated": column.estimated,
         }  # fmt: skip
+        return body, self._frame(column, steps) if column.binary_ok else None
+
+    def _publish(self, st: _SymbolState, state: _SpecState, entry: _Entry, now: float) -> int:
+        steps = self._steps(st.symbol)
+        if steps is None or not state.consumers:
+            return 0  # its subscriptions wait for the steps (`build`), then snap
+        spec, column = state.spec, entry.column
+        body, part = self._delta(spec, column, steps)
         try:
             sent = self._hub.publish(
-                f"{FAMILY}.{spec.symbol}", body, part=entry.part, coalesced_count=1,
+                f"{FAMILY}.{spec.symbol}", body, part=part, coalesced_count=1,
                 select=lambda sub: _leased(sub, spec),
             )  # fmt: skip
         except Exception as exc:  # contained: the other specs and symbols go on
@@ -1080,12 +1100,15 @@ class HeatmapTopic:
 
         binary = sub.effective.get("encoding") == "binary"
         entries = bounded(lambda e: e.column.wire_bytes) if binary else []
-        for entry in entries:
-            self._fill(entry, steps)  # a no-op but after a steps change
-        parts: tuple[Any, ...] = ()
-        if binary and all(e.part is not None for e in entries):
-            parts = tuple(e.part for e in entries)
-        else:  # structured: G-03 counts each column at its JSON's bound (23 §6.1)
+        built: list[Any] = []
+        for entry in entries:  # a part a step: kind 6 only when every column has one
+            if not entry.column.binary_ok or (part := self._frame(entry.column, steps)) is None:
+                built = []
+                break
+            built.append(part)
+            yield
+        parts: tuple[Any, ...] = tuple(built)
+        if not parts:  # structured: G-03 counts each column at its JSON's bound (23 §6.1)
             entries = bounded(lambda e: e.column.json_bytes)
         # A binary snapshot sends its parts only: its structured side carries what the gateway
         # reads of it (each column's bucket and that it is complete, §8.2), not 1 024 floats a
@@ -1102,9 +1125,27 @@ class HeatmapTopic:
             "symbol": spec.symbol, "time_bucket_ms": spec.time_bucket_ms,
             "price_grouping": spec.price_grouping, "depth": spec.depth, "columns": columns,
         }  # fmt: skip
+        hint = None if parts else sum(e.column.json_bytes for e in entries) + 256
         return self._body(structured, parts, price_scale=places(steps[0]),
                           qty_scale=places(steps[1]),
-                          estimated=any(e.column.estimated for e in entries))  # fmt: skip
+                          estimated=any(e.column.estimated for e in entries),
+                          size_hint=hint)  # fmt: skip
+
+    def catch_up(self, sub: HeatmapSub, since: int) -> list[tuple[dict[str, Any], Any]] | None:
+        """The `d` frames of the columns that closed since generation `since` (m-A, 23 §7.1): a
+        snapshot spread across loop turns holds the columns of its first turn, and these follow
+        it. None when they cannot be told apart (a seed, or more than the ring holds)."""
+        held = self._held(sub)
+        if held is None:
+            return None
+        _, state, steps = held
+        missed = state.version - since
+        if missed <= 0:
+            return []
+        if missed > len(state.ring) or missed > CATCH_UP_MAX:
+            return None
+        columns = [state.ring[i].column for i in range(len(state.ring) - missed, len(state.ring))]
+        return [self._delta(state.spec, column, steps) for column in columns]
 
     def generation(self, sub: HeatmapSub) -> int:
         held = self._held(sub)

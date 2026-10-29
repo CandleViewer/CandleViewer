@@ -13,7 +13,7 @@ from array import array
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from prometheus_client import REGISTRY
@@ -877,31 +877,29 @@ async def test_a_depth_500_spec_demands_the_deep_tier_and_waits_for_its_swap() -
     assert demand.calls[-1] == ("release", H.DEEP_CONSUMER, SYM)
 
 
-async def test_a_snapshot_is_a_slice_of_cached_columns(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fable M-1 (a): each column's §14.5 form and kind-6 part are built once, at its close;
-    `build` reuses them (no frame is built), and a steps change rebuilds them once."""
+async def test_a_binary_snapshot_builds_its_parts_a_step_each_and_keeps_none() -> None:
+    """M-B: the ring keeps each column's sizes only; a snapshot builds its parts a column per
+    step (`build_steps`, spread across loop turns by the gateway), equal to the parts its
+    columns' `d` frames carried."""
     w = World()
     await live(w)
     sub = w.hold(HeatmapSpec(SYM, time_bucket_ms=100))
     for k in range(1, 4):
         w.at(k * COLUMN_MS)
     published = [p for _, _, p in w.hub.frames]
-    calls: list[int] = []
-    real = w.topic._frame
-
-    def counted(column: HeatmapColumn, steps: tuple[Decimal, Decimal]) -> Any:
-        calls.append(1)
-        return real(column, steps)
-
-    monkeypatch.setattr(w.topic, "_frame", counted)
-    body = w.topic.build(sub)
-    assert isinstance(body, SnapshotBody) and calls == []
-    assert all(a is b for a, b in zip(body.parts, published, strict=True))  # the same objects
-    w.steps[SYM] = (Decimal("0.1"), Decimal("0.01"))  # an instrument revision
-    again = w.topic.build(sub)
-    assert isinstance(again, SnapshotBody) and len(calls) == 3 and again.qty_scale == 2
-    w.topic.build(sub)
-    assert len(calls) == 3
+    steps = w.topic.build_steps(sub)
+    taken = 0
+    while True:
+        try:
+            next(steps)
+        except StopIteration as done:
+            body = done.value
+            break
+        taken += 1
+    assert taken == 3 and isinstance(body, SnapshotBody)
+    assert list(body.parts) == published
+    entry = w.topic._symbols[SYM].specs[HeatmapSpec(SYM, time_bucket_ms=100)].ring[0]
+    assert set(type(entry).__slots__) == {"column"}  # nothing derived is kept
 
 
 async def test_a_new_spec_closes_what_is_due_before_integrating_the_others() -> None:
@@ -950,3 +948,39 @@ def test_snapshot_columns_counts_a_structured_column_at_its_json_bound() -> None
     got = H.snapshot_columns(ring, window_seconds=900, bucket_ms=100, queue_bytes=QUEUE_BYTES,
                              queue_frames=10**9, structured=True)  # fmt: skip
     assert len(got) == (QUEUE_BYTES // 2) // ring[0].json_bytes
+
+
+async def test_a_column_closing_mid_snapshot_follows_it_as_a_d(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fable m-A (23 §7.1): a snapshot spread across loop turns holds the columns of its first
+    turn; a column that closes meanwhile follows it as a `d` (`catch_up`), never lost between."""
+    from candleviewer.ws.permissions import Subscription
+    from candleviewer.ws.sequencing import SnapshotCache, TopicEmitter
+    from candleviewer.ws.topics import effective_options, parse_topic
+
+    w = World()
+    await live(w)
+    spec = HeatmapSpec(SYM, time_bucket_ms=100)
+    lease = w.hold(spec).heatmap_lease
+    for k in range(1, 6):
+        w.at(k * COLUMN_MS)
+    out: list[dict[str, Any]] = []
+    emitter = TopicEmitter(out.append, connection_id="t", wall_ms=lambda: T0, clock=lambda: 0.0,
+                           source=cast(Any, w.topic), cache=SnapshotCache())  # fmt: skip
+    emitter.turn_s = 0.0
+    parsed = parse_topic(f"heatmap.{SYM}")
+    opts = {"encoding": "structured", "window_seconds": 900}
+    sub = Subscription("s1", parsed, opts, effective_options(parsed, opts))
+    sub.heatmap_lease = lease
+    assert emitter.snapshot(sub, "initial") and out == []
+    await asyncio.sleep(0)
+    w.at(6 * COLUMN_MS)  # a column closes while the snapshot is under way
+    for _ in range(10_000):
+        await asyncio.sleep(0)
+        if out:
+            break
+    snap, *rest = out
+    held = [c["t_ms"] - T0 for c in snap["p"]["columns"]]
+    assert held == [k * COLUMN_MS for k in range(5)]
+    assert [(f["t"], f["s"], f["p"]["columns"][0]["t_ms"] - T0) for f in rest] == [("d", 2, 500)]
