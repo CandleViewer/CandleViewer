@@ -261,6 +261,8 @@ Three things make this acceptable rather than reckless, and all three are condit
 9. Electron shell boots the web app, passes a Playwright-Electron smoke test, and starts with the hardened security switches enabled (verified by an automated assertion, not by inspection).
 10. Grafana shows ingestion rate, WS state, queue depth and API latency; a synthetic alert fires and is received.
 
+**E06 outcome — 2026-10-29 (E06-T03).** The ADRs this section calls ADR-0006 (engine path) and ADR-0007 (Electron vs Tauri) are ADR-0002 and ADR-0011 in `27-adrs/`. Criterion 4 is **met on the conservative reading**: B5 in Electron passed on a host below the `06` §3.1 reference class, which the #220 ruling (2026-10-29 08:40Z) counts as conservative evidence (`spikes/E06-M0-report.md` §2 V1, §3.2); the "on reference hardware" run is a post-GA confirmation line, not a gate. ADR-0002's fallback trigger did not fire on the measured half, so there is **no R1 re-cut**; the M1-overrun half stays live until M1 closes (ADR-0002 "M0 outcome — 2026-10-29"). For criterion 3, ADR-0002 carries measured numbers by citation to the report; ADR-0011 is decided (Electron) on its criterion 5 with no WebView2 figures and criteria 1–4 not measured, so its part of criterion 3 is met **by ruling** (#220, 2026-10-29 08:40Z), not by measurement (ADR-0011 "Decision — 2026-10-29").
+
 ### 4.4 Quality gates
 
 | Gate | Threshold | Owner |
@@ -274,6 +276,8 @@ Three things make this acceptable rather than reckless, and all three are condit
 | Threat model | STRIDE models complete for E03 (supply chain), E08 (exchange boundary), E09 (auth/RBAC) | Security eng |
 | Design | Design-system v0 signed off by CDO; D-S01/D-S02 outputs Done | CDO |
 | PRR | PRR-lite: observability, runbook for "dev environment rebuild", backup job configured for Postgres | Architect |
+
+Perf gate status (E06-T03, 2026-10-29): the harness is committed and the CI job records the matrix — Chromium per PR, Electron nightly — without gating, as this row requires (`spikes/E06-M0-report.md` §2 V7, §12); making it gating is E11-T06.
 
 ### 4.5 R0 key dates
 
