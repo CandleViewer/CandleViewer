@@ -17,8 +17,10 @@ from typing import get_args
 
 import pytest
 
+from candleviewer.account_health_wiring import AccountHealthRuntime
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 from candleviewer.oms import stream_consumer
+from candleviewer.oms.ports import NoReconciliation
 from candleviewer.oms.stream_consumer import REAPPLY_TIMEOUT_S, Outcome
 from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW
 
@@ -702,8 +704,8 @@ def test_8_12_names_the_wallet_clock_the_stand_ins_signals_and_the_holds_windows
     and counted `wallet_ahead`; the stand-in reconciliation's refusal is named by the log, the
     count and the page the consumer gives it, never `oms_reconciliation_unavailable`, which nothing
     emits; and a disable's hold is never called absolute: the paragraph and `_hold`'s docstring
-    name its two windows, a carry on #848. Its section 19 entry is found by its title, whatever
-    number it lands as."""
+    name its two windows, a carry on #848. The stand-in's and account health's docstrings say the
+    same. Its section 19 entry is found by its title, whatever number it lands as."""
     head = "### 8.12 The private-stream consumer (E29-T05)"
     section = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n---\n", 1)[0])
     skew = f"{MAX_FUTURE_SKEW.total_seconds():g} s"
@@ -735,6 +737,12 @@ def test_8_12_names_the_wallet_clock_the_stand_ins_signals_and_the_holds_windows
         "this hold is taken, which releases it; and a disable while the account has no stream "
         "open brings no status to hold on.",
     )
+    stand_in = _words(inspect.getdoc(NoReconciliation) or "")
+    assert "oms_reconciliation_unavailable" not in stand_in
+    assert "logs (`stream_resync_refused`), counts (`reconciliation_unavailable`)" in stand_in
+    health = _words(inspect.getdoc(AccountHealthRuntime) or "")
+    assert "dated ahead of the host clock" not in health
+    assert f"dated more than {skew} (`MAX_FUTURE_SKEW`) ahead of the exchange-synced" in health
     assert {"wallet_ahead", "reconciliation_unavailable"} <= set(get_args(Outcome.__value__))
     source = inspect.getsource(stream_consumer)
     assert '"stream_resync_refused"' in source

@@ -711,9 +711,9 @@ class ReconciliationRequests(Protocol):
 
 class NoReconciliation(Interim):
     """`ReconciliationRequests` until E29-T06 (24 Sec.8.12): each request is
-    `ReconciliationUnavailable`, which the consumer logs, counts and pages once per episode
-    (`oms_reconciliation_unavailable`), keeping `oms.account_resyncing` in force without holding
-    order entry."""
+    `ReconciliationUnavailable`, which the consumer logs (`stream_resync_refused`), counts
+    (`reconciliation_unavailable`) and pages once per episode, keeping `oms.account_resyncing` in
+    force without holding order entry."""
 
     port: ClassVar[RuntimePortName] = "reconciliation"
     replaced_by: ClassVar[str] = "E29-T06 (#914)"
