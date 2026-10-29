@@ -1,7 +1,10 @@
 # E09 auth perf and chaos report (E09-Q05, #296)
 
-Status: **k6 profile runnable (#2848); latency numbers pending.** No latency figure below was
-measured, and no number in this file is invented. The chaos half has CI evidence (below).
+Status: **k6 profile measured on a GitHub-hosted runner (2026-10-29); the reference-host run stays
+pending (#2105).** Every latency figure below comes from the `e09-auth-k6-summary` artifact of
+`perf-ingestion-nightly` run 40944399030 (`workflow_dispatch`, `profile=auth`, `main`); none is
+invented. A hosted runner is not the reference host, so these figures do not close #2105. The chaos
+half has CI evidence (below).
 
 ## How the k6 profile runs
 
@@ -30,19 +33,36 @@ measured, and no number in this file is invented. The chaos half has CI evidence
 ## Reference host and Argon2id
 
 - Reference host spec: pending (#2105; record CPU, RAM and kernel at run time).
+- Measured host: GitHub-hosted `ubuntu-latest` (4 vCPU, 16 GB), a keyless testnet stack on loopback
+  with 10 seeded Owners, `K6_HOST_CLASS=hosted`.
 - Argon2id in force: `DEFAULT_ARGON2_PARAMS` = m=65536 KiB (64 MiB), t=3, p=4
   (`candleviewer/auth/hashing.py`). `setup()` aborts if `GET /auth/_perf/argon2-params` (#2097) does
-  not answer or reports less than this floor.
+  not answer or reports less than this floor. On run 40944399030 it answered at or above the floor
+  (setup completed and every scenario ran).
 
 ## Budgets
 
-| Budget                                                | Source  | Gated | Measured | Verdict |
-| ----------------------------------------------------- | ------- | ----- | -------- | ------- |
-| `GET /auth/session` p95 <= 100 ms                     | #13     | yes   | pending  | pending |
-| `POST /auth/step-up` p95 <= 400 ms                    | SCR-006 | yes   | pending  | pending |
-| `POST /auth/mfa/verify` p95 <= 400 ms                 | SCR-002 | yes   | pending  | pending |
-| Argon2id step p50 >= 100 ms (`Server-Timing: argon2`) | SR-011  | yes   | pending  | pending |
-| Login, rest of the request (p50/p95/p99)              | report  | no    | pending  | n/a     |
+Measured on the hosted runner (run 40944399030; p50 / p95 / p99 in ms, n samples):
+
+| Budget                                                | Source  | Gated             | Measured (hosted)                | Verdict (hosted)                             |
+| ----------------------------------------------------- | ------- | ----------------- | -------------------------------- | -------------------------------------------- |
+| `GET /auth/session` p95 <= 100 ms                     | #13     | yes               | 18.52 / 23.62 / 28.66, n = 3001  | met                                          |
+| `POST /auth/step-up` p95 <= 400 ms                    | SCR-006 | on reference host | 316.73 / 712.10 / 720.15, n = 40 | missed on the hosted runner; judged on #2105 |
+| `POST /auth/mfa/verify` p95 <= 400 ms                 | SCR-002 | yes               | 113.88 / 172.89 / 196.76, n = 50 | met                                          |
+| Argon2id step p50 >= 100 ms (`Server-Timing: argon2`) | SR-011  | yes               | 217.7 / 241.41 / 241.48, n = 20  | met (the cost is preserved)                  |
+| Login, rest of the request (p50/p95/p99)              | report  | no                | 44.77 / 118.92 / 140.68, n = 20  | n/a                                          |
+
+- `checks`: 3191 passed, 0 failed (rate 1.0 against > 0.99).
+- Sign-ins refused `429 rate_limited` by the verification bound (#4663) and retried as told:
+  `auth_login_busy_refusals` = 36.
+- The step-up p95 includes one Argon2id verification of the password per call (about 220 ms here),
+  so the hosted runner's 4 vCPUs under 10 VUs put it past 400 ms; the profile reports it and does
+  not judge it off the reference host (`K6_HOST_CLASS=hosted`).
+
+**The summary artifact.** The k6 summary export carried the setup return value; it is now stripped
+before upload. The `auth-k6` job removes `setup_data`, checks it is gone and fails closed (a failed
+strip removes the file, and the upload needs the strip to have succeeded), before the report step
+and the upload; `scripts/tests/test_perf_auth_k6.py` pins the step, its order and both guards.
 
 There is no session cache in `candleviewer/auth` (ADR-0010 addendum, "Session cache"), so the
 profile has no warm/cold split and no cache-off negative control (#2848).
@@ -77,7 +97,8 @@ The `integration` job runs them on every pull request.
 
 ## Not covered
 
-- Every latency number and the reference host spec: pending #2105 / #2097.
+- The reference-host run and its host spec: pending #2105. The figures above are hosted-runner
+  figures; the step-up budget is judged only on the reference host.
 - SR-015/016 over HTTP under load: the lockout race is proven at the service and on Postgres, not
   driven by k6 against a running API; "a throttled attacker cannot degrade a legitimate user's
   sign-in" is proven only by unit tests of the per-IP throttle.
