@@ -58,6 +58,20 @@ ways, both in code:
 - the next correct-password login after expiry resets the counter (`record_login_success` in
   `auth/repository.py`).
 
+**"Lock now" (`POST /auth/lock`, CMP-098, #4743) locks a session, never an account.** It sets
+`sessions.locked_at` on the calling session's row, which every check of the row reads, so on every
+API process and after a restart the session answers `401 session_idle_locked` to everything but
+the four operations allowed while locked; its `idle_deadline` and `last_seen_at` do not move. Only
+`POST /auth/unlock` with the password lifts it, clearing `locked_at` and stamping `unlocked_at`; a
+refresh carries the lock to the new session, and extend is refused. Each lock writes one
+`auth.session_locked` row ahead of the lock (query it as in step 1 below, with
+`action=auth.session_locked`) and B16's own `auth.idle_locked`; a call on a session that is already
+locked writes nothing. A `503` from the lock means its record could not be written, and the session
+is not locked. If B16's step fails after the lock committed, the answer is still `200`,
+`auth.lock.chart_failed` is logged and the session's chart records the lock on its next use, as for
+`auth.unlock.chart_failed`. Backup download links end at any unlock of the session chain. Nobody can
+lock another user's session with this route: to end one, revoke it.
+
 Preconditions: you know the user. Do not ask the user to retry during the lock window: a locked
 account refuses even a correct password, at login, at a step-up and at the idle-lock unlock, where
 each refusal also counts toward the five failed unlocks that revoke the session.

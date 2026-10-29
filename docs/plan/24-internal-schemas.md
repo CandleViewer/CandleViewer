@@ -6273,3 +6273,9 @@ This number follows `main`'s last entry, §19.54; an entry that lands first take
 This number follows `main`'s last entry, §19.55; an entry that lands first takes it, and this one moves to the next free number.
 
 - §15.5: `auth.session_locked` joins the closed set, not registered yet: `POST /auth/lock` (22) writes it ahead of the lock, one per lock, and its time is the lock moment; a call on a session that is already locked writes no second one. Nothing is sent to B16 at lock time: B16's own `auth.idle_locked`, written when it next reads the row, carries the lock moment. The implementation PR registers it in `audit/actions.py` with its test. No chart or `machine_hash` change, since the lock is B16's existing `IDLE_DEADLINE` into `auth.idle_locked`, and this contract adds no column; how the lock is stored is the implementation's (21).
+
+### 19.57 2026-10-29 — §15.5: `auth.session_locked` is registered (E09-S03-F1, #4743)
+
+This number follows §19.56 (#4941), which merges first; an entry that lands first takes it, and this one moves to the next free number.
+
+- §15.5: `auth.session_locked` loses "not registered yet": the implementation PR registers it in `audit/actions.py` with its test, on the writer, never the lane. `POST /auth/lock` writes it under the session row's lock, so of concurrent calls exactly one writes it. The lock is stored as `sessions.locked_at` (21 §3.1.4, revision `0056_sessions_lock_state`), which every check of the row reads and no API field serves; the same revision adds `sessions.unlocked_at`, which a successful unlock stamps: download links end at any unlock of the session chain. No chart or `machine_hash` change.
