@@ -3,11 +3,12 @@
 Contract: `docs/plan/22-api-openapi.yaml` info "Idle lock", `x-error-codes`
 `session_idle_locked` / `unlock_invalid` / `session_revoked`, `SessionState`.
 
-A session past its `idle_deadline` is idle-locked, not revoked: WS frames keep
-flowing (ADR-0020 section 4) and the session can be unlocked with the password
-(`POST /auth/unlock`) or signed out. Every other authenticated operation answers
-a request from a locked session with `401 session_idle_locked` (problem field
-`idle_locked_at`) and changes nothing.
+A session past its `idle_deadline`, or one `POST /auth/lock` locked (#4743), is
+idle-locked, not revoked: WS frames keep flowing (ADR-0020 section 4) and the
+session can be unlocked with the password (`POST /auth/unlock`) or signed out.
+Every other authenticated operation but a read of itself and a lock (which answers
+`200` again) answers a request from a locked session with `401 session_idle_locked`
+(problem field `idle_locked_at`) and changes nothing.
 
 `IdleLockMiddleware` enforces that once, for every route, so no router can
 forget it: a pure ASGI middleware mounted inside `CsrfMiddleware` that never
@@ -42,9 +43,15 @@ from candleviewer.api.deny_by_default import declared_operations
 from candleviewer.auth.errors import AuthError, SessionIdleLocked
 from candleviewer.auth.models import SessionRecord
 
-#: The operations an idle-locked session may call (#2290 ruling, rule 3a).
+#: The operations an idle-locked session may call (#2290 ruling, rule 3a; `POST /auth/lock`,
+#: #4743: a locked session's lock answers `200` and changes nothing).
 LOCKED_OK_OPERATIONS: frozenset[tuple[str, str]] = frozenset(
-    {("POST", "/auth/unlock"), ("POST", "/auth/logout"), ("GET", "/auth/session")}
+    {
+        ("POST", "/auth/unlock"),
+        ("POST", "/auth/logout"),
+        ("POST", "/auth/lock"),
+        ("GET", "/auth/session"),
+    }
 )
 _ERRORS = "https://candleviewer.local/errors/"
 _HTTP_METHODS = frozenset({"get", "put", "post", "patch", "delete", "head", "options", "trace"})

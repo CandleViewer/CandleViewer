@@ -12,7 +12,7 @@ import pytest
 
 from candleviewer.auth.errors import SessionRevoked, UserDisabled
 from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
-from candleviewer.auth.session_repository import StepUpChange
+from candleviewer.auth.session_repository import LockDecision, LockWriteAhead, StepUpChange
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsNotice, ViewAsStartHook, ViewAsState
 from candleviewer.storage.errors import WriteAheadTimeout
@@ -102,6 +102,31 @@ class FakeSessionRepository:
         )
         self.sessions[session_id] = updated
         return updated
+
+    async def lock_session(
+        self,
+        session_id: str,
+        *,
+        now: datetime,
+        unlocked: LockDecision,
+        write_ahead: LockWriteAhead,
+        audit_timeout_s: float,
+    ) -> tuple[SessionRecord, bool] | None:
+        """As the SQL store's unit (#4743): decided under the row lock (one for every row, the
+        start's), the bounded hook awaited before the write, nothing written if it fails."""
+        async with self._start_lock:
+            session = self._with_status(self.sessions.get(session_id))
+            if session is None or session.is_revoked or session.is_absolute_expired(now=now):
+                return None
+            if not unlocked(session):
+                return session, False
+            await _bounded(write_ahead(session), audit_timeout_s)
+            current = self.sessions.get(session_id)
+            if current is None or current.is_revoked:  # the SQL row lock keeps writers out
+                raise RuntimeError("the locked session row refused its lock")
+            self.sessions[session_id] = current.model_copy(update={"locked_at": now})
+            status = self._user_status(current.user_id)
+            return current.model_copy(update={"locked_at": now, "user_status": status}), True
 
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:
         session = self.sessions.get(session_id)

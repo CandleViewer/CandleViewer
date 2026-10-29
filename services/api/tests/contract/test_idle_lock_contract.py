@@ -21,6 +21,7 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.idle_lock import LOCKED_OK_OPERATIONS
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.auth.session_service import MAX_IDLE_TIMEOUT_S, MIN_IDLE_TIMEOUT_S
 from candleviewer.statechart.registry import default_registry
@@ -495,7 +496,9 @@ def test_lock_answers_session_revoked_when_revoked_or_expired(spec: dict[str, An
 
 def test_lock_is_recorded_ahead_and_by_b16_at_its_next_read(spec: dict[str, Any]) -> None:
     # BQ-1, L2 (c): `auth.session_locked` is the lock's record (C-2.9); B16's later
-    # `auth.idle_locked` carries the lock moment. 24 is pinned by the test after this one.
+    # `auth.idle_locked` carries the lock moment. 24 is pinned by the test after this one. Both
+    # actions are registered (`audit/actions.py`, #4743).
+    assert {"auth.session_locked", "auth.idle_locked"} <= AUDIT_ACTIONS
     op = _op(spec, "post", _LOCK)
     assert op["responses"]["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
     description = _flat(op["description"])
@@ -504,12 +507,15 @@ def test_lock_is_recorded_ahead_and_by_b16_at_its_next_read(spec: dict[str, Any]
     assert "the answer is `503` and the session is not locked." in description
 
 
-def test_24_lists_the_lock_record_until_the_implementation_registers_it() -> None:
-    """24 section 15.5 and its change-log entry; registering the action flips both marker halves."""
+def test_24_lists_the_lock_record_as_registered() -> None:
+    """24 section 15.5 and its change-log entry: the implementation (#4743) registered the action,
+    flipping both marker halves."""
     internal = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
     vocabulary = _flat(internal.split("### 15.5 ", 1)[1].split("### 15.6 ", 1)[0])
-    assert "`auth.session_locked` (not registered yet, E09-S03-F1)" in vocabulary
-    assert "auth.session_locked" not in AUDIT_ACTIONS
+    assert "`auth.session_locked`, " in vocabulary and "(not registered yet, E09-S03-F1)" not in (
+        vocabulary
+    )
+    assert "auth.session_locked" in AUDIT_ACTIONS
     assert "There is one record per lock" in vocabulary
     assert "nothing is sent to B16 at lock time" in vocabulary
     title = r"^### 19\.\d+ .* the `auth\.session_locked` action \(E09-S03-F1, #4743\)$"
@@ -536,3 +542,9 @@ def test_a_read_only_downgrade_never_refuses_lock(spec: dict[str, Any]) -> None:
     assert read_only in _idle_lock_section(spec)
     step_up = _flat(_op(spec, "post", "/auth/step-up")["description"])
     assert "`POST /auth/session/extend`, `POST /auth/lock` and" in step_up
+
+
+def test_the_gate_serves_exactly_the_operations_the_contract_allows_while_locked() -> None:
+    """The idle-lock gate passes the four operations "Idle lock" allows while locked, lock
+    included (#4743), and no other: a missing one would refuse a locked session's own lock."""
+    assert {(method.upper(), path) for method, path in _LOCKED_OK} == LOCKED_OK_OPERATIONS

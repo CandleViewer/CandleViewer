@@ -19,8 +19,8 @@ from types import MappingProxyType
 from typing import Final
 
 #: The viewer's own operations, (METHOD, contract path template): the start, reading and ending
-#: the context, the session's own read, refresh, logout, extension and unlock, and the bucket
-#: counts of `POST /telemetry/frontend`.
+#: the context, the session's own read, refresh, logout, extension, lock (#4743) and unlock, and
+#: the bucket counts of `POST /telemetry/frontend`.
 OWN_OPERATIONS: Final = frozenset(
     {
         ("POST", "/admin/view-as"),
@@ -30,6 +30,7 @@ OWN_OPERATIONS: Final = frozenset(
         ("POST", "/auth/refresh"),
         ("POST", "/auth/logout"),
         ("POST", "/auth/session/extend"),
+        ("POST", "/auth/lock"),
         ("POST", "/auth/unlock"),
         ("POST", "/telemetry/frontend"),
     }

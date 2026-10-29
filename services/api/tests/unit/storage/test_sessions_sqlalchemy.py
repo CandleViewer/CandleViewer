@@ -654,6 +654,9 @@ _CLAUSES = {
         "FOR NO KEY UPDATE",
     ),
     "_VIEW_AS_NOTICE_SQL": ("VALUES ('auth', 'view_as_started', 'info',",),  # info: no incident
+    # #4743: the lock's unit. A revoked or expired row is not locked; the read holds the row.
+    "_LOCK_ROW_SQL": ("revoked_at IS NULL AND expires_at > :now", "FOR NO KEY UPDATE"),
+    "_SET_LOCKED_SQL": ("SET locked_at = :now WHERE", "revoked_at IS NULL RETURNING"),
 }
 
 
@@ -820,3 +823,75 @@ async def test_a_failing_write_ahead_commits_nothing() -> None:
             write_ahead=fails, audit_timeout_s=1.0,
         )  # fmt: skip
     assert log == ["_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL"] and rel.commits == 0
+
+
+# -- #4743: `POST /auth/lock`'s unit of work (`lock_session`), offline: the statements in order,
+# where the write-ahead hook runs, each branch (Postgres: tests/integration/auth/
+# test_session_lock_pg.py).
+
+
+def _lock_unit(
+    read: list[SimpleNamespace],
+) -> tuple[SqlAlchemySessionRepository, _Relational, list[str]]:
+    """A store whose lock read answers `read` and whose update answers the row as locked."""
+    log: list[str] = []
+    rel = _Relational([])
+    script = {"_LOCK_ROW_SQL": read, "_SET_LOCKED_SQL": [_row(locked_at=_T0)]}
+    rel.session = _Scripted(script, log)
+    repo = SqlAlchemySessionRepository(
+        rel,  # type: ignore[arg-type]  # fake relational stub, structurally compatible
+        lambda **f: SessionRecord.model_validate(f),
+    )
+    return repo, rel, log
+
+
+def _lock(
+    repo: SqlAlchemySessionRepository, log: list[str], *, unlocked: bool = True
+) -> Awaitable[Any]:
+    async def ahead(_record: Any) -> None:
+        log.append("ahead")
+
+    return repo.lock_session(
+        "sid", now=_T0, unlocked=lambda _row: unlocked, write_ahead=ahead, audit_timeout_s=1.0
+    )
+
+
+async def test_lock_session_locks_the_live_row_writes_ahead_then_updates_in_one_unit() -> None:
+    repo, rel, log = _lock_unit([_row()])
+
+    locked, locked_now = await _lock(repo, log)
+
+    assert log == ["_LOCK_ROW_SQL", "ahead", "_SET_LOCKED_SQL"]
+    assert [params for _, params in rel.session.calls] == [{"id": "sid", "now": _T0}] * 2
+    assert (rel.units, rel.commits) == (1, 1) and locked_now and locked.locked_at == _T0
+    for name in ("_LOCK_ROW_SQL", "_SET_LOCKED_SQL"):
+        stmt = getattr(sessions_sqlalchemy, name)
+        assert _binds(stmt) == {"id", "now"} and _COLUMNS in str(stmt) and _STATUS_READ in str(stmt)
+
+
+async def test_lock_session_of_a_locked_row_commits_nothing_and_skips_the_write_ahead() -> None:
+    repo, rel, log = _lock_unit([_row(locked_at=_T0)])
+
+    row, locked_now = await _lock(repo, log, unlocked=False)
+
+    assert log == ["_LOCK_ROW_SQL"] and rel.commits == 0
+    assert not locked_now and row.locked_at == _T0
+
+
+async def test_lock_session_of_a_gone_revoked_or_expired_row_answers_none() -> None:
+    repo, rel, log = _lock_unit([])
+    assert await _lock(repo, log) is None
+    assert log == ["_LOCK_ROW_SQL"] and rel.commits == 0
+
+
+async def test_lock_session_with_a_failing_write_ahead_commits_nothing() -> None:
+    repo, rel, log = _lock_unit([_row()])
+
+    async def fails(_record: Any) -> None:
+        raise ConnectionError("audit down")
+
+    with pytest.raises(ConnectionError):
+        await repo.lock_session(
+            "sid", now=_T0, unlocked=lambda _row: True, write_ahead=fails, audit_timeout_s=1.0
+        )
+    assert log == ["_LOCK_ROW_SQL"] and rel.commits == 0

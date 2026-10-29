@@ -235,8 +235,9 @@ async def test_held_write_refused_view_as_expired_and_changes_nothing(
 
 
 #: Contract first (C-6.1), as `_DOCUMENTED_AHEAD` is: an own operation 22 lists before
-#: `OWN_OPERATIONS` has it -> the ticket whose implementation PR moves it there (BQ-3).
-_OWN_AHEAD: dict[tuple[str, str], str] = {("POST", "/auth/lock"): "#4743"}
+#: `OWN_OPERATIONS` has it -> the ticket whose implementation PR moves it there (BQ-3). Empty now:
+#: #4743 moved `POST /auth/lock` there.
+_OWN_AHEAD: dict[tuple[str, str], str] = {}
 
 
 def _contract_own_operations() -> set[tuple[str, str]]:

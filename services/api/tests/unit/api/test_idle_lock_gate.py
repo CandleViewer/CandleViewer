@@ -103,7 +103,7 @@ async def gate() -> Any:
         await g.client.aclose()
 
 
-def test_ungated_operations_are_the_three_allowed_while_locked_and_the_non_bearer_ones() -> None:
+def test_ungated_operations_are_the_four_allowed_while_locked_and_the_non_bearer_ones() -> None:
     """Derived from the contract's `security`, so a new bearer operation is gated by default."""
     assert ungated_operations(_spec()) == LOCKED_OK_OPERATIONS | {
         ("POST", "/auth/login"),
@@ -116,6 +116,7 @@ def test_ungated_operations_are_the_three_allowed_while_locked_and_the_non_beare
     assert LOCKED_OK_OPERATIONS == {
         ("POST", "/auth/unlock"),
         ("POST", "/auth/logout"),
+        ("POST", "/auth/lock"),  # #4743: a locked session's lock answers 200 again
         ("GET", "/auth/session"),
     }
 
@@ -160,6 +161,8 @@ async def test_a_locked_session_is_refused_with_session_idle_locked_and_the_rout
         ("POST", "/settings/arm"),
         ("GET", "/api/v1/market/bars"),
         ("GET", "/auth/session/"),  # exact match only: a variant of an allowed path is gated
+        ("POST", "/auth/lock/"),
+        ("PUT", "/auth/lock"),  # by method too
         ("HEAD", "/no/such/route"),
     ],
 )
@@ -179,6 +182,7 @@ async def test_every_other_request_of_a_locked_session_is_refused(
         ("POST", "/auth/unlock"),
         ("POST", "/api/v1/auth/unlock"),
         ("POST", "/auth/logout"),
+        ("POST", "/auth/lock"),
         ("GET", "/auth/session"),
         ("POST", "/auth/refresh"),
         ("POST", "/auth/login"),

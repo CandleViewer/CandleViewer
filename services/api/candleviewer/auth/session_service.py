@@ -15,6 +15,8 @@ Every Gherkin scenario in the ticket maps to a method here:
   the OMS/WS path must run before honouring a session id.
 - `unlock()` — "Unlock restores context": password-only re-auth while
   still within the absolute lifetime.
+- `lock()` — CMP-098 "Lock now" (#4743): the session locks at once, its lock a fact
+  on its row (`locked_at`) that every check above reads; only `unlock()` lifts it.
 - `revoke()` / `revoke_all()` — single-session revoke and sign-out-
   everywhere (SCR-112).
 - `classify_session()` — #2295: the enrolment-only class of a resolved
@@ -79,7 +81,7 @@ from candleviewer.auth.models import (
     UserRecord,
     UserStatus,
 )
-from candleviewer.auth.session_repository import SessionRepository
+from candleviewer.auth.session_repository import LockWriteAhead, SessionRepository
 from candleviewer.auth.view_as import ViewAsState
 from candleviewer.observability.context import spawn
 
@@ -811,6 +813,35 @@ class SessionService:
             await self.require_active(session_id)  # locked or revoked since the check
             raise SessionNotFound("session disappeared between check and touch")
         return touched
+
+    # -- lock (#4743) ----------------------------------------------------------
+
+    async def lock(
+        self, session_id: str, *, write_ahead: LockWriteAhead, audit_timeout_s: float
+    ) -> tuple[SessionRecord, bool]:
+        """`POST /auth/lock` (22 `authLock`, CMP-098 "Lock now"): lock the session at once, as if
+        its idle deadline fell due, without moving it (`last_seen_at` stays: BQ-5). One unit of
+        work under the row's lock (`SessionRepository.lock_session`). A session that is already
+        idle-locked, by its deadline or by request, comes back as it is with `False`, and
+        *write_ahead* is never awaited: one record per lock. Otherwise *write_ahead* (C-2.9) is
+        awaited with the row, `locked_at` is set, and the locked row comes back with `True`.
+
+        A session revoked, past its absolute lifetime or gone raises what `require_active`
+        raises for it (an expired one is revoked as `expired` and published), else
+        `SessionNotFound` (fail closed). A failing hook raises its error, and one past
+        *audit_timeout_s* `WriteAheadTimeout`, with nothing changed."""
+        now = self._clock()
+        outcome = await self._repository.lock_session(
+            session_id,
+            now=now,
+            unlocked=lambda row: not row.is_idle_locked(now=now),
+            write_ahead=write_ahead,
+            audit_timeout_s=audit_timeout_s,
+        )
+        if outcome is None:
+            await self.require_active(session_id, allow_locked=True)
+            raise SessionNotFound("session ended before its lock")
+        return outcome
 
     # -- unlock -------------------------------------------------------------
 

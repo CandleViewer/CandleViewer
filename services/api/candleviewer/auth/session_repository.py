@@ -10,7 +10,7 @@ Protocol without either module importing the other's types.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Protocol
 
@@ -22,6 +22,11 @@ StepUpState = tuple[dict[str, datetime], int, datetime | None]
 #: and the values it was built with, does no I/O and never awaits. It may note its own outcome on
 #: itself (the strike's `downgraded`), so the repository calls it once, under the row lock.
 StepUpChange = Callable[[StepUpState], StepUpState]
+#: #4743: whether the row, as read under its lock, is unlocked, so the lock goes on. It reads only
+#: the row and the values it was built with, does no I/O and never awaits.
+LockDecision = Callable[[SessionRecord], bool]
+#: #4743: the lock's write-ahead record (C-2.9), awaited with the row under its lock.
+LockWriteAhead = Callable[[SessionRecord], Awaitable[None]]
 
 
 class SessionRepository(Protocol):
@@ -81,6 +86,26 @@ class SessionRepository(Protocol):
         keeping `step_up_failures` and `readonly_until`. A one-factor unlock never
         inherits a two-factor elevation. Same `None` contract as
         `touch_last_seen`."""
+        ...
+
+    async def lock_session(
+        self,
+        session_id: str,
+        *,
+        now: datetime,
+        unlocked: LockDecision,
+        write_ahead: LockWriteAhead,
+        audit_timeout_s: float,
+    ) -> tuple[SessionRecord, bool] | None:
+        """`POST /auth/lock`'s one unit of work (#4743), under the row's lock (`FOR NO KEY
+        UPDATE`), so of concurrent locks of one session exactly one writes anything:
+        - a row revoked, absolute-expired at `now` or gone answers `None`;
+        - a row `unlocked` refuses (locked already, by its deadline or by request) answers
+          `(row, False)`: nothing is written and no hook awaited (one record per lock);
+        - otherwise `write_ahead(row)` is awaited, then `locked_at = now` is set and committed:
+          `(locked row, True)`. `last_seen_at` never moves.
+        A hook past `audit_timeout_s` raises `WriteAheadTimeout`, a hook that fails raises its
+        error and a write that fails the driver's; each rolls everything back."""
         ...
 
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:

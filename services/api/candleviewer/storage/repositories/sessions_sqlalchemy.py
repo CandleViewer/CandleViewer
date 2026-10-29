@@ -23,7 +23,8 @@ can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`). A signed-in insert (MFA 
 resolves its user's critical `auth`/`owner_bootstrapped` event in the same transaction (#4479).
 Every record read also carries the row's lock by request and its last unlock (#4743,
 `0056_sessions_lock_state`): the insert writes the lock a refresh carries, extend's write refuses a
-row that holds one, and an unlock clears it and stamps `unlocked_at` in its one write.
+row that holds one, and an unlock clears it and stamps `unlocked_at` in its one write. The lock
+itself is one unit of work that locks the row first (`lock_session`), as the view-as start's.
 """
 
 from __future__ import annotations
@@ -124,6 +125,19 @@ _LIFT_IDLE_LOCK_SQL = _sql(
     "UPDATE sessions SET last_seen_at = :now, step_up_elevations = '{}'::jsonb, "
     "locked_at = NULL, unlocked_at = :now "
     "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
+)
+# #4743, `POST /auth/lock`'s unit of work (`lock_session`): the row, locked as an UPDATE of non-key
+# columns locks it, so of concurrent locks exactly one writes; a revoked or absolute-expired row is
+# not read, as a lock must not write it. With the user's status, as `find_by_id` reads it (#2911),
+# so the record the lock answers with is a whole one. Then, after the record written ahead (C-2.9),
+# the lock itself: `last_seen_at` never moves.
+_LOCK_ROW_SQL = _sql(
+    "SELECT @COLS@, @STATUS@ FROM sessions WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
+    "AND expires_at > :now FOR NO KEY UPDATE"
+)
+_SET_LOCKED_SQL = _sql(
+    "UPDATE sessions SET locked_at = :now WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
+    "RETURNING @COLS@, @STATUS@"
 )
 _REVOKE_SQL = _sql(
     "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason "
@@ -450,6 +464,31 @@ class SqlAlchemySessionRepository:
 
     async def lift_idle_lock(self, session_id: str, *, now: datetime) -> Any:
         return await self._one(_LIFT_IDLE_LOCK_SQL, {"id": session_id, "now": now})
+
+    async def lock_session(
+        self,
+        session_id: str,
+        *,
+        now: datetime,
+        unlocked: Callable[[Any], bool],
+        write_ahead: Callable[[Any], Awaitable[None]],
+        audit_timeout_s: float,
+    ) -> tuple[Any, bool] | None:
+        """See `SessionRepository.lock_session` (#4743): one transaction under the row's lock."""
+        async with self._relational.unit_of_work() as uow:
+            s, params = uow.session, {"id": session_id, "now": now}
+            row = (await s.execute(_LOCK_ROW_SQL, params)).first()
+            if row is None:
+                return None
+            record = self._make(**row_to_fields(row))
+            if not unlocked(record):
+                return record, False  # rolled back: nothing was written, the row lock goes
+            await bounded_write_ahead(write_ahead(record), audit_timeout_s)
+            locked = (await s.execute(_SET_LOCKED_SQL, params)).first()
+            if locked is None:  # the lock holds the row as read: only a driver fault lands here
+                raise RuntimeError("the locked session row refused its lock")
+            await uow.commit()
+        return self._make(**row_to_fields(locked)), True
 
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> Any:
         return await self._one(_REVOKE_SQL, {"id": session_id, "reason": reason, "now": now})

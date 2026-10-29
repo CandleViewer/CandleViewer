@@ -64,6 +64,9 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     # #2300: the lock lift is no elevation. The password alone lifts the idle lock and the contract
     # says it restores no step-up; 04 §7.2.2 rows 1 and 4a, the authentication rows, demand none.
     ("POST", "/auth/unlock"): "authUnlock: lifts the idle lock, password only; restores no step-up",
+    # #4743: the lock only reduces risk. It voids the session's grants, as any idle lock does, and
+    # demands no step-up (22 `authLock`; a read-only downgrade and view-as refuse it neither).
+    ("POST", "/auth/lock"): "authLock: locks the caller's own session; voids grants, demands none",
     # #2914: a refresh rotates the session and carries the step-up penalty, never a grant: it
     # elevates nothing and demands no step-up.
     ("POST", "/auth/refresh"): "authRefresh: rotates the session, carries the penalty, no grant",

@@ -263,6 +263,14 @@ class _Sessions:
     async def touch(self, session_id: str) -> Any:  # `POST /auth/session/extend` (#2300)
         return await self.require_active(session_id)
 
+    async def lock(
+        self, session_id: str, *, write_ahead: Any, audit_timeout_s: float
+    ) -> tuple[Any, bool]:
+        """`POST /auth/lock` (#4743): its record written ahead, then the row as locked."""
+        row = await self.require_active(session_id)
+        await write_ahead(row)
+        return row.model_copy(update={"locked_at": self.now()}), True
+
     def now(self) -> datetime:  # the session routes judge deadlines by it (#2300)
         return datetime.now(UTC)
 
@@ -376,6 +384,20 @@ class _StepUp:
         return await self.record_pending(session_id, action_class, fingerprint=fingerprint)
 
     async def assert_writable(self, session_id: str) -> None:
+        return None
+
+    @property
+    def chart(self) -> _Chart:  # `POST /auth/lock` records its lock on B16 (#4743)
+        return _Chart()
+
+
+class _Chart:
+    """The B16 chart `POST /auth/lock` records a committed lock on: it records nothing here."""
+
+    async def observe(self, record: Any, now: datetime) -> None:
+        return None
+
+    async def forget(self, session_id: str) -> None:
         return None
 
 

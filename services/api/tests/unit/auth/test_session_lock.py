@@ -5,17 +5,21 @@ lock never moves `last_seen_at` or the idle deadline (BQ-5). No DB, no network, 
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from candleviewer.auth.errors import SessionIdleLocked
+from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession, SessionRecord
+from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import SessionService
+from candleviewer.storage.errors import WriteAheadTimeout
+from tests.conftest import RecordingAuditSink
 
-from .session_fakes import FakeSessionRepository
+from .session_fakes import FakeSessionRepository, LoopClock
 
 _T0 = datetime(2026, 10, 29, 9, 0, 0, tzinfo=UTC)
 _USER = "00000000-0000-4000-8000-000000004743"
@@ -163,3 +167,151 @@ async def test_the_successor_carries_a_lock_that_landed_before_the_claim() -> No
     assert row.last_seen_at == _T0  # carried, never moved
     with pytest.raises(SessionIdleLocked):
         await svc.require_active(str(successor.session_id))
+
+
+# -- `SessionService.lock`: one unit of work under the row lock -----------------------------------
+
+
+class _Ahead:
+    """The lock's write-ahead hook: the rows it was called with, and the row's `locked_at` at
+    that moment (the record must precede the change it describes, C-2.9)."""
+
+    def __init__(self, repo: FakeSessionRepository, *, fails: Exception | None = None) -> None:
+        self.repo, self.fails = repo, fails
+        self.seen: list[tuple[uuid.UUID, datetime | None]] = []
+
+    async def __call__(self, row: SessionRecord) -> None:
+        self.seen.append((row.id, self.repo.sessions[str(row.id)].locked_at))
+        await asyncio.sleep(0)  # a yield, so concurrent locks interleave here
+        if self.fails is not None:
+            raise self.fails
+
+
+async def test_lock_of_a_live_session_writes_ahead_then_sets_locked_at_not_last_seen_at() -> None:
+    svc, repo, clock = _svc()
+    minted = await _mint(svc)
+    clock.now += _EARLY
+    ahead = _Ahead(repo)
+
+    locked, locked_now = await svc.lock(
+        str(minted.session_id), write_ahead=ahead, audit_timeout_s=2.0
+    )
+
+    assert locked_now and ahead.seen == [(minted.session_id, None)]  # written before the lock
+    assert locked.locked_at == clock.now == _row(repo, minted).locked_at
+    assert locked.last_seen_at == _T0 and locked.idle_deadline() == _T0 + timedelta(seconds=_IDLE_S)
+    assert locked.is_idle_locked(now=clock.now)
+
+
+@pytest.mark.parametrize("by", ["deadline", "request"])
+async def test_lock_of_an_already_locked_session_returns_it_and_never_calls_the_write_ahead(
+    by: str,
+) -> None:
+    """One record per lock (BQ-2): nothing changed, so nothing is written."""
+    svc, repo, clock = _svc()
+    minted = await _mint(svc)
+    if by == "request":
+        _locked_by_request(repo, minted, _T0)
+        clock.now += _EARLY
+    else:
+        clock.now += timedelta(seconds=_IDLE_S)
+    before = _row(repo, minted)
+    ahead = _Ahead(repo)
+
+    row, locked_now = await svc.lock(str(minted.session_id), write_ahead=ahead, audit_timeout_s=2.0)
+
+    assert not locked_now and ahead.seen == [] and _row(repo, minted) == before
+    assert row.locked_at == before.locked_at and row.is_idle_locked(now=clock.now)
+
+
+async def test_lock_with_a_failing_write_ahead_changes_nothing() -> None:
+    svc, repo, clock = _svc()
+    minted = await _mint(svc)
+    clock.now += _EARLY
+    refused = RuntimeError("audit writer refused")
+    with pytest.raises(RuntimeError) as raised:
+        await svc.lock(
+            str(minted.session_id), write_ahead=_Ahead(repo, fails=refused), audit_timeout_s=2.0
+        )
+    assert raised.value is refused
+    assert _row(repo, minted).locked_at is None
+    assert not _row(repo, minted).is_idle_locked(now=clock.now)
+
+
+async def test_lock_with_a_write_ahead_past_its_bound_is_a_timeout_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop_clock = LoopClock(monkeypatch)
+    svc, repo, _ = _svc()
+    minted = await _mint(svc)
+
+    async def stalls(row: SessionRecord) -> None:
+        loop_clock.advance(3.0)  # past the 2 s bound: the timeout fires, nothing waits
+        await asyncio.Event().wait()
+
+    with pytest.raises(WriteAheadTimeout):
+        await svc.lock(str(minted.session_id), write_ahead=stalls, audit_timeout_s=2.0)
+    assert _row(repo, minted).locked_at is None
+
+
+@pytest.mark.parametrize("state", ["revoked", "expired", "gone"])
+async def test_lock_of_a_revoked_expired_or_gone_session_raises_and_writes_nothing(
+    state: str,
+) -> None:
+    svc, repo, clock = _svc()
+    minted = await _mint(svc)
+    sid = str(minted.session_id)
+    if state == "revoked":
+        await svc.revoke(sid, reason="admin")
+    elif state == "expired":
+        clock.now += timedelta(hours=12)
+    else:
+        del repo.sessions[sid]
+    ahead = _Ahead(repo)
+    refusal: type[Exception] = SessionNotFound if state == "gone" else SessionRevoked
+    with pytest.raises(refusal):
+        await svc.lock(sid, write_ahead=ahead, audit_timeout_s=2.0)
+    assert ahead.seen == []
+    if state != "gone":
+        row = _row(repo, minted)
+        assert row.locked_at is None and row.revoked_reason == (
+            "expired" if state == "expired" else "admin"
+        )
+
+
+async def test_concurrent_locks_of_one_session_call_the_write_ahead_once() -> None:
+    """Decided under the row lock: the second lock waits, then finds the session locked."""
+    svc, repo, clock = _svc()
+    minted = await _mint(svc)
+    clock.now += _EARLY
+    ahead = _Ahead(repo)
+    sid = str(minted.session_id)
+
+    outcomes = await asyncio.gather(
+        *(svc.lock(sid, write_ahead=ahead, audit_timeout_s=2.0) for _ in range(5))
+    )
+
+    assert sorted(locked_now for _, locked_now in outcomes) == [False] * 4 + [True]
+    assert len(ahead.seen) == 1 and {row.locked_at for row, _ in outcomes} == {clock.now}
+
+
+async def test_the_lock_survives_a_new_session_service_and_chart_over_the_same_store(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    """A restart loses no lock: the row holds it, so a new service refuses the session and a new
+    chart records the lock on its first use (INV-B16-e)."""
+    svc, repo, clock = _svc()
+    minted = await _mint(svc)
+    sid = str(minted.session_id)
+    clock.now += _EARLY
+    await svc.lock(sid, write_ahead=_Ahead(repo), audit_timeout_s=2.0)
+
+    restarted = SessionService(repo, Hasher(), clock=clock)
+    with pytest.raises(SessionIdleLocked):
+        await restarted.require_active(sid)
+    chart = SessionChart()
+    try:
+        await chart.observe(await restarted.require_active(sid, allow_locked=True), clock.now)
+        assert chart.in_state(sid, "idle_locked") and b16_audit.actions() == ["auth.idle_locked"]
+    finally:
+        await chart.stop()

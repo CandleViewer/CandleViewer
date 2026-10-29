@@ -34,9 +34,9 @@ Then, except for the five pre-session operations (contract "Exempt"):
 is the one bound to the presented refresh token, which the route itself loads.
 After its throttles and reuse detection (a rotated-out token only revokes, never
 mints), the route runs the full check with `verify_refresh_csrf()` before it
-audits or rotates. `POST /auth/logout` and `POST /auth/unlock` (exact paths) are
-partial exceptions, only when the `cv_refresh` cookie identifies them (contract
-"Idle lock", #2300): the cookie is present and no access token inside its
+audits or rotates. `POST /auth/logout`, `POST /auth/unlock` and `POST /auth/lock`
+(#4743; exact paths) are partial exceptions, only when the `cv_refresh` cookie
+identifies them (contract "Idle lock", #2300): the cookie is present and no access token inside its
 lifetime is (no bearer, or one past `ACCESS_TOKEN_TTL`). Steps 2-4 still run
 here; step 5, the binding, is the route's, against the cookie's session. One
 identified by its access token is bound here, like every other bearer request.
@@ -102,8 +102,9 @@ _EXEMPT_PATH = re.compile(
 REFRESH_PATH = "/auth/refresh"
 LOGOUT_PATH = "/auth/logout"
 UNLOCK_PATH = "/auth/unlock"
+LOCK_PATH = "/auth/lock"
 #: The POSTs a `cv_refresh` cookie may identify (contract "Idle lock"): their routes bind it.
-_COOKIE_IDENTIFIED_PATHS = frozenset({LOGOUT_PATH, UNLOCK_PATH})
+_COOKIE_IDENTIFIED_PATHS = frozenset({LOGOUT_PATH, UNLOCK_PATH, LOCK_PATH})
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _UNMATCHED = "(unmatched)"
 #: Refusals not bound to a live session, per source IP per window, that are
@@ -219,7 +220,8 @@ def verify_refresh_csrf(
 ) -> CsrfRefusal | None:
     """SR-041 check run by a route against the exact session it acts on: `POST /auth/refresh`
     (the session it is about to rotate), and `POST /auth/unlock` and a cookie-identified
-    `POST /auth/logout` (the session they identify, #2300). `None` means OK."""
+    `POST /auth/logout` or `POST /auth/lock` (the session they identify, #2300, #4743).
+    `None` means OK."""
     if not header or not cookie:
         return CsrfRefusal.MISSING
     if not tokens_equal(header, cookie):
@@ -523,8 +525,8 @@ class CsrfMiddleware:
     def _cookie_identified(
         self, scope: Scope, headers: Headers, record: SessionRecord | None
     ) -> bool:
-        """`POST /auth/logout` or `POST /auth/unlock` that the route identifies by
-        `cv_refresh`: the cookie is present and no access token inside its lifetime
+        """`POST /auth/logout`, `POST /auth/unlock` or `POST /auth/lock` that the route
+        identifies by `cv_refresh`: the cookie is present and no access token inside its lifetime
         identifies a session (none, or *record*, its session, is past `ACCESS_TOKEN_TTL`).
         A bearer this server never issued is not: the route refuses it without reading the
         cookie, so it stays here."""

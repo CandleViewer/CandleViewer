@@ -1,7 +1,7 @@
 """`POST /auth/refresh`, `GET /auth/session`, `GET /auth/sessions`,
 `POST /auth/logout` and `DELETE /me/sessions/{sessionId}` (E09-S03,
-US-ONB-004/009; QA defect #1634), and the idle-lock routes `POST /auth/unlock`
-and `POST /auth/session/extend` (#2300).
+US-ONB-004/009; QA defect #1634), and the idle-lock routes `POST /auth/unlock`,
+`POST /auth/session/extend` (#2300) and `POST /auth/lock` (#4743).
 
 Thin HTTP adapter over `candleviewer.auth.session_service.SessionService`,
 same shape as `api/auth.py`: structural Protocols, RFC 7807 problems, audit
@@ -74,14 +74,15 @@ stays on the writer. A row joins with `lane=True` on its `_audit` call; a call s
 router that writes through `AuditService.lane` needs the same `LaneNotWired` guard.
 
 Idle lock (#2300, contract info "Idle lock"): `GET /auth/session` never re-stamps
-`last_seen_at`. `GET /auth/session`, `POST /auth/unlock` and `POST /auth/logout`
-serve a locked session, identified by an access token inside its lifetime or else
-the current `cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin
+`last_seen_at`. `GET /auth/session`, `POST /auth/unlock`, `POST /auth/logout` and
+`POST /auth/lock` serve a locked session, identified by an access token inside its lifetime or
+else the current `cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin
 and SR-041 checks here); every other operation of a locked session is refused by
 `api.idle_lock`, and a locked or cookie-identified logout ends only its own session.
 `POST /auth/refresh` answers a locked session `401 session_idle_locked` itself, before its
 write-ahead record (#3331). `POST /auth/session/extend` re-stamps it only after its write-ahead
-record, and never lifts a lock.
+record, and never lifts a lock. `POST /auth/lock` (#4743) locks the session at once, its lock a
+fact on the row that every check reads, without moving `last_seen_at`.
 """
 
 from __future__ import annotations
@@ -105,6 +106,7 @@ from candleviewer.api.csrf import (
     ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
     SESSION_REFUSALS_PER_WINDOW,
+    CsrfRefusal,
     RefusalAuditTracker,
     clear_csrf_cookie,
     csrf_problem,
@@ -148,6 +150,7 @@ from candleviewer.auth.models import (
     SessionView,
 )
 from candleviewer.auth.session_chart import SessionChart, SessionChartError, to_us
+from candleviewer.auth.session_repository import LockWriteAhead
 from candleviewer.auth.session_service import (
     ACCESS_TOKEN_TTL,
     PasswordCheck,
@@ -160,6 +163,7 @@ from candleviewer.auth.step_up import PasswordVerdict, grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.statechart.gateway import GatewayError
+from candleviewer.storage.errors import WriteAheadTimeout
 
 REFRESH_COOKIE_PATH = "/api/v1/auth"
 ACCESS_TOKEN_EXPIRES_IN_S = 720  # ADR-0020: 12 min
@@ -222,6 +226,10 @@ class SessionServiceLike(Protocol):
         write_ahead: UnlockWriteAhead | None = None,
     ) -> SessionRecord: ...
 
+    async def lock(
+        self, session_id: str, *, write_ahead: LockWriteAhead, audit_timeout_s: float
+    ) -> tuple[SessionRecord, bool]: ...
+
     async def revoke(self, session_id: str, *, reason: str) -> SessionRecord | None: ...
 
     async def revoke_all(
@@ -237,6 +245,7 @@ class UnlockAuthority(Protocol):
     """What `POST /auth/unlock` needs besides the session service (#2300): the B16
     chart the lock and the unlock are recorded on (B16.7), and the password check on
     login's Argon2id path and lockout counters (SR-015, SR-016). `StepUpService`.
+    `POST /auth/lock` (#4743) records its lock on the same chart.
 
     #4664: the route checks with `hold=False` and holds a refusal itself with *failure_hold*,
     after the session service has written everything a wrong password changes."""
@@ -346,13 +355,14 @@ def _unauthorized(
 #: query parameters its contract operation declares; anything else is refused by
 #: `api.query_allowlist`, never silently ignored (#2573, #2632). Declared query parameters
 #: (22-api-openapi.yaml): `authGetSession` has none; `authListSessions` has `Cursor` and `Limit`;
-#: `authLogout`, `authUnlock` and `revokeMySession` have none (`CsrfToken` is a header,
-#: `sessionId` a path one). `authExtendSession` has none either, but declares no `422`, so
-#: extend checks no query string until the contract does (#2300).
+#: `authLogout`, `authUnlock`, `authLock` (#4743) and `revokeMySession` have none (`CsrfToken` is
+#: a header, `sessionId` a path one). `authExtendSession` has none either, but declares no `422`,
+#: so extend checks no query string until the contract does (#2300).
 GET_SESSION_QUERY: frozenset[str] = frozenset()
 LIST_SESSIONS_QUERY = frozenset({"cursor", "limit"})
 LOGOUT_QUERY: frozenset[str] = frozenset()
 UNLOCK_QUERY: frozenset[str] = frozenset()
+LOCK_QUERY: frozenset[str] = frozenset()
 REVOKE_MY_SESSION_QUERY: frozenset[str] = frozenset()
 
 
@@ -618,7 +628,8 @@ def make_session_router(
 ) -> APIRouter:
     """*audit_tracker*: pass the app's CSRF refusal tracker so both guards share one
     in-flight cap and one shutdown drain. *unlock_authority* is a thunk (step-up exists
-    only after `AuthService.start()`); without one `POST /auth/unlock` answers 503.
+    only after `AuthService.start()`); without one `POST /auth/unlock` and `POST /auth/lock`
+    (whose chart it holds) answer 503.
     *enrolment_refusals*: the enrolment guard's recorder, so unlock's refusals share its
     budgets (#2295). *contained*: Q9's memo, one per router (a test passes a small one)."""
     router = APIRouter(tags=["auth"])
@@ -1086,15 +1097,17 @@ def make_session_router(
             return None
         return body.password.get_secret_value()
 
-    async def _recorded(event: str, step: Awaitable[None]) -> bool:
-        """Await an unlock step on B16 (*event* names it), against the row as read while
-        locked (B16.7); False, logged, when it was not recorded: the chart failed
+    async def _recorded(
+        event: str, step: Awaitable[None], *, log_event: str = "auth.unlock.chart_failed"
+    ) -> bool:
+        """Await an unlock or lock step on B16 (*event* names it), against the row as read while
+        locked (B16.7); False, logged as *log_event*, when it was not recorded: the chart failed
         (`SessionChartError`), or the statechart gateway refused the send (an unknown key,
         the wrong loop, a full inbox)."""
         try:
             await step
         except (SessionChartError, GatewayError) as exc:
-            _log().error("auth.unlock.chart_failed", b16_event=event, error=type(exc).__name__)
+            _log().error(log_event, b16_event=event, error=type(exc).__name__)
             return False
         return True
 
@@ -1115,6 +1128,25 @@ def make_session_router(
             raise
         if not recorded:
             await chart.forget(str(record.id))
+
+    async def _record_lock(chart: SessionChart, locked: SessionRecord, at: datetime) -> None:
+        """The B16 step of a lock this request committed (#4743), its `auth.session_locked`
+        written ahead: `observe` finds the row locked while the chart is `active` and sends
+        `IDLE_DEADLINE`, whose `auth.idle_locked` the chart writes (28 B16.7); never a `REQUEST`.
+        As for an unlock's committed outcome (`_record_committed`), B16 only records (C-2.21): a
+        failed step (the chart failed, or the gateway refused the send) never changes the answer,
+        which states what was committed. The chart is dropped instead, so its next use rebuilds
+        it from the row and records the lock first (INV-B16-e), an unlock's included. A step cut
+        short by a cancelled request drops it the same way before the cancellation goes on."""
+        try:
+            recorded = await _recorded(
+                "IDLE_DEADLINE", chart.observe(locked, at), log_event="auth.lock.chart_failed"
+            )
+        except asyncio.CancelledError:
+            await chart.forget(str(locked.id))
+            raise
+        if not recorded:
+            await chart.forget(str(locked.id))
 
     @router.post("/auth/refresh")
     async def refresh(request: Request) -> Response:
@@ -1511,6 +1543,80 @@ def make_session_router(
         )
         try:
             info = await _session_info(identity, unlocked, now())
+        except LookupError:  # the user went after the commit: as `/me` answers, never a 500
+            return _unauthorized()
+        return JSONResponse(info)
+
+    @router.post("/auth/lock")
+    async def lock(request: Request) -> Response:
+        """CMP-098 "Lock now" (contract `authLock`, #4743): the calling session locks at once, as
+        if its idle deadline fell due, without moving it. Identified as in "Idle lock"; a
+        cookie-identified call gets the SR-042 Origin and SR-041 checks before anything about
+        the session is told, as unlock orders them. One `auth.session_locked` per lock, written
+        ahead under the row's lock (C-2.9): a session that is already locked answers `200` and
+        writes nothing, even with the audit sink down. B16 records a lock once it is committed
+        (`_record_lock`), and a failed step never changes the committed answer, as for unlock."""
+        authority = unlock_authority() if unlock_authority is not None else None
+        if not auth_service.sessions_is_active or authority is None:
+            return _problem(503, "Service unavailable", "session backend is not wired")
+        if identity is None:
+            return _problem(
+                501, "Not implemented", "identity provider not wired (E09-T03); lock disabled"
+            )
+        caller = await _identify(request)
+        if caller is None:
+            return _unauthorized()
+        record, by_cookie = caller
+        ip = _source_ip(request)
+        if by_cookie:
+            if not _origin_ok(request, allowed_origins):
+                return csrf_problem(CsrfRefusal.CROSS_ORIGIN)  # SR-042, before any record
+            if (refusal := await _csrf_refusal(request, record, ip)) is not None:
+                return refusal
+        at = now()
+        if record.is_revoked:
+            return idle_lock.session_revoked_problem(record.revoked_reason or "revoked")
+        if record.is_absolute_expired(now=at):
+            return idle_lock.session_revoked_problem("expired")
+        try:  # #2911's on-use backstop, as on unlock: a disabled user's session is revoked
+            record = await auth_service.sessions.require_active(str(record.id), allow_locked=True)
+        except SessionRevoked as exc:
+            return idle_lock.session_revoked_problem(exc.reason)
+        except SessionNotFound:
+            return _unauthorized()
+        op = ("POST", "/auth/lock")  # #2295: not an enrolment-only session's operation
+        if auth_service.enrolment_gate_is_active and (
+            refused := await route_refusal(
+                auth_service, enrolment_refusals, record, operation=op, ip=ip, logged_as=op
+            )
+        ):
+            return refused  # before the lock state is told or anything is recorded
+        if (refusal := undeclared_query_refusal(request, LOCK_QUERY)) is not None:
+            return refusal  # SR-026: before anything is locked or recorded
+
+        async def write_ahead(row: SessionRecord) -> None:
+            """C-2.9, under the row's lock, before `locked_at` is set: the actor, the session and
+            the time (the lock moment), nothing else of the row."""
+            await _audit("auth.session_locked", record=row, ip=ip)
+
+        try:
+            locked, locked_now = await auth_service.sessions.lock(
+                str(record.id), write_ahead=write_ahead, audit_timeout_s=audit_timeout_s
+            )
+        except (AuditUnavailableError, WriteAheadTimeout) as exc:
+            _log().error("auth.lock.audit_unavailable", error=type(exc).__name__)
+            return _audit_down()  # rolled back: the session is not locked
+        except SessionRevoked as exc:
+            if exc.reason == "rotated":  # a refresh rotated the row while the lock waited
+                return _unauthorized()
+            return idle_lock.session_revoked_problem(exc.reason)
+        except SessionNotFound:
+            return _unauthorized()
+        at = now()
+        if locked_now:
+            await _record_lock(authority.chart, locked, at)
+        try:
+            info = await _session_info(identity, locked, at)
         except LookupError:  # the user went after the commit: as `/me` answers, never a 500
             return _unauthorized()
         return JSONResponse(info)
