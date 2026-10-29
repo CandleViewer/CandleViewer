@@ -895,3 +895,13 @@ async def test_lock_session_with_a_failing_write_ahead_commits_nothing() -> None
             "sid", now=_T0, unlocked=lambda _row: True, write_ahead=fails, audit_timeout_s=1.0
         )
     assert log == ["_LOCK_ROW_SQL"] and rel.commits == 0
+
+
+async def test_lock_session_whose_update_finds_no_row_raises_and_commits_nothing() -> None:
+    """The read holds the row, so only a driver fault leaves the update without one: fail loudly,
+    commit nothing."""
+    repo, rel, log = _lock_unit([_row()])
+    rel.session.script["_SET_LOCKED_SQL"] = []
+    with pytest.raises(RuntimeError, match="refused its lock"):
+        await _lock(repo, log)
+    assert log == ["_LOCK_ROW_SQL", "ahead", "_SET_LOCKED_SQL"] and rel.commits == 0

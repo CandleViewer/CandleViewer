@@ -16,7 +16,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.api.enrolment_guard import REFUSAL_ACTION
 from candleviewer.audit.models import AuditOutcome, Severity
-from candleviewer.auth.models import MintedSession, UserStatus
+from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
 from candleviewer.auth.session_chart import to_us
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, SessionClass
 from candleviewer.statechart.bindings.b16_session import elevation_view
@@ -30,6 +30,7 @@ from ._world import (
     _bearer,
     _conforms,
     _cookie,
+    _Identity,
     _open,
     _unlock,
 )
@@ -226,6 +227,68 @@ async def test_rotated_away_credentials_are_unauthenticated_never_session_revoke
         r = await _lock(w, headers)
         assert (r.status_code, r.json().get("code")) == (401, "unauthenticated")
     assert (await w.row(rotated.minted)).locked_at is None
+
+
+async def test_a_session_gone_before_the_backstop_re_reads_it_is_unauthenticated(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row went after the route read it: the uniform 401, as from unlock, nothing recorded."""
+    minted = await _live(w)
+    peek = w.sessions.peek_access_token
+
+    async def then_gone(token: str) -> SessionRecord | None:
+        found = await peek(token)
+        del w.repo.sessions[str(minted.session_id)]
+        return found
+
+    monkeypatch.setattr(w.sessions, "peek_access_token", then_gone)
+    r = await _lock(w, _bearer(minted))
+    assert (r.status_code, r.json().get("code")) == (401, "unauthenticated")
+    assert w.audit.writer.records == [] and w.b16.calls == []
+
+
+@pytest.mark.parametrize(
+    ("meanwhile", "status", "code"),
+    [("rotated", 401, "unauthenticated"), ("admin", 401, "session_revoked"),
+     ("gone", 401, "unauthenticated")],
+)  # fmt: skip
+async def test_a_session_ended_while_the_lock_waited_is_refused_and_nothing_is_recorded(
+    w: World, monkeypatch: pytest.MonkeyPatch, meanwhile: str, status: int, code: str
+) -> None:
+    """A refresh claim (`rotated`), a revoke or a deletion lands before the lock's unit reads the
+    row: a rotated-away session gets the uniform 401 (22 `authLock`), a revoked one
+    `session_revoked`, a gone one the uniform 401; nothing is recorded or locked."""
+    minted = await _live(w)
+    sid, lock_session = str(minted.session_id), w.repo.lock_session
+
+    async def ended_first(session_id: str, **kw: Any) -> tuple[SessionRecord, bool] | None:
+        if meanwhile == "gone":
+            del w.repo.sessions[sid]
+        else:
+            await w.repo.revoke(sid, reason=meanwhile, now=w.clock.now)
+        return await lock_session(session_id, **kw)
+
+    monkeypatch.setattr(w.repo, "lock_session", ended_first)
+    r = await _lock(w, _bearer(minted))
+    assert (r.status_code, r.json().get("code")) == (status, code)
+    assert w.audit.writer.records == [] and w.b16.calls == []
+    assert sid not in w.repo.sessions or w.repo.sessions[sid].locked_at is None
+
+
+async def test_a_user_gone_after_the_lock_committed_is_401_never_a_500(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As unlock: the lock stands, recorded; the answer the identity read cannot build is 401."""
+    minted = await _live(w)
+
+    async def gone(_self: Any, _user_id: str) -> dict[str, Any]:
+        raise LookupError("no such user")
+
+    monkeypatch.setattr(_Identity, "user", gone)
+    r = await _lock(w, _bearer(minted))
+    assert (r.status_code, r.json().get("code")) == (401, "unauthenticated")
+    assert (await w.row(minted)).locked_at is not None
+    assert w.audit.writer.actions() == ["auth.session_locked"]
 
 
 async def test_lock_needs_a_credential_and_a_never_issued_one_is_unauthenticated(

@@ -246,7 +246,7 @@ _ROW_REVOKERS = frozenset({"_revoke_row"})
 _NON_REVOKING = frozenset(
     "create_session find_by_id find_by_refresh_hash find_by_access_token_jti find_live_by_user "
     "touch_last_seen lift_idle_lock update_step_up_state consume_step_up_key link_rotation "
-    "walk_rotation_family".split()
+    "walk_rotation_family lock_session".split()  # lock_session (#4743): it locks, never revokes
 )
 
 

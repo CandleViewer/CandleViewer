@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -344,3 +345,18 @@ async def test_b16s_next_read_records_the_lock_at_its_own_moment(
         assert recorded["after_state"]["idle_locked_at_us"] == to_us(moment)
     finally:
         await chart.stop()
+
+
+class _LiveButUnlockable(FakeSessionRepository):
+    """A lock unit that finds no row while every other read finds it live (a store fault)."""
+
+    async def lock_session(self, session_id: str, **_kw: Any) -> None:
+        return None
+
+
+async def test_lock_fails_closed_when_its_unit_finds_no_row_the_reads_find_live() -> None:
+    svc, repo, _ = _svc(_LiveButUnlockable())
+    minted = await _mint(svc)
+    with pytest.raises(SessionNotFound):
+        await svc.lock(str(minted.session_id), write_ahead=_Ahead(repo), audit_timeout_s=2.0)
+    assert _row(repo, minted).locked_at is None
