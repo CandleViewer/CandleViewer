@@ -386,20 +386,6 @@ class _StepUp:
     async def assert_writable(self, session_id: str) -> None:
         return None
 
-    @property
-    def chart(self) -> _Chart:  # `POST /auth/lock` records its lock on B16 (#4743)
-        return _Chart()
-
-
-class _Chart:
-    """The B16 chart `POST /auth/lock` records a committed lock on: it records nothing here."""
-
-    async def observe(self, record: Any, now: datetime) -> None:
-        return None
-
-    async def forget(self, session_id: str) -> None:
-        return None
-
 
 class _Invites:
     """Invite service seam. Every owner operation reports "no such invite" (4xx) and creates

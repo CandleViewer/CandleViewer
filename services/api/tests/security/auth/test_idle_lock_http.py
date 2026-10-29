@@ -22,6 +22,7 @@ from candleviewer.api.idle_lock import ungated_operations
 from candleviewer.api.sessions import REFRESH_COOKIE
 from candleviewer.auth.csrf import CSRF_COOKIE
 from candleviewer.auth.models import MintedSession
+from candleviewer.auth.session_chart import to_us
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from tests.csrf_helpers import csrf_headers
 
@@ -430,13 +431,18 @@ def test_a_session_locked_by_request_reads_itself_relocks_and_unlocks_with_the_p
     assert again.status_code == 200 and again.json()["session"]["locked"] is True
     gated = stack.client.get("/auth/sessions", headers=headers)
     assert (gated.status_code, _code(gated)) == (401, "session_idle_locked")
+    row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    assert row is not None and row.locked_at is not None
+    stack.clock.now += timedelta(seconds=30)  # B16 reads the row after the lock
     r = stack.client.post("/auth/unlock", headers=headers, json={"password": PW})
     assert r.status_code == 200 and r.json()["session"]["locked"] is False, r.text
     assert [rec["action"] for rec in stack.audit.records] == [
         "auth.session_locked",
-        "auth.idle_locked",
+        "auth.idle_locked",  # B16, at its next read of the row (the unlock's), at the lock moment
         "auth.session_unlocked",
     ]
+    (idle,) = stack.audit.of("auth.idle_locked")
+    assert idle["after_state"]["idle_locked_at_us"] == to_us(row.locked_at)
     assert stack.client.get("/auth/sessions", headers=headers).status_code == 200
 
 
@@ -448,10 +454,7 @@ def test_after_a_reload_the_cookie_alone_locks_through_the_csrf_guard(stack: Sta
     stack.clock.now += ACCESS_TOKEN_TTL  # the access token is gone, the session is not locked
     r = stack.client.post("/auth/lock", headers=_cookie_only(stack, minted, minted))
     assert r.status_code == 200 and r.json()["session"]["locked"] is True, r.text
-    assert [rec["action"] for rec in stack.audit.records] == [
-        "auth.session_locked",
-        "auth.idle_locked",
-    ]
+    assert [rec["action"] for rec in stack.audit.records] == ["auth.session_locked"]  # B16: none
     row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
     assert row is not None and row.locked_at == stack.clock.now
 

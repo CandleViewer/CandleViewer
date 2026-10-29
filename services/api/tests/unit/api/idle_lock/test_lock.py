@@ -16,11 +16,10 @@ from structlog.testing import capture_logs
 
 from candleviewer.api.enrolment_guard import REFUSAL_ACTION
 from candleviewer.audit.models import AuditOutcome, Severity
-from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
+from candleviewer.auth.models import MintedSession, UserStatus
+from candleviewer.auth.session_chart import to_us
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, SessionClass
-from candleviewer.statechart.bindings import b16_session
 from candleviewer.statechart.bindings.b16_session import elevation_view
-from candleviewer.statechart.gateway import GatewayError, GatewayOverloadedError
 from tests.conftest import RecordingAuditSink
 from tests.unit.auth.session_fakes import LoopClock
 
@@ -31,7 +30,6 @@ from ._world import (
     _bearer,
     _conforms,
     _cookie,
-    _FailingB16Sink,
     _open,
     _unlock,
 )
@@ -112,21 +110,23 @@ async def test_lock_of_a_locked_session_answers_200_even_with_the_audit_sink_dow
     assert r.status_code == 200 and r.json()["session"]["locked"] is True
 
 
-async def test_lock_records_idle_deadline_on_b16_and_never_request(
-    w: World, monkeypatch: pytest.MonkeyPatch
+async def test_lock_sends_b16_nothing_and_its_next_read_records_the_lock_at_its_moment(
+    w: World,
 ) -> None:
-    """BQ-1 (28 B16.7): the chart takes `IDLE_DEADLINE` into `auth.idle_locked` and writes that
-    record; the route never sends `REQUEST` (or anything through `record`)."""
+    """The orchestrator's ruling (option c; 28 B16.7, C-2.21): as extend, the lock sends B16
+    nothing, never a `REQUEST`; the row is the truth. The chart's next read of the row, here the
+    unlock's, records `auth.idle_locked` with the row's `locked_at` as its moment, not the time
+    of that read (INV-B16-e)."""
     minted = await _live(w)
-    sent: list[str] = []
-
-    async def record(_row: SessionRecord, _at: Any, event: str, **_kw: Any) -> None:
-        sent.append(event)
-
-    monkeypatch.setattr(w.step_up.chart, "record", record)
     assert (await _lock(w, _bearer(minted))).status_code == 200
-    assert sent == [] and w.b16.actions() == ["auth.idle_locked"]
-    assert w.chart_state(minted) >= {"auth.idle_locked"}
+    assert w.b16.calls == [] and w.chart_state(minted) == frozenset()
+    locked_at = (await w.row(minted)).locked_at
+    assert locked_at is not None
+    w.clock.now += timedelta(minutes=3)  # the read comes later than the lock
+    assert (await _unlock(w, _bearer(minted))).status_code == 200
+    [recorded] = w.b16.calls
+    assert recorded["action"] == "auth.idle_locked"
+    assert recorded["after_state"]["idle_locked_at_us"] == to_us(locked_at) != to_us(w.clock.now)
 
 
 async def test_every_later_request_of_a_session_locked_by_request_is_session_idle_locked(
@@ -309,14 +309,15 @@ async def test_lock_refuses_an_enrolment_only_session_its_cookie_names(w: World)
     assert (await w.row(minted)).locked_at is None and w.b16.calls == []
 
 
-async def test_lock_without_a_session_chart_authority_is_503_and_locks_nothing(
-    b16_audit: RecordingAuditSink,
-) -> None:
+async def test_lock_needs_no_session_chart_authority(b16_audit: RecordingAuditSink) -> None:
+    """The lock sends B16 nothing, so it needs no chart: without the unlock authority (whose chart
+    B16 lives on) the session still locks, and only its own record is written."""
     w = await _open(b16_audit, authority=False)
     try:
         minted = await _live(w)
-        assert (await _lock(w, _bearer(minted))).status_code == 503
-        assert (await w.row(minted)).locked_at is None and w.audit.writer.records == []
+        assert (await _lock(w, _bearer(minted))).status_code == 200
+        assert (await w.row(minted)).locked_at is not None
+        assert w.audit.writer.actions() == ["auth.session_locked"] and w.b16.calls == []
     finally:
         await w.client.aclose()
         await w.step_up.stop()
@@ -383,109 +384,23 @@ async def test_lock_whose_write_ahead_outlasts_its_bound_is_503_and_locks_nothin
     assert (await w.row(minted)).locked_at is None and w.b16.calls == []
 
 
-async def test_lock_writes_its_record_before_the_row_and_b16_after_it(
+async def test_lock_writes_its_record_before_the_row_and_sends_b16_nothing(
     w: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """C-2.9: `auth.session_locked` while the row is still unlocked, under its lock; B16's
-    `auth.idle_locked` only once the row shows the lock (C-2.21)."""
+    """C-2.9: `auth.session_locked`, the record of the lock, while the row is still unlocked,
+    under its lock; nothing reaches B16 at lock time."""
     minted = await _live(w)
     seen: list[tuple[str, Any]] = []
-    writer_emit, b16_emit = w.audit.writer.emit, w.b16.emit
-
-    async def row_locked_at() -> Any:
-        return w.repo.sessions[str(minted.session_id)].locked_at
+    writer_emit = w.audit.writer.emit
 
     async def on_writer(action: str, **kw: Any) -> None:
-        seen.append((action, await row_locked_at()))
+        seen.append((action, w.repo.sessions[str(minted.session_id)].locked_at))
         await writer_emit(action, **kw)
 
-    async def on_b16(action: str, **kw: Any) -> None:
-        seen.append((action, await row_locked_at()))
-        await b16_emit(action, **kw)
-
     monkeypatch.setattr(w.audit.writer, "emit", on_writer)
-    monkeypatch.setattr(w.b16, "emit", on_b16)
     assert (await _lock(w, _bearer(minted))).status_code == 200
-    assert seen == [("auth.session_locked", None), ("auth.idle_locked", w.clock.now)]
-
-
-async def test_a_lock_the_chart_misses_answers_200_and_the_chart_records_it_on_next_use() -> None:
-    """The lock committed with `auth.session_locked` written ahead, so a failed `IDLE_DEADLINE`
-    step answers the committed state, 200 and locked, never 503 (B16 only records, C-2.21), as
-    an unlock's does. The chart is dropped; its next use, the unlock's, rebuilds it from the row
-    and records the lock before the unlock (INV-B16-e). A retry in between writes nothing."""
-    sink = _FailingB16Sink("auth.idle_locked")
-    b16_session.set_audit_sink(sink)
-    w = await _open(sink)
-    try:
-        minted = await _live(w)
-        with capture_logs() as logs:
-            r = await _lock(w, _bearer(minted))
-        assert r.status_code == 200, r.text
-        assert r.json()["session"]["locked"] is True
-        failed = [e for e in logs if e["event"] == "auth.lock.chart_failed"]
-        assert [(e["b16_event"], e["error"]) for e in failed] == [
-            ("IDLE_DEADLINE", "SessionChartError")
-        ]
-        assert (await w.row(minted)).is_idle_locked(now=w.clock.now)
-        assert w.audit.writer.actions() == ["auth.session_locked"] and sink.actions() == []
-        assert w.step_up.chart.interpreter(str(minted.session_id)) is None  # dropped
-        assert (await _lock(w, _bearer(minted))).status_code == 200
-        assert w.audit.writer.actions() == ["auth.session_locked"] and sink.actions() == []
-        sink.fail_on = set()
-        assert (await _unlock(w, _bearer(minted))).status_code == 200
-        assert sink.actions() == ["auth.idle_locked"]
-    finally:
-        await w.client.aclose()
-        await w.step_up.stop()
-
-
-@pytest.mark.parametrize("refusal", [GatewayOverloadedError("s", "control")], ids=["overloaded"])
-async def test_a_gateway_refusal_after_the_commit_answers_200_and_drops_the_chart(
-    w: World, monkeypatch: pytest.MonkeyPatch, refusal: GatewayError
-) -> None:
-    """The statechart gateway refuses the step after the lock committed: the committed lock is
-    the answer, never 500 or 503, the miss is logged, and the chart is dropped."""
-    minted = await _live(w)
-
-    async def refused(_record: SessionRecord, _at: Any) -> None:
-        raise refusal
-
-    monkeypatch.setattr(w.step_up.chart, "observe", refused)
-    with capture_logs() as logs:
-        r = await _lock(w, _bearer(minted))
-    assert r.status_code == 200 and r.json()["session"]["locked"] is True
-    failed = [e for e in logs if e["event"] == "auth.lock.chart_failed"]
-    assert [(e["b16_event"], e["error"]) for e in failed] == [
-        ("IDLE_DEADLINE", type(refusal).__name__)
-    ]
-    assert (await w.row(minted)).locked_at is not None
-    assert w.step_up.chart.interpreter(str(minted.session_id)) is None
-
-
-async def test_a_lock_cancelled_during_its_b16_step_drops_the_chart_and_stays_cancelled(
-    w: World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The client goes away while the lock is recorded on B16, after it committed: the
-    cancellation goes on, and the chart is dropped as for a failed step, so its next use
-    rebuilds it from the row and records the lock."""
-    minted = await _live(w)
-    observe, pending = w.step_up.chart.observe, asyncio.Event()
-
-    async def stall(row: SessionRecord, at: Any) -> None:
-        await observe(row, at)  # the chart is up: the drop below is what removes it
-        pending.set()
-        await asyncio.Event().wait()  # until the request is cancelled
-
-    monkeypatch.setattr(w.step_up.chart, "observe", stall)
-    request = asyncio.create_task(_lock(w, _bearer(minted)))
-    await pending.wait()
-    request.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await request
-    assert (await w.row(minted)).locked_at is not None
-    assert w.audit.writer.actions() == ["auth.session_locked"]
-    assert w.step_up.chart.interpreter(str(minted.session_id)) is None
+    assert seen == [("auth.session_locked", None)] and w.b16.calls == []
+    assert (await w.row(minted)).locked_at == w.clock.now
 
 
 async def test_a_lock_racing_another_lock_locks_once_writes_one_record_and_both_answer_200(
@@ -495,14 +410,14 @@ async def test_a_lock_racing_another_lock_locks_once_writes_one_record_and_both_
     answers = await asyncio.gather(*(_lock(w, _bearer(minted)) for _ in range(2)))
     assert [a.status_code for a in answers] == [200, 200]
     assert all(a.json()["session"]["locked"] for a in answers)
-    assert w.audit.writer.actions() == ["auth.session_locked"]
-    assert w.b16.actions() == ["auth.idle_locked"]
+    assert w.audit.writer.actions() == ["auth.session_locked"] and w.b16.calls == []
 
 
 async def test_the_lock_records_carry_ids_and_times_only(w: World) -> None:
     """C-12.6: `auth.session_locked` carries the actor, the session and the request, and no
-    state of the row (no token hash, no grant); B16's `auth.idle_locked` its elevation view only:
-    class names, counts and times, never a grant key, challenge or token hash."""
+    state of the row (no token hash, no grant); B16's `auth.idle_locked`, written at its next read
+    of the row, its elevation view and the lock's moment only: class names, counts and times,
+    never a grant key, challenge or token hash."""
     minted = await _live(w)
     sid = str(minted.session_id)
     grace = {"keys": w.clock.now + timedelta(minutes=4)}
@@ -521,9 +436,11 @@ async def test_the_lock_records_carry_ids_and_times_only(w: World) -> None:
         "reason": None,
         "after_state": None,
     }
+    assert (await _unlock(w, _bearer(minted))).status_code == 200  # B16's next read of the row
     [b16] = w.b16.calls
     view = set(elevation_view({}))
-    assert set(b16["before_state"]) == set(b16["after_state"]) == view
+    assert set(b16["before_state"]) == view
+    assert set(b16["after_state"]) == {*view, "idle_locked_at_us"}
     assert b16["before_state"]["elevated_classes"] == ["keys"]
     for secret in (row.refresh_token_hash, str(row.access_token_jti), minted.access_token):
         assert secret not in f"{locked}{b16}"

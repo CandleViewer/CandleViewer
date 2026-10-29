@@ -14,7 +14,7 @@ import pytest
 from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession, SessionRecord
-from candleviewer.auth.session_chart import SessionChart
+from candleviewer.auth.session_chart import SessionChart, to_us
 from candleviewer.auth.session_service import SessionService
 from candleviewer.storage.errors import WriteAheadTimeout
 from tests.conftest import RecordingAuditSink
@@ -313,5 +313,34 @@ async def test_the_lock_survives_a_new_session_service_and_chart_over_the_same_s
     try:
         await chart.observe(await restarted.require_active(sid, allow_locked=True), clock.now)
         assert chart.in_state(sid, "idle_locked") and b16_audit.actions() == ["auth.idle_locked"]
+    finally:
+        await chart.stop()
+
+
+@pytest.mark.parametrize("by", ["request", "deadline"])
+async def test_b16s_next_read_records_the_lock_at_its_own_moment(
+    b16_audit: RecordingAuditSink, by: str
+) -> None:
+    """The orchestrator's ruling (option c): B16 is sent nothing at lock time and records the
+    lock when it next reads the row (INV-B16-e). Its `auth.idle_locked` carries the lock's own
+    moment, the row's `locked_at` for a lock by request and the idle deadline for a deadline
+    lock, never the time of that read."""
+    svc, repo, clock = _svc()
+    minted = await _mint(svc)
+    sid = str(minted.session_id)
+    if by == "request":
+        clock.now += _EARLY
+        await svc.lock(sid, write_ahead=_Ahead(repo), audit_timeout_s=2.0)
+        moment = clock.now
+    else:
+        moment = _T0 + timedelta(seconds=_IDLE_S)
+    assert b16_audit.calls == []  # nothing reached B16 at lock time
+    clock.now = moment + timedelta(minutes=7)  # the chart reads the row much later
+    chart = SessionChart()
+    try:
+        await chart.observe(await svc.require_active(sid, allow_locked=True), clock.now)
+        [recorded] = b16_audit.calls
+        assert recorded["action"] == "auth.idle_locked"
+        assert recorded["after_state"]["idle_locked_at_us"] == to_us(moment)
     finally:
         await chart.stop()
