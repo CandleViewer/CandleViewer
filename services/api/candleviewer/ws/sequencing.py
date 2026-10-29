@@ -393,18 +393,28 @@ def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Render
     if body.meta:  # `snapshot` sized the budget without the owner's keys, which every chunk carries
         max_part_bytes -= len(_dumps(dict(body.meta)))
     flags = _flags(body, sub.replay_session_id is not None)
+    ps, qs = body.price_scale, body.qty_scale
     frames: list[Frame] = []
     for part in body.parts:
-        scaled = replace(
-            part, flags=part.flags | flags, price_scale=body.price_scale, qty_scale=body.qty_scale
-        )
+        if part.raw is not None:  # packed (#605): one unit; its header is set as it is written
+            frames.extend(split_frame(part, max_part_bytes))
+            continue
+        scaled = replace(part, flags=part.flags | flags, price_scale=ps, qty_scale=qs)
         frames.extend(split_frame(scaled, max_part_bytes))
     last = len(frames) - 1
-    out = tuple(  # weight 1: a snapshot is rare, so every chunk is timed and sized
-        encode_b64(f if i == last else replace(f, flags=f.flags | FLAG_PARTIAL), 1)
-        for i, f in enumerate(frames)
-    )
+    out = tuple(_chunk(f, i == last, flags, ps, qs) for i, f in enumerate(frames))
     return Rendered(None, out, body.stale, body.meta, complete, root)
+
+
+def _chunk(frame: Frame, last: bool, flags: int, ps: int, qs: int) -> str:
+    """One snapshot chunk as base64, weight 1 (a snapshot is rare: every chunk is timed and
+    sized); every chunk but the last carries `partial`. A packed part gets its header here."""
+    partial = 0 if last else FLAG_PARTIAL
+    if frame.raw is not None:
+        return encode_b64(
+            frame, 1, flags=frame.flags | flags | partial, price_scale=ps, qty_scale=qs
+        )
+    return encode_b64(frame if last else replace(frame, flags=frame.flags | partial), 1)
 
 
 # -- chunking ------------------------------------------------------------------------------------
@@ -413,7 +423,12 @@ def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Render
 def split_frame(frame: Frame, max_bytes: int) -> list[Frame]:
     """Split one CVWB frame into frames of at most `max_bytes` encoded bytes, at record / group
     boundaries (each chunk is a valid frame; header and trailer repeat). A single record, group or
-    heatmap column larger than `max_bytes` cannot be split and raises `FrameEncodeError`."""
+    heatmap column larger than `max_bytes` cannot be split and raises `FrameEncodeError`, as does a
+    packed part (`binary.pack`, a producer's pre-encoded part), which is never cut."""
+    if frame.raw is not None:  # a packed part (#605): its bytes are one unit, never cut
+        if len(frame.raw) > max_bytes:
+            raise FrameEncodeError(f"body_kind {frame.body_kind}: a packed part exceeds the budget")
+        return [frame]
     kind = KINDS[frame.body_kind]
     fixed = HEADER.size + (kind.trailer.size if kind.trailer is not None else 0)
     if kind.group_prefix is not None:
@@ -781,7 +796,7 @@ class TopicEmitter:
             if coalesced_count > 1:
                 flags |= FLAG_COALESCED
             weight = 0 if received is None else SAMPLE_EVERY  # the stamped delta is timed too
-            frame |= {"e": "b64", "p": encode_b64(replace(part, flags=flags), weight)}
+            frame |= {"e": "b64", "p": encode_b64(part, weight, flags=flags)}
         else:
             p = dict(body or {})  # a fresh dict per subscription: no shared private buffers
             if fam in COUNT_DISCLOSED:

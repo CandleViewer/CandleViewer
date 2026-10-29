@@ -1111,6 +1111,7 @@ def _heatmap_parts(body: dict[str, Any], like: Frame) -> list[tuple[dict[str, An
             flags=flags,
             ts_base_ms=int(col["t_ms"]),
             prefix=(0, price_min, step),
+            raw=None,  # a packed producer part holds its own column: this one is rebuilt
         )
         out.append(({**body, "columns": [col]}, frame))
     return out

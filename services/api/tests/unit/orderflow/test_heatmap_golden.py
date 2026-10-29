@@ -12,7 +12,7 @@ import os
 from typing import Any
 
 from candleviewer.book.models import BookPhase
-from candleviewer.orderflow.heatmap import COLUMN_MS, HeatmapSpec
+from candleviewer.orderflow.heatmap import COLUMN_MS, HeatmapSpec, wire_column
 from tests._corpus import CORPUS_ROOT
 from tests.chaos.ws._book import _recorded
 from tests.unit.book._builders import delta, snap
@@ -45,8 +45,8 @@ async def _columns() -> list[dict[str, Any]]:
     assert eng.phase is BookPhase.LIVE
     out = []
     for entry in w.topic._symbols[SYM].specs[SPEC].ring:
-        assert entry.wire is not None
-        out.append({**entry.wire, "estimated": entry.column.estimated,
+        wire = wire_column(entry.column, tick)
+        out.append({**wire, "estimated": entry.column.estimated,
                     "samples_held": entry.column.samples})  # fmt: skip
     assert len(out) == len(ring(w, SPEC)) == COLUMNS
     return out

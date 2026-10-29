@@ -262,6 +262,7 @@ async def test_a_heatmap_reference_holds_the_symbols_book() -> None:
 def test_heatmap_part_is_a_one_column_kind_6_frame() -> None:
     frame = heatmap_part(1_700_000_000_000, 99_510, 1, ((1_000, 2_000),), 1, 3, True)
     assert frame.body_kind == HEATMAP_COLUMN and frame.flags & 1
+    assert frame.raw is not None  # packed at the close: encoded once (#605, M-1)
     back = structured(decode(encode(frame)))
     assert back["columns"] == [
         {"t_ms": 1_700_000_000_000, "price_min": "9951.0", "price_step": "0.1",

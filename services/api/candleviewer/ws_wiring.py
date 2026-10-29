@@ -68,7 +68,14 @@ from candleviewer.recorder.ws_topic import RecorderTopic
 from candleviewer.rules.manager import Actor, RuleRow, rule_visible
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws import permissions as ws_permissions
-from candleviewer.ws.binary import BOOK_DELTA, BOOK_SNAPSHOT, FLAG_ESTIMATED, HEATMAP_COLUMN, Frame
+from candleviewer.ws.binary import (
+    BOOK_DELTA,
+    BOOK_SNAPSHOT,
+    FLAG_ESTIMATED,
+    HEATMAP_COLUMN,
+    Frame,
+    pack,
+)
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
 from candleviewer.ws.machines import MachineStateRegistry
@@ -305,15 +312,19 @@ def heatmap_part(
     qty_scale: int,
     estimated: bool,
 ) -> Frame:
-    """One heatmap column's CVWB kind-6 twin (23 §3.4): one column per frame, its own time base."""
-    return Frame(
-        HEATMAP_COLUMN,
-        rows,
-        FLAG_ESTIMATED if estimated else 0,
-        price_scale,
-        qty_scale,
-        ts_base_ms=ts_ms,
-        prefix=(0, price_min, price_step),
+    """One heatmap column's CVWB kind-6 twin (23 §3.4): one column per frame, its own time base,
+    packed (`binary.pack`): encoded once here, at the column's close, so a snapshot or a fan-out
+    of it re-encodes only the header (#605, M-1)."""
+    return pack(
+        Frame(
+            HEATMAP_COLUMN,
+            rows,
+            FLAG_ESTIMATED if estimated else 0,
+            price_scale,
+            qty_scale,
+            ts_base_ms=ts_ms,
+            prefix=(0, price_min, price_step),
+        )
     )
 
 

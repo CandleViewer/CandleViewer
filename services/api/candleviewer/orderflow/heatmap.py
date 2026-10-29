@@ -41,8 +41,8 @@ published state (`phase`, `depth`, `book`).
 - **Snapshot (G-03).** The newest columns that fit all of `window_seconds`, the column cap, half
   the queue's bytes (48 + 16 x rows a column) and half its frames, oldest first; kind 6 beside it
   only when every column is complete (23 §14.5) and its scales are known and fit. Each column's
-  §14.5 form and kind-6 part are built once, at its close, and cached on its ring entry, so a
-  snapshot is a slice of cached objects.
+  kind-6 part is built and packed (encoded once) at its close and cached on its ring entry, so a
+  binary snapshot is a slice of cached parts that the gateway re-encodes header only.
 - **Storage.** Each native column with a populated row is queued for the injected store, bounded
   by cells (`STORE_CELLS_MAX`, oldest dropped and logged); a size that is negative or not finite
   is never written (24 §6.5).
@@ -63,6 +63,7 @@ from dataclasses import dataclass, field
 from decimal import ROUND_HALF_EVEN, Context, Decimal
 from typing import Any, Final, Protocol
 
+import numpy as np
 import structlog
 
 from candleviewer.book.models import BookPhase, BookStatus
@@ -300,20 +301,23 @@ def scaled_size(size: float, qty_scale: int) -> int | None:
 
 def scaled_sizes(sizes: Sequence[float], qty_scale: int) -> list[int] | None:
     """`scaled_size` of each of `sizes` (a column side: kind 6's hot path), or None when one is
-    no `u64`; the same results, inlined for the common case."""
-    factor, out = 10.0**qty_scale, []
-    floor, limit, margin = math.floor, _FAST_LIMIT, _TIE_MARGIN
-    for size in sizes:
-        scaled = size * factor
-        if 0.0 <= scaled < limit and abs(scaled - floor(scaled) - 0.5) > margin * (
-            scaled if scaled > 1.0 else 1.0
-        ):
-            out.append(round(scaled))
-            continue
-        n = scaled_size(size, qty_scale)
+    no `u64`; the same results, vectorised. `numpy.rint` rounds the float product half to even,
+    as `round` does, and a value near a tie, large or not finite takes `scaled_size`'s exact
+    path, one by one."""
+    values = np.asarray(sizes, dtype=np.float64)
+    if values.size == 0:
+        return []
+    with np.errstate(invalid="ignore", over="ignore"):
+        scaled = values * 10.0**qty_scale
+        fast = np.isfinite(scaled) & (scaled >= 0.0) & (scaled < _FAST_LIMIT)
+        distance = np.abs(scaled - np.floor(scaled) - 0.5)
+        fast &= distance > _TIE_MARGIN * np.maximum(1.0, scaled)
+        out: list[int] = np.where(fast, np.rint(scaled), 0.0).astype(np.int64).tolist()
+    for i in np.flatnonzero(~fast).tolist():
+        n = scaled_size(float(values[i]), qty_scale)
         if n is None:
             return None
-        out.append(n)
+        out[i] = n
     return out
 
 
@@ -439,11 +443,12 @@ class _Integrator:
 
 @dataclass(slots=True)
 class _Entry:
-    """A ring column with its §14.5 form and kind-6 part, built once per instrument steps."""
+    """A ring column with its kind-6 part, built (and packed: encoded once) per instrument steps.
+    The §14.5 form is not kept: 1 024 floats a column as Python objects are ~32 KiB, four times the
+    packed part, so it is built when a structured reader asks (23 §6.1, budget #8)."""
 
     column: HeatmapColumn
     steps: tuple[Decimal, Decimal] | None = None
-    wire: dict[str, Any] | None = None
     part: Any = None
 
 
@@ -917,12 +922,11 @@ class HeatmapTopic:
         return self._publish(st, state, entry, now)
 
     def _fill(self, entry: _Entry, steps: tuple[Decimal, Decimal]) -> None:
-        """Build the entry's §14.5 form and kind-6 part once for these steps (columns never
-        change; an instrument revision changes the steps and rebuilds them)."""
+        """Build the entry's kind-6 part once for these steps (columns never change; an
+        instrument revision changes the steps and rebuilds it)."""
         if entry.steps == steps:
             return
         column = entry.column
-        entry.wire = wire_column(column, steps[0])
         entry.part = self._frame(column, steps) if column.binary_ok else None
         entry.steps = steps
 
@@ -935,7 +939,7 @@ class HeatmapTopic:
         body = {
             "symbol": spec.symbol, "time_bucket_ms": spec.time_bucket_ms,
             "price_grouping": spec.price_grouping, "depth": spec.depth,
-            "columns": [entry.wire], "estimated": column.estimated,
+            "columns": [wire_column(column, steps[0])], "estimated": column.estimated,
         }  # fmt: skip
         try:
             sent = self._hub.publish(
@@ -1045,14 +1049,22 @@ class HeatmapTopic:
         )
         for entry in entries:
             self._fill(entry, steps)  # a no-op but after a steps change
-        structured = {
-            "symbol": spec.symbol, "time_bucket_ms": spec.time_bucket_ms,
-            "price_grouping": spec.price_grouping, "depth": spec.depth,
-            "columns": [e.wire for e in entries],
-        }  # fmt: skip
         parts: tuple[Any, ...] = ()
         if sub.effective.get("encoding") == "binary" and all(e.part is not None for e in entries):
             parts = tuple(e.part for e in entries)
+        # A binary snapshot sends its parts only: its structured side carries what the gateway
+        # reads of it (each column's bucket and that it is complete, §8.2), not 1 024 floats a
+        # column it would never send. A structured one gets every §14.5 column.
+        tick = steps[0]
+        columns = (
+            [{"t_ms": e.column.ts_ms, "complete": True} for e in entries]
+            if parts
+            else [wire_column(e.column, tick) for e in entries]
+        )
+        structured = {
+            "symbol": spec.symbol, "time_bucket_ms": spec.time_bucket_ms,
+            "price_grouping": spec.price_grouping, "depth": spec.depth, "columns": columns,
+        }  # fmt: skip
         return self._body(structured, parts, price_scale=places(steps[0]),
                           qty_scale=places(steps[1]),
                           estimated=any(e.column.estimated for e in entries))  # fmt: skip

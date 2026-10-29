@@ -18,7 +18,7 @@ import base64
 import binascii
 import itertools
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from time import perf_counter
 from typing import Final
 
@@ -40,6 +40,10 @@ FLAG_PARTIAL: Final = 0b1000
 _KNOWN_FLAGS: Final = 0b1111
 
 _HEADER: Final = struct.Struct(HEADER.fmt)
+#: The header's first 9 bytes (magic, format_version, body_kind, flags, price_scale, qty_scale):
+#: three whole base64 groups, the part of a packed frame that changes per use (`encode_b64`).
+_LEAD: Final = 9
+_LEAD_STRUCT: Final = struct.Struct(HEADER.fmt[: HEADER.fmt.index("3x")])
 _STRUCTS: Final[dict[str, struct.Struct]] = {}
 
 Record = tuple[int, ...]
@@ -93,6 +97,11 @@ class Frame:
       ``cell_count`` derived;
     * kind 6: ``prefix`` = ``(ts_offset_ms, price_min, price_step)``, ``records`` = rows,
       ``row_count`` derived; header ``record_count`` is 1 (one column).
+
+    ``raw`` is a packed frame (`pack`, #605): its own encoding, the body held as bytes instead of
+    records, prefix, trailer or groups (which are then empty). It encodes to the same bytes as
+    the frame it was packed from, with this frame's header ``flags``, scales and
+    ``ts_base_ms``, so a part reused across subscriptions and snapshots is encoded once.
     """
 
     body_kind: int
@@ -104,6 +113,19 @@ class Frame:
     trailer: Record | None = None
     prefix: Record | None = None
     groups: tuple[Group, ...] | None = None
+    raw: bytes | None = None
+    #: A packed frame's base64 from byte 9 on (`pack`): the 9 header bytes before it (magic,
+    #: version, kind, flags, scales) are a whole number of base64 groups, so `encode_b64` writes
+    #: only those 12 characters per use, while ``ts_base_ms`` is the one ``raw`` holds.
+    tail: str | None = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.raw is not None and (
+            self.records or self.prefix is not None or self.trailer is not None or self.groups
+        ):
+            raise FrameEncodeError("a packed frame holds its body as bytes only")
+        if self.tail is not None and self.raw is None:
+            raise FrameEncodeError("a base64 tail belongs to a packed frame")
 
     @property
     def format_version(self) -> int:
@@ -129,6 +151,43 @@ def _body_size(frame: Frame, kind: Kind) -> int:
     return size
 
 
+def pack(frame: Frame) -> Frame:
+    """``frame`` as a packed frame (``Frame.raw``): encoded once, the same bytes on every later
+    `encode`, which then only rewrites the header's flags, scales and time base."""
+    if frame.raw is not None:
+        return frame
+    raw = encode(frame)
+    return Frame(
+        frame.body_kind,
+        flags=frame.flags,
+        price_scale=frame.price_scale,
+        qty_scale=frame.qty_scale,
+        ts_base_ms=frame.ts_base_ms,
+        raw=raw,
+        tail=base64.b64encode(raw[_LEAD:]).decode("ascii"),
+    )
+
+
+def frame_size(frame: Frame) -> int:
+    """The encoded size of ``frame`` in bytes, without encoding it."""
+    if frame.raw is not None:
+        return len(frame.raw)
+    return HEADER.size + _body_size(frame, _kind(frame.body_kind))
+
+
+def _encode_packed(frame: Frame, kind: Kind, raw: bytes) -> bytearray:
+    if len(raw) < HEADER.size or raw[5] != kind.id:
+        raise FrameEncodeError(f"{kind.name}: a packed frame's bytes are not of its kind")
+    out = bytearray(raw)
+    count = int.from_bytes(raw[12:16], "little")
+    try:
+        _HEADER.pack_into(out, 0, MAGIC, kind.format_version, kind.id, frame.flags,
+                          frame.price_scale, frame.qty_scale, count, frame.ts_base_ms)  # fmt: skip
+    except struct.error as exc:
+        raise FrameEncodeError(f"{kind.name}: value out of range for section 3.4: {exc}") from exc
+    return out
+
+
 def _header_count(frame: Frame, kind: Kind) -> int:
     if kind.group_prefix is not None:
         return len(frame.groups or ())
@@ -146,6 +205,8 @@ def encode(frame: Frame, weight: int = 0) -> bytes:
     began = perf_counter() if weight else 0.0
     if frame.flags & ~_KNOWN_FLAGS:
         raise FrameEncodeError(f"unknown header flag bits 0x{frame.flags:x}")
+    if frame.raw is not None:
+        return _encoded(kind, bytes(_encode_packed(frame, kind, frame.raw)), weight, began)
     if (kind.trailer is None) != (frame.trailer is None):
         raise FrameEncodeError(f"{kind.name}: trailer must be given iff the kind declares one")
     if (kind.body_prefix is None) != (frame.prefix is None):
@@ -191,17 +252,24 @@ def encode(frame: Frame, weight: int = 0) -> bytes:
         raise FrameEncodeError(f"{kind.name}: value out of range for section 3.4: {exc}") from exc
     except TypeError as exc:  # a record that is not a tuple: `*record` cannot expand it
         raise FrameEncodeError(f"{kind.name}: a record is not a tuple of ints: {exc}") from exc
-    encoded = bytes(out)
+    return _encoded(kind, bytes(out), weight, began)
+
+
+def _encoded(kind: Kind, encoded: bytes, weight: int, began: float) -> bytes:
+    _observed(kind, len(encoded), weight, began)
+    return encoded
+
+
+def _observed(kind: Kind, size: int, weight: int, began: float) -> None:
     # Success path only, O(1) per frame, on the loop thread where the hub calls it (the
     # histograms have a single writer). The timer stops here: the counters are not encode time.
     if weight:
         seconds, sizes = ENCODE_COST[kind.id]
         seconds.observe(perf_counter() - began, weight)
-        sizes.observe(len(encoded), weight)
+        sizes.observe(size, weight)
     frames, nbytes = ENCODED[kind.id]
     frames.inc()
-    nbytes.inc(len(encoded))
-    return encoded
+    nbytes.inc(size)
 
 
 def _count_at(part: Part) -> int:
@@ -260,10 +328,42 @@ def _check_enums(part: Part, record: Record) -> None:
             raise FrameEncodeError(f"{name}={value} not in {allowed}")
 
 
-def encode_b64(frame: Frame, weight: int = 0) -> str:
+def encode_b64(
+    frame: Frame,
+    weight: int = 0,
+    *,
+    flags: int | None = None,
+    price_scale: int | None = None,
+    qty_scale: int | None = None,
+) -> str:
     """``cv.v1.json`` wrapping (section 3.2): the frame bytes as base64, sent with ``e: "b64"``.
-    ``weight`` is `encode`'s."""
-    return base64.b64encode(encode(frame, weight)).decode("ascii")
+    ``weight`` is `encode`'s. ``flags`` and the scales, when given, replace the frame's own (the
+    snapshot render's and a `d`'s per-subscription header). A packed frame (`pack`) is written
+    as its 12 header characters and its cached tail: the same text as encoding it whole."""
+    fl = frame.flags if flags is None else flags
+    ps = frame.price_scale if price_scale is None else price_scale
+    qs = frame.qty_scale if qty_scale is None else qty_scale
+    raw, tail = frame.raw, frame.tail
+    if raw is None or tail is None or _ts_base(raw) != frame.ts_base_ms:
+        same = flags is None and price_scale is None and qty_scale is None
+        target = frame if same else replace(frame, flags=fl, price_scale=ps, qty_scale=qs)
+        return base64.b64encode(encode(target, weight)).decode("ascii")
+    kind = _kind(frame.body_kind)
+    began = perf_counter() if weight else 0.0
+    if fl & ~_KNOWN_FLAGS:
+        raise FrameEncodeError(f"unknown header flag bits 0x{fl:x}")
+    if len(raw) < HEADER.size or raw[5] != kind.id:
+        raise FrameEncodeError(f"{kind.name}: a packed frame's bytes are not of its kind")
+    try:
+        lead = _LEAD_STRUCT.pack(MAGIC, kind.format_version, kind.id, fl, ps, qs)
+    except struct.error as exc:
+        raise FrameEncodeError(f"{kind.name}: value out of range for section 3.4: {exc}") from exc
+    _observed(kind, len(raw), weight, began)
+    return base64.b64encode(lead).decode("ascii") + tail
+
+
+def _ts_base(raw: bytes) -> int:
+    return int.from_bytes(raw[16:24], "little") if len(raw) >= HEADER.size else -1
 
 
 def _fits(count: int, stride: int, available: int, what: str) -> None:
@@ -369,4 +469,6 @@ __all__ = [
     "decode_b64",
     "encode",
     "encode_b64",
+    "frame_size",
+    "pack",
 ]
