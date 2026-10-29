@@ -15,6 +15,7 @@ import type { PortLike } from "../lib/ws/port/endpoint.js";
 import type { WsState } from "../lib/ws/state/types.js";
 import { bootOwnsOutage } from "../features/system-states/bootOffline.js";
 import { runBootstrap, type BootstrapDeps } from "./bootstrap/bootstrap.js";
+import { watchGpu } from "./bootstrap/gpuCrash.js";
 import { startLiveness } from "./bootstrap/liveness.js";
 import { createBrowserShellAdapter } from "./BrowserShellAdapter.js";
 import { installCrashReporter } from "./crash/reportCrash.js";
@@ -72,8 +73,11 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     onChange: (reachability) => setShellState({ reachability }),
     quiet: bootOwnsOutage,
   });
+  // SCR-159 (#306 slice 9c): the desktop shell's GPU-process crashes, for the in-canvas GPU page
+  const unwatchGpu = watchGpu();
   const teardown = (): void => {
     liveness.stop();
+    unwatchGpu();
     uninstallCrash();
   };
   // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call.

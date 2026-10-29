@@ -59,6 +59,12 @@ export const DEGRADED_COPY = {
     message: "Recorder down — no new history is being written.",
     stillWorks: "Charts, orders, positions, cancel and close still work.",
   },
+  /** Routing row 10, client-side: SCR-159's GPU page answered "Keep software rendering" (#306 9c). */
+  gpuFallback: {
+    severity: "info",
+    message: "Chart engine in fallback — reduced visuals.",
+    stillWorks: "Order entry unaffected.",
+  },
 } as const satisfies Readonly<Record<string, DegradedCopy>>;
 
 export type DegradedIssueId = keyof typeof DEGRADED_COPY;
@@ -115,6 +121,30 @@ export const SCR159_COPY = {
   /** §9.2 R-902: the wordmark, and board 10's footer line (CMP-207's pre-auth state is G10). */
   wordmark: "CandleViewer",
   buildLine: (version: string): string => `CandleViewer v${version} · environment not known yet`,
+} as const;
+
+/**
+ * SCR-159's GPU-unavailable page, the desktop app's only (§9.2's fourth row; #306 9c). The heading
+ * is §9.2's and board 10's; f28 drew "Charts are running without the GPU". Board 10 draws a shorter
+ * body; D02 f28's is used, since it has the crash time and E11-D04 D13's limits.
+ */
+export const GPU_COPY = {
+  /** §9.2 and board 10. */
+  heading: "Hardware acceleration is off",
+  /** D02 f28, its time as the StatusBar's clock prints it (" UTC" PROPOSED; f28 draws "14:01:58"). */
+  sentence: (at: string): string =>
+    `The graphics process stopped at ${at} and CandleViewer restarted the charts in software rendering.`,
+  /** D02 f28: `degraded-2d`'s limits (E11-D04 D13). */
+  limits: [
+    "Charts redraw more slowly: candles, lines, axes, the crosshair and drawings stay.",
+    "Footprint cells show colour only and the heatmap is off until the GPU is back.",
+    "Order entry, positions and the kill switch are not affected.",
+  ],
+  /** D02 f28 draws "GPU process restarted 1 time this session"; the plural is PROPOSED. */
+  restarts: (n: number): string =>
+    `GPU process restarted ${n} time${n === 1 ? "" : "s"} this session`,
+  /** D02 f28's secondary action (BQ-9.2; Retry now is board 10's). */
+  keep: "Keep software rendering",
 } as const;
 
 /**

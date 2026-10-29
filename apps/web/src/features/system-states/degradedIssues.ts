@@ -1,7 +1,8 @@
 /**
- * E10-S04 (#306) SCR-153: the degraded-mode issues, derived from the WS `system` stream alone, so a
- * new impairment class is a payload addition and a copy row, never a new banner (ticket Technical
- * notes). Pure: `reduceDegraded(facts, update)` depends on its arguments only.
+ * E10-S04 (#306) SCR-153: the degraded-mode issues, derived from the WS `system` stream, so a new
+ * impairment class is a payload addition and a copy row, never a new banner (ticket Technical
+ * notes). Pure: `reduceDegraded(facts, update)` depends on its arguments only. One row is the
+ * client's own and never read from a frame: the GPU fallback (`setGpuFallback`, slice 9c).
  *
  * Routing (`docs/design/E17/E17-D02.md` §6, first match wins; one reason, one surface): row 6
  * blocking (maintenance: the `notice` or the `maintenance.mode` flag; the `postgres` component), row 8 the public exchange feed, row 10 the other
@@ -49,6 +50,7 @@ const ORDER: readonly DegradedIssueId[] = [
   "privateReconnect",
   "ruleEngineDown",
   "recorderDown",
+  "gpuFallback",
 ];
 
 /** A `health.components[]` name → its issue. A `switch`: a key such as `__proto__` is not a component. */
@@ -133,7 +135,21 @@ function verdicts(u: SystemUpdate): Map<DegradedIssueId, boolean> {
 }
 
 export function reduceDegraded(facts: DegradedFacts, update: SystemUpdate): DegradedFacts {
-  const said = verdicts(update);
+  return applyVerdicts(facts, verdicts(update));
+}
+
+/**
+ * §8's GPU-fallback row (routing row 10, info): asserted when the user keeps software rendering on
+ * SCR-159's GPU page (#306 BQ-9.3), so it holds for the session; a new crash's page withdraws it.
+ */
+export function setGpuFallback(facts: DegradedFacts, holds: boolean): DegradedFacts {
+  return applyVerdicts(facts, new Map<DegradedIssueId, boolean>([["gpuFallback", holds]]));
+}
+
+function applyVerdicts(
+  facts: DegradedFacts,
+  said: ReadonlyMap<DegradedIssueId, boolean>,
+): DegradedFacts {
   if (said.size === 0) return facts;
   const next: Partial<Record<DegradedIssueId, number>> = { ...facts.asserted };
   let changed = false;
