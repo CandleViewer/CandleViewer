@@ -21,12 +21,15 @@ import json
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
 
 from candleviewer.api import market, market_bars, market_response
 from candleviewer.api.market import make_market_router
@@ -39,7 +42,7 @@ from candleviewer.ingestion.kline_backfill import KlineBackfillService
 from candleviewer.ingestion.kline_coverage import Range
 from candleviewer.ingestion.kline_read import KlineReadService
 from tests._corpus import rest
-from tests.contract._generated_contract import SPEC, _at, _deref, _members, _validator
+from tests.contract._generated_contract import _REGISTRY, _URI, SPEC, _at, _deref, _members
 from tests.contract._market_world import (
     BASE,
     KLINES_NOW_US,
@@ -136,7 +139,7 @@ class Case:
     headers: Mapping[str, str] = field(default_factory=lambda: dict(READER))
     outage: bool = False
     ceiling: int | None = None  # `RESPONSE_MAX_BYTES` for this request (`response_ceiling`)
-    pages: int = 1  # pages read, `meta.next_cursor` followed
+    pages: int = 1  # pages read by following `meta.next_cursor`, each one reached
 
 
 def _documented(case_id: str, op: str, query: Mapping[str, object]) -> Case:
@@ -180,6 +183,8 @@ def _statuses() -> Iterator[Case]:
         yield Case(f"{op}:store-down", op, _query(op), 503, "store_unavailable", outage=True)
     yield Case("getBars:malformed-param", "getBars", _query("getBars", param="abc"), 400,
                "validation_failed")  # fmt: skip
+    month = _query("getBars", bar_type="time", param="M")  # D3: a time param takes no `M`
+    yield Case("getBars:time-month", "getBars", month, 400, "validation_failed")
     pre = _query("getBars", **{"from": before})
     yield Case("getBars:pre-recording", "getBars", pre, 422, "no_data_recorded")
     yield Case("getKlines:unknown-interval", "getKlines", _query("getKlines", interval="7"), 400,
@@ -259,6 +264,15 @@ def _response_schema(op: str, status: int) -> tuple[str, list[str]]:
     ((media, content),) = _response(op, status)["content"].items()
     schema = content["schema"]
     return media, [b["$ref"].removeprefix("#") for b in schema.get("anyOf", [schema])]
+
+
+@cache
+def _validator(pointer: str) -> Draft202012Validator:
+    """22's schema at `pointer`, its `format`s asserted where the checker knows them (`date-time`
+    with `rfc3339-validator`): a timestamp must be RFC 3339, not only a string."""
+    format_checker = Draft202012Validator.FORMAT_CHECKER
+    ref = {"$ref": f"{_URI}#{pointer}"}
+    return Draft202012Validator(ref, registry=_REGISTRY, format_checker=format_checker)
 
 
 def _schema_errors(pointer: str, body: object) -> list[str]:
@@ -383,10 +397,11 @@ def test_contract_market_every_documented_response_validates(
     run: dict[str, list[Seen]], case: Case
 ) -> None:
     """AC1: each response of the matrix and of the refusals is one 22 declares for its operation,
-    in its declared media type, valid against its raw schema, with the case's status and code."""
+    in its declared media type, valid against its raw schema (formats included), with the case's
+    status and code; a paged case reaches every page it asks for."""
     seen = run[case.id]
     _check_valid(seen)
-    assert [(s.status, s.body.get("code")) for s in seen] == [(case.status, case.code)] * len(seen)
+    assert [(s.status, s.body.get("code")) for s in seen] == [(case.status, case.code)] * case.pages
 
 
 @pytest.mark.parametrize("op", OPERATIONS)
@@ -690,6 +705,16 @@ def _numeric_price(mp: pytest.MonkeyPatch) -> None:
     mp.setattr(market_bars, "serialize_bar", serialize_bar)
 
 
+def _naive_time(mp: pytest.MonkeyPatch) -> None:
+    """Each bar's times sent with no offset (`2023-11-14T22:15:00`): a string still, but not the
+    RFC 3339 `date-time` 22 declares."""
+
+    def iso_naive(ts_us: int) -> str:
+        return datetime.fromtimestamp(ts_us / 1_000_000, UTC).replace(tzinfo=None).isoformat()
+
+    mp.setattr(market_response, "iso_us", iso_naive)
+
+
 #: Mutation -> (how it is seeded, the check that must refuse it, what its failure names).
 _MUTATIONS: Final[Mapping[str, tuple[Callable[[pytest.MonkeyPatch], None],
                                      Callable[[Iterable[Seen]], None], str]]] = {
@@ -699,6 +724,9 @@ _MUTATIONS: Final[Mapping[str, tuple[Callable[[pytest.MonkeyPatch], None],
     ),
     "numeric-price": (
         _numeric_price, _check_valid, r"\$\.bars\[0\]\.o: [0-9.]+ is not of type 'string'"
+    ),
+    "naive-time": (
+        _naive_time, _check_valid, r"\$\.bars\[0\]\.t: '[0-9T:.-]+' is not a 'date-time'"
     ),
 }  # fmt: skip
 
