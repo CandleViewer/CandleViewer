@@ -2465,6 +2465,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Stories:** US-ADMIN-001, US-ADMIN-004, US-ADMIN-011.
 - **Performance:** The overview aggregates from `GET /api/v1/admin/overview` in one call plus `system` for live tiles; it must render in <=800 ms and never block on the slowest subsystem - each tile resolves independently with its own loading and error state.
 - **Analytics/audit:** `admin.overview_viewed` (analytics). Entering any admin route emits the audited `admin.area_entered` `{route, reauth_age_s}`.
+- **Hi-fi (E42-D03):** nine CMP-178 tiles in three bands, each with its own loading, error, unavailable and stale state; the strip; today's `main`; tamper check and Record tier. See `docs/design/E42/E42-D03.md` §6.
 - **Design sign-off acceptance checklist:** [ ] tiles for users, accounts, keys needing rotation, recorder, storage, health, flags and last backup drawn [ ] per-tile loading, error and degraded states [ ] alerts for anything requiring owner action, with the action linked [ ] the admin area is visually distinct from the trading app [ ] the re-auth freshness indicator is visible [ ] non-owner access hard-404s (verified, not just hidden)
 
 ### SCR-121 — Admin: users list
@@ -2491,8 +2492,9 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Audit:** `user.invited|updated|deactivated|deleted|role_changed`.
 - **Sign-off:** [ ] capacity constraint surfaced [ ] destructive flows use step-up + typed confirm [ ] impersonation clearly marked. **Stories:** US-ADMIN-002..005.
 - **Performance:** Cursor-paginated table; 500 users render without exceeding 4 ms scripting per frame; presence/last-seen updates at <=0.1 Hz.
-- **Components:** CMP-001 Button, CMP-011 Tag / Chip, CMP-013 Avatar / ProfileBadge base, CMP-049 Table, CMP-055 FilterBar, CMP-087 AdminLayout.
+- **Components:** CMP-001 Button, CMP-011 Tag / Chip, CMP-013 Avatar / ProfileBadge base, CMP-049 Table, CMP-055 FilterBar, CMP-087 AdminLayout, CMP-079 RbacGate, CMP-019 Icon (`lock`).
 - **Stories:** US-ADMIN-001, US-ADMIN-002.
+- **Hi-fi (E42-D03):** named columns, split status chips, the capacity line in seven states, row actions on the ladder. See `docs/design/E42/E42-D03.md` §7.
 - **Design sign-off acceptance checklist:** [ ] columns (username, role, accounts assigned, 2FA state, last login, status) drawn [ ] status and role are text, never colour-only [ ] filters and search [ ] per-row actions (edit, suspend, reset 2FA, view as) with disabled reasons [ ] suspended and locked-out rows drawn [ ] empty state (owner only, no invitees yet)
 
 ### SCR-122 — Admin: user detail / edit
@@ -2517,8 +2519,9 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Audit:** `users.access_change` (step-up). **Stories:** US-ADMIN-006, US-PROF-007.
 - **A11y:** A form with clearly separated sections (identity, role, account assignments, risk caps, session controls); the account-assignment control is a labelled multi-select with a reviewable summary list; every destructive action is a named button with a confirmation dialog.
 - **Performance:** Permission changes take effect server-side immediately and are pushed to the affected user's session within 2 s; the UI confirms only after the server acknowledges.
-- **Components:** CMP-004 Toggle, CMP-009 Select, CMP-040 FormField, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger, CMP-105 AccountMultiSelect, CMP-138 RiskCapMeter.
+- **Components:** CMP-004 Toggle, CMP-009 Select, CMP-040 FormField, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger, CMP-105 AccountMultiSelect, CMP-138 RiskCapMeter, CMP-079 RbacGate, CMP-019 Icon (`lock`).
 - **Stories:** US-ADMIN-002, US-ADMIN-003, US-PAPER-007.
+- **Hi-fi (E42-D03):** sections, guards, conflict and save states, the unbind two-choice dialog and the limit-tightening notice. See `docs/design/E42/E42-D03.md` §8 and §12.
 - **Design sign-off acceptance checklist:** [ ] role change with its consequence restated ('alex will lose access to 3 accounts') [ ] account assignment with per-account profile shown [ ] per-user risk caps [ ] force-logout, reset-2FA, suspend and delete actions with confirmations and step-up [ ] the 'you cannot demote the last owner' guard state drawn [ ] change summary before save [ ] every action confirmed to emit an audit event
 
 ### SCR-123 — Admin: invite user
@@ -2530,17 +2533,19 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Performance:** Invite creation <=500 ms; the link is shown exactly once and is not retrievable afterwards (only revocable and re-issuable).
 - **Components:** CMP-009 Select, CMP-027 ErrorState / InlineError, CMP-033 CopyButton, CMP-040 FormField, CMP-043 Dialog, CMP-105 AccountMultiSelect.
 - **Stories:** US-ONB-006, US-ADMIN-013.
+- **Hi-fi (E42-D03):** a viewer invite, the link shown once, the pending list with revoke and re-issue. See `docs/design/E42/E42-D03.md` §9.
 - **Design sign-off acceptance checklist:** [ ] username, role, account assignment and expiry fields drawn [ ] the generated link shown once with copy, plus the 'shown only once' warning [ ] the Tailscale ACL reminder drawn [ ] pending-invite list with revoke and resend [ ] expired-invite state [ ] validation messages
 
 ### SCR-124 — Admin: "view as" (read-only impersonation)
 
-- **Type:** Mode with a persistent, unmistakable banner: "Viewing as alex (read-only) — you cannot act. [Exit]". Every write endpoint is refused server-side for the duration; the session is audited on entry and exit.
+- **Type:** Mode with a persistent, unmistakable banner: "Viewing as alex (read-only) — only protective actions work. [Exit view-as]". Every write endpoint is refused server-side for the duration except the C-2.6 protective writes and engaging the kill switch on an account set, which run as the viewer (`22-api-openapi.yaml` View-as); the session is audited on entry and exit.
 - **Validation:** cannot impersonate another owner; time-boxed to 30 min.
-- **Audit:** `admin.view_as_started|ended` (high severity). **Stories:** US-ADMIN-007.
-- **A11y:** The impersonation banner is a `role="status"` landmark placed first in the document order and repeated in every floating window; it reads 'Viewing as alex, read-only. You cannot act. Exit view-as.'; the Exit control is always reachable with a single documented hotkey and is never scrolled out of view.
+- **Audit:** `admin.view_as_started` (severity `warning`, written ahead), `admin.view_as_ended`, `admin.view_as_refused`.
+- **A11y:** The impersonation banner is a labelled region (`aria-label="View-as"`, not a live role) placed first in the document order, above the TopBar, and repeated in every floating window; one assertive announcement on entry reads 'Viewing as alex, read-only. Only protective actions work. Exit view-as.'; the Exit control is the first tab stop in every window and is never scrolled out of view; no hotkey until OQ-7 registers one (`docs/design/E42/E42-D03.md` §10).
 - **Performance:** Entering and exiting view-as tears down and rebuilds the data scope; both transitions are blocking (typically <=2 s) and no write-capable control is mounted at any point during the transition.
-- **Components:** CMP-013 Avatar / ProfileBadge base, CMP-028 Callout / Banner, CMP-087 AdminLayout, CMP-092 DegradedModeBanner, CMP-093 AuditActionTrigger.
+- **Components:** CMP-013 Avatar / ProfileBadge base, CMP-028 Callout / Banner, CMP-087 AdminLayout, CMP-092 DegradedModeBanner, CMP-093 AuditActionTrigger, CMP-079 RbacGate, CMP-019 Icon (`lock`).
 - **Stories:** US-ADMIN-002, US-ADMIN-008.
+- **Hi-fi (E42-D03):** the entry dialog, the banner first in every window, the countdown, expired and held, the refusals. See `docs/design/E42/E42-D03.md` §10.
 - **Design sign-off acceptance checklist:** [ ] the banner is drawn and unmistakable in every window and in greyscale [ ] the mandatory reason field is drawn before entry [ ] the 30-minute time box with a visible countdown and auto-exit is drawn [ ] 'hidden in view-as' placeholders are drawn for every category listed under Audit [ ] the write-denied state is drawn (control disabled with the reason, plus a server refusal if forced) [ ] the target-user notification is drawn [ ] 'cannot impersonate another owner' guard state drawn
 
 ### SCR-125 — Admin: Bybit accounts list
@@ -2956,12 +2961,12 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 ### SCR-149 — Admin re-authentication gate
 
 - **Type:** Page/Modal shown on first entry to any `/admin/*` route when the admin token is older than 15 minutes. Password + TOTP; explains why ("Admin screens need a fresh confirmation"); on success, admin routes unlock for 15 minutes of activity.
-- **Audit:** `auth.session_unlocked` (new — #2300), `auth.step_up_failed` on a wrong password or code. **Stories:** US-ADMIN-016.
+- **Audit:** `auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed` (a wrong password or code), `auth.step_up_mismatch`, `auth.session_readonly_downgrade`; with an admin window (#1085) also `admin.session_elevated` once registered; `admin.area_entered` on the `/admin/*` API routes behind the admin-area guard (not `/admin/audit` or `/users/*`; `docs/design/E42/E42-D03.md` §4).
 - **A11y:** `role="alertdialog"` explaining why re-authentication is required and for how long the resulting token is valid; the TOTP field has a visible label and format hint; failures are announced assertively.
 - **Performance:** Token issue <=400 ms; the token's TTL (15 min) is server-issued and the remaining validity is displayed in the admin chrome so the user is never surprised by a mid-task expiry.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-043 Dialog, CMP-201 PasswordField, CMP-204 OtpInput.
 - **Stories:** US-ONB-005.
-- **Hi-fi (E09-D06):** drawn as a declared variant of the SCR-005/006 chassis (default, verifying, wrong credentials, lockout, expiry during admin edit, unlocked indicator). See `docs/design/E09/E09-D06.md`.
+- **Hi-fi (E42-D03, superseding E09-D06's SCR-149 frames):** the E09-D06 chassis with E42-D02's copy and E09-D09's three-strike banner (entry gate, verifying, wrong credentials, read-only after three wrong codes, expiry during an admin edit with the save held, not saved, saved, outcome pending, idle lock, codes can't be checked, nothing checked (`503`, `422`), confirmation ended); retired if the re-auth decision (#1085) keeps per-action step-up. See `docs/design/E42/E42-D03.md` §5.
 - **Design sign-off acceptance checklist:** [ ] the reason for the gate and the resulting token's validity window are stated [ ] the countdown/freshness indicator in the admin chrome is drawn [ ] expiry-during-an-admin-edit case drawn (the form's content is preserved, the save is held) [ ] failure and lockout states [ ] cancel returns to the non-admin app, not to a dead end
 
 ---
@@ -3035,6 +3040,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **A11y:** A page with a heading, a sentence naming the resource and the missing permission, and a link to a permitted destination; the correlation id is selectable text.
 - **Performance:** Rendered from the server's 403 response without additional fetches; appears in <=200 ms.
 - **Analytics/audit:** The server records `authz.denied` `{actor, role, resource, action, ip}` for every 403 regardless of what the UI showed; the page emits `error.403_shown` (analytics).
+- **Hi-fi (E42-D03; copy E09-D09 §10):** never had, withdrawn and the account variant. See `docs/design/E42/E42-D03.md` §11.
 - **Design sign-off acceptance checklist:** [ ] the resource and the required permission are named (without leaking whether the resource exists, for admin-only objects) [ ] 'ask the owner' guidance with the owner's contact route [ ] a link back to a permitted screen [ ] the correlation id [ ] distinct copy for 'you lack the role' vs 'this account is not assigned to you'
 
 ### SCR-155 — Not found (404)
@@ -3045,6 +3051,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **A11y:** Heading, plain sentence, and a list of likely destinations as links; the attempted route is echoed as text.
 - **Performance:** Client-side route resolution; renders instantly with no network call.
 - **Analytics/audit:** `error.404_shown` `{route}` (analytics - used to find broken deep links).
+- **Hi-fi (E42-D03, admin routes):** `/admin/**` for a non-owner beside an unknown route. See `docs/design/E42/E42-D03.md` §11.
 - **Design sign-off acceptance checklist:** [ ] the attempted route echoed [ ] likely destinations offered [ ] distinct copy for a deleted object ('this workspace was deleted') vs an unknown route [ ] admin routes 404 for non-owners with identical copy to any other 404 - verified, so the admin area's existence is not disclosed
 
 ### SCR-156 — Application error boundary (500 / crash)

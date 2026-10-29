@@ -1,0 +1,74 @@
+{
+ "09": {
+  "sheet": "09-tint-proof.json",
+  "exit": 0,
+  "last": "09-tint-proof.md",
+  "frames_equal": true,
+  "sheet_equal": true
+ },
+ "26": {
+  "sheet": "26-scr120-trading-unknown.json",
+  "exit": 0,
+  "last": "26-scr120-trading-unknown.md",
+  "frames_equal": true,
+  "sheet_equal": true
+ },
+ "94": {
+  "sheet": "94-scr120-withdrawal.json",
+  "exit": 0,
+  "last": "94-scr120-withdrawal.md",
+  "frames_equal": true,
+  "sheet_equal": true
+ },
+ "53": {
+  "sheet": "53-scr122-unbind-unknown.json",
+  "exit": 0,
+  "last": "13 sections: frame-1280 8079, SCR-122 content (composition) 18365, CMP-093 AuditActionTrigger (composition) · footer marker 473, Save bar (composition) 1771, CMP-208 StatusBar (composition) 893, overlay 13881, frame-2560 9119, SCR-122 content (composition) 18686, Save bar (composition) 1654, CMP-093",
+  "frames_equal": true,
+  "sheet_equal": true
+ },
+ "57": {
+  "sheet": "57-scr122-invited.json",
+  "exit": 0,
+  "last": "57-scr122-invited.md",
+  "frames_equal": true,
+  "sheet_equal": true
+ },
+ "72": {
+  "sheet": "72-scr124-active.json",
+  "exit": 0,
+  "last": "14 sections: frame-1280 19294, SCR-063 Positions and orders grid panel (composition) 19157, panels · row 2 12320, CMP-208 StatusBar (composition) 893, frame-2560 6108, body 14056, SCR-063 Positions and orders grid panel (composition) 19167, panels · row 2 12320, CMP-208 StatusBar (composition) 893, ",
+  "frames_equal": true,
+  "sheet_equal": true
+ },
+ "88": {
+  "sheet": "88-role-matrix.json",
+  "exit": 0,
+  "last": "4 sections: role · Owner 8897, role · Manager 12372, role · Viewer 8156, annotations 8773",
+  "frames_equal": true,
+  "sheet_equal": true
+ },
+ "90": {
+  "sheet": "90-status-treatments.json",
+  "exit": 0,
+  "last": "90-status-treatments.md",
+  "frames_equal": false,
+  "sheet_equal": false,
+  "frames_equal_pre_skel": true
+ },
+ "91": {
+  "sheet": "91-components.json",
+  "exit": 0,
+  "last": "35 sections: frame-1280 640, stories 9436, story · ReauthExpired 3698, story · PerActionOnly 1719, story · PerActionGrace 2179, story · AfterIdleUnlock 3706, story · StripEmpty 1523, story · StripWithItems 6718, frame-2560 6589, specimen · Rung3 8205, specimen · TwoChoice 809, CMP-044 ConfirmDialog ",
+  "frames_equal": false,
+  "sheet_equal": false,
+  "frames_equal_pre_skel": true
+ },
+ "92": {
+  "sheet": "92-redlines.json",
+  "exit": 0,
+  "last": "92-redlines.md",
+  "frames_equal": true,
+  "sheet_equal": true
+ }
+}
