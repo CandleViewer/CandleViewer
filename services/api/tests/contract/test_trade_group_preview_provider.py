@@ -18,6 +18,7 @@ from tests.unit.api.test_trade_group_preview_route import ALT, FOREIGN, A, B, L,
         ("owner", body(), None, 200), ("owner", body(A, L), None, 400),
         ("nobody", body(), None, 401), ("viewer", body(), None, 403),
         ("owner", body(A, FOREIGN), None, 403),
+        ("owner", body((A, {"leverage": "11"}), B), None, 403), ("owner", body(), "flag", 403),
         ("owner", body((B, {"profile_id": str(ALT)})), None, 404),
         ("owner", body(A, A), None, 422), ("owner", body(), "rate", 429),
         ("owner", body(), "audit", 503),
@@ -28,6 +29,7 @@ def test_each_preview_answer_is_one_22_declares(
 ) -> None:
     world = World(rate=1 if fault == "rate" else 20)
     world.fail = "trade_group.previewed" if fault == "audit" else None
+    world.flag = fault != "flag"  # R1C-07(c): the widening's and the flag's 403s validate too
     if fault == "rate":
         world.post(sent, who=who)  # the one token
     resp = world.post(sent, who=who)

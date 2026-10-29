@@ -3,18 +3,26 @@ the instance the pipeline was built with (24 Sec.8.4 steps 4, 5, 8, 10 and 12), 
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, cast, get_type_hints
+from uuid import UUID
 
 import pytest
 
 from candleviewer.accounts.trade_group_repository import TradeGroupReader
 from candleviewer.exchange.base.models import AccountRef
-from candleviewer.oms.errors import AccountScopeDenied, OmsNotReady, OrderEntryRefused
+from candleviewer.oms.errors import (
+    AccountScopeDenied,
+    OmsNotReady,
+    OrderEntryRefused,
+    StoreUnavailable,
+)
 from candleviewer.oms.fanout.guard import S4SGuard
 from candleviewer.oms.ports import FiguresReading, NoArmRecords, SymbolRates
 from candleviewer.oms.repository import OrderRepository
+from candleviewer.oms_lane import HOP_TIMEOUT_S, LaneStopped
 from candleviewer.oms_wiring import (
     NO_ACTIVE_KEY,
     AccountExistence,
@@ -29,7 +37,7 @@ from candleviewer.oms_wiring import (
 from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.submit_rig import figures as known
-from tests.unit.oms.test_oms_runtime import KEY, World, started
+from tests.unit.oms.test_oms_runtime import KEY, Recording, Refusing, World, started
 
 
 def test_the_route_holds_the_one_read_each_step_uses_of_the_orders_and_the_accounts() -> None:
@@ -108,15 +116,37 @@ async def test_the_previews_reads_are_the_order_paths_own_and_peek_on_the_lane()
         assert await served.figures.peeked("BTCUSDT", fallbacks) == dict.fromkeys(fallbacks)
 
 
+async def test_the_previews_figures_hop_to_the_lane_within_its_bound() -> None:
+    """R1C-01 (S3c's code lens): `runtime.preview.figures` peeks on the order lane, where the
+    figures are kept, within `HOP_TIMEOUT_S`, as the exit routes' reads hop; a lane that stopped
+    or does not answer is `OmsNotReady`, the peek unrun."""
+    lane = Recording()
+    async with started(World().runtime(lane=lambda: lane)) as runtime:
+        lane.hops.clear()
+        peeked = await runtime.preview.figures.peeked("BTCUSDT", {cr.ACCOUNT: None})
+        assert (peeked, lane.hops) == (
+            {cr.ACCOUNT: None},
+            [("PreviewFigures.peeked", HOP_TIMEOUT_S)],
+        )
+        parts = runtime._composed()
+        for error in (LaneStopped("stopped"), TimeoutError()):
+            on_lane = OnLanePreview(replace(parts, lane=Refusing(error)))
+            with pytest.raises(OmsNotReady):
+                await on_lane.peeked("BTCUSDT", {cr.ACCOUNT: None})
+
+
 async def test_preview_figures_peek_each_resolved_account_never_read_it() -> None:
     """SR-E28-22: each account resolved as an order's, its kept reading peeked at its fallback and
     its symbol's rates merged as the size step merges them; an account the binding refuses (no
     key, another environment) has none, and nothing is ever read from the venue."""
     rates = SymbolRates(maintenance_margin_rate=Decimal("0.005"), taker_fee_rate=Decimal("0.0006"))
     asked: list[tuple[Any, ...]] = []
+    unread = UUID(int=77)  # R1C-03(b): an account whose read fails has none, as one refused
 
     class Accounts:
         async def trading_account(self, account_id: Any) -> AccountRef:
+            if account_id == unread:
+                raise StoreUnavailable
             if account_id != cr.ACCOUNT:
                 raise OrderEntryRefused(NO_ACTIVE_KEY) if account_id == KEY else AccountScopeDenied
             return AccountRef(account_id=account_id, uid="1", environment="demo", key_ref=str(KEY))
@@ -128,11 +158,11 @@ async def test_preview_figures_peek_each_resolved_account_never_read_it() -> Non
             return FiguresReading(unrated, {"BTCUSDT": rates})
 
     peeked = await PreviewFigures(Accounts(), cast(Any, Figures())).peeked(
-        "BTCUSDT", {cr.ACCOUNT: Decimal("0.02"), KEY: None, cr.LIVE_ACCOUNT: None}
+        "BTCUSDT", {cr.ACCOUNT: Decimal("0.02"), KEY: None, cr.LIVE_ACCOUNT: None, unread: None}
     )
     assert asked == [(cr.ACCOUNT, ("BTCUSDT",), Decimal("0.02"))]
     merged = peeked[cr.ACCOUNT]
     assert merged is not None and (merged.maintenance_margin_rate, merged.taker_fee_rate) == (
         Decimal("0.005"), Decimal("0.0006"),
     )  # fmt: skip
-    assert (peeked[KEY], peeked[cr.LIVE_ACCOUNT]) == (None, None)
+    assert (peeked[KEY], peeked[cr.LIVE_ACCOUNT], peeked[unread]) == (None, None, None)

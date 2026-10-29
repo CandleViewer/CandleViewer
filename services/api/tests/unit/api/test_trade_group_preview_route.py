@@ -8,6 +8,7 @@ read in the order written."""
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -17,6 +18,7 @@ from uuid import UUID
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 from candleviewer.accounts.errors import AccountNotFoundError, ProfileUnavailableError
 from candleviewer.accounts.models import ExchangeAccount
@@ -44,17 +46,22 @@ from tests.unit.oms.submit_rig import instrument as btcusdt
 from tests.unit.oms.submit_rig import profile
 
 A, B, C, L, D, FOREIGN = (AccountId(UUID(int=n)) for n in (1, 2, 5, 3, 4, 9))  # L live, D gone
-ALT, NARROW, OFF = UUID(int=91), UUID(int=92), UUID(int=93)  # A's alternates
+ALT, NARROW, OFF, DISABLED = (UUID(int=n) for n in (91, 92, 93, 94))  # A's alternates
 OWNER, MANAGER, VIEWER = UUID(int=71), UUID(int=72), UUID(int=73)
 LABELS: dict[UUID, str] = {A: "E28-A", B: "E28-B", C: "E28-C", L: "E28-LIVE-MAIN"}
 NOW = datetime(2026, 10, 28, 12, 0, tzinfo=UTC)
 PREVIEWED, REFUSED = "trade_group.previewed", "trade_group.override_refused"
 TRADE = frozenset({Permission.ORDERS_WRITE, Permission.ORDERS_READ})
 _GRANTS = tuple(AccountGrant(a, True, True, False) for a in (A, B, C, L, D))
+_MANAGER = frozenset({"manager"})
+#: R1S-01: A granted to view only, and A granted to trade but frozen.
+_VIEW_ONLY, _FROZEN = (AccountGrant(A, True, False, False),), (AccountGrant(A, True, True, True),)
 SNAPSHOTS = {
     "owner": PrincipalSnapshot(OWNER, frozenset({"owner"}), frozenset(Permission)),
-    "manager": PrincipalSnapshot(MANAGER, frozenset({"manager"}), TRADE, _GRANTS),
+    "manager": PrincipalSnapshot(MANAGER, _MANAGER, TRADE, _GRANTS),
     "viewer": PrincipalSnapshot(VIEWER, frozenset({"viewer"}), frozenset({Permission.ORDERS_READ})),
+    "manager_view_only": PrincipalSnapshot(MANAGER, _MANAGER, TRADE, _VIEW_ONLY),
+    "manager_frozen": PrincipalSnapshot(MANAGER, _MANAGER, TRADE, _FROZEN),
 }
 #: Bearer token: the principal, the manager's second session included (one user, two sessions).
 TOKENS = {who: TradingPrincipal(UUID(int=81), s) for who, s in SNAPSHOTS.items()}
@@ -86,6 +93,7 @@ class World:
         self.records: list[dict[str, Any]] = []
         self.fail: str | None = None  # the action whose write raises
         self.faults: dict[str, BaseException] = {}  # a read's port that raises
+        self.hang: str | None = None  # the port that never answers (R1C-03)
         self.read, self.profiled, self.asked = list[UUID](), list[UUID](), list[Any]()
         self.alternates = {
             ALT: profile(A, profile_id=str(ALT), is_default=False),
@@ -93,6 +101,7 @@ class World:
                 A, profile_id=str(NARROW), is_default=False, leverage="5", max_leverage_cap="5"
             ),
             OFF: profile(A, profile_id=str(OFF), is_default=False, trading_enabled=False),
+            DISABLED: profile(A, profile_id=str(DISABLED), is_default=False, enabled=False),
         }
         self.limiter, self.metrics = PreviewLimiter(rate, clock=lambda: self.clock), Metrics("demo")
         self.runtime: World | None = self
@@ -122,12 +131,16 @@ class World:
         return TOKENS.get(request.headers["authorization"].partition(" ")[2])
 
     async def emit(self, action: str, **fields: Any) -> None:  # the audit writer
+        if self.hang == "audit":
+            await asyncio.Event().wait()
         if action == self.fail:
             raise RuntimeError("the audit writer is not started")
         self.records.append({"action": action, **fields})
 
     async def get_account(self, scope: Any, account_id: UUID) -> ExchangeAccount:
         self._fault("accounts")
+        if self.hang == "accounts":
+            await asyncio.Event().wait()
         self.read.append(account_id)
         if account_id not in LABELS or (
             isinstance(scope, GrantScope) and account_id not in scope.account_ids
@@ -252,6 +265,9 @@ def test_the_flag_off_refuses_the_preview_after_rbac_with_no_reason(world: World
         ({k: v for k, v in body(A, A).items() if k != "defaults"},
          [("legs[1].exchange_account_id", "duplicate_account")]),
         (body() | {"note": "x" * 17_000}, [("body", "body_too_large")]),
+        (body(A, B) | {"defaults": {"price": "60000", "sizing": {"mode": "fixed_qty",
+         "qty": "0.01", "round_to_lot": "true"}}},
+         [("defaults.sizing.round_to_lot", "bool_type")]),
     ],
 )  # fmt: skip
 def test_a_repeated_account_is_422_before_any_read(
@@ -269,18 +285,49 @@ def test_an_ungranted_and_a_missing_account_refuse_the_whole_preview_alike() -> 
     """PF-I01, SR-E29-13 (R1S-05): a leg outside the grants, on a deleted account, or on none
     refuses the whole request with one byte-identical `403 account_scope_denied`, counted and
     recorded `rbac.denied` naming the account, as `placeOrder` records it, then previewed; no
-    profile or figure is read before it, and a grant is judged before any row is read."""
+    profile or figure is read before it, and a grant is judged before any row is read. R1C-04:
+    the whole row, and `authz_denied_total{permission="orders:write"}` once each."""
     answers, reason = set(), "account_not_granted:orders:write:granted_accounts"
+    denials = {"permission": "orders:write"}
     for who, offending, rows in (("manager", FOREIGN, []), ("manager", D, [A, D]),
                                  ("owner", FOREIGN, [A, FOREIGN])):  # fmt: skip
-        world = World()
+        world, was = World(), REGISTRY.get_sample_value("authz_denied_total", denials) or 0.0
         got = world.post(body(A, offending), who=who)
         answers.add((got.status_code, got.content))
+        user = OWNER if who == "owner" else MANAGER
+        assert world.records[0] == {
+            "action": "rbac.denied", "actor_label": str(user), "actor_user_id": user,
+            "actor_ip": "testclient", "session_id": UUID(int=81), "object_kind": "exchange_account",
+            "object_id": str(offending), "outcome": "denied", "severity": "warning",
+            "reason": reason, "request_id": None,
+        }  # fmt: skip
+        assert REGISTRY.get_sample_value("authz_denied_total", denials) == was + 1
         assert [(r["action"], r["reason"], r.get("object_id")) for r in world.records] == [
             ("rbac.denied", reason, str(offending)), (PREVIEWED, "account_scope_denied", None),
         ]  # fmt: skip
         assert (world.read, world.profiled, world.asked) == (rows, [], [])
     assert len(answers) == 1 and next(iter(answers))[0] == 403
+
+
+@pytest.mark.parametrize(
+    ("who", "reason"),
+    [("manager_view_only", "trading_not_granted"), ("manager_frozen", "account_frozen")],
+)
+def test_a_view_only_or_frozen_grant_refuses_the_preview_as_a_missing_account(
+    who: str, reason: str
+) -> None:
+    """R1S-01 (PF-I03, C-12.4): the submit's grant, to trade and unfrozen. A Manager whose grant
+    on A only views, or is frozen, gets the missing account's bytes, recorded `rbac.denied` with
+    its reason naming A, then previewed; no row is read."""
+    missing = World().post(body(A, FOREIGN), who="manager")
+    world = World()
+    got = world.post(body(A), who=who)
+    assert (got.status_code, got.content) == (missing.status_code, missing.content)
+    assert [(r["action"], r["reason"], r.get("object_id")) for r in world.records] == [
+        ("rbac.denied", f"{reason}:orders:write:granted_accounts", str(A)),
+        (PREVIEWED, "account_scope_denied", None),
+    ]
+    assert world.read == world.asked == []
 
 
 def test_a_leg_outside_this_environment_is_400_counted_and_never_peeked(world: World) -> None:
@@ -343,6 +390,7 @@ def test_what_the_planner_does_not_carry_is_400_before_any_figure(
         ({"leverage": "11"}, "max_leverage_cap", "10"),  # past _B_'s cap
         ({"profile_id": str(NARROW), "leverage": "6"}, "max_leverage_cap", "5"),  # min(B, A)
         ({"profile_id": str(OFF)}, "trading_enabled", None),  # an alternate that does not trade
+        ({"profile_id": str(DISABLED)}, "enabled", None),  # an alternate that is disabled
     ],
 )
 def test_a_widening_before_planning_is_403_recorded_ahead_and_reads_no_figure(
@@ -365,6 +413,12 @@ def test_a_widening_before_planning_is_403_recorded_ahead_and_reads_no_figure(
         rule,
     )
     assert world.records[1]["after_state"]["outcomes"] == {"refused": 1} and world.asked == []
+
+
+def test_a_leverage_at_the_tighter_cap_is_no_widening(world: World) -> None:
+    """R1C-02: R3 refuses a leverage above the tighter `max_leverage_cap`, never one at it."""
+    assert world.post(body((A, {"leverage": "10"}), B)).status_code == 200
+    assert world.actions() == [(PREVIEWED, None)]
 
 
 def test_a_widening_preview_is_403_and_each_offending_leg_is_audited_ahead(world: World) -> None:
@@ -433,6 +487,21 @@ def test_an_unwired_or_unread_dependency_answers_503_or_501_unrecorded(
     world.faults = {port: error for port, error in world.faults.items() if port == fault}
     got = world.post()
     assert (got.status_code, got.json()["code"], world.records) == (status, code, [])
+
+
+@pytest.mark.parametrize(("hang", "code"), [("accounts", "store_unavailable"),
+                                            ("audit", "audit_unavailable")])  # fmt: skip
+def test_a_read_or_a_record_past_its_bound_answers_503(
+    monkeypatch: pytest.MonkeyPatch, hang: str, code: str
+) -> None:
+    """R1C-03: a row read or a record that does not answer within the store's bound is 503,
+    the read's `store_unavailable` and the record's `audit_unavailable`, nothing recorded; never
+    the 500 an unhandled `TimeoutError` would be."""
+    monkeypatch.setattr(route, "STORE_TIMEOUT_S", 0.01)
+    world = World()
+    world.hang = hang
+    got = world.post()
+    assert (got.status_code, got.json()["code"], world.records) == (503, code, [])
 
 
 def test_an_unlisted_symbol_or_a_planners_refusal_is_400_recorded(world: World) -> None:
