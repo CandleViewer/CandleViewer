@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type JSX,
@@ -183,6 +184,9 @@ export function CommandPalette({
   const listId = `${id}-list`;
   const input = useRef<HTMLInputElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // The last pointer position over the list: a mousemove at the same spot is the list scrolling under a still
+  // pointer (a key move), not a hover, so it never takes the active option from the keyboard.
+  const pointer = useRef<{ readonly x: number; readonly y: number } | null>(null);
   const [text, setText] = useState(defaultQuery);
   const [settled, setSettled] = useState(defaultQuery.trim());
   const [active, setActive] = useState({ index: 0, scroll: false });
@@ -190,8 +194,12 @@ export function CommandPalette({
   const [recall, setRecall] = useState<{ readonly text: string; readonly n: number } | null>(null);
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
-    // Each opening starts afresh: the host's query, the first option, nothing said yet.
+    // Each opening starts afresh: the host's query, the first option, nothing said yet. A query still settling
+    // when the palette closed must not land on the reopened one (its count would never be said).
     setWasOpen(open);
+    clearTimeout(timer.current);
+    timer.current = undefined;
+    pointer.current = null;
     if (open) {
       setText(defaultQuery);
       setSettled(defaultQuery.trim());
@@ -201,8 +209,8 @@ export function CommandPalette({
   }
 
   const query = text.trim();
-  const groups = groupsFor(query, commands, sections);
-  const rows = groups.flatMap((g) => g.rows);
+  const groups = useMemo(() => groupsFor(query, commands, sections), [query, commands, sections]);
+  const rows = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
   const count = rows.length;
   const current = count === 0 ? -1 : Math.min(active.index, count - 1);
   const optionId = (index: number): string => `${id}-opt-${String(index)}`;
@@ -243,7 +251,8 @@ export function CommandPalette({
   };
 
   const handleKey = (event: KeyboardEvent<HTMLInputElement>): void => {
-    if (event.nativeEvent.isComposing) return;
+    // An IME composing (Safari reports its keys as keyCode 229 without isComposing) owns the keys.
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     const { key } = event;
     const plain = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
     if (key === "Enter") {
@@ -357,7 +366,11 @@ export function CommandPalette({
                           why !== undefined ? "locked" : destructive ? "destructive" : undefined
                         }
                         data-active={at === current ? "" : undefined}
-                        onMouseMove={() => {
+                        onMouseMove={(event) => {
+                          const { clientX: x, clientY: y } = event;
+                          const last = pointer.current;
+                          if (last !== null && last.x === x && last.y === y) return;
+                          pointer.current = { x, y };
                           if (at !== current) setActive({ index: at, scroll: false });
                         }}
                         onClick={() => {

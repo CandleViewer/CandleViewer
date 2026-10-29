@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { createRequire } from "node:module";
 import { act, useState, type JSX } from "react";
+import { createRoot } from "react-dom/client";
 import { expect, fireEvent, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
@@ -97,6 +98,13 @@ const type = (text: string): Promise<void> =>
   act(async () => void fireEvent.change(input(), { target: { value: text } }));
 const wait = (ms: number): Promise<void> =>
   act(() => vi.advanceTimersByTimeAsync(ms).then(() => undefined));
+const rowOf = (name: string): Element => {
+  const row = screen().getByRole("option", { name }).closest(".cv-palette__row");
+  if (row === null) throw new Error(`no row for ${name}`);
+  return row;
+};
+const hover = (name: string, x: number, y: number): Promise<void> =>
+  act(async () => void fireEvent.mouseMove(rowOf(name), { clientX: x, clientY: y }));
 const openHost = async (ui: JSX.Element): Promise<HTMLElement> => {
   const host = await mount(ui);
   const opener = within(host).getByRole("button", { name: "Commands" });
@@ -348,6 +356,114 @@ describe("CommandPalette (CMP-059)", () => {
     await openHost(<Host />);
     await act(async () => fireEvent.click(screen().getByRole("option", { name: "Open settings" })));
     expect(run.settings).toHaveBeenCalledTimes(1);
+  });
+
+  it("a click on a gated row never runs it and re-shows its reason per click", async () => {
+    const spy = vi.fn();
+    await openHost(<Host spy={spy} />);
+    const option = screen().getByRole("option", { name: "Set leverage" });
+    await act(async () => fireEvent.click(option));
+    const first = status().lastElementChild;
+    expect(first).toHaveTextContent(REASON);
+    await act(async () => fireEvent.click(option));
+    const second = status().lastElementChild;
+    expect(second).not.toBe(first);
+    expect(second).toHaveTextContent(REASON);
+    expect(active()).toBe("Set leverage");
+    expect([run.lev.mock.calls.length, spy.mock.calls]).toEqual([0, []]);
+    expect(screen().getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("Enter inside the settle window runs the row on screen", async () => {
+    vi.useFakeTimers();
+    await openHost(<Host />);
+    await type("settings");
+    expect(active()).toBe("Open settings");
+    await press("Enter");
+    expect(run.settings).toHaveBeenCalledTimes(1);
+    expect(run.chart).not.toHaveBeenCalled();
+    expect(screen().queryByRole("dialog")).toBeNull();
+  });
+
+  it("a reopening inside the settle window says the reopened query's count once", async () => {
+    vi.useFakeTimers();
+    const host = await openHost(<Host defaultQuery="chart" />);
+    await type("op");
+    await wait(100);
+    await press("Escape");
+    await act(async () => fireEvent.click(within(host).getByRole("button", { name: "Commands" })));
+    expect(input()).toHaveValue("chart");
+    expect(status()).toHaveTextContent("1 result");
+    const node = status().firstElementChild;
+    await wait(500); // the closed palette's "op" settle must not land on "chart"
+    expect(status()).toHaveTextContent("1 result");
+    expect(status().firstElementChild).toBe(node);
+    expect(status().querySelectorAll("span")).toHaveLength(1);
+  });
+
+  it("an unmount mid-settle leaves no timer and no state update", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); // the settle timer only
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(<CommandPalette open onOpenChange={() => undefined} commands={COMMANDS} />),
+    );
+    await type("op");
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    await act(async () => root.unmount());
+    await act(() => vi.advanceTimersByTimeAsync(0).then(() => undefined)); // the Dialog's focus return
+    expect(vi.getTimerCount()).toBe(0); // the settle timer went with the palette
+    await act(() => vi.advanceTimersByTimeAsync(1000).then(() => undefined));
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("a mousemove at the pointer's last spot (the list scrolling under it) keeps the keyboard's option", async () => {
+    await openHost(<Host />);
+    await hover("Go to chart", 5, 5);
+    expect(active()).toBe("Go to chart");
+    await press("ArrowDown");
+    expect(active()).toBe("Open settings");
+    await hover("Flatten all positions, confirms", 5, 5);
+    await hover("Set leverage", 5, 5);
+    expect(active()).toBe("Open settings");
+    await hover("Set leverage", 5, 9); // a real move hovers
+    expect(active()).toBe("Set leverage");
+  });
+
+  it("a commands change while open keeps the active option valid", async () => {
+    const ran = vi.fn();
+    const many = Array.from({ length: 6 }, (_, i) => ({
+      id: `c${String(i)}`,
+      label: `Command ${String(i)}`,
+      group: "Action",
+      onRun: () => ran(i),
+    }));
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    const render = (commands: readonly PaletteCommand[]): Promise<void> =>
+      act(async () =>
+        root.render(<CommandPalette open onOpenChange={() => undefined} commands={commands} />),
+      );
+    await render(many);
+    await press("End");
+    expect(active()).toBe("Command 5");
+    await render(many.slice(0, 3));
+    expect(active()).toBe("Command 2");
+    await press("Enter");
+    expect(ran).toHaveBeenCalledWith(2);
+    await act(async () => root.unmount());
+  });
+
+  it("an IME's keys (keyCode 229) neither move nor run", async () => {
+    await openHost(<Host />);
+    await press("ArrowDown", { keyCode: 229 } as KeyboardEventInit);
+    expect(active()).toBe("Go to chart");
+    await press("Enter", { keyCode: 229 } as KeyboardEventInit);
+    expect(run.chart).not.toHaveBeenCalled();
+    expect(screen().getByRole("dialog")).toBeInTheDocument();
+    await press("Enter");
+    expect(run.chart).toHaveBeenCalledTimes(1);
   });
 
   it("has no serious or critical axe violation with every row kind showing", async () => {
