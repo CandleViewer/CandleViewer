@@ -119,3 +119,25 @@ def test_the_script_posts_the_contract_bodies_and_no_cache_control() -> None:
     assert "code, password: PASSWORD, challenge_id: challengeId" in text  # authStepUp
     assert "username" not in text and "CV_CACHE_DISABLED" not in text
     assert not re.search(r"\b(warm|cold)\b", text)
+
+
+def test_the_summary_artifact_carries_no_setup_data() -> None:
+    """#296: k6's --summary-export carries setup()'s return value; a step strips it, and checks it
+    is gone, before the step-up report reads the file and before the upload."""
+    steps = _job()["steps"]
+    names = [s.get("name", "") for s in steps]
+    drop = names.index("Drop setup data from the summary")
+    report = names.index("Report the step-up p95 beside its reference-host budget")
+    uses = [str(s.get("uses", "")) for s in steps]
+    upload = next(i for i, u in enumerate(uses) if u.startswith("actions/upload-artifact"))
+    run = names.index("E09-Q05 k6 auth profile (its thresholds decide the step)")
+    assert run < drop < report < upload
+    step = steps[drop]
+    assert step.get("if") == "always()"
+    assert "del(.setup_data)" in step["run"]
+    assert "has(\"setup_data\") | not" in step["run"]
+    # Fail closed (#296): a failed scrub removes the file, and the upload needs the scrub's success.
+    assert step.get("id") == "scrub"
+    assert "trap 'rm -f \"$summary\" \"$summary.tmp\"' ERR" in step["run"]
+    assert steps[upload]["if"] == "always() && steps.scrub.outcome == 'success'"
+
