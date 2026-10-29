@@ -216,11 +216,29 @@ def test_semgrep_step_hands_its_json_report_to_the_gate() -> None:
     # #3549: the SARIF cannot say which files the engine left unparsed; the JSON report can,
     # and with --verbose it also lists the targets Semgrep skipped (one over the size limit).
     (step,) = [s for s in _steps("semgrep-bandit") if s.get("id") == "semgrep"]
-    lines = [line.strip() for line in step["run"].splitlines()]
+    run = step["run"].replace("\\\n", " ")
+    lines = [" ".join(line.split()) for line in run.splitlines()]
     scan = f"semgrep scan $CONFIG_ARGS --verbose {MAX_TARGET_BYTES} --sarif --output semgrep.sarif"
     gate = "python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif"
     assert scan + " --json-output semgrep.json" in lines
-    assert lines[-1] == gate + " --semgrep-json semgrep.json"
+    assert lines[-1] == gate + " --semgrep-json semgrep.json --sarif-out semgrep.gate.sarif"
+
+
+def test_code_scanning_receives_the_gates_copy_of_each_report() -> None:
+    # #1882: code scanning ignores SARIF suppressions, so it gets the gate's copy, without what
+    # the gate cleared; the raw report only when the gate wrote none (over-reporting, not less).
+    steps = _steps("semgrep-bandit")
+    for tool in ("semgrep", "bandit"):
+        (gate,) = [s for s in steps if s.get("id") == tool]
+        assert f"--sarif-out {tool}.gate.sarif" in " ".join(gate["run"].split())
+        (upload,) = [
+            s
+            for s in steps
+            if "upload-sarif@" in s.get("uses", "") and s["with"]["category"] == tool
+        ]
+        assert upload["with"]["sarif_file"] == (
+            f"${{{{ hashFiles('{tool}.gate.sarif') != '' && '{tool}.gate.sarif' || '{tool}.sarif' }}}}"
+        )
 
 
 def test_security_auth_step_hands_its_verbose_json_report_to_the_gate() -> None:
