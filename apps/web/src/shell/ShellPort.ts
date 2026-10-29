@@ -69,6 +69,8 @@ export interface GpuInfo {
   readonly hardwareAccelerated: boolean;
   /** True if the WebGL2 context reports the extensions the chart engine needs. */
   readonly webgl2CapabilityParity: boolean;
+  /** The desktop shell's last GPU-process crash this session, or null (#4951); a tab has none. */
+  readonly lastCrash?: GpuLastCrash | null;
 }
 
 /** Why the desktop shell's GPU process went: Electron's reason, or "unknown" (F15). */
@@ -89,6 +91,11 @@ export interface GpuCrash {
   /** GPU-process restarts this session, this one included. */
   readonly restartCount: number;
   readonly reason: GpuCrashReason;
+}
+
+/** `GpuInfo.lastCrash`: the crash as it was pushed, and whether a retry was accepted after it. */
+export interface GpuLastCrash extends GpuCrash {
+  readonly retried: boolean;
 }
 
 export interface DeepLinkPayload {
@@ -152,7 +159,10 @@ export interface ShellPort {
 
   readonly gpu: {
     info(): Promise<GpuInfo>;
-    /** Each GPU-process crash in the desktop shell; a no-op subscription in a browser tab. */
+    /**
+     * Each GPU-process crash in the desktop shell, the last one before the subscription included
+     * (`GpuInfo.lastCrash`, read once) unless a retry answered it; a no-op subscription in a tab.
+     */
     onCrashed(handler: (crash: GpuCrash) => void): () => void;
     /** Relaunches the desktop app with the GPU allowed again; refused in a browser tab. */
     retry(): Promise<void>;

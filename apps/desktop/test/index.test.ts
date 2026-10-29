@@ -494,7 +494,11 @@ describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", ()
 
   it("answers every channel for the app origin's main frame", async () => {
     const from = invokeFrom("app://candleviewer/terminal?tab=1", "main");
-    await expect(ipcListener("cv:gpu:info")(from)).resolves.toMatchObject({ vendor: "unknown" });
+    // No GPU crash yet in this main (the GPU tests below come later): lastCrash is null (#4951).
+    await expect(ipcListener("cv:gpu:info")(from)).resolves.toMatchObject({
+      vendor: "unknown",
+      lastCrash: null,
+    });
     expect(ipcListener("cv:keychain:getKekHandle")(from)).toMatch(/^kek-handle-/);
     expect(ipcListener("cv:updates:check")(from)).toEqual({
       state: "error",
@@ -631,6 +635,16 @@ describe("the GPU-process crash signal and its relaunch (F15, E10-S04)", () => {
     gone.forEach((win) => expect(win.send).not.toHaveBeenCalled());
   });
 
+  it("cv:gpu:info answers the last GPU crash as it was sent, no retry yet (#4951)", async () => {
+    const shell = windowOn("app://candleviewer/terminal");
+    getAllWindows.mockReturnValue([shell]);
+    childProcessGone("GPU");
+    const [[, sent]] = shell.webContents.send.mock.calls as [[string, object]];
+    const from = invokeFrom("app://candleviewer/terminal", "main");
+    const info = (await ipcListener("cv:gpu:info")(from)) as { lastCrash: unknown };
+    expect(info.lastCrash).toEqual({ ...sent, retried: false });
+  });
+
   it("listens from module load, before whenReady is even called, so a pre-ready crash counts", () => {
     const at = appOnCalls().findIndex(([name]) => name === "child-process-gone");
     const listenedAt = (app.on as unknown as Mock).mock.invocationCallOrder[at] ?? Infinity;
@@ -638,15 +652,19 @@ describe("the GPU-process crash signal and its relaunch (F15, E10-S04)", () => {
     expect(listenedAt).toBeLessThan(readyAsked ?? 0);
   });
 
-  it("cv:gpu:retry after a crash relaunches the app, then exits it with 0", () => {
+  it("cv:gpu:retry after a crash relaunches the app, then exits it with 0", async () => {
     getAllWindows.mockReturnValue([]);
     childProcessGone("GPU");
-    ipcListener("cv:gpu:retry")(invokeFrom("app://candleviewer/terminal", "main"), "ignored");
+    const from = invokeFrom("app://candleviewer/terminal", "main");
+    ipcListener("cv:gpu:retry")(from, "ignored");
     const args = [...process.argv.slice(1), "--cv-gpu-relaunched"];
     expect(vi.mocked(app.relaunch).mock.calls).toEqual([[{ args }]]);
     expect(vi.mocked(app.exit).mock.calls).toEqual([[0]]);
     const [relaunched] = vi.mocked(app.relaunch).mock.invocationCallOrder;
     const [exited] = vi.mocked(app.exit).mock.invocationCallOrder;
     expect(relaunched).toBeLessThan(exited ?? 0);
+    // A page that reads cv:gpu:info before the exit lands sees the crash answered (#4951).
+    const info = (await ipcListener("cv:gpu:info")(from)) as { lastCrash: unknown };
+    expect(info.lastCrash).toMatchObject({ reason: "crashed", retried: true });
   });
 });

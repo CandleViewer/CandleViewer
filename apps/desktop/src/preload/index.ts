@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ALLOWED_IPC_CHANNELS, ALLOWED_IPC_EVENTS, isChannelAllowed } from "./allowList.js";
 import { parseCrashEntry } from "../main/crashEntry.js";
-import { parseGpuCrash, type GpuCrash } from "../main/gpuCrash.js";
+import { parseGpuCrash, parseGpuLastCrash, type GpuCrash } from "../main/gpuCrash.js";
 
 /**
  * Exposes exactly one namespaced object, `window.cv`, as a fixed set of
@@ -37,8 +37,22 @@ function subscribeAllowed(channel: string, listener: (payload: unknown) => void)
   };
 }
 
+/**
+ * Main's `cv:gpu:info` answer with its `lastCrash` (#4951) checked as `cv:gpu:crashed`'s payload
+ * is: a fresh copy or null. An answer that fails the check is refused.
+ */
+function checkedGpuInfo(info: unknown): object {
+  if (typeof info === "object" && info !== null && !Array.isArray(info)) {
+    const lastCrash = parseGpuLastCrash((info as { lastCrash?: unknown }).lastCrash);
+    if (lastCrash !== undefined) {
+      return { ...info, lastCrash };
+    }
+  }
+  throw new Error("GPU info refused");
+}
+
 const cv = Object.freeze({
-  gpuInfo: () => invokeAllowed("cv:gpu:info"),
+  gpuInfo: () => invokeAllowed("cv:gpu:info").then(checkedGpuInfo),
   keychainGetKekHandle: () => invokeAllowed("cv:keychain:getKekHandle"),
   updatesCheck: () => invokeAllowed("cv:updates:check"),
   // Only a fresh, schema-checked copy crosses to main; main checks it again (SR-111).

@@ -31,3 +31,5 @@ command-line switches, and are asserted independently by SR-110's test suite.
 hardware-accelerated flag, WebGL2 capability parity) so the renderer can
 enter the `degraded-2d` path (`docs/plan/20-architecture.md` F15) when the
 probe fails, independent of which flags are set here.
+Main's `cv:gpu:info` answer also carries `lastCrash` (#4951): the session's last
+GPU-process crash (time, restart count, reason, `retried`), or `null` before one.

@@ -2,8 +2,10 @@
  * E10-S04 (#306) slice 9c: SCR-159's GPU-unavailable state, the desktop app's only (F15; the ruling
  * of record on #306, BQ-9.1 to 9.4). Each `cv:gpu:crashed` the preload forwards lands in the shell
  * store for the page and is reported once as `shell.gpu_unavailable`, by its reason class only. The
- * host's GPU is the shell port's: the Electron adapter where the preload ran. In a tab nothing
- * reports a crash: the browser adapter's `onCrashed` is a no-op, its retry refused.
+ * host's GPU is the shell port's: the Electron adapter where the preload ran, whose subscription
+ * also reads the last crash before it (#4951), so main's push and that read of one crash are taken
+ * once. In a tab nothing reports a crash: the browser adapter's `onCrashed` is a no-op, its retry
+ * refused.
  */
 import { crashLogSettled } from "../crash/reportCrash.js";
 import { createShellPort } from "../createShellPort.js";
@@ -51,8 +53,7 @@ export function watchGpu(gpu: GpuPort = createShellPort().gpu): () => void {
   try {
     unsubscribe = gpu.onCrashed((payload: unknown) => {
       const crash = checked(payload);
-      if (crash === undefined) return;
-      applyGpuCrash(crash);
+      if (crash === undefined || !applyGpuCrash(crash)) return; // a bad payload, or one taken
       const detail = { name: "shell.gpu_unavailable", reason: crash.reason };
       window.dispatchEvent(new CustomEvent(THEME_ANALYTICS_EVENT, { detail }));
     });

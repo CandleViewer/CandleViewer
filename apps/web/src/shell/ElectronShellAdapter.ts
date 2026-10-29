@@ -72,6 +72,27 @@ function requireBridge(): CvBridge {
 }
 
 /**
+ * `gpu.onCrashed`: each `cv:gpu:crashed`, and the last crash before the subscription (main pushed
+ * it to no listener: at boot, or during a reload), read once from `cv:gpu:info` (#4951). One a
+ * retry answered is the relaunch's, and an answer after the unsubscribe is dropped. A crash that
+ * both bring reaches `handler` twice; the GPU watcher takes it once.
+ */
+function onGpuCrashed(bridge: CvBridge, handler: (crash: GpuCrash) => void): () => void {
+  const unsubscribe = bridge.onGpuCrashed(handler);
+  let subscribed = true;
+  const replay = async (): Promise<void> => {
+    const { lastCrash } = await bridge.gpuInfo();
+    if (subscribed && lastCrash?.retried === false) handler(lastCrash);
+  };
+  // a failed read (a refused answer, say) shows no page: one fixed line, never its error (C-12.6)
+  void replay().catch(() => console.error("gpu.onCrashed: the last-crash read failed"));
+  return () => {
+    subscribed = false;
+    unsubscribe();
+  };
+}
+
+/**
  * Preload-backed adapter. Every method here forwards to a named function on
  * `window.cv`; there is no method that accepts a caller-supplied channel
  * name, satisfying SR-111 end to end (the allow-list on the main-process
@@ -107,7 +128,7 @@ export function createElectronShellAdapter(): ShellPort {
     },
     gpu: {
       info: () => requireBridge().gpuInfo(),
-      onCrashed: (handler) => requireBridge().onGpuCrashed(handler),
+      onCrashed: (handler) => onGpuCrashed(requireBridge(), handler),
       retry: () => requireBridge().gpuRetry(),
     },
   };

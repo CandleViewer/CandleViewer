@@ -114,6 +114,40 @@ describe("createGpuRecovery: cv:gpu:retry relaunches the app", () => {
   });
 });
 
+describe("createGpuRecovery: cv:gpu:info's lastCrash (#4951)", () => {
+  it("is null before a GPU crash, then the last one as sent, not retried; another process is none", () => {
+    const { clock, recovery } = setup();
+    expect(recovery.lastCrash()).toBeNull();
+    recovery.childProcessGone({ ...GPU_GONE, type: "Utility" });
+    expect(recovery.lastCrash()).toBeNull();
+    const first = recovery.childProcessGone(GPU_GONE);
+    expect(recovery.lastCrash()).toEqual({ ...first, retried: false });
+    clock.now = AT + 5;
+    const second = recovery.childProcessGone({ ...GPU_GONE, reason: "oom" });
+    expect(recovery.lastCrash()).toEqual({ ...second, retried: false });
+  });
+
+  it("is retried once a retry is accepted after it; a refused retry or a newer crash is not", () => {
+    const { clock, recovery } = setup();
+    const first = recovery.childProcessGone(GPU_GONE);
+    recovery.retry();
+    expect(recovery.lastCrash()).toEqual({ ...first, retried: true });
+    const second = recovery.childProcessGone(GPU_GONE);
+    expect(() => recovery.retry()).toThrow(GpuRetryRefusedError); // rate-limited
+    expect(recovery.lastCrash()).toEqual({ ...second, retried: false });
+    clock.now = AT + GPU_RETRY_INTERVAL_MS;
+    recovery.retry();
+    expect(recovery.lastCrash()).toEqual({ ...second, retried: true });
+  });
+
+  it("a relaunched launch has none until its own crash, which no retry has answered", () => {
+    const { recovery } = setup([GPU_RELAUNCH_MARKER]);
+    expect(recovery.lastCrash()).toBeNull();
+    const crash = recovery.childProcessGone(GPU_GONE);
+    expect(recovery.lastCrash()).toEqual({ ...crash, retried: false });
+  });
+});
+
 describe("parseGpuCrash (the preload's check of cv:gpu:crashed)", () => {
   it("returns a fresh copy holding the three fields only", () => {
     const payload = { crashedAtMs: AT, restartCount: 2, reason: "killed", exitCode: 9 };
