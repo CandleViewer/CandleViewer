@@ -57,8 +57,9 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   on it ends the connection `internal_error` (as a writer fault does, if no close took); and
   teardown cancels it first.
 - **Inbound limits**: size checked before decoding (`1009`), 8 KiB until the first `auth_ok`;
-  30/s and 300/min (`client_rate_limited`, then `4429`), charged once per frame of every kind
-  before the frame is decoded, so a refused frame is never decoded and its `err` has no `id`.
+  30/s and 300/min (`client_rate_limited`, then `4429`), in tokens a frame takes by its size,
+  charged once per frame of every kind before the frame is decoded, so a refused frame is never
+  decoded and its `err` has no `id`.
   From the first `auth_ok` a frame that opens with `t: "pong"` is counted only once its
   `PongBudget` is spent, and one over `MAX_PONG_BYTES` closes `protocol_violation` (§8.5), never
   decoded. A JSON frame past the container cap or the SR-185 value bound (over-counted on its
@@ -179,6 +180,7 @@ from candleviewer.ws.limits import (
     MAX_PONG_BYTES,
     MAX_PREAUTH_FRAME_BYTES,
     MAX_UNAUTHENTICATED_SOCKETS,
+    inbound_frame_weight,
     json_nests_deeper,
     json_values_over_count,
 )
@@ -1126,7 +1128,7 @@ class _Connection:
         if pong_bound and pong:
             self.close_with("protocol_violation")
             return _OVERSIZE
-        if not self.charge(pong=pong):
+        if not self.charge(pong=pong, weight=inbound_frame_weight(size)):
             return _REFUSED
         frame = self._parse(raw, values)
         if pong_bound and isinstance(frame, dict) and frame.get("t") == "pong":
@@ -1134,17 +1136,18 @@ class _Connection:
             return _OVERSIZE
         return frame
 
-    def charge(self, *, pong: bool) -> bool:
+    def charge(self, *, pong: bool, weight: int) -> bool:
         """Charge one inbound frame before it is decoded (§8.5); False when it is refused.
 
         A `pong` (`decode` has read its leading `t` from the first `auth_ok`) takes from its own
-        budget first; past it, and for every other frame, the inbound rate counts it. A refusal
+        budget first; past it, and for every other frame, the inbound rate takes `weight` tokens,
+        the frame's size weight (`inbound_frame_weight`, #4924). A refusal
         is the rate's strike: the first an `err` `client_rate_limited` with no `id` (the frame is
         never read), the next the `4429` close, which the close's metric and audit row record."""
         now = self.clock()
         if pong and self.pongs.allow(now):
             return True
-        if self.rate.allow(now):
+        if self.rate.allow(now, weight):
             return True
         self.rate_strikes += 1
         if self.rate_strikes > 1:

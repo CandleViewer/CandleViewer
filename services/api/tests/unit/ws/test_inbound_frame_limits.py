@@ -204,8 +204,8 @@ def allowed(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     answers: list[bool] = []
 
     class _Recording(InboundRateLimiter):
-        def allow(self, now: float) -> bool:
-            answers.append(ok := super().allow(now))
+        def allow(self, now: float, weight: int = 1) -> bool:
+            answers.append(ok := super().allow(now, weight))
             return ok
 
     monkeypatch.setattr(gateway, "InboundRateLimiter", _Recording)

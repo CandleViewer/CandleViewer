@@ -8,8 +8,8 @@ Single home for every bound the gateway enforces. Overflow policy:
   same way, so it is never scanned or decoded), and a MessagePack frame past the smaller value
   budget `ws/codec.py` sets for that window -> `frame_malformed`.
 - Every inbound frame is charged against the connection's inbound rate (§8.5) before it is
-  decoded, so a refused frame is never decoded; from the first `auth_ok` a frame that opens with
-  `t: "pong"` takes from its own `pong` budget first.
+  decoded, `inbound_frame_weight` tokens by its size, so a refused frame is never decoded; from
+  the first `auth_ok` a frame that opens with `t: "pong"` takes from its own `pong` budget first.
 - JSON text frame with > `MAX_JSON_CONTAINERS` `[` and `{` characters, or whose value count
   (`json_values_over_count`) is past the SR-185 value bound the gateway applies to both
   encodings (`codec.MAX_MSGPACK_VALUES`) -> `frame_malformed` (a protocol violation); it is never
@@ -260,6 +260,17 @@ def json_depth_exceeds(text: str, limit: int) -> bool:
         elif ch in "]}":
             depth -= 1
     return False
+
+
+#: §8.5 (#4924, an orchestrator contract decision of 2026-10-29): an inbound frame takes one token
+#: of the inbound rate, plus one per full 32 KiB of its encoded bytes, before it is decoded. A
+#: frame at `MAX_INBOUND_FRAME_BYTES` takes 9; one at the pre-auth cap, or any `pong`, takes 1.
+INBOUND_WEIGHT_BYTES = 32 * 1024
+
+
+def inbound_frame_weight(size: int) -> int:
+    """The inbound-rate tokens of a frame of `size` encoded bytes (§8.5)."""
+    return 1 + size // INBOUND_WEIGHT_BYTES
 
 
 def json_values_over_count(text: str) -> int:

@@ -222,6 +222,7 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
     "Sockets awaiting `auth_ok`": "limits.MAX_UNAUTHENTICATED_SOCKETS",
     "Max inbound frame": "limits.MAX_INBOUND_FRAME_BYTES limits.MAX_PREAUTH_FRAME_BYTES",
     "Max values / inbound frame": "codec.MAX_MSGPACK_VALUES",  # both encodings (#4924)
+    "Inbound frame weight": "limits.INBOUND_WEIGHT_BYTES",  # #4924
     "Fragments per inbound message": "limits.WS_MAX_FRAGMENTS_PER_MESSAGE",
     "Charge per inbound fragment": "limits.WS_FRAGMENT_OVERHEAD_BYTES limits.SERVER_WS_MAX_SIZE",
     "Inbound frames / connection": "limits.WS_INBOUND_FRAME_BURST limits.WS_INBOUND_FRAMES_PER_S",
@@ -268,6 +269,7 @@ SECTION_3_6_ROWS: Final = {
     "Max inbound JSON nesting depth": "limits.MAX_JSON_DEPTH",
     "Max inbound JSON containers": "limits.MAX_JSON_CONTAINERS",
     "Max inbound JSON values": "codec.MAX_MSGPACK_VALUES",
+    "Inbound frame weight": "limits.INBOUND_WEIGHT_BYTES",
 }
 #: The MessagePack bounds of SR-185, in a paragraph of 3.6: the phrase that states each (its
 #: number is group 1) and the constant of `ws/codec.py`.

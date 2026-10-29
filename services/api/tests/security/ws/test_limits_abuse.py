@@ -54,7 +54,8 @@ from tests.unit.ws._seq_support import ACC_A
 
 SUBS, SYMBOLS, BARS = 200, 40, 16
 SOCKETS, CONNECTS, FRAMES = 8, 20, 300  # per user; per user a minute; per socket a minute
-RATE = 30  # frames per socket a second (§8.5)
+RATE = 30  # tokens per socket a second (§8.5)
+WEIGHT_NEAR_CAP = 8  # the tokens of a frame of 224 to 256 KiB: one, plus one per full 32 KiB (§3.6)
 SESSIONS = 3  # of the one user whose sockets and connects AC-15 counts, taking turns
 BUDGET = 20  # `ws.subscribe.denied` records one connection writes in a minute (§4.3)
 MINUTE = 60  # seconds
@@ -365,9 +366,11 @@ def test_x02_ac_11_300_frames_a_minute_end_the_socket_4429_and_the_window_slides
 def test_x02_frames_near_the_cap_past_the_rate_are_refused_unread_counted_and_audited(
     world: RawWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#4924: the inbound rate is charged before a frame is decoded. Frames near the 256 KiB cap,
-    30 in a second, are decoded and answered; the next two are refused unread (no decode, an `err`
-    with no `id`, then `4429`), counted by both metrics and recorded by the close's audit row."""
+    """#4924: the inbound rate is charged before a frame is decoded, one token plus one per full
+    32 KiB (§3.6, §8.5). Frames near the 256 KiB cap take 8 each, so after `hello` and `auth` three
+    fit the second's 30 and are decoded and answered; the next two are refused unread (no decode,
+    an `err` with no `id`, then `4429`), counted by both metrics and recorded by the close's audit
+    row."""
     errors = delta("cv_ws_errors_total", code="client_rate_limited")
     closes = delta("cv_ws_closes_total", reason="client_rate_limited")
     parsed: list[int] = []
@@ -384,7 +387,7 @@ def test_x02_frames_near_the_cap_past_the_rate_are_refused_unread_counted_and_au
     login = world.login("alice")
     with raw_connect(world) as c:
         authenticated(c, login)  # `hello` and `auth`: two of the second's 30
-        for n in range(RATE - 2):
+        for n in range((RATE - 2) // WEIGHT_NEAR_CAP):
             c.send(big(f"p{n}"))
             assert c.recv()["t"] == "pong"
         title = ERROR_META[ErrorCode.CLIENT_RATE_LIMITED].title
@@ -397,8 +400,8 @@ def test_x02_frames_near_the_cap_past_the_rate_are_refused_unread_counted_and_au
             _bye(ms, "client_rate_limited", text, retry_after_ms=1000),
             4429,
         )
-    # `hello`, `auth` and the 28 pings admitted were decoded; the two refused never were.
-    assert len(parsed) == RATE and all(n > 250_000 for n in parsed[2:])
+    # `hello`, `auth` and the three pings admitted were decoded; the two refused never were.
+    assert len(parsed) == 2 + 3 and all(n > 250_000 for n in parsed[2:])
     assert (errors(), closes()) == (1, 1)
     connection = c.seen[0]["p"]["connection_id"]
     row = _closed(login.user_id, login.minted.session_id, connection, SOURCE, "client_rate_limited")
@@ -445,11 +448,13 @@ class _Sink:
 def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing(
     world: RawWorld, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC-29: a principal with market data only (V) sends, each second of a minute, one frame near
-    256 KiB and two of 50 private-family topics. The near-cap frame gets one small `err` and no
-    record; the other 120 are denied, 20 of them recorded (one record each, never one per topic)
-    and the rest counted. Four `orders.submit` records go through the same `AuditWriter`, two while
-    the 20 records are being written and two after: each lands in the store, under a hang guard.
+    """AC-29: a principal with market data only (V) sends, each second of a minute, two frames of 50
+    private-family topics, and every third second one frame near 256 KiB, as often as its weight
+    lets the minute's 300 tokens hold the rest (8 tokens each, §8.5; #4924). The near-cap frame
+    gets one small `err` and no record; the other 120 are denied, 20 of them recorded (one record
+    each, never one per topic) and the rest counted. Four `orders.submit` records go through the
+    same `AuditWriter`, two while the 20 records are being written and two after: each lands in
+    the store, under a hang guard.
 
     Measures: the writer's handling of an order-class record during the flood, through its real
     WAL (fsync'd, in `tmp_path`), with one connection's budget spent. Does not measure: an OMS
@@ -486,11 +491,12 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
             big = _near_cap_sub(c)
             for second in range(MINUTE):
                 world.clock.now = float(second)
-                c.send_raw(big)
-                err = c.recv()
-                assert err == {"t": "err", "id": "big", "p": too_many}
-                assert len(json.dumps(err)) < 400  # one small reply
-                for k in range(2):  # three frames a second: 180 a minute, inside the 300
+                if second % 3 == 0:  # 20 x 8 tokens, + 120 + `hello` and `auth`: inside the 300
+                    c.send_raw(big)
+                    err = c.recv()
+                    assert err == {"t": "err", "id": "big", "p": too_many}
+                    assert len(json.dumps(err)) < 400  # one small reply
+                for k in range(2):
                     c.send_raw({"t": "sub", "id": "s", "p": {"topics": private}})
                     if k == 0 and second in ordered:  # meanwhile, an order-class write
                         world.call(_order_write, writer, second)
@@ -517,5 +523,5 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
     assert [r for r in rows if r["action"] == "orders.submit"] == orders  # each one landed
     assert len(rows) == BUDGET + len(ordered)  # nothing else: no store growth with the flood
     assert (verdict.verified, verdict.entries_checked) == (True, len(rows))  # the fake's chain
-    assert (unaudited(), refused(), writer.refused_total) == (2 * MINUTE - BUDGET, MINUTE, 0)
+    assert (unaudited(), refused(), writer.refused_total) == (2 * MINUTE - BUDGET, MINUTE // 3, 0)
     assert [f() for f in failed] == [0, 0, 0, 0]  # no audit row failed, timed out or was dropped

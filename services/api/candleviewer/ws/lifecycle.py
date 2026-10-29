@@ -62,6 +62,13 @@ SHUTDOWN_GRACE_MS: Final = 5000
 MAX_AUTH_FAILURES: Final = 3
 MAX_UNAUTHENTICATED_FRAMES: Final = 3
 MAX_PROTOCOL_VIOLATIONS: Final = 3
+#: §8.5: the inbound rate, in tokens: a frame takes `limits.inbound_frame_weight` of them, one
+#: plus one per full `limits.INBOUND_WEIGHT_BYTES` (#4924). Sized so that a client reconnecting
+#: (§9.2: no resumption, it re-subscribes from scratch) is never refused: `hello` and `auth` (one
+#: each, 8 KiB at most) and its whole set of `MAX_SUBSCRIPTIONS` in `MAX_TOPICS_PER_SUB`-topic
+#: `sub`s (4), each at most the widest schema-valid `sub`, about 53 KiB, so 2 tokens: 10 tokens
+#: in all, a third of one second's 30, with the 300 of the minute untouched by it. A frame at the
+#: 256 KiB cap takes 9, so a single frame of any size always fits an idle second.
 RATE_PER_SECOND: Final = 30
 RATE_PER_MINUTE: Final = 300
 #: §8.5: `pong`s a second that the inbound rate does not count, from the first `auth_ok`: about
@@ -360,24 +367,30 @@ def bye_frame(
 
 
 class InboundRateLimiter:
-    """Sliding-window counter: 30 frames per 1 s and 300 per 60 s (§8.5).
+    """Sliding-window token counter: 30 tokens per 1 s and 300 per 60 s (§8.5). A frame takes
+    its weight in tokens (`limits.inbound_frame_weight`, #4924); a frame of weight 1 is one frame,
+    as before.
 
-    Bounded: the deque never holds more than `per_minute` timestamps.
+    Bounded: every stamp holds at least one token, so the deque never holds more than
+    `per_minute` stamps.
     """
 
     def __init__(self, per_second: int = RATE_PER_SECOND, per_minute: int = RATE_PER_MINUTE):
         self._per_second = per_second
         self._per_minute = per_minute
-        self._stamps: deque[float] = deque(maxlen=per_minute + 1)
+        self._stamps: deque[tuple[float, int]] = deque(maxlen=per_minute + 1)
+        self._minute = 0  # the tokens the stamps hold
 
-    def allow(self, now: float) -> bool:
-        """Record one frame at monotonic `now`; False when over either limit."""
-        while self._stamps and now - self._stamps[0] >= 60.0:
-            self._stamps.popleft()
-        last_second = sum(1 for t in self._stamps if now - t < 1.0)
-        if last_second >= self._per_second or len(self._stamps) >= self._per_minute:
+    def allow(self, now: float, weight: int = 1) -> bool:
+        """Record a frame of `weight` tokens at monotonic `now`; False, recording nothing, when
+        it would take either window over its limit."""
+        while self._stamps and now - self._stamps[0][0] >= 60.0:
+            self._minute -= self._stamps.popleft()[1]
+        last_second = sum(w for t, w in self._stamps if now - t < 1.0)
+        if last_second + weight > self._per_second or self._minute + weight > self._per_minute:
             return False
-        self._stamps.append(now)
+        self._stamps.append((now, weight))
+        self._minute += weight
         return True
 
 

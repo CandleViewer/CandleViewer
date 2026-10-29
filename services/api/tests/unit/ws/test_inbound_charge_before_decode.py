@@ -23,11 +23,16 @@ from hypothesis import strategies as st
 import candleviewer.ws.gateway as gateway
 from candleviewer.ws.codec import MAX_MSGPACK_VALUES, decode_client_frame
 from candleviewer.ws.gateway import _REFUSED, _Connection
-from candleviewer.ws.lifecycle import PONG_BUDGET_BURST, RATE_PER_SECOND
+from candleviewer.ws.lifecycle import PONG_BUDGET_BURST, RATE_PER_SECOND, InboundRateLimiter
 from candleviewer.ws.limits import (
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_CONTAINERS,
     MAX_JSON_DEPTH,
+    MAX_PONG_BYTES,
+    MAX_PREAUTH_FRAME_BYTES,
+    MAX_SUBSCRIPTIONS,
+    MAX_TOPICS_PER_SUB,
+    inbound_frame_weight,
     json_depth_exceeds,
     json_nests_deeper,
     json_values_over_count,
@@ -305,3 +310,65 @@ def test_limits_value_bound_holds_the_widest_schema_valid_sub_and_ctl_with_room(
         text = json.dumps(frame)
         assert 3 * json_values_over_count(text) <= 2 * MAX_MSGPACK_VALUES
         assert _decode(_connection(JSON[0], authed=True), text)["t"] == frame["t"]
+
+
+# -- the frame weight (#4924): one token, plus one per full 32 KiB, before decode -----------------
+
+
+def test_inbound_frame_weight_is_one_plus_one_per_full_32_kib() -> None:
+    assert [inbound_frame_weight(n) for n in (0, 32_767, 32_768, 65_535, 65_536)] == [1, 1, 2, 2, 3]
+    assert (
+        inbound_frame_weight(MAX_PREAUTH_FRAME_BYTES) == inbound_frame_weight(MAX_PONG_BYTES) == 1
+    )
+    assert inbound_frame_weight(MAX_INBOUND_FRAME_BYTES) == 9 <= RATE_PER_SECOND  # always fits
+
+
+def test_inbound_rate_limiter_counts_tokens_in_both_windows() -> None:
+    limiter = InboundRateLimiter()
+    assert [limiter.allow(0.0, 9) for _ in range(4)] == [True, True, True, False]  # 27 + 9 > 30
+    assert limiter.allow(0.0, 3) and not limiter.allow(0.0, 1)  # 30 of 30: refused, unrecorded
+    for second in range(1, 10):  # 30 more each second: the minute's 300 by second 9
+        assert limiter.allow(float(second), 30)
+    assert not limiter.allow(10.0, 1)
+    assert limiter.allow(60.0, 30)  # second 0's 30 have left the minute
+
+
+@_ENCODINGS
+def test_charge_a_frame_whose_weight_the_tokens_left_cannot_cover_is_refused_unread(
+    handed: _Handed, encoding: str
+) -> None:
+    """Three frames near the cap take 27 of the second's 30; the fourth (9) is refused before it is
+    decoded, as the rate refuses any frame, while a small one still fits."""
+    conn = _connection(encoding, authed=True)
+    big = _wire(encoding, {"t": "ping", "id": "b", "p": {"pad": "x" * 250_000}})
+    assert inbound_frame_weight(len(big)) == 8
+    for _ in range(3):
+        assert _decode(conn, big)["t"] == "ping"
+    handed.clear()
+    _queued(conn)
+    assert _decode(conn, big) is _REFUSED and handed.nothing  # 24 + 8 > 30
+    (err,) = _queued(conn)
+    assert (err["p"]["code"], "id" in err) == ("client_rate_limited", False)
+    assert _decode(conn, _wire(encoding, {"t": "ping", "id": "s"}))["t"] == "ping"
+
+
+def test_charge_a_reconnect_re_subscribing_its_set_with_the_widest_subs_is_never_refused() -> None:
+    """§9.2: no resumption, so a client reconnecting sends `hello`, `auth` and its whole set again:
+    `MAX_SUBSCRIPTIONS` topics in `sub`s of `MAX_TOPICS_PER_SUB`, each here the widest the schema
+    allows, all in the same instant. None is rate-limited, and the tokens they take leave most of
+    the second's."""
+    sub = _widest_sub()
+    frames = MAX_SUBSCRIPTIONS // MAX_TOPICS_PER_SUB
+    weight = inbound_frame_weight(len(json.dumps(sub).encode()))
+    assert weight == 2 and 2 + frames * weight <= RATE_PER_SECOND // 2
+    w = _World()
+    for _ in range(3):  # reconnecting, again and again: each socket's budget is its own
+        with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+            assert _hello(ws)["t"] == "welcome"
+            assert _auth(ws)["t"] == "auth_ok"
+            for n in range(frames):
+                _send(ws, {**sub, "id": f"s{n}"})
+                reply = _recv(ws)
+                assert (reply["t"], reply["id"]) == ("sub_ok", f"s{n}")
+            _send(ws, {"t": "ping", "id": "p"})
+            assert _recv(ws)["t"] == "pong"
