@@ -927,7 +927,7 @@ def strings_report(spec: str, handoff: str, draft: str | None) -> dict[str, Any]
         TRADE_WORDS.search(" ".join(r)) for r in table_rows(spec, "### 12.2", "## 13.")
     )
     slips_ok = only_in("CMP-042", "C-", "eviation") and only_in("CMP-217", "C-", "eviation")
-    pending_ok = bool(boards) and all(r[-1] == "PENDING" for r in boards)
+    pending_ok = bool(boards) and all(r[-1] == "drawn" for r in boards)
     checks = [
         ("the T2 rule stated once (full label; never the `disabled` attribute)", t2_once),
         (f"'T2' in every gated state row ({len(gated)} rows)", t2_rows),
@@ -943,7 +943,7 @@ def strings_report(spec: str, handoff: str, draft: str | None) -> dict[str, Any]
         ("no trading word in the copy-deck delta", trade_ok),
         ("CMP-042 and CMP-217 only in Deviation or C-rows", slips_ok),
         ("`drawing.removed` only in a C-row", only_in("drawing.removed", "C-")),
-        (f"every section 0 board row ends in PENDING ({len(boards)} rows)", pending_ok),
+        (f"every section 0 board row ends in drawn ({len(boards)} rows)", pending_ok),
         (f"every Constitution id cited exists ({len(ids)})", all(f"**{i}" in cons for i in ids)),
         (
             f"the handoff has three blocks ({blocks}), no blank checklist line",
