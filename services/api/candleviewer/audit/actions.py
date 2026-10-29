@@ -181,6 +181,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "orders.submit",
         "orders.cancel",
         "orders.amend",
+        # E29-T07 (#915, 24 Sec.15.5; SR-E29-09): an Owner's read of an order's diagnostics,
+        # written before its body is sent (`api.order_diagnostics`), the order its object.
+        "order.diagnostics_viewed",
         # E29-T03 (#847, 24 Sec.8.2 S6): an exchange push a final or held order did not take, or an
         # execution B1 refused as hostile (OM-T04); the OMS facade writes it ahead (system actor).
         "oms.reconcile_anomaly",
