@@ -1,14 +1,14 @@
 # E30-D04 — handoff checklists (the fifteen trading ticket components; #917)
 
-Per `docs/plan/16-design-system-brief.md` §11.4 and §13.3 item 8 (`02` §4.2): this component ticket specifies fifteen contracts. Thirteen get a full block below (CMP-100, 101, 102, 103, 107, 119, 121, 122, 130, 139, 158, 229, 231); **CMP-105 and CMP-232 have blocks in `E30-D03-handoff.md` (:24–:41, :43–:62) — their blocks here are deltas** (tokens, motion, stories, frames); CMP-044 is D03's and is not re-specified (spec §1, BQ-5 RULED). **Deviation from the §11.4 block shape (the lane shape of E25-D05 / E11-D05 / E30-D03):** Tables 1–5, the Density table and the Essential-exceptions table appear once each with a leading `Component` column instead of once per block. Every line is `[x]` with its evidence or `[ ] N/A — <reason>`; BLOCKED-PENPOT lines are N/A with the reason until hpe-worker-1 draws (2026-10-23). Prop names are PROPOSED (spec §28). Penpot token sets = `packages/ui/tokens` at `698276854abd6f1dd3dba5c0005746257ef8b9b7`.
+Per `docs/plan/16-design-system-brief.md` §11.4 and §13.3 item 8 (`02` §4.2): this component ticket specifies fifteen contracts. Thirteen get a full block below (CMP-100, 101, 102, 103, 107, 119, 121, 122, 130, 139, 158, 229, 231); **CMP-105 and CMP-232 have blocks in `E30-D03-handoff.md` (:24–:41, :43–:62) — their blocks here are deltas** (tokens, motion, stories, frames); CMP-044 is D03's and is not re-specified (spec §1, BQ-5 RULED). **Deviation from the §11.4 block shape (the lane shape of E25-D05 / E11-D05 / E30-D03):** Tables 1–5, the Density table and the Essential-exceptions table appear once each with a leading `Component` column instead of once per block. Every line is `[x]` with its evidence or `[ ] N/A — <reason>`; the Penpot lines, N/A until the design lane drew the boards (2026-10-23 → 2026-10-29), now carry the boards (spec §0). Prop names are PROPOSED (spec §28). Penpot token sets = `packages/ui/tokens` at `698276854abd6f1dd3dba5c0005746257ef8b9b7`.
 
 ## Handoff checklist — CMP-100 PriceInput (E30-D04, #917)
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-02-<slug>.png` (board 02)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §4: 7 `CMP-100/<state>` frames on board 02)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `02 cmp-100-101-inputs` id `de0f65fe-8f9a-802e-8008-dce32856d00a` — `docs/design/E30/img/E30-D04-02-cmp-100-101-inputs.png` (1920 × 1609)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §4: 7 `CMP-100/<state>` frames on board 02)
 - [x] **Keyboard table** — Table 2 (spec §4): `↑` / `↓` one tick, `Shift` ×10, `PageUp` / `PageDown` ×10, `Home` / `End`; `Alt+B` / `Alt+A` / `Alt+M` snap; `Enter` nothing; T2 keys re-show the reason; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="spinbutton"` named "Price" + the unit; the rounding caption a polite region (once per blur)
 - [x] **Live data** — Table 5: the rounding caption — polite · once per blur · never per tick
@@ -17,7 +17,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §4 Tokens row (existing names only; CR names beside them as pending)
 - [x] **Data contract confirmed** — `GET /instruments/{symbol}` (`tick_size`; D02 §5.4)
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -26,8 +26,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-02-<slug>.png` (board 02)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §5: 9 `CMP-101/<state>` frames on board 02)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `02 cmp-100-101-inputs` id `de0f65fe-8f9a-802e-8008-dce32856d00a` — `docs/design/E30/img/E30-D04-02-cmp-100-101-inputs.png` (1920 × 1609)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §5: 9 `CMP-101/<state>` frames on board 02)
 - [x] **Keyboard table** — Table 2 (spec §5): `↑` / `↓` one lot, `Shift` ×10; `←` / `→`, `Home` / `End` on the unit radiogroup; `1`..`4` while the ticket region has focus; `Enter` nothing; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="spinbutton"` named "Size" + the unit; the unit switch `role="radiogroup"` with the formula as `aria-describedby`
 - [x] **Live data** — Table 5: the read-out line — polite · ≤ 1 per 2 s · latest value only
@@ -36,7 +36,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §5 Tokens row (existing names only; CR names beside them as pending)
 - [x] **Data contract confirmed** — `GET /instruments/{symbol}` (`qty_step`, `min_order_qty`, `min_notional` — `22`); WS `wallet` (equity); `POST /trade-groups/preview` (`resolved.qty`)
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -45,8 +45,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-03-<slug>.png` (board 03)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §6: 6 `CMP-102/<state>` frames on board 03)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `03 cmp-102-103-231-side-type-tif` id `de0f65fe-8f9a-802e-8008-dce3599b2719` — `docs/design/E30/img/E30-D04-03-cmp-102-103-231-side-type-tif.png` (1920 × 1815)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §6: 6 `CMP-102/<state>` frames on board 03)
 - [x] **Keyboard table** — Table 2 (spec §6): `←` / `→`, `Home` / `End` on the roving stop; `B` / `S` while the ticket region has focus and no text field is active; T2 arrows stage nothing; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="radiogroup"` named "Side"; `role="radio"` halves "Buy / Long", "Sell / Short"
 - [ ] N/A — **Live data**: static chrome
@@ -55,7 +55,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §6 Tokens row (existing names only; CR names beside them as pending)
 - [ ] N/A — **Data contract confirmed**: pure chrome (the value flows into CMP-107's draft)
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -64,8 +64,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-03-<slug>.png` (board 03)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §7: 7 `CMP-103/<state>` frames on board 03)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `03 cmp-102-103-231-side-type-tif` id `de0f65fe-8f9a-802e-8008-dce3599b2719` — `docs/design/E30/img/E30-D04-03-cmp-102-103-231-side-type-tif.png` (1920 × 1815)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §7: 7 `CMP-103/<state>` frames on board 03)
 - [x] **Keyboard table** — Table 2 (spec §7): `←` / `→`, `Home` / `End`; `Enter` / `Space` selects (manual activation, PROPOSED); on an emulated tab `Enter` re-shows its line; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="tablist"` named "Order type"; `role="tab"` + `aria-selected`; the "(emulated)" tag in the name
 - [ ] N/A — **Live data**: static chrome
@@ -74,7 +74,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §7 Tokens row (existing names only; CR names beside them as pending)
 - [ ] N/A — **Data contract confirmed**: a static client-side vocabulary
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -83,8 +83,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-09-<slug>.png` (board 09)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §9: 40 `CMP-107/<state>` frames on board 09)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `09 cmp-107-order-ticket` id `de0f65fe-8f9a-802e-8008-dce3b0ef0ced` — `docs/design/E30/img/E30-D04-09-cmp-107-order-ticket.png` (2040 × 2111)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §9: 40 `CMP-107/<state>` frames on board 09)
 - [x] **Keyboard table** — Table 2 (spec §9): D02 §13: `Ctrl+Enter` submit, `Esc` clear, `Ctrl+Shift+T` arm, `B` / `S`, `1`..`4`, `R`, `Alt+B` / `Alt+A` / `Alt+M`; the panel by `Ctrl+\` and the skip link; with blocking errors `Ctrl+Enter` inserts the summary and focuses it; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="region"` named `env.name`; one `<form>`, a `<fieldset>` per section; the submit a native `<button>` named `submit.name`, `aria-busy` while submitting
 - [x] **Live data** — Table 5: four regions: helpers (polite ≤ 1 / 2 s), read-out (polite ≤ 1 / 2 s), arm `mm:ss` (`aria-live="off"`, polite 60 s / 10 s), banners (`role="alert"` once for filled / partially filled, rejection, disconnect and the protective-stop banner; `role="status"` for accepted-not-filled, pending-key and stale)
@@ -93,7 +93,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §9 Tokens row (existing names only; CR names beside them as pending)
 - [x] **Data contract confirmed** — `POST /orders`; WS `positions` (`native_stop_present`) and `machines.order:{id}.state` (`regions.protection` `protected` / `naked`, `23`); `POST /settings/arm` (`X-Arm-Token`); `POST /trade-groups/preview`; `GET /risk/summary`
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -102,8 +102,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-05-<slug>.png` (board 05)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §10: 10 `CMP-119/<state>` frames on board 05)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `05 cmp-119-158-bracket-notice` id `de0f65fe-8f9a-802e-8008-dce3862362ce` — `docs/design/E30/img/E30-D04-05-cmp-119-158-bracket-notice.png` (1920 × 1295)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §10: 10 `CMP-119/<state>` frames on board 05)
 - [x] **Keyboard table** — Table 2 (spec §10): the fields as CMP-100; `←` / `→` on the unit radiogroup; `Space` on the TP checkbox; `R` toggles reduce-only (refused with `v.reduce_only.no_position` without a position); no key invented
 - [x] **Accessible name / role table** — Table 3: `<fieldset>` "Protective orders"; the stop `role="spinbutton"` named "Stop-loss (required)" with the source and holder as `aria-describedby`; CMP-158 `role="note"` inside
 - [ ] N/A — **Live data**: static until input (the stop source line changes on the profile, a cut)
@@ -112,7 +112,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §10 Tokens row (existing names only; CR names beside them as pending)
 - [x] **Data contract confirmed** — `POST /orders` `stop_loss` / `take_profit` (`22`); the stop rounds away per `24` §9.3.1; `require_native_stop` const true
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -121,8 +121,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-04-<slug>.png` (board 04)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §11: 10 `CMP-121/<state>` frames on board 04)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `04 cmp-122-121-ladder-risk` id `34afef7e-59c7-8006-8008-dcba775fd846` — `docs/design/E30/img/E30-D04-04-cmp-122-121-ladder-risk.png` (1920 × 1259)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §11: 10 `CMP-121/<state>` frames on board 04)
 - [x] **Keyboard table** — Table 2 (spec §11): rows are static text; "Apply" via `Tab` + `Enter` / `Space`; in T2 they stage nothing and re-show the reason once (spec §2.5); no key invented
 - [x] **Accessible name / role table** — Table 3: CMP-036 `dt` / `dd` pairs; "Apply" a native `<button>` naming the value it pushes
 - [x] **Live data** — Table 5: the read-out — polite · ≤ 1 per 2 s · latest value only · never per tick
@@ -131,7 +131,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §11 Tokens row (existing names only; CR names beside them as pending)
 - [x] **Data contract confirmed** — `POST /trade-groups/preview` (`estimated_margin_usd`, `estimated_risk_usd`); WS `wallet`; `GET /risk/summary`
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -140,8 +140,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-04-<slug>.png` (board 04)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §12: 7 `CMP-122/<state>` frames on board 04)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `04 cmp-122-121-ladder-risk` id `34afef7e-59c7-8006-8008-dcba775fd846` — `docs/design/E30/img/E30-D04-04-cmp-122-121-ladder-risk.png` (1920 × 1259)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §12: 7 `CMP-122/<state>` frames on board 04)
 - [x] **Keyboard table** — Table 2 (spec §12): `Tab` to the group, `←` / `→` roving, `Enter` / `Space`; `1`..`4` while the ticket region has focus (not in a text field); a below-minimum preset re-shows "min {min}"; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="group"` "Size presets" of native `<button>`s named "{label} — preset {n}" with `aria-pressed`; CMP-022 `<kbd>` hints
 - [ ] N/A — **Live data**: static chrome
@@ -150,7 +150,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §12 Tokens row (existing names only; CR names beside them as pending)
 - [x] **Data contract confirmed** — the settings REST presets (`default_qty_presets`, D03 A14's example); `GET /instruments/{symbol}` `min_order_qty`
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -159,8 +159,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-07-<slug>.png` (board 07)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §13: 8 `CMP-130/<state>` frames on board 07)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `07 cmp-232-130-chips` id `72481af1-849e-80bc-8008-dcd1d68f74dd` — `docs/design/E30/img/E30-D04-07-cmp-232-130-chips.png` (1920 × 1300)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §13: 8 `CMP-130/<state>` frames on board 07)
 - [x] **Keyboard table** — Table 2 (spec §13): `Tab` to the CMP-227 button; `Enter` / `Space` opens SCR-058; `Esc` closes the tooltip; no key invented
 - [x] **Accessible name / role table** — Table 3: the value and the confidence word are text; CMP-227 a native `<button>` named "Estimated, slippage[, {confidence} confidence]", `aria-describedby` → the tooltip, `aria-haspopup="dialog"`
 - [ ] N/A — **Live data**: no live region (the value follows the book snapshot; CMP-239 for stale)
@@ -169,7 +169,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §13 Tokens row (existing names only; CR names beside them as pending)
 - [x] **Data contract confirmed** — client-side book walk at order-entry time (not a Bybit field); `preview.slippage`
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -178,8 +178,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-08-<slug>.png` (board 08)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §14: 4 `CMP-139/<state>` frames on board 08)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `08 cmp-105-139-select-guard` id `34afef7e-59c7-8006-8008-dcbb0e516f55` — `docs/design/E30/img/E30-D04-08-cmp-105-139-select-guard.png` (1920 × 829)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §14: 4 `CMP-139/<state>` frames on board 08)
 - [x] **Keyboard table** — Table 2 (spec §14): the child's keys; `Enter` / `Space` / `Ctrl+Enter` on the gated child re-show the reason; no key invented
 - [x] **Accessible name / role table** — Table 3: composes CMP-079 (`allowed`, `reason` = the state key) and CMP-019 `lock` ("Not available"); the reason node in the DOM at mount, `aria-describedby`
 - [ ] N/A — **Live data**: static chrome
@@ -188,7 +188,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — n/a (the T2 look's tokens on the child) (existing names only; CR names beside them as pending)
 - [ ] N/A — **Data contract confirmed**: pure chrome (the env store, the account's `env`, the session's `account_scope`)
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -197,8 +197,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-05-<slug>.png` (board 05)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §15: 2 `CMP-158/<state>` frames on board 05)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `05 cmp-119-158-bracket-notice` id `de0f65fe-8f9a-802e-8008-dce3862362ce` — `docs/design/E30/img/E30-D04-05-cmp-119-158-bracket-notice.png` (1920 × 1295)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §15: 2 `CMP-158/<state>` frames on board 05)
 - [x] **Keyboard table** — Table 2 (spec §15): not focusable; reading order; no key invented
 - [x] **Accessible name / role table** — Table 3: `role="note"`; not a live region; the glyph `aria-hidden`
 - [ ] N/A — **Live data**: static chrome
@@ -207,7 +207,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §15 Tokens row (existing names only; CR names beside them as pending)
 - [ ] N/A — **Data contract confirmed**: pure chrome (`profileTicks` from the profile)
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -216,8 +216,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-06-<slug>.png` (board 06)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §16: 15 `CMP-229/<state>` frames on board 06)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `06 cmp-229-arm-toggle` id `34afef7e-59c7-8006-8008-dcbacd9a02b9` — `docs/design/E30/img/E30-D04-06-cmp-229-arm-toggle.png` (1920 × 1498)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §16: 15 `CMP-229/<state>` frames on board 06)
 - [x] **Keyboard table** — Table 2 (spec §16): `Ctrl+Shift+T` (`ticket.arm`; LIVE opens the CMP-044 dialog, `Enter` ≥ 400 ms after open, `Esc` cancels); `Enter` / `Space` on the control; T2 keys re-show the reason; a `requires_arm` binding while LOCKED re-shows `arm.refused` at the point of action (the announcement level follows spec C20); no key invented
 - [x] **Accessible name / role table** — Table 3: a native `<button>` with `aria-pressed` named by scope and state ("One-click trading: locked"); the countdown CMP-035 `aria-live="off"`
 - [x] **Live data** — Table 5: the `mm:ss` — `aria-live="off"` · 1 Hz text swap · polite at 60 s and 10 s · the disarm announcement's level per O-L
@@ -226,7 +226,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §16 Tokens row (existing names only; CR names beside them as pending)
 - [ ] N/A — **Data contract confirmed**: pure chrome of a server truth: the arm store's enum (E30-S04), `POST /settings/arm`
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -235,8 +235,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-23). Page `E30-D04 Trading ticket DS and motion` (id pinned once created; never a URL, host, team or file id); planned PNG `docs/design/E30/img/E30-D04-03-<slug>.png` (board 03)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §17: 5 `CMP-231/<state>` frames on board 03)
+- [x] **Final Penpot link** — page `E30-D04 Trading ticket DS and motion` · id `b184b847-f982-8000-8008-dca4408422d0` (never a URL, host, team or file id); board `03 cmp-102-103-231-side-type-tif` id `de0f65fe-8f9a-802e-8008-dce3599b2719` — `docs/design/E30/img/E30-D04-03-cmp-102-103-231-side-type-tif.png` (1920 × 1815)
+- [x] **Variants × States matrix** — Table 1, drawn (spec §17: 5 `CMP-231/<state>` frames on board 03)
 - [x] **Keyboard table** — Table 2 (spec §17): `Alt+↓` / `Enter` / `Space` open; `↑` / `↓` / `Home` / `End`; type-ahead; `Enter` selects; `Esc` closes; an unavailable option is focusable and `Enter` selects nothing; no key invented
 - [x] **Accessible name / role table** — Table 3: the APG listbox / combobox (Radix Select); each option's description holds the acronym's expansion and, when unavailable, the reason
 - [ ] N/A — **Live data**: static chrome
@@ -245,7 +245,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §17 Tokens row (existing names only; CR names beside them as pending)
 - [ ] N/A — **Data contract confirmed**: a static client-side matrix of Bybit's order-type rules
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23
+- [x] **Contrast and CVD** — the tool's numbers (44 pairs × 3 themes, FAIL 0; the disabled and rejected-M1 composites reported; 7 CVD pairs) are spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
@@ -254,11 +254,11 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3). The lines D03's block already carries (Penpot, Variants × States, Keyboard, Accessible name / role, Live data, Essential exceptions, Data contract, Sign-off) are not repeated; D03's block stands for them.
 
-- [ ] N/A — **Variants × States matrix** (delta): PENDING until drawn; Table 1 adds 3 `CMP-105/<state>` frames on board 08 (spec §8)
+- [x] **Variants × States matrix** (delta) — Table 1, drawn: 3 `CMP-105/<state>` frames on board 08 (spec §8)
 - [x] **Motion pair** (delta) — Table 4: M8: clip + translate at the final geometry over `motion.duration.normal` / `motion.easing.standard`; reduce → instant (corrects D03's row)
 - [x] **Tokens used** (delta) — `space.row.height.compact` / `space.row.height.comfortable` (CR-8), `color.surface.overlay` + `elevation.popover` (CR-9); the rest as D03's block
 - [x] **Storybook** (delta) — spec §24: 12 stories
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; spec §23
+- [x] **Contrast and CVD** — spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
 ## Handoff checklist — CMP-232 LimitsChip (E30-D04, #917) — delta on `E30-D03-handoff.md`
@@ -266,16 +266,16 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3). The lines D03's block already carries (Penpot, Variants × States, Keyboard, Accessible name / role, Live data, Essential exceptions, Data contract, Sign-off) are not repeated; D03's block stands for them.
 
-- [ ] N/A — **Variants × States matrix** (delta): PENDING until drawn; Table 1 adds 6 `CMP-232/<state>` frames on board 07 (spec §18)
+- [x] **Variants × States matrix** (delta) — Table 1, drawn: 6 `CMP-232/<state>` frames on board 07 (spec §18)
 - [x] **Motion pair** (delta) — Table 4: M5 on a changed row (reduce → the static info tick + the one announcement); the binding ↔ none flip a cut
 - [x] **Tokens used** (delta) — `color.status.warning.subtle` / `color.status.warning.strong` (A-10), `radius.pill`, `font.family.mono` + `type.num.sm`, `color.surface.overlay` + `elevation.popover`; the rest as D03's block
 - [x] **Storybook** (delta) — spec §24: 11 stories
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; spec §23
+- [x] **Contrast and CVD** — spec §23; the CVD renders (greyscale, deuteranopia, protanopia) of boards 01, 03, 06 and 11 beside the PNGs (spec §0)
 - [ ] N/A — **Sign-off**: owner approval pending (#917)
 
-### Table 1 — Variants × States (planned frames `CMP-nnn/<state>`; PENDING until drawn; every frame named here is drawn by the board script)
+### Table 1 — Variants × States (frames `CMP-nnn/<state>` as drawn; every frame named here is drawn by the board script on its board)
 
-| Component       | Board | Planned frames (`CMP-nnn/<state>`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Story group                          | Stories       |
+| Component       | Board | Frames (`CMP-nnn/<state>`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Story group                          | Stories       |
 | --------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------- |
 | CMP-100         | 02    | `CMP-100/default`, `CMP-100/focus`, `CMP-100/invalid-tick`, `CMP-100/invalid`, `CMP-100/stale-helpers`, `CMP-100/read-only-t2`, `CMP-100/comfortable`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `Trading/PriceInput`                 | 10 (spec §24) |
 | CMP-101         | 02    | `CMP-101/default`, `CMP-101/focus`, `CMP-101/below-min-qty`, `CMP-101/below-min-notional`, `CMP-101/stale-wallet-units`, `CMP-101/preview-in-flight`, `CMP-101/server-size-highlight`, `CMP-101/read-only-t2`, `CMP-101/comfortable`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `Trading/QtyInput`                   | 13 (spec §24) |
@@ -396,10 +396,10 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 ## §A — Design QA checklist (`16` §12), filled for the component set
 
 - [x] Only published Tier-2 / Tier-3 tokens (spec §3.1, §4–§18, §23); zero hard-coded hex or px in the spec beyond the measured redlines and the resolved-value table (§23.2).
-- [ ] N/A — three themes × two densities verified visually: BLOCKED-PENPOT; the tool measures all three themes (spec §23); board 11 shows the contrast-critical items in light and hc with the comfortable twins.
+- [x] Three themes × two densities verified visually on the boards: board 11 shows the contrast-critical items in light and hc with the comfortable twins, boards 01, 02 and 06 carry light twins (spec §0); the tool measures all three themes (spec §23).
 - [x] Contrast matrix for every pair introduced (44 × 3, FAIL 0; 22 PROPOSED `pairs.mjs` rows routed, A17; the disabled and rejected-M1 composites reported).
 - [x] CVD simulation reviewed for every new colour-carrying state (7 pairs; the collapses carried by word / glyph / shape / pattern, spec §23.3–§23.4).
-- [ ] N/A — every State has a Penpot variant and a Storybook story: the frames are planned (Table 1), the stories are PROPOSED (spec §24; the Stories' tickets own them).
+- [ ] N/A — every State has a Penpot variant and a Storybook story: the frames are drawn (Table 1); the stories are PROPOSED (spec §24; the Stories' tickets own them).
 - [x] Disabled states use disabled-with-reason (CMP-079 / CMP-019 `lock` / E09-D09 §2.2 T2) for every role / grant / environment / session / registered-state gate, never a bare disabled control; form validity takes the LANE-55 validity look, never a lock (spec §2.5 decision table).
 - [x] Loading / empty / error states designed (submitting, awaiting, the rejection classes, the absent slippage chip, the error summary — spec §9, §13).
 - [x] Keyboard table completed (Table 2; spec §4–§18).
@@ -413,7 +413,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Demo / Live context unambiguous wherever a trading action can fire (spec §2.2: band, pill, rule, name; CMP-139's reason names the environment).
 - [x] Reuses existing CMP ids; no near-duplicate requested (CMP-227 composed, not re-drawn; CMP-079 composed).
 - [ ] N/A — Storybook stories match the matrix: the implementing tickets'.
-- [ ] N/A — composes only published-library components in Penpot: BLOCKED-PENPOT.
+- [ ] N/A — composes only published-library components in Penpot: the boards are drawn into the set's own file (`E30-D04 boards`) by the board script with resolved colours, not library instances; the `15` entries are PR 3's (spec §28).
 
 ## §B — Accessibility acceptance criteria (`05` §10), filled once for the component set (per-screen items N/A: the screens are D02's / D03's)
 

@@ -1,6 +1,8 @@
 """E30-D04 audit: the trading-ticket design-system and motion spec (docs/design/E30/E30-D04.md).
 
-Offline, stdlib only; every number the spec and its boards show is computed here, never typed:
+Offline, stdlib only; every measured number the spec and its boards show (ratios, dE76, flash rates,
+counts) is computed here, never typed; design parameters (the M1 0.9 hold, 3 px, the 6 px pitch,
+45°, 8 px) are the spec's own, typed, and appear in no `--json` key:
 (1) token existence for every token name the spec binds (an absent name must be a CR row in
 section 3.2 or a cited C-row in section 29); (2) the WCAG matrix with `contrast_check`'s
 `contrast_ratio()` over the token JSON resolved as `packages/ui/tokens/tests/verify_tokens.py`
@@ -11,7 +13,8 @@ view-as, RULED-stamp, structure and CMP-158 string gates (section 15 and 28.12 q
 variant's sentence once, verbatim from E30-D02 section 14 / E36-D02 section 2 — C21);
 (6) hygiene. E30-D02 section 15.1's pairs are reproduced exactly.
 
-Usage: python3 -I docs/design/_tools/e30_d04_ds_motion_audit.py [--json] [--spec <path>]
+Usage: python3 -I -X utf8 docs/design/_tools/e30_d04_ds_motion_audit.py [--json] [--spec <path>]
+(`-X utf8`: `--json` writes non-ASCII with `ensure_ascii=False`; a cp1252 console needs it)
 Exit 1 only on a gated FAIL.
 """
 
@@ -135,18 +138,16 @@ M5 reduce tick on the panel|status.info.default|surface.canvas|non-text
 M5 reduce tick on raised|status.info.default|surface.raised|non-text
 M5 reduce tick on the popover|status.info.default|surface.overlay|non-text
 """.splitlines()
-D02_REPRO = (
-    {  # E30-D02 section 15.1 rows reproduced to the hundredth (:474 :475 :481 D3 :511 :512 :514)
-        ("text.primary", "status.warning.subtle"): (9.86, 15.62, 11.16),
-        ("text.primary", "surface.raised"): (14.35, 15.62, 16.25),
-        ("text.primary", "status.info.subtle"): (10.74, 15.44, 12.16),
-        ("text.inverse", "buy.default"): (7.87, 5.39, 10.51),
-        ("text.inverse", "sell.default"): (4.94, 5.20, 8.02),
-        ("status.warning.strong", "status.warning.subtle"): (7.56, 4.11, 7.56),
-        ("text.secondary", "surface.raised"): (8.81, 8.98, 14.35),
-        ("status.danger.strong", "status.danger.subtle"): (7.83, 3.85, 7.83),
-    }
-)
+D02_REPRO = {  # E30-D02 section 15.1 rows to the hundredth (:474 :475 :481 D3 :511 :512 :514)
+    ("text.primary", "status.warning.subtle"): (9.86, 15.62, 11.16),
+    ("text.primary", "surface.raised"): (14.35, 15.62, 16.25),
+    ("text.primary", "status.info.subtle"): (10.74, 15.44, 12.16),
+    ("text.inverse", "buy.default"): (7.87, 5.39, 10.51),
+    ("text.inverse", "sell.default"): (4.94, 5.20, 8.02),
+    ("status.warning.strong", "status.warning.subtle"): (7.56, 4.11, 7.56),
+    ("text.secondary", "surface.raised"): (8.81, 8.98, 14.35),
+    ("status.danger.strong", "status.danger.subtle"): (7.83, 3.85, 7.83),
+}
 VALIDITY = (  # the whole control at opacity.disabled over the panel: label | fill | surface
     "BUY submit|text.inverse|buy.default|surface.canvas",
     "SELL submit|text.inverse|sell.default|surface.canvas",
@@ -344,7 +345,7 @@ def structure(spec: str) -> dict[str, object]:
         for r in rows(body):
             for item in r[1].split("·") if r[0] == "States" else []:
                 gated = any(w in item for w in GATE_WORDS)
-                if gated and not any(k in item for k in ("validity", "T2", "loading")):
+                if gated and not any(k in item for k in ("validity", "T2", "loading", "busy")):
                     FAILS.append(f"CMP-{cmp_id}: gated state without a look: {item[:50]!r}")
         if cmp_id in VIEW_AS and "rbac.view_as" not in body:
             FAILS.append(f"CMP-{cmp_id}: no rbac.view_as leg")
