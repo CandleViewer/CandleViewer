@@ -239,6 +239,16 @@ def test_code_scanning_receives_the_gates_copy_of_each_report() -> None:
         assert upload["with"]["sarif_file"] == (
             f"${{{{ hashFiles('{tool}.gate.sarif') != '' && '{tool}.gate.sarif' || '{tool}.sarif' }}}}"
         )
+        # A committed copy must not survive to the upload when the gate fails before writing.
+        code = [
+            ln.strip() for ln in gate["run"].splitlines() if ln.strip() and ln.strip()[0] != "#"
+        ]
+        first = code[1]  # right after `set -euo pipefail`
+        assert first.startswith("rm -f ") and f"{tool}.gate.sarif" in first.split("#")[0]
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", "*.gate.sarif"], cwd=ROOT, capture_output=True, text=True
+    )
+    assert (tracked.returncode, tracked.stdout) == (0, "")
 
 
 def test_security_auth_step_hands_its_verbose_json_report_to_the_gate() -> None:

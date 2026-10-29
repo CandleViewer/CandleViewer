@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 import yaml
 
-from tools.ci.security_gate import main, write_gate_sarif
+from tools.ci.security_gate import Finding, main, write_gate_sarif
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 BANDIT = FIXTURES / "sarif" / "bandit-1.9.4-finding.sarif"
@@ -80,13 +80,16 @@ def test_write_gate_sarif_keeps_only_what_the_gate_did_not_clear(tmp_path: Path)
     suppressed = _result("rules.a", "a.py", 2, suppressions=[{"kind": "inSource"}])
     accepted, blocking = _result("rules.b", "b.py", 3), _result("rules.c", "c.py", 4)
     report = _write(tmp_path / "in.sarif", _doc(suppressed, accepted, blocking))
-    kept = {(0, 1): "rules.b:b.py:3", (0, 2): "rules.c:c.py:4"}
+    findings = [
+        Finding(tool="semgrep", finding_id="rules.b:b.py:3", severity="HIGH"),
+        Finding(tool="semgrep", finding_id="rules.c:c.py:4", severity="HIGH"),
+    ]
     out = tmp_path / "out.sarif"
-    dropped = write_gate_sarif(report, out, kept, {"rules.b:b.py:3"})
+    dropped = write_gate_sarif(report, out, findings, {(0, 1): 0, (0, 2): 1}, {0})
     assert _results(out) == [blocking]
     assert dropped == [
         "code-scanning copy: dropped rules.a at a.py:2 (justified in-source suppression)",
-        "code-scanning copy: dropped rules.b at b.py:3 (accepted risk)",
+        "code-scanning copy: dropped rules.b:b.py:3 (accepted risk)",
     ]
 
 
@@ -95,7 +98,8 @@ def test_write_gate_sarif_keeps_the_rest_of_the_document(tmp_path: Path) -> None
     doc["runs"][0]["invocations"] = [{"executionSuccessful": True}]
     report = _write(tmp_path / "in.sarif", doc)
     out = tmp_path / "out.sarif"
-    assert write_gate_sarif(report, out, {(0, 0): "rules.c:c.py:4"}, set()) == []
+    findings = [Finding(tool="semgrep", finding_id="rules.c:c.py:4", severity="HIGH")]
+    assert write_gate_sarif(report, out, findings, {(0, 0): 0}, set()) == []
     assert json.loads(out.read_text(encoding="utf-8")) == doc
 
 
@@ -108,7 +112,7 @@ def test_bandit_copy_drops_a_finding_an_accepted_risk_clears(
     rc = main([*argv, "--accepted-risks", str(risks), "--run-date", "2026-10-29"])
     printed = capsys.readouterr().out
     assert rc == 0 and _results(out) == []
-    assert "code-scanning copy: dropped B307 at finding/parse_expr.py:2 (accepted risk)" in printed
+    assert f"code-scanning copy: dropped {BANDIT_ID} (accepted risk)" in printed
 
 
 def test_bandit_copy_keeps_a_finding_that_blocks_the_gate(
@@ -166,3 +170,72 @@ def test_sarif_out_refuses_a_tool_it_does_not_serve(
     err = capsys.readouterr().err
     assert rc == 1 and not out.exists()
     assert err == "CI-SEC-005: --sarif-out is for semgrep and bandit, not codeql\n"
+
+
+def _bandit_twins(tmp_path: Path, severity: float) -> Path:
+    """The recorded finding, then a twin at the same id scored `severity` (security-severity)."""
+    doc = json.loads(BANDIT.read_text(encoding="utf-8"))
+    results = doc["runs"][0]["results"]
+    twin = json.loads(json.dumps(results[0]))
+    twin.setdefault("properties", {})["security-severity"] = str(severity)
+    results.append(twin)
+    return _write(tmp_path / "twins.sarif", doc)
+
+
+@pytest.mark.parametrize(
+    ("severity", "entry"),
+    [(9.5, "HIGH"), (7.5, "MEDIUM")],  # a Critical twin; a twin above its entry's severity
+)
+def test_a_blocked_twin_of_a_cleared_finding_stays_in_the_copy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], severity: float, entry: str
+) -> None:
+    # Clearance is per result: the accepted MEDIUM goes, its blocked twin at the same id stays.
+    report = _bandit_twins(tmp_path, severity)
+    out = tmp_path / "bandit.gate.sarif"
+    risks = _risks(tmp_path, _bandit_risk() | {"severity": entry})
+    argv = ["--tool", "bandit", "--report", str(report), "--sarif-out", str(out)]
+    rc = main([*argv, "--accepted-risks", str(risks), "--run-date", "2026-10-29"])
+    printed = capsys.readouterr().out
+    assert rc == 1 and _results(out) == _results(report)[1:]
+    assert printed.count("code-scanning copy: dropped") == 1
+
+
+def test_a_finding_below_the_threshold_stays_in_the_copy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The gate clears nothing it does not block: a LOW bandit result passes and is still shown.
+    doc = json.loads(BANDIT.read_text(encoding="utf-8"))
+    doc["runs"][0]["results"][0]["properties"] = {"security-severity": "1.0"}
+    report = _write(tmp_path / "low.sarif", doc)
+    out = tmp_path / "bandit.gate.sarif"
+    argv = ["--tool", "bandit", "--report", str(report), "--sarif-out", str(out)]
+    rc = main([*argv, "--accepted-risks", str(_risks(tmp_path)), "--run-date", "2026-10-29"])
+    capsys.readouterr()
+    assert rc == 0 and _results(out) == _results(report)
+
+
+def test_without_sarif_out_the_gate_writes_nothing_and_says_the_same(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    argv = ["--tool", "bandit", "--report", str(BANDIT), "--run-date", "2026-10-29"]
+    risks = ["--accepted-risks", str(_risks(tmp_path, _bandit_risk()))]
+    rc = main([*argv, *risks])
+    plain = capsys.readouterr()
+    assert rc == main([*argv, *risks, "--sarif-out", str(tmp_path / "copy.sarif")]) == 0
+    with_copy = capsys.readouterr()
+    assert with_copy.err == plain.err
+    assert [line for line in with_copy.out.splitlines() if "code-scanning copy" not in line] == (
+        plain.out.splitlines()
+    )
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["accepted-risks.yaml", "copy.sarif"]
+
+
+def test_a_copy_that_cannot_be_written_is_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "missing-dir" / "bandit.gate.sarif"
+    argv = ["--tool", "bandit", "--report", str(BANDIT), "--sarif-out", str(out)]
+    rc = main([*argv, "--accepted-risks", str(_risks(tmp_path)), "--run-date", "2026-10-29"])
+    err = capsys.readouterr().err
+    assert rc == 1 and err.startswith("CI-SEC-005: cannot write the code-scanning copy ")

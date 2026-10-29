@@ -188,6 +188,9 @@ jobs:
         timeout-minutes: 15
         run: |
           set -euo pipefail
+          # Only this run's gate writes the copy code scanning receives (#1882): a committed one
+          # would be uploaded if the gate failed before writing its own.
+          rm -f semgrep.gate.sarif bandit.gate.sarif
           python -m venv "$RUNNER_TEMP/semgrep-venv"
           export PATH="$RUNNER_TEMP/semgrep-venv/bin:$PATH"
           pip install --require-hashes --only-binary=:all: -r tools/ci/requirements-semgrep.txt
@@ -253,6 +256,7 @@ jobs:
         # sibling package (#2893, ADR-0036): never shipped, but it runs in a dev stack.
         run: |
           set -euo pipefail
+          rm -f bandit.gate.sarif # as in the semgrep step: only this run's gate writes it
           python -m venv "$RUNNER_TEMP/bandit-venv"
           export PATH="$RUNNER_TEMP/bandit-venv/bin:$PATH"
           pip install -r scripts/requirements-ci.txt "bandit[sarif]==1.8.6"

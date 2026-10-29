@@ -104,3 +104,6 @@ services/api/bench/reports/*
 
 # The xstate-contract gate's JUnit report (tools/statechart/run_xstate_contract.sh, #3104).
 services/api/xstate-contract-junit.xml
+
+# The security gate's code-scanning copies (security_gate.py --sarif-out, #1882).
+*.gate.sarif
