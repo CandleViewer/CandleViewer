@@ -24,64 +24,13 @@ from candleviewer.ws.metrics import (
     cv_ws_tape_prints_dropped_total,
     cv_ws_trades_subscribe_rejected_total,
 )
-from candleviewer.ws.permissions import Subscription, SubscriptionServices
-from candleviewer.ws.sequencing import SequencingHub
-from candleviewer.ws.trades_publish import SNAPSHOT_ITEMS, TradesTopic, options_of
-from candleviewer.ws.upstream import UpstreamRefs
-from tests._bigtrades import T0_US, Tape, event
+from candleviewer.ws.permissions import Subscription
+from candleviewer.ws.trades_publish import SNAPSHOT_ITEMS, options_of
+from tests._bigtrades import CH, T0_US, Tape, World, event
 from tests.contract.ws._harness import check_schema
-from tests.unit.ws._seq_support import USER, Clock, Conn
+from tests.unit.ws._seq_support import Conn
 
-_SMALL = BigTradeConfig("absolute_size", Decimal("1"))
-_CH = "trades.BTCUSDT"
-
-
-class World:
-    """One process: the hot tape, the topic and its hub, and the connections built on them."""
-
-    def __init__(self, tape: Tape | None = None, config: BigTradeConfig = _SMALL) -> None:
-        self.tape: Tape | None = tape or Tape()
-        self.clock = Clock()
-        self.now_us = T0_US
-        self.hub = SequencingHub()
-        self.topic = TradesTopic(
-            self.hub,
-            reader=lambda: self.tape,
-            bus=Bus(),
-            env="demo",
-            scales=lambda s: (1, 3) if s == "BTCUSDT" else None,
-            floor=lambda s: Decimal("0.001") if s == "BTCUSDT" else None,
-            config=lambda _s: config,
-            clock=self.clock,
-            now_us=lambda: self.now_us,
-        )
-        self.services = SubscriptionServices(
-            upstream=UpstreamRefs(), snapshots=self.topic, trades=self.topic
-        )
-
-    def conn(self, user: Any = USER) -> Conn:
-        source: Any = self.topic  # the topic is the snapshot source `Conn` renders from
-        conn = Conn(source, services=self.services, clock=self.clock, user=user)
-        self.hub.register(conn.authz, conn.emitter)
-        return conn
-
-    def sub(self, conn: Conn, opts: dict[str, Any] | None = None) -> tuple[dict[str, Any], Any]:
-        result, sub = conn.authz.admit({"ch": _CH, "opts": opts or {}})
-        if sub is None:
-            return result, None
-        refused = asyncio.run(conn.authz.subscribe_upstream(sub))
-        if refused is not None:
-            return refused, None
-        sub.announced = True
-        conn.emitter.flush_pending([sub])
-        return result, sub
-
-    def window(self, *batches: list[TradeEvent]) -> int:
-        """Offer each batch as one bus drain, then let one window close."""
-        for batch in batches:
-            self.topic.offer(batch)
-        self.clock.now += 1.0
-        return self.topic.tick()
+_CH = CH
 
 
 def _data(conn: Conn) -> list[dict[str, Any]]:

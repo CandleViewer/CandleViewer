@@ -15,8 +15,7 @@ from fastapi.testclient import TestClient
 from candleviewer.api._generated.openapi_models import PublicTrade, TradesPageMeta
 from candleviewer.api.trades import make_trades_router
 from candleviewer.orderflow.bigtrade_models import BigTradeConfig
-from tests._bigtrades import Tape, recorded_batches
-from tests.unit.ws.test_trades_publish import World
+from tests._bigtrades import Tape, World, recorded_batches
 
 #: Small enough that the recorded BTCUSDT tape has big prints (its sizes run 0.001 to ~1 BTC).
 _CONFIG = BigTradeConfig("absolute_size", Decimal("0.05"))
