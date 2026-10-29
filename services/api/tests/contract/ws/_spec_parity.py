@@ -240,9 +240,14 @@ def _probe(module: str, word: str) -> Callable[[], bool]:
 
 #: 16.2 rows the contract states and no code enforces yet: the owning ticket, and a probe that is
 #: true once code for it exists (the row must then be mapped above, so this list cannot rot).
-#: None is left: the last one, the machines' terminal retention, was built by #3966 (E17-T08 PR 2a),
-#: its probe fired and the row is mapped.
-CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {}
+#: The machines' terminal retention was the last one before, built by #3966 (E17-T08 PR 2a). The
+#: deep-book cap is #604's: its probe fires once `ws.permissions` or `ws.limits` names it.
+CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {
+    "Max deep `book.*` / connection": (
+        "#604",
+        lambda: _probe("permissions", "deep_book")() or _probe("limits", "DEEP_BOOK")(),
+    ),
+}
 #: 3.6 table rows that 16.2 does not repeat: the JSON bounds of SR-184.
 SECTION_3_6_ROWS: Final = {
     "Max inbound JSON nesting depth": "limits.MAX_JSON_DEPTH",
