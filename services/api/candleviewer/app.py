@@ -169,6 +169,7 @@ from candleviewer.api.response_headers import NoSniff
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
 from candleviewer.api.scanner import make_scanner_router
+from candleviewer.api.scanner_service import ScannerMetrics, ScannerService
 from candleviewer.api.session_backstop_audit import SessionBackstopAudit
 from candleviewer.api.session_snapshot import SessionSnapshotResolver
 from candleviewer.api.sessions import AuditEmitter, make_session_router
@@ -3196,7 +3197,20 @@ def create_app(
     )
     # E08-T09 (#4708): the static `/scanner/criteria` and owner-scoped `/scanner/presets*`
     # (`scope: self`, writes audited ahead). Postgres on the real backend only: the fake backend
-    # answers the presets 503 without any I/O.
+    # answers the presets 503 without any I/O. `GET /scanner` (PR 2b) reads the shared ticker
+    # snapshot (`app.state.ticker_universe`), the recorded set and the trading catalogue, each
+    # resolved per cache-cold scan; with no ticker snapshot it answers 503 after RBAC.
+    app.state.scanner_service = ScannerService(
+        lambda: app.state.ticker_universe,
+        lambda: app.state.recording_control,
+        ScannerMetrics(
+            evaluations=metrics_facade.get("scanner_evaluations_total"),
+            seconds=metrics_facade.get("scanner_evaluation_seconds"),
+            hits=metrics_facade.get("scanner_cache_hits_total"),
+            capped=metrics_facade.get("scanner_capped_total"),
+        ),
+        listed=lambda: _catalogue_trading(ctx),
+    )
     app.state.scanner_presets_repository = (
         SqlAlchemyScannerPresetRepository(
             SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "scanner-presets")
@@ -3209,6 +3223,7 @@ def create_app(
             lambda: app.state.scanner_presets_repository,
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
+            scanner=app.state.scanner_service,
         )
     )
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).
@@ -3403,6 +3418,14 @@ def _catalogue_listed(ctx: AppContext, symbol: str) -> bool:
     snap = scheduler.snapshot() if scheduler is not None else None
     inst = snap.get(symbol) if snap is not None else None
     return inst is not None and inst.status == "trading"
+
+
+def _catalogue_trading(ctx: AppContext) -> frozenset[str] | None:
+    """The catalogue snapshot's `trading` symbols; `None` while no snapshot exists (the scanner
+    then reads the venue's ticker snapshot as it is)."""
+    scheduler = ctx.ingestion.instruments
+    snap = scheduler.snapshot() if scheduler is not None else None
+    return None if snap is None else frozenset(i.symbol for i in snap.listing())
 
 
 def _ws_symbol_known(ctx: AppContext, symbol: str) -> bool:

@@ -1073,6 +1073,57 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E08",
         max_series=1,
     ),
+    # --- Scanner (E08-T09, #4708): `api.scanner_service`, behind `GET /scanner` ---------------
+    _s(
+        "scanner_evaluations_total",
+        "counter",
+        "scans",
+        ("outcome",),
+        "Cache-cold scanner evaluations by outcome: ok, rate_limited (refused past the bound on "
+        "concurrent evaluations, 429), unavailable (an input could not be read, 503), timeout "
+        "or error.",
+        "dashboard only (sustained rate_limited: clients vary filters past the cache; "
+        "unavailable: the ticker snapshot or the recorded set is down)",
+        _L,
+        "E08",
+        max_series=5,  # the five outcomes
+    ),
+    _s(
+        "scanner_evaluation_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "Duration of one cache-cold scanner evaluation that answered (the ticker read, the "
+        "recorded-set read and the ranking); the budget is p95 under 200 ms.",
+        "dashboard only",
+        _L,
+        "E08",
+        buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1.0, 2.5, 5.0),
+        max_series=1,
+    ),
+    _s(
+        "scanner_cache_hits_total",
+        "counter",
+        "scans",
+        (),
+        "Scans answered from the 5 s result cache, without an evaluation.",
+        "dashboard only",
+        _L,
+        "E08",
+        max_series=1,
+    ),
+    _s(
+        "scanner_capped_total",
+        "counter",
+        "scans",
+        (),
+        "Scanner evaluations where more instruments matched than the request's limit returned "
+        "(meta.capped).",
+        "dashboard only",
+        _L,
+        "E08",
+        max_series=1,
+    ),
     # --- Bar builder set (E12-T03); served by bars.metrics.export_bars_metrics ------
     _s(
         "bar_builder_specs_in_use",
