@@ -1,7 +1,5 @@
 - main:
-  - heading "Not found" [level=1]
-  - paragraph: Nothing lives at this address.
-  - link "Return to the terminal":
-    - /url: /terminal
+  - heading "Page not found" [level=1]
+  - paragraph: There's nothing at /404.
 - status
 - status

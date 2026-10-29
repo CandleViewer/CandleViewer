@@ -1,0 +1,117 @@
+/* CMP-089 ForbiddenState and CMP-090 NotFoundState: CMP-026's block on the route surface. Tokens only; no motion. */
+.cv-appstate {
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: var(--space-stack-md);
+  padding: var(--space-inset-xl);
+  background: var(--color-surface-app);
+  color: var(--color-text-primary);
+}
+
+.cv-appstate__glyph {
+  display: inline-flex;
+  width: var(--size-icon-lg);
+  height: var(--size-icon-lg);
+  color: var(--color-text-tertiary);
+}
+
+.cv-appstate__heading {
+  margin: 0;
+  color: var(--color-text-primary);
+  font: var(--type-ui-heading-lg-font-weight) var(--type-ui-heading-lg-font-size) /
+    var(--type-ui-heading-lg-line-height) var(--type-ui-heading-lg-font-family);
+}
+
+.cv-appstate__body {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+/* The account echo (type.num.base) and the attempted route (type.num.sm) break anywhere rather than overflow. */
+.cv-appstate__echo {
+  margin: 0;
+  color: var(--color-text-primary);
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+  overflow-wrap: anywhere;
+}
+
+.cv-appstate__route {
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  overflow-wrap: anywhere;
+}
+
+/* The Ref: selectable audit key, broken anywhere. */
+.cv-appstate__ref {
+  margin: 0;
+  max-width: 100%;
+  color: var(--color-text-secondary);
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.cv-appstate__actions,
+.cv-appstate__try,
+.cv-appstate__list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-sm);
+}
+
+.cv-appstate__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cv-appstate__list > li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-sm);
+}
+
+.cv-appstate__sep {
+  color: var(--color-text-tertiary);
+}
+
+/* CMP-021 link: a hit target of at least size.target.min (24 px) tall. */
+.cv-appstate__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--size-target-min);
+  color: var(--color-text-link);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-appstate__link:focus-visible,
+.cv-appstate__heading:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  .cv-appstate,
+  .cv-appstate__heading,
+  .cv-appstate__body,
+  .cv-appstate__echo,
+  .cv-appstate__ref,
+  .cv-appstate__sep {
+    color: CanvasText;
+  }
+
+  .cv-appstate__glyph {
+    color: currentColor;
+  }
+
+  .cv-appstate__link {
+    color: LinkText;
+  }
+}

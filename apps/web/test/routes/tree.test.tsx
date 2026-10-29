@@ -63,7 +63,9 @@ describe("route tree x RBAC matrix", () => {
     claimsFor("viewer");
     renderAt("/risk");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Forbidden" })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("heading", { name: "You don't have access to this", level: 1 }),
+      ).toBeInTheDocument(),
     );
   });
 
@@ -71,7 +73,7 @@ describe("route tree x RBAC matrix", () => {
     claimsFor("viewer");
     renderAt("/admin/users");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Not found" })).toBeInTheDocument(),
+      expect(screen.getByRole("heading", { name: "Page not found", level: 1 })).toBeInTheDocument(),
     );
   });
 
@@ -79,7 +81,7 @@ describe("route tree x RBAC matrix", () => {
     claimsFor("manager");
     renderAt("/admin");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Not found" })).toBeInTheDocument(),
+      expect(screen.getByRole("heading", { name: "Page not found", level: 1 })).toBeInTheDocument(),
     );
   });
 
@@ -98,18 +100,23 @@ describe("route tree x RBAC matrix", () => {
     expect(f.mock.calls.filter(([u]) => String(u).includes("/auth/step-up"))).toEqual([]);
   });
 
-  it("every manifest route is reachable by at least one role without crashing", async () => {
-    claimsFor("owner");
-    for (const entry of ROUTE_MANIFEST) {
-      if (entry.access.roles === "public") continue;
-      if (!entry.access.roles.includes("owner")) continue;
-      const concretePath = entry.path.replace(/:[a-zA-Z]+/g, "x");
-      const router = createMemoryRouter(buildRoutes(), { initialEntries: [concretePath] });
-      const { unmount } = render(<RouterProvider router={router} />);
-      await waitFor(() => expect(screen.getByRole("main")).toBeInTheDocument());
-      unmount();
-    }
-  });
+  // The walk mounts every manifest route in turn, so its time grows with the manifest: its own budget.
+  it(
+    "every manifest route is reachable by at least one role without crashing",
+    { timeout: 15_000 },
+    async () => {
+      claimsFor("owner");
+      for (const entry of ROUTE_MANIFEST) {
+        if (entry.access.roles === "public") continue;
+        if (!entry.access.roles.includes("owner")) continue;
+        const concretePath = entry.path.replace(/:[a-zA-Z]+/g, "x");
+        const router = createMemoryRouter(buildRoutes(), { initialEntries: [concretePath] });
+        const { unmount } = render(<RouterProvider router={router} />);
+        await waitFor(() => expect(screen.getByRole("main")).toBeInTheDocument());
+        unmount();
+      }
+    },
+  );
 });
 
 describe("E49-S07 reachability through the real route tree", () => {
