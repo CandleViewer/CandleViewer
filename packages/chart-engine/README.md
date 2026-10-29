@@ -69,3 +69,29 @@ across weeks) is:
 The machine descriptor (CPU, GPU, driver, OS, and — on Tauri — the WebView2
 runtime version) is captured automatically by `bench/machine.mjs`; a run
 missing any required field fails rather than reporting anonymous numbers.
+
+## Matrix benchmark in CI and the baseline-update policy (E06-T02)
+
+`.github/workflows/perf-engine-matrix.yml` runs the E06-T01 matrix (`bench/matrix/`) on every PR that
+touches this package (headless Chromium, B1 B2 B3 B4 B5 B7 B9) and nightly (Electron, the full set with
+the 30-minute B10 soak). It is **recording only** in R0: `bench/matrix/ci-compare.mjs` publishes the
+comparison with the committed baseline in the job summary and the run's report as an artefact, and a
+regression never fails the build. A run that produces no valid report does fail the job. Making it a
+required gate is E11-T06. These hosted software-GL numbers are not reference-hardware evidence (the
+committed matrix on `main` is); they are regression tracking only. The M0 findings report it keeps alive is `docs/plan/spikes/E06-M0-report.md`.
+
+Baselines live in `bench/matrix/baselines/<runtime>-ubuntu-latest.json`, one per runtime and runner
+class. The policy (`docs/plan/06-performance-and-load-standard.md` §7.4): baselines **move forward only**
+(get stricter or stay flat). The one exception, a deviation from §7.4 that this recording-only job needs,
+is a toolchain or runner-image change (Chromium, Electron, driver or hosted image), which can shift every
+figure without any code change; such a move still follows rules 1–3.
+
+1. A baseline moves **only through a reviewed PR** whose description states why it moves (the change
+   that caused it, or the toolchain bump) and quotes the old and new figures.
+2. The file is the **unmodified report JSON from a CI artefact of a `main` run** of the same workflow and
+   runner class (`ubuntu-latest`, no GPU). Never a laptop, a reference-machine or a PR-branch run: those
+   numbers are not comparable with the runner's.
+3. A baseline is never re-taken to make a regression disappear; a regression is fixed, or accepted in
+   the PR with the rationale on record.
+4. Until a runtime's file exists the job records "no baseline yet" and still publishes its report; the
+   first file is committed from the first green `main` run.

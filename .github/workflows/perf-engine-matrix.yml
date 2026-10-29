@@ -1,0 +1,137 @@
+name: perf-engine-matrix
+
+# E06-T02 (#221): the E06-T01 measurement matrix as a standing CI job, RECORDING ONLY (R0,
+# docs/plan/30-release-roadmap.md §4.4 "numbers recorded, not yet gating"). Not a required check,
+# and no other workflow waits on it: the required `engine-bench` stub (_job-engine-bench.yml) and
+# its gate belong to E03-T14 / E11-T06. Headless Chromium runs on every PR that touches
+# packages/chart-engine (06 §7.1 (a)); Electron runs nightly (06 §7.1 (b): its startup cost makes
+# per-PR impractical) and on dispatch.
+#
+# A regression is recorded, not enforced: ci-compare.mjs prints the comparison with the committed
+# baseline (bench/matrix/baselines/<runtime>-ubuntu-latest.json) into the job summary and exits 0.
+# A FAILURE TO RUN is enforced: no report, an invalid report (missing machine descriptor or
+# version, < 3 repetitions) or a harness run error (watchdog, early shell exit) exits 1 and the
+# job goes red (ticket acceptance scenario 3). The report JSON and the summary are uploaded either
+# way.
+#
+# Runner class: GitHub-hosted ubuntu-latest, no GPU. Chromium renders with the K01 pinned flags
+# (ANGLE on SwiftShader, software GL, the matrix's Chromium arm); Electron runs under xvfb-run with
+# the shipped `tuned` flag set and also gets software GL. The numbers are therefore comparable
+# only with a baseline from the same runner class, never with the reference machine or a laptop.
+# The self-hosted bench runner is CPU-only, shares the cv-bench-01 concurrency group with the 24 h
+# perf packs and never runs a PR's code, so it is not used here; a GPU runner is E03-T14 / E11's.
+#
+# Inputs are committed and pinned: the fixture is generated from the committed seed, the flag
+# sets are code (bench/report.mjs, bench/matrix/electron/flagsets.cjs), and nothing is fetched at
+# run time beyond the lockfile's packages, the Electron binary (SR-138 allowlist runner) and the
+# lockfile's Playwright Chromium. Baseline-update policy: packages/chart-engine/README.md.
+#
+# Scenario sets: per PR, B1 B2 B3 B4 B5 B7 B9 (3 repetitions x 20 s, the 100k-bar M0 fixture);
+# the 30-minute B10 soak runs only in the nightly Electron job.
+
+on:
+  pull_request:
+    paths:
+      - "packages/chart-engine/**"
+      - ".github/workflows/perf-engine-matrix.yml"
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+    inputs:
+      runtime:
+        description: "chromium (per-PR set), electron (nightly set with the B10 soak), or both"
+        type: choice
+        options: [both, chromium, electron]
+        default: both
+
+permissions:
+  contents: read
+
+# A new push replaces the PR's previous run; scheduled and dispatched runs are never cancelled.
+concurrency:
+  group: perf-engine-matrix-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  chromium:
+    name: engine-matrix-chromium (recording, not gating)
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runtime != 'electron') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ".nvmrc"
+      - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: node tools/ci/run-allowed-postinstall.mjs
+      - name: Install the lockfile's Playwright Chromium (run-matrix resolves Playwright from apps/desktop)
+        working-directory: apps/desktop
+        run: pnpm exec playwright install --with-deps chromium
+      # continue-on-error: the harness exits 1 on a run error; the next step re-reads the report and
+      # fails the job then, after the summary is written, so the artefact is still uploaded.
+      - name: Run the matrix, headless Chromium (K01 pinned flags, software GL)
+        continue-on-error: true
+        working-directory: packages/chart-engine
+        run: >-
+          node bench/matrix/run-matrix.mjs --runtime chromium
+          --scenarios B1,B2,B3,B4,B5,B7,B9 --out-dir "$RUNNER_TEMP/matrix"
+      - name: Compare with the committed baseline (recording; fails only if the run failed)
+        working-directory: packages/chart-engine
+        run: >-
+          node bench/matrix/ci-compare.mjs --runtime chromium --report-dir "$RUNNER_TEMP/matrix"
+          --baseline bench/matrix/baselines/chromium-ubuntu-latest.json
+          --summary "$GITHUB_STEP_SUMMARY"
+      - name: Upload the matrix report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-matrix-chromium
+          path: ${{ runner.temp }}/matrix/
+          if-no-files-found: warn
+          retention-days: 30
+
+  electron:
+    name: engine-matrix-electron (recording, not gating)
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.runtime != 'chromium') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ".nvmrc"
+      - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # Electron 42 and later ship no postinstall: the SR-138 runner fetches the binary (#1819).
+      - run: node tools/ci/run-allowed-postinstall.mjs
+      # The system libraries a browser needs, installed as _job-e2e.yml's e2e-electron installs them.
+      - name: Install the browser system libraries (as the e2e Electron job does)
+        working-directory: apps/desktop
+        run: pnpm exec playwright install --with-deps chromium
+      # Electron needs an X display: the runner image ships xvfb, as _job-e2e.yml's e2e-electron uses.
+      - name: Run the matrix, Electron (`tuned` flag set, full set with the 30-minute B10 soak)
+        continue-on-error: true
+        working-directory: packages/chart-engine
+        run: >-
+          xvfb-run -a node bench/matrix/run-matrix.mjs --runtime electron --flagset tuned
+          --out-dir "$RUNNER_TEMP/matrix"
+      - name: Compare with the committed baseline (recording; fails only if the run failed)
+        working-directory: packages/chart-engine
+        run: >-
+          node bench/matrix/ci-compare.mjs --runtime electron --report-dir "$RUNNER_TEMP/matrix"
+          --baseline bench/matrix/baselines/electron-ubuntu-latest.json
+          --summary "$GITHUB_STEP_SUMMARY"
+      - name: Upload the matrix report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-matrix-electron
+          path: ${{ runner.temp }}/matrix/
+          if-no-files-found: warn
+          retention-days: 30

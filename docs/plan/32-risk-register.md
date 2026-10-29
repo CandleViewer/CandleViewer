@@ -62,7 +62,7 @@ These are the project-board `Risk` field values, reused verbatim across tickets 
 
 ## 2. Risk heat map (current scores)
 
-Updated 2026-10-28 (E21-X01): RSK-092 (High, L3/I4 = 12) is left to §10, like RSK-065 to RSK-071; RSK-063 gains E21-X01 text with no score change, so no plotted score changed. Updated 2026-10-28 (E36-X01): RSK-091 (High, L3/I4 = 12) is left to §10, like RSK-065 to RSK-071, and no plotted score changed. Updated 2026-10-26 (E33-X01): RSK-090 (Medium, L2/I4 = 8) is left to §10, like RSK-065 to RSK-071; RSK-013, RSK-017, RSK-077, RSK-084 and RSK-086 gain E33-X01 text with no score change, so no plotted score changed. Updated 2026-10-20 (E14-X01): RSK-087 (High, L3/I4 = 12), RSK-088 and RSK-089 (Medium, L3/I3 = 9) are left to §10, like RSK-065 to RSK-071, and no plotted score changed. Updated 2026-10-20 (E28-X01): RSK-082 to RSK-086 (four Critical at L3/I5 = 15, one High at L3/I4 = 12) are left to §10, like RSK-065 to RSK-071, and no plotted score changed. Regenerated 2026-10-17 (E42-X01): RSK-072 and RSK-073 added at L2/I5 = 10. The chart plots a selection, not the whole register (§10 lists every entry by band): RSK-074 and RSK-075 (Medium, 8), like RSK-065 to RSK-071, are left to §10. RSK-076 to RSK-081 (E29-X01, High, 10 to 12, 2026-10-20) are left to §10 as well. No other plotted score changed. (Previously: 2026-10-09 (E12-K01): RSK-062 added at L3/I3 = 9.)
+Updated 2026-10-29 (E06-T02): RSK-001 re-scored L3/I5 = 15 to L2/I5 = 10 (Critical to High) on the M0 matrix evidence and re-plotted at the lower likelihood; RSK-003 re-scored L3/I3 = 9 to L2/I3 = 6 (Medium, not plotted); RSK-037 gains a note with no score change (`docs/plan/spikes/E06-M0-report.md` §14). Updated 2026-10-28 (E21-X01): RSK-092 (High, L3/I4 = 12) is left to §10, like RSK-065 to RSK-071; RSK-063 gains E21-X01 text with no score change, so no plotted score changed. Updated 2026-10-28 (E36-X01): RSK-091 (High, L3/I4 = 12) is left to §10, like RSK-065 to RSK-071, and no plotted score changed. Updated 2026-10-26 (E33-X01): RSK-090 (Medium, L2/I4 = 8) is left to §10, like RSK-065 to RSK-071; RSK-013, RSK-017, RSK-077, RSK-084 and RSK-086 gain E33-X01 text with no score change, so no plotted score changed. Updated 2026-10-20 (E14-X01): RSK-087 (High, L3/I4 = 12), RSK-088 and RSK-089 (Medium, L3/I3 = 9) are left to §10, like RSK-065 to RSK-071, and no plotted score changed. Updated 2026-10-20 (E28-X01): RSK-082 to RSK-086 (four Critical at L3/I5 = 15, one High at L3/I4 = 12) are left to §10, like RSK-065 to RSK-071, and no plotted score changed. Regenerated 2026-10-17 (E42-X01): RSK-072 and RSK-073 added at L2/I5 = 10. The chart plots a selection, not the whole register (§10 lists every entry by band): RSK-074 and RSK-075 (Medium, 8), like RSK-065 to RSK-071, are left to §10. RSK-076 to RSK-081 (E29-X01, High, 10 to 12, 2026-10-20) are left to §10 as well. No other plotted score changed. (Previously: 2026-10-09 (E12-K01): RSK-062 added at L3/I3 = 9.)
 
 ```mermaid
 quadrantChart
@@ -73,7 +73,7 @@ quadrantChart
     quadrant-2 "Plan contingency"
     quadrant-3 "Monitor"
     quadrant-4 "Reduce likelihood"
-    "RSK-001 frame budget": [0.62, 0.90]
+    "RSK-001 frame budget": [0.40, 0.90]
     "RSK-004 footprint text cost": [0.70, 0.72]
     "RSK-010 book desync": [0.58, 0.85]
     "RSK-013 rate limit fan-out": [0.72, 0.80]
@@ -100,13 +100,14 @@ quadrantChart
 
 ### RSK-001 · Custom WebGL engine misses the 16.6 ms frame budget at full order-flow density
 
-`Risk: R1` · Category **Technical** · L 3 · I 5 · **Score 15 — Critical** · Owner **Chart-engine lead** · Epics E06, E11, E18, E21, E46 · Status **Mitigating**
+`Risk: R1` · Category **Technical** · L 2 · I 5 · **Score 10 — High (was L3/15, re-scored 2026-10-29)** · Owner **Chart-engine lead** · Epics E06, E11, E18, E21, E46 · Status **Mitigating**
 
 - **Description** — The engine must hold a 100k-bar model, draw footprint text cells, and upload a 200-depth heatmap column every 100 ms while staying ≤16.6 ms p95 per frame. Research flagged text-heavy footprint rendering as the dominant CPU cost; no candidate library does this natively, which is precisely why we are building it.
 - **Mitigation** — E06 spike proves the density before any R1 estimate is trusted; frame-time benchmark harness with a seeded dataset committed in R0 and wired as a required CI check from S05, so a regression is attributed to a single PR within hours; per-stage frame instrumentation matching the §4.3 budget breakdown; LOD text-hiding below a per-cell pixel-width threshold; rolling-texture heatmap updating only the newest column.
 - **Trigger** — Benchmark p95 exceeds 16.6 ms on two consecutive runs on reference hardware, **or** the E06 spike fails to reach ≥55 fps p95 by 2026-10-08.
 - **Contingency** — Adopt the pre-decided ADR-0006 fallback: Lightweight Charts v5 as the chassis with custom series/primitives for footprint and a separate regl/PixiJS WebGL heatmap layer. Re-cut R1 scope before S05 planning. This fallback is _cheaper_, not better — it costs feature control, which is why it is a contingency and not the plan.
 - **Contingency cost** — Estimated 3–4 sprints of rework if triggered after S07; ~1 sprint if triggered at the S02 go/no-go. This asymmetry is the entire reason the spike is front-loaded.
+- **Review** — 2026-10-29, E06-T02 (M0 findings report, `docs/plan/spikes/E06-M0-report.md` §2, §3). Re-scored L3→L2. The evidence arrived after the trigger's 2026-10-08 date, so the dated clause lapsed unmeasured; the contingency was not invoked because the measurement, when it came, met the bar — B1–B5 met their p95 gates in Electron and headless Chromium, R0 exit criterion 4 passes and ADR-0002's fallback trigger does not fire on the measured half (figures in the report's §2 V1–V2 and §3.1–§3.3). L is not lowered further because the host was below the reference class (a met budget is conservative evidence under the #220 ruling of 2026-10-29; `06` §3.1 defines the reference class), the harness page models the scene costs and adds a fixed WebGL2 load rather than running the engine, and B5 shows a p95-invisible footprint-rebuild hitch (the report's §2 V6 and §3.2) that M3 must remove. I stays 5. Re-score again when E11 runs the real engine on reference hardware (E11-T06, E11-Q03); the standing per-PR recording job is `.github/workflows/perf-engine-matrix.yml`.
 
 ### RSK-002 · WebGL context loss corrupts or blanks the trading view
 
@@ -119,12 +120,13 @@ quadrantChart
 
 ### RSK-003 · Electron/Tauri GPU behaviour diverges from Chromium, invalidating benchmarks
 
-`Risk: R1` · Category **Technical** · L 3 · I 3 · **Score 9 — Medium** · Owner **Chart-engine lead** · Epics E06, E10 · Status **Mitigating**
+`Risk: R1` · Category **Technical** · L 2 · I 3 · **Score 6 — Medium (was L3/9, re-scored 2026-10-29)** · Owner **Chart-engine lead** · Epics E06, E10 · Status **Mitigating**
 
 - **Description** — Tauri/WebView2 WebGL behaviour under 100 ms heatmap updates is unverified (research finding #29); Electron's bundled Chromium is a known quantity but GPU flags, hardware acceleration blocklists and vsync behaviour still vary by machine.
 - **Mitigation** — E06 measures all three targets (Chromium, Electron, Tauri) on identical hardware and data; Electron is the locked primary with explicitly pinned GPU flags; the benchmark runs in Electron in CI, not only in headless Chromium.
 - **Trigger** — Electron frame times >15% worse than Chromium on the same scene, or GPU-acceleration blocklisting observed on the reference machine.
 - **Contingency** — Pin a known-good Electron/Chromium version and document the GPU flag set as a supported-configuration requirement; if Tauri measures materially better, ADR-0007 is reopened before R1 starts (and only before).
+- **Review** — 2026-10-29, E06-T02 (`docs/plan/spikes/E06-M0-report.md` §3.6, §4, §9). Re-scored L3→L2: the trigger did not fire — Electron 45 (Chromium 156, ANGLE D3D11) was faster than the headless-Chromium arm on every frame row and had full WebGL2 capability parity, including WebGL2 in a worker; the shipped `tuned` flag set and the default set were indistinguishable at the 0.1 ms timer resolution; the Tauri / WebView2 arm was dropped by the 2026-10-29 ruling (ADR-0011 decided on criterion 5). L is not lowered further: the Chromium arm ran on SwiftShader, so it is not a like-for-like GPU comparison, the host was below the reference class, and the Q02 hardware cells (N1, I1, G1–G3) are still not run. The mitigation's "benchmark runs in Electron in CI" now exists as a recording-only nightly job (`.github/workflows/perf-engine-matrix.yml`, software GL on hosted runners).
 
 ### RSK-004 · Footprint text rendering becomes the permanent frame-budget bottleneck
 
@@ -504,6 +506,7 @@ the 30-minute canary meanwhile.
 - **Mitigation** — At least 2 other frontend engineers work inside `packages/chart-engine` from S05 (enforced by rotating story assignment, not by intention); `26-chart-engine-design.md` documents architecture and invariants before implementation, not after; code-owner review on every engine PR spreads knowledge; the benchmark harness encodes performance expectations so a successor can verify their own work; weekly engine design walkthroughs recorded.
 - **Trigger** — Engine PRs authored by a single person for 3 consecutive sprints, or planned absence of the lead for >2 weeks.
 - **Contingency** — Freeze new engine features, use the documented fallback chassis for any pending scope, and run a knowledge-transfer sprint before resuming.
+- **Review** — 2026-10-29, E06-T02: score unchanged. Mitigation added: the M0 findings report (`docs/plan/spikes/E06-M0-report.md`) is the transferable record of what the spike measured and what M1–M8 must budget (§10), its figures regenerate from the committed raw reports by script (`packages/chart-engine/bench/matrix/m0-report.mjs`), and the matrix runs in CI so a successor can re-measure without the spike's author.
 
 ### RSK-038 · Review bottleneck — 2 approvals incl. a code-owner throttles throughput
 
@@ -1010,14 +1013,14 @@ the 30-minute canary meanwhile.
 
 ## 10. Register summary
 
-| Score band           | Count  | IDs                                                                                                                                                                                                                                                                                                                                                           |
-| -------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Critical (15–25)** | 13     | RSK-053, RSK-001, RSK-004, RSK-010, RSK-013, RSK-014, RSK-031, RSK-037, RSK-060, RSK-082, RSK-084, RSK-085, RSK-086                                                                                                                                                                                                                                           |
-| **High (10–14)**     | 39     | RSK-056, RSK-002, RSK-011, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-022, RSK-023, RSK-026, RSK-028, RSK-029, RSK-032, RSK-036, RSK-039, RSK-041, RSK-043, RSK-046, RSK-047, RSK-049, RSK-065, RSK-066, RSK-068, RSK-069, RSK-070, RSK-071, RSK-072, RSK-073, RSK-076, RSK-077, RSK-078, RSK-079, RSK-080, RSK-081, RSK-083, RSK-087, RSK-091, RSK-092 |
-| **Medium (5–9)**     | 35     | RSK-003, RSK-005, RSK-012, RSK-015, RSK-021, RSK-024, RSK-025, RSK-027, RSK-030, RSK-033, RSK-034, RSK-035, RSK-038, RSK-040, RSK-042, RSK-044, RSK-048, RSK-050, RSK-051, RSK-052, RSK-054, RSK-055, RSK-057, RSK-058, RSK-059, RSK-061, RSK-062, RSK-063, RSK-064, RSK-067, RSK-074, RSK-075, RSK-088, RSK-089, RSK-090                                     |
-| **Total entries**    | **87** | RSK-001 … RSK-092 (non-contiguous numbering, grouped by category block; numbers are never reused)                                                                                                                                                                                                                                                             |
+| Score band           | Count  | IDs                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Critical (15–25)** | 12     | RSK-053, RSK-004, RSK-010, RSK-013, RSK-014, RSK-031, RSK-037, RSK-060, RSK-082, RSK-084, RSK-085, RSK-086                                                                                                                                                                                                                                                             |
+| **High (10–14)**     | 40     | RSK-056, RSK-001, RSK-002, RSK-011, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-022, RSK-023, RSK-026, RSK-028, RSK-029, RSK-032, RSK-036, RSK-039, RSK-041, RSK-043, RSK-046, RSK-047, RSK-049, RSK-065, RSK-066, RSK-068, RSK-069, RSK-070, RSK-071, RSK-072, RSK-073, RSK-076, RSK-077, RSK-078, RSK-079, RSK-080, RSK-081, RSK-083, RSK-087, RSK-091, RSK-092 |
+| **Medium (5–9)**     | 35     | RSK-003, RSK-005, RSK-012, RSK-015, RSK-021, RSK-024, RSK-025, RSK-027, RSK-030, RSK-033, RSK-034, RSK-035, RSK-038, RSK-040, RSK-042, RSK-044, RSK-048, RSK-050, RSK-051, RSK-052, RSK-054, RSK-055, RSK-057, RSK-058, RSK-059, RSK-061, RSK-062, RSK-063, RSK-064, RSK-067, RSK-074, RSK-075, RSK-088, RSK-089, RSK-090                                              |
+| **Total entries**    | **87** | RSK-001 … RSK-092 (non-contiguous numbering, grouped by category block; numbers are never reused)                                                                                                                                                                                                                                                                      |
 
-Band arithmetic (corrected by E49-T03; the earlier text said 47 and predated RSK-051…057): 13 Critical + 39 High + 35 Medium = **87**, equal to the 87 `### RSK-nnn` entries in §3–§9 (RSK-053 moved High→Critical on its provisional re-score). There are no Low-band entries: anything that scored ≤4 during drafting was not carried into the register as a tracked risk (see §10.1.2). RSK-012 moved High->Medium in an earlier PR (E07-K01 spike evidence, partial retirement); its narrative was corrected in this PR after QA bug #1562 found the spike's original shape-B result was not reproducible (see §4 entry) — the band/score is unchanged, only the evidence text.
+Band arithmetic (corrected by E49-T03; the earlier text said 47 and predated RSK-051…057): 12 Critical + 40 High + 35 Medium = **87**, equal to the 87 `### RSK-nnn` entries in §3–§9 (RSK-053 moved High→Critical on its provisional re-score; RSK-001 moved Critical→High on the E06-T02 re-score of 2026-10-29). There are no Low-band entries: anything that scored ≤4 during drafting was not carried into the register as a tracked risk (see §10.1.2). RSK-012 moved High->Medium in an earlier PR (E07-K01 spike evidence, partial retirement); its narrative was corrected in this PR after QA bug #1562 found the spike's original shape-B result was not reproducible (see §4 entry) — the band/score is unchanged, only the evidence text.
 
 #### 10.0.1 ID allocation — which numbers exist and which never will
 
@@ -1073,7 +1076,7 @@ This subsection exists so an auditor does not have to re-derive the arithmetic. 
 
 | Partition                  | Rows                     | Sum                                      | Duplicates within the partition | Entries not covered |
 | -------------------------- | ------------------------ | ---------------------------------------- | ------------------------------- | ------------------- |
-| Score band (§10)           | 3 (Critical/High/Medium) | 13 + 39 + 35 = **87**                    | none                            | none                |
+| Score band (§10)           | 3 (Critical/High/Medium) | 12 + 40 + 35 = **87**                    | none                            | none                |
 | Category (§10.1)           | 7                        | 17 + 48 + 6 + 5 + 4 + 4 + 3 = **87**     | none                            | none                |
 | `Risk` field value (§10.2) | 15 (R1–R15)              | 5+7+6+16+6+12+8+3+4+2+2+3+4+4+5 = **87** | none                            | none                |
 
