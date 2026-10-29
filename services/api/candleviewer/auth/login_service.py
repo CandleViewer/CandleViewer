@@ -235,6 +235,8 @@ class LoginService:
         # Password verified. A disabled user is refused only now, after the one verify every
         # attempt takes; the router answers it as a wrong password (SR-014, #4961).
         if user.status is UserStatus.DISABLED:
+            # Every refusal is one failure from this address, whatever the account's state.
+            self._per_ip_throttle.record_failure(source_ip)
             raise AccountDisabled("Account disabled - contact the owner")
 
         if self._hasher.needs_rehash(user.password_hash, DEFAULT_ARGON2_PARAMS):
@@ -254,7 +256,9 @@ class LoginService:
             # A password-only full session is undecided (#2295 Q6), and C-12.2
             # forbids such a user (#965 refuses `mfa_required: false`). Fail
             # closed: never fabricate a session shape for it, and answer it as a wrong password
-            # (SR-014, #4961), held to the same floor.
+            # (SR-014, #4961), held to the same floor, and counted from this address as any
+            # refusal is.
+            self._per_ip_throttle.record_failure(source_ip)
             raise MfaNotRequired()
 
         mfa_token = self._mfa_token_factory()

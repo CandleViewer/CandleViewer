@@ -495,8 +495,9 @@ async def test_login_every_account_state_verifies_once_then_waits_out_the_same_f
     real_hash: str, name: str
 ) -> None:
     """One Argon2id verify at the stored hash's cost (the placeholder's for an unknown
-    identifier), then the hold as its last step, ending at the floor: the same steps a wrong
-    password takes, counted on the spies rather than timed on a wall clock."""
+    identifier), one failure recorded from the address, then the hold as its last step, ending
+    at the floor: the same steps a wrong password takes, counted on the spies rather than timed
+    on a wall clock."""
     update, identifier, verdict = _ACCOUNT_STATES[name]
     user = make_user(password_hash=real_hash, **update)
     service, _, events, time = _timed_world(real_hash, verdict=verdict, user=user, work_s=0.01)
@@ -507,5 +508,6 @@ async def test_login_every_account_state_verifies_once_then_waits_out_the_same_f
         )
 
     assert [e for e in events if e[0] == "verify"] == [("verify", extract_parameters(real_hash))]
+    assert [e for e in events if e[0] == "record_failure"] == [("record_failure",)]
     assert events[-1] == ("sleep", pytest.approx(_FLOOR_S - 0.01))
     assert time.now == pytest.approx(_FLOOR_S)
