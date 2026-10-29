@@ -13,7 +13,8 @@ read is of the engine's plain published state (`phase`, `resync_count`, `last_u`
   the scales and a version. A snapshot is that window (seeded from the live book when no
   subscription that already took its `snap` holds it), so every `d` applies to exactly what its
   client holds. Depths 1, 50 and 200 are windows of the same tier; 500 is one only while the tier
-  is 500 (`heatmap_depth_500`), else the `sub` was refused.
+  is 500: a 500 `sub` while the tier is still 200 stays pending and takes its snapshot after the
+  swap (with `heatmap_depth_500` off the `sub` was refused).
 - **Deltas.** Each window has its own cadence (BQ-4, 23 §8.2): 20 ms for depth 1, 50 ms for 50,
   100 ms for 200 and 500, whatever the pacer. An upstream change goes out at once when the window
   sent nothing in its last period, else at the period's close, as one `d` holding every level that
@@ -144,6 +145,7 @@ class _Window:
     bids: tuple[BookLevel, ...]
     asks: tuple[BookLevel, ...]
     xu: int
+    xseq: int  # the cross sequence the window was seeded with, rendered with its `xu`
     scales: tuple[int, int]
     version: int
     dirty_since: float | None = None  # the clock at the first change not yet sent
@@ -255,7 +257,7 @@ class BookTopic[B]:
             if w is None:
                 return None
             st.windows[depth] = w
-        return self._source.render(eng, w.served, w.bids, w.asks, w.xu, w.scales)
+        return self._source.render(eng, w.served, w.bids, w.asks, w.xu, w.xseq, w.scales)
 
     def generation(self, sub: BookSub) -> int:
         key = self._key(sub)
@@ -266,7 +268,8 @@ class BookTopic[B]:
             self._known[key] = None
         st = self._symbols.get(key[0])
         w = st.windows.get(key[1]) if st is not None and st.of(eng) else None
-        moving = eng.last_u if w is None else w.version  # a held window moves with its frames
+        # a held window moves with its frames; tagged, so a version never reads as a live `u`
+        moving = ("u", eng.last_u) if w is None else ("w", w.version)
         state = (id(eng), eng.resync_count, eng.phase, moving, self._source.is_stale(eng))
         seen = self._seen.get(key)
         if seen is None or seen[0] != state:
@@ -400,16 +403,17 @@ class BookTopic[B]:
         return sent
 
     def _seed(self, eng: BookEngine, depth: int) -> _Window | None:
-        book = eng.book
+        """`None` (the `sub` stays pending) while the tier is shallower than `depth`: a 500 window
+        is never a 200 tier's book under the `.500` topic; it is seeded after the swap."""
+        book, xseq = eng.book, eng.snapshot_cross_seq
         steps = self._source.steps(eng.symbol)
-        if book is None or steps is None:
+        if book is None or steps is None or xseq is None or eng.depth < depth:
             return None
-        served = min(depth, eng.depth)
-        bids, asks = book.top(served)
+        bids, asks = book.top(depth)
         scales = book_scales(steps, bids, asks)
         if scales is None or not _uncrossed(bids, asks):
             return None
-        return _Window(served, bids, asks, eng.last_u, scales, next(self._versions))
+        return _Window(depth, bids, asks, eng.last_u, xseq, scales, next(self._versions))
 
     def _symbol(self, symbol: str, eng: BookEngine) -> _Symbol | None:
         """The symbol's windows of `eng`'s book: a book that is gone is replaced, and the next

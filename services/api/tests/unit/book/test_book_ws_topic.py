@@ -514,3 +514,44 @@ async def test_start_and_stop_run_the_loop_on_the_bus() -> None:
     await topic.stop()
     assert w.hub.frames and w.hub.frames[-1][0] == "book.BTCUSDT.50"
     assert topic.pump() == 0
+
+
+async def test_a_500_subscription_at_tier_200_stays_pending_until_the_swap() -> None:
+    """S1/F8: a `book.X.500` sub while the active tier is still 200 is never served a 200-level
+    snapshot under the `.500` topic; it takes its snapshot, at 500 levels, after the swap."""
+    w = World()
+    await live(w)
+    deep = w.attach(sub(500))
+    assert deep.built is None and deep.snapshot_pending
+    swapped = await w.engine(depth=500)  # the 500 tier, swapped in live
+    bids, asks = ladder(1000, 1001, 500)
+    await swapped.on_event(snap(30, bids, asks, depth=500))
+    built = w.attach(deep).built
+    assert built is not None and built["structured"]["depth"] == 500
+    assert len(built["structured"]["bids"]) == len(built["structured"]["asks"]) == 500
+
+
+async def test_a_window_version_and_a_live_u_never_name_the_same_generation() -> None:
+    """F3: the generation's moving slot is tagged, so a held window whose version equals the live
+    `u` the unheld topic last named is still a new state."""
+    w = World()
+    eng = await live(w)
+    s = sub(50)
+    before = w.topic.generation(s)
+    w.topic._versions = itertools.count(eng.last_u)  # the window's version == the live `u`
+    w.attach(s)
+    assert w.topic.generation(s) > before
+
+
+async def test_a_held_window_renders_the_cross_seq_it_was_seeded_with() -> None:
+    """F5: `xseq` pairs with the window's `xu`, never with whatever the engine holds later."""
+    w = World()
+    eng = await live(w)
+    first = w.attach(sub(50)).built
+    seeded = first["structured"]["xseq"]
+    template = eng._template
+    assert template is not None
+    eng._template = template.model_copy(update={"cross_seq": seeded + 1000})
+    second = w.topic.build(sub(50))  # the first one holds the window
+    assert second is not None
+    assert second["structured"]["xseq"] == seeded and second["trailer"][1] == seeded

@@ -116,7 +116,7 @@ class BookSnapshotSource[B]:
         scales = book_scales(steps, bids, asks)
         if scales is None:
             return None
-        return self.render(eng, depth, bids, asks, eng.last_u, scales)
+        return self.render(eng, depth, bids, asks, eng.last_u, xseq, scales)
 
     def steps(self, symbol: str) -> tuple[Decimal, Decimal] | None:
         """The symbol's instrument tick and qty step, `None` while unknown."""
@@ -129,13 +129,12 @@ class BookSnapshotSource[B]:
         bids: tuple[BookLevel, ...],
         asks: tuple[BookLevel, ...],
         xu: int,
+        xseq: int,
         scales: tuple[int, int],
     ) -> B | None:
         """The §14.1 body of these levels at `scales` (E21-T01: the book publisher renders the
-        window it holds through it); `None` when a value does not fit its kind-1 field."""
-        xseq = eng.snapshot_cross_seq
-        if xseq is None:
-            return None
+        window it holds through it, with the `xseq` it was seeded with); `None` when a value does
+        not fit its kind-1 field."""
         ps, qs = scales
         records = _records(0, bids, ps, qs) + _records(1, asks, ps, qs)
         trailer = (xu, xseq)
