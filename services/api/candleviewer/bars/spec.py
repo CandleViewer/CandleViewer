@@ -29,6 +29,7 @@ from candleviewer.bars.limits import (
     RANGE_TICKS_RANGE,
     TICK_PARAM_RANGE,
 )
+from candleviewer.bars.metrics import bars_spec_registry_conflict_total
 from candleviewer.bars.models import BarSpec, check_renko_bounds
 from candleviewer.observability.metrics import Counter
 
@@ -235,17 +236,22 @@ def to_wire(spec: BarSpec) -> tuple[WireBarType, str]:
 
 class SpecRegistry:
     """Process-local `spec_hash -> BarSpec` map so operators can resolve a QuestDB
-    `bar_param` / WS topic back to a readable spec."""
+    `bar_param` / WS topic back to a readable spec. Insert-only per hash (BR-15): a hash that
+    already names another spec keeps the first, and the conflict is counted and logged."""
 
     def __init__(self) -> None:
         self._specs: dict[str, BarSpec] = {}
 
     def register(self, spec: BarSpec) -> str:
         h = spec.spec_hash
-        if h not in self._specs:
+        prior = self._specs.get(h)
+        if prior is None:
             self._specs[h] = spec
             bar_specs_registered_total.inc()
             _log().info("bar_spec_registered", spec_hash=h, spec=canonical_json(spec))
+        elif prior != spec:  # a collision, or a replaced entry: never overwrite (#2294)
+            bars_spec_registry_conflict_total.inc()
+            _log().error("bar_spec_registry_conflict", spec_hash=h, spec=canonical_json(spec))
         return h
 
     def resolve(self, spec_hash: str) -> BarSpec | None:

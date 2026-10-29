@@ -38,6 +38,7 @@ import structlog
 
 from candleviewer.domain.sql_names import column_identifier, ts_param
 from candleviewer.observability.metrics import Counter, Gauge
+from candleviewer.observability.parquet_parity_metrics import parquet_hot_cold_parity_mismatch_total
 from candleviewer.storage.cold.compactor import IdleGuard
 from candleviewer.storage.cold.exporter import ColdExporter, HotTierSource
 from candleviewer.storage.cold.layout import (
@@ -433,7 +434,8 @@ class ColdArchiver:
                 continue
             try:
                 await self._exporter.export_partition(symbol, stream, rng, partition_extra=extra)
-            except StorageExportVerifyFailed:
+            except StorageExportVerifyFailed:  # the export's own count check: hot != cold
+                parquet_hot_cold_parity_mismatch_total.labels(stream=stream.value).inc()
                 return await self._fail(symbol, stream, day, VERIFICATION_FAILED, "row_count")
             except (OSError, DatasetNotRegistered, TimeoutError) as exc:
                 logger().warning("rolloff_archive_write_failed", error=type(exc).__name__)
@@ -477,6 +479,7 @@ class ColdArchiver:
         elif file_digest != src.hexdigest():
             reason = "checksum"
         if reason:
+            parquet_hot_cold_parity_mismatch_total.labels(stream=stream.value).inc()  # BR-16
             await self._quarantine(store, paths, entry.file, reason)
             return reason, 0, 0
         return "", file_rows, path.stat().st_size

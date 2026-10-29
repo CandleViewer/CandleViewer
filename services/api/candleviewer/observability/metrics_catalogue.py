@@ -1221,6 +1221,29 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_snapshot_write_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "Wall time of one builder state blob write (write, fsync, rename).",
+        "p99 > 1 s for 10m = state root disk stalling under snapshot writes (BR-37)",
+        _L,
+        "E12",
+        (0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+        exported=True,
+    ),
+    _s(
+        "bars_snapshot_bytes_total",
+        "counter",
+        "bytes",
+        (),
+        "Bytes of builder state blobs written (one blob per series every 60 s, and on stop).",
+        "rate far above specs x blob size / 60 s = write amplification (BR-37); dashboard",
+        _L,
+        "E12",
+        exported=True,
+    ),
+    _s(
         "bars_blob_discarded_total",
         "counter",
         "blobs",
@@ -1256,6 +1279,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_spec_registry_conflict_total",
+        "counter",
+        "registrations",
+        (),
+        "Spec registrations whose spec_hash already names another spec (the first is kept).",
+        "any = a spec_hash collision or a replaced registry entry (BR-15); see the"
+        " bar_spec_registry_conflict log. Nothing emits it in the composed app yet (no"
+        " SpecRegistry is built; the live bar_param path re-parses the wire grammar), so 0"
+        " is not evidence of no collision",
+        _L,
+        "E12",
+        exported=True,
+    ),
+    _s(
         "bar_builder_quarantined_total",
         "counter",
         "series",
@@ -1265,6 +1302,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E12",
         max_series=2,
+        exported=True,
+    ),
+    _s(
+        "bars_print_rejected_total",
+        "counter",
+        "prints",
+        ("reason",),
+        "Prints a bar builder refused (SR-E12-15), by the builder whose per-print cap refused"
+        " them.",
+        "any = a pathological print reached a builder past the E08 plausibility layer (BR-11);"
+        " its series is quarantined (bar_builder_quarantined_total)",
+        _L,
+        "E12",
+        max_series=2,  # `bars.metrics.PRINT_REJECT_REASONS`
         exported=True,
     ),
     _s(
@@ -1338,6 +1389,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E12",
         max_series=1,
+        exported=True,
+    ),
+    _s(
+        "bars_cold_read_duplicate_inflight_total",
+        "counter",
+        "reads",
+        (),
+        "Cold kline page reads that found an identical read already in flight; no single-flight"
+        " joins them, so each scans.",
+        "sustained = identical expensive cold reads not coalesced (BR-36)",
+        _L,
+        "E12",
         exported=True,
     ),
     _s(
@@ -1477,6 +1540,34 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_subscribe_snapshot_total",
+        "counter",
+        "snapshots",
+        ("history",),
+        "Bars snapshots built (a subscribe's first, a resync's, a repair's), by the bucket of the"
+        " history asked for (0, 1-100, 101-500, 501-1000).",
+        "rate of 501-1000 several times the subscribe rate = snapshot storms on deep history"
+        " (BR-38); cv_ws_resync_total splits out the resyncs",
+        _L,
+        "E12",
+        max_series=4,  # `bars.metrics.HISTORY_BUCKETS`
+        exported=True,
+    ),
+    _s(
+        "ws_bars_seq_gap_total",
+        "counter",
+        "gaps",
+        (),
+        "Client-reported sequence gaps (resync reason sequence_gap) on bars topics.",
+        "any = a bars frame lost, reordered or altered on the way (BR-13); also counted in"
+        " cv_ws_sequence_gaps_detected_total. Client-reported, bounded by the 23-ws 7.5 resync"
+        " limit: cross-check cv_ws_resync_total and the per-connection resync log before"
+        " reading it as tampering",
+        _L,
+        "E12",
+        exported=True,
+    ),
+    _s(
         "bars_endpoint_rows_returned_total",
         "counter",
         "bars",
@@ -1582,6 +1673,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E12",
         max_series=2,
+        exported=True,
+    ),
+    _s(
+        "bars_write_roundtrip_mismatch_total",
+        "counter",
+        "prices",
+        (),
+        "Bar prices stored as a DOUBLE that reads back as another decimal (precision lost).",
+        "any = a stored price differs from the built one, so a re-read or a rebuild disagrees"
+        " (BR-14)",
+        _L,
+        "E12",
         exported=True,
     ),
     _s(
@@ -3792,6 +3895,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E16",
         max_series=8,
+        exported=True,
+    ),
+    _s(
+        "parquet_hot_cold_parity_mismatch_total",
+        "counter",
+        "archives",
+        ("stream",),
+        "Roll-off archives whose Parquet file differs from the QuestDB rows it holds (row count or"
+        " content digest), by stream; the file is not kept and the hot partition stays.",
+        "any = a partial write or schema drift between the tiers (BR-16); runbook recorder-rolloff",
+        _L,
+        "E07",
+        max_series=13,  # `storage.models.StreamKind`
         exported=True,
     ),
     _s(

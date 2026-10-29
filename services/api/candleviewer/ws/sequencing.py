@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 import structlog
 
 from candleviewer.auth.generated_permissions import Scope
+from candleviewer.bars.metrics import ws_bars_seq_gap_total
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
 from candleviewer.ws._generated.cvwb_layout import HEADER, KINDS
 from candleviewer.ws.binary import (
@@ -842,6 +843,8 @@ class TopicEmitter:
             return None
         if reason == "sequence_gap":
             cv_ws_sequence_gaps_detected_total.inc()
+            if sub.topic.family.family == "bars":  # BR-13 (#2294): the bars family's own count
+                ws_bars_seq_gap_total.inc()
         # What the client says beside what the server numbered: a gap is one side's bug.
         fields: dict[str, Any] = {
             "connection_id": self.connection_id,

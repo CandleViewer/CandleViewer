@@ -13,6 +13,7 @@ from typing import Final
 
 from candleviewer.observability import pgwire_metrics  # noqa: F401 - registers the PG-wire series
 from candleviewer.observability.cold_kline_cache_metrics import (  # noqa: F401 - registers them
+    bars_cold_read_duplicate_inflight_total,
     cv_cold_kline_page_cache_bytes,
 )
 from candleviewer.observability.kline_boundary_metrics import (  # noqa: F401 - registers it
@@ -180,6 +181,63 @@ bars_tape_read_degraded_total = Counter(
     labelnames=("reason",),
 )
 
+# --- E12-X01 detection signals (#2294; the threat model's section 10) -----------------------
+#: BR-11: prints a builder refused under SR-E12-15, by the builder whose cap it is (a renko
+#: print completing, or a volume print closing, more than `MAX_BRICKS_PER_TRADE`).
+PRINT_REJECT_REASONS: Final = ("renko", "volume")
+bars_print_rejected_total = Counter(
+    "bars_print_rejected_total",
+    "Prints a bar builder refused (SR-E12-15), by the builder whose per-print cap refused them.",
+    labelnames=("reason",),
+)
+for _reason in PRINT_REJECT_REASONS:  # bound now: each series exists at 0 from import
+    bars_print_rejected_total.labels(reason=_reason)
+#: BR-14: an OHLC price whose binary64 reads back as another decimal (`rows.to_price_double`).
+bars_write_roundtrip_mismatch_total = Counter(
+    "bars_write_roundtrip_mismatch_total",
+    "Bar prices stored as a DOUBLE that reads back as another decimal (precision lost).",
+)
+#: BR-15: a `spec_hash` already registered for another spec (`spec.SpecRegistry`).
+bars_spec_registry_conflict_total = Counter(
+    "bars_spec_registry_conflict_total",
+    "Spec registrations whose spec_hash already names another spec (the first is kept).",
+)
+#: BR-37: builder state blobs (`state_store.StateStore.save`), bytes and the atomic write's time.
+bars_snapshot_bytes_total = Counter(
+    "bars_snapshot_bytes_total",
+    "Bytes of builder state blobs written (one blob per series every 60 s, and on stop).",
+)
+bars_snapshot_write_seconds = Histogram(
+    "bars_snapshot_write_seconds",
+    "Wall time of one builder state blob write (write, fsync, rename).",
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+#: BR-38: bars snapshots built (`ws.bars_source`), by the bucket of the `history` asked for
+#: (0..1000, 23 section 6.1): four values, never the raw count.
+HISTORY_BUCKETS: Final = ("0", "1-100", "101-500", "501-1000")
+bars_subscribe_snapshot_total = Counter(
+    "bars_subscribe_snapshot_total",
+    "Bars snapshots built (a subscribe's first, a resync's, a repair's), by the bucket of the"
+    " history asked for (0, 1-100, 101-500, 501-1000).",
+    labelnames=("history",),
+)
+for _bucket in HISTORY_BUCKETS:
+    bars_subscribe_snapshot_total.labels(history=_bucket)
+#: BR-13: a client `resync` with `sequence_gap` on a `bars` topic (`ws.sequencing`).
+ws_bars_seq_gap_total = Counter(
+    "ws_bars_seq_gap_total",
+    "Client-reported sequence gaps (resync reason sequence_gap) on bars topics.",
+)
+
+
+def history_bucket(history: int) -> str:
+    """The `HISTORY_BUCKETS` value of a validated `history` (0..1000; a larger one is the top)."""
+    if history <= 0:
+        return "0"
+    if history <= 100:
+        return "1-100"
+    return "101-500" if history <= 500 else "501-1000"
+
 
 def record_page(route: str, rows: int, tiers: list[str]) -> None:
     """Count one served page; unknown label values are dropped, never minted."""
@@ -249,6 +307,15 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_rebuild_scheduled_total",
         "bars_stale_build_version_total",
         "bars_tail_scan_bounded_total",  # its table-row bound (#2787 D2-M4)
+        # The E12-X01 detection signals (#2294).
+        "bars_print_rejected_total",
+        "bars_write_roundtrip_mismatch_total",
+        "bars_spec_registry_conflict_total",
+        "bars_snapshot_bytes_total",
+        "bars_snapshot_write_seconds",
+        "bars_subscribe_snapshot_total",
+        "ws_bars_seq_gap_total",
+        "bars_cold_read_duplicate_inflight_total",  # storage.cold.kline_reader
         # Every `LazyPgWire`'s, the bars sink's and the store's among them (#2787 D2-G2).
         "questdb_pgwire_discards_total",
         "questdb_pgwire_abandoned_total",

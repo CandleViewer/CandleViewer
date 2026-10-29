@@ -47,6 +47,7 @@ import structlog
 
 from candleviewer.bars.errors import BarsError, BarSpecError
 from candleviewer.bars.limits import MAX_BRICKS_PER_TRADE
+from candleviewer.bars.metrics import bars_print_rejected_total
 from candleviewer.bars.models import BarSpec, BarUpdate, BuilderState
 from candleviewer.bars.time_builder import _NONE, _Draft, bars_built_total
 from candleviewer.domain.primitives import TsUs
@@ -204,6 +205,7 @@ class VolumeBarBuilder(_ActivityBuilder):
         # the cap iff rem - room >= `_cap_qty`. Refused before any state changes, so the builder is
         # left as if it never arrived. `rem >= room` first: the common path skips the subtraction.
         if rem >= room and rem - room >= self._cap_qty:
+            bars_print_rejected_total.labels(reason="volume").inc()  # BR-11 (#2294)
             raise self._refusal(rem - room)
         self._last_seq = seq
         self._n_trades += 1

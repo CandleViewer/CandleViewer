@@ -133,9 +133,16 @@ rules:
       #   book_subscriptions_active): a book depth, the closed 23 Sec.6.1 set {1, 50, 200, 500}
       #   (a tier or a topic depth, `ws/topics.DEPTHS`), never an identifier; max_series <= 132
       #   with `symbol` (bounded by `symbol_label`).
+      # history (#2294, bars_subscribe_snapshot_total): the bucket of a bars subscription's
+      #   `history` (0..1000, 23 Sec.6.1), never the raw count: the closed set
+      #   {0, 1-100, 101-500, 501-1000} (`bars/metrics.HISTORY_BUCKETS`); max_series=4.
+      # reason, also (#2294, bars_print_rejected_total): the builder whose SR-E12-15 cap refused a
+      #   print, {renko, volume} (`bars/metrics.PRINT_REJECT_REASONS`); max_series=2.
+      # stream, also (#2294, parquet_hot_cold_parity_mismatch_total): a `storage.models.StreamKind`
+      #   value (13, a closed enum), never a symbol or a path; max_series=13.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(action|bucket|builtin|cap|cause|class|code|depth|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger_mode|version|where|wire)$).*$"
+          regex: "^(?!(action|bucket|builtin|cap|cause|class|code|depth|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger_mode|version|where|wire)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"

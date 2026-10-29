@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from candleviewer.bars.errors import BarsError
+from candleviewer.bars.metrics import bars_subscribe_snapshot_total, history_bucket
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import BUILD_VERSIONS
 from candleviewer.bars.series_store import MAX_SERIES, SeriesStore
@@ -112,6 +113,7 @@ class BarsSnapshotSource:
                 return None
             body = SnapshotBody({**head, "bars": items}, meta=meta)
         self._logged -= {(sub.ch, "refused"), (sub.ch, "structured")}
+        bars_subscribe_snapshot_total.labels(history=history_bucket(history)).inc()  # BR-38
         if latest.generation is not None and self._seed is not None:
             self._seed(symbol, spec, latest.generation)
         return replace(body, stale=True) if self._quarantined(symbol, spec) else body
