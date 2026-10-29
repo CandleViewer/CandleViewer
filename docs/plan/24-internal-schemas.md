@@ -451,6 +451,8 @@ class BookDesyncEvent(MarketEvent):        # E21-T01: one per resync incident
 | `TradeClusterEvent`      | derived (§2.10)                    | on cluster close    | no (derivable from trades, C-2.15) | `{env}.md.{symbol}.cluster`            |
 | `BigTradeThresholdEvent` | derived (§2.10)                    | ≤ 1 / 5 s           | yes (config echo; not derivable)   | `{env}.md.{symbol}.bigtrade-threshold` |
 | `BigTradeAdvisoryEvent`  | derived (§2.10)                    | on over-flag entry  | yes                                | `{env}.md.{symbol}.bigtrade-advisory`  |
+| `LiquidityReload`        | derived (§2.11)                    | per detected reload | no (derivable from book+trades)    | `{env}.md.{symbol}.liquidity`          |
+| `LiquidityPulled`        | derived (§2.11)                    | per detected pull   | no (derivable from book+trades)    | `{env}.md.{symbol}.liquidity`          |
 
 **Ingestion health reasons (#1919).** `IngestionService.health()` returns `degraded` (never `down`;
 `stopped` before start) with `detail` = comma-joined `HealthReason` tokens, derived from published plain
@@ -598,6 +600,47 @@ Topic details are flat single segments (`bus/models.py` `_SEGMENT_RE` = `[a-zA-Z
 - **State caps (closes threat-model gap G3; SR-E22-05).** Per symbol: `CLUSTER_KEYS_MAX = 4096` open cluster keys and `PRINTS_BUFFER_MAX = 16384` buffered prints (a floor). The buffer holds **all** evaluated prints (not only flagged ones) inside the active cluster window, so a config change can recompute without a restart. Its effective bound is the asserted constant expression `PRINTS_BUFFER_EFFECTIVE_MAX = max(PRINTS_BUFFER_MAX, cluster_window_ms × 5)` in `orderflow/limits.py`, where 5 = the 5 000 prints/s budget #5 expressed per ms. That means a healthy feed never evicts inside the window: 25 000 at the 5 000 ms REST cap, 10 000 → 16 384 at the 2 000 ms WS cap. It stays bounded because `cluster_window_ms` is capped (SR-E22-04). The oldest entry is evicted (`close_reason="evicted"`) and `bigtrade_state_truncated_total{symbol}` is incremented, never silently. Every bound is imported from `orderflow/limits.py` (E22 threat model §7). No literal copies are allowed elsewhere.
 - **Bounded membership.** `trade_ids` is capped at `CLUSTER_IDS_MAX = 64` (`orderflow/limits.py`, asserted), with `trade_ids_truncated` set when the cap applies. The exact count and the first/last ids are always present, so the event size is O(1) on the bus while still giving tape highlighting and determinism tests concrete members. The full membership stays reconstructible from the tape by `(symbol, side, price_bucket, first_ts_event..last_ts_event)`.
 - **Input assert (SR-E22-13).** Engine inputs are `Decimal` > 0 and on tick. Anything else is rejected and counted.
+
+### 2.11 Liquidity events (E21-T04, contract-first; PR 1 = the pure core)
+
+Produced by M9 `orderflow/liquidity.py` (`LiquidityTracker`) from a 100 ms book sample (`BookState.walk`, read only while `BookPhase.LIVE`) and the `TradeEvent` tape. Plain synchronous code, not a statechart (C-2.20); every time is the caller's `ts_us`, so live and replay take the same path. Bus only: no REST or WS surface (`23-ws-protocol.md` is untouched; WS exposure is E21-S07's own contract PR), and nothing is persisted (`heatmap_cells.refill_count` and the age columns stay NULL).
+
+```python
+class LiquidityReload(MarketEvent):        # a level consumed by prints, then replenished in the window
+    side: Literal["bid", "ask"]            # the resting side of the level
+    price: Px
+    price_ticks: Ticks
+    prior_size: Qty                        # size before the consume
+    replenished_size: Qty
+    refill_count: int                      # consume -> replenish cycles at this price within the window
+    estimated: Literal[True] = True        # L2-only inference, no L3/MBO
+
+class LiquidityPulled(MarketEvent):        # a level dropped without matching prints
+    side: Literal["bid", "ask"]
+    price: Px
+    price_ticks: Ticks
+    prior_size: Qty
+    remaining_size: Qty
+    traded_qty: Qty                        # tape volume at or through the price in the window
+    estimated: Literal[True] = True
+```
+
+`ts_event` = `ts_ingest` = the sample time; `event_id` is content-derived (as §2.10). Config `liquidity.*` (`LiquidityConfig`; `*_pct` are fractions):
+
+| Key                    | Default                | Meaning                                                               |
+| ---------------------- | ---------------------- | --------------------------------------------------------------------- |
+| `bands_ticks`          | `(5, 10, 25, 50, 100)` | depth bands, ticks from the mid, inclusive and cumulative (bps later) |
+| `reload_consume_pct`   | `0.5`                  | size drop (of the previous sample) that opens a consume / pull        |
+| `reload_replenish_pct` | `0.9`                  | share of the prior size that closes a reload                          |
+| `reload_window_ms`     | `5000`                 | tape look-back, reload deadline and refill-count window (inclusive)   |
+| `min_size`             | `10 x qty_step`        | smaller levels are ignored (base qty)                                 |
+| `tolerance_pct`        | `0.1`                  | traded volume needed to call a drop consumed: `drop x tolerance_pct`  |
+
+Rules. A drop of at least `reload_consume_pct` with traded volume at or through the price (buys through an ask, sells through a bid) of at least `drop x tolerance_pct` in the window is **consumed**, otherwise **pulled** (`LiquidityPulled`, no reload). A consumed level back at `reload_replenish_pct` of its prior size within `reload_window_ms` emits one `LiquidityReload`. A sample while the book is not LIVE (or one-sided) is an estimated gap: pending detection state of every level is reset and no event fires on the first live sample after it (the book is re-baselined). Levels that fall out of the walked depth are forgotten, not pulled.
+
+Bands: `BandDepth(band_ticks, bid, ask, diff = bid - ask)`, exact `Decimal` from the book (distance to the mid measured in half ticks, so the integer arithmetic is exact).
+
+Ring and bound: `buckets` (200, at most 256) price rows x `ring_ms / cadence_ms` (600 000 / 100 = 6 000) samples x (bid, ask) `float32`, preallocated, rows keyed by `bucket % buckets` (a row whose bucket changes is wiped). 200 x 6 000 x 8 B = 9.6 MB per symbol (the "12 MB" figure of `20-architecture.md` §3.2 is the cap). Coarser prices: `bucket_ticks`. `max_levels` (500) bounds the per-sample work on a pathological book. `distance_to_liquidity_cluster(side, z=2.0, window_columns=600)` is `None` when any of those samples is estimated, when there is no history or when no cell has `heatmap_cluster_z >= z`.
 
 ---
 
