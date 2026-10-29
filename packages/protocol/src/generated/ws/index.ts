@@ -784,7 +784,7 @@ export interface HeatmapSymbol {
      */
     asks: number[];
     /**
-     * Book states aggregated into the column (24 §6.1). Present only when lower than the bucket's native count, `time_bucket_ms` / 100 (a stall or gap; 0 is a column the engine missed, 24 §6.3); absent on a complete column.
+     * Book states aggregated into the column (24 §6.1). Present only when lower than the bucket's native count, the 100 ms deadlines inside it (a stall or gap; 0 is a column the engine missed, 24 §6.3); absent on a complete column.
      */
     samples?: number;
     /**
