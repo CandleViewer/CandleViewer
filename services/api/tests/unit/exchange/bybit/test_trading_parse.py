@@ -618,6 +618,34 @@ def test_an_execution_without_its_order_id_fails_the_read(order_id: object) -> N
         tp.parse(tp.ExecutionRow, EXEC_ROW | {"orderId": order_id}, "executions")
 
 
+@pytest.mark.parametrize(
+    ("closed_size", "exec_pnl", "closed_pnl"),
+    [
+        ("0.01", "12.5", Decimal("12.5")), ("0.01", "-1.5", Decimal("-1.5")),
+        ("0.01", "0", Decimal("0")), ("0", "0", None), ("", None, None), (None, None, None),
+        ("0.01", None, None), ("0.01", "", None),
+    ],
+    ids=["closing-gain", "closing-loss", "closing-flat", "opening", "rest-blank", "unstated",
+         "closing-without-pnl", "closing-blank-pnl"],
+)  # fmt: skip
+def test_an_execution_carries_the_venues_pnl_of_the_size_it_closed(
+    closed_size: str | None, exec_pnl: str | None, closed_pnl: Decimal | None
+) -> None:
+    """24 §8.1: `closed_pnl` is present on a reducing fill, the venue's `execPnl` of it (#848's
+    post-Done note); an opening fill, or a reply that states neither, has none."""
+    given = {
+        k: v for k, v in {"closedSize": closed_size, "execPnl": exec_pnl}.items() if v is not None
+    }
+    fill = tp.to_execution(tp.parse(tp.ExecutionRow, EXEC_ROW | given, "executions"), account(), 42)
+    assert fill.closed_pnl == closed_pnl
+
+
+@pytest.mark.parametrize("closed_size", ["-0.01", "abc", 0.01])
+def test_an_execution_whose_closed_size_is_no_quantity_fails_the_read(closed_size: object) -> None:
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.ExecutionRow, EXEC_ROW | {"closedSize": closed_size}, "executions")
+
+
 #: A unit input with every field the closed-PnL parser reads (names as documented).
 CLOSED_ROW: dict[str, Any] = {
     "symbol": "BTCUSDT", "side": "Sell", "closedSize": "0.5", "avgEntryPrice": "60000",
