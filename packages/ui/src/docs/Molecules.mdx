@@ -480,6 +480,11 @@ Submenu decisions (E05-S03):
 - No RTL mirroring yet: `→` opens and `←` closes in every direction, and a submenu opens `right-start`
   (a known deferral, to be tracked in its own issue).
 
+A re-shown T2 reason is said by the menu's own polite `role="status"`, rendered only while some item
+has a reason. A host that owns its surface's one live region (CMP-049's line) passes
+`announceReason` instead: the menu then renders no region and hands each re-shown reason to the
+host.
+
 ### DatePicker (CMP-047, APG Date Picker Dialog; the dialog is modal)
 
 | Keys                                            | Action                                                                                                              |
@@ -546,46 +551,3 @@ The band (`color.surface.selected` behind the days between the ends) is decorati
 fields and the two sentences carry the range. While the end is pending it previews to the day under
 the pointer, else the focused day, and selects nothing. The fields wrap, so End stacks under Start
 when the host is narrower than both.
-
-### Table (CMP-049, table mode: the WAI-ARIA APG Table pattern)
-
-| Keys                                             | Action                                                                                                                     |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab                                  | The scroll region when it scrolls (named by the caption), then the sortable header buttons in order; the body has no stop. |
-| Arrows, Page Up / Down, Home / End on the region | Scroll it (native).                                                                                                        |
-| Enter / Space on a header button                 | Sorts ascending, then descending; while that column is `sortPending` the press changes nothing.                            |
-
-| Element     | Role                            | Name             | ARIA                                                                                            |
-| ----------- | ------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------- |
-| table       | table (native `<table>`)        | the caption      | `aria-rowcount` (rows and the header; -1 while loading); `aria-busy="true"` while loading       |
-| region      | region, only while it scrolls   | the caption      | `tabindex="0"`; no role and no stop when everything fits                                        |
-| header cell | columnheader (`th scope="col"`) | its label        | `aria-sort` on the sorted column, `none` on the other sortable ones, none on plain headers      |
-| sort button | button                          | the header label | `aria-busy="true"` while `sortPending`; a CMP-014 spinner replaces the glyph                    |
-| row         | row                             | —                | `aria-rowindex` (absolute: the header row is 1)                                                 |
-| live region | status, one per table           | —                | polite: a settled sort ("Sorted by Size, ascending"), a finished load ("3 rows"), an error once |
-
-The consumer sorts the rows: `onSortChange` asks for the next sort and the host passes the sorted
-`rows` and `sort` back. Numeric columns (`numeric`, a NumericText format) are end-aligned and never
-truncate; text cells truncate with an ellipsis and keep the full text in the DOM. Loading keeps the
-header row under CMP-015 skeleton rows and shows the caption's loading words; empty and
-filtered-empty render the host's CMP-026 (`emptyState`) across every column; an error renders CMP-027
-with Retry, spoken once by the table's region (the panel itself is not live). v0 renders every row
-and is not virtualised: above 200 rows it warns in development (#266). Grid mode, selection and row
-actions are a later E05-S03 slice.
-
-Below the sum of its columns' `minWidthEm` (default 8 each, in the table's own `em`, so 200 % zoom
-counts) the table stacks, one block per row, read in order: the header buttons (wrapped, still
-sorting), then each row with its first cell as the heading line and every other cell as its header
-label then its value. The label is visible but hidden from assistive technology, which takes the
-header from the cell's `columnheader` (the explicit table roles stay while stacked). In table
-navigation a screen reader says the header once, then the value; reading linearly in browse mode it
-reads the values without their headers. Not yet confirmed with NVDA or VoiceOver: an E05-D05 check.
-
-The polite line clears as a load, a pending sort or a Retry starts, so a result identical to the
-last one (the same row count after a reload, the same failure after a Retry) is said again. The
-default empty title "No rows to show" is PROPOSED copy, pending E05-D05 review.
-
-A re-shown T2 reason is said by the menu's own polite `role="status"`, rendered only while some item
-has a reason. A host that owns its surface's one live region (CMP-049's line) passes
-`announceReason` instead: the menu then renders no region and hands each re-shown reason to the
-host.
