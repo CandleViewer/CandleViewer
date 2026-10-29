@@ -438,6 +438,23 @@ def test_trades_a_lease_waits_for_the_trade_stream_then_snaps() -> None:
     assert [t["id"] for t in frame["p"]["trades"]] == ["t00003"]
 
 
+def test_trades_a_pending_percentile_symbol_echoes_the_notional_default_never_zero() -> None:
+    """§6.1 echoes `big_trade_threshold` always; before the tape opens a percentile has no value,
+    so the ack carries the server's notional default and the first snap the engine's own."""
+    w = World(config=BigTradeConfig("percentile", Decimal("99")))
+    w.tape = None
+    conn = w.conn()
+    result, sub = w.sub(conn, {"encoding": "structured"})
+    assert sub is not None and sub.snapshot_pending
+    eff = result["effective"]
+    assert (eff["big_trade_threshold"], eff["big_trade_mode"]) == ("250000", "percentile")
+    w.tape = Tape([event(1, "0.1")])
+    w.window()
+    [snap] = _data(conn)
+    assert snap["t"] == "snap"
+    assert snap["p"]["big_trade_threshold"] == w.topic.echo("BTCUSDT")["big_trade_threshold"]
+
+
 def test_trades_a_subscription_without_a_lease_is_never_served_from_the_live_tape() -> None:
     w = World()
     _, sub = w.conn().authz.admit({"ch": _CH})  # admitted, never upstream: no lease

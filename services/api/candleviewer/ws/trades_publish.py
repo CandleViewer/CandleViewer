@@ -267,12 +267,17 @@ class TradesTopic:
         self._free(lease)
 
     def echo(self, symbol: str) -> dict[str, Any]:
-        """`sub_ok.effective`'s threshold fields (§6.1): the current threshold, absolute."""
+        """`sub_ok.effective`'s threshold fields (§6.1): the current threshold, absolute. §6.1
+        has `effective` echo `big_trade_threshold` with the defaults included, so it is never left
+        out. Before the symbol's tape opens a configured value is echoed as is, but a percentile
+        is no threshold yet: that echoes the server's notional default (`BigTradeConfig().value`,
+        USDT like a percentile threshold) rather than a misleading "0", and the first snap, which
+        carries the engine's own threshold (§14.2), corrects it."""
         state = self._symbols.get(symbol)
         tape = None if state is None else state.tape
         if tape is None:
             config = self._config(symbol)
-            value = config.value if config.mode != "percentile" else Decimal(0)
+            value = config.value if config.mode != "percentile" else BigTradeConfig().value
             return {"big_trade_threshold": format(value, "f"), "big_trade_mode": config.mode}
         return {"big_trade_threshold": format(tape.threshold, "f"), "big_trade_mode": tape.mode}
 
