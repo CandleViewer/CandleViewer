@@ -25,6 +25,7 @@ import os
 import random
 import statistics
 import time
+import tracemalloc
 from array import array
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, replace
@@ -33,6 +34,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Final, cast
 from uuid import UUID
+
+import numpy as np
 
 from candleviewer.book.resync import BookEngine
 from candleviewer.bus.bus import Bus
@@ -46,7 +49,10 @@ from candleviewer.orderflow.heatmap import (
     HeatmapSpec,
     HeatmapTopic,
     _Entry,
+    rebucket,
+    window_column,
 )
+from candleviewer.ws import sequencing
 from candleviewer.ws.binary import decode, encode, encode_b64
 from candleviewer.ws.outbound import json_payload
 from candleviewer.ws.permissions import Subscription
@@ -101,6 +107,22 @@ class Report:
     #: The same turns' CPU (`time.thread_time`), which a loaded host's preemption does not inflate.
     emit_binary_sliced_cpu_max_ms: float = 0.0
     emit_structured_sliced_cpu_max_ms: float = 0.0
+    #: m-C: eight connections' snapshots at once, one shared budget a turn.
+    emit_binary_8_connections_turn_max_ms: float = 0.0
+    emit_binary_8_connections_cpu_max_ms: float = 0.0
+    emit_structured_8_connections_turn_max_ms: float = 0.0
+    emit_structured_8_connections_cpu_max_ms: float = 0.0
+    emit_binary_8_connections_asking_turn_cpu_ms: float = 0.0
+    emit_binary_8_connections_later_turn_cpu_max_ms: float = 0.0
+    emit_structured_8_connections_asking_turn_cpu_ms: float = 0.0
+    emit_structured_8_connections_later_turn_cpu_max_ms: float = 0.0
+    #: M-B: a ring entry's bytes and a spec's ring at 2 000 columns x 512 rows (tracemalloc).
+    ring_entry_bytes: int = 0
+    ring_spec_mib: float = 0.0
+    #: m-B: the re-seed's CPU, 1 000 columns of 512 rows re-bucketed 1 -> 2: by `window_column`
+    #: (the dict path before #605's vectorising) and by `rebucket`.
+    rebucket_dict_ms: float = 0.0
+    rebucket_numpy_ms: float = 0.0
     reseed_turns: int = 0
     reseed_turn_p95_ms: float = 0.0
     reseed_turn_max_ms: float = 0.0
@@ -262,54 +284,68 @@ class _RenderSub:
 
 
 def _emit_turns(
-    topic: HeatmapTopic, lease: Any, encoding: str, sliced: bool
+    topic: HeatmapTopic, lease: Any, encoding: str, sliced: bool, connections: int = 1
 ) -> tuple[list[float], list[float]]:
-    """Every loop turn's CPU of one `snap` of `lease`'s spec through the gateway's emitter, ms;
-    the frames go to a queue that encodes as the pipeline does (`json_payload`)."""
+    """Every loop turn's wall time and CPU of `connections` concurrent `snap`s of `lease`'s spec
+    through the gateway's emitters, ms: the turn that asked (every inline slice together) and
+    each turn of the shared budget (`sequencing._Turns`). The frames go to a queue that encodes
+    as the pipeline does (`json_payload`)."""
 
-    async def run_one() -> tuple[list[float], list[float]]:
+    async def run_all() -> tuple[list[float], list[float]]:
         parsed = parse_topic(f"heatmap.{SYMBOL}")
         opts = {"encoding": encoding, "window_seconds": 900}
-        sub = Subscription("s1", parsed, opts, effective_options(parsed, opts))
-        sub.heatmap_lease = lease
+        left = [connections]
         done = asyncio.Event()
+
+        def finished(frame: dict[str, Any]) -> None:
+            if frame.get("s") is not None:
+                left[0] -= 1
+                if not left[0]:
+                    done.set()
 
         def push(frame: dict[str, Any]) -> None:
             json_payload(frame)  # the queue encodes at push
-            if frame.get("s") is not None:
-                done.set()
+            finished(frame)
 
         def push_encoded(frame: dict[str, Any], payload: str | bytes, _r: float | None) -> None:
-            if frame.get("s") is not None:
-                done.set()
+            finished(frame)
 
-        emitter = TopicEmitter(push, connection_id="bench", wall_ms=lambda: T0,
-                               clock=time.monotonic, source=cast(Any, topic),
-                               cache=SnapshotCache())  # fmt: skip
-        if sliced:
-            emitter.push_encoded, emitter.encode_payload = push_encoded, json_payload
-            emitter.wire = "json"
-        else:
-            emitter.turn_s = 1e9
-        turns: list[float] = []
+        pairs = []
+        for n in range(connections):
+            sub = Subscription(f"s{n}", parsed, opts, effective_options(parsed, opts))
+            sub.heatmap_lease = lease
+            emitter = TopicEmitter(push, connection_id=f"bench{n}", wall_ms=lambda: T0,
+                                   clock=time.monotonic, source=cast(Any, topic),
+                                   cache=SnapshotCache(max_bytes=0))  # fmt: skip
+            if sliced:
+                emitter.push_encoded, emitter.encode_payload = push_encoded, json_payload
+                emitter.wire = "json"
+            else:
+                emitter.turn_s = 1e9
+            pairs.append((emitter, sub))
+        wall: list[float] = []
         cpu: list[float] = []
-        step = emitter._continue
+        turn = sequencing._Turns._turn
 
-        def timed(job: Any) -> None:
+        def timed(self: Any) -> None:
             began, began_cpu = time.perf_counter(), time.thread_time()
-            step(job)
-            turns.append((time.perf_counter() - began) * 1000)
+            turn(self)
+            wall.append((time.perf_counter() - began) * 1000)
             cpu.append((time.thread_time() - began_cpu) * 1000)
 
-        emitter._continue = timed  # type: ignore[method-assign]  # the bench times each slice
-        began, began_cpu = time.perf_counter(), time.thread_time()
-        emitter.snapshot(sub, "initial")
-        turns.insert(0, (time.perf_counter() - began) * 1000)
-        cpu.insert(0, (time.thread_time() - began_cpu) * 1000)
-        await asyncio.wait_for(done.wait(), 120)
-        return turns, cpu
+        sequencing._Turns._turn = timed  # type: ignore[method-assign]  # timed for the bench
+        try:
+            began, began_cpu = time.perf_counter(), time.thread_time()
+            for emitter, sub in pairs:
+                emitter.snapshot(sub, "initial")
+            wall.insert(0, (time.perf_counter() - began) * 1000)
+            cpu.insert(0, (time.thread_time() - began_cpu) * 1000)
+            await asyncio.wait_for(done.wait(), 300)
+        finally:
+            sequencing._Turns._turn = turn  # type: ignore[method-assign]
+        return wall, cpu
 
-    return asyncio.run(run_one())
+    return asyncio.run(run_all())
 
 
 def emit_scenario(report: Report, topic: HeatmapTopic, lease: Any) -> Report:
@@ -317,6 +353,12 @@ def emit_scenario(report: Report, topic: HeatmapTopic, lease: Any) -> Report:
         one, _ = _emit_turns(topic, lease, encoding, sliced=False)
         turns, cpu = _emit_turns(topic, lease, encoding, sliced=True)
         setattr(report, f"emit_{encoding}_sliced_cpu_max_ms", max(cpu))
+        many, many_cpu = _emit_turns(topic, lease, encoding, sliced=True, connections=8)
+        setattr(report, f"emit_{encoding}_8_connections_turn_max_ms", max(many))
+        setattr(report, f"emit_{encoding}_8_connections_cpu_max_ms", max(many_cpu))
+        # the turn that asked runs each request's own slice; the shared budget covers the rest
+        setattr(report, f"emit_{encoding}_8_connections_asking_turn_cpu_ms", many_cpu[0])
+        setattr(report, f"emit_{encoding}_8_connections_later_turn_cpu_max_ms", max(many_cpu[1:]))
         p95 = statistics.quantiles(turns, n=100)[94] if len(turns) > 1 else turns[0]
         setattr(report, f"emit_{encoding}_one_turn_ms", max(one))
         setattr(report, f"emit_{encoding}_sliced_p95_ms", p95)
@@ -348,14 +390,37 @@ def snapshot_and_seed(report: Report, seed: int) -> Report:
     st = topic._symbols[SYMBOL]
     st.tier = 500  # as a live book would set it
     state = st.specs[spec]
-    for i in range(2_000):
-        sizes = [rng.randint(0, 9_000) / 1_000 for _ in range(2 * ROWS)]
-        column = HeatmapColumn(T0 + 100 * i, 100, 630_924, 1, array("d", sizes[:ROWS]),
-                               array("d", sizes[ROWS:]), 631_180, 631_181, 0.0, 0.0, False, 1,
-                               1)  # fmt: skip
-        entry = _Entry(column)
-        topic._fill(entry, (TICK, QTY_STEP))  # the close's own cost, paid once per column
-        state.ring.append(entry)
+    raw = [
+        np.asarray([rng.randint(0, 9_000) / 1_000 for _ in range(2 * ROWS)]).tobytes()
+        for _ in range(2_000)
+    ]
+    tracemalloc.start()
+    before = tracemalloc.get_traced_memory()[0]
+    for i, data in enumerate(raw):  # M-B: what the ring holds per column, measured
+        bids, asks = array("d"), array("d")
+        bids.frombytes(data[: 8 * ROWS])
+        asks.frombytes(data[8 * ROWS :])
+        column = HeatmapColumn(T0 + 100 * i, 100, 630_924, 1, bids, asks, 631_180, 631_181, 0.0,
+                               0.0, False, 1, 1)  # fmt: skip
+        state.ring.append(_Entry(column))
+    held = tracemalloc.get_traced_memory()[0] - before
+    tracemalloc.stop()
+    report.ring_entry_bytes = held // len(raw)
+    report.ring_spec_mib = held / 2**20
+    columns = [e.column for e in list(state.ring)[:1_000]]
+    began = time.perf_counter()
+    for c in columns:  # the dict path `rebucket` took before it was vectorised
+        prices = [c.price_origin_ticks + i * c.price_step_ticks for i in range(c.rows)]
+        window_column(ts_ms=c.ts_ms, bucket_ms=c.bucket_ms, step=2,
+                      bids=dict(zip(prices, c.bid_sizes, strict=True)),
+                      asks=dict(zip(prices, c.ask_sizes, strict=True)),
+                      best_bid=c.best_bid_ticks, best_ask=c.best_ask_ticks, estimated=False,
+                      samples=1, expected=1, origin_hint=c.price_origin_ticks)  # fmt: skip
+    report.rebucket_dict_ms = (time.perf_counter() - began) * 1000
+    began = time.perf_counter()
+    for c in columns:
+        rebucket(c, 2)
+    report.rebucket_numpy_ms = (time.perf_counter() - began) * 1000
     sub = _Sub(lease, effective={"encoding": "binary", "window_seconds": 900})
     t0 = time.perf_counter()
     body = topic.build(sub)
