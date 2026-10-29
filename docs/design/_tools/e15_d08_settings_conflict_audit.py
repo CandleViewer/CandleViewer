@@ -85,7 +85,7 @@ MERGE_SHAS = (
     "c4989493461ec6b6d22b9254633452a6362b750e",
 )
 PENPOT_PAGE = "E15-D08 Workspace settings and conflicts"
-STATUS_WORDS = ("text-first", "PROPOSED unless RULED", "boards PENDING", "≤ 10 boards", "≤ 1/3")
+STATUS_WORDS = ("text-first", "PROPOSED unless RULED", "boards drawn", "≤ 10 boards", "≤ 1/3")
 # Generic patterns only (the repo is public): a local home path (POSIX, Windows or UNC), a
 # design-tool host, a team or file id query, a home-relative path, a tailnet host, an IPv4
 # address. Split literals keep the tool from matching itself.
@@ -759,7 +759,6 @@ ENV_RE = (
     r"|pinned|pinning|real[- ]money)\b)|\bCMP-07[45]\b"
 )
 ENV_ALLOWED: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("the boards PR pins it", ("the header",)),
     ("account and environment semantics (E27, E28)", ("the header",)),
     ("**Inputs pinned.**", ("the header",)),
     ("stored fields only are drawn live", ("the header", "§2")),
@@ -989,6 +988,10 @@ BANNED_COPY = (
 )
 FRAME_RE = r"^\| `((?:SCR-025|SCR-029)/[a-z0-9-]+)` +\|.*$"
 BOARD_RE = r"^\| (\d\d) +\| `(E15-D08 / (\d\d) [a-z0-9-]+)` +\|(.*)$"
+# A drawn board's Status cell (the boards PR): the script, the board id, the PNG header's size.
+BOARD_STATUS_RE = (
+    r"drawn \(r1a\): board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}` \(\d+ × \d+\)"
+)
 ENTRY_RE = r"^\| (E\d+) +\|(.*)$"
 FRAME_NAME_RE = r"`((?:SCR-025|SCR-029)/[a-z0-9-]+)`"
 # The written sections' fixed sentences: A3 as the header's standing additions quote the ruling
@@ -2025,8 +2028,8 @@ def board_gates(spec: str) -> tuple[list[str], dict[str, Any]]:
             bad.append(fail("board-theme", f"§0 board {num}: its slug and its theme disagree"))
         if export != f"`docs/design/E15/img/E15-D08-{num}-{slug}.png`":
             bad.append(fail("board-export", f"§0 board {num}: export path {export} not its name"))
-        if status != "pending":
-            bad.append(fail("board-status", f"§0 board {num}: status {status!r} (text-first)"))
+        if not re.fullmatch(BOARD_STATUS_RE, status):
+            bad.append(fail("board-status", f"§0 board {num}: status {status!r} (drawn, r1a)"))
         frames = set(re.findall(FRAME_NAME_RE, draws))
         for f in sorted(frames - set(KIND)):
             bad.append(fail("board-unknown", f"§0 board {num} names an unknown frame {f}"))
@@ -3821,7 +3824,7 @@ def more_mutations() -> list[tuple[str, Callable[[str], str], str]]:
         ),
         (
             "X99-board-cells",
-            row_fn(r"^\| 07 .*$", lambda ln: re.sub(r"\| pending +\|$", "|", ln)),
+            row_fn(r"^\| 07 .*$", lambda ln: re.sub(r"\| drawn \(r1a\)[^|]*\|$", "|", ln)),
             "[board-cells] §0 board 07",
         ),
         (
@@ -3836,7 +3839,7 @@ def more_mutations() -> list[tuple[str, Callable[[str], str], str]]:
         ),
         (
             "X102-board-status",
-            line_sub("| 04 ", "| pending |", "| drawn   |"),
+            line_sub("| 04 ", "| drawn (r1a): board id", "| pending: board id"),
             "[board-status] §0 board 04",
         ),
         (
@@ -3920,8 +3923,8 @@ def more_mutations() -> list[tuple[str, Callable[[str], str], str]]:
         ),
         (
             "X112-head-status",
-            sub("boards PENDING (§0:", "boards to come (§0:"),
-            "[head-status] header: status lost 'boards PENDING'",
+            sub("boards drawn (§0:", "boards to come (§0:"),
+            "[head-status] header: status lost 'boards drawn'",
         ),
         (
             "X14-deviation",
