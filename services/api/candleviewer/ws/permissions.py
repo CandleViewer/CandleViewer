@@ -1001,22 +1001,23 @@ class ConnectionAuthz:
 
     def _book_refusal(self, sub: Subscription) -> dict[str, Any] | None:
         """E21-T01 (§6.1): depth 500 is `invalid_topic_format` while `heatmap_depth_500` is off,
-        never served at another depth; past `max_deep_book_subs` distinct (symbol, depth >= 200)
-        `book` subscriptions on the connection, live and replay alike, `subscription_limit`."""
+        never served at another depth; past `max_deep_book_subs` distinct deep (depth >= 200)
+        `book` subscriptions on the connection, each (symbol, depth) live and in each replay
+        session counted apart, `subscription_limit`."""
         depth, symbol = sub.topic.depth or 0, sub.topic.symbol
         if depth >= 500 and not self.services.depth_500:
             return _fail(sub.ch, "invalid_topic_format", "Book depth 500 is not offered.")
         if depth < DEEP_BOOK_MIN_DEPTH:
             return None
         held = {
-            (s.topic.symbol, s.topic.depth)
+            (s.topic.symbol, s.topic.depth, s.replay_session_id)
             for s in self.by_id.values()
             if s is not sub
             and s.topic.family.family == "book"
             and (s.topic.depth or 0) >= DEEP_BOOK_MIN_DEPTH
         }
         cap = self.services.max_deep_book_subs
-        if (symbol, depth) not in held and len(held) >= cap:
+        if (symbol, depth, sub.replay_session_id) not in held and len(held) >= cap:
             return _fail(
                 sub.ch,
                 "subscription_limit",

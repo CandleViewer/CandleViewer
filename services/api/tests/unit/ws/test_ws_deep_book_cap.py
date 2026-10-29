@@ -1,9 +1,10 @@
 """E21-T01 (#604; 23 §6.1, §16.2, BQ-2): the deep-book cap and the flag-off depth 500 at `sub`.
 
-A connection holds at most `ws.max_deep_book_subs` distinct (symbol, depth >= 200) `book`
-subscriptions, live and replay counted together; the next is refused `subscription_limit` before
-it is pending, never clamped to a shallower depth. `book.{symbol}.500` while `heatmap_depth_500`
-is off is `invalid_topic_format`, never served at another depth."""
+A connection holds at most `ws.max_deep_book_subs` distinct deep (depth >= 200) `book`
+subscriptions, each (symbol, depth) live and in each replay session counted apart; the next is
+refused `subscription_limit` before it is pending, never clamped to a shallower depth.
+`book.{symbol}.500` while `heatmap_depth_500` is off is `invalid_topic_format`, never served at
+another depth."""
 
 from __future__ import annotations
 
@@ -20,6 +21,8 @@ from candleviewer.ws.permissions import ConnectionAuthz, SubscriptionServices, h
 from candleviewer.ws.upstream import UpstreamRefs
 
 RS = "bb000000-0000-4000-8000-000000000001"
+RS2 = "bb000000-0000-4000-8000-000000000002"
+RS3 = "bb000000-0000-4000-8000-000000000003"
 SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT")
 
 
@@ -73,15 +76,15 @@ def test_deep_book_cap_refuses_the_fifth_distinct_deep_book_subscription() -> No
     assert [_code(r) for r in shallow] == [None, None]
 
 
-def test_deep_book_cap_counts_live_and_replay_alike_per_symbol_and_depth() -> None:
+def test_deep_book_cap_counts_each_replay_session_and_live_apart() -> None:
+    """F1: the same (symbol, depth) live and in N replay sessions is N + 1 deep subscriptions."""
     conn, _ = _conn()
     assert _code(_sub(conn, "book.BTCUSDT.200")[0]) is None
-    # the same (symbol, depth) in a replay session is the same pair: not a second one
-    assert _code(_sub(conn, "book.BTCUSDT.200", replay_session_id=RS)[0]) is None
-    replays = [f"book.{s}.200" for s in SYMBOLS[1:4]]
-    assert [_code(r) for r in _sub(conn, *replays, replay_session_id=RS)] == [None] * 3
-    (refused,) = _sub(conn, "book.DOGEUSDT.200")
-    assert _code(refused) == "subscription_limit"  # three replay pairs and one live hold the cap
+    for rs in (RS, RS2):
+        assert _code(_sub(conn, "book.BTCUSDT.200", replay_session_id=rs)[0]) is None
+    assert _code(_sub(conn, "book.ETHUSDT.200", replay_session_id=RS)[0]) is None
+    (refused,) = _sub(conn, "book.BTCUSDT.200", replay_session_id=RS3)
+    assert _code(refused) == "subscription_limit"  # one live and three replay hold the cap
 
 
 def test_deep_book_cap_frees_a_slot_on_unsub() -> None:
