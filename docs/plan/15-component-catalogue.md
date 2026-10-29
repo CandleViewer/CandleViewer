@@ -167,6 +167,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: dot `color.status.{info|success|warning|danger}.default` (neutral: `color.neutral.default`), 8 px = `space.inset.xs` padding, centred in a `size.icon` slot, `radius.badge`, placed on `color.surface.app` or `color.surface.canvas`; count `color.status.{tone}.subtle` fill + 1 px `color.status.{tone}.strong` outline (neutral: `color.neutral.subtle` + `color.neutral.default`), numeral `type.num.xs` in `color.text.primary`, height and min-width `size.icon`, paddingX `space.inset.xs`, `radius.badge`.
 - **Storybook**: Count, Dot, AllTones.
 - **Tests**: unit, visual, axe.
+- **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner approval pending)**: the notifications bell's and SCR-090 Fired tab's `count` badge is a filled count: `color.status.info.strong` fill with a `color.text.inverse` numeral (CP-14: 10.92 / 5.05 / 10.92), never `color.status.info.default`, which fails 4.5:1 in light and 7:1 in high contrast (CP-15); "99+" above 99; on the labelled bell the count is `aria-hidden` and joins its name ("Notifications, 3 unread").
 
 ### CMP-013 Avatar / ProfileBadge base
 
@@ -521,6 +522,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: AllTones, WithAction, PersistentLogLink, Persistent, Focused, ActionGated, Undo.
 - **Tests**: unit, visual, axe, live-region announcement test, pause-on-hover/focus test.
 - **As built (E05-S03)**: two parts. `Toast` renders one toast: `actions?: {label, onClick, variant?, loading?, disabledReason?}[]` replaces `action?`, with gated actions sharing one reason line per distinct reason; `undo?: {label?, onUndo, outcome}` with `undoClosed?`; `meta?`; `onDismiss(reason)` and `onRefuse(reason)`. `ToastRegion` owns timing and speech: `toasts` (each with `id`, `durationMs?: number | null`, `persistent?`, `error?`, `politeness?`), `onDismiss(id, reason)`, an injected `announce(politeness, text, key)` into the shell's announcer, `durationMs?` (default 5,000 ms; `null` is until dismissed) and `label?` (default "Notifications", a region landmark that exists only while a toast shows). `error?` makes a non-`danger` toast persistent and assertive. A pause keeps the time left and resumes from it; a timer fires once. An Undo toast never times out (`persistent: false` does not change that); only its Undo window follows the duration, then the outcome line replaces Undo and is spoken once. Under a modal layer the stack stays visible, inert through the layer's inert-outside pass. A gated action mirrors CMP-001's gated markup with the lock leading the label; the catalogued fill and label colours for a gated filled action are not yet built (a CMP-001 follow-up). The storm summary, count and "Focus toasts" stay with CMP-212. Storybook adds Default, Success, UndoOutcome, LongText, Region, RegionUntilDismissed and RegionUnderModal.
+- **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner approval pending)**: two deltas to the built toast, which wins everywhere else (`kicker`, `persistent`, `politeness`, the `border.thick` edge, the 360 px width): (1) a fired user alert is spoken in CMP-212's polite region at every severity, `tone="danger"` included: the host passes `politeness: "polite"` (AM-11, UA-A), so a user alert never takes the assertive region that order rejects and risk events keep; (2) no countdown bar, ever (X-17; motion over 5 s with no pause control for a keyboard user).
 
 ### CMP-046 Drawer (side panel)
 
@@ -532,6 +534,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: Modal, NonModal, LeftSide, RightSide, Loading, Narrow.
 - **Tests**: unit, visual, axe, focus-trap test.
 - **As built (E05-S03)**: `width?` is the host's width in CSS px (default 480); `busy?` sets `aria-busy` on the body while the host renders its CMP-015 rows; adds `footer?`, `fallbackFocusRef?`, `id?` and `className?`; `onOpenChange(open, reason)` adds the reason, `"escape"|"scrim"|"close"`, as CMP-043's. Storybook adds HostWidthAndName, LongText, FallbackReturn and a contrast pair.
+- **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner approval pending)**: the `alert-detail` drawer (SCR-092): non-modal (`modal: false`, `role="dialog"`), the built default width of 480 px, sliding over the right edge of the workspace and the docked CMP-209 rail at `elevation.popover`, never a wider dock, so the chart never lays out again; focus moves to its heading on a user action and returns to the opener, or to the bell when the opener has gone.
 
 ### CMP-047 DatePicker / DateRangePicker
 
@@ -672,6 +675,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `elevation.3`.
 - **Storybook**: Empty, WithUnread.
 - **Tests**: unit, visual, axe.
+- **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner approval pending)**: SCR-014's content: the kinds Alert, Rule, Order and System with glyph + word (NC-1, NC-2); repeat groups ("12 similar alerts") and the storm row; the muted-category line; "Showing the newest 500" with `Load older`; `Mark all read` and `Shift+click` (everything above as read, KM-4); read state on alert rows only; the panel `color.surface.raised` in CMP-209, the unread dot `color.status.info.default`, the count badge per CMP-012's E40-D02 line. The roles of the list and the bell follow `14` SCR-014's A11y.
 
 ### CMP-061 UserMenu
 
@@ -1930,42 +1934,108 @@ interface WatchlistRowData {
 
 ### CMP-163 AlertRow
 
-- **Tier**: Molecule (trading) · **Purpose**: one configured alert — condition summary, delivery channel, enabled toggle, snooze/mute, last-fired.
-- **Props**: `alert: AlertSummary` · `onToggleEnabled` · `onSnooze` · `onEdit` · `onDelete`.
-- **A11y**: reuses CMP-140 condition-summary rendering (read-only) for consistency with the rule editor's language.
-- **Tokens**: inherits CMP-049 row pattern.
-- **API sketch**:
+- **Tier**: Molecule (trading) · **Purpose**: one alert definition in SCR-090: its condition with the evaluate-on and firing-mode words, its status in words, its delivery health and its actions; a compact form lists alerts elsewhere (the indicator manager's "Used by", E13-D02).
+- **Props** (the served `Alert`, never a client summary; `deliveryChannels` of the placeholder did not match `AlertChannel`, E40-D02 X-19):
 
 ```ts
-interface AlertSummary {
-  id: string;
-  conditionSummary: string;
-  symbol?: string;
-  deliveryChannels: ("in-app" | "push" | "email")[];
-  enabled: boolean;
-  oneShot: boolean;
-  lastFiredAt?: number;
+interface AlertRowProps {
+  alert: Alert; // 22 `Alert`, as served; its `condition_hash` is never rendered
+  account?: { label: string; env: "demo" | "live" }; // an account-scoped alert (CMP-075)
+  stale: boolean; // Disconnected or resyncing (CMP-078)
+  status: "armed" | "disarmed" | "fired" | "disabled" | "expired" | "snoozed"; // E40-D02 §2.3
+  disarmReason?: string; // the disarm notice's title until CC-3
+  estimated: boolean; // the vocabulary's `estimated` over the condition's metrics
+  deliveryProblem?: {
+    outcome: "blocked" | "failed";
+    permission: "granted" | "denied" | "default" | "unsupported";
+  };
+  unacked: number;
+  muted: boolean; // after CC-8
+  readOnly?: { reason: string }; // an E09-D09 sentence
+  variant: "table" | "compact";
+  density: "compact" | "comfortable";
+  selected: boolean;
+  onSelect(): void;
+  onToggleEnabled(): void;
+  onSnooze(preset: "15m" | "30m" | "1h" | "tomorrow"): void;
+  onEdit(): void;
+  onDuplicate(): void;
+  onDelete(): void;
+  onShowOnChart(): void;
+  onViewHistory(): void;
 }
 ```
 
-- **Storybook**: Enabled, Disabled, Snoozed, RecentlyFired, OneShot.
-- **Tests**: unit, visual, axe.
+- **States**: armed, disarmed with its reason, fired one-shot, disabled, expired, snoozed, delivery problem, partial delivery, estimated, muted, unacknowledged firings, account-scoped, stale, selected, hover, focus, read-only, loading; the condition cell with its evaluate-on and firing-mode words in every state; another stored trigger.
+- **A11y**: a `<tr>` whose name cell is `th scope="row"`; status is a word with a glyph, never colour alone; the checkbox label and the menu button name the alert ("More actions for BTC above 65k"); the condition reuses CMP-140's read-only wording.
+- **Tokens**: rows on `color.surface.canvas`, hover `color.surface.hover`, selection `color.surface.selected`; text `color.text.primary` / `.secondary` / `.tertiary`; glyphs `color.status.*.strong`; the delivery chip `color.status.danger.default`; `size.row.compact` / `.comfortable`; `type.ui.body`, `type.num.base`.
+- **Storybook**: Armed, ArmedEstimated, IntrabarEveryTime, BarCloseOncePerBar, Disarmed, FiredOneShot, Disabled, Expired, Snoozed, DesktopBlocked, PartialDelivery, Unacknowledged, Muted, AccountScoped, Stale, Selected, Hover, Focus, Loading, ViewerReadOnly, Compact, Comfortable, LongName (120 characters), OtherTrigger.
+- **Tests**: unit (status derivation incl. precedence), visual, axe, keyboard (row menu, `Space` select).
+- **Design (hi-fi spec):** [E40-D02.md](../design/E40/E40-D02.md) §7.1, §2; hand-off [E40-D02-handoff.md](../design/E40/E40-D02-handoff.md) (E40-D02; owner approval pending).
 
 ### CMP-164 AlertBuilderForm
 
-- **Tier**: Organism (trading) · **Purpose**: alert condition builder — reuses CMP-140/141/143/144/157 from the rule engine (condition editor minus the execution-action step, per digest 23 §19).
-- **Props**: `conditionGroup: RuleConditionGroupProps` · `deliveryChannels` · `oneShot` · `onSave`.
-- **Tokens**: inherits CMP-141.
-- **Storybook**: Default, MultiCondition, MultiChannel.
-- **Tests**: unit, visual, axe.
+- **Tier**: Organism (trading) · **Purpose**: SCR-091's form: CMP-141, CMP-140, CMP-157, CMP-143 and CMP-144 in `mode: "alert"`, with CMP-219, CMP-220, CMP-006, CMP-008, CMP-047, CMP-009, CMP-005, CMP-007, CMP-041 and CMP-234. **No actions slot exists**: the action vocabulary is empty in `mode: "alert"` and Delivery takes the Actions section's place with the persistent line "Alerts notify; to act automatically, create a rule." (E40-D02 D-1).
+- **Props**:
+
+```ts
+interface AlertBuilderFormProps {
+  mode: "create" | "edit" | "duplicate";
+  draft: AlertDraft; // E40-D02 §3.10, a client type
+  vocabulary: RuleVocabulary | "unavailable"; // GET /rules/vocabulary
+  desktopPermission: "granted" | "denied" | "default" | "unsupported";
+  shell: "desktop" | "browser";
+  readOnly?: { reason: string };
+  serverIssues?: unknown[]; // the 422 `errors` items, shown verbatim
+  pending: boolean; // a save in flight
+  onSave(input: AlertInput): void; // 22 `AlertInput`, unchanged
+  onCancel(): void;
+  onTest(): void;
+}
+```
+
+- **Slots**: restatement · name · scope · condition · evaluate on · fire · expiry · severity · delivery (with the boundary line) · message (with the preview) · validation · footer.
+- **States**: default, prefilled, validating, invalid, estimated warning, vocabulary unavailable (read-only, saving disabled), metric needs recording, saving, name taken, may already exist, changed elsewhere, server error, read-only, browser (the sound note), desktop blocked, test shown, a refused body (one server line), a stored trigger read-only.
+- **A11y**: inline errors under their field (`aria-describedby`); on a failed save CMP-234 lists them, errors first, each a button that moves focus to its field, and takes focus itself; the preview is `role="status"`, written at most once per 500 ms.
+- **Tokens**: `color.surface.overlay`, `elevation.dialog`, `radius.dialog`, `space.dialog.padding`, `space.field.gap`; the preview `color.surface.sunken`; callouts `color.status.warning.subtle` / `color.status.info.subtle`; checked boxes `color.action.primary.default`.
+- **Storybook**: Default, PriceCross, IndicatorBarClose, StackedImbalance, EstimatedDetector, MultiCondition, AccountMetric, OncePerBar, EveryTimeCooldown, Expiry, PerAlertSound, ValidationErrors, Pending, VocabularyUnavailable, MetricNeedsRecording, NameTaken, MayAlreadyExist, ChangedElsewhere, ServerError, BrowserSoundNote, DesktopBlocked, ReadOnlyViewer, TestFire, Zoom200, RefusedValues, StoredTriggerReadOnly.
+- **Tests**: unit (the action vocabulary is empty in `mode: "alert"`, E40-S01; the validation mirror against E40-D02 §3.6's table), visual, axe, keyboard-complete authoring.
+- **Design (hi-fi spec):** [E40-D02.md](../design/E40/E40-D02.md) §7.2, §1, §3; hand-off [E40-D02-handoff.md](../design/E40/E40-D02-handoff.md) (E40-D02; owner approval pending).
 
 ### CMP-165 AlertFiredToastGroup
 
-- **Tier**: Molecule (trading) · **Purpose**: specialised Toast (CMP-045) variant for fired alerts, batches rapid-fire duplicates into a single "3 alerts fired for BTCUSDT" summary to avoid flooding.
-- **Props**: `alerts: FiredAlert[]` · `onOpenAll` · `onDismiss`.
-- **Tokens**: inherits CMP-045.
-- **Storybook**: Single, Batched.
-- **Tests**: unit, visual, axe, batching-logic unit test.
+- **Tier**: Molecule (trading), a CMP-045 variant mounted by CMP-212 · **Purpose**: the fired-alert toast in all its forms: single, repeat, symbol batch, overflow, storm summary, disarm notice, after a gap, test.
+- **Props**:
+
+```ts
+type FiringKind = "single" | "repeat" | "symbolBatch" | "overflow" | "stormSummary"; // E40-D02 §4.5
+interface AlertFiredToastGroupProps {
+  kind: FiringKind | "disarmed" | "reconnected" | "test"; // E40-D02 §4.2
+  items: { delivery: AlertUpdateItem; name: string; estimated: boolean }[]; // 23 §15.7 items + the alert list
+  severity: "info" | "warning" | "error" | "critical";
+  persistent: boolean; // Error, Critical; disarmed, symbol batch, overflow, storm summary, reconnected (T-3)
+  oneShot: boolean; // a fired `once` alert: `Enable again` replaces Snooze and Disable
+  live: boolean; // shown on the replay page
+  durationMs?: number; // SCR-115's setting
+  readOnly?: { reason: string };
+  onOpenChart(): void;
+  onSnooze(preset: "15m" | "30m" | "1h" | "tomorrow"): void;
+  onDisable(): void;
+  onEnableAgain(): void;
+  onWhy(): void;
+  onDetails(): void;
+  onExpand(): void;
+  onOpenAll(): void;
+  onDismiss(): void;
+}
+```
+
+- **States**: info, warning, error, critical, estimated, repeat (×n), symbol batch, mixed-severity batch, expanded, overflow, storm summary, disarm notice, fired while disconnected, one-shot, snoozed confirmation, disabled confirmation, test, live on the replay page, paused, read-only, reduced motion.
+- **A11y**: `role="status"` through CMP-212's polite region, whatever the severity; the toast never takes focus; the announcer (E40-D01 AR-1..AR-7) decides what is spoken; every action has a text label.
+- **Tokens**: inherits CMP-045 (`color.surface.overlay`, `elevation.popover`, `radius.card`, `space.inset.md`, `space.stack.sm`, the `border.thick` edge in `color.status.*.default`, light warning `.strong`).
+- **Storybook**: Info, Warning, Error, Critical, Estimated, Repeat, SymbolBatch, SymbolBatchExpanded, SymbolBatchMixedSeverity, Overflow, StormSummary, Disarmed, Reconnected, OneShotEnableAgain, SnoozedConfirm, DisabledConfirm, Test, LiveOnReplay, Paused, ViewerReadOnly, ReducedMotion, LongNameAndMessage.
+- **Tests**: unit (the item classes, grouping windows and the overflow arithmetic), visual, axe, interaction (pause on hover and focus, `Esc` dismisses and acknowledges).
+- **Design (hi-fi spec):** [E40-D02.md](../design/E40/E40-D02.md) §7.3, §4; hand-off [E40-D02-handoff.md](../design/E40/E40-D02-handoff.md) (E40-D02; owner approval pending).
 
 ### CMP-166 JournalEntryRow
 
@@ -2550,6 +2620,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Storybook**: Closed, NotificationsOpen, DetailOpen.
 - **Tests**: unit, visual, axe, interaction (Esc, focus return).
 - **As built (E10-S01, #304)**: in `apps/web`, mounted inside the `complementary` landmark named "Side panels" (PROPOSED): a launcher strip with one Notifications disclosure button (`aria-expanded`, `aria-controls`) and one 192 px panel holding only its heading until SCR-014 lands. The panel slides by `transform`; the reserved width opens at once and closes at the end of the slide. `Esc` closes it and returns focus to the launcher; nothing is trapped.
+- **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner approval pending)**: hosts the `alert-detail` drawer (CMP-046) above the docked rail at `elevation.popover`; the rail itself keeps `elevation.1` and its width. `motion.drawer` is not a token: it reads `motion.duration.normal` with `motion.easing.decelerate` (closing `accelerate`), instant under motion-reduce (X-20).
 
 ### CMP-210 HealthChips
 
@@ -2577,11 +2648,12 @@ This band was added during the cross-document traceability reconciliation (see `
 ### CMP-212 ToastHost
 
 - **Tier**: Organism (chrome) · **Purpose**: the single global mount point that positions, stacks, de-duplicates and expires CMP-045 Toasts.
-- **Props**: `position: "top-right"|"bottom-right"` · `max: number = 4` · `defaultDurationMs` · `pauseOnHover: boolean`.
+- **Props**: `position: "top-right"|"bottom-right"` · `max: number = 3` · `defaultDurationMs` · `pauseOnHover: boolean`.
 - **A11y**: one `aria-live="polite"` region for informational toasts and a **separate** `role="alert"` region for errors/rejections, so a critical order rejection is not queued behind chatter; toasts are dismissible by keyboard and never steal focus.
 - **Tokens**: `space.4`, `elevation.3`, `motion.toast`.
 - **Storybook**: Single, Stacked, Overflow, ErrorAndInfoMixed.
 - **Tests**: unit, visual, axe (dual live-region separation), interaction (dismiss, pause-on-hover).
+- **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner approval pending)**: `max` is 3, SCR-015's three slots (AM-9, X-8; it was 4): from the fourth item the slot farthest from the anchor becomes the counted toast ("4 more alerts — Open Notifications"). Placement (D-20): never over a registered order-entry panel, an armed order ticket, SCR-063, the ticket's cancel and close controls, the top-bar Safety cluster, an open dialog's footer or the element with keyboard focus; bottom-right left of the open RightRail, else top-right, else the one-line counted pill ("3 alerts — Open Notifications"); each app window keeps its own three slots. `motion.toast` is not a token: enter `translateY` 8 px and opacity over `motion.duration.fast` with `motion.easing.decelerate`, exit opacity and `translateX` 8 px with `.accelerate`, fade only under motion-reduce (X-9, X-20). AM-8's "Toasts" landmark name rides DF-19; the built `ToastRegion` `label` stands until then.
 
 ### CMP-213 FuzzyList
 
