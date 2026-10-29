@@ -15,7 +15,7 @@ from candleviewer.ingestion.ticker_stream import uuid7
 from candleviewer.orderflow.bigtrade_models import BigTradeConfig
 from candleviewer.ws.permissions import SubscriptionServices
 from candleviewer.ws.sequencing import SequencingHub
-from candleviewer.ws.trades_publish import TradesTopic
+from candleviewer.ws.trades_publish import PENDING_MAX, TradesTopic
 from candleviewer.ws.upstream import UpstreamRefs
 from tests._corpus import TICKS, frames, normalize
 from tests.unit.ws._seq_support import USER, Clock, Conn
@@ -128,7 +128,7 @@ class World:
         self,
         tape: Tape | None = None,
         config: BigTradeConfig = SMALL,
-        pending_max: int | None = None,
+        pending_max: int = PENDING_MAX,
     ) -> None:
         self.tape: Tape | None = tape or Tape()
         self.clock = Clock()
@@ -144,7 +144,7 @@ class World:
             config=lambda _s: config,
             clock=self.clock,
             now_us=lambda: self.now_us,
-            **({} if pending_max is None else {"pending_max": pending_max}),
+            pending_max=pending_max,
         )
         self.services = SubscriptionServices(
             upstream=UpstreamRefs(), snapshots=self.topic, trades=self.topic
