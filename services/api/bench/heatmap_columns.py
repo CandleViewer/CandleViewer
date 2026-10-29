@@ -25,8 +25,9 @@ import os
 import random
 import statistics
 import time
+from array import array
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -36,8 +37,15 @@ from candleviewer.book.resync import BookEngine
 from candleviewer.bus.bus import Bus
 from candleviewer.domain.primitives import EventId
 from candleviewer.exchange.base.models import BookDelta, BookLevel, BookSnapshot
-from candleviewer.orderflow.heatmap import COLUMN_MS, ROWS, HeatmapSpec, HeatmapTopic
-from candleviewer.ws.binary import encode
+from candleviewer.orderflow.heatmap import (
+    COLUMN_MS,
+    ROWS,
+    HeatmapColumn,
+    HeatmapSpec,
+    HeatmapTopic,
+    _Entry,
+)
+from candleviewer.ws.binary import encode, encode_b64
 from candleviewer.ws.sequencing import SnapshotBody
 from candleviewer.ws_wiring import heatmap_part
 
@@ -62,6 +70,17 @@ class Report:
     budget_6_pass: bool
     budget_14_pass: bool
     source: str
+    # Fable M-1 (#605): a `sub` at the full G-03 budget and a 2 000-column re-seed.
+    snapshot_columns: int = 0
+    snapshot_build_ms: float = 0.0
+    snapshot_encode_ms: float = 0.0
+    hold_ms: float = 0.0
+    reseed_turns: int = 0
+    reseed_turn_p95_ms: float = 0.0
+    reseed_turn_max_ms: float = 0.0
+    reseed_total_ms: float = 0.0
+    #: One core's share at the G-02 cap: 32 specs x 10 columns/s x the close cost (`tick` p50).
+    steady_core_share_at_cap: float = 0.0
 
 
 class _Hub:
@@ -80,6 +99,9 @@ class _Hub:
 class _Sub:
     heatmap_lease: Any
     ch: str = f"heatmap.{SYMBOL}"
+    effective: dict[str, Any] = field(default_factory=dict)
+    replay_session_id: str | None = None
+    snapshot_pending: bool = False
 
 
 def _level(ticks: int, qty: Decimal) -> BookLevel:
@@ -198,6 +220,59 @@ async def run(events: list[BookSnapshot | BookDelta], source: str) -> Report:
     )  # fmt: skip
 
 
+def snapshot_and_seed(report: Report, seed: int) -> Report:
+    """Fable M-1: `build()` for a binary `sub` at the default budget (8 MiB, 2 000 frames) over a
+    full ring of 2 000 cached 512-row columns, the CVWB encode of its parts (what the gateway's
+    render then does, once per generation), `hold()` of a coarser grouping and every loop turn of
+    its re-seed."""
+    rng = random.Random(seed)  # noqa: S311 - seeded synthetic columns, not crypto
+    hub = _Hub()
+    topic = HeatmapTopic(
+        hub, engine=lambda _s: None, steps=lambda _s: (TICK, QTY_STEP), part=heatmap_part,
+        body=SnapshotBody, bus=Bus(), env="live", queue_bytes=8_388_608, queue_frames=2_000,
+        clock_ms=lambda: float(T0),
+    )  # fmt: skip
+    spec = HeatmapSpec(SYMBOL, time_bucket_ms=COLUMN_MS)
+    lease = topic.hold("a", spec)
+    st = topic._symbols[SYMBOL]
+    st.tier = 500  # as a live book would set it
+    state = st.specs[spec]
+    for i in range(2_000):
+        sizes = [rng.randint(0, 9_000) / 1_000 for _ in range(2 * ROWS)]
+        column = HeatmapColumn(T0 + 100 * i, 100, 630_924, 1, array("d", sizes[:ROWS]),
+                               array("d", sizes[ROWS:]), 631_180, 631_181, 0.0, 0.0, False, 1,
+                               1)  # fmt: skip
+        entry = _Entry(column)
+        topic._fill(entry, (TICK, QTY_STEP))  # the close's own cost, paid once per column
+        state.ring.append(entry)
+    sub = _Sub(lease, effective={"encoding": "binary", "window_seconds": 900})
+    t0 = time.perf_counter()
+    body = topic.build(sub)
+    t1 = time.perf_counter()
+    if not isinstance(body, SnapshotBody):
+        raise RuntimeError("the spec is ready, so a snapshot is built")
+    for frame in body.parts:
+        encode_b64(frame)
+    t2 = time.perf_counter()
+    topic.hold("b", HeatmapSpec(SYMBOL, price_grouping=2, time_bucket_ms=COLUMN_MS))
+    t3 = time.perf_counter()
+    turns: list[float] = []
+    while any(s.seed for s in st.specs.values()):
+        began = time.perf_counter()
+        topic._seed_turn()
+        turns.append((time.perf_counter() - began) * 1000)
+    report.snapshot_columns = len(body.parts)
+    report.snapshot_build_ms = (t1 - t0) * 1000
+    report.snapshot_encode_ms = (t2 - t1) * 1000
+    report.hold_ms = (t3 - t2) * 1000
+    report.reseed_turns = len(turns)
+    report.reseed_turn_p95_ms = statistics.quantiles(turns, n=100)[94] if len(turns) > 1 else 0.0
+    report.reseed_turn_max_ms = max(turns, default=0.0)
+    report.reseed_total_ms = sum(turns)
+    report.steady_core_share_at_cap = 32 * 10 * report.build_ms_p50 / 1000
+    return report
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--columns", type=int, default=3000)
@@ -210,7 +285,7 @@ def main() -> None:
         events, source = _recorded(Path(args.capture), args.columns), f"capture:{args.capture}"
     else:
         events, source = _synthetic(args.columns, args.changes, args.seed), "synthetic"
-    report = asyncio.run(run(events, source))
+    report = snapshot_and_seed(asyncio.run(run(events, source)), args.seed)
     text = json.dumps(asdict(report), indent=2)
     print(text)
     if args.out:
