@@ -18,7 +18,8 @@ pack (`E12-D09.md`), its registry (`E12-D09-barmodes.json`) and the pins from th
 2. **Cites.** Every `NN`:line and `D0n`/`D0nH`/`E11-D0n`/`E08-D04`/`TOK-*`/`CAL`/`SEED`:line cite
    (with `, :n` continuations and `n–m` ranges) is read at the base; a missing or blank line FAILs
    (G-CITE) and the load-bearing fragments of CITED must sit on their lines. G-VERSION FAILs when
-   any line inside a cited range differs at `origin/main`, when `origin/main` does not resolve, or
+   `origin/main` edits a line inside a cited range or inserts inside it (a range that main only
+   moved, by lines added or dropped above it, is no drift), when `origin/main` does not resolve, or
    when the last commit moved for a version-line input or for an input that feeds a computed
    value without a cited range (DRIFT_INPUTS: the token JSON, `themes.json`, `E12.json`,
    `calendar_cv.py`, the research CVD script, `rbac_seed.json`). Every such read goes through
@@ -35,6 +36,17 @@ pack (`E12-D09.md`), its registry (`E12-D09-barmodes.json`) and the pins from th
    the C-rows, the dry run over every scenario, the cells of every table row, the line budget)
    follow; G-UNTOUCHED reads the committed and uncommitted paths against `git
    merge-base HEAD origin/main` and FAILs when that does not resolve.
+   **PR 2** (the catalogue PR) is a mode the tree selects: once `14` / `15` / `16` hold some
+   row's New at its target, G-AROW wants every row of the merged pack's §C (the spec at BASE)
+   applied there (unapplied, a New off by a byte, or neither Old nor New FAILs), Old still
+   checked at BASE, but a HELD row (A-38 ... A-41, waiting for ACK-1) keeps its Old at the
+   working tree; G-UNTOUCHED wants each changed one of the three to equal the merge-base with
+   the applied rows applied and no HELD row (a HELD row's New FAILs), in the form the commit
+   hook's Prettier writes (tables re-padded, A-5's long union broken one member per line), with
+   no other byte (files are read with no newline translation, so a CR counts). The merged
+   targets count lines at PACK_BASE: each is re-pointed by content to BASE (difflib, autojunk
+   off), and a target whose Old main changed, or that main inserted at, FAILs (G-AROW), as does
+   a working-pack target that is not that re-point. Cites into them read BASE, before §C.
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of the pack in
    `e12_d09_ruled_pins.txt`: each heading, table row (by its lead cell), rule line and prose
    sentence, by region (the heading path plus occurrence) and location, NFKC and whitespace
@@ -59,19 +71,24 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import difflib
 import hashlib
 import json
 import math
 import re
 import subprocess
 import sys
+import tempfile
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "8f652abb16"  # #4848's merge: every cite was re-read here (v1 read at aba03ac309)
+BASE = "a05b504919"  # PR 2's merge-base (#4906's merge, after PR 1 #4853): every cite re-read here
+# PR 1's base (#4848's merge): the merged pack's §C targets count lines here; PR 2 re-points each
+# by content to BASE (a base move, via 5d4f6418b7: main's lines above them, no content change)
+PACK_BASE = "8f652abb16"
 HEAD_REF = "origin/main"  # drift inside a cited range FAILs (G-VERSION)
 SPEC_REL = "docs/design/E12/E12-D09.md"
 REG_REL = "docs/design/E12/E12-D09-barmodes.json"
@@ -80,7 +97,10 @@ PINS_REL = "docs/design/_tools/e12_d09_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, REG_REL, TOOL_REL, PINS_REL)
 LINE_BUDGET = 300  # BQ-4 as ruled: "One spec of at most ~300 lines"
 WALK_MAX = 10  # BQ-30: "the owner walkthrough <= 10 items"
-PR_TITLE = "docs(chart-engine): E12-D09 design-system pack for the bar-mode and series components"
+PR_TITLE = "docs(charting-ui): E12-D09 catalogue entries for the bar-mode and series components"
+PR1_TITLE = (
+    "docs(charting-ui): E12-D09 design-system contribution for the bar-mode and series components"
+)
 RULING_ID = "6465614406"
 BQ_LIST_ID = "6465465756"
 COMMENT_IDS = (RULING_ID, BQ_LIST_ID, "6463491974", "6455151492")
@@ -146,6 +166,11 @@ VERSION_PINS: dict[str, str] = {
     "D06H": "63b13d034a",
 }
 
+# the late changes merged while the pack was in flight, each recorded on the version line (#4853)
+LATE_CHANGES = ("#4847",)
+# §C: "A-38 … A-41 wait for ACK-1" (§13, pending): PR 2 holds them; the owner's sign-off applies
+HELD = frozenset({"A-38", "A-39", "A-40", "A-41"})
+
 # the inputs that feed computed values (tokens, layering, dates, CVD constants, the RBAC cite)
 # but are cited by no line range: any commit to one after the base is a late change (G-VERSION)
 DRIFT_INPUTS: tuple[str, ...] = (
@@ -178,13 +203,14 @@ class Env:
     status_raw: Callable[[], str] | None = None
     memo: dict[str, object] = field(default_factory=dict)
     grep_extra: dict[str, list[str]] = field(default_factory=dict)
+    held: frozenset[str] = HELD
 
     def current(self, rel: str) -> str | None:
         """The working-tree text of `rel` (the self-test may swap it)."""
         if rel in self.cur_override:
             return self.cur_override[rel]
         path = ROOT / rel
-        return path.read_text(encoding="utf-8") if path.exists() else None
+        return read_raw(path) if path.exists() else None
 
     def show(self, rev: str, rel: str) -> str | None:
         if rev == BASE:
@@ -245,15 +271,18 @@ def porcelain_paths(raw: str) -> list[str]:
     return [e[3:] for e in raw.split("\0") if len(e) > 3 and e[2] == " "]
 
 
+def read_raw(path: Path) -> str:
+    """A file's text as is: `newline=""` keeps a CR (universal newlines would drop it)."""
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
 def git_show(rev: str, rel: str) -> str | None:
+    """`rev:rel` as is (bytes decoded, no newline translation)."""
     r = subprocess.run(
-        ["git", "-C", str(ROOT), "show", f"{rev}:{rel}"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
+        ["git", "-C", str(ROOT), "show", f"{rev}:{rel}"], capture_output=True, check=False
     )
-    return r.stdout if r.returncode == 0 else None
+    return r.stdout.decode("utf-8") if r.returncode == 0 else None
 
 
 def git_out(*args: str) -> str:
@@ -688,32 +717,32 @@ def cites_in(text: str) -> list[Cite]:
 
 # Load-bearing fragments: each must sit on (one of) the cited line(s) at the base.
 CITED: dict[tuple[str, int], tuple[str, ...]] = {
-    ("15", 2170): ('"pointfigure"', "`barMode:"),
-    ("15", 2187): ('"pointfigure"',),
-    ("15", 2194): ("100k+ bars, ≥58fps",),
-    ("15", 2129): ("§11.3",),
-    ("15", 2167): ("### CMP-181 CandleSeries",),
-    ("15", 2891): ("CMP-180..199", "20"),
-    ("15", 2893): ("241",),
-    ("15", 2903): ("241 and 242 stay unassigned",),
-    ("15", 2439): ("CMP-200..243",),
+    ("15", 2188): ('"pointfigure"', "`barMode:"),
+    ("15", 2205): ('"pointfigure"',),
+    ("15", 2212): ("100k+ bars, ≥58fps",),
+    ("15", 2147): ("§11.3",),
+    ("15", 2185): ("### CMP-181 CandleSeries",),
+    ("15", 2909): ("CMP-180..199", "20"),
+    ("15", 2911): ("241",),
+    ("15", 2921): ("241 and 242 stay unassigned",),
+    ("15", 2457): ("CMP-200..243",),
     ("15", 31): ("CMP-200..243",),
-    ("15", 2689): ("one home", "time remaining until the current bar closes"),
-    ("15", 2690): ("`msRemaining: number`",),
-    ("15", 2692): ("No countdown for tick bars",),
-    ("15", 2693): ('aria-live="off"', "1 Hz"),
-    ("15", 2695): ("NonTimeBar",),
-    ("15", 2654): ("aria-pressed",),
-    ("15", 2702): ("composition",),
-    ("15", 2710): ("catalogue-level test",),
-    ("15", 435): ("a load, an export or a replay only",),
-    ("15", 436): ("after 5 s",),
-    ("15", 276): ("never a live region",),
-    ("15", 403): ("bar-close countdown",),
+    ("15", 2707): ("one home", "time remaining until the current bar closes"),
+    ("15", 2708): ("`msRemaining: number`",),
+    ("15", 2710): ("No countdown for tick bars",),
+    ("15", 2711): ('aria-live="off"', "1 Hz"),
+    ("15", 2713): ("NonTimeBar",),
+    ("15", 2672): ("aria-pressed",),
+    ("15", 2720): ("composition",),
+    ("15", 2728): ("catalogue-level test",),
+    ("15", 436): ("a load, an export or a replay only",),
+    ("15", 437): ("after 5 s",),
+    ("15", 277): ("never a live region",),
+    ("15", 404): ("bar-close countdown",),
     ("15", 41): ("dark/light",),
     ("15", 38): ("focus ring",),
-    ("15", 438): ("Cancel a CMP-001 `ghost` `sm`",),
-    ("23", 757): ("`trades` is always sent", "It defaults to false"),
+    ("15", 439): ("Cancel a CMP-001 `ghost` `sm`",),
+    ("23", 769): ("`trades` is always sent", "It defaults to false"),
     ("14", 1085): ("request window entirely before recording start",),
     ("D02", 317): ("`no_data_recorded`", "`Switch to time bars`"),
     ("D05", 257): ("reuses C-6 as the mode's description",),
@@ -723,8 +752,8 @@ CITED: dict[tuple[str, int], tuple[str, ...]] = {
     ("D06", 410): ("line vs `color.order.line`",),
     ("D06", 411): ("line vs `color.focus.ring`",),
     ("D06H", 64): ("high contrast",),
-    ("15", 738): ('"inline"',),
-    ("15", 472): ("description?",),
+    ("15", 755): ('"inline"',),
+    ("15", 474): ("description?",),
     ("15", 122): ("`suffix?`",),
     ("14", 734): ("Vol 37 / 50 BTC",),
     ("14", 736): ("rebuilding", "`Cancel` after 2 s"),
@@ -737,25 +766,25 @@ CITED: dict[tuple[str, int], tuple[str, ...]] = {
     ("05", 128): ("Chart data-ink contrast", "3:1"),
     ("16", 478): ("no near-duplicate token",),
     ("02", 53): ("an explicit Architect/CDO waiver", "with reason"),
-    ("22", 17365): ("heikin_ashi", "pnf"),
-    ("22", 17363): ("BarType",),
-    ("22", 4166): ("heikin_ashi",),
-    ("22", 4164): ("atr:14",),
-    ("22", 4165): ("pnf",),
-    ("22", 5036): ("recording:read",),
-    ("22", 17100): ("DataMeta",),
-    ("22", 17113): ("recording_started_at",),
-    ("22", 20939): ("heikin_ashi", "pnf"),
-    ("22", 21121): ("ChartTemplateInput",),
-    ("22", 21143): ("step_line",),
-    ("23", 1916): ('"barType"',),
-    ("23", 1917): ('"pnf", "heikin_ashi"',),
-    ("23", 2809): ("barType",),
-    ("23", 2815): ('"v"', '"confirm"'),
-    ("23", 2844): ('"trades"',),
-    ("23", 257): ("`u32 trades`", "`include_delta`"),
-    ("23", 733): ("bars.{symbol}.{bar_type}.{param}", "`include_delta`"),
-    ("23", 1258): ("(generation, index)",),
+    ("22", 17483): ("heikin_ashi", "pnf"),
+    ("22", 17481): ("BarType",),
+    ("22", 4174): ("heikin_ashi",),
+    ("22", 4172): ("atr:14",),
+    ("22", 4173): ("pnf",),
+    ("22", 5107): ("recording:read",),
+    ("22", 17218): ("DataMeta",),
+    ("22", 17231): ("recording_started_at",),
+    ("22", 21085): ("heikin_ashi", "pnf"),
+    ("22", 21267): ("ChartTemplateInput",),
+    ("22", 21289): ("step_line",),
+    ("23", 1937): ('"barType"',),
+    ("23", 1938): ('"pnf", "heikin_ashi"',),
+    ("23", 2853): ("barType",),
+    ("23", 2859): ('"v"', '"confirm"'),
+    ("23", 2888): ('"trades"',),
+    ("23", 259): ("`u32 trades`", "`include_delta`"),
+    ("23", 744): ("bars.{symbol}.{bar_type}.{param}", "`include_delta`"),
+    ("23", 1277): ("(generation, index)",),
     ("D02", 29): ("D-5",),
     ("D02", 32): ("Bar order · not time",),
     ("D02", 33): ("D-9",),
@@ -840,6 +869,28 @@ CITED: dict[tuple[str, int], tuple[str, ...]] = {
 }
 
 
+_EDITS: dict[tuple[str, str], tuple[frozenset[int], frozenset[int]]] = {}
+
+
+def base_edits(base: list[str], head: list[str]) -> tuple[frozenset[int], frozenset[int]]:
+    """The base lines (1-based) `head` changed or dropped, and the base lines `head` inserted
+    after (0 = before the first): a shift alone, lines added or dropped elsewhere, is no edit."""
+    key = (hashlib.sha256("\n".join(base).encode()).hexdigest(),
+           hashlib.sha256("\n".join(head).encode()).hexdigest())  # fmt: skip
+    got = _EDITS.get(key)
+    if got is None:
+        changed: set[int] = set()
+        after: set[int] = set()
+        sm = difflib.SequenceMatcher(None, base, head, autojunk=False)
+        for op, i1, i2, _, _ in sm.get_opcodes():
+            if op in ("replace", "delete"):
+                changed.update(range(i1 + 1, i2 + 1))
+            elif op == "insert":
+                after.add(i1)
+        got = _EDITS[key] = (frozenset(changed), frozenset(after))
+    return got
+
+
 def cite_problems(env: Env, text: str) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
     """(FAILs, drifted) for every cite: a gone or blank line, or a missing CITED fragment."""
     bad: list[tuple[str, int]] = []
@@ -857,7 +908,11 @@ def cite_problems(env: Env, text: str) -> tuple[list[tuple[str, int]], list[tupl
         if head_ok:
             head = (env.show(HEAD_REF, PATHS[c.key]) or "").split("\n")
             if head[c.lo - 1 : c.hi] != base[c.lo - 1 : c.hi]:
-                drift.append((f"{c.key}:{c.lo}-{c.hi} drifted at {HEAD_REF}", c.line_no))
+                # a cited range drifts when HEAD_REF edits a line of it or inserts inside it;
+                # lines moved by edits elsewhere (main moving under the base) do not
+                changed, after = base_edits(base, head)
+                if any(c.lo <= n <= c.hi for n in changed) or any(c.lo <= n < c.hi for n in after):
+                    drift.append((f"{c.key}:{c.lo}-{c.hi} drifted at {HEAD_REF}", c.line_no))
     return bad, drift
 
 
@@ -1256,11 +1311,19 @@ def g_anchor(t: Texts) -> list[Finding]:
     return one("G-ANCHOR", bad)
 
 
+# a link-reference definition (`[//]: # (text)`) renders nothing: a hidden "comment" (#4853 carry)
+LINKREF = re.compile(r"^ {0,3}\[[^\]\n]+\]:(?:\s|$)", re.MULTILINE)
+
+
 def g_marker(t: Texts) -> list[Finding]:
     bad = [
         f"a comment that is not a value anchor: {m[0][:40]!r}"
         for m in COMMENT.finditer(t.spec)
         if not ANCHOR.fullmatch(m[0])
+    ]
+    bad += [
+        f"line {t.spec.count(chr(10), 0, m.start()) + 1}: a link-reference definition hides text"
+        for m in LINKREF.finditer(t.spec)
     ]
     return one("G-MARKER", bad)
 
@@ -1315,6 +1378,9 @@ def g_version(t: Texts) -> list[Finding]:
     for rel in DRIFT_INPUTS:
         if t.env.last_commit(HEAD_REF, rel) != t.env.last_commit(BASE, rel):
             bad.append(f"{rel} changed at {HEAD_REF} after the base: a late change (§0)")
+    for pr in LATE_CHANGES:
+        if f"**Late change before merge:** {pr} (" not in vline:
+            bad.append(f"the version line does not record {pr} as the late change before merge")
     return one("G-VERSION", bad, "0")
 
 
@@ -1323,11 +1389,26 @@ def g_untouched(t: Texts) -> list[Finding]:
     if not mb:
         return one("G-UNTOUCHED", [f"`git merge-base HEAD {HEAD_REF}` does not resolve"])
     bad = []
+    states = arow_states(t.env)
     for p in t.env.changed_paths(mb):
-        if p in UNTOUCHED or p.startswith(UNTOUCHED_PREFIX):
-            bad.append(f"{p} changed against the merge-base: the pack PR must not edit it")
+        if p in states:
+            # PR 2 may change `14` / `15` / `16`, by §C's rows alone: the file must equal the
+            # merge-base with its applied rows applied (a row that differs is G-AROW's)
+            at_mb = t.env.base(p) if mb.startswith(BASE) else (t.env.show(mb, p) or "")
+            mine = [r for r in pack_rows(t.env) if r["file"] == p and r["lines"]]
+            st, want = reconcile(at_mb, t.env.current(p) or "", mine, t.env.held)
+            for aid in sorted(a for a, s in st.items() if s == "held-applied"):
+                bad.append(f"{aid} is applied in {p}, but it is held for ACK-1 (HELD)")
+            got = t.env.current(p) or ""
+            if got != want:
+                w, g = want.split("\n"), got.split("\n")
+                n = next((i for i, (x, y) in enumerate(zip(w, g, strict=False), 1) if x != y),
+                         min(len(w), len(g)) + 1)  # fmt: skip
+                bad.append(f"{p} differs from §C's rows applied to the merge-base (line {n})")
+        elif p in UNTOUCHED or p.startswith(UNTOUCHED_PREFIX):
+            bad.append(f"{p} changed against the merge-base: neither PR may edit it")
         elif p not in OWN_PATHS:
-            bad.append(f"{p} changed against the merge-base: outside the pack's four files")
+            bad.append(f"{p} changed against the merge-base: outside the pack's files")
     return one("G-UNTOUCHED", bad)
 
 
@@ -1380,8 +1461,8 @@ QUOTES: tuple[tuple[str, str, int], ...] = (
     ("Not available yet", "D03", 211),
     ("Bar order · not time", "D02", 32),
     ("Vol 37 / 50 BTC", "D02", 267),
-    ("No countdown for tick bars", "15", 2692),
-    ("a load, an export or a replay only", "15", 435),
+    ("No countdown for tick bars", "15", 2710),
+    ("a load, an export or a replay only", "15", 436),
     ("rows wrap, never truncate", "D03H", 89),
     ("not a new chip", "D06", 239),
     ("a transform, not a wire type", "D05", 142),
@@ -1395,7 +1476,7 @@ QUOTES: tuple[tuple[str, str, int], ...] = (
     ("Load more", "D02", 275),
     ("Zoomed out · high–low only", "D06", 250),
     ("Zoomed out · 1 column = ", "E11-D02", 417),
-    ("one home", "15", 2689),
+    ("one home", "15", 2707),
 )
 NEW_STORIES = {
     "A-6": ("PartialHistoryBoundary",),
@@ -1407,9 +1488,9 @@ NEW_STORIES = {
 }  # fmt: skip
 STORY_SRC: dict[str, tuple[tuple[str, int, int], ...]] = {
     "A-6": (("D06H", 68, 68),),
-    "A-13": (("15", 2638, 2638), ("D03H", 35, 45), ("D04H", 53, 53)),
+    "A-13": (("15", 2656, 2656), ("D03H", 35, 45), ("D04H", 53, 53)),
     "A-19": (("D06H", 49, 49),),
-    "A-23": (("15", 2695, 2695),),
+    "A-23": (("15", 2713, 2713),),
 }
 
 
@@ -1496,7 +1577,7 @@ CLOSING = re.compile(
 
 def g_close(t: Texts) -> list[Finding]:
     bad = [
-        f"line {i}: a closing keyword: {m[0]!r} (PR 1 carries `Refs #244` only)"
+        f"line {i}: a closing keyword: {m[0]!r} (the PR body carries it, never a file)"
         for i, ln in enumerate(t.spec.split("\n"), 1)
         for m in CLOSING.finditer(without_code(ln))
     ]
@@ -1580,9 +1661,9 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     ),
     "0": (
         "no new Penpot page and no boards PR",
-        "**v1 at base `8f652abb16`**",
+        f"**v1 at base `{BASE}`**",
         "The first expected deltas are #242, #243 and the BQ-28 rulings.",
-        "the PR body embeds those PNGs pinned to the base `8f652abb16` (BQ-29)",
+        "PR 1's body embeds those PNGs pinned to its base `8f652abb16` (BQ-29)",
     ),
     "2": (
         "held (owner): D04-C14, D05-C23; `15` keeps #4719's text",
@@ -1634,7 +1715,7 @@ REQUIRED: dict[str, tuple[str, ...]] = {
             " (E05-S02, #265) rather than widening CMP-038 here."
         ),
         "The determinate phase needs the G-2 build contract",
-        "(as CMP-038's Cancel, `15`:438)",
+        "(as CMP-038's Cancel, `15`:439)",
     ),
     "8": (
         "(BQ-19, OWNER: PROPOSED, owner approval pending (#2701))",
@@ -1687,6 +1768,15 @@ REQUIRED: dict[str, tuple[str, ...]] = {
         "(BQ-33: PROPOSED, owner approval pending (#2701))",
         "with `Refs #244` and `Partial: PR 1 of 2` and no closing keyword",
         "**Deviations, accepted as written.**",
+        (
+            "**D5** (PR 2) A-5's New writes the `chartType` union as one line; the commit hook's"
+            " Prettier breaks it one member per line, so `15` holds Prettier's form, and the tool"
+            " verifies the two are equivalent."
+        ),
+        (
+            "**D6** (PR 2) A-38 … A-41 are held for ACK-1 (§13): PR 2 leaves their Old in `15`"
+            " (the tool's HELD set), and the owner's sign-off applies them."
+        ),
     ),
     "C": (
         "Old is the whole current line at the base, verbatim",
@@ -1895,6 +1985,30 @@ HZ_OK = frozenset({"1", "4"})
 CLOSED_END = r"(?: \([^()]*\))?(?:[.;:]|$)"
 
 
+# C2: no `-handoff.md` beside the pack; the parents' hand-offs (D02 ... D06H) are inputs
+HANDOFF = re.compile(r"([\w-]*)-handoff\.md")
+PARENT_HANDOFF = re.compile(r"E12-D0[2-6n]")
+
+
+def blank_secs(text: str, keys: tuple[str, ...]) -> str:
+    """`text` with the lines of the `##` sections `keys` blanked (line numbers kept)."""
+    out, cur = [], "(top)"
+    for ln in text.split("\n"):
+        m = HEADING.match(ln)
+        if m and len(m[1]) == 2:
+            cur = sec_no(m[2])
+        out.append("" if cur in keys and not m else ln)
+    return "\n".join(out)
+
+
+def negated(text: str, pos: int) -> bool:
+    """A negation in the clause before `pos`, at most four words back (as `live_plain`)."""
+    head = text[:pos]
+    cut = [b.end() for b in CLAUSE_BREAK.finditer(head)]
+    before = (head[cut[-1] :] if cut else head).split()[-4:]
+    return any(NEG.fullmatch(w.strip(",;:()`*").lower()) for w in before)
+
+
 def g_ruled(t: Texts) -> list[Finding]:
     bad: list[tuple[str, str]] = []
     secs = sections(t.spec)
@@ -1941,8 +2055,15 @@ def g_ruled(t: Texts) -> list[Finding]:
     if '"No countdown: bars close on activity, not time" (PROPOSED' not in news.get("A-22", ""):
         bad.append(("A-22's New lacks the PROPOSED accessible name of `—`", "C"))
     for r in c_rows(t.spec):
-        if len(r) >= 3 and r[2] in ("`15`:266", "`15`:484"):
+        if len(r) >= 3 and r[2] in ("`15`:267", "`15`:487"):
             bad.append((f"{r[0]} applies a held row (BQ-28: D04-C14, D05-C23)", "C"))
+    # §15 lists the mutations, which plant such names on purpose
+    for name, text in (("the pack", blank_secs(t.spec, ("15",))), ("the registry", t.reg)):
+        for m in HANDOFF.finditer(text):
+            if not PARENT_HANDOFF.fullmatch(m[1]) and not negated(text, m.start()):
+                bad.append((f"{name} names a hand-off {m[0]!r}: C2 rules one spec, no -handoff.md",
+                            sec_of_line(t.spec, t.spec.count(chr(10), 0, m.start()) + 1)
+                            if name == "the pack" else "0"))  # fmt: skip
     in14 = [r for r in c_rows(t.spec) if len(r) >= 3 and r[2].startswith("`14`")]
     if [r[2] for r in in14] != ["`14`:736"]:
         bad.append(("`14` takes exactly one content line, SCR-030's rebuilding row (BQ-27)", "C"))
@@ -2034,18 +2155,34 @@ def g_disp(t: Texts) -> list[Finding]:
         elif not r[4].strip() or r[4].strip() == "—":
             bad.append(f"{lead}: no rejected-alternative line")
     bad += [f"the ruled item {k!r} has no row" for k in DISP if k not in got]
+    # BQ-15 / BQ-16: CMP-248 is the one new entry; no other id, no refused component asserted
+    have = set(re.findall(r"^### (CMP-\d{3})\b", t.env.base(PATHS["15"]), re.MULTILINE))
+    # §3's rejected-alternative cells and §15's mutations name the refused ones on purpose
+    spec = blank_secs(t.spec, ("15",))
+    for r in rows:
+        spec = spec.replace(r[4], " ") if len(r) >= 5 and r[4].strip() else spec
+    for name, text in (("the pack", spec), ("the registry", t.reg)):
+        for cid in sorted(set(re.findall(r"CMP-\d{3}", text)) - have - {REID_NEW, REID_OLD}):
+            bad.append(f"{name} names {cid}, an entry `15` does not hold: CMP-248 is the one new")
+        for term in REFUSED:
+            if live(text, term.lower(), t.env):
+                bad.append(f"{name} asserts {term}, refused for the named pattern (BQ-17)")
     return one("G-DISP", bad, "3")
+
+
+# the alternatives BQ-15 / BQ-17 refused, never a live component of the pack
+REFUSED = ("BuildProgressStrip",)
 
 
 # BQ-14 as ruled: mode -> (Shows, Data condition)
 AC4 = {
-    "time": ('"bar close 0:41", "0:08 closing", "closed" (`15`:2692)', "always"),
-    "tick": ('"Tick 412 / 1,000"', "always: `trades` is always sent (`23`:757)"),
+    "time": ('"bar close 0:41", "0:08 closing", "closed" (`15`:2710)', "always"),
+    "tick": ('"Tick 412 / 1,000"', "always: `trades` is always sent (`23`:769)"),
     "volume": ('"Vol 37 / 50 BTC" (`14`:734; D02:267)', "always"),
     "range": ('"Range 23 / 40" (ticks)', 'the instrument\'s tick size known; else "—"'),
     "delta": (
         '"Delta 12 / 25 BTC"',
-        'the subscription sets `include_delta` (`23`:257, :733); else "—"',
+        'the subscription sets `include_delta` (`23`:259, :744); else "—"',
     ),
     "renko": ('"—"', "—"),
     "pnf": ("not offered (D03:73)", "—"),
@@ -2086,6 +2223,9 @@ def row_cells(line: str) -> str:
 def arow_problems(env: Env, spec: str) -> list[str]:
     bad: list[str] = []
     rows = c_rows(spec)
+    states = arow_states(env)
+    pr2 = pr2_mode(states)
+    merged = {str(r["id"]): r for r in pack_rows(env)}
     for i, r in enumerate(rows, 1):
         if len(r) != 7:
             bad.append(f"§C row {i} has {len(r)} cells, not 7")
@@ -2100,6 +2240,11 @@ def arow_problems(env: Env, spec: str) -> list[str]:
         base = env.base(PATHS[m[1]]).split("\n")
         cur = (env.current(PATHS[m[1]]) or "").split("\n")
         lo, hi = int(m[2]), int(m[3] or m[2])
+        was = merged.get(aid)
+        if was and was["moved"]:
+            bad.append(f"{aid}: its target does not move to {BASE} by content ({was['moved']})")
+        elif was and was["lines"] != [lo, hi]:
+            bad.append(f"{aid}: {fld} is not its merged target re-pointed by content to {BASE}")
         old_u, new_u = unescape(old), unescape(new)
         if not new_u.strip() or new_u == old_u or PLACEHOLDER.search(without_code(new_u)):
             bad.append(f"{aid}: New is empty, unchanged or unfilled")
@@ -2118,7 +2263,7 @@ def arow_problems(env: Env, spec: str) -> list[str]:
             continue
         for k, part in enumerate(parts):
             n = lo + k
-            for label, lines in (("the base", base), ("the working tree", cur)):
+            for label, lines in (("the base", base), ("the working tree", cur))[: 1 if pr2 else 2]:
                 line = lines[n - 1] if n <= len(lines) else ""
                 if op == "row cells":
                     want = row_cells(line)
@@ -2129,6 +2274,15 @@ def arow_problems(env: Env, spec: str) -> list[str]:
                 if part != want:
                     bad.append(f"{aid}: Old is not {fld} at {label}, byte for byte")
                     break
+    # PR 2 (the tree holds some New): every row of the merged pack is applied, byte for byte
+    for rel, (st, _) in states.items():
+        for aid, s in sorted(st.items(), key=lambda kv: int(kv[0][2:])):
+            if s == "neither":
+                bad.append(f"{aid}: neither Old nor New is at its target in {rel}")
+            elif s == "differs":
+                bad.append(f"{aid}: New is at its target in {rel} but differs by a byte")
+            elif s == "unapplied" and pr2:
+                bad.append(f"{aid} is left unapplied in {rel} (PR 2 applies every row not HELD)")
     return bad
 
 
@@ -2163,6 +2317,245 @@ def a_rows_export(spec: str, values: dict[str, str]) -> list[dict[str, object]]:
             }
         )
     return out
+
+
+# ---------------------------------------------------------------------------- PR 2: applying §C
+
+# PR 2 applies the merged pack's §C (the spec at BASE, so an edit to the working pack's New cells
+# is G-NEWBYTES's alone) to `14` / `15` / `16`, in the form the repo's formatter writes it:
+# Prettier (packages/config/prettier.config.mjs, run by the commit hook) re-pads every table a
+# `row cells` row lands in and breaks a code line over PRINT_WIDTH, so A-5's 120-character
+# `chartType` union is written one member per line. Nothing else is normalised.
+PRINT_WIDTH = 100
+UNION = re.compile(r'([\w$]+\??): ((?:"[^"\n]*" \| )+"[^"\n]*");')
+AROW_DOCS = ("14", "15", "16")
+
+
+def str_width(s: str) -> int:
+    return sum(
+        0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1
+        for c in s
+    )
+
+
+def code_form(indent: str, line: str) -> list[str]:
+    """A code line as Prettier writes it: a string-literal union over PRINT_WIDTH breaks."""
+    m = UNION.fullmatch(line)
+    if not m or len(indent) + len(line) <= PRINT_WIDTH:
+        return [indent + line]
+    parts = m[2].split(" | ")
+    return (
+        [f"{indent}{m[1]}:"]
+        + [f"{indent}  | {p}" for p in parts[:-1]]
+        + [f"{indent}  | {parts[-1]};"]
+    )
+
+
+def render_row(cells: str) -> str:
+    return "| " + " | ".join(c.replace("|", "\\|") for c in cells.split(" | ")) + " |"
+
+
+def realign(lines: list[str], i: int) -> None:
+    """Re-pad, in place, the table holding line `i` as Prettier does (left-aligned columns)."""
+    lo, hi = i, i
+    while lo > 0 and lines[lo - 1].startswith("|"):
+        lo -= 1
+    while hi + 1 < len(lines) and lines[hi + 1].startswith("|"):
+        hi += 1
+    rows = [split_row(ln) for ln in lines[lo : hi + 1]]
+    n = max(len(r) for r in rows)
+    width = [3] * n
+    for k, r in enumerate(rows):
+        if k != 1:
+            for j, c in enumerate(r):
+                width[j] = max(width[j], str_width(c))
+    for k, r in enumerate(rows):
+        r = r + [""] * (n - len(r))
+        if k == 1:
+            lines[lo + k] = "| " + " | ".join("-" * w for w in width) + " |"
+        else:
+            cells = [c + " " * (width[j] - str_width(c)) for j, c in enumerate(r)]
+            lines[lo + k] = "| " + " | ".join(cells) + " |"
+
+
+def strs(row: dict[str, object], key: str) -> list[str]:
+    got = row[key]
+    return [str(x) for x in got] if isinstance(got, list) else []
+
+
+def span(row: dict[str, object]) -> tuple[int, int]:
+    got = row["lines"]
+    assert isinstance(got, list)
+    return int(got[0]), int(got[1])
+
+
+def applied_form(row: dict[str, object], indent: str = "") -> list[str]:
+    """The lines a row writes at its target (before a table is re-padded)."""
+    op, new = str(row["op"]), strs(row, "new")
+    if op == "row cells":
+        return [render_row(x) for x in new]
+    if op == "replace code lines":
+        return [ln for x in new for ln in code_form(indent, x)]
+    if op == "insert entry after":
+        return ["", new[0], ""] + new[1:]
+    if op == "insert paragraph after":
+        return [""] + new
+    return new
+
+
+def same(op: str, a: list[str], b: list[str]) -> bool:
+    if op == "row cells":
+        return [row_cells(x) for x in a] == [row_cells(x) for x in b]
+    return a == b
+
+
+def near(a: list[str], b: list[str]) -> bool:
+    """A block that is the applied form give or take a few bytes ("New differs")."""
+    if len(a) != len(b):
+        return False
+    x, y = "\n".join(a), "\n".join(b)
+    return abs(len(x) - len(y)) <= 8 and sum(p != q for p, q in zip(x, y, strict=False)) <= 8
+
+
+def row_order(row: dict[str, object]) -> tuple[int, int, str]:
+    lo = span(row)[0]
+    return (lo, 1 if str(row["op"]).startswith("insert") else 0, str(row["id"]))
+
+
+def reconcile(
+    base: str, cur: str, rows: list[dict[str, object]], held: frozenset[str] = frozenset()
+) -> tuple[dict[str, str], str]:
+    """Each row's state in `cur` (applied, unapplied, differs or neither; a `held` row is held
+    or held-applied) and the text `cur` must equal: `base` with the applied rows applied (tables
+    re-padded), `base` at every held row (unapplied by rule, so never in the expected diff), and
+    `cur`'s own lines where a row differs or holds neither form (G-AROW reports those,
+    G-UNTOUCHED the rest, a held row applied among them)."""
+    b_lines, c_lines = base.split("\n"), cur.split("\n")
+    state: dict[str, str] = {}
+    out: list[str] = []
+    pads: list[int] = []
+    b = c = 0
+    for row in sorted(rows, key=row_order):
+        lo, hi = span(row)
+        op, aid = str(row["op"]), str(row["id"])
+        start = lo if op.startswith("insert") else lo - 1
+        if start < b:
+            state[aid] = "neither"
+            continue
+        out += b_lines[b:start]
+        c += start - b
+        b = start
+        if op.startswith("insert"):
+            form = applied_form(row)
+            got = c_lines[c : c + len(form)]
+            if got == form:
+                state[aid] = "held-applied" if aid in held else "applied"
+            elif near(got, form):
+                state[aid] = "differs"
+            else:
+                state[aid] = "held" if aid in held else "unapplied"
+                continue
+            if state[aid] != "held-applied":
+                out += form if state[aid] == "applied" else got
+            c += len(form)
+            continue
+        k = hi - lo + 1
+        old = b_lines[b : b + k]
+        indent = old[0][: len(old[0]) - len(old[0].lstrip())] if old else ""
+        form = applied_form(row, indent)
+        if aid in held and same(op, c_lines[c : c + len(form)], form):
+            state[aid] = "held-applied"
+            out += old
+            c += len(form)
+        elif same(op, c_lines[c : c + len(form)], form):
+            state[aid] = "applied"
+            if op == "row cells":
+                pads.append(len(out))
+            out += form
+            c += len(form)
+        elif same(op, c_lines[c : c + k], old):
+            state[aid] = "held" if aid in held else "unapplied"
+            out += old
+            c += k
+        elif near(c_lines[c : c + len(form)], form):
+            state[aid] = "differs"
+            out += c_lines[c : c + len(form)]
+            c += len(form)
+        else:
+            state[aid] = "neither"
+            out += c_lines[c : c + k]
+            c += k
+        b += k
+    out += b_lines[b:]
+    for i in pads:
+        realign(out, i)
+    return state, "\n".join(out)
+
+
+_MAPS: dict[tuple[str, str], dict[int, tuple[int, bool]]] = {}
+
+
+def line_map(then: str, now: str) -> dict[int, tuple[int, bool]]:
+    """Each line of `then` (1-based) -> (its line in `now`, unchanged?): equal blocks by content,
+    a same-size replaced block line for line (changed); an inserted or a deleted line maps none."""
+    key = (hashlib.sha256(then.encode()).hexdigest(), hashlib.sha256(now.encode()).hexdigest())
+    got = _MAPS.get(key)
+    if got is None:
+        got = {}
+        sm = difflib.SequenceMatcher(None, then.split("\n"), now.split("\n"), autojunk=False)
+        for op, i1, i2, j1, j2 in sm.get_opcodes():
+            if op == "equal" or (op == "replace" and i2 - i1 == j2 - j1):
+                got.update({i1 + d + 1: (j1 + d + 1, op == "equal") for d in range(i2 - i1)})
+        _MAPS[key] = got
+    return got
+
+
+def repoint(env: Env, row: dict[str, object]) -> tuple[tuple[int, int] | None, str]:
+    """A merged row's target (counted at PACK_BASE) at BASE, by content, and what blocks it."""
+    rel, (lo, hi) = str(row["file"]), span(row)
+    m = line_map(env.show(PACK_BASE, rel) or "", env.base(rel))
+    got = [m.get(n) for n in range(lo, hi + 2 if str(row["op"]).startswith("insert") else hi + 1)]
+    if any(g is None for g in got[: hi - lo + 1]):
+        return None, "main inserted or deleted a line in it"
+    pos = [g[0] for g in got if g is not None]
+    if pos != list(range(pos[0], pos[0] + len(pos))) or len(pos) != len(got):
+        return (pos[0], pos[0] + hi - lo), "main inserted or edited a line at it"
+    if not all(g[1] for g in got[: hi - lo + 1] if g is not None):
+        return (pos[0], pos[0] + hi - lo), "main changed its Old"
+    return (pos[0], pos[0] + hi - lo), ""
+
+
+def pack_rows(env: Env) -> list[dict[str, object]]:
+    """The merged pack's §C export (the spec at BASE): what PR 2 applies, each target re-pointed
+    by content from PACK_BASE to BASE (`moved`: what blocks the move; a row with no line there is
+    left out, and G-AROW reports it)."""
+    got = env.memo.get("pack_rows")
+    if isinstance(got, list):
+        return got
+    rows: list[dict[str, object]] = []
+    for row in a_rows_export(env.base(SPEC_REL), {}):
+        if row["file"] and row["lines"]:
+            at, why = repoint(env, row)
+            row = {**row, "lines": list(at) if at else None, "moved": why}
+        rows.append(row)
+    env.memo["pack_rows"] = rows
+    return rows
+
+
+def arow_states(env: Env) -> dict[str, tuple[dict[str, str], str]]:
+    """Per `14` / `15` / `16`: each row's state at the working tree and the text expected there."""
+    rows = pack_rows(env)
+    out: dict[str, tuple[dict[str, str], str]] = {}
+    for key in AROW_DOCS:
+        rel = PATHS[key]
+        mine = [r for r in rows if r["file"] == rel and r["lines"]]
+        out[rel] = reconcile(env.base(rel), env.current(rel) or "", mine, env.held)
+    return out
+
+
+def pr2_mode(states: dict[str, tuple[dict[str, str], str]]) -> bool:
+    """PR 2's mode, selected by the tree itself: some row's New is at its target."""
+    return any(s in ("applied", "differs") for st, _ in states.values() for s in st.values())
 
 
 REG_ORDER = ["time", "tick", "volume", "range", "delta", "renko", "pnf"]
@@ -2285,9 +2678,9 @@ def enum_of(line: str) -> list[str]:
 
 def g_enum(t: Texts) -> list[Finding]:
     bad = []
-    wire = enum_of(base_lines(t.env, "22", 17365, 17365))
-    ws = enum_of(base_lines(t.env, "23", 1917, 1917))
-    cat = re.search(r"barMode: ([^`]*)`", base_lines(t.env, "15", 2170, 2170))
+    wire = enum_of(base_lines(t.env, "22", 17483, 17483))
+    ws = enum_of(base_lines(t.env, "23", 1938, 1938))
+    cat = re.search(r"barMode: ([^`]*)`", base_lines(t.env, "15", 2188, 2188))
     cat_m = re.findall(r'"([a-z_]+)"', cat[1]) if cat else []
     rows = {r[0]: r for r in table_after(sec(t.spec, "9"), "Source")}
     r22 = rows.get("`22` `BarType`")
@@ -2560,15 +2953,15 @@ def g_pins(t: Texts) -> list[Finding]:
 # C11 / BQ-6: each parent row's Old cell, re-pinned by content: (parent, its line, the parent's
 # base, the `15` line there, the `15` line at BASE)
 REPIN: tuple[tuple[str, int, str, int, int], ...] = (
-    ("D06H", 43, "5930749cdf", 2131, 2170),
-    ("D06H", 45, "5930749cdf", 2132, 2171),
-    ("D06H", 46, "5930749cdf", 2133, 2172),
-    ("D06H", 47, "5930749cdf", 2154, 2193),
-    ("D06H", 49, "5930749cdf", 2613, 2656),
-    ("D06H", 51, "5930749cdf", 2649, 2692),
-    ("D04H", 42, "d6597cbcf7", 2585, 2625),
-    ("D04H", 43, "d6597cbcf7", 2595, 2635),
-    ("D05H", 49, "15ba8bbc1b", 2675, 2715),
+    ("D06H", 43, "5930749cdf", 2131, 2188),
+    ("D06H", 45, "5930749cdf", 2132, 2189),
+    ("D06H", 46, "5930749cdf", 2133, 2190),
+    ("D06H", 47, "5930749cdf", 2154, 2211),
+    ("D06H", 49, "5930749cdf", 2613, 2674),
+    ("D06H", 51, "5930749cdf", 2649, 2710),
+    ("D04H", 42, "d6597cbcf7", 2585, 2643),
+    ("D04H", 43, "d6597cbcf7", 2595, 2653),
+    ("D05H", 49, "15ba8bbc1b", 2675, 2733),
 )
 
 
@@ -2834,7 +3227,7 @@ def g_reid(t: Texts) -> list[Finding]:
         if rev == HEAD_REF and not t.env.head_resolves():
             continue
         for p in t.env.grep_paths(rev, REID_NEW):
-            if p not in OWN_PATHS:
+            if p not in OWN_PATHS + (PATHS["15"],):  # `15` holds it from PR 2 (A-44) on
                 bad.append(f"{p} holds {REID_NEW} at {rev}: the id is taken")
     # CMP-244 may appear only in the version line's delta, never for HistoryMarker
     for name, text in (("the pack", t.spec), ("the registry", t.reg)):
@@ -2939,6 +3332,7 @@ def with_env(tweak: Callable[[Env], None]) -> Callable[[Texts], Texts]:
             cur_override=dict(t.env.cur_override),
             status_raw=t.env.status_raw,
             grep_extra={k: list(v) for k, v in t.env.grep_extra.items()},
+            held=t.env.held,
         )
         tweak(e)
         return replace(t, env=e)
@@ -2995,8 +3389,81 @@ def late_input(rel: str) -> Callable[[Env], None]:
 
 def wt_edit(e: Env) -> None:
     lines = e.base(PATHS["15"]).split("\n")
-    lines[2169] = lines[2169].replace("upColor", "upColour")
+    lines[2187] = lines[2187].replace("upColor", "upColour")
     e.cur_override[PATHS["15"]] = "\n".join(lines)
+
+
+def cur_edit(key: str, fn: Callable[[str, list[dict[str, object]]], str]) -> Callable[[Env], None]:
+    """Edit the working-tree text of `14` / `15` / `16` (fn gets it and the pack's rows)."""
+
+    def tweak(e: Env) -> None:
+        rel = PATHS[key]
+        e.cur_override[rel] = fn(e.current(rel) or "", pack_rows(e))
+
+    return tweak
+
+
+def new_of(rows: list[dict[str, object]], aid: str) -> list[str]:
+    row = next(r for r in rows if r["id"] == aid)
+    return strs(row, "new")
+
+
+def extra_byte(text: str, _rows: list[dict[str, object]]) -> str:
+    lines = text.split("\n")
+    lines[9] += " "
+    return "\n".join(lines)
+
+
+def unapply_a4(text: str, rows: list[dict[str, object]]) -> str:
+    row = next(r for r in rows if r["id"] == "A-4")
+    old, new = strs(row, "old")[0], strs(row, "new")[0]
+    assert text.count(new) == 1
+    return text.replace(new, old)
+
+
+def twice_a46(text: str, rows: list[dict[str, object]]) -> str:
+    block = "\n\n" + new_of(rows, "A-46")[0]
+    assert text.count(block) == 1
+    return text.replace(block, block + block)
+
+
+def byte_a12(text: str, rows: list[dict[str, object]]) -> str:
+    new = new_of(rows, "A-12")[0]
+    assert text.count(new) == 1 and "`space.1`" in new
+    return text.replace(new, new.replace("`space.1`", "`space.2`"))
+
+
+def apply_a38(text: str, rows: list[dict[str, object]]) -> str:
+    row = next(r for r in rows if r["id"] == "A-38")
+    old, new = strs(row, "old")[0], strs(row, "new")[0]
+    assert text.count(old) == 1
+    return text.replace(old, new)
+
+
+def unhold_a39(e: Env) -> None:
+    e.held = HELD - {"A-39"}
+
+
+def crlf_15(e: Env) -> None:
+    """`15` at the working tree with one CRLF line, read from disk by the tool's own reader."""
+    rel = PATHS["15"]
+    lines = (e.current(rel) or "").split("\n")
+    lines[9] += "\r"
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "15.md"
+        path.write_bytes("\n".join(lines).encode("utf-8"))
+        e.cur_override[rel] = read_raw(path)
+
+
+def old_moved_a29(e: Env) -> None:
+    """Main changes A-29's Old (`15`:102) at the base: the target no longer moves by content."""
+    base_line_edit(PATHS["15"], 102, e.base(PATHS["15"]).split("\n")[101] + " ")(e)
+
+
+def stray_14(text: str, _rows: list[dict[str, object]]) -> str:
+    lines = text.split("\n")
+    lines[2] = lines[2].replace("Owner", "Ownr", 1)
+    return "\n".join(lines)
 
 
 def hc_logic(e: Env) -> None:
@@ -3061,7 +3528,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("M-2", "G-ANCHOR", "leave the ledger count as a placeholder",
       resub(r"\d+<!--=COUNT:ledger-->", "{{COUNT:ledger}}")),
     M("M-3", "G-MARKER", "add a comment that is not an anchor in §0",
-      subst("**Version line** (PROPOSED", "<!-- draft -->**Version line** (PROPOSED")),
+      subst("**Version line** (BQ-32", "<!-- draft -->**Version line** (BQ-32")),
     M("M-4", "G-FIGURE", "type the dark canvas ratio by hand in §8",
       subst("contrast is WCAG 2.x, truncated to two decimals;",
             "contrast is WCAG 2.x, truncated to two decimals, the line reading 4.32:1;")),
@@ -3076,8 +3543,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("M-10", "G-VERSION", "pin D05 at a wrong sha in the version line",
       subst("D05 / D05H at `d6597cbcf7`", "D05 / D05H at `d6597cbcf8`")),
     M("M-11", "G-VERSION", "simulate a late commit to D04 at origin/main", with_env(late_commit)),
-    M("M-12", "G-UNTOUCHED", "simulate an edit to `15` in the pack PR",
-      with_env(changed_also(PATHS["15"]))),
+    M("M-12", "G-UNTOUCHED", "simulate an edit to `05`", with_env(changed_also(PATHS["05"]))),
     M("M-13", "G-UNTOUCHED", "simulate a failed merge-base", with_env(no_mb)),
     M("M-14", "G-UNTOUCHED", "simulate a hand-off file beside the pack",
       with_env(changed_also("docs/design/E12/E12-D09-handoff.md"))),
@@ -3153,14 +3619,14 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("M-45", "G-DISP", "empty NC-10's rejected alternative",
       subst("| a combined-picker entry |", "| — |")),
     M("M-46", "G-AC4", "drop the delta row's fallback",
-      subst('`include_delta` (`23`:257, :733); else "—" |', "`include_delta` (`23`:257, :733) |")),
+      subst('`include_delta` (`23`:259, :744); else "—" |', "`include_delta` (`23`:259, :744) |")),
     M("M-47", "G-AC4", "give Renko a fraction",
       subst('| renko | "—" |', '| renko | "Renko 3 / 5" |')),
     M("M-48", "G-AROW", "alter one character of A-3's Old",
       subst("| - **A11y**: bar-level DOM mirror", "| - **A11y**: bar-level DOM-mirror")),
-    M("M-49", "G-AROW", "simulate a working-tree edit of `15`:2170", with_env(wt_edit)),
+    M("M-49", "G-AROW", "simulate a working-tree edit of `15`:2188", with_env(wt_edit)),
     M("M-50", "G-AROW", "give an insert row an Old cell",
-      subst("| `15`:2170 | insert bullet after | — |", "| `15`:2170 | insert bullet after | x |")),
+      subst("| `15`:2188 | insert bullet after | — |", "| `15`:2188 | insert bullet after | x |")),
     M("M-51", "G-REGISTRY", "change the registry's tick default",
       reg_set(("modes", "1", "first_use_default"), "1000"), ),
     M("M-52", "G-REGISTRY", "write a high-entropy registry value",
@@ -3197,8 +3663,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("M-66", "G-MUTLIST", "rename M-1 in §15", subst("M-1 hand-edit", "M-01 hand-edit")),
     M("M-67", "G-LINES", "add a 120-character line to the tool", tool_long),
     M("M-68", "G-RULED", "write that the catalogue PR lands first in §0",
-      subst("**Version line** (PROPOSED",
-            "The catalogue PR lands first. **Version line** (PROPOSED")),
+      subst("**Version line** (BQ-32",
+            "The catalogue PR lands first. **Version line** (BQ-32")),
     M("M-69", "G-RULED", "write that the history marker is a CMP-195 variant in §6",
       subst("**D08's hi-fi is G-D08-1.**", "**D08's hi-fi is G-D08-1.** The history marker is a"
             " CMP-195 variant.")),
@@ -3236,12 +3702,12 @@ MUTATIONS: tuple[Mutation, ...] = (
       with_env(late_input(CVD_SRC))),
     M("M-85", "G-VERSION", "simulate a late commit to `rbac_seed.json`",
       with_env(late_input(PATHS["SEED"]))),
-    M("M-86", "G-UNTOUCHED", "simulate an unstaged edit of `15` in porcelain status",
-      with_env(porcelain(" M docs/plan/15-component-catalogue.md\0")),
-      want=f"{PATHS['15']} changed against the merge-base: the pack PR must not edit it"),
-    M("M-87", "G-UNTOUCHED", "simulate porcelain with an own path first and `16` second",
-      with_env(porcelain(f" M {TOOL_REL}\0 M docs/plan/16-design-system-brief.md\0")),
-      want=f"{PATHS['16']} changed against the merge-base: the pack PR must not edit it"),
+    M("M-86", "G-UNTOUCHED", "simulate an unstaged edit of `05` in porcelain status",
+      with_env(porcelain(f" M {PATHS['05']}\0")),
+      want=f"{PATHS['05']} changed against the merge-base: neither PR may edit it"),
+    M("M-87", "G-UNTOUCHED", "simulate porcelain with an own path first and `26` second",
+      with_env(porcelain(f" M {TOOL_REL}\0 M {PATHS['26']}\0")),
+      want=f"{PATHS['26']} changed against the merge-base: neither PR may edit it"),
     M("M-88", "G-RULED", "narrow §5's stale-feed rule to time bars (X-02)",
       subst("speaks for it (D06:272).", "speaks for it, except on non-time bars (D06:272).")),
     M("M-89", "G-RULED", "call the 4 Hz cadence final in §7 (X-04)",
@@ -3313,7 +3779,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("M-112", "G-RULED", "drop CMP-188's no-change note from §11",
       subst("**CMP-188 PriceAxis** (BQ-23): no change:", "**CMP-188 PriceAxis** (BQ-23):")),
     M("M-113", "G-RULED", "drop the PR-body PNG embedding from §0",
-      subst("and the PR body embeds those PNGs pinned to the base `8f652abb16` (BQ-29), so the"
+      subst("and PR 1's body embeds those PNGs pinned to its base `8f652abb16` (BQ-29), so the"
             " pack adds none;", "so the pack adds none;")),
     M("M-114", "G-RULED", "cite `15`:41 for the three-theme story rule in §11",
       subst("D06H §D's rule (D06H:64), stricter than `15`:41's dark / light × density", "`15`:41")),
@@ -3321,8 +3787,8 @@ MUTATIONS: tuple[Mutation, ...] = (
       subst(' the state value "Closed, corrected" and', " and")),
     M("M-116", "G-RULED", "name A-48's source row without its hand-off",
       subst("the E12-D06 hand-off's A-14;", "E12-D06 A-14;")),
-    M("M-117", "G-RULED", "drop the `15`:438 source of the strip's Cancel in §7",
-      subst(" (as CMP-038's Cancel, `15`:438)", "")),
+    M("M-117", "G-RULED", "drop the `15`:439 source of the strip's Cancel in §7",
+      subst(" (as CMP-038's Cancel, `15`:439)", "")),
     M("M-118", "G-AC4", "drop the range row's fallback",
       subst("the instrument's tick size known; else \"—\" |",
             "the instrument's tick size known |")),
@@ -3387,6 +3853,38 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("M-143", "G-RULED", "append a dated walk to §14",
       subst("No session took place and none is claimed.", "No session took place and none is"
             " claimed. A walk was held on 2026-10-27.")),
+    M("M-144", "G-UNTOUCHED", "add one byte to `15` outside every A-row",
+      with_env(cur_edit("15", extra_byte))),
+    M("M-145", "G-AROW", "leave A-4 unapplied in `15`", with_env(cur_edit("15", unapply_a4))),
+    M("M-146", "G-UNTOUCHED", "apply A-46 twice in `15`", with_env(cur_edit("15", twice_a46))),
+    M("M-147", "G-UNTOUCHED", "edit a `14` line no A-row names",
+      with_env(cur_edit("14", stray_14))),
+    M("M-148", "G-AROW", "write A-12's New into `15` one byte off",
+      with_env(cur_edit("15", byte_a12))),
+    M("M-149", "G-VERSION", "drop #4847 as the late change from the version line",
+      subst("**Late change before merge:** #4847 (the r2", "**Late change before merge:** none;"
+            " #4847 (the r2")),
+    M("M-150", "G-RULED", "name a `-handoff.md` beside the pack in §0",
+      subst("No A-row Old changed.", "No A-row Old changed. The A-rows are mirrored in"
+            " `E12-D09-handoff.md`.")),
+    M("M-151", "G-DISP", "add a new BuildProgressStrip entry sentence",
+      subst("No A-row Old changed.", "No A-row Old changed. A new BuildProgressStrip entry hosts"
+            " the strip.")),
+    M("M-152", "G-MARKER", "hide a sentence in a `[//]: #` link reference",
+      subst("\n\n## 3. Dispositions", "\n[//]: # (hidden)\n## 3. Dispositions")),
+    M("M-153", "G-UNTOUCHED", "apply A-38, held for ACK-1, in `15`",
+      with_env(cur_edit("15", apply_a38))),
+    M("M-154", "G-AROW", "drop A-39 from HELD while `15` holds its Old", with_env(unhold_a39)),
+    M("M-155", "G-RULED", "drop D5 from §16's deviations",
+      subst(" **D5** (PR 2) A-5's New writes", " A-5's New writes")),
+    M("M-156", "G-RULED", "drop D6 from §16's deviations",
+      subst(" **D6** (PR 2) A-38 … A-41 are held", " A-38 … A-41 are held")),
+    M("M-157", "G-AROW", "leave A-44's target at its line before the base move",
+      subst("| `15`:2895 | insert entry after |", "| `15`:2877 | insert entry after |")),
+    M("M-158", "G-AROW", "main changes A-29's Old at the base (no move by content)",
+      with_env(old_moved_a29)),
+    M("M-159", "G-UNTOUCHED", "a CRLF line ending in `15` at the working tree",
+      with_env(crlf_15)),
     M("P-1", "G-RULED-PIN", "reword an unruled sentence of §0",
       subst("cited by number and page", "cited by number and name")),
     M("P-2", "G-RULED-PIN", "swap two log rows",
@@ -3417,7 +3915,7 @@ def _swap_rows(t: Texts, a: str, b: str) -> Texts:
 
 def read(rel: str) -> str:
     path = ROOT / rel
-    return path.read_text(encoding="utf-8") if path.exists() else ""
+    return read_raw(path) if path.exists() else ""
 
 
 def load(env: Env | None = None) -> Texts:

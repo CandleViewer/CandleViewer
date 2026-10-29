@@ -1,6 +1,6 @@
 {
-  "$comment": "E12-D09 (#244) bar-mode registry: one record per mode, the source of the consistency contract (E12-D09 section 10) and of CMP-220's catalogue-level test. Built from E12-D03 section 2 and its copy deck (C-n) and E12-D05 section 4.1 at 8f652abb16; checked cell by cell by docs/design/_tools/e12_d09_ds_audit.py.",
-  "base": "8f652abb16",
+  "$comment": "E12-D09 (#244) bar-mode registry: one record per mode, the source of the consistency contract (E12-D09 section 10) and of CMP-220's catalogue-level test. Built from E12-D03 section 2 and its copy deck (C-n) and E12-D05 section 4.1 at a05b504919; checked cell by cell by docs/design/_tools/e12_d09_ds_audit.py.",
+  "base": "a05b504919",
   "order": ["time", "tick", "volume", "range", "delta", "renko", "pnf"],
   "modes": [
     {
