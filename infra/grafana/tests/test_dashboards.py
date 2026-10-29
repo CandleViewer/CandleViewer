@@ -269,3 +269,52 @@ def test_the_trading_board_shows_the_profile_save_series() -> None:
     assert defaults["custom"]["thresholdsStyle"] == {"mode": "dashed"}
     assert p95.get("description")
     assert drawn["instruments_refresh_total"].get("description")
+
+
+def test_the_trading_board_shows_the_trade_group_and_sizer_series() -> None:
+    """#909 (E28-T05): the Trade groups row draws the preview's three series, the widenings
+    refused by cap and E28-T03's four sizer series, each env-filtered and summed by its own labels
+    alone (outcome, reason or cap), never per account, profile or principal; the preview p95 draws
+    SCR-061's 300 ms and the sizing p95 the 1 ms per-leg budget as dashed lines."""
+    d = json.loads((G / "dashboards" / "trading.json").read_text("utf-8"))
+    at = next(i for i, p in enumerate(d["panels"]) if p["title"] == "Trade groups")
+    ours = []
+    for p in d["panels"][at + 1 :]:  # the row's panels, up to the next row
+        if p["type"] == "row":
+            break
+        ours.append(p)
+    sums_by = {
+        "cv_tradegroup_preview_total": "outcome",
+        "cv_tradegroup_preview_seconds_bucket": "le",
+        "cv_tradegroup_legs_skipped_total": "reason",
+        "cv_override_refused_total": "cap",
+        "cv_sizer_duration_seconds_bucket": "le",
+        "cv_sizer_outcomes_total": "outcome, reason",
+        "cv_sizer_clamped_total": "cap",
+        "cv_sizer_stop_fallback_total": "",  # one series: summed over replicas
+    }
+    drawn = {}
+    for p in ours:
+        (expr,) = [t["expr"] for t in p["targets"]]
+        (metric,) = [m for m in sums_by if m in expr]
+        # the "(" before rate keeps irate( (or any other prefix) from passing
+        assert f'(rate({metric}{{env="$env"}}[$__rate_interval]))' in expr, expr
+        by = sums_by[metric]
+        summed = f"sum by ({by}) (" if by else "sum(rate("
+        assert summed in expr and expr.count("by (") == (1 if by else 0), expr
+        drawn[metric] = p
+    assert (len(ours), sorted(drawn)) == (8, sorted(sums_by))
+    # previews/s, its p95, skipped legs/s, refusals/s, sizing p95, sized legs/s, clamps/s, falls/s
+    units = [p["fieldConfig"]["defaults"]["unit"] for p in ours]
+    assert units == ["ops", "s", "ops", "ops", "s", "ops", "ops", "ops"]
+    assert all(m.removesuffix("_bucket") in lint.catalogue_names() for m in sums_by)
+    for metric, budget in (
+        ("cv_tradegroup_preview_seconds_bucket", 0.3),
+        ("cv_sizer_duration_seconds_bucket", 0.001),
+    ):
+        p95 = drawn[metric]
+        defaults = p95["fieldConfig"]["defaults"]
+        assert p95["targets"][0]["expr"].startswith("histogram_quantile(0.95, ")
+        assert [s["value"] for s in defaults["thresholds"]["steps"]] == [None, budget]
+        assert defaults["custom"]["thresholdsStyle"] == {"mode": "dashed"}
+        assert p95.get("description")

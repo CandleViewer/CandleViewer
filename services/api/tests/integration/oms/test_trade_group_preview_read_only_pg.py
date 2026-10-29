@@ -5,8 +5,9 @@ the real stores on a pool whose engine refuses writes (`postgresql_readonly`: ev
 `AuditWriter` on a pool of its own. The OMS's preview parts are the order path's own classes: the
 leg guard over the interim risk gate, the stop resolver, the listing of the 2026-10-05 capture's
 BTCUSDT, prices with no ticker composed, and `PreviewFigures` over the account binding and
-`DayRiskFigures`, whose venue is a recording `FakeTradingPort` (C-13.5). `serving` composes it for
-the golden module too. Needs Docker; CI's `integration` job runs it."""
+`DayRiskFigures`, whose venue is a recording `FakeTradingPort` (C-13.5); cold, the binding reads
+each account over the read-only pool, as the lane reads it. `serving` composes it for the golden
+module too. Needs Docker; CI's `integration` job runs it."""
 
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ from fastapi import FastAPI
 from psycopg import sql
 from sqlalchemy import event
 from sqlalchemy import exc as sa_exc
+from structlog.testing import capture_logs
 
 from candleviewer.accounts.profile_cache import EffectiveProfiles
 from candleviewer.accounts.repository import AccountsRepository
@@ -60,13 +62,18 @@ from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
 )
 from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     sqlstate_of,
 )
 from candleviewer.storage.repositories.trading_accounts import (
     InMemoryTradingAccountReads,
+    TradingAccountReads,
     TradingAccountRow,
+)
+from candleviewer.storage.repositories.trading_accounts_sqlalchemy import (
+    SqlAlchemyTradingAccountReads,
 )
 from tests.integration import _refused
 from tests.unit.accounts.test_sizer import instrument
@@ -137,7 +144,8 @@ class Served:
 @asynccontextmanager
 async def serving(dsn: str, wal: Path, figures: Any, readiness: Any) -> AsyncIterator[Served]:
     """The route as the root composes it, but its reads' pool refuses writes and its audit
-    writer's pool is its own; the seed's Owner sends every request."""
+    writer's pool is its own; the seed's Owner sends every request. `figures` are the preview's,
+    or, called with that read-only pool, build them over it."""
     pool, audit = (SqlAlchemyRelationalRepository(dsn, name) for name in ("ro", "audit"))
     pool.engine.update_execution_options(postgresql_readonly=True)  # every transaction READ ONLY
     logs: tuple[list[str], list[str]] = ([], [])
@@ -151,7 +159,8 @@ async def serving(dsn: str, wal: Path, figures: Any, readiness: Any) -> AsyncIte
     listing = InstrumentsBinding(cast(Any, SimpleNamespace(snapshot=lambda: LISTED)))
     parts = PreviewParts(
         S4SGuard(InterimRiskGate(now=lambda: NOW), SimpleNamespace(refusal=lambda *_: None)),
-        InterimStopResolver(), listing, ReferencePricesBinding(None), figures,
+        InterimStopResolver(), listing, ReferencePricesBinding(None),
+        figures(pool) if callable(figures) else figures,
     )  # fmt: skip
     owner = TradingPrincipal(UUID(int=1), PrincipalSnapshot(OWNER, frozenset({"owner"}),
                                                             frozenset(Permission)))  # fmt: skip
@@ -217,24 +226,38 @@ class Venue(FakeTradingPort):
         return self
 
 
-def _figures(venue: Venue) -> tuple[PreviewFigures, DayRiskFigures]:
+def _figures(
+    venue: Venue, reads: TradingAccountReads | None = None
+) -> tuple[PreviewFigures, DayRiskFigures]:
     """The order path's figures over `venue`, on a clock that never moves, and the preview's
-    peek of them through the account binding (each account with a key, as no seed row has)."""
+    peek of them through the account binding over `reads`: by default, rows that give each account
+    a key, as no seed row has."""
     kept = DayRiskFigures("demo", port_for=venue.port_for, tiers=LISTED.risk_limit_tiers,
                           now=lambda: NOW, monotonic=lambda: 100.0)  # fmt: skip
     rows = (TradingAccountRow(a, "demo", "928", False, UUID(KEY)) for a in (A, B, C, D))
-    binding = TradingAccountsBinding(InMemoryTradingAccountReads(*rows), environment="demo")
-    return PreviewFigures(binding, kept), kept
+    keyed = InMemoryTradingAccountReads(*rows) if reads is None else reads
+    return PreviewFigures(TradingAccountsBinding(keyed, environment="demo"), kept), kept
 
 
-async def test_preview_runs_in_a_read_only_transaction(seeded: str, tmp_path: Path) -> None:
+def _lane_on(pool: SqlAlchemyRelationalRepository) -> PreviewFigures:
+    """Cold: nothing kept, and each account read by the lane's own read over `pool`, as the root
+    composes it (`oms_wiring.pg_stores`); no seed row has a key, so each leg is `figure_unknown`."""
+    reads = SqlAlchemyTradingAccountReads(pool, statement_timeout_ms=OMS_STATEMENT_TIMEOUT_MS)
+    return _figures(Venue(), reads)[0]
+
+
+@pytest.mark.parametrize("cold", [False, True], ids=["warm", "cold"])
+async def test_preview_runs_in_a_read_only_transaction(
+    seeded: str, tmp_path: Path, cold: bool
+) -> None:
     """AC 7: the preview's reads run on an engine whose every write fails with 25006, and 100
     previews (sized, skipped and refused alike) leave the groups, legs, orders, definitions and
     profiles as they were; none answers 500. What lands is their audit rows alone, through the
-    writer's own pool, and every statement of theirs ran on the read-only engine."""
-    venue = Venue()
-    figures, kept = _figures(venue)
-    for account in (A, C):  # warm, as the order path keeps them
+    writer's own pool, and every statement of theirs ran on the read-only engine. Warm, the legs'
+    figures are kept as the order path keeps them; cold (R1C-04), nothing is kept and the lane's
+    own account read runs on that engine too, once for each leg the request does not skip."""
+    figures, kept = _figures(Venue())
+    for account in () if cold else (A, C):  # warm, as the order path keeps them
         ref = AccountRef(account_id=account, uid="928", environment="demo", key_ref=KEY)
         await kept.read(ref, ("BTCUSDT",), fallback_sl_offset_pct=Decimal("0.02"))
     cases = [
@@ -246,20 +269,25 @@ async def test_preview_runs_in_a_read_only_transaction(seeded: str, tmp_path: Pa
     ]
     audited, before = "SELECT action, count(*) FROM audit_log GROUP BY 1", _kept(seeded)
     was = Counter(dict(_rows(seeded, audited)))
-    async with serving(seeded, tmp_path / "audit.wal", figures, Readiness()) as served:
+    composed = _lane_on if cold else figures
+    async with serving(seeded, tmp_path / "audit.wal", composed, Readiness()) as served:
         async with served.pool.unit_of_work() as uow:  # what any write of the reads meets
             with pytest.raises(sa_exc.DBAPIError) as refused:
                 await uow.session.execute(
                     sa.text("UPDATE trade_groups SET closed_at = closed_at WHERE false")
                 )
         served.reads.clear()  # the probe's own statements
-        answers = [await served.post(body) for _ in range(20) for _, body in cases]
+        with capture_logs() as logged:
+            answers = [await served.post(body) for _ in range(20) for _, body in cases]
         await served.writer.flush(30.0)
     assert sqlstate_of(refused.value) == "25006"
     assert [r.status_code for r in answers] == [status for status, _ in cases] * 20
+    first = "blocked" if cold else "ready"
     assert [[leg["status"] for leg in r.json()["legs"]] for r in answers[:2]] == [
-        ["ready", "warn"], ["ready", "skipped", "skipped"],
+        [first, "blocked" if cold else "warn"], [first, "skipped", "skipped"],
     ]  # fmt: skip
+    unknown = [leg["rejection"]["code"] for leg in answers[0].json()["legs"] if cold]
+    assert unknown == ["figure_unknown"] * (2 if cold else 0)  # cold: no seed row has a key
     assert _kept(seeded) == before
     assert Counter(dict(_rows(seeded, audited))) - was == {
         "rbac.denied": 20, "trade_group.override_refused": 20, "trade_group.previewed": 100,
@@ -268,6 +296,9 @@ async def test_preview_runs_in_a_read_only_transaction(seeded: str, tmp_path: Pa
     read = ("exchange_accounts", "account_profiles")
     assert all(any(table in s for s in served.reads) for table in read)
     assert not [s for s in served.writes if any(t in s for t in (*KEPT, *read))]
+    lane = [s for s in served.reads if "active_key_id" in s]  # A and C, then A and D, a round
+    unread = [e for e in logged if e["event"] == "oms_account_unread"]  # one the engine refused
+    assert (len(lane), unread) == (4 * 20 if cold else 0, [])
 
 
 async def test_preview_makes_no_exchange_call(seeded: str, tmp_path: Path) -> None:

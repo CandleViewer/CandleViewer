@@ -940,6 +940,378 @@
       ],
       "title": "Instrument catalogue refreshes/s by result",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "id": 24,
+      "panels": [],
+      "title": "Trade groups",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Every preview answer by its status: ok, refused (401, 403, 404), rate_limited (429), invalid (400, 422), error (5xx) and environment_mismatch, a leg on another environment's account. A rising rate_limited or environment_mismatch is a client probing the preview.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 67
+      },
+      "id": 25,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (outcome) (rate(cv_tradegroup_preview_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Trade-group previews/s by outcome",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "A preview's round trip in the router, from the handler's entry to its answer, every answer but a 429. The dashed line is SCR-061's 300 ms at five accounts. Fast refusals sit beside sized plans here, so this p95 reads low; the py-perf job's test measures the budget itself.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#D55E00",
+                "value": 0.3
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 67
+      },
+      "id": 26,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cv_tradegroup_preview_seconds_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Trade-group preview p95 (budget 300 ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 74
+      },
+      "id": 27,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (reason) (rate(cv_tradegroup_legs_skipped_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Skipped trade-group legs/s by reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Trade-group requests refused because a leg would go past its bound profile's caps, one count per distinct refused field of the override table, counted once the refusal's record landed.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 74
+      },
+      "id": 28,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (cap) (rate(cv_override_refused_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{cap}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Refused widenings/s by cap",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "One leg's sizing, whatever its outcome: a single order's and each trade-group leg's. The dashed line is the 1 ms per-leg budget.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#D55E00",
+                "value": 0.001
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 81
+      },
+      "id": 29,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cv_sizer_duration_seconds_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Leg sizing p95 (budget 1 ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 81
+      },
+      "id": 30,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (outcome, reason) (rate(cv_sizer_outcomes_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}} {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Sized legs/s by outcome and reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 88
+      },
+      "id": 31,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (cap) (rate(cv_sizer_clamped_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{cap}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Sizer clamps/s by cap",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Legs whose ATR stop fell back to the profile's fallback offset. A steady rate means the ATR feed is not reaching the sizer.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 88
+      },
+      "id": 32,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum(rate(cv_sizer_stop_fallback_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Stop fallbacks/s (no warm ATR reading)",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

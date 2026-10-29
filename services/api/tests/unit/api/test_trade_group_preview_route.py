@@ -10,6 +10,8 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import itertools
+import time
 from collections import Counter
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -57,6 +59,8 @@ OWNER, MANAGER, VIEWER = UUID(int=71), UUID(int=72), UUID(int=73)
 LABELS: dict[UUID, str] = {A: "E28-A", B: "E28-B", C: "E28-C", L: "E28-LIVE-MAIN"}
 NOW = datetime(2026, 10, 28, 12, 0, tzinfo=UTC)
 PREVIEWED, REFUSED = "trade_group.previewed", "trade_group.override_refused"
+#: The answers' clock steps this far a read; read at an answer's entry and end, each takes one.
+TICK = 0.125
 TRADE = frozenset({Permission.ORDERS_WRITE, Permission.ORDERS_READ})
 _GRANTS = tuple(AccountGrant(a, True, True, False) for a in (A, B, C, L, D))
 _MANAGER = frozenset({"manager"})
@@ -124,6 +128,7 @@ class World:
         app.include_router(make_trade_group_preview_router(
             self, lambda: self.runtime, reads=reads, audit=self, limiter=self.limiter,
             gate=TradeGroupsGate(lambda: self.flag, preview_ready=True), metrics=self.metrics,
+            clock=itertools.count(0.0, TICK).__next__,
         ))  # fmt: skip
         self.client = TestClient(app, raise_server_exceptions=False)
 
@@ -568,8 +573,9 @@ def test_each_answer_is_counted_once_by_its_outcome_and_all_but_a_429_timed() ->
     """20 Sec.12.1: one `cv_tradegroup_preview_total` count per answer, by its status (a `401`,
     `403` or `404` `refused`, a `400` or `422` `invalid`, a `5xx` `error`, a defect's `500` too), a
     leg in another environment its own `environment_mismatch` (SR-E28-16); each child bound once,
-    so no value outside the closed set appears; every answer but a `429` timed."""
-    world = World(rate=6)  # the Owner's six answers past the session take its bucket's six
+    so no value outside the closed set appears; every answer but a `429` timed, in seconds from
+    its handler's entry (R1C-01: each answer takes one `TICK`)."""
+    world = World(rate=7)  # the Owner's seven answers past the session take its bucket's seven
     sent = [
         world.post(),
         world.post(who="viewer"),
@@ -577,20 +583,27 @@ def test_each_answer_is_counted_once_by_its_outcome_and_all_but_a_429_timed() ->
         world.post(body(A, A)),
         world.post(body(A, L)),
         world.post(body((A, {"leverage": "11"}))),
+        world.post(body((B, {"profile_id": str(ALT)}))),  # A's alternate on B's leg: 404
     ]
     world.fail = PREVIEWED
     sent.append(world.post())  # unrecorded: 503
     world.faults = {"preview": RuntimeError("a defect")}
     sent += [world.post(), world.post()]  # a defect FastAPI answers 500; then past the bucket: 429
-    assert [r.status_code for r in sent] == [200, 403, 401, 422, 400, 403, 503, 500, 429]
+    assert [r.status_code for r in sent] == [200, 403, 401, 422, 400, 403, 404, 503, 500, 429]
     assert series(world, "cv_tradegroup_preview_total") == {
-        "ok": 1, "refused": 3, "rate_limited": 1, "invalid": 1, "environment_mismatch": 1,
+        "ok": 1, "refused": 4, "rate_limited": 1, "invalid": 1, "environment_mismatch": 1,
         "error": 2,
     }  # fmt: skip
-    timed = {"env": "demo"}
-    assert (
-        world.metrics.registry.get_sample_value("cv_tradegroup_preview_seconds_count", timed) == 8
-    )
+    get, timed = world.metrics.registry.get_sample_value, {"env": "demo"}
+    seconds = [get(f"cv_tradegroup_preview_seconds_{part}", timed) for part in ("count", "sum")]
+    assert seconds == [9, 9 * TICK]
+
+
+def test_a_preview_is_timed_on_the_performance_counter_by_default() -> None:
+    """R1C-01: unless the router is given a clock, an answer is timed on `time.perf_counter()`,
+    as a profile save is (`SaveMeasures`)."""
+    default = inspect.signature(make_trade_group_preview_router).parameters["clock"].default
+    assert default is route.PreviewMeasures.bound(Metrics("demo")).clock is time.perf_counter
 
 
 def test_a_widening_counts_each_field_it_was_refused_on_once(world: World) -> None:
@@ -618,23 +631,48 @@ def test_each_skipped_leg_is_counted_by_its_reason(world: World) -> None:
     assert (skipped["skipped"], sum(skipped.values()), set(skipped)) == (2, 2, set(SKIP_REASONS))
 
 
+def test_an_unrecorded_answer_counts_no_field_and_no_skipped_leg(world: World) -> None:
+    """R1C-08: a widening's fields and a plan's skipped legs are counted once its record landed,
+    so an answer the audit write turned into a `503` counts neither, and its retry counts once."""
+    big = {"sizing": {"mode": "fixed_qty", "qty": "0.2"}}
+    sent = (body((A, big), (B, big)), body(A, (B, {"skip": True})))
+    world.fail = PREVIEWED
+    assert [world.post(each).status_code for each in sent] == [503, 503]
+    world.fail = None
+    assert [world.post(each).status_code for each in sent] == [403, 200]
+    names = ("cv_override_refused_total", "cv_tradegroup_legs_skipped_total")
+    counts = [{label: n for label, n in series(world, name).items() if n} for name in names]
+    assert counts == [{"max_daily_loss": 1}, {"skipped": 1}]
+
+
 def test_a_preview_is_one_span_with_a_child_per_leg_it_plans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The ticket's trace: each preview one `oms.preview` span with its environment, its symbol
-    once read and its outcome; each leg the planner plans one `oms.preview_leg` child naming its
-    account. A leg the request skips plans nothing; a refusal before the plan has no child."""
+    once read and its outcome, the counter's (R1C-01: a leg in another environment its own, and a
+    `429` and a defect's `500` theirs); each leg the planner plans one `oms.preview_leg` child
+    naming its account. A leg the request skips plans nothing; a refusal before the plan has no
+    child."""
     exporter, provider = InMemorySpanExporter(), TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     monkeypatch.setattr(trace, "get_tracer", provider.get_tracer)
-    world = World()
-    assert [world.post(body(A, B, (C, {"skip": True}))).status_code,
-            world.post(who="viewer").status_code] == [200, 403]  # fmt: skip
+    world = World(rate=3)  # the Owner's 200, 400 and 500 take its bucket's three
+    statuses = [
+        world.post(body(A, B, (C, {"skip": True}))).status_code,
+        world.post(who="viewer").status_code,
+        world.post(body(A, L)).status_code,
+    ]
+    world.faults = {"preview": RuntimeError("a defect")}
+    statuses += [world.post().status_code, world.post().status_code]
+    assert statuses == [200, 403, 400, 500, 429]
     spans = exporter.get_finished_spans()
     previews = [s for s in spans if s.name == "oms.preview"]
     legs = [s for s in spans if s.name == "oms.preview_leg"]
+    read, unread = {"env": "demo", "symbol": "BTCUSDT"}, {"env": "demo"}
     assert [dict(s.attributes or {}) for s in previews] == [
-        {"env": "demo", "symbol": "BTCUSDT", "result": "ok"}, {"env": "demo", "result": "refused"},
+        read | {"result": "ok"}, unread | {"result": "refused"},
+        read | {"result": "environment_mismatch"}, read | {"result": "error"},
+        unread | {"result": "rate_limited"},
     ]  # fmt: skip
     assert [dict(s.attributes or {}) for s in legs] == [
         {"exchange_account_id": str(A)}, {"exchange_account_id": str(B)},

@@ -25,7 +25,8 @@ token is needed (22). No `detail`, log or label carries a figure, symbol, label 
 
 Each answer is one `oms.preview` span, under which the planner starts one `oms.preview_leg` per leg
 it plans (`PREVIEW_SPANS`), and is counted once by its outcome (`OUTCOMES`) and, but a 429, timed;
-a plan's skipped legs are counted by reason, and a widening's fields once each (20 Sec.12.1).
+once its record landed, a plan's skipped legs are counted by reason, and a widening's fields once
+each (20 Sec.12.1).
 """
 
 from __future__ import annotations
@@ -141,15 +142,19 @@ def _outcome(status: int) -> str:
 @dataclass(frozen=True, slots=True)
 class PreviewMeasures:
     """The preview's series (20 Sec.12.1), every child bound once: each label set is closed, and
-    no value outside it is counted (`NOOP_CHILD`), so nothing on the answer's path can raise."""
+    no value outside it is counted (`NOOP_CHILD`), so nothing on the answer's path can raise;
+    `clock` times an answer from its handler's entry, as a profile save's (`SaveMeasures`)."""
 
     outcomes: Mapping[str, MetricChild]
     seconds: MetricChild
     skipped: Mapping[str, MetricChild]
     refused: Mapping[str, MetricChild]
+    clock: Callable[[], float] = time.perf_counter
 
     @classmethod
-    def bound(cls, metrics: Metrics) -> PreviewMeasures:
+    def bound(
+        cls, metrics: Metrics, *, clock: Callable[[], float] = time.perf_counter
+    ) -> PreviewMeasures:
         """Registered through the facade as catalogued (idempotent)."""
         spec = {s.name: s for s in CATALOGUE}
 
@@ -164,7 +169,7 @@ class PreviewMeasures:
         return cls(
             children("cv_tradegroup_preview_total", OUTCOMES), seconds.child(),
             children("cv_tradegroup_legs_skipped_total", SKIP_REASONS),
-            children("cv_override_refused_total", sorted(comparator.OVERRIDE_CLASS)),
+            children("cv_override_refused_total", sorted(comparator.OVERRIDE_CLASS)), clock,
         )  # fmt: skip
 
     def answered(self, outcome: str, elapsed_s: float) -> None:
@@ -423,11 +428,13 @@ def make_trade_group_preview_router(
     principals: OrderPrincipals | None, runtime: Callable[[], PreviewRuntime | None], *,
     reads: PreviewReads | None, gate: TradeGroupsGate, audit: AuditEmitter,
     limiter: PreviewLimiter, metrics: Metrics, auth: SessionsLike | None = None,
+    clock: Callable[[], float] = time.perf_counter,
 ) -> APIRouter:  # fmt: skip
     """`POST /trade-groups/preview` (module docstring): no principal source or no OMS runtime
-    composed, 501; no `reads`, 503."""
+    composed, 501; no `reads`, 503. `clock` times each answer (`PreviewMeasures`)."""
     router = APIRouter(tags=["trading"])
-    measures, observer = PreviewMeasures.bound(metrics), SizerMetrics.register(metrics)
+    measures = PreviewMeasures.bound(metrics, clock=clock)
+    observer = SizerMetrics.register(metrics)
     traced = {} if reads is None else {"env": reads.environment}
 
     def unread(what: str, exc: BaseException | None = None) -> JSONResponse:
@@ -454,14 +461,18 @@ def make_trade_group_preview_router(
     async def widened(
         who: comparator.RefusalActor, group: planner.GroupRequest, refused: planner.GroupRefused
     ) -> Response:
-        """A whole refusal: each offending leg's `trade_group.override_refused` row first."""
-        measures.widening(refused)
+        """A whole refusal: each offending leg's `trade_group.override_refused` row first; its
+        fields counted once the record landed, so a 503 counts none and its retry once."""
         made = [comparator.refusal_record(
             leg.violations, actor=who, bound=leg.bound, leg_index=leg.index,
             alternate_id=None if leg.alternate is None else leg.alternate.profile_id,
         ) for leg in refused.legs]  # fmt: skip
         ahead = [(record.action, record.emit_kwargs()) for record in made]
-        return await audit_answer(who, group, refused, _widening(refused), *ahead)
+        refusal = _widening(refused)
+        answered = await audit_answer(who, group, refused, refusal, *ahead)
+        if answered is refusal:
+            measures.widening(refused)
+        return answered
 
     async def scope_denied(
         who: comparator.RefusalActor, session: uuid.UUID | None, group: planner.GroupRequest,
@@ -486,21 +497,24 @@ def make_trade_group_preview_router(
         outcome; that outcome counted, and the answer timed but a 429's (20 Sec.12.1). What the
         answer does not say of itself, the handler notes on the request's `_Seen`."""
 
+        def ended(request: Request, outcome: str, started: float) -> dict[str, str]:
+            """The answer's outcome, counted and timed, and its span's attributes."""
+            seen = cast(_Seen, request.state.preview)
+            if outcome == "invalid" and seen.mismatch:
+                outcome = "environment_mismatch"
+            measures.answered(outcome, measures.clock() - started)
+            return ({} if seen.symbol is None else {"symbol": seen.symbol}) | {"result": outcome}
+
         @functools.wraps(handler)  # FastAPI reads the handler's own signature
         async def timed(request: Request) -> Response:
-            started, request.state.preview = time.perf_counter(), _Seen()
+            started, request.state.preview = measures.clock(), _Seen()
             with span("oms.preview", traced) as current:
                 try:
                     response = await handler(request)
                 except Exception:  # an answer FastAPI turns into a 500: an `error`, then raised
-                    measures.answered("error", time.perf_counter() - started)
+                    current.set_attributes(ended(request, "error", started))
                     raise
-                seen, outcome = cast(_Seen, request.state.preview), _outcome(response.status_code)
-                if outcome == "invalid" and seen.mismatch:
-                    outcome = "environment_mismatch"
-                named = {} if seen.symbol is None else {"symbol": seen.symbol}
-                current.set_attributes(named | {"result": outcome})
-            measures.answered(outcome, time.perf_counter() - started)
+                current.set_attributes(ended(request, _outcome(response.status_code), started))
             return response
 
         return timed
@@ -615,8 +629,11 @@ def make_trade_group_preview_router(
             return await audit_answer(who, group, exc.errors[0].rule, order_problem(exc))
         if isinstance(plan, planner.GroupRefused):
             return await widened(who, group, plan)
-        measures.planned(plan)
         labels = {row.id: row.label for row in rows}
-        return await audit_answer(who, group, plan, JSONResponse(preview_document(plan, labels)))
+        document = JSONResponse(preview_document(plan, labels))
+        answered = await audit_answer(who, group, plan, document)
+        if answered is document:  # its skipped legs counted once its record landed, as a widening
+            measures.planned(plan)
+        return answered
 
     return router
