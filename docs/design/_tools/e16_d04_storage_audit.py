@@ -9,7 +9,7 @@ sparkline stroke; (2) every token the spec binds, resolved or MISSING; (3) the c
 boards quote, parsed from `22` / `23` / `21` / `20` / `24` / `14` / `15` text (the `StorageUsage` field
 list, the `level` enum, the gate reasons, the five `Job.status` words, the `Job.kind` list and the
 ABSENCE of a vacuum or compaction kind and of a cancel route, the three routes' `x-rbac`, the purge
-body's required triple, the 366-day cap, the section 5.4 compaction thresholds, the `CV_DISK_*` steps,
+body's four required fields (`before` among them), the 366-day cap, the section 5.4 compaction thresholds, the `CV_DISK_*` steps,
 the SCR-142 checklist's six boxes, the six CMP headings, the `ComponentState` words, the health
 example's component names); (4) the fixture, derived from the `22` `getStorageUsage` example and its
 level, health, lag, migration and import variants, every size with a unit, every date ISO, and the
@@ -56,6 +56,7 @@ import difflib
 import hashlib
 import json
 import re
+import struct
 import sys
 import textwrap
 from collections.abc import Callable
@@ -208,38 +209,44 @@ CITED_TABLE = """
 14 | 2779 | `storage.compaction_triggered`, `storage.vacuum_triggered`, `storage.tier_migration_triggered`
 14 | 2780 | recording pauses before trading is affected - stated
 14 | 2795 | questdb 41GB - postgres 1.2GB - parquet 88GB
-22 | 378 | `compactRecorder`, `importTradeArchive` and `purgeRecordedData` keep theirs: at most 256 jobs
-22 | 715 | The typed confirm_symbol does not equal the symbol to purge
-22 | 721 | code: import_range_invalid
-22 | 4993 | operationId: getStorageUsage
-22 | 5004 | the `questdb` plus `parquet` `tiers[]` bytes by `cap_bytes`
-22 | 5015 | disk_total_bytes: 4000000000000
-22 | 5026 | { tier: questdb, used_bytes: 640000000000, retention_days: 7 }
-22 | 10458 | operationId: getHealth
-22 | 10486 | detail: "ingest 18.4k msg/s"
-22 | 10570 | Dependencies reachable and migrations applied
-22 | 11276 | (`checksum_mismatch` when the stored digest does
-22 | 11572 | operationId: getJob
-22 | 11584 | Every `404` here carries rule `job_unknown`
-22 | 13501 | CHECK (migration 0008, `21-database-schema.md` §3.10.2)
-22 | 14043 | operationId: compactRecorder
-22 | 14048 | One compaction at a time (`409 job_running`)
-22 | 14084 | operationId: importTradeArchive
-22 | 14088 | `[from, to]` (inclusive UTC dates, at most 366 days)
-22 | 14089 | Recorded data wins: rows inside a
-22 | 14091 | archive-derived and cover `trades` only
-22 | 14094 | Audited as `recorder.import`
-22 | 14138 | operationId: purgeRecordedData
-22 | 14141 | Requires an elevated session, a mandatory reason, and
-22 | 14145 | Elevation is the `recorder` step-up class
-22 | 14150 | The audit record (`retention.purge`, exact window, partition count, rows, bytes)
-22 | 14164 | required: [symbol, confirm_symbol, reason]
-22 | 16368 | enum: [healthy, degraded, warning, down, not_deployed]
-22 | 18101 | tier: { type: string, enum: [questdb, parquet, postgres] }
-22 | 18115 | level: { type: integer, enum: [0, 1, 2, 3] }
-22 | 20691 | last_good_at: { type: ["string", "null"], format: date-time }
-22 | 20843 |                 archive_import,
-22 | 20847 | status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+22 | 380 | `compactRecorder`, `importTradeArchive` and `purgeRecordedData` keep theirs: at most 256 jobs
+22 | 722 | The typed confirm_symbol does not equal the symbol to purge
+22 | 728 | code: import_range_invalid
+22 | 5413 | operationId: getStorageUsage
+22 | 5424 | the `questdb` plus `parquet` `tiers[]` bytes by `cap_bytes`
+22 | 5435 | disk_total_bytes: 4000000000000
+22 | 5446 | { tier: questdb, used_bytes: 640000000000, retention_days: 7 }
+22 | 10991 | operationId: getHealth
+22 | 11019 | detail: "ingest 18.4k msg/s"
+22 | 11103 | Dependencies reachable and migrations applied
+22 | 11809 | (`checksum_mismatch` when the stored digest does
+22 | 12105 | operationId: getJob
+22 | 12117 | Every `404` here carries rule `job_unknown`
+22 | 12495 | `recorder_purge` are no-grace: the response is `single_use: true` and no window is opened
+22 | 14395 | CHECK (migration 0008, `21-database-schema.md` §3.10.2)
+22 | 14937 | operationId: compactRecorder
+22 | 14942 | One compaction at a time (`409 job_running`)
+22 | 14978 | operationId: importTradeArchive
+22 | 14982 | `[from, to]` (inclusive UTC dates, at most 366 days)
+22 | 14983 | Recorded data wins: rows inside a
+22 | 14985 | archive-derived and cover `trades` only
+22 | 14988 | Audited as `recorder.import`
+22 | 15032 | operationId: purgeRecordedData
+22 | 15035 | Requires a fresh step-up, a mandatory reason, an explicit
+22 | 15040 | `recorder_purge` is a no-grace step-up class
+22 | 15043 | `action_class` set to `recorder_purge`
+22 | 15045 | `422 retention_pinned_refused`
+22 | 15051 | **Window.** `before` is required
+22 | 15054 | by this request or by any retry of it. A `before` later than the server's clock is
+22 | 15055 | validation_failed` with `errors: [{field: before, rule: before_in_future}]`
+22 | 15073 | The audit record (`retention.purge`, exact window, partition count, rows, bytes)
+22 | 15086 | required: [symbol, confirm_symbol, reason, before]
+22 | 17419 | enum: [healthy, degraded, warning, down, not_deployed]
+22 | 19221 | tier: { type: string, enum: [questdb, parquet, postgres] }
+22 | 19235 | level: { type: integer, enum: [0, 1, 2, 3] }
+22 | 21860 | last_good_at: { type: ["string", "null"], format: date-time }
+22 | 22012 |                 archive_import,
+22 | 22016 | status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
 23 | 4060 | "ingest_rate_msgs_per_sec": { "type": "integer" }
 23 | 4061 | "write_backlog_rows": { "type": "integer" }
 23 | 4071 | Recorded bytes (QuestDB plus Parquet), the meter's numerator over cap_bytes
@@ -364,7 +371,13 @@ BOARD_SECTION = {
 TWINS = ("SCR-142/low-disk-warning", "IMPORT/running-with-skips", "SCR-142/view-as")
 # Frames the stamp gate (R-2) exempts: the reflow twin, the redlines sheet and the loading skeleton.
 NO_STAMP = ("SCR-142/healthy-200-zoom", "SCR-142/redlines", "SCR-142/loading")
-DIALOG_FAMILIES = ("JOB/confirm-", "PURGE/dialog", "PURGE/step-up", "PURGE/pinned-refused")
+DIALOG_FAMILIES = (
+    "JOB/confirm-",
+    "PURGE/dialog",
+    "PURGE/step-up",
+    "PURGE/pinned-refused",
+    "PURGE/refused-before",
+)
 ROW_IDS = (
     ("a_rows", "A"),
     ("c_rows", "C"),
@@ -566,13 +579,26 @@ def contract_facts(t: dict[str, str]) -> dict[str, Any]:
         "audited": "Audited as `recorder.import`" in a22,
         "result_summary": "`result` carries the import summary" in a22,
     }
-    f["purge_required"] = first(r"required: \[(symbol, confirm_symbol, reason)\]", a22).split(", ")
+    f["purge_required"] = first(
+        r"required: \[(symbol, confirm_symbol, reason, before)\]", a22
+    ).split(", ")
     f["purge_sentences"] = {
-        "elevated": "Requires an elevated session, a mandatory reason, and" in a22,
-        "stepup_class": "Elevation is the `recorder` step-up class" in a22,
+        "elevated": "Requires a fresh step-up, a mandatory reason, an explicit" in a22,
+        "stepup_class": "`recorder_purge` is a no-grace step-up class" in a22,
+        "stepup_problem": "`action_class` set to `recorder_purge`" in a22,
+        "no_grace": "`recorder_purge` are no-grace: the response is `single_use: true`" in a22,
+        "before_required": "**Window.** `before` is required: the exclusive upper bound of the purge window"
+        in a22,
+        "before_kept": "Data recorded at or after `before` is never deleted" in a22,
+        "before_future": "rule: before_in_future" in a22,
+        "before_schema": re.search(
+            r"before:\n\s+type: string\n\s+format: date-time\n",
+            block(a22, "operationId: purgeRecordedData", '"202"'),
+        )
+        is not None,
         "audit_first": "written BEFORE the job exists; if it cannot be written the answer is 503"
         in a22,
-        "pinned_refused": "`retention_pinned_refused` (pinned without `include_pinned`)" in a22,
+        "pinned_refused": "(pinned without `include_pinned`) and `409 job_running`" in a22,
         "audit_name": "`retention.purge`, exact window" in a22,
     }
     f["reason_bounds"] = [
@@ -1052,6 +1078,9 @@ def fixture(facts: dict[str, Any], a22: str) -> dict[str, Any]:
             facts["e16d02"]["purge_body"],
         ),
         "pinned_symbol": ex["symbols"][0]["symbol"],
+        # the refused-before frame: a bound one day past the sample, refused against the sample's instant
+        "before_future": (gen + dt.timedelta(days=1)).strftime("%Y-%m-%d"),
+        "server_time": f"{gen:%Y-%m-%d %H:%M:%S} UTC",
     }
     return fx
 
@@ -1437,6 +1466,7 @@ EXITS: dict[str, tuple[str, ...]] = {
     "PURGE/dialog": (CLOSE_EXITS,),
     "PURGE/dialog-validity": (CLOSE_EXITS,),
     "PURGE/pinned-refused": (CLOSE_EXITS,),
+    "PURGE/refused-before": (CLOSE_EXITS,),
     "PURGE/step-up": (CLOSE_EXITS,),
     "TIER/per-symbol": ("Manage pin",),
 }
@@ -1543,6 +1573,10 @@ DECK_KEYS = frozenset(
         "storage.purge.button",
         "storage.purge.title",
         "storage.purge.body",
+        "storage.purge.before",
+        "storage.purge.before.help",
+        "storage.purge.before.reason",
+        "storage.purge.refused.before",
         "storage.purge.typed",
         "storage.purge.typed.reason",
         "storage.purge.stepup",
@@ -2207,8 +2241,16 @@ def anchor_table(
         ),
         (
             "the purge cut-off",
-            {"*": one(fx["purge"]["before"])},
+            {
+                "PURGE/refused-before": one(fx["purge"]["before_future"]),
+                "*": one(fx["purge"]["before"]),
+            },
             r"\(CMP-047 single\) (\d{4}-\d\d-\d\d)",
+        ),
+        (
+            "the server time",
+            {"*": one(fx["sample_date"], fx["sample_time"])},
+            r"\bthe server's \(?(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) UTC",
         ),
         (
             "the compacted time",
@@ -2695,6 +2737,11 @@ def row_presence(
             bad.append(f"R-7 {name}: reason missing")
         elif not re.search(r"\brequired\b", reason[0]) or "3–280" not in reason[0]:
             bad.append(f"R-7 {name}: reason not required 3–280")
+        before = [x for x in cl if x.startswith("Delete data recorded before")]
+        if not before:
+            bad.append(f"R-7 {name}: before field missing")
+        elif not re.search(r"`before`, required\b", before[0]):
+            bad.append(f"R-7 {name}: before field not required")
     if name in ("PURGE/dialog", "PURGE/step-up") and STEPUP not in text:
         bad.append(f"R-7 {name}: elevation not shown")
     if name == "PURGE/dialog" and fx["purge"]["body"] not in text:
@@ -2836,11 +2883,42 @@ def doc_units(spec: str) -> list[tuple[str, str, str]]:
             c = cells(ln)
             key = c[0].strip("`*")
             out.append((f"{where} table ({key[:40]})", "row", ln))
+        elif where == "§0" and re.match(REGISTER_RE, ln):
+            out.append((f"{where} register", "register", ln))
         elif ln.strip():
             for sent in re.split(r'(?<=[.!?])\s+(?=[A-Z*(`"])(?=(?:[^"]*"[^"]*")*[^"]*$)', ln):
                 if sent.strip():
                     out.append((f"{where} prose", "prose", sent))
     return out
+
+
+# Section 0's "Boards as drawn" register (the boards PR): the lead paragraph and one bullet per board. Its numbers
+# are export facts, not the fixture's: the draw date and the script shas are provenance, and a bullet's size is the
+# exported PNG's IHDR, which R-17 reads from the file instead of the `--json` register.
+REGISTER_RE = r"^(?:Boards as drawn \(|- `\d\d [a-z0-9-]+` — board id `)"
+REGISTER_BULLET = r"`(docs/design/E16/img/E16-D04-(\d\d)-[a-z0-9-]+\.png)` \((\d+) × (\d+)\)"
+
+
+def register_gate(line: str) -> list[str]:
+    """R-17 on a register unit: a bullet names its export and the size the PNG's IHDR carries (read from the file)."""
+    if line.startswith("Boards as drawn ("):
+        return []
+    m = re.search(REGISTER_BULLET, line)
+    if not m:
+        return ["R-17 §0 register: a bullet without its export path and size"]
+    rel, board, w_s, h_s = m.groups()
+    path = ROOT / rel
+    if not path.is_file():
+        return [f"R-17 §0 register: board {board} export missing ({rel})"]
+    head = path.read_bytes()[:24]
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return [f"R-17 §0 register: board {board} export is not a PNG ({rel})"]
+    w, h = struct.unpack(">II", head[16:24])
+    if (int(w_s), int(h_s)) != (w, h):
+        return [
+            f"R-17 §0 register: board {board} size reads {w_s} × {h_s}, the export is {w} × {h}"
+        ]
+    return []
 
 
 def t2_context(text: str) -> bool:
@@ -2879,6 +2957,9 @@ def doc_gates(
     for where, kind, raw0 in doc_units(spec):
         last, prev = prev, (where, kind, raw0)
         raw = raw0
+        if kind == "register":
+            bad += register_gate(raw0)
+            continue
         if kind == "prose" and last[:2] == (where, kind) and re.match(PRONOUN_LEAD, raw0):
             raw = last[2] + " " + raw0
         if kind == "sketch":
@@ -3772,7 +3853,7 @@ P04, P05, P06 = (
 )
 P07, P08 = (
     "Purge is the one destructive action here",
-    "`importTradeArchive` (`22` :14081–14134) imports",
+    "`importTradeArchive` (`22` :14975–15028) imports",
 )
 P14, PEND = "The ladder is the server's", "E16-D06 and E16-D07 are PENDING by name;"
 PDV, EXITS_T1 = "PURGE/dialog-validity", "exits Cancel, Esc and the close ✕ (T1)"
@@ -3903,6 +3984,18 @@ MUTATIONS: list[Mutation] = [
         "R-7 PURGE/step-up: elevation not shown",
     ),
     (
+        "V01 PURGE/dialog: the before field removed (the purge-contract re-pin, #4597)",
+        _sub(
+            PDL,
+            SH,
+            "Delete data recorded before (CMP-047 single) 2026-08-15, the retention cut-off: the contract's `before`, required (`22` :15086), "
+            "the exclusive upper bound of the window `[earliest, before)` sent as a `date-time` instant with an offset and not later than the "
+            'server\'s clock (:15051–15054, :15092–15097), with the help line "Data recorded at or after this time is kept." under it · ',
+            "",
+        ),
+        "R-7 PURGE/dialog: before field missing",
+    ),
+    (
         "M18 PURGE/dialog-validity: a lock added",
         _append("PURGE/dialog-validity", SH, "a lock glyph before the label"),
         "R-8 PURGE/dialog-validity: lock on a validity control",
@@ -3937,7 +4030,7 @@ MUTATIONS: list[Mutation] = [
         _sub(
             "IMPORT/summary",
             SH,
-            ', the overlap report "660,000 rows inside recorded windows were discarded — recorded data wins." (`22` :14089, never "duplicates removed")',
+            ', the overlap report "660,000 rows inside recorded windows were discarded — recorded data wins." (`22` :14983, never "duplicates removed")',
             "",
         ),
         "R-10 IMPORT/summary: overlap report missing",
@@ -4058,7 +4151,7 @@ MUTATIONS: list[Mutation] = [
         "M44 IMPORT/failed: the row deleted (its counts updated)",
         lambda s: _counts(
             _row_delete(s, "IMPORT/failed"),
-            frames_total=(40, 39),
+            frames_total=(41, 40),
             frames_import=(6, 5),
             **{"board_frames.07": (6, 5)},
         ),
@@ -5767,8 +5860,8 @@ MUTATIONS: list[Mutation] = [
         lambda s: _line_sub(
             s,
             "| the per-symbol table ",
-            "(`22` :18104–18112)",
-            "(`22` :18104–18112); a row's symbol sits in the typed field once its confirm opens",
+            "(`22` :19224–19232)",
+            "(`22` :19224–19232); a row's symbol sits in the typed field once its confirm opens",
         ),
         "R-23 §3 row the per-symbol table: a pinned unit changed (table, a line edited)",
     ),
@@ -5977,6 +6070,12 @@ MUTATIONS: list[Mutation] = [
         ),
         "R-23 header prose: a pinned unit changed (paragraph, a line edited)",
     ),
+    # B01: the boards lens round 1 (M-2): the refused-before frame's exits read like every dialog's
+    (
+        "B01 refused-before: the close ✕ no longer available after the refusal",
+        _append("PURGE/refused-before", CT, "the close ✕ no longer available after the refusal"),
+        "R-14 refused-before: exit gated ('no longer available' in 'the close ✕ no longer availa')",
+    ),
 ]
 # Valid twins: each must raise nothing (a captioned inset line, the gap's own G-row, a negated mention).
 VALID: list[tuple[str, Callable[[str], str]]] = [
@@ -6176,6 +6275,7 @@ def fixture_numbers(fx: dict[str, Any], facts: dict[str, Any]) -> dict[str, obje
         "trigger_files": facts["compaction"]["trigger_files"],
         "trigger_mib": facts["compaction"]["trigger_mib"],
         "purge_before": fx["purge"]["before"],
+        "purge_before_future": fx["purge"]["before_future"],
         "purge_from": fx["purge"]["from"],
         "healthy_backlog_rows": fx["lag"]["healthy_backlog_rows"],
         "healthy_pending": fx["migration"]["healthy_pending"],
@@ -6268,6 +6368,8 @@ def numbers_of(
     n["mutations_text4"] = sum(d.startswith("S") for d, _, _ in MUTATIONS)
     n["mutations_text4_own"] = sum(d.startswith("W") for d, _, _ in MUTATIONS)
     n["mutations_text5"] = sum(d.startswith("Q") for d, _, _ in MUTATIONS)
+    n["mutations_contract"] = sum(d.startswith("V") for d, _, _ in MUTATIONS)
+    n["mutations_boards"] = sum(d.startswith("B") for d, _, _ in MUTATIONS)
     n["valid_twins"] = len(VALID)
     n["pins"] = pin_counts(RULED_PIN_TXT)
     n["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
@@ -6630,22 +6732,23 @@ RULED_PIN_TXT = r"""
 @ header#1 ¶1 ‖ heading
   # E16-D04 — SCR-142 Storage and database panel with tier health and projections: hi-fi
 @ header#1 ¶2 ‖ paragraph
-  **Ticket:** E16-D04 (#372) · **Epic:** E16 · **Status:** Draft, **text-first** — this file is
-   the hi-fi spec; the ten Penpot boards (nine dark, one light twin board) are **PENDING** and land
-   in a second PR with their exports and the page id (§0); nothing here is cited as drawn. **Owner
-   approval pending** (agent-delivery adaptations, owner decision 2026-09-25): the owner's
-   `approved` comment or the merge stands in for the ticket's design sign-off (§18). **Every
-   decision not already binding is PROPOSED**; RULED items name their source (the BQ table; the
-   orchestrator's ruling on #372, issue comment 6397016433, 2026-10-25); every finding is
-   `(heuristic)`; no participant, timing or quote is invented (§17). **Method:** a desk spec over
-   the merged E16-D02 (SCR-140, the host page) and E16-D03 (the destructive-change pattern and the
-   SCR-141 / SCR-142 boundary), and the merged E09-D09 / E30-D02 / E30-D04 patterns; every number
-   here carries an `audit:` marker that `docs/design/_tools/e16_d04_storage_audit.py --check`
-   re-derives from the `22` `getStorageUsage` example, and `--self-test` proves §12's gates with
-   ⟦audit:mutations⟧ mutations.
+  **Ticket:** E16-D04 (#372) · **Epic:** E16 · **Status:** the text merged first (#4532, with
+   `Refs #372` and a `Partial:` line); this revision is the boards PR's: the ten Penpot boards
+   (nine dark, one light twin board) of §0 are **drawn** from the board script r7 (boards 01–04, 09
+   and 10 from r6 and board 07 from r5, which r7 leaves unchanged) and exported in this PR with the
+   page id, which completes #372; §0 records them as drawn. **Owner approval pending**
+   (agent-delivery adaptations, owner decision 2026-09-25): the owner's `approved` comment or the
+   merge stands in for the ticket's design sign-off (§18). **Every decision not already binding is
+   PROPOSED**; RULED items name their source (the BQ table; the orchestrator's ruling on #372,
+   issue comment 6397016433, 2026-10-25); every finding is `(heuristic)`; no participant, timing or
+   quote is invented (§17). **Method:** a desk spec over the merged E16-D02 (SCR-140, the host
+   page) and E16-D03 (the destructive-change pattern and the SCR-141 / SCR-142 boundary), and the
+   merged E09-D09 / E30-D02 / E30-D04 patterns; every number here carries an `audit:` marker that
+   `docs/design/_tools/e16_d04_storage_audit.py --check` re-derives from the `22` `getStorageUsage`
+   example, and `--self-test` proves §12's gates with ⟦audit:mutations⟧ mutations.
 @ header#1 ¶3 ‖ paragraph
-  **Penpot page:** `E16-D04 Storage and database` · id pending (the boards PR pins it; page by
-   name + id only, `docs/design/README.md` :46–48).
+  **Penpot page:** `E16-D04 Storage and database` · id `f5d056cd-3de8-808d-8008-dc7bdd2c5c5f`
+   (pinned at the draw step; page by name + id only, `docs/design/README.md` :46–48).
 @ header#1 ¶4 ‖ paragraph
   **Scope** (the ticket): SCR-142 as the one picture of the three storage tiers (QuestDB hot,
    Parquet/DuckDB cold, Postgres): per-tier size, growth rate and projected full date with units
@@ -6670,45 +6773,47 @@ RULED_PIN_TXT = r"""
    the E16-D05 boards PR #4501 are PENDING by name only** — nothing from either is pinned, quoted
    or cited as a frame. E16-D06 and E16-D07 are PENDING by name; the implementation ticket that
    consumes SCR-142 opens the contract-first PRs for D04-G1…G12 (§13; E16-T10 is the import's, `22`
-   :14085).
+   :14979).
 @ header#1 ¶6 ‖ paragraph
   **Inputs pinned.** Base `origin/main` `965cf14090e590781d3e19c51a719ff54fb4c30e`: `14` §0.3 :43,
    §0.5 rules 4–6 :84–86, SCR-140 :2725–2757 (states :2748), SCR-141 :2758–2769 (the pointer form
    :2768), SCR-142 :2770–2781 (type :2772, data :2773, states :2774, components :2775, a11y :2777,
-   performance :2778, audit :2779, checklist :2780), SCR-143 :2782–2795; `22` `getStorageUsage`
-   :4990–5045 (the description :4995–5004, the example :5015–5042), `StorageUsage` :18088–18123,
-   `RecorderPolicySettings` :18060–18087, `compactRecorder` :14040–14080, `importTradeArchive`
-   :14081–14134, `purgeRecordedData` :14135–14185, `getJob` :11564–11600, `Job` :20823–20875,
-   `getHealth` :10455–10494, `HealthReport` :20667–20692, `ComponentState` :16366–16369, the job
-   caps :378, the 422 titles :715, :721, `checksum_mismatch` :11276, the readiness probe :10570,
-   the step-up problem :11879–11883, migration 0008 :13501; `23` the recorder topic's `storage`
-   object :4062–4085 and the two pressure fields :4060–4061, the gate prose :4096–4105; `21` §4
-   :3956–4334 (the thirteen table headings :3968–4318, the operational notes :4319–4334), §5.1
-   :4339, §5.4 :4408–4420, §8 :4567; `20` :904–908; `24` §13.4.1 :3814–3860 (the projection :3830,
-   the precedence :3854), :494, :3718–3719; `27` ADR-0003 :1, :23, :34–36, :45; `04` SR-048 :873;
-   `05` §3.4 :90, §6.2 :144–150; `11` US-REC-004 :4153, US-REC-005 :4172, US-REC-007 :4210–4226;
-   `15` CMP-001 :48, CMP-009 :129, CMP-011 :149, CMP-016 :198, CMP-019 :225–231, CMP-023 :262–270,
-   CMP-024 :272–278, CMP-026 :290, CMP-027 :301, CMP-028 :311, CMP-035 :381, CMP-036 :390–396,
-   CMP-038 :409, CMP-040 :433, CMP-043 :463, CMP-044 :473–481, CMP-047 :503, CMP-049 :524–533,
-   CMP-050 :535, CMP-051 :544, CMP-079 :811–817, CMP-087 :884–890, CMP-093 :940, CMP-178
-   :2068–2074, CMP-239 :2784. Merged upstream specs at their merge commits: E16-D02 `736f995e…` (§2
-   :150–158, §3.1 :186–194, §3.2 :196–209, §6.4 :380–384, §6.5 :404–420, §6.6 :422–426, §7
-   :444–455, §8.3 :486–504, §8.5 :508–519, D-8 :760, D-16 :778); E16-D03 `3ff63ea0…` (BQ-6 :45,
-   §1.3 :102–120, §5 :198–224 incl. `SCR-141/confirm-lengthen` :210, §8 :255–268, §18 :546);
-   E16-D05 `cba937ef…` (the header, §0 :52–68, §12 :319–357, §13 :359, §18 :537: the spec shape and
-   the table-keyed audit tool); E09-D09 `baccf724a1fa3ad66f9333e440a7f5e8668b6eff` (§2.1 :32–44,
-   §2.2 :49, §3.1 :85–95, §3.2 :108, §9.1 :224–232, §9.3 :238, §10 :252); E30-D02
-   `f798a64e65d15d13f2f816c9b5564e0d148ba2ae` (D3 :128); E30-D04
-   `ca7d61fa1a767f6698d5243379546ad9f95090ab` (§30 :1048, the shared G-row sentence); E25-D01
-   `c0674eb95a59903b09388468f8bf2e382bab1161` (§9.5 :334, the pattern rule cited, never
-   re-proposed); the token JSON `packages/ui/tokens/*.tokens.json` + `themes.json`;
+   performance :2778, audit :2779, checklist :2780), SCR-143 :2782–2795; `22` (re-pinned to
+   `origin/main` `299562bdb829588edeae26065dc79b1c704395c4`, after #4597 reworded the purge route:
+   step-up class `recorder_purge`, `before` required) `getStorageUsage` :5410–5465 (the description
+   :5415–5424, the example :5435–5462), `StorageUsage` :19208–19243, `RecorderPolicySettings`
+   :19180–19207, `compactRecorder` :14934–14974, `importTradeArchive` :14975–15028,
+   `purgeRecordedData` :15029–15142 (the step-up :15040–15049, the window :15051–15057, the body
+   :15086–15100), `getJob` :12097–12133, `Job` :21992–22044, `getHealth` :10988–11027,
+   `HealthReport` :21836–21861, `ComponentState` :17417–17420, the job caps :380, the 422 titles
+   :722, :728, `checksum_mismatch` :11809, the readiness probe :11103, the step-up problem
+   :12413–12417, migration 0008 :14395; `23` the recorder topic's `storage` object :4062–4085 and
+   the two pressure fields :4060–4061, the gate prose :4096–4105; `21` §4 :3956–4334 (the thirteen
+   table headings :3968–4318, the operational notes :4319–4334), §5.1 :4339, §5.4 :4408–4420, §8
+   :4567; `20` :904–908; `24` §13.4.1 :3814–3860 (the projection :3830, the precedence :3854),
+   :494, :3718–3719; `27` ADR-0003 :1, :23, :34–36, :45; `04` SR-048 :873; `05` §3.4 :90, §6.2
+   :144–150; `11` US-REC-004 :4153, US-REC-005 :4172, US-REC-007 :4210–4226; `15` CMP-001 :48,
+   CMP-009 :129, CMP-011 :149, CMP-016 :198, CMP-019 :225–231, CMP-023 :262–270, CMP-024 :272–278,
+   CMP-026 :290, CMP-027 :301, CMP-028 :311, CMP-035 :381, CMP-036 :390–396, CMP-038 :409, CMP-040
+   :433, CMP-043 :463, CMP-044 :473–481, CMP-047 :503, CMP-049 :524–533, CMP-050 :535, CMP-051
+   :544, CMP-079 :811–817, CMP-087 :884–890, CMP-093 :940, CMP-178 :2068–2074, CMP-239 :2784.
+   Merged upstream specs at their merge commits: E16-D02 `736f995e…` (§2 :150–158, §3.1 :186–194,
+   §3.2 :196–209, §6.4 :380–384, §6.5 :404–420, §6.6 :422–426, §7 :444–455, §8.3 :486–504, §8.5
+   :508–519, D-8 :760, D-16 :778); E16-D03 `3ff63ea0…` (BQ-6 :45, §1.3 :102–120, §5 :198–224 incl.
+   `SCR-141/confirm-lengthen` :210, §8 :255–268, §18 :546); E16-D05 `cba937ef…` (the header, §0
+   :52–68, §12 :319–357, §13 :359, §18 :537: the spec shape and the table-keyed audit tool);
+   E09-D09 `baccf724a1fa3ad66f9333e440a7f5e8668b6eff` (§2.1 :32–44, §2.2 :49, §3.1 :85–95, §3.2
+   :108, §9.1 :224–232, §9.3 :238, §10 :252); E30-D02 `f798a64e65d15d13f2f816c9b5564e0d148ba2ae`
+   (D3 :128); E30-D04 `ca7d61fa1a767f6698d5243379546ad9f95090ab` (§30 :1048, the shared G-row
+   sentence); E25-D01 `c0674eb95a59903b09388468f8bf2e382bab1161` (§9.5 :334, the pattern rule
+   cited, never re-proposed); the token JSON `packages/ui/tokens/*.tokens.json` + `themes.json`;
    `tools/contrast/pairs.mjs`.
 @ header#1 ¶7 ‖ paragraph
   **Key.** `NN` = `docs/plan/NN-*.md` (`22` = `22-api-openapi.yaml`). **D04-Gn** = a contract gap
    (the shared sentence of §13), **D04-CGn** = a shipped limit recorded, not designed around,
    **D04-Cn** = a contradiction with its owner, **D04-An** = a copy-ready amendment, **D04-Qn** =
    an open question, **D04-Dn** = a decision of this spec. **Fixture** (derived by the tool from
-   the `22` `getStorageUsage` example :5015–5042, never typed): report sampled
+   the `22` `getStorageUsage` example :5435–5462, never typed): report sampled
    ⟦audit:fixture.sample_date⟧ ⟦audit:fixture.sample_time⟧ UTC; disk ⟦audit:fixture.disk_total_tb⟧
    TB, ⟦audit:fixture.disk_used_tb⟧ TB used (⟦audit:fixture.volume_pct⟧ %),
    ⟦audit:fixture.disk_free_tb⟧ TB free; recording budget ⟦audit:fixture.cap_gb⟧ GB with
@@ -6772,7 +6877,7 @@ RULED_PIN_TXT = r"""
 @ BQ#1 ¶2 ‖ table
   | # | Question | Built here | Status |
   | ----- | ------------------------------------------------------------------- |
-   ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | ------ |
   | BQ-1 | the deliverable path and companions | `docs/design/E16/E16-D04.md` +
    `docs/design/_tools/e16_d04_storage_audit.py` + one `14` pointer line; the ticket's web template
@@ -6801,16 +6906,16 @@ RULED_PIN_TXT = r"""
    drawn as a cited re-use with the typed field empty; no second shape | RULED |
   | BQ-10 | the confirm pattern for compact / vacuum | CMP-044 **standard** — compaction and
    vacuum are non-destructive ("Nothing is deleted."): no typed field, no step-up unless the server
-   answers 403; purge keeps E16-D02 §6.5's typed dialog with the `recorder` step-up | RULED |
+   answers 403; purge keeps E16-D02 §6.5's typed dialog with the `recorder_purge` step-up | RULED |
   | BQ-11 | vacuum's existence and class | wholly PROPOSED (D04-G8); **never a frame's default**:
    it appears only as a captioned inset "PROPOSED — D04-G8, owner approval pending (#2701)" on
    boards 01, 02 and 05; `recording:write` and no step-up proposed; the owner may require the
-   `recorder` class (D04-Q1) | RULED |
+   `recorder_purge` class (D04-Q1) | RULED |
   | BQ-12 | the import confirm | no dialog: the card form + one consequence line is the confirm
    (additive, resumable); the CMP-044 standard alternative is D04-Q3 | RULED |
   | BQ-13 | cancel | drawn only as a captioned PROPOSED carrier on the jobs strip (D04-G10 `POST
    /admin/jobs/{jobId}/cancel`), never as a shipped control; the shipped reality stated on every
-   carrier: a started job runs to its end; the `cancelled` outcomes kept (`Job.status` :20847) |
+   carrier: a started job runs to its end; the `cancelled` outcomes kept (`Job.status` :22016) |
    RULED |
   | BQ-14 | actions at level 3 / write gate closed | Compact, Purge and Import **enabled**
    (availability, never a pre-emptive disable — E30-D02 D3); a server refusal is shown in the
@@ -6818,7 +6923,7 @@ RULED_PIN_TXT = r"""
   | BQ-15 | a tier down | per-card CMP-027 inline with Retry (re-poll); the actions that need that
    tier are T4 on refusal; the page stays usable | RULED |
   | BQ-16 | migration pending | CMP-028 warning banner on PROPOSED fields (D04-G7), captioned;
-   **no Apply control** (an absence: migrations run with the release, `22` :10570) | RULED |
+   **no Apply control** (an absence: migrations run with the release, `22` :11103) | RULED |
   | BQ-17 | "ingestion lag" with no lag field | the two produced numbers (WS
    `ingest_rate_msgs_per_sec`, `write_backlog_rows`, `23` :4060–4061) with units; the lag cell "—"
    + D04-G4; the lag-warning state keyed on the backlog | RULED |
@@ -6827,7 +6932,7 @@ RULED_PIN_TXT = r"""
    row appears only as a captioned second row or inset with the shipped fallback beside it; the
    checklist boxes are satisfied "as PROPOSED" and say so in §16 | RULED |
   | BQ-19 | import per-file reporting with no result schema | D04-G11 `ArchiveImportResult`
-   PROPOSED; `checksum_mismatch` reuses `22` :11276's code word; the running frame shows the pct
+   PROPOSED; `checksum_mismatch` reuses `22` :11809's code word; the running frame shows the pct
    bar and "{done} of {n} days"; the per-file rows and the skip counter while running are D04-G11's
    `files[]` stream, a captioned inset | RULED |
   | BQ-20 | the audit-name mismatch | a C-row (D04-C1, owner `14`); the confirm line stays "This
@@ -6848,17 +6953,17 @@ RULED_PIN_TXT = r"""
    PENDING by name only; every departure a PROPOSED A / C / G-row; `15` untouched, `14` the one
    pointer line; no lane as authority.
 @ §0#1 ¶1 ‖ heading
-  ## 0. Boards (PENDING — the boards PR draws them)
+  ## 0. Boards (drawn — this boards PR)
 @ §0#1 ¶2 ‖ paragraph
-  Boards go on the self-hosted Penpot page `E16-D04 Storage and database` · id pending
-   (`docs/design/README.md` :46–48; never the host, team or file id, never a workspace URL). Boards
-   are `E16-D04 / NN slug`; frames inside them are `SCR-142/<state>`, `TIER/<state>`,
-   `JOB/<state>`, `PURGE/<state>` and `IMPORT/<state>`; exports go to
-   `docs/design/E16/img/E16-D04-NN-<slug>.png` at 1:1 via `docs/design/_tools/penpot_export.py`.
-   Every board with a PROPOSED decision carries the stamp, every RULED item its source; every
-   PROPOSED control, column or action is a captioned inset or a captioned second row ("PROPOSED —
-   D04-Gn, owner approval pending (#2701)"), never a frame's default (BQ-11 / BQ-13 / BQ-18 / BQ-22
-   RULED). Nothing from E16-D02's boards
+  Boards are on the self-hosted Penpot page `E16-D04 Storage and database` · id
+   `f5d056cd-3de8-808d-8008-dc7bdd2c5c5f`, in the file `E16-D04 boards` (`docs/design/README.md`
+   :46–48; never the host, team or file id, never a workspace URL). Boards are `E16-D04 / NN slug`;
+   frames inside them are `SCR-142/<state>`, `TIER/<state>`, `JOB/<state>`, `PURGE/<state>` and
+   `IMPORT/<state>`; exports go to `docs/design/E16/img/E16-D04-NN-<slug>.png` at 1:1 via
+   `docs/design/_tools/penpot_export.py`. Every board with a PROPOSED decision carries the stamp,
+   every RULED item its source; every PROPOSED control, column or action is a captioned inset or a
+   captioned second row ("PROPOSED — D04-Gn, owner approval pending (#2701)"), never a frame's
+   default (BQ-11 / BQ-13 / BQ-18 / BQ-22 RULED). Nothing from E16-D02's boards
    (`docs/design/E16/img/E16-D02-05-scr-140-disk-warning.png`,
    `E16-D02-19-scr-140-purge-confirm.png`) is redrawn: they are cited by name and path.
    ⟦audit:boards⟧ boards, ⟦audit:light_twins⟧ light board, ⟦audit:frames_total⟧ frames
@@ -6869,58 +6974,142 @@ RULED_PIN_TXT = r"""
   | # | Board | Draws | Theme | Export | Status |
   | --- | --------------------------------- |
    -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-   | ----- | ------------------------------------------------------- | ------- |
+   | ----- | ------------------------------------------------------- | ------ |
   | 01 | `E16-D04 / 01 anatomy-healthy` | ⟦audit:board_frames.01⟧ frames of §2: `SCR-142/healthy`
    (the full page, regions (a)…(h) lettered, the two meters, the three tier cards, the sample
    stamp; the vacuum inset captioned PROPOSED, D04-G8) · `SCR-142/healthy-200-zoom` (the reflow:
    cards stack, tables one row element per record) | dark |
-   `docs/design/E16/img/E16-D04-01-anatomy-healthy.png` | pending |
+   `docs/design/E16/img/E16-D04-01-anatomy-healthy.png` | drawn |
   | 02 | `E16-D04 / 02 tiers-and-tables` | ⟦audit:board_frames.02⟧ frames of §4: `TIER/questdb`,
    `TIER/parquet`, `TIER/postgres` (the cards, every row, PROPOSED rows captioned with the shipped
    fallback) · `TIER/tables-questdb` (the per-table CMP-049 as a captioned second row) ·
    `TIER/per-symbol` (the hot-tier symbol table; the sparkline as the one PROPOSED D04-G2 inset
    with its mirror table) · `TIER/query-performance` (a captioned second row) | dark |
-   `docs/design/E16/img/E16-D04-02-tiers-and-tables.png` | pending |
+   `docs/design/E16/img/E16-D04-02-tiers-and-tables.png` | drawn |
   | 03 | `E16-D04 / 03 states-disk` | ⟦audit:board_frames.03⟧ frames of §5:
    `SCR-142/low-disk-warning` (level 1 + the AC 2 sentence) · `SCR-142/autostop` ·
    `SCR-142/read-only-disk-full` (level 3, gate closed; every action still enabled) ·
    `SCR-142/volume-refused` · `SCR-142/view-as` (every write T2, one notice) | dark |
-   `docs/design/E16/img/E16-D04-03-states-disk.png` | pending |
+   `docs/design/E16/img/E16-D04-03-states-disk.png` | drawn |
   | 04 | `E16-D04 / 04 states-health` | ⟦audit:board_frames.04⟧ frames of §5:
    `SCR-142/tier-unreachable-questdb` (the card error, the page usable) · `SCR-142/lag-warning` ·
    `SCR-142/migration-pending` (the captioned banner with the version delta; no Apply) ·
    `SCR-142/stale-sample` · `SCR-142/loading` · `SCR-142/unavailable` | dark |
-   `docs/design/E16/img/E16-D04-04-states-health.png` | pending |
+   `docs/design/E16/img/E16-D04-04-states-health.png` | drawn |
   | 05 | `E16-D04 / 05 maintenance-jobs` | ⟦audit:board_frames.05⟧ frames of §6:
    `JOB/confirm-compact` (CMP-044 standard) · `JOB/confirm-vacuum` (captioned PROPOSED) ·
    `JOB/strip-running` (two jobs with their pct; Stop job (PROPOSED D04-G10)) ·
    `JOB/strip-refused-409` (T4) · `JOB/outcomes` (succeeded / failed / cancelled / unknown insets
    for compact and, captioned PROPOSED (D04-G8), vacuum) | dark |
-   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` | pending |
+   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` | drawn |
   | 06 | `E16-D04 / 06 purge` | ⟦audit:board_frames.06⟧ frames of §7: `PURGE/entry-points` ·
    `PURGE/dialog` (E16-D02 §6.5 reused; the typed field empty) · `PURGE/dialog-validity` (the typed
    mismatch: validity look, `validity-reason` layer, no lock) · `PURGE/pinned-refused` (T4) ·
-   `PURGE/step-up` (the sentence; SCR-006 cited, not drawn) · `PURGE/outcomes` | dark |
-   `docs/design/E16/img/E16-D04-06-purge.png` | pending |
+   `PURGE/refused-before` (T4: the server's time in the reason) · `PURGE/step-up` (the sentence;
+   SCR-006 cited, not drawn) · `PURGE/outcomes` | dark | `docs/design/E16/img/E16-D04-06-purge.png`
+   | drawn |
   | 07 | `E16-D04 / 07 import` | ⟦audit:board_frames.07⟧ frames of §8: `IMPORT/form` ·
    `IMPORT/form-validity` (over 366 days) · `IMPORT/running` (the bar and the days; the per-file
    table a captioned PROPOSED D04-G11 inset) · `IMPORT/running-with-skips` (AC 3: the shipped bar
    moving, the skipped row with its reason in the captioned D04-G11 inset, no banner) ·
    `IMPORT/summary` (the overlap report, the archive-derived tag) · `IMPORT/failed` (inside the
-   card) | dark | `docs/design/E16/img/E16-D04-07-import.png` | pending |
+   card) | dark | `docs/design/E16/img/E16-D04-07-import.png` | drawn |
   | 08 | `E16-D04 / 08 keyboard-a11y-copy` | ⟦audit:board_frames.08⟧ state frames: the focus-order
    map (header → meters → cards → tables → maintenance → import), the keys table, the announcement
    policy, the copy-deck counts, the measured-matrix line, the RULED stamps (§10, §13–§15) | dark |
-   `docs/design/E16/img/E16-D04-08-keyboard-a11y-copy.png` | pending |
+   `docs/design/E16/img/E16-D04-08-keyboard-a11y-copy.png` | drawn |
   | 09 | `E16-D04 / 09 redlines` | ⟦audit:board_frames.09⟧ frame of §11: `SCR-142/redlines` —
    tokens annotated on a tier card, a meter, the jobs strip, the per-file table (the PROPOSED
    D04-G11 inset), the T2 control and the validity control; the token audit counts | dark |
-   `docs/design/E16/img/E16-D04-09-redlines.png` | pending |
+   `docs/design/E16/img/E16-D04-09-redlines.png` | drawn |
   | 10 | `E16-D04 / 10 light-twins` | ⟦audit:board_frames.10⟧ twins in `semantic-light` through
    `themes.json` (BQ-21 RULED): `SCR-142/low-disk-warning` (the warning tone on the admin canvas),
    `IMPORT/running-with-skips` (the warning subtle rows), `SCR-142/view-as` (the T2 pair); the
-   measured ratios in the title | light | `docs/design/E16/img/E16-D04-10-light-twins.png` |
-   pending |
+   measured ratios in the title | light | `docs/design/E16/img/E16-D04-10-light-twins.png` | drawn
+   |
+@ §0#1 ¶4 ‖ paragraph
+  Boards as drawn (2026-10-29, from the board script r7 — sha256
+   `8164c098c5cc65b1bf11e3f34e2cadbd1e1fc09d6122df4f60567475c8bfc199` — a declared patch of r6
+   (sha256 `43fdb2f8d7d832db95b14de5bcc5aebde3d33626f5434f7c6112cc057c8b313f`) with the boards lens
+   round 1's two Majors: board 05's `JOB/confirm-vacuum` producer caption names the
+   `recorder_purge` class, never `recorder` (M-1); board 06 gains `PURGE/refused-before`, the
+   server's `422 validation_failed` (`before_in_future`) drawn as T4 in the `PURGE/pinned-refused`
+   style — the dialog with a `before` later than the server's clock, the CMP-027 inline reason
+   naming the server's time with the code in parentheses, Confirm enabled, the exits T1 (M-2) — and
+   board 08's counts follow (⟦audit:frames_total⟧ frames, ⟦audit:mutations⟧ mutations). r6 was a
+   declared patch of r5 (sha256 `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`)
+   with three fixes from the r5 draw's QA: board 03's `SCR-142/volume-refused` meter reads the
+   gate's level over the unchanged bytes (1,188.0 GB of 2,000.0 GB cap_bytes, 59.4 %, with the
+   level-3 danger fill and ✗ glyph), never a level derived from the bytes; board 04's
+   `SCR-142/tier-unreachable-questdb` QuestDB card in `down` tags its last sizes with the `stale`
+   chip, as the stale-sample frame does; the tier cards' wrapping captions keep a date, a number
+   with its unit and the "—" together (the date's hyphens non-breaking, a no-break space before a
+   unit and before the dash). Boards 05, 06 and 08 are redrawn from r7; boards 01, 02, 03, 04, 09
+   and 10 are the r6 draw and board 07 the r5 draw, which r7 leaves unchanged; every board exported
+   at 1:1):
+@ §0#1 ¶5 ‖ list
+  - `01 anatomy-healthy` — board id `3dabf49b-b27a-8036-8008-dc8761e1a9bb` —
+   `docs/design/E16/img/E16-D04-01-anatomy-healthy.png` (1920 × 2629)
+  - `02 tiers-and-tables` — board id `3dabf49b-b27a-8036-8008-dc87a15c81eb` —
+   `docs/design/E16/img/E16-D04-02-tiers-and-tables.png` (1920 × 2058)
+  - `03 states-disk` — board id `3dabf49b-b27a-8036-8008-dc87db88209f` —
+   `docs/design/E16/img/E16-D04-03-states-disk.png` (2664 × 4316)
+  - `04 states-health` — board id `3dabf49b-b27a-8036-8008-dc88678c7444` —
+   `docs/design/E16/img/E16-D04-04-states-health.png` (2664 × 4248)
+  - `05 maintenance-jobs` — board id `8151935f-ff84-80bf-8008-dca2ccbf658c` —
+   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` (1920 × 1256) — redrawn from r7 (M-1: the
+   `JOB/confirm-vacuum` caption names `recorder_purge`)
+  - `06 purge` — board id `8151935f-ff84-80bf-8008-dca2eae0fd19` —
+   `docs/design/E16/img/E16-D04-06-purge.png` (1920 × 2231) — redrawn from r7 (M-2:
+   `PURGE/refused-before` added as the seventh frame)
+  - `07 import` — board id `f5d056cd-3de8-808d-8008-dc7d32665db1` —
+   `docs/design/E16/img/E16-D04-07-import.png` (1920 × 2029) — drawn from r5 (sha256
+   `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`), unchanged by r6 and r7
+  - `08 keyboard-a11y-copy` — board id `8151935f-ff84-80bf-8008-dca318873496` —
+   `docs/design/E16/img/E16-D04-08-keyboard-a11y-copy.png` (1920 × 1063) — redrawn from r7 (the
+   counts: 41 frames, 345 mutations)
+  - `09 redlines` — board id `3dabf49b-b27a-8036-8008-dc891ad5977c` —
+   `docs/design/E16/img/E16-D04-09-redlines.png` (1920 × 1762)
+  - `10 light-twins` — board id `3dabf49b-b27a-8036-8008-dc8936dc3903` —
+   `docs/design/E16/img/E16-D04-10-light-twins.png` (2664 × 2286)
+@ §0 › Contract-truth update (p#1 ¶1 ‖ heading
+  ### Contract-truth update (post-#4597, `22` :15035 / :15040 / :15046 / :15086)
+@ §0 › Contract-truth update (p#1 ¶2 ‖ paragraph
+  The text merged before #4597 reworded the purge route in `22`. This boards PR carries the
+   as-built
+  update, ruled for this PR (no separate spec PR). Nothing else in the spec changes.
+@ §0 › Contract-truth update (p#1 ¶3 ‖ list
+  - **Step-up class:** `recorder` → `recorder_purge` wherever the purge's class is named (BQ-10,
+  BQ-11, the §7 action table and prose, `PURGE/step-up`'s producer, the roles line, D04-Q1).
+  `recorder_purge` is no-grace (`22` :12495, :15040), so `PURGE/step-up` states that every purge
+  takes a fresh code instead of the grace-window sentence.
+  - **`before` field:** the purge dialog gains the contract's required `before` field
+  (`required: [symbol, confirm_symbol, reason, before]`, `22` :15086): its label "Delete data
+  recorded before" (E16-D02 §6.5 :409, not `new`), the help line "Data recorded at or after this
+  time is kept.", the validity reason "Choose a time no later than now." (shown while `before` is
+  later than the client's now, `PURGE/dialog-validity`) and the T4 reason for
+  `422 validation_failed before_in_future`, `storage.purge.refused.before` "Not started: the time
+   is
+  later than the server's ({server_time}). Choose a time at or before it." (the server's time from
+  the error's `message`; drawn on `PURGE/refused-before`, board 06). The help line and the two
+  reasons are the three `new` strings (PROPOSED here) in §14, the label is E16-D02's; §1.3's
+  classification carries both forms (the validity-look row and the T4 row), §1.3's validity
+  paragraph, its T4 list and §7's enablement sentence name `before`; `PURGE/dialog`,
+  `PURGE/dialog-validity` and `PURGE/refused-before` draw them (board script r5, r7).
+  - **`retention_pinned_refused`:** cited at its current line (`22` :15045–15046) where the
+   dialog's
+  refusals are listed.
+  - **Cites:** every `22` cite is re-pinned to `main` by content (the purge block's six needles
+   plus the
+  line drift #4597 caused across the file); the audit tool's `purge_sentences` needles and RULED
+  pin table move with them (`--repin-ruled`), with one new mutation for the `before` field.
+  - **Section 6 leftovers (the r5 boards' QA):** `recorder` → `recorder_purge` in the §6 prose
+  ("Purge keeps E16-D02 §6.5's typed dialog with the … step-up (§7)") and in the
+   `JOB/confirm-vacuum`
+  row (PROPOSED — D04-G8, owner approval pending (#2701); "unless the owner assigns the … class
+  (D04-Q1)"): the purge's class is `recorder_purge` (`22` :15035, :15040), and D04-Q1's question
+   names
+  the purge's class, as the §6 action table and BQ-11 already do.
 @ §1#1 ¶1 ‖ heading
   ## 1. Purpose, locked inputs, the rules stated once, the classification
 @ §1 › §1.1#1 ¶1 ‖ heading
@@ -6964,7 +7153,7 @@ RULED_PIN_TXT = r"""
    no confirmation on SCR-140 |
   | the job terminal copy | E16-D02 §3.2 :196–209 | the failed / cancelled / unknown / succeeded
    lines for purge and compact (reused by cite in §6, §7); a lost job is `404 job_unknown` (`22`
-   :11584) |
+   :12117) |
   | the job footer grammar | E16-D03 §8 :255–268 | one `role="status"` region,
    ⟦audit:layout.poll_s⟧ s polling while queued or running, progress as text first with a CMP-023
    whose `aria-valuetext` equals the text, one announcement per terminal state; the Class words
@@ -6973,12 +7162,12 @@ RULED_PIN_TXT = r"""
    confirm carrying the consequence → step-up on submit for a destructive change;
    `SCR-141/confirm-lengthen` (:210) is the non-destructive form: CMP-044 standard, "Nothing is
    deleted.", the audited line, Cancel / Confirm |
-  | the three routes and the job poll | `22` :14040–14185, :11564–11600, :20823–20875 |
+  | the three routes and the job poll | `22` :14934–15142, :12097–12133, :21992–22044 |
    `compactRecorder`, `importTradeArchive`, `purgeRecordedData` (all `recording:write`), `getJob`
    (`admin:read`); one job of a kind at a time (`409 job_running`); jobs live in one process's
-   memory, at most ⟦audit:facts.jobs_cap⟧, lost at a restart (:378, :11581–11584; D04-CG4) |
+   memory, at most ⟦audit:facts.jobs_cap⟧, lost at a restart (:380, :12114–12117; D04-CG4) |
   | the ladder, the cadence, the precedence | `20` :904–908; `24` §13.4.1 :3814–3860; `22`
-   :4995–5004; `23` :4096–4105 | warn 80 <!-- audit:facts.disk.CV_DISK_WARN_PCT=80 --> / autostop
+   :5415–5424; `23` :4096–4105 | warn 80 <!-- audit:facts.disk.CV_DISK_WARN_PCT=80 --> / autostop
    90 / halt 95 % of `cap_bytes`, re-armed 5 points lower; a sample every 60 <!--
    audit:facts.disk.CV_DISK_SAMPLE_INTERVAL_S=60 --> s; `level` read, never derived; the gate
    closed = symbols without an open position dropped as gaps; INV-B11-a outranks ADR-0015's halt |
@@ -7022,10 +7211,11 @@ RULED_PIN_TXT = r"""
    reason at full opacity under or beside it in `color.text.secondary` (never inside),
    `aria-disabled`, focusable; a press shows the error summary; no lock glyph, no CMP-079, no key;
    board layer `validity-reason`. On SCR-142 two controls take it: Import archives while the range
-   is empty, inverted or longer than ⟦audit:facts.import_days_max⟧ days (`22` :14088), and the
-   purge dialog's Confirm while the typed symbol differs or the reason is shorter than
-   ⟦audit:facts.reason_min⟧ characters (E16-D02 :419; CMP-044 :477 "form validity, not a gate").
-   Never over-converted.
+   is empty, inverted or longer than ⟦audit:facts.import_days_max⟧ days (`22` :14982), and the
+   purge dialog's Confirm while the typed symbol differs, the reason is shorter than
+   ⟦audit:facts.reason_min⟧ characters or the `before` bound is later than now (E16-D02 :419;
+   CMP-044 :477 "form validity, not a gate"; the server's own check on the bound is T4,
+   `PURGE/refused-before`). Never over-converted.
 @ §1 › §1.3#1 ¶4 ‖ paragraph
   **Status · outcome · absence · refusal** (E09-D09 §9.1 :231; the orchestrator's conditions A1
    and A3). **Busy** — a job this client started while it is queued or running: the button is
@@ -7040,18 +7230,20 @@ RULED_PIN_TXT = r"""
    G8, G3, G5, G1, G2, G7) is drawn absent from every frame's default and appears only as a
    captioned PROPOSED inset or second row, never as a lock (BQ-11 / 13 / 16 / 18 / 22 RULED).
    **Refusal (T4)** — `409 job_running`, `422 import_range_invalid`, `422
-   purge_confirmation_mismatch`, `422 retention_pinned_refused`, the `503` when the purge's audit
-   record cannot be written (`22` :14150–14152), and `403 step_up_required` (not a refusal: it runs
-   the SCR-006 step-up, E16-D02 §6.4): CMP-027 inline under the control with the server's code in
-   parentheses, polite once; the page state never changes and nothing else dims. **Exits and links
-   are never gated** (A3): Cancel, Esc and the close ✕ in every dialog, Retry, the links to SCR-140
-   / SCR-141 / SCR-143, the per-tier table alternatives — enabled for every role on every frame.
+   purge_confirmation_mismatch`, `422 retention_pinned_refused`, `422 validation_failed`
+   (`before_in_future`: a `before` later than the server's clock, its time in `message`), the `503`
+   when the purge's audit record cannot be written (`22` :15073–15075), and `403 step_up_required`
+   (not a refusal: it runs the SCR-006 step-up, E16-D02 §6.4): CMP-027 inline under the control
+   with the server's code in parentheses, polite once; the page state never changes and nothing
+   else dims. **Exits and links are never gated** (A3): Cancel, Esc and the close ✕ in every
+   dialog, Retry, the links to SCR-140 / SCR-141 / SCR-143, the per-tier table alternatives —
+   enabled for every role on every frame.
 @ §1 › §1.3#1 ¶5 ‖ paragraph
   **The classification (every state row of §2 and §4–§8 names one class):**
 @ §1 › §1.3#1 ¶6 ‖ table
   | Control × condition | Class | Reason / look (source) |
   |
-   ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | ------------------------ |
    ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
@@ -7065,17 +7257,19 @@ RULED_PIN_TXT = r"""
   | a Manager or a Viewer | not a state of this page | the route is hidden and hard-404s (`14`
    :43, :85; E16-D02 §7 :449); SCR-142 draws neither; the server is the control (C-12.4) |
   | Import archives while the range is empty, inverted or over 366 days; the purge Confirm while
-   the typed symbol differs or the reason is short | **validity look** | own fill + label at
-   `opacity.disabled`, the reason full-opacity under it: "Choose a range of at most 366 days." ·
-   "Type ETHUSDT exactly to confirm."; never T2 (E09-D09 §9.1 :230; E30-D02 D3 :128) |
+   the typed symbol differs, the reason is short or the `before` bound is later than now |
+   **validity look** | own fill + label at `opacity.disabled`, the reason full-opacity under it:
+   "Choose a range of at most 366 days." · "Type ETHUSDT exactly to confirm." · "Choose a time no
+   later than now."; never T2 (E09-D09 §9.1 :230; E30-D02 D3 :128) |
   | Compact Parquet… / Import archives / Purge… while this client's job of that kind is queued or
    running | **busy** | CMP-001 `loading`, `aria-busy`, focusable, a press opens nothing; the strip
    shows the progress; no lock (E09-D09 §9.1; E16-D02 §6.6) |
   | `409 job_running` (a second press, or after a reload with no job id) · `422
-   import_range_invalid` · `422 purge_confirmation_mismatch` · `422 retention_pinned_refused` · the
-   purge's `503` when its audit record cannot be written | **T4** | the refusal sentence under the
-   control at the point of action with the code in parentheses (§6, §7, §8); `403 step_up_required`
-   runs the step-up flow instead (§7) |
+   import_range_invalid` · `422 purge_confirmation_mismatch` · `422 retention_pinned_refused` ·
+   `422 validation_failed` (`before_in_future`: a `before` later than the server's clock, its time
+   in `message`) · the purge's `503` when its audit record cannot be written | **T4** | the refusal
+   sentence under the control at the point of action with the code in parentheses (§6, §7, §8);
+   `403 step_up_required` runs the step-up flow instead (§7) |
   | disk full (`level` 3, `write_gate` closed) · a tier `down` · the ingestion backlog · a pending
    migration (PROPOSED, D04-G7) · a stale sample | **status** | notices and tones (§5); every write
    stays enabled; a refusal, if any, is T4 at the point of action; Shorten retention / Reduce depth
@@ -7149,12 +7343,12 @@ RULED_PIN_TXT = r"""
    -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
   | (a) | H2 "Storage and database" (`type.ui.heading-lg`); the sample stamp "Sampled {HH:MM:SS}
-   UTC (every 60 s)" from `generated_at` (`22` :18113) and `CV_DISK_SAMPLE_INTERVAL_S` (`20` :908),
+   UTC (every 60 s)" from `generated_at` (`22` :19233) and `CV_DISK_SAMPLE_INTERVAL_S` (`20` :908),
    `type.ui.caption` `color.text.secondary`, with CMP-239 `stale` and its clock glyph once the
    report is older than ⟦audit:layout.stale_factor⟧ samples (`14` §0.5 rule 4 :84: the last-good
    time always shown); the one view-as notice slot (0 px unless viewing as) |
   | (b) | two CMP-023 `kind="meter"` (`15` :265), each labelled with what it divides (D04-D1,
-   D04-A2): **Recording budget** = (questdb + parquet `used_bytes`) ÷ `cap_bytes` (`22` :5003–5004;
+   D04-A2): **Recording budget** = (questdb + parquet `used_bytes`) ÷ `cap_bytes` (`22` :5423–5424;
    `23` :4071) with E16-D02 §8.3's headline keyed on `level`; **Disk volume** = `disk_used_bytes` ÷
    `disk_total_bytes` with `disk_free_bytes`; under them the projection line and E16-D02's formula
    and threshold scale; the AC 2 sentence on every level ≥ 1 frame (§1.4); the fill tone by `level`
@@ -7178,7 +7372,7 @@ RULED_PIN_TXT = r"""
    "{done} of {n} days" (`progress_pct` with the requested range); the per-file CMP-049 table (Day
    / Status / Reason / Rows), the skip counter and the overlap report only as captioned PROPOSED
    insets (D04-G11); the CMP-011 tag "Archive-derived · trades only · no book data" (`22`
-   :14090–14091) |
+   :14984–14985) |
 @ §2#1 ¶5 ‖ table
   | Frame | Producer | Shows | Controls (class per §1.3) | Class | Board |
   | -------------------------- |
@@ -7218,27 +7412,27 @@ RULED_PIN_TXT = r"""
   | ----------------------------------------------------- |
    --------------------------------------------------------------------------------------------------------------------------------------------
    | ----------------------- | ------------------------------- |
-  | the sample stamp | `StorageUsage.generated_at` (`22` :18113); the cadence
+  | the sample stamp | `StorageUsage.generated_at` (`22` :19233); the cadence
    `CV_DISK_SAMPLE_INTERVAL_S` 60 s (`20` :908) | HH:MM:SS UTC, s | — |
-  | the budget meter | `tiers[]` questdb + parquet `used_bytes` ÷ `cap_bytes` (`22` :5003–5004,
-   :18096–18103, :18114); live `storage.used_bytes` (`23` :4068–4071) | GB, % | — |
+  | the budget meter | `tiers[]` questdb + parquet `used_bytes` ÷ `cap_bytes` (`22` :5423–5424,
+   :19216–19223, :19234); live `storage.used_bytes` (`23` :4068–4071) | GB, % | — |
   | the volume meter | `disk_used_bytes` ÷ `disk_total_bytes`, `disk_free_bytes` (`22`
-   :18091–18093) | TB, % | — |
+   :19211–19213) | TB, % | — |
   | the headline, the gate, the suggested actions | `level`, `write_gate`, `write_gate_reason`,
-   `accelerate_retention` (`22` :18115–18123; `23` :4073–4079); E16-D02 §8.3's grammar | words | —
+   `accelerate_retention` (`22` :19235–19243; `23` :4073–4079); E16-D02 §8.3's grammar | words | —
    |
   | the projection line and the formula | `projected_full_at`, `daily_growth_bytes` (`22`
-   :18094–18095; `24` :3830: to the nearer wall); the ladder percentages (`20` :905–907) | days,
+   :19214–19215; `24` :3830: to the nearer wall); the ladder percentages (`20` :905–907) | days,
    date, GB/day | — |
-  | per-tier size and retention | `tiers[] {tier, used_bytes, retention_days}` (`22` :18096–18103)
+  | per-tier size and retention | `tiers[] {tier, used_bytes, retention_days}` (`22` :19216–19223)
    | GB, d ("—" when null) | — |
   | per-tier growth rate and projected full date (AC 1) | none: only the disk-level numbers exist;
    the card shows them labelled "all tiers" and "—" per tier | GB/day, date | D04-G1 |
   | per-tier health, the "unreachable" state | `HealthReport.components[] {name, state,
-   last_good_at}` (`22` :20681–20691; names from the example :10481–10493) | the ComponentState
+   last_good_at}` (`22` :21850–21860; names from the example :11014–11026) | the ComponentState
    word | — (D04-CG1) |
   | the per-symbol table | `symbols[] {symbol, used_bytes, daily_growth_bytes, pinned}` (`22`
-   :18104–18112) | GB, MB/day, % | — |
+   :19224–19232) | GB, MB/day, % | — |
   | per-symbol oldest / newest, the sparkline history | none | UTC date, GB | D04-G2 |
   | rows by table, oldest / newest per table | none; the table names are `21` §4.1–4.13's
    (⟦audit:facts.questdb_tables⟧ headings) and §5.1's partition families | count, GB, UTC date |
@@ -7250,19 +7444,19 @@ RULED_PIN_TXT = r"""
   | last compaction / last vacuum | none; the schedule is a fact (`21` :4410 weekly, Sundays 03:00
    UTC) | UTC time | D04-G6 |
   | the schema version and pending migrations | none; `HealthReport.version` / `git_sha` (`22`
-   :20671–20672) are release facts; readiness = "migrations applied" (`22` :10570) | version, count
+   :21840–21841) are release facts; readiness = "migrations applied" (`22` :11103) | version, count
    | D04-G7 |
   | compaction, purge, import progress | `202 {job_id}` → `getJob`: `Job.status`, `progress_pct`,
-   `result` (`22` :20847–20851; E16-D02 :157: bytes and partitions only from `result`) | %, GB | —
+   `result` (`22` :22016–22020; E16-D02 :157: bytes and partitions only from `result`) | %, GB | —
    (D04-G9 the kind word) |
-  | a vacuum | none: no route, no `Job.kind` (`22` :20833–20845); `21` :4332 "the API never issues
+  | a vacuum | none: no route, no `Job.kind` (`22` :22002–22014); `21` :4332 "the API never issues
    DDL against QuestDB at runtime except the retention job" | — | D04-G8 |
-  | cancel a running job | none: `getJob` only (`22` :11564–11600) | — | D04-G10 |
+  | cancel a running job | none: `getJob` only (`22` :12097–12133) | — | D04-G10 |
   | the import summary: per-file status, reasons, overlap | `Job.result` "carries the import
-   summary" (`22` :14093) with no schema | days, rows | D04-G11 |
-  | the archive-derived label on coverage | prose only (`22` :14090–14091) | a tag | D04-G12 |
+   summary" (`22` :14987) with no schema | days, rows | D04-G11 |
+  | the archive-derived label on coverage | prose only (`22` :14984–14985) | a tag | D04-G12 |
 @ §3#1 ¶4 ‖ paragraph
-  **The fixture** is the header's: the `22` example (:5015–5042) and its derived states, every
+  **The fixture** is the header's: the `22` example (:5435–5462) and its derived states, every
    number the tool's: budget 59.4 %, volume 30.1 %, runway about 560 days to 2028-03-27 (the budget
    wall; the volume's wall about 1,928 days), autostop runway about ⟦audit:fixture.autostop_days⟧
    days, "In 30 days: about ⟦audit:fixture.used30_gb⟧ GB"; level 1 at 80.5 % (1,610.0 GB; about
@@ -7271,9 +7465,9 @@ RULED_PIN_TXT = r"""
    ⟦audit:fixture.last_good⟧ UTC (7 min before the sample); the backlog
    ⟦audit:fixture.backlog_rows⟧ rows (5 ILP batches of 5,000 rows, `21` :4323; the healthy frames'
    backlog ⟦audit:fixture.healthy_backlog_rows⟧ rows) at ⟦audit:fixture.ingest_rate⟧ msg/s (the
-   health example's "ingest 18.4k msg/s", `22` :10486); migration ⟦audit:fixture.schema_version⟧ →
+   health example's "ingest 18.4k msg/s", `22` :11019); migration ⟦audit:fixture.schema_version⟧ →
    ⟦audit:fixture.target_version⟧, ⟦audit:fixture.pending⟧ pending (the latest migration `22`
-   :13501 names; ⟦audit:fixture.healthy_pending⟧ pending on the healthy card); the import BTCUSDT
+   :14395 names; ⟦audit:fixture.healthy_pending⟧ pending on the healthy card); the import BTCUSDT
    2026-01-01 → 2026-01-31, ⟦audit:fixture.import_days⟧ days (≤ 366), ⟦audit:fixture.running_done⟧
    done at ⟦audit:fixture.running_pct⟧ % on the running frame, ⟦audit:fixture.skip_processed⟧
    processed (⟦audit:fixture.skip_done⟧ done, 1 skipped) at ⟦audit:fixture.skip_pct⟧ % on the skip
@@ -7289,11 +7483,11 @@ RULED_PIN_TXT = r"""
 @ §4#1 ¶2 ‖ paragraph
   The three cards are the AC 1 surface: Size · Share of budget · Retention · Growth/day ·
    Projected full · Health, then the tier's own rows. Of the three AC 1 numbers only the disk-level
-   growth and projection are produced today (`22` :18094–18095): every card's Growth/day and
+   growth and projection are produced today (`22` :19214–19215): every card's Growth/day and
    Projected full cells read "—" with the caption PROPOSED (D04-G1) and the shipped fallback beside
    them ("all tiers 1.45 GB/day", "all tiers 2028-03-27"), so the board is honest about today and
    the tool fails a tier row whose cell is neither a figure with a unit nor the captioned fallback
-   (§12 R-1). Health is the `ComponentState` word (`22` :16368) with its glyph (✓ healthy · ⚠
+   (§12 R-1). Health is the `ComponentState` word (`22` :17419) with its glyph (✓ healthy · ⚠
    degraded / warning · ✗ down · "not deployed" plain), never colour alone (`14` :86, :2777). Every
    figure carries a unit. The CMP-178 tile for SCR-143's link carries `label · value · unit · tone`
    (D04-A1 adds the `unit` requirement and the tone ↔ `ComponentState` map). Row counts (D04-G3),
@@ -7301,7 +7495,7 @@ RULED_PIN_TXT = r"""
    appear only as captioned PROPOSED second rows with their shipped fallback (BQ-18 RULED); no card
    links a console (SR-048) and no card carries a backup control (`21` §8). Purge data… sits on the
    QuestDB and Parquet cards only: `purgeRecordedData` deletes recorded data from QuestDB and
-   Parquet (`22` :14139–14153; E16-D02 :410), and the Postgres tier holds none of it, so its card
+   Parquet (`22` :15035–15057; E16-D02 :410), and the Postgres tier holds none of it, so its card
    has no purge entry.
 @ §4#1 ¶3 ‖ table
   | Frame | Producer | Shows | Controls (class per §1.3) | Class | Board |
@@ -7332,7 +7526,7 @@ RULED_PIN_TXT = r"""
    | 02 |
   | `TIER/postgres` | `tiers[].tier` postgres (`retention_days` null); `components[]` postgres
    healthy | Size 16.0 GB · Share of budget not counted (the meter divides questdb + parquet only,
-   `22` :5004) · Retention — · Growth/day — (PROPOSED — D04-G1, owner approval pending (#2701),
+   `22` :5424) · Retention — · Growth/day — (PROPOSED — D04-G1, owner approval pending (#2701),
    shipped fallback beside it: all tiers 1.45 GB/day) · Projected full — (PROPOSED — D04-G1, owner
    approval pending (#2701), shipped fallback beside it: all tiers 2028-03-27) · Health healthy,
    the text word with the ✓ glyph · Last vacuum — (PROPOSED — D04-G6, owner approval pending
@@ -7340,7 +7534,7 @@ RULED_PIN_TXT = r"""
    not a schema version) · a captioned second row PROPOSED — D04-G7, owner approval pending
    (#2701): Migration 0008, 0 pending · Rows by table — (PROPOSED — D04-G3, owner approval pending
    (#2701)) | Vacuum Postgres… only as the inset PROPOSED — D04-G8, owner approval pending (#2701)
-   · no purge entry on this card: purge deletes QuestDB and Parquet data only (`22` :14139–14153) ·
+   · no purge entry on this card: purge deletes QuestDB and Parquet data only (`22` :15035–15057) ·
    no console link · no backup control | T1 | 02 |
   | `TIER/tables-questdb` | PROPOSED `tiers[].tables[]` (D04-G3); the shipped frame carries no
    table | a captioned second row "PROPOSED — D04-G3, owner approval pending (#2701)": CMP-049
@@ -7412,7 +7606,7 @@ RULED_PIN_TXT = r"""
    recording volume was refused at start-up; the gate opens once it is fixed" · the AC 2 sentence
    "Recording pauses before trading is affected." · the meters at their last values, the budget
    fill danger · `level` 3 shown as the gate's level, never derived from the bytes (`22`
-   :4996–4998) | every write enabled (T1); the same T4 rule on a refusal | status | 03 |
+   :5416–5418) | every write enabled (T1); the same T4 rule on a refusal | status | 03 |
   | `SCR-142/view-as` | `GET /auth/session/view-as` reports an active context (the Owner viewing
    as alex); `level` 0 | stamp Sampled 10:31:03 UTC (every 60 s) · one notice under the header: ⚿
    "Read-only — read-only while viewing as alex." (`notice.panel_read_only`, E16-D02 D-16 :778
@@ -7436,7 +7630,7 @@ RULED_PIN_TXT = r"""
    data…, Import archives enabled (T1); an action that needs QuestDB is refused by the server at
    the point of action (T4 with the code), never pre-emptively disabled | status | 04 |
   | `SCR-142/lag-warning` | WS `recorder` `write_backlog_rows` 25,000 (5 ILP batches of 5,000
-   rows, `21` :4323) for two samples; `ingest_rate_msgs_per_sec` 18,400 (`22` :10486); `level` 0 |
+   rows, `21` :4323) for two samples; `ingest_rate_msgs_per_sec` 18,400 (`22` :11019); `level` 0 |
    stamp Sampled 10:31:03 UTC (every 60 s) · CMP-028 warning "Ingestion backlog 25,000 rows —
    writes are behind the feed" · the QuestDB card's Ingestion row "Ingest 18,400 msg/s, backlog
    25,000 rows, lag —" with the lag cell captioned PROPOSED — D04-G4, owner approval pending
@@ -7450,7 +7644,7 @@ RULED_PIN_TXT = r"""
    the Postgres card's Migration row as a captioned second row PROPOSED — D04-G7, owner approval
    pending (#2701): "0008, 1 pending" · the shipped fallback beside it: `HealthReport.version` and
    `git_sha` as the release words | no Apply control: migrations run with the release (`22`
-   :10570), a deferred capability drawn absent (A1) · every write enabled (T1) | status | 04 |
+   :11103), a deferred capability drawn absent (A1) · every write enabled (T1) | status | 04 |
   | `SCR-142/stale-sample` | no new report for more than 2 × 60 s (the socket up or down); the
    last report 10:31:03 UTC; `level` 0 | stamp Sampled 10:31:03 UTC, stale (3 min old) with the
    clock glyph (CMP-239 `stale`, `color.data-confidence.stale.indicator`) · every figure keeps
@@ -7481,13 +7675,13 @@ RULED_PIN_TXT = r"""
    unless the server answers 403 (D04-CG2). On SCR-140, E16-D02 §6.6 runs the same
    `compactRecorder` as Compact now with no confirmation (:424); this page confirms it (BQ-10
    RULED), and D04-C6 records the divergence for its owner. Purge keeps E16-D02 §6.5's typed dialog
-   with the `recorder` step-up (§7). The vacuum is wholly PROPOSED (D04-G8: no route, no
-   `Job.kind`, `22` :20833–20845; `21` :4332) and appears only as a captioned inset (BQ-11 RULED).
+   with the `recorder_purge` step-up (§7). The vacuum is wholly PROPOSED (D04-G8: no route, no
+   `Job.kind`, `22` :22002–22014; `21` :4332) and appears only as a captioned inset (BQ-11 RULED).
    Stop job (cancel a running job) is PROPOSED (D04-G10: `getJob` is the only job route, `22`
-   :11564–11600) and appears only as a captioned carrier on the strip, named Stop job so it never
+   :12097–12133) and appears only as a captioned carrier on the strip, named Stop job so it never
    shares a label with the dialogs' Cancel exit; today a started compaction, purge or import runs
    to its end, and the `cancelled` outcome copy stands because `Job.status` has the word (`22`
-   :20847). The jobs strip is one `role="status"` region (E16-D03 §8 :255–268): 2 s polling while
+   :22016). The jobs strip is one `role="status"` region (E16-D03 §8 :255–268): 2 s polling while
    queued or running, the text swapped in place, progress text first with a CMP-023 whose
    `aria-valuetext` equals the text, one polite announcement at start and one per terminal state —
    never per tick (CMP-023 `15` :267).
@@ -7498,11 +7692,12 @@ RULED_PIN_TXT = r"""
    ----------------------------------------------------------------------------------------------------------------------------------
    | ------------------------ |
    ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-   | ------------------------------------------------------------------------------ |
-   ------------------------------------ | --------------------------- |
+   |
+   -------------------------------------------------------------------------------------------------------------------------------
+   | ------------------------------------ | --------------------------- |
    -----------------------------------------------------------------------------------------------
    |
-  | Compact Parquet | `compactRecorder` (`22` :14043); `Job.kind` PROPOSED `parquet_compaction`
+  | Compact Parquet | `compactRecorder` (`22` :14937); `Job.kind` PROPOSED `parquet_compaction`
    (D04-G9); optional `symbols[]`, `older_than_days` 1–3650 | no (`21` :4416–4417) | CMP-044
    standard: "Compact Parquet partitions?" · "Merges small files into partitions of at most 512
    MiB. Nothing is deleted. Replay is paused on partitions it touches." · the audited line · Cancel
@@ -7511,14 +7706,15 @@ RULED_PIN_TXT = r"""
   | Vacuum Postgres | PROPOSED `POST /admin/db/vacuum` + `Job.kind` `db_vacuum` (D04-G8): the
    whole action is PROPOSED, captioned on every carrier | no | CMP-044 standard: "Vacuum Postgres?"
    · "Reclaims space from deleted rows. Nothing is deleted. Queries may be slower while it runs." ·
-   the audited line · Cancel / Vacuum | none proposed; the owner may require `recorder` (D04-Q1) |
-   "Vacuum running · {pct} %" | PROPOSED (D04-G10) | `new` keys `storage.vacuum.{succeeded, failed,
-   cancelled, unknown}` mirroring the compact lines |
-  | Purge data | `purgeRecordedData` (`22` :14138); `Job.kind` `retention_purge` (:20844) | **yes,
-   irreversible** | E16-D02 §6.5's typed dialog, reused whole (§7) | `recorder` class on submit
-   after the typed confirm (`22` :14145; E16-D02 §6.4) | "Purge of ETHUSDT running · {pct} %" |
-   PROPOSED (D04-G10) | E16-D02 §3.2 :200–202, :204 reused |
-  | Import archives | `importTradeArchive` (`22` :14084); `Job.kind` `archive_import` (:20843) |
+   the audited line · Cancel / Vacuum | none proposed; the owner may require `recorder_purge`
+   (D04-Q1) | "Vacuum running · {pct} %" | PROPOSED (D04-G10) | `new` keys
+   `storage.vacuum.{succeeded, failed, cancelled, unknown}` mirroring the compact lines |
+  | Purge data | `purgeRecordedData` (`22` :15032); `Job.kind` `retention_purge` (:22013) | **yes,
+   irreversible** | E16-D02 §6.5's typed dialog, reused whole (§7) | `recorder_purge` class,
+   no-grace: a fresh code per purge (`22` :15040, :12495; E16-D02 §6.4), on submit after the typed
+   confirm | "Purge of ETHUSDT running · {pct} %" | PROPOSED (D04-G10) | E16-D02 §3.2 :200–202,
+   :204 reused |
+  | Import archives | `importTradeArchive` (`22` :14978); `Job.kind` `archive_import` (:22012) |
    no (adds; recorded wins) | no dialog: the card form + one consequence line (BQ-12 RULED; §8) |
    none | "Import running · 38 %" | PROPOSED (D04-G10) | §8: the summary, failed, cancelled,
    unknown (`new` keys) |
@@ -7540,9 +7736,9 @@ RULED_PIN_TXT = r"""
    D04-G8; nothing is shipped) | captioned PROPOSED — D04-G8, owner approval pending (#2701):
    CMP-044 standard, title "Vacuum Postgres?" · body "Reclaims space from deleted rows. Nothing is
    deleted. Queries may be slower while it runs." · "This action is audited." · no typed field, no
-   step-up sentence unless the owner assigns the `recorder` class (D04-Q1) | exits Cancel, Esc and
-   the close ✕ (T1) · Vacuum (CMP-001 primary, T1), PROPOSED — D04-G8, owner approval pending
-   (#2701) | T1 | 05 |
+   step-up sentence unless the owner assigns the `recorder_purge` class (D04-Q1) | exits Cancel,
+   Esc and the close ✕ (T1) · Vacuum (CMP-001 primary, T1), PROPOSED — D04-G8, owner approval
+   pending (#2701) | T1 | 05 |
   | `JOB/strip-running` | this client's `202` → `Job.status` running for a compaction
    (`progress_pct` 42) and an import (38) | one `role="status"` region (polite), 2 s polling, the
    text swapped in place · "Compaction running · 42 %" + CMP-023 (`aria-valuetext` equal to the
@@ -7557,7 +7753,7 @@ RULED_PIN_TXT = r"""
    unchanged, nothing dimmed | Compact Parquet… stays enabled (T1): the refusal is T4 at the point
    of action, never a pre-emptive lock | T4 | 05 |
   | `JOB/outcomes` | `Job.status` succeeded / failed / cancelled, or `404 job_unknown` (`22`
-   :11584) | insets, one per terminal state, reused from E16-D02 §3.2 (:203–204): compact succeeded
+   :12117) | insets, one per terminal state, reused from E16-D02 §3.2 (:203–204): compact succeeded
    "Compacted at 10:42 UTC" · compact failed "Compaction failed (`<code>`); nothing was deleted." ·
    compact cancelled "Compaction cancelled; nothing was deleted." (E16-D02's elided "…cancelled."
    completed here: D04-A8) · compact unknown "Compaction status is no longer available on the
@@ -7567,31 +7763,42 @@ RULED_PIN_TXT = r"""
    `color.status.success.subtle` / `color.status.danger.subtle` inside the card | none (outcomes) |
    outcome | 05 |
 @ §7#1 ¶1 ‖ heading
-  ## 7. Purge (board 06; 6 frames) — E16-D02 §6.5 reused whole
+  ## 7. Purge (board 06; 7 frames) — E16-D02 §6.5 reused whole
 @ §7#1 ¶2 ‖ paragraph
-  Purge is the one destructive action here: Owner-only, step-up authenticated, with a mandatory
-   reason and the typed `confirm_symbol` echo (`22` :14141–14147, :14164; the ticket's security
-   note). SCR-142 adds **entry points**, not a dialog: the QuestDB and Parquet tier cards' "Purge
-   data…" and the "Purge…" in the per-symbol row's detail popover (D04-D3) open E16-D02 §6.5's
-   dialog (:404–420) with the symbol preselected and **the typed field empty — never pre-filled**
-   (BQ-9 RULED: no second shape). The Postgres card has no purge entry: purge deletes QuestDB and
-   Parquet data only (`22` :14139–14153; E16-D02 :410). The dialog is reused whole, its window and
-   its roll-off sentence included (E16-D02 :410–412). The Confirm is enabled only when the reason
-   is valid and the typed symbol matches: a validity look, never T2 (CMP-044 :477; E30-D02 D3). The
-   `recorder` step-up runs on submit after the typed confirm (`22` :14145; E16-D02 §6.4 :380–384:
-   the request held and re-sent once with the same Idempotency-Key; SCR-006 cited, not drawn). A
-   pinned symbol is refused without Include pinned (`422 retention_pinned_refused`, `22` :14148):
-   T4 at the point of action. The audit record (`retention.purge`) is written before the job
-   exists; when it cannot be, the server answers 503 and nothing starts (`22` :14150–14152): "Not
-   started: the audit record could not be written." (T4). The dialog's confirm line stays "This
-   action is audited (high severity)." (E16-D02's words; the name mismatch with `14` :2779 is
-   D04-C1). No frame links a QuestDB or DuckDB console (SR-048, `04` :873).
+  Purge is the one destructive action here: Owner-only, step-up authenticated (a fresh code per
+   purge), with a mandatory reason, the typed `confirm_symbol` echo and the window's upper bound
+   `before` (`22` :15035–15049, :15086; the ticket's security note). SCR-142 adds **entry points**,
+   not a dialog: the QuestDB and Parquet tier cards' "Purge data…" and the "Purge…" in the
+   per-symbol row's detail popover (D04-D3) open E16-D02 §6.5's dialog (:404–420) with the symbol
+   preselected and **the typed field empty — never pre-filled** (BQ-9 RULED: no second shape). The
+   Postgres card has no purge entry: purge deletes QuestDB and Parquet data only (`22`
+   :15035–15057; E16-D02 :410). The dialog is reused whole, its window and its roll-off sentence
+   included (E16-D02 :410–412). Its date field carries the contract's `before`, **required** (`22`
+   :15086): the exclusive upper bound of the purge window `[earliest, before)`, sent as a
+   `date-time` instant with an offset and never later than the server's clock (:15051–15054,
+   :15092–15097); data recorded at or after it is never deleted by the request or by any retry of
+   it (:15053–15054); a bound in the future is `422 validation_failed` with `errors: [{field:
+   before, rule: before_in_future}]` and the server's current time in `message` (:15054–15057) — T4
+   at the point of action (`PURGE/refused-before`), after the dialog's own validity look on the
+   bound (`PURGE/dialog-validity`); the help line under the field, "Data recorded at or after this
+   time is kept.", and its two reasons are `new` (§14). The Confirm is enabled only when the reason
+   is valid, the typed symbol matches and the `before` bound is not later than now: a validity
+   look, never T2 (CMP-044 :477; E30-D02 D3). The `recorder_purge` step-up runs on submit after the
+   typed confirm (`22` :15040; a no-grace class: each purge spends a fresh code and no trusted
+   window opens, :12495; E16-D02 §6.4 :380–384: the request held and re-sent once with the same
+   Idempotency-Key; SCR-006 cited, not drawn). A pinned symbol is refused without Include pinned
+   (`422 retention_pinned_refused`, `22` :15045): T4 at the point of action. The audit record
+   (`retention.purge`) is written before the job exists; when it cannot be, the server answers 503
+   and nothing starts (`22` :15073–15075): "Not started: the audit record could not be written."
+   (T4). The dialog's confirm line stays "This action is audited (high severity)." (E16-D02's
+   words; the name mismatch with `14` :2779 is D04-C1). No frame links a QuestDB or DuckDB console
+   (SR-048, `04` :873).
 @ §7#1 ¶3 ‖ table
   | Frame | Producer | Shows | Controls (class per §1.3) | Class | Board |
   | ----------------------- |
-   -----------------------------------------------------------------------------------------------------------------------
+   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
-   ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
    ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    | ------------- | ----- |
@@ -7605,33 +7812,48 @@ RULED_PIN_TXT = r"""
   | `PURGE/dialog` | Purge… pressed on the ETHUSDT row | E16-D02 §6.5's dialog reused whole
    (CMP-043 form, CMP-044 typed, wrapped by CMP-093): title "Purge ETHUSDT data?" · Symbol
    (CMP-009) ETHUSDT · Delete data recorded before (CMP-047 single) 2026-08-15, the retention
-   cut-off · "This deletes about 1.2 GB recorded from 2026-08-13 to 2026-08-15 from QuestDB and
-   Parquet. It cannot be undone, and replay, footprint history and the journal lose this range.
-   Shared QuestDB day partitions are freed by the nightly roll-off." (E16-D02 :410–412, whole) ·
-   Reason (CMP-007, required, 3–280 characters) · Include pinned (CMP-005) shown only for a pinned
-   symbol · Type the symbol to confirm (CMP-007): empty, never pre-filled (the ticket's security
-   note) · the step-up sentence "You'll confirm with your password and a code." · "This action is
-   audited (high severity)." | exits Cancel, Esc and the close ✕ (T1) · Confirm "Purge ETHUSDT
-   data" (CMP-001 danger) enabled only when the reason is valid and the typed symbol matches: a
-   validity look while it is not, never T2 (`PURGE/dialog-validity`) | T1 | 06 |
-  | `PURGE/dialog-validity` | the typed symbol differs from ETHUSDT, or the reason is shorter than
-   3 characters | the same dialog · Confirm "Purge ETHUSDT data" with its own danger fill and label
-   at `opacity.disabled` 0.45, the reason full-opacity under it in `color.text.secondary`: "Type
-   ETHUSDT exactly to confirm." · board layer `validity-reason` · `aria-disabled`, focusable, a
-   press shows the error summary · no lock, no CMP-079, no key (E09-D09 §9.1 :230; E30-D02 D3 :128)
-   | exits Cancel, Esc and the close ✕ (T1) | validity look | 06 |
+   cut-off: the contract's `before`, required (`22` :15086), the exclusive upper bound of the
+   window `[earliest, before)` sent as a `date-time` instant with an offset and not later than the
+   server's clock (:15051–15054, :15092–15097), with the help line "Data recorded at or after this
+   time is kept." under it · "This deletes about 1.2 GB recorded from 2026-08-13 to 2026-08-15 from
+   QuestDB and Parquet. It cannot be undone, and replay, footprint history and the journal lose
+   this range. Shared QuestDB day partitions are freed by the nightly roll-off." (E16-D02 :410–412,
+   whole) · Reason (CMP-007, required, 3–280 characters) · Include pinned (CMP-005) shown only for
+   a pinned symbol · Type the symbol to confirm (CMP-007): empty, never pre-filled (the ticket's
+   security note) · the step-up sentence "You'll confirm with your password and a code." · "This
+   action is audited (high severity)." | exits Cancel, Esc and the close ✕ (T1) · Confirm "Purge
+   ETHUSDT data" (CMP-001 danger) enabled only when the reason is valid and the typed symbol
+   matches: a validity look while it is not, never T2 (`PURGE/dialog-validity`) | T1 | 06 |
+  | `PURGE/dialog-validity` | the typed symbol differs from ETHUSDT, the reason is shorter than 3
+   characters, or the `before` bound is later than now (`22` :15054) | the same dialog · Confirm
+   "Purge ETHUSDT data" with its own danger fill and label at `opacity.disabled` 0.45, the reason
+   full-opacity under it in `color.text.secondary`: "Type ETHUSDT exactly to confirm." (for the
+   bound, "Choose a time no later than now.", in the same place) · board layer `validity-reason` ·
+   `aria-disabled`, focusable, a press shows the error summary · no lock, no CMP-079, no key
+   (E09-D09 §9.1 :230; E30-D02 D3 :128) | exits Cancel, Esc and the close ✕ (T1) | validity look |
+   06 |
   | `PURGE/pinned-refused` | Confirm pressed for BTCUSDT (pinned) without Include pinned: the
    server's `422 retention_pinned_refused` | CMP-027 inline under Confirm: "Pinned data is
    excluded. Tick Include pinned to delete it too." with the code retention_pinned_refused in
    parentheses, polite once · the dialog stays open with its inputs | exits Cancel, Esc and the
    close ✕ (T1) · Confirm stays enabled (T1): a refusal is T4 at the point of action | T4 | 06 |
+  | `PURGE/refused-before` | Confirm pressed for ETHUSDT with a `before` later than the server's
+   clock (Delete data recorded before (CMP-047 single) 2026-09-15 against the server's 2026-09-14
+   10:31:03 UTC): the server's `422 validation_failed` with `errors: [{field: before, rule:
+   before_in_future}]` and its time in `message` (`22` :15054–15057) | CMP-027 inline under
+   Confirm: "Not started: the time is later than the server's (2026-09-14 10:31:03 UTC). Choose a
+   time at or before it." with the code validation_failed in parentheses, polite once · the dialog
+   stays open with its inputs | exits Cancel, Esc and the close ✕ (T1) · Confirm stays enabled
+   (T1): a refusal is T4 at the point of action, after the dialog's own validity look on the bound
+   (`PURGE/dialog-validity`) | T4 | 06 |
   | `PURGE/step-up` | Confirm pressed with a valid form: the server answers `403 step_up_required`
-   with `action_class` recorder (`22` :14145) | the step-up sentence "You'll confirm with your
-   password and a code." already in the dialog · the SCR-006 step-up modal opens over it (cited,
-   E16-D02 §6.4 :380–384; not drawn here), the request held and re-sent once with the same
-   Idempotency-Key · inside a live grace window the sentence reads "Still trusted for recorder
-   changes · {mm:ss}" | exits Cancel, Esc and the close ✕ on the modal (T1); the dialog keeps its
-   inputs | T1 | 06 |
+   with `action_class` `recorder_purge` (`22` :15043) | the step-up sentence "You'll confirm with
+   your password and a code." already in the dialog · the SCR-006 step-up modal opens over it
+   (cited, E16-D02 §6.4 :380–384; not drawn here), the request held and re-sent once with the same
+   Idempotency-Key · `recorder_purge` is a no-grace class (`22` :12495, :15040): each purge spends
+   a fresh code and no trusted window opens, so E16-D02 §6.4 :389's "Still trusted for recorder
+   changes · {mm:ss}" is never shown here | exits Cancel, Esc and the close ✕ on the modal (T1);
+   the dialog keeps its inputs | T1 | 06 |
   | `PURGE/outcomes` | `Job.status` terminal, or `404 job_unknown` | insets reused from E16-D02
    §3.2 (:200–202, :204): failed, `role="alert"` once, "Purge of ETHUSDT failed (`<code>`). Some
    data may already be deleted: check ETHUSDT's size and gaps." · cancelled (the cancel itself
@@ -7642,7 +7864,7 @@ RULED_PIN_TXT = r"""
 @ §8#1 ¶1 ‖ heading
   ## 8. Import (board 07; 6 frames; US-REC-007 :4210–4226)
 @ §8#1 ¶2 ‖ paragraph
-  `importTradeArchive` (`22` :14081–14134) imports the exchange's public daily trade archives for
+  `importTradeArchive` (`22` :14975–15028) imports the exchange's public daily trade archives for
    one symbol over an inclusive UTC date range of at most 366 days, verifies each file, writes
    trades to the Parquet cold tier, discards and reports rows inside a recorded window (recorded
    data wins), labels the windows archive-derived and `trades` only, is resumable and idempotent
@@ -7650,7 +7872,7 @@ RULED_PIN_TXT = r"""
    (BQ-12 RULED: an additive, resumable action; the CMP-044 alternative is D04-Q3): Symbol, From /
    To, one consequence line, "Import archives". **A failing file never looks like a failing page**
    (AC 3). While the import runs, the shipped surface is `Job.progress_pct` with the requested
-   range (`22` :20848; `Job.result` is null until `succeeded`, :20851–20852): the overall bar and
+   range (`22` :22017; `Job.result` is null until `succeeded`, :22020–22021): the overall bar and
    "{done} of {n} days · {pct} %" keep moving and the strip reads "Import running · {pct} %". The
    per-file rows and the "{k} skipped" counter during the run need `files[]` streamed before
    `succeeded` (D04-G11), so they are drawn as a captioned PROPOSED inset beside the bar: a skipped
@@ -7661,7 +7883,7 @@ RULED_PIN_TXT = r"""
    counts, the overlap report, the per-file table) comes from `result`, whose shape is PROPOSED too
    (D04-G11), and is drawn as a captioned inset; the shipped summary is the finished line and the
    tag. The per-file reason codes are PROPOSED with `ArchiveImportResult` (D04-G11):
-   `checksum_mismatch` (the code word of `22` :11276) · `parse_error` · `download_failed` ·
+   `checksum_mismatch` (the code word of `22` :11809) · `parse_error` · `download_failed` ·
    `already_imported`, each with one sentence (§14).
 @ §8#1 ¶3 ‖ table
   | Frame | Producer | Shows | Controls (class per §1.3) | Class | Board |
@@ -7672,9 +7894,9 @@ RULED_PIN_TXT = r"""
    |
    ----------------------------------------------------------------------------------------------------------
    | ------------- | ------ |
-  | `IMPORT/form` | the import card at rest (`importTradeArchive`, `22` :14084) | Symbol (CMP-009)
+  | `IMPORT/form` | the import card at rest (`importTradeArchive`, `22` :14978) | Symbol (CMP-009)
    BTCUSDT · From / To (CMP-047 range) 2026-01-01 → 2026-01-31, inclusive UTC dates, at most 366
-   days (`22` :14088) · the consequence line "Imports Bybit's public daily trade archives (trades
+   days (`22` :14982) · the consequence line "Imports Bybit's public daily trade archives (trades
    only, no book data). Recorded data wins where they overlap. Re-running skips finished days." ·
    the CMP-011 tag "Archive-derived · trades only · no book data" | Import archives (CMP-001
    primary, T1); no dialog: the form is the confirm (BQ-12 RULED) | T1 | 07 |
@@ -7691,7 +7913,7 @@ RULED_PIN_TXT = r"""
    "Import started" announced once | Import archives busy (`aria-busy`, no lock) · Stop job,
    PROPOSED — D04-G10, owner approval pending (#2701) | busy | 07 |
   | `IMPORT/running-with-skips` | day 14 (2026-01-14) fails its checksum: the file is skipped
-   (`checksum_mismatch`, the code word of `22` :11276) and the import continues | the overall bar
+   (`checksum_mismatch`, the code word of `22` :11809) and the import continues | the overall bar
    keeps moving: "30 of 31 days · 96 %" (`aria-valuetext` equal; `Job.progress_pct` with the
    requested range, the shipped running state) · the strip reads "Import running · 96 %" · the page
    keeps its healthy chrome: no page banner, no `role="alert"` (AC 3) · an inset PROPOSED —
@@ -7708,7 +7930,7 @@ RULED_PIN_TXT = r"""
    (E16-D05's chip is the consumer) · an inset PROPOSED — D04-G11, owner approval pending (#2701)
    from `result`: the counts "Imported 29 days of BTCUSDT trades · 1 file skipped · 1 file failed ·
    660,000 overlapping rows discarded", the overlap report "660,000 rows inside recorded windows
-   were discarded — recorded data wins." (`22` :14089, never "duplicates removed"), the per-file
+   were discarded — recorded data wins." (`22` :14983, never "duplicates removed"), the per-file
    table complete with the 2026-01-31 row "error ✗ / download_failed / The file could not be
    downloaded; run the import again to retry it. / —" | Import archives enabled again (T1); "Run it
    again to resume: finished days are skipped." | outcome | 07 |
@@ -7729,7 +7951,7 @@ RULED_PIN_TXT = r"""
   | Owner viewing as another user | the **first leg** on every write (E09-D09 §2.1 step 3): every
    write T2 with `rbac.view_as`, one panel notice (`SCR-142/view-as`); reads, meters, tables and a
    running job's progress unchanged; exits and links enabled |
-  | Owner | everything in §2–§8; the `recorder` step-up on purge; compaction, import and the
+  | Owner | everything in §2–§8; the `recorder_purge` step-up on purge; compaction, import and the
    PROPOSED vacuum (D04-G8) without a typed field |
   | Manager / Viewer | not reachable: `/admin/*` is hidden from navigation and returns a hard 404
    (`14` :43, :85; E16-D02 §7 :449); `rbac.owner_only` "Only the owner can change recording."
@@ -7838,12 +8060,12 @@ RULED_PIN_TXT = r"""
   ## 12. Producibility, the contract gaps and the frame gates (the Test plan)
 @ §12#1 ¶2 ‖ paragraph
   **Shipped state at the base (the zero counts).** `StorageUsage` has ⟦audit:facts.storage_fields⟧
-   fields (`22` :18091–18123) and nothing SCR-142's catalogue entry asks for beyond them: no row
+   fields (`22` :19211–19243) and nothing SCR-142's catalogue entry asks for beyond them: no row
    counts, no lag, no slow queries, no vacuum or compaction timestamps, no schema version, no
    per-tier growth or projection; `Job.kind` has ⟦audit:facts.job_kinds⟧ values with no compaction
-   or vacuum kind (:20833–20845); `getJob` is the only job route (no cancel, :11564–11600); no
-   vacuum route exists; `Job.result` for `archive_import` has no schema (:14093);
-   `HealthReport.components[]` names its tiers only in the example (:10481–10493). The tool prints
+   or vacuum kind (:22002–22014); `getJob` is the only job route (no cancel, :12097–12133); no
+   vacuum route exists; `Job.result` for `archive_import` has no schema (:14987);
+   `HealthReport.components[]` names its tiers only in the example (:11014–11026). The tool prints
    the counts.
 @ §12#1 ¶3 ‖ table
   | Field or behaviour | Producer today | Gap |
@@ -7851,9 +8073,9 @@ RULED_PIN_TXT = r"""
    ------------------------------------------------------------------------------------- |
    ----------- |
   | disk and budget figures, projection, growth, level, gate, sample time | `StorageUsage` (`22`
-   :18091–18123); WS `storage` (`23` :4062–4085) | — |
+   :19211–19243); WS `storage` (`23` :4062–4085) | — |
   | per-tier size, retention; per-symbol size, growth, pinned | `tiers[]`, `symbols[]` (`22`
-   :18096–18112) | — |
+   :19216–19232) | — |
   | per-tier growth and projected full date (AC 1) | none | D04-G1 |
   | per-symbol oldest / newest, the sparkline history | none | D04-G2 |
   | rows by table, oldest / newest per table | none | D04-G3 |
@@ -7861,19 +8083,19 @@ RULED_PIN_TXT = r"""
   | slowest queries | none | D04-G5 |
   | last compaction / last vacuum | none (the schedule is `21` :4410) | D04-G6 |
   | schema version, pending migrations | none (`version` / `git_sha` are release facts,
-   :20671–20672; readiness :10570) | D04-G7 |
+   :21840–21841; readiness :11103) | D04-G7 |
   | a vacuum action | none (no route, no kind; `21` :4332) | D04-G8 |
   | the compaction job's kind word | none in `Job.kind` | D04-G9 |
   | cancel a running job | none | D04-G10 |
   | the import summary's shape and the per-file reason codes | `result` "carries the import
-   summary", no schema (:14093) | D04-G11 |
-  | the archive-derived label on coverage intervals | prose (:14090–14091) | D04-G12 |
-  | a tier unreachable | `components[] {name, state, last_good_at}` (:20681–20691); the names from
+   summary", no schema (:14987) | D04-G11 |
+  | the archive-derived label on coverage intervals | prose (:14984–14985) | D04-G12 |
+  | a tier unreachable | `components[] {name, state, last_good_at}` (:21850–21860); the names from
    the example | — (D04-CG1) |
-  | the step-up on compact / PROPOSED vacuum (D04-G8) / import | none in `22` (purge only, :14145)
+  | the step-up on compact / PROPOSED vacuum (D04-G8) / import | none in `22` (purge only, :15040)
    | — (D04-CG2) |
-  | the example's symbols against its tiers | the `22` example (:5025–5041) | — (D04-CG3) |
-  | jobs after an API restart | lost; `404 job_unknown` (:11581–11584; the 256 cap :378) | —
+  | the example's symbols against its tiers | the `22` example (:5445–5461) | — (D04-CG3) |
+  | jobs after an API restart | lost; `404 job_unknown` (:12114–12117; the 256 cap :380) | —
    (D04-CG4) |
 @ §12#1 ¶4 ‖ paragraph
   **The gates (A2 RULED; `docs/design/_tools/e16_d04_storage_audit.py`).** `--check` reads this
@@ -7911,32 +8133,35 @@ RULED_PIN_TXT = r"""
    ⟦audit:mutations_text4_own⟧ paraphrases of this fold (M2, M3, M4 and M6, three each, in units no
    pin held before it) and the gate re-check 4's ⟦audit:mutations_text5⟧ forms (the sketch's Purge
    box shifted by spaces alone, onto the Postgres card and off the Parquet card, and a `~` written
-   before a marked number) — and each must make `--check` fail with **one** FAIL, its own message;
-   no two share a message, ⟦audit:valid_twins⟧ valid twins (a captioned inset, the gap's own G-row,
-   a negated mention, the exit Cancel, "Esc closes the dialog", the ruled order reworded four ways,
-   a sibling PENDING by name, the typed field starting empty, trailing spaces) raise no gate FAIL
-   and nothing once re-pinned (until then R-23 alone refuses each, as it edits a unit), the
-   unmutated file passes and the file is byte-identical afterwards; `--mutate N` exits 1 when the
-   gate caught the mutation, 2 when it slipped. **Two layers (the gate re-check 3: whole-document
-   default-deny).** The vocabulary gates above are the first line: each reads its ruled sentence
-   through its words, their synonyms and the negators that govern them. R-23 is the backstop and
-   pins **every unit** of this file in the tool's committed `RULED_PIN_TXT`: a unit is a Markdown
-   block — a heading, or a run of consecutive non-blank lines (each paragraph, list block and table
-   block, the deck's table among them) — and the fenced sketch whole, its lines verbatim (its
-   columns are content; every other unit's whitespace is normalised); a soft-wrapped line belongs
-   to its block. A unit is keyed by its region (the heading path, plus the heading's occurrence)
-   and its place in the region, and read with its exact text: ⟦audit:pins.total⟧ units (headings
-   ⟦audit:pins.heading⟧, paragraphs ⟦audit:pins.paragraph⟧, tables ⟦audit:pins.table⟧, the sketch
-   ⟦audit:pins.sketch⟧). A changed, moved, duplicated or missing unit, a unit the pins do not hold,
-   a new or repeated heading and a duplicate location FAIL naming the location, so a new or edited
-   unit anywhere fails until `--repin-ruled` rewrites the table, a deliberate act read in the diff;
-   `--check` never re-pins. **Left unpinned, by name (the exemption list, the tool's
-   `PIN_EXEMPT`):** ⟦audit:pins.exempt⟧ class — the `audit:` markers and the number printed before
-   each, §12's among them (⟦audit:pins.masked⟧ spans, each read as its key): `--check` re-derives
-   each key's value and reads the number before the marker. Nothing else is exempt: §12's R-rows,
-   §15's matrix and the caption carriers have no exact gate that reads them whole, so they stay
-   pinned. An R-23 FAIL is reported only when no other gate FAILs, else counted beside it on a NOTE
-   line, so one wrong form yields one FAIL.
+   before a marked number) and the purge-contract re-pin's ⟦audit:mutations_contract⟧ form (the
+   dialog's `before` field removed) and the boards lens round 1's ⟦audit:mutations_boards⟧ form
+   (`PURGE/refused-before`'s close ✕ read dead after the refusal) — and each must make `--check`
+   fail with **one** FAIL, its own message; no two share a message, ⟦audit:valid_twins⟧ valid twins
+   (a captioned inset, the gap's own G-row, a negated mention, the exit Cancel, "Esc closes the
+   dialog", the ruled order reworded four ways, a sibling PENDING by name, the typed field starting
+   empty, trailing spaces) raise no gate FAIL and nothing once re-pinned (until then R-23 alone
+   refuses each, as it edits a unit), the unmutated file passes and the file is byte-identical
+   afterwards; `--mutate N` exits 1 when the gate caught the mutation, 2 when it slipped. **Two
+   layers (the gate re-check 3: whole-document default-deny).** The vocabulary gates above are the
+   first line: each reads its ruled sentence through its words, their synonyms and the negators
+   that govern them. R-23 is the backstop and pins **every unit** of this file in the tool's
+   committed `RULED_PIN_TXT`: a unit is a Markdown block — a heading, or a run of consecutive
+   non-blank lines (each paragraph, list block and table block, the deck's table among them) — and
+   the fenced sketch whole, its lines verbatim (its columns are content; every other unit's
+   whitespace is normalised); a soft-wrapped line belongs to its block. A unit is keyed by its
+   region (the heading path, plus the heading's occurrence) and its place in the region, and read
+   with its exact text: ⟦audit:pins.total⟧ units (headings ⟦audit:pins.heading⟧, paragraphs
+   ⟦audit:pins.paragraph⟧, tables ⟦audit:pins.table⟧, the sketch ⟦audit:pins.sketch⟧). A changed,
+   moved, duplicated or missing unit, a unit the pins do not hold, a new or repeated heading and a
+   duplicate location FAIL naming the location, so a new or edited unit anywhere fails until
+   `--repin-ruled` rewrites the table, a deliberate act read in the diff; `--check` never re-pins.
+   **Left unpinned, by name (the exemption list, the tool's `PIN_EXEMPT`):** ⟦audit:pins.exempt⟧
+   class — the `audit:` markers and the number printed before each, §12's among them
+   (⟦audit:pins.masked⟧ spans, each read as its key): `--check` re-derives each key's value and
+   reads the number before the marker. Nothing else is exempt: §12's R-rows, §15's matrix and the
+   caption carriers have no exact gate that reads them whole, so they stay pinned. An R-23 FAIL is
+   reported only when no other gate FAILs, else counted beside it on a NOTE line, so one wrong form
+   yields one FAIL.
 @ §12#1 ¶5 ‖ table
   | Rule | The ruled sentence the gate reads (source) | Tables read | Mutations |
   | ---- |
@@ -7951,7 +8176,7 @@ RULED_PIN_TXT = r"""
    unavailable frames show its stale form "stale (N min old)" (`14` :84; `20` :908) | §2, §5 |
    ⟦audit:mutations_by_rule.r2⟧ |
   | R-3 | exactly two meters, each naming its denominator field (`cap_bytes`, `disk_total_bytes`;
-   `22` :5004; D04-D1) | §2 `SCR-142/healthy` | ⟦audit:mutations_by_rule.r3⟧ |
+   `22` :5424; D04-D1) | §2 `SCR-142/healthy` | ⟦audit:mutations_by_rule.r3⟧ |
   | R-4 | health is a `ComponentState` word in every tier card; a tier down keeps the page usable
    and draws no page-level banner, callout, toast or alert in any wording (`14` :2777, :86; BQ-15
    RULED) | §4, §5 `SCR-142/tier-unreachable-questdb` | ⟦audit:mutations_by_rule.r4⟧ |
@@ -7968,13 +8193,14 @@ RULED_PIN_TXT = r"""
    `opacity.disabled`); §1.3's classes are fixed per row; the disk-full frame carries the BQ-14
    sentence; the migration frame draws no Apply or run control (A1; BQ-14 / 15 / 16 RULED) | every
    frame table, §1.3, every prose sentence, §14 | ⟦audit:mutations_by_rule.r6⟧ |
-  | R-7 | the purge dialog carries the Reason field (required, 3–280), the typed symbol empty and
-   the step-up sentence; the typed field is never pre-filled, auto-filled, pre-populated, filled
-   in, typed or copied into, nor — with the typed field as its subject — set to the symbol, already
-   holding it or already in it, arriving, opening or starting with it, defaulting to or suggesting
-   it, seeded or "empty at first"; nor is the symbol entered for the Owner — in any wording
-   anywhere in the file (the ticket's security note; `22` :14141, :14164) | §7 `PURGE/dialog`,
-   `PURGE/step-up`, every prose sentence | ⟦audit:mutations_by_rule.r7⟧ |
+  | R-7 | the purge dialog carries the Reason field (required, 3–280), the `before` bound (Delete
+   data recorded before, required), the typed symbol empty and the step-up sentence; the typed
+   field is never pre-filled, auto-filled, pre-populated, filled in, typed or copied into, nor —
+   with the typed field as its subject — set to the symbol, already holding it or already in it,
+   arriving, opening or starting with it, defaulting to or suggesting it, seeded or "empty at
+   first"; nor is the symbol entered for the Owner — in any wording anywhere in the file (the
+   ticket's security note; `22` :15035, :15051, :15086) | §7 `PURGE/dialog`, `PURGE/step-up`, every
+   prose sentence | ⟦audit:mutations_by_rule.r7⟧ |
   | R-8 | a validity-look frame carries `validity-reason`, `opacity.disabled` and the reason under
    the control, never inside it, and no lock, no CMP-079 or RbacGate (E09-D09 §9.1 :230; E30-D02 D3
    :128) | every row whose Class is validity look | ⟦audit:mutations_by_rule.r8⟧ |
@@ -7984,7 +8210,7 @@ RULED_PIN_TXT = r"""
    ⟦audit:mutations_by_rule.r9⟧ |
   | R-10 | the per-file table has a Reason column and the skipped row a code of the closed set
    with its deck sentence; the summary carries the overlap report ("recorded data wins"), the
-   archive-derived label and "no book data" (`22` :14089–14091; US-REC-007 :4220, :4226) | §8, §14
+   archive-derived label and "no book data" (`22` :14983–14985; US-REC-007 :4220, :4226) | §8, §14
    | ⟦audit:mutations_by_rule.r10⟧ |
   | R-11 | a running job is busy with `aria-busy`, never `T2`, a lock or a disabled write; a `409`
    refusal is T4, never a lock or a disabled control (E16-D02 §6.6 :422; E09-D09 §9.1) | §6
@@ -8111,8 +8337,8 @@ RULED_PIN_TXT = r"""
    the server." → New: the middle form written out whole, "Compaction cancelled; nothing was
    deleted." (the line `JOB/outcomes` draws); owner E16-D02 |
   | D04-C1 | `14` :2779 audits `storage.compaction_triggered`, `storage.vacuum_triggered`,
-   `storage.tier_migration_triggered`; `22` audits the import as `recorder.import` (:14094) and the
-   purge as `retention.purge` (:14150) and names no compaction audit; owner `14` / `22`; the
+   `storage.tier_migration_triggered`; `22` audits the import as `recorder.import` (:14988) and the
+   purge as `retention.purge` (:15073) and names no compaction audit; owner `14` / `22`; the
    confirm line here stays "This action is audited." |
   | D04-C2 | `14` :2774 lists four states; the ticket adds "a tier unreachable"; this spec draws
    five (§5); owner `14` (D04-A5) |
@@ -8155,25 +8381,25 @@ RULED_PIN_TXT = r"""
    started job runs to its end. Shared sentence. |
   | D04-G11 | `ArchiveImportResult {days_total, days_done, files[] {date, status ∈ done \| skipped
    \| error, reason, rows}, overlap_rows_discarded, archive_derived: true}` as `Job.result` for
-   `archive_import`; reason codes `checksum_mismatch` (`22` :11276's word) · `parse_error` ·
+   `archive_import`; reason codes `checksum_mismatch` (`22` :11809's word) · `parse_error` ·
    `download_failed` · `already_imported`; and `files[]` (with the skip count) streamed in `result`
-   while the job runs, before `succeeded` — today `result` is null until then (`22` :20851–20852),
+   while the job runs, before `succeeded` — today `result` is null until then (`22` :22020–22021),
    so the running frames' per-file rows and skip counter are this gap's captioned inset. Shared
    sentence. |
   | D04-G12 | a per-interval `source: recorded \| archive` on `GET /market/data-coverage`, so the
    chart's coverage chip and band (E16-D05) can label archive-derived ranges. Shared sentence. |
   | D04-CG1 | `HealthReport.components[].name` is a free string; `postgres`, `questdb`,
-   `parquet_store` are the example's names (`22` :10481–10493), not an enum — the three tier cards
+   `parquet_store` are the example's names (`22` :11014–11026), not an enum — the three tier cards
    bind to them by name and show "not reported" for a missing one |
-  | D04-CG2 | `22` puts a step-up class on purge only (:14145); compact, import and the PROPOSED
+  | D04-CG2 | `22` puts a step-up class on purge only (:15040); compact, import and the PROPOSED
    vacuum carry none, so no step-up sentence is drawn on their confirms |
   | D04-CG3 | the `22` example's `symbols[]` sum to 813.6 GB against 1,188.0 GB of QuestDB +
    Parquet: the per-symbol table states "{sum} of {budget used} attributed to symbols"; the example
    is not corrected |
-  | D04-CG4 | jobs live in the API process (at most 256, lost at a restart, `22` :378,
-   :11581–11584): the strip's "unknown" outcome and the reload case (`409 job_running` with no job
+  | D04-CG4 | jobs live in the API process (at most 256, lost at a restart, `22` :380,
+   :12114–12117): the strip's "unknown" outcome and the reload case (`409 job_running` with no job
    id) are designed for |
-  | D04-Q1 | does the owner want the `recorder` step-up class on the PROPOSED vacuum (a `22`
+  | D04-Q1 | does the owner want the `recorder_purge` step-up class on the PROPOSED vacuum (a `22`
    change)? Default proposed: none (non-destructive) |
   | D04-Q2 | a section of `/admin/recorder` (built) or its own `/admin/storage` route? One line
    changes if the owner prefers the route |
@@ -8209,10 +8435,10 @@ RULED_PIN_TXT = r"""
   Variables: `{HH:MM:SS}` 10:31:03; `{every}` 60 s; `{used}` / `{cap}` 1,188.0 GB / 2,000.0 GB;
    `{pct}` 59.4 %; `{d}` 422 (the autostop runway) or 560 (the full date); `{date}` 2028-03-27;
    `{growth}` 1.45 GB/day; `{symbol}` ETHUSDT; `{user}` alex; `{n}` / `{done}` 31 / 12; `{k}` 1;
-   `{rows}` 660,000; `{code}` the server's stable code; `{verb}` Compaction · Import · Purge of
-   {symbol} · Vacuum (PROPOSED, D04-G8). The fixture strings beside a template are the boards'
-   words. Every `rbac.*` string ≤ 60 characters, names no data; no jargon in a user-facing string
-   (the tool gates).
+   `{rows}` 660,000; `{code}` the server's stable code; `{server_time}` 2026-09-14 10:31:03 UTC;
+   `{verb}` Compaction · Import · Purge of {symbol} · Vacuum (PROPOSED, D04-G8). The fixture
+   strings beside a template are the boards' words. Every `rbac.*` string ≤ 60 characters, names no
+   data; no jargon in a user-facing string (the tool gates).
 @ §14#1 ¶3 ‖ table
   | Key | String | Source | Frames |
   | -------------------------------- |
@@ -8228,7 +8454,7 @@ RULED_PIN_TXT = r"""
    stale (3 min old)" | `new` | `SCR-142/stale-sample` |
   | `storage.stamp.sampling` | "Sampling…" | `new` | `SCR-142/loading` |
   | `storage.meter.budget` | "Recording budget: {used} of {cap} ({pct})" · "Recording budget:
-   1,188.0 GB of 2,000.0 GB (59.4 %)" | `new` (the numerator rule `22` :5004) | every page frame |
+   1,188.0 GB of 2,000.0 GB (59.4 %)" | `new` (the numerator rule `22` :5424) | every page frame |
   | `storage.meter.volume` | "Disk volume: {used} of {total} ({pct}), {free} free" · "Disk volume:
    1.2 TB of 4.0 TB (30.1 %), 2.8 TB free" | `new` | every page frame |
   | `storage.projection` | "Full in about {d} days ({date}) at {growth}: the {wall} is the nearer
@@ -8257,7 +8483,7 @@ RULED_PIN_TXT = r"""
    the disk." | `new` (`20` :905–907; `24` :3845, :3854) | every level ≥ 1 frame |
   | `storage.autostop.next` | "Recording stops at {halt} % in about {d} days" · "Recording stops
    at 95 % in about 69 days" | E16-D02 §8.3 :494 | `SCR-142/autostop` |
-  | `storage.accelerated` | "Retention accelerated" | `new` (`22` :18123) | `SCR-142/autostop` |
+  | `storage.accelerated` | "Retention accelerated" | `new` (`22` :19243) | `SCR-142/autostop` |
   | `storage.volume_refused` | "The recording volume was refused at start-up; the gate opens once
    it is fixed" | `new` (`23` :4103–4104; SR-096) | `SCR-142/volume-refused` |
   | `storage.actions.shorten` | "Shorten retention" | E16-D02 §8.3 :503 | level ≥ 1 frames |
@@ -8270,11 +8496,11 @@ RULED_PIN_TXT = r"""
    full" · "Health" · "Ingestion" · "Last compaction" · "Last vacuum" · "Migration" · "Rows by
    table" | `new` (`14` :2772, :2777; "Last compaction", "Last vacuum", "Migration" and "Rows by
    table" label PROPOSED rows: D04-G6, D04-G7, D04-G3) | `TIER/*` |
-  | `storage.tier.not_counted` | "not counted" | `new` (`22` :5004) | `TIER/postgres` |
+  | `storage.tier.not_counted` | "not counted" | `new` (`22` :5424) | `TIER/postgres` |
   | `storage.tier.all_tiers` | "all tiers {growth}" · "all tiers 1.45 GB/day" · "all tiers
    2028-03-27" | `new` (D04-G1's fallback) | `TIER/*` |
   | `storage.tier.health` | "healthy" · "degraded" · "warning" · "down" · "not deployed" · "not
-   reported" | `22` :16368 (`ComponentState`); `new` the last | `TIER/*`,
+   reported" | `22` :17419 (`ComponentState`); `new` the last | `TIER/*`,
    `SCR-142/tier-unreachable-questdb` |
   | `storage.tier.unreachable` | "{Tier} unreachable since {HH:MM:SS} UTC" · "QuestDB unreachable
    since 10:24:03 UTC" | `new` | `SCR-142/tier-unreachable-questdb` |
@@ -8296,7 +8522,7 @@ RULED_PIN_TXT = r"""
    1,188.0 GB attributed to symbols (68.5 %)" | `new` (D04-CG3) | `TIER/per-symbol` |
   | `storage.migration.banner` | "Migration pending · {n} pending · {from} → {to} — applied with
    the next release" · "Migration pending · 1 pending · 0008 → 0009 — applied with the next
-   release" | `new` (PROPOSED D04-G7; `22` :10570) | `SCR-142/migration-pending` |
+   release" | `new` (PROPOSED D04-G7; `22` :11103) | `SCR-142/migration-pending` |
   | `storage.unavailable` | "Disk figures could not be loaded." | E16-D02 §3.1 :191 |
    `SCR-142/unavailable` |
   | `storage.stale.announce` | "Storage figures are stale" | `new` | `SCR-142/stale-sample` |
@@ -8322,7 +8548,7 @@ RULED_PIN_TXT = r"""
    the strip (announced once) |
   | `storage.job.stop` | "Stop job" | `new` (PROPOSED D04-G10) | the strip's PROPOSED carrier |
   | `storage.job.refused.running` | "A {verb} is already running." · "A compaction is already
-   running." | `new` (`22` :14048 `409 job_running`) | `JOB/strip-refused-409` |
+   running." | `new` (`22` :14942 `409 job_running`) | `JOB/strip-refused-409` |
   | `storage.compact.succeeded` | "Compacted at {HH:MM} UTC" · "Compacted at 10:42 UTC" | E16-D02
    §3.2 :204 | `JOB/outcomes` |
   | `storage.compact.failed` | "Compaction failed (`<code>`); nothing was deleted." | E16-D02 §3.2
@@ -8346,21 +8572,32 @@ RULED_PIN_TXT = r"""
    and Parquet. It cannot be undone, and replay, footprint history and the journal lose this range.
    Shared QuestDB day partitions are freed by the nightly roll-off." | E16-D02 §6.5 :410–412 |
    `PURGE/dialog` |
+  | `storage.purge.before` | "Delete data recorded before" | E16-D02 §6.5 :409 (`22` :15086:
+   `before`, required) | `PURGE/dialog` |
+  | `storage.purge.before.help` | "Data recorded at or after this time is kept." | `new` (`22`
+   :15053–15054) | `PURGE/dialog` |
+  | `storage.purge.before.reason` | "Choose a time no later than now." | `new` (`22` :15054–15057
+   `before_in_future`) | `PURGE/dialog-validity` |
+  | `storage.purge.refused.before` | "Not started: the time is later than the server's
+   ({server_time}). Choose a time at or before it." · "Not started: the time is later than the
+   server's (2026-09-14 10:31:03 UTC). Choose a time at or before it." | `new` (`22` :15054–15057:
+   `422 validation_failed`, the server's time in `message`) | `PURGE/refused-before` |
   | `storage.purge.typed` | "Type the symbol to confirm" | E16-D02 §6.5 :415 | `PURGE/dialog` |
   | `storage.purge.typed.reason` | "Type {symbol} exactly to confirm." · "Type ETHUSDT exactly to
    confirm." | `new` (the validity reason) | `PURGE/dialog-validity` |
   | `storage.purge.stepup` | "You'll confirm with your password and a code." | E16-D02 §6.4 :388 |
    `PURGE/dialog`, `PURGE/step-up` |
   | `storage.purge.stepup.trusted` | "Still trusted for recorder changes · {mm:ss}" | E16-D02 §6.4
-   :389 | `PURGE/step-up` |
+   :389 (never on purge: `recorder_purge` is no-grace, `22` :12495) | none (`PURGE/step-up` states
+   why) |
   | `storage.purge.audited` | "This action is audited (high severity)." | E16-D02 §6.5 :417 |
    `PURGE/dialog` |
   | `storage.purge.confirm` | "Purge {symbol} data" · "Purge ETHUSDT data" | E16-D02 §6.5 :418 |
    `PURGE/dialog` |
   | `storage.purge.refused.pinned` | "Pinned data is excluded. Tick Include pinned to delete it
-   too." | `new` (`22` :14148) | `PURGE/pinned-refused` |
+   too." | `new` (`22` :15045) | `PURGE/pinned-refused` |
   | `storage.purge.refused.audit` | "Not started: the audit record could not be written." | `new`
-   (`22` :14150–14152) | §7 (T4) |
+   (`22` :15073–15075) | §7 (T4) |
   | `storage.purge.failed` | "Purge of {symbol} failed (`<code>`). Some data may already be
    deleted: check {symbol}'s size and gaps." | E16-D02 §3.2 :200 | `PURGE/outcomes` |
   | `storage.purge.cancelled` | "Purge of {symbol} was cancelled. Data deleted before the cancel
@@ -8372,10 +8609,10 @@ RULED_PIN_TXT = r"""
   | `storage.import.button` | "Import archives" | `new` | `IMPORT/*` |
   | `storage.import.consequence` | "Imports Bybit's public daily trade archives (trades only, no
    book data). Recorded data wins where they overlap. Re-running skips finished days." | `new`
-   (`22` :14087–14092) | `IMPORT/form` |
+   (`22` :14981–14986) | `IMPORT/form` |
   | `storage.import.tag` | "Archive-derived · trades only · no book data" | `new` (`22`
-   :14090–14091; US-REC-007 :4226) | `IMPORT/form`, `IMPORT/summary` |
-  | `storage.import.range.reason` | "Choose a range of at most 366 days." | `new` (`22` :14088) |
+   :14984–14985; US-REC-007 :4226) | `IMPORT/form`, `IMPORT/summary` |
+  | `storage.import.range.reason` | "Choose a range of at most 366 days." | `new` (`22` :14982) |
    `IMPORT/form-validity` |
   | `storage.import.progress` | "{done} of {n} days · {pct} %" · "12 of 31 days · 38 %" · "30 of
    31 days · 96 %" | `new` | `IMPORT/running`, `/running-with-skips` |
@@ -8388,29 +8625,29 @@ RULED_PIN_TXT = r"""
   | `storage.import.status` | "done" · "skipped" · "error" · "downloading" | `new` (PROPOSED
    D04-G11) | the per-file table |
   | `storage.import.reason.checksum` | "Checksum did not match; the file was skipped." | `new`
-   (`checksum_mismatch`, `22` :11276) | `IMPORT/running-with-skips` |
+   (`checksum_mismatch`, `22` :11809) | `IMPORT/running-with-skips` |
   | `storage.import.reason.parse` | "The file could not be read; it was skipped." | `new`
    (`parse_error`; PROPOSED D04-G11) | the per-file table |
   | `storage.import.reason.download` | "The file could not be downloaded; run the import again to
    retry it." | `new` (`download_failed`) | `IMPORT/summary` |
   | `storage.import.reason.already` | "Already imported on an earlier run." | `new`
-   (`already_imported`; PROPOSED D04-G11; `22` :14091–14092) | the per-file table |
+   (`already_imported`; PROPOSED D04-G11; `22` :14985–14986) | the per-file table |
   | `storage.import.overlap` | "{rows} rows inside recorded windows were discarded — recorded data
    wins." · "660,000 rows inside recorded windows were discarded — recorded data wins." | `new`
-   (PROPOSED D04-G11; `22` :14089–14090; US-REC-007 :4220) | `IMPORT/summary` |
+   (PROPOSED D04-G11; `22` :14983–14984; US-REC-007 :4220) | `IMPORT/summary` |
   | `storage.import.summary` | "Imported {days} days of {symbol} trades · {k} file skipped · {e}
    file failed · {rows} overlapping rows discarded" · "Imported 29 days of BTCUSDT trades · 1 file
    skipped · 1 file failed · 660,000 overlapping rows discarded" | `new` (PROPOSED D04-G11) |
    `IMPORT/summary` |
   | `storage.import.failed` | "Import failed ({code}). Finished days are kept; run it again to
    resume." · "Import failed (download_failed). Finished days are kept; run it again to resume." |
-   `new` (`22` :14091–14092) | `IMPORT/failed` |
+   `new` (`22` :14985–14986) | `IMPORT/failed` |
   | `storage.import.cancelled` | "Import cancelled. Finished days are kept." | `new` (PROPOSED
    D04-G10) | §8 |
   | `storage.import.unknown` | "The import's status is no longer available on the server. Run it
    again: finished days are skipped." | `new` | `IMPORT/failed` |
   | `storage.import.resume` | "Run it again to resume: finished days are skipped." | `new` (`22`
-   :14091–14092) | `IMPORT/summary`, `IMPORT/failed` |
+   :14985–14986) | `IMPORT/summary`, `IMPORT/failed` |
   | `storage.links.storage_details` | "Storage details →" | `new` (D04-A4; on SCR-140's card) |
    SCR-140 (E16-D02's card) |
   | `storage.links.health` | "System health →" | `new` (the CMP-178 tile to SCR-143) | every page
@@ -8535,7 +8772,7 @@ RULED_PIN_TXT = r"""
 @ §17#1 ¶3 ‖ table
   | # | Flow |
   | --- |
-   --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
   | F1 | Read the picture: `SCR-142/healthy` → the tier cards → `TIER/per-symbol` → the SCR-143
    tile link; at 200 % `SCR-142/healthy-200-zoom` |
@@ -8545,7 +8782,8 @@ RULED_PIN_TXT = r"""
   | F3 | Compact: `SCR-142/healthy` → `JOB/confirm-compact` → `JOB/strip-running` →
    `JOB/outcomes`; a second press → `JOB/strip-refused-409` |
   | F4 | Purge one symbol: `PURGE/entry-points` → `PURGE/dialog` (`PURGE/dialog-validity` while
-   typing) → `PURGE/step-up` → `PURGE/outcomes`; a pinned symbol → `PURGE/pinned-refused` |
+   typing) → `PURGE/step-up` → `PURGE/outcomes`; a pinned symbol → `PURGE/pinned-refused`; a
+   `before` in the future → `PURGE/refused-before` |
   | F5 | Import a month: `IMPORT/form` (`IMPORT/form-validity` on a bad range) → `IMPORT/running`
    → `IMPORT/running-with-skips` → `IMPORT/summary`; a failed download after the retry budget →
    `IMPORT/failed` → run it again |
@@ -8581,7 +8819,7 @@ RULED_PIN_TXT = r"""
    `approved` (pending); the import flow reviewed by the backend lead against the importer's real
    capabilities (resumable, rate-limited, recorded data wins on overlap) → under the agent-delivery
    adaptations the owner's approval stands in for that review, and the importer check itself is
-   handed to E16-T10 (the import's implementation ticket), with §8 citing `22` :14085–14094 for
+   handed to E16-T10 (the import's implementation ticket), with §8 citing `22` :14979–14988 for
    each capability; Sprint 05 → the owner. **Deviations (recorded, not hidden):** (1) branch
    `design/e16-d04-storage-panel-hifi`, not the ticket's `design/e16-scr142` (C-4.4); (2) the
    ticket's `apps/web/src/features/<feature>/` paths, `pnpm` commands and closing-keyword body line
@@ -8592,21 +8830,22 @@ RULED_PIN_TXT = r"""
    "migration version" are drawn as captioned PROPOSED carriers (D04-G8, G10, G3, G5, G6, G7),
    never as shipped controls (BQ-11 / 13 / 18 RULED); (5) the ticket's audit names are `14`'s and
    differ from `22`'s (D04-C1); (6) no hand-off file (BQ-3 RULED); (7) Figma → Penpot; the boards
-   are PENDING (text-first). **Hand-offs:** the E16 implementation ticket that consumes SCR-142
-   (E16-S05 / E16-S08 per the ticket; E16-T10 for the import, E16-T07 for `DiskBudget`) — the
-   build, every `storage.*` key, the frames, and the contract-first PRs for D04-G1…G12; E16-D06 —
-   the a11y review of §10 and the hand-off of the set; E16-D07 — design QA of F1–F5; the `14` owner
-   — D04-A4…A6, D04-C1…C3; the E16-D02 owner — D04-A8, D04-C6; the `15` owner — D04-A1…A3, D04-A7,
-   D04-C4; the `22` owner — D04-G1…G12, D04-CG1, D04-CG2; the owner — D04-Q1…Q4. **Summary:** one
-   admin section with eight regions: two labelled meters and the sample stamp, three tier cards
-   with health as text, the per-tier tables and the per-symbol table, the maintenance card with its
-   jobs strip, the import card with per-file reporting; ⟦audit:frames_total⟧ frames across 9 dark
-   boards and 1 light board (PENDING); the only T2 is the view-as leg; purge is E16-D02's typed
-   dialog, compact and the PROPOSED vacuum (D04-G8) are standard confirms that delete nothing; the
-   degradation order is stated in text on every warning state; every missing field is a captioned
-   PROPOSED carrier beside its shipped fallback; every number is the tool's and every frame gate is
-   mutation-tested (⟦audit:mutations⟧ mutations, each its mutation's only FAIL with a distinct
-   message); the boards land in the second PR with the page id.
+   are drawn (§0, this boards PR). **Hand-offs:** the E16 implementation ticket that consumes
+   SCR-142 (E16-S05 / E16-S08 per the ticket; E16-T10 for the import, E16-T07 for `DiskBudget`) —
+   the build, every `storage.*` key, the frames, and the contract-first PRs for D04-G1…G12; E16-D06
+   — the a11y review of §10 and the hand-off of the set; E16-D07 — design QA of F1–F5; the `14`
+   owner — D04-A4…A6, D04-C1…C3; the E16-D02 owner — D04-A8, D04-C6; the `15` owner — D04-A1…A3,
+   D04-A7, D04-C4; the `22` owner — D04-G1…G12, D04-CG1, D04-CG2; the owner — D04-Q1…Q4.
+   **Summary:** one admin section with eight regions: two labelled meters and the sample stamp,
+   three tier cards with health as text, the per-tier tables and the per-symbol table, the
+   maintenance card with its jobs strip, the import card with per-file reporting;
+   ⟦audit:frames_total⟧ frames across 9 dark boards and 1 light board (PENDING); the only T2 is the
+   view-as leg; purge is E16-D02's typed dialog, compact and the PROPOSED vacuum (D04-G8) are
+   standard confirms that delete nothing; the degradation order is stated in text on every warning
+   state; every missing field is a captioned PROPOSED carrier beside its shipped fallback; every
+   number is the tool's and every frame gate is mutation-tested (⟦audit:mutations⟧ mutations, each
+   its mutation's only FAIL with a distinct message); the boards land in the second PR with the
+   page id.
 """
 
 
