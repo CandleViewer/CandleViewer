@@ -371,7 +371,13 @@ BOARD_SECTION = {
 TWINS = ("SCR-142/low-disk-warning", "IMPORT/running-with-skips", "SCR-142/view-as")
 # Frames the stamp gate (R-2) exempts: the reflow twin, the redlines sheet and the loading skeleton.
 NO_STAMP = ("SCR-142/healthy-200-zoom", "SCR-142/redlines", "SCR-142/loading")
-DIALOG_FAMILIES = ("JOB/confirm-", "PURGE/dialog", "PURGE/step-up", "PURGE/pinned-refused")
+DIALOG_FAMILIES = (
+    "JOB/confirm-",
+    "PURGE/dialog",
+    "PURGE/step-up",
+    "PURGE/pinned-refused",
+    "PURGE/refused-before",
+)
 ROW_IDS = (
     ("a_rows", "A"),
     ("c_rows", "C"),
@@ -1072,6 +1078,9 @@ def fixture(facts: dict[str, Any], a22: str) -> dict[str, Any]:
             facts["e16d02"]["purge_body"],
         ),
         "pinned_symbol": ex["symbols"][0]["symbol"],
+        # the refused-before frame: a bound one day past the sample, refused against the sample's instant
+        "before_future": (gen + dt.timedelta(days=1)).strftime("%Y-%m-%d"),
+        "server_time": f"{gen:%Y-%m-%d %H:%M:%S} UTC",
     }
     return fx
 
@@ -1457,6 +1466,7 @@ EXITS: dict[str, tuple[str, ...]] = {
     "PURGE/dialog": (CLOSE_EXITS,),
     "PURGE/dialog-validity": (CLOSE_EXITS,),
     "PURGE/pinned-refused": (CLOSE_EXITS,),
+    "PURGE/refused-before": (CLOSE_EXITS,),
     "PURGE/step-up": (CLOSE_EXITS,),
     "TIER/per-symbol": ("Manage pin",),
 }
@@ -2231,8 +2241,16 @@ def anchor_table(
         ),
         (
             "the purge cut-off",
-            {"*": one(fx["purge"]["before"])},
+            {
+                "PURGE/refused-before": one(fx["purge"]["before_future"]),
+                "*": one(fx["purge"]["before"]),
+            },
             r"\(CMP-047 single\) (\d{4}-\d\d-\d\d)",
+        ),
+        (
+            "the server time",
+            {"*": one(fx["sample_date"], fx["sample_time"])},
+            r"\bthe server's \(?(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) UTC",
         ),
         (
             "the compacted time",
@@ -4133,7 +4151,7 @@ MUTATIONS: list[Mutation] = [
         "M44 IMPORT/failed: the row deleted (its counts updated)",
         lambda s: _counts(
             _row_delete(s, "IMPORT/failed"),
-            frames_total=(40, 39),
+            frames_total=(41, 40),
             frames_import=(6, 5),
             **{"board_frames.07": (6, 5)},
         ),
@@ -6052,6 +6070,12 @@ MUTATIONS: list[Mutation] = [
         ),
         "R-23 header prose: a pinned unit changed (paragraph, a line edited)",
     ),
+    # B01: the boards lens round 1 (M-2): the refused-before frame's exits read like every dialog's
+    (
+        "B01 refused-before: the close ✕ no longer available after the refusal",
+        _append("PURGE/refused-before", CT, "the close ✕ no longer available after the refusal"),
+        "R-14 refused-before: exit gated ('no longer available' in 'the close ✕ no longer availa')",
+    ),
 ]
 # Valid twins: each must raise nothing (a captioned inset line, the gap's own G-row, a negated mention).
 VALID: list[tuple[str, Callable[[str], str]]] = [
@@ -6251,6 +6275,7 @@ def fixture_numbers(fx: dict[str, Any], facts: dict[str, Any]) -> dict[str, obje
         "trigger_files": facts["compaction"]["trigger_files"],
         "trigger_mib": facts["compaction"]["trigger_mib"],
         "purge_before": fx["purge"]["before"],
+        "purge_before_future": fx["purge"]["before_future"],
         "purge_from": fx["purge"]["from"],
         "healthy_backlog_rows": fx["lag"]["healthy_backlog_rows"],
         "healthy_pending": fx["migration"]["healthy_pending"],
@@ -6344,6 +6369,7 @@ def numbers_of(
     n["mutations_text4_own"] = sum(d.startswith("W") for d, _, _ in MUTATIONS)
     n["mutations_text5"] = sum(d.startswith("Q") for d, _, _ in MUTATIONS)
     n["mutations_contract"] = sum(d.startswith("V") for d, _, _ in MUTATIONS)
+    n["mutations_boards"] = sum(d.startswith("B") for d, _, _ in MUTATIONS)
     n["valid_twins"] = len(VALID)
     n["pins"] = pin_counts(RULED_PIN_TXT)
     n["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
@@ -6708,16 +6734,16 @@ RULED_PIN_TXT = r"""
 @ header#1 ¶2 ‖ paragraph
   **Ticket:** E16-D04 (#372) · **Epic:** E16 · **Status:** the text merged first (#4532, with
    `Refs #372` and a `Partial:` line); this revision is the boards PR's: the ten Penpot boards
-   (nine dark, one light twin board) of §0 are **drawn** from the board script r6 (boards 05, 07
-   and 08 from r5, which r6 leaves unchanged) and exported in this PR with the page id, which
-   completes #372; §0 records them as drawn. **Owner approval pending** (agent-delivery
-   adaptations, owner decision 2026-09-25): the owner's `approved` comment or the merge stands in
-   for the ticket's design sign-off (§18). **Every decision not already binding is PROPOSED**;
-   RULED items name their source (the BQ table; the orchestrator's ruling on #372, issue comment
-   6397016433, 2026-10-25); every finding is `(heuristic)`; no participant, timing or quote is
-   invented (§17). **Method:** a desk spec over the merged E16-D02 (SCR-140, the host page) and
-   E16-D03 (the destructive-change pattern and the SCR-141 / SCR-142 boundary), and the merged
-   E09-D09 / E30-D02 / E30-D04 patterns; every number here carries an `audit:` marker that
+   (nine dark, one light twin board) of §0 are **drawn** from the board script r7 (boards 01–04, 09
+   and 10 from r6 and board 07 from r5, which r7 leaves unchanged) and exported in this PR with the
+   page id, which completes #372; §0 records them as drawn. **Owner approval pending**
+   (agent-delivery adaptations, owner decision 2026-09-25): the owner's `approved` comment or the
+   merge stands in for the ticket's design sign-off (§18). **Every decision not already binding is
+   PROPOSED**; RULED items name their source (the BQ table; the orchestrator's ruling on #372,
+   issue comment 6397016433, 2026-10-25); every finding is `(heuristic)`; no participant, timing or
+   quote is invented (§17). **Method:** a desk spec over the merged E16-D02 (SCR-140, the host
+   page) and E16-D03 (the destructive-change pattern and the SCR-141 / SCR-142 boundary), and the
+   merged E09-D09 / E30-D02 / E30-D04 patterns; every number here carries an `audit:` marker that
    `docs/design/_tools/e16_d04_storage_audit.py --check` re-derives from the `22` `getStorageUsage`
    example, and `--self-test` proves §12's gates with ⟦audit:mutations⟧ mutations.
 @ header#1 ¶3 ‖ paragraph
@@ -6979,8 +7005,9 @@ RULED_PIN_TXT = r"""
   | 06 | `E16-D04 / 06 purge` | ⟦audit:board_frames.06⟧ frames of §7: `PURGE/entry-points` ·
    `PURGE/dialog` (E16-D02 §6.5 reused; the typed field empty) · `PURGE/dialog-validity` (the typed
    mismatch: validity look, `validity-reason` layer, no lock) · `PURGE/pinned-refused` (T4) ·
-   `PURGE/step-up` (the sentence; SCR-006 cited, not drawn) · `PURGE/outcomes` | dark |
-   `docs/design/E16/img/E16-D04-06-purge.png` | drawn |
+   `PURGE/refused-before` (T4: the server's time in the reason) · `PURGE/step-up` (the sentence;
+   SCR-006 cited, not drawn) · `PURGE/outcomes` | dark | `docs/design/E16/img/E16-D04-06-purge.png`
+   | drawn |
   | 07 | `E16-D04 / 07 import` | ⟦audit:board_frames.07⟧ frames of §8: `IMPORT/form` ·
    `IMPORT/form-validity` (over 366 days) · `IMPORT/running` (the bar and the days; the per-file
    table a captioned PROPOSED D04-G11 inset) · `IMPORT/running-with-skips` (AC 3: the shipped bar
@@ -7001,17 +7028,25 @@ RULED_PIN_TXT = r"""
    measured ratios in the title | light | `docs/design/E16/img/E16-D04-10-light-twins.png` | drawn
    |
 @ §0#1 ¶4 ‖ paragraph
-  Boards as drawn (2026-10-29, from the board script r6 — sha256
-   `43fdb2f8d7d832db95b14de5bcc5aebde3d33626f5434f7c6112cc057c8b313f` — a declared patch of r5
-   (sha256 `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`) with three fixes
-   from the r5 draw's QA: board 03's `SCR-142/volume-refused` meter reads the gate's level over the
-   unchanged bytes (1,188.0 GB of 2,000.0 GB cap_bytes, 59.4 %, with the level-3 danger fill and ✗
-   glyph), never a level derived from the bytes; board 04's `SCR-142/tier-unreachable-questdb`
-   QuestDB card in `down` tags its last sizes with the `stale` chip, as the stale-sample frame
-   does; the tier cards' wrapping captions keep a date, a number with its unit and the "—" together
-   (the date's hyphens non-breaking, a no-break space before a unit and before the dash). Boards
-   01, 02, 03, 04, 06, 09 and 10 are redrawn from r6; boards 05, 07 and 08 are the r5 draw, which
-   r6 leaves unchanged; every board exported at 1:1):
+  Boards as drawn (2026-10-29, from the board script r7 — sha256
+   `8164c098c5cc65b1bf11e3f34e2cadbd1e1fc09d6122df4f60567475c8bfc199` — a declared patch of r6
+   (sha256 `43fdb2f8d7d832db95b14de5bcc5aebde3d33626f5434f7c6112cc057c8b313f`) with the boards lens
+   round 1's two Majors: board 05's `JOB/confirm-vacuum` producer caption names the
+   `recorder_purge` class, never `recorder` (M-1); board 06 gains `PURGE/refused-before`, the
+   server's `422 validation_failed` (`before_in_future`) drawn as T4 in the `PURGE/pinned-refused`
+   style — the dialog with a `before` later than the server's clock, the CMP-027 inline reason
+   naming the server's time with the code in parentheses, Confirm enabled, the exits T1 (M-2) — and
+   board 08's counts follow (⟦audit:frames_total⟧ frames, ⟦audit:mutations⟧ mutations). r6 was a
+   declared patch of r5 (sha256 `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`)
+   with three fixes from the r5 draw's QA: board 03's `SCR-142/volume-refused` meter reads the
+   gate's level over the unchanged bytes (1,188.0 GB of 2,000.0 GB cap_bytes, 59.4 %, with the
+   level-3 danger fill and ✗ glyph), never a level derived from the bytes; board 04's
+   `SCR-142/tier-unreachable-questdb` QuestDB card in `down` tags its last sizes with the `stale`
+   chip, as the stale-sample frame does; the tier cards' wrapping captions keep a date, a number
+   with its unit and the "—" together (the date's hyphens non-breaking, a no-break space before a
+   unit and before the dash). Boards 05, 06 and 08 are redrawn from r7; boards 01, 02, 03, 04, 09
+   and 10 are the r6 draw and board 07 the r5 draw, which r7 leaves unchanged; every board exported
+   at 1:1):
 @ §0#1 ¶5 ‖ list
   - `01 anatomy-healthy` — board id `3dabf49b-b27a-8036-8008-dc8761e1a9bb` —
    `docs/design/E16/img/E16-D04-01-anatomy-healthy.png` (1920 × 2629)
@@ -7021,17 +7056,18 @@ RULED_PIN_TXT = r"""
    `docs/design/E16/img/E16-D04-03-states-disk.png` (2664 × 4316)
   - `04 states-health` — board id `3dabf49b-b27a-8036-8008-dc88678c7444` —
    `docs/design/E16/img/E16-D04-04-states-health.png` (2664 × 4248)
-  - `05 maintenance-jobs` — board id `f5d056cd-3de8-808d-8008-dc7cf8aa156a` —
-   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` (1920 × 1256) — drawn from r5 (sha256
-   `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`), unchanged by r6
-  - `06 purge` — board id `3dabf49b-b27a-8036-8008-dc88f100675c` —
-   `docs/design/E16/img/E16-D04-06-purge.png` (1920 × 1624)
+  - `05 maintenance-jobs` — board id `8151935f-ff84-80bf-8008-dca2ccbf658c` —
+   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` (1920 × 1256) — redrawn from r7 (M-1: the
+   `JOB/confirm-vacuum` caption names `recorder_purge`)
+  - `06 purge` — board id `8151935f-ff84-80bf-8008-dca2eae0fd19` —
+   `docs/design/E16/img/E16-D04-06-purge.png` (1920 × 2231) — redrawn from r7 (M-2:
+   `PURGE/refused-before` added as the seventh frame)
   - `07 import` — board id `f5d056cd-3de8-808d-8008-dc7d32665db1` —
    `docs/design/E16/img/E16-D04-07-import.png` (1920 × 2029) — drawn from r5 (sha256
-   `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`), unchanged by r6
-  - `08 keyboard-a11y-copy` — board id `f5d056cd-3de8-808d-8008-dc7d5bc0ec7c` —
-   `docs/design/E16/img/E16-D04-08-keyboard-a11y-copy.png` (1920 × 1063) — drawn from r5 (sha256
-   `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`), unchanged by r6
+   `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`), unchanged by r6 and r7
+  - `08 keyboard-a11y-copy` — board id `8151935f-ff84-80bf-8008-dca318873496` —
+   `docs/design/E16/img/E16-D04-08-keyboard-a11y-copy.png` (1920 × 1063) — redrawn from r7 (the
+   counts: 41 frames, 345 mutations)
   - `09 redlines` — board id `3dabf49b-b27a-8036-8008-dc891ad5977c` —
    `docs/design/E16/img/E16-D04-09-redlines.png` (1920 × 1762)
   - `10 light-twins` — board id `3dabf49b-b27a-8036-8008-dc8936dc3903` —
@@ -7048,10 +7084,18 @@ RULED_PIN_TXT = r"""
   `recorder_purge` is no-grace (`22` :12495, :15040), so `PURGE/step-up` states that every purge
   takes a fresh code instead of the grace-window sentence.
   - **`before` field:** the purge dialog gains the contract's required `before` field
-  (`required: [symbol, confirm_symbol, reason, before]`, `22` :15086): its label, the help line
-  "Data recorded at or after this time is kept." and the T4 reason "Choose a time no later than
-  now." (`422 validation_failed before_in_future`). The three strings are `new` (PROPOSED here) in
-  §14; `PURGE/dialog` and `PURGE/dialog-validity` draw them (board script r5, kept in r6).
+  (`required: [symbol, confirm_symbol, reason, before]`, `22` :15086): its label "Delete data
+  recorded before" (E16-D02 §6.5 :409, not `new`), the help line "Data recorded at or after this
+  time is kept.", the validity reason "Choose a time no later than now." (shown while `before` is
+  later than the client's now, `PURGE/dialog-validity`) and the T4 reason for
+  `422 validation_failed before_in_future`, `storage.purge.refused.before` "Not started: the time
+   is
+  later than the server's ({server_time}). Choose a time at or before it." (the server's time from
+  the error's `message`; drawn on `PURGE/refused-before`, board 06). The help line and the two
+  reasons are the three `new` strings (PROPOSED here) in §14, the label is E16-D02's; §1.3's
+  classification carries both forms (the validity-look row and the T4 row), §1.3's validity
+  paragraph, its T4 list and §7's enablement sentence name `before`; `PURGE/dialog`,
+  `PURGE/dialog-validity` and `PURGE/refused-before` draw them (board script r5, r7).
   - **`retention_pinned_refused`:** cited at its current line (`22` :15045–15046) where the
    dialog's
   refusals are listed.
@@ -7168,9 +7212,10 @@ RULED_PIN_TXT = r"""
    `aria-disabled`, focusable; a press shows the error summary; no lock glyph, no CMP-079, no key;
    board layer `validity-reason`. On SCR-142 two controls take it: Import archives while the range
    is empty, inverted or longer than ⟦audit:facts.import_days_max⟧ days (`22` :14982), and the
-   purge dialog's Confirm while the typed symbol differs or the reason is shorter than
-   ⟦audit:facts.reason_min⟧ characters (E16-D02 :419; CMP-044 :477 "form validity, not a gate").
-   Never over-converted.
+   purge dialog's Confirm while the typed symbol differs, the reason is shorter than
+   ⟦audit:facts.reason_min⟧ characters or the `before` bound is later than now (E16-D02 :419;
+   CMP-044 :477 "form validity, not a gate"; the server's own check on the bound is T4,
+   `PURGE/refused-before`). Never over-converted.
 @ §1 › §1.3#1 ¶4 ‖ paragraph
   **Status · outcome · absence · refusal** (E09-D09 §9.1 :231; the orchestrator's conditions A1
    and A3). **Busy** — a job this client started while it is queued or running: the button is
@@ -7185,12 +7230,14 @@ RULED_PIN_TXT = r"""
    G8, G3, G5, G1, G2, G7) is drawn absent from every frame's default and appears only as a
    captioned PROPOSED inset or second row, never as a lock (BQ-11 / 13 / 16 / 18 / 22 RULED).
    **Refusal (T4)** — `409 job_running`, `422 import_range_invalid`, `422
-   purge_confirmation_mismatch`, `422 retention_pinned_refused`, the `503` when the purge's audit
-   record cannot be written (`22` :15073–15075), and `403 step_up_required` (not a refusal: it runs
-   the SCR-006 step-up, E16-D02 §6.4): CMP-027 inline under the control with the server's code in
-   parentheses, polite once; the page state never changes and nothing else dims. **Exits and links
-   are never gated** (A3): Cancel, Esc and the close ✕ in every dialog, Retry, the links to SCR-140
-   / SCR-141 / SCR-143, the per-tier table alternatives — enabled for every role on every frame.
+   purge_confirmation_mismatch`, `422 retention_pinned_refused`, `422 validation_failed`
+   (`before_in_future`: a `before` later than the server's clock, its time in `message`), the `503`
+   when the purge's audit record cannot be written (`22` :15073–15075), and `403 step_up_required`
+   (not a refusal: it runs the SCR-006 step-up, E16-D02 §6.4): CMP-027 inline under the control
+   with the server's code in parentheses, polite once; the page state never changes and nothing
+   else dims. **Exits and links are never gated** (A3): Cancel, Esc and the close ✕ in every
+   dialog, Retry, the links to SCR-140 / SCR-141 / SCR-143, the per-tier table alternatives —
+   enabled for every role on every frame.
 @ §1 › §1.3#1 ¶5 ‖ paragraph
   **The classification (every state row of §2 and §4–§8 names one class):**
 @ §1 › §1.3#1 ¶6 ‖ table
@@ -7716,7 +7763,7 @@ RULED_PIN_TXT = r"""
    `color.status.success.subtle` / `color.status.danger.subtle` inside the card | none (outcomes) |
    outcome | 05 |
 @ §7#1 ¶1 ‖ heading
-  ## 7. Purge (board 06; 6 frames) — E16-D02 §6.5 reused whole
+  ## 7. Purge (board 06; 7 frames) — E16-D02 §6.5 reused whole
 @ §7#1 ¶2 ‖ paragraph
   Purge is the one destructive action here: Owner-only, step-up authenticated (a fresh code per
    purge), with a mandatory reason, the typed `confirm_symbol` echo and the window's upper bound
@@ -7732,23 +7779,24 @@ RULED_PIN_TXT = r"""
    :15092–15097); data recorded at or after it is never deleted by the request or by any retry of
    it (:15053–15054); a bound in the future is `422 validation_failed` with `errors: [{field:
    before, rule: before_in_future}]` and the server's current time in `message` (:15054–15057) — T4
-   at the point of action, after the dialog's own validity look on the bound
-   (`PURGE/dialog-validity`); the help line under the field, "Data recorded at or after this time
-   is kept.", and its two reasons are `new` (§14). The Confirm is enabled only when the reason is
-   valid and the typed symbol matches: a validity look, never T2 (CMP-044 :477; E30-D02 D3). The
-   `recorder_purge` step-up runs on submit after the typed confirm (`22` :15040; a no-grace class:
-   each purge spends a fresh code and no trusted window opens, :12495; E16-D02 §6.4 :380–384: the
-   request held and re-sent once with the same Idempotency-Key; SCR-006 cited, not drawn). A pinned
-   symbol is refused without Include pinned (`422 retention_pinned_refused`, `22` :15045): T4 at
-   the point of action. The audit record (`retention.purge`) is written before the job exists; when
-   it cannot be, the server answers 503 and nothing starts (`22` :15073–15075): "Not started: the
-   audit record could not be written." (T4). The dialog's confirm line stays "This action is
-   audited (high severity)." (E16-D02's words; the name mismatch with `14` :2779 is D04-C1). No
-   frame links a QuestDB or DuckDB console (SR-048, `04` :873).
+   at the point of action (`PURGE/refused-before`), after the dialog's own validity look on the
+   bound (`PURGE/dialog-validity`); the help line under the field, "Data recorded at or after this
+   time is kept.", and its two reasons are `new` (§14). The Confirm is enabled only when the reason
+   is valid, the typed symbol matches and the `before` bound is not later than now: a validity
+   look, never T2 (CMP-044 :477; E30-D02 D3). The `recorder_purge` step-up runs on submit after the
+   typed confirm (`22` :15040; a no-grace class: each purge spends a fresh code and no trusted
+   window opens, :12495; E16-D02 §6.4 :380–384: the request held and re-sent once with the same
+   Idempotency-Key; SCR-006 cited, not drawn). A pinned symbol is refused without Include pinned
+   (`422 retention_pinned_refused`, `22` :15045): T4 at the point of action. The audit record
+   (`retention.purge`) is written before the job exists; when it cannot be, the server answers 503
+   and nothing starts (`22` :15073–15075): "Not started: the audit record could not be written."
+   (T4). The dialog's confirm line stays "This action is audited (high severity)." (E16-D02's
+   words; the name mismatch with `14` :2779 is D04-C1). No frame links a QuestDB or DuckDB console
+   (SR-048, `04` :873).
 @ §7#1 ¶3 ‖ table
   | Frame | Producer | Shows | Controls (class per §1.3) | Class | Board |
   | ----------------------- |
-   -------------------------------------------------------------------------------------------------------------------------------------
+   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
    -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
@@ -7789,6 +7837,15 @@ RULED_PIN_TXT = r"""
    excluded. Tick Include pinned to delete it too." with the code retention_pinned_refused in
    parentheses, polite once · the dialog stays open with its inputs | exits Cancel, Esc and the
    close ✕ (T1) · Confirm stays enabled (T1): a refusal is T4 at the point of action | T4 | 06 |
+  | `PURGE/refused-before` | Confirm pressed for ETHUSDT with a `before` later than the server's
+   clock (Delete data recorded before (CMP-047 single) 2026-09-15 against the server's 2026-09-14
+   10:31:03 UTC): the server's `422 validation_failed` with `errors: [{field: before, rule:
+   before_in_future}]` and its time in `message` (`22` :15054–15057) | CMP-027 inline under
+   Confirm: "Not started: the time is later than the server's (2026-09-14 10:31:03 UTC). Choose a
+   time at or before it." with the code validation_failed in parentheses, polite once · the dialog
+   stays open with its inputs | exits Cancel, Esc and the close ✕ (T1) · Confirm stays enabled
+   (T1): a refusal is T4 at the point of action, after the dialog's own validity look on the bound
+   (`PURGE/dialog-validity`) | T4 | 06 |
   | `PURGE/step-up` | Confirm pressed with a valid form: the server answers `403 step_up_required`
    with `action_class` `recorder_purge` (`22` :15043) | the step-up sentence "You'll confirm with
    your password and a code." already in the dialog · the SCR-006 step-up modal opens over it
@@ -8077,32 +8134,34 @@ RULED_PIN_TXT = r"""
    pin held before it) and the gate re-check 4's ⟦audit:mutations_text5⟧ forms (the sketch's Purge
    box shifted by spaces alone, onto the Postgres card and off the Parquet card, and a `~` written
    before a marked number) and the purge-contract re-pin's ⟦audit:mutations_contract⟧ form (the
-   dialog's `before` field removed) — and each must make `--check` fail with **one** FAIL, its own
-   message; no two share a message, ⟦audit:valid_twins⟧ valid twins (a captioned inset, the gap's
-   own G-row, a negated mention, the exit Cancel, "Esc closes the dialog", the ruled order reworded
-   four ways, a sibling PENDING by name, the typed field starting empty, trailing spaces) raise no
-   gate FAIL and nothing once re-pinned (until then R-23 alone refuses each, as it edits a unit),
-   the unmutated file passes and the file is byte-identical afterwards; `--mutate N` exits 1 when
-   the gate caught the mutation, 2 when it slipped. **Two layers (the gate re-check 3:
-   whole-document default-deny).** The vocabulary gates above are the first line: each reads its
-   ruled sentence through its words, their synonyms and the negators that govern them. R-23 is the
-   backstop and pins **every unit** of this file in the tool's committed `RULED_PIN_TXT`: a unit is
-   a Markdown block — a heading, or a run of consecutive non-blank lines (each paragraph, list
-   block and table block, the deck's table among them) — and the fenced sketch whole, its lines
-   verbatim (its columns are content; every other unit's whitespace is normalised); a soft-wrapped
-   line belongs to its block. A unit is keyed by its region (the heading path, plus the heading's
-   occurrence) and its place in the region, and read with its exact text: ⟦audit:pins.total⟧ units
-   (headings ⟦audit:pins.heading⟧, paragraphs ⟦audit:pins.paragraph⟧, tables ⟦audit:pins.table⟧,
-   the sketch ⟦audit:pins.sketch⟧). A changed, moved, duplicated or missing unit, a unit the pins
-   do not hold, a new or repeated heading and a duplicate location FAIL naming the location, so a
-   new or edited unit anywhere fails until `--repin-ruled` rewrites the table, a deliberate act
-   read in the diff; `--check` never re-pins. **Left unpinned, by name (the exemption list, the
-   tool's `PIN_EXEMPT`):** ⟦audit:pins.exempt⟧ class — the `audit:` markers and the number printed
-   before each, §12's among them (⟦audit:pins.masked⟧ spans, each read as its key): `--check`
-   re-derives each key's value and reads the number before the marker. Nothing else is exempt:
-   §12's R-rows, §15's matrix and the caption carriers have no exact gate that reads them whole, so
-   they stay pinned. An R-23 FAIL is reported only when no other gate FAILs, else counted beside it
-   on a NOTE line, so one wrong form yields one FAIL.
+   dialog's `before` field removed) and the boards lens round 1's ⟦audit:mutations_boards⟧ form
+   (`PURGE/refused-before`'s close ✕ read dead after the refusal) — and each must make `--check`
+   fail with **one** FAIL, its own message; no two share a message, ⟦audit:valid_twins⟧ valid twins
+   (a captioned inset, the gap's own G-row, a negated mention, the exit Cancel, "Esc closes the
+   dialog", the ruled order reworded four ways, a sibling PENDING by name, the typed field starting
+   empty, trailing spaces) raise no gate FAIL and nothing once re-pinned (until then R-23 alone
+   refuses each, as it edits a unit), the unmutated file passes and the file is byte-identical
+   afterwards; `--mutate N` exits 1 when the gate caught the mutation, 2 when it slipped. **Two
+   layers (the gate re-check 3: whole-document default-deny).** The vocabulary gates above are the
+   first line: each reads its ruled sentence through its words, their synonyms and the negators
+   that govern them. R-23 is the backstop and pins **every unit** of this file in the tool's
+   committed `RULED_PIN_TXT`: a unit is a Markdown block — a heading, or a run of consecutive
+   non-blank lines (each paragraph, list block and table block, the deck's table among them) — and
+   the fenced sketch whole, its lines verbatim (its columns are content; every other unit's
+   whitespace is normalised); a soft-wrapped line belongs to its block. A unit is keyed by its
+   region (the heading path, plus the heading's occurrence) and its place in the region, and read
+   with its exact text: ⟦audit:pins.total⟧ units (headings ⟦audit:pins.heading⟧, paragraphs
+   ⟦audit:pins.paragraph⟧, tables ⟦audit:pins.table⟧, the sketch ⟦audit:pins.sketch⟧). A changed,
+   moved, duplicated or missing unit, a unit the pins do not hold, a new or repeated heading and a
+   duplicate location FAIL naming the location, so a new or edited unit anywhere fails until
+   `--repin-ruled` rewrites the table, a deliberate act read in the diff; `--check` never re-pins.
+   **Left unpinned, by name (the exemption list, the tool's `PIN_EXEMPT`):** ⟦audit:pins.exempt⟧
+   class — the `audit:` markers and the number printed before each, §12's among them
+   (⟦audit:pins.masked⟧ spans, each read as its key): `--check` re-derives each key's value and
+   reads the number before the marker. Nothing else is exempt: §12's R-rows, §15's matrix and the
+   caption carriers have no exact gate that reads them whole, so they stay pinned. An R-23 FAIL is
+   reported only when no other gate FAILs, else counted beside it on a NOTE line, so one wrong form
+   yields one FAIL.
 @ §12#1 ¶5 ‖ table
   | Rule | The ruled sentence the gate reads (source) | Tables read | Mutations |
   | ---- |
@@ -8376,10 +8435,10 @@ RULED_PIN_TXT = r"""
   Variables: `{HH:MM:SS}` 10:31:03; `{every}` 60 s; `{used}` / `{cap}` 1,188.0 GB / 2,000.0 GB;
    `{pct}` 59.4 %; `{d}` 422 (the autostop runway) or 560 (the full date); `{date}` 2028-03-27;
    `{growth}` 1.45 GB/day; `{symbol}` ETHUSDT; `{user}` alex; `{n}` / `{done}` 31 / 12; `{k}` 1;
-   `{rows}` 660,000; `{code}` the server's stable code; `{verb}` Compaction · Import · Purge of
-   {symbol} · Vacuum (PROPOSED, D04-G8). The fixture strings beside a template are the boards'
-   words. Every `rbac.*` string ≤ 60 characters, names no data; no jargon in a user-facing string
-   (the tool gates).
+   `{rows}` 660,000; `{code}` the server's stable code; `{server_time}` 2026-09-14 10:31:03 UTC;
+   `{verb}` Compaction · Import · Purge of {symbol} · Vacuum (PROPOSED, D04-G8). The fixture
+   strings beside a template are the boards' words. Every `rbac.*` string ≤ 60 characters, names no
+   data; no jargon in a user-facing string (the tool gates).
 @ §14#1 ¶3 ‖ table
   | Key | String | Source | Frames |
   | -------------------------------- |
@@ -8520,8 +8579,9 @@ RULED_PIN_TXT = r"""
   | `storage.purge.before.reason` | "Choose a time no later than now." | `new` (`22` :15054–15057
    `before_in_future`) | `PURGE/dialog-validity` |
   | `storage.purge.refused.before` | "Not started: the time is later than the server's
-   ({server_time}). Choose a time at or before it." | `new` (`22` :15054–15057: `422
-   validation_failed`, the server's time in `message`) | — (T4 under Confirm, §1.3; no frame) |
+   ({server_time}). Choose a time at or before it." · "Not started: the time is later than the
+   server's (2026-09-14 10:31:03 UTC). Choose a time at or before it." | `new` (`22` :15054–15057:
+   `422 validation_failed`, the server's time in `message`) | `PURGE/refused-before` |
   | `storage.purge.typed` | "Type the symbol to confirm" | E16-D02 §6.5 :415 | `PURGE/dialog` |
   | `storage.purge.typed.reason` | "Type {symbol} exactly to confirm." · "Type ETHUSDT exactly to
    confirm." | `new` (the validity reason) | `PURGE/dialog-validity` |
@@ -8712,7 +8772,7 @@ RULED_PIN_TXT = r"""
 @ §17#1 ¶3 ‖ table
   | # | Flow |
   | --- |
-   --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+   --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
    |
   | F1 | Read the picture: `SCR-142/healthy` → the tier cards → `TIER/per-symbol` → the SCR-143
    tile link; at 200 % `SCR-142/healthy-200-zoom` |
@@ -8722,7 +8782,8 @@ RULED_PIN_TXT = r"""
   | F3 | Compact: `SCR-142/healthy` → `JOB/confirm-compact` → `JOB/strip-running` →
    `JOB/outcomes`; a second press → `JOB/strip-refused-409` |
   | F4 | Purge one symbol: `PURGE/entry-points` → `PURGE/dialog` (`PURGE/dialog-validity` while
-   typing) → `PURGE/step-up` → `PURGE/outcomes`; a pinned symbol → `PURGE/pinned-refused` |
+   typing) → `PURGE/step-up` → `PURGE/outcomes`; a pinned symbol → `PURGE/pinned-refused`; a
+   `before` in the future → `PURGE/refused-before` |
   | F5 | Import a month: `IMPORT/form` (`IMPORT/form-validity` on a bad range) → `IMPORT/running`
    → `IMPORT/running-with-skips` → `IMPORT/summary`; a failed download after the retry budget →
    `IMPORT/failed` → run it again |
