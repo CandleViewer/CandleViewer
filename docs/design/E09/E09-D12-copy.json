@@ -1,0 +1,1176 @@
+{
+  "pack": "E09-D12",
+  "version": "v1",
+  "base": "121e9e989b",
+  "header": "Every string the band may show, once. Provenance: verbatim (the cited line holds it), 14 (the screens catalogue), as shipped (no design text exists), new PROPOSED, RULED. A security entry names its frozen-set row and what breaks if it is reworded.",
+  "by_cite": {
+    "SCR-004 and the SCR-112 password section": "D05:277–314 (W-1..W-32)",
+    "RBAC denials, SCR-154, SCR-155, scr017.cannot": "D09:252–282"
+  },
+  "strings": {
+    "auth.login.busy": {
+      "string": "Signing in…",
+      "screen": "SCR-001",
+      "state": "submitting",
+      "provenance": "verbatim",
+      "source": "D08:87",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.login.failed": {
+      "string": "Couldn't sign you in. Check your details and try again.",
+      "screen": "SCR-001",
+      "state": "error-generic",
+      "provenance": "verbatim",
+      "source": "D03:112–113",
+      "status": "merged",
+      "security": "frozen (1): no enumeration (SR-014)",
+      "breaks": "a cause-specific word tells an attacker that an account exists, is disabled or is locked",
+      "key_status": "PROPOSED"
+    },
+    "auth.login.heading": {
+      "string": "Sign in to CandleViewer",
+      "screen": "SCR-001",
+      "state": "idle",
+      "provenance": "as shipped",
+      "source": "LOGIN:99",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.login.identifier": {
+      "string": "Username or email",
+      "screen": "SCR-001",
+      "state": "idle",
+      "provenance": "verbatim",
+      "source": "`22`:17562",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.login.password": {
+      "string": "Password",
+      "screen": "SCR-001",
+      "state": "idle",
+      "provenance": "14",
+      "source": "`14`:132",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.login.required.identifier": {
+      "string": "Enter your username.",
+      "screen": "SCR-001",
+      "state": "idle",
+      "provenance": "14",
+      "source": "`14`:145",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.login.required.password": {
+      "string": "Enter your password.",
+      "screen": "SCR-001",
+      "state": "idle",
+      "provenance": "14",
+      "source": "`14`:145",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.login.submit": {
+      "string": "Sign in",
+      "screen": "SCR-001",
+      "state": "idle",
+      "provenance": "14",
+      "source": "`14`:134",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.mfa.back": {
+      "string": "Back to login",
+      "screen": "SCR-002",
+      "state": "expired-challenge",
+      "provenance": "verbatim",
+      "source": "D03:145",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.mfa.expired": {
+      "string": "This code has expired. Please log in again.",
+      "screen": "SCR-002",
+      "state": "expired-challenge",
+      "provenance": "verbatim",
+      "source": "D03:145",
+      "status": "merged",
+      "notes": "also the lockout after the token is invalidated (C-8)",
+      "key_status": "PROPOSED"
+    },
+    "auth.mfa.heading": {
+      "string": "Two-factor code",
+      "screen": "SCR-002",
+      "state": "idle",
+      "provenance": "14",
+      "source": "`14`:159",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.mfa.helper": {
+      "string": "Code from your authenticator app",
+      "screen": "SCR-002",
+      "state": "idle",
+      "provenance": "14",
+      "source": "`14`:161",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.mfa.input": {
+      "string": "Six-digit authentication code",
+      "screen": "SCR-002",
+      "state": "idle",
+      "provenance": "verbatim",
+      "source": "`15`:2587",
+      "status": "merged",
+      "notes": "the accessible name of CMP-204",
+      "key_status": "PROPOSED"
+    },
+    "auth.mfa.invalid": {
+      "string": "That code isn't valid.",
+      "screen": "SCR-002",
+      "state": "invalid-code",
+      "provenance": "verbatim",
+      "source": "D03:143",
+      "status": "merged",
+      "security": "F-2: a replayed code reads as an invalid one (SR-014)",
+      "breaks": "a replayed or reused wording confirms that a code was once valid",
+      "key_status": "PROPOSED"
+    },
+    "auth.mfa.use_recovery": {
+      "string": "Use a recovery code instead",
+      "screen": "SCR-002",
+      "state": "idle",
+      "provenance": "verbatim",
+      "source": "D03:131",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.mfa.verify": {
+      "string": "Verify",
+      "screen": "SCR-002",
+      "state": "idle",
+      "provenance": "verbatim",
+      "source": "D03:131",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.rate_limited": {
+      "string": "Too many attempts. Try again in {mm:ss}.",
+      "screen": "SCR-001",
+      "state": "rate-limited",
+      "provenance": "verbatim",
+      "source": "D03:120",
+      "status": "merged",
+      "params": {
+        "{mm:ss}": "the Retry-After header's value"
+      },
+      "key_status": "PROPOSED"
+    },
+    "auth.reason.unlock_attempts": {
+      "string": "Signed out after too many unlock attempts.",
+      "screen": "SCR-001",
+      "state": "reason line",
+      "provenance": "verbatim",
+      "source": "S03:131",
+      "status": "PROPOSED",
+      "key_status": "PROPOSED"
+    },
+    "auth.recovery.back": {
+      "string": "Back to authenticator code",
+      "screen": "SCR-002",
+      "state": "recovery-code-entry",
+      "provenance": "verbatim",
+      "source": "D03:151",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.recovery.invalid": {
+      "string": "That recovery code isn't valid.",
+      "screen": "SCR-002",
+      "state": "recovery-code-entry",
+      "provenance": "new PROPOSED",
+      "source": "none (Q-5)",
+      "status": "PROPOSED",
+      "security": "F-2 and F-3: invalid, replayed and exhausted read alike",
+      "breaks": "an exhausted or used wording tells which codes were spent",
+      "key_status": "PROPOSED"
+    },
+    "auth.recovery.label": {
+      "string": "Recovery code",
+      "screen": "SCR-002",
+      "state": "recovery-code-entry",
+      "provenance": "new PROPOSED",
+      "source": "none (Q-4)",
+      "status": "PROPOSED",
+      "key_status": "PROPOSED"
+    },
+    "auth.retry": {
+      "string": "Retry",
+      "screen": "SCR-001",
+      "state": "server-unreachable",
+      "provenance": "verbatim",
+      "source": "D03:126",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.reveal.hide": {
+      "string": "Hide password",
+      "screen": "SCR-001",
+      "state": "idle",
+      "provenance": "verbatim",
+      "source": "`15`:2560",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.reveal.show": {
+      "string": "Show password",
+      "screen": "SCR-001",
+      "state": "idle",
+      "provenance": "verbatim",
+      "source": "`15`:2560",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "auth.unreachable": {
+      "string": "Can't reach the server. Check your connection and try again.",
+      "screen": "SCR-001",
+      "state": "server-unreachable",
+      "provenance": "verbatim",
+      "source": "D03:125",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.cancel": {
+      "string": "Cancel enrolment",
+      "screen": "SCR-003",
+      "state": "step1-scan",
+      "provenance": "verbatim",
+      "source": "D04:77",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.codes.ack": {
+      "string": "I've saved these codes somewhere safe",
+      "screen": "SCR-003",
+      "state": "step3-codes-shown",
+      "provenance": "verbatim",
+      "source": "D04:108",
+      "status": "merged",
+      "security": "frozen (3): the acknowledgement gate (SR-022)",
+      "breaks": "a label that does not say saved lets the gate pass without a saved copy",
+      "key_status": "PROPOSED"
+    },
+    "enrol.codes.copy_all": {
+      "string": "Copy all",
+      "screen": "SCR-003",
+      "state": "step3-codes-shown",
+      "provenance": "verbatim",
+      "source": "`15`:2605",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.codes.download": {
+      "string": "Download .txt",
+      "screen": "SCR-003",
+      "state": "step3-codes-shown",
+      "provenance": "verbatim",
+      "source": "`15`:2605",
+      "status": "merged",
+      "notes": "D04:107 reads Download as .txt (C-21)",
+      "key_status": "PROPOSED"
+    },
+    "enrol.codes.once": {
+      "string": "Recovery codes are shown once.",
+      "screen": "SCR-003",
+      "state": "step3-codes-shown",
+      "provenance": "as shipped",
+      "source": "INVITE:135",
+      "status": "merged",
+      "security": "frozen (3): displayed exactly once (SR-022)",
+      "breaks": "a softer line invites skipping the save, and the codes are then lost",
+      "key_status": "PROPOSED"
+    },
+    "enrol.codes.print": {
+      "string": "Print",
+      "screen": "SCR-003",
+      "state": "step3-codes-shown",
+      "provenance": "verbatim",
+      "source": "`15`:2605",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.copied": {
+      "string": "Copied to clipboard",
+      "screen": "SCR-003",
+      "state": "step3-codes-shown",
+      "provenance": "verbatim",
+      "source": "D04:179–180",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.done": {
+      "string": "Two-factor authentication is now active.",
+      "screen": "SCR-003",
+      "state": "step3-completed",
+      "provenance": "verbatim",
+      "source": "D04:118",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.exhausted": {
+      "string": "You've used your last recovery code and can't verify a new authenticator from here. Contact the owner to reset your two-factor setup.",
+      "screen": "SCR-002",
+      "state": "recovery-exhausted-lockout (held)",
+      "provenance": "verbatim",
+      "source": "D02:118–120",
+      "status": "held (G-3)",
+      "key_status": "PROPOSED"
+    },
+    "enrol.forced.banner": {
+      "string": "You signed in with a recovery code — set up a new authenticator to continue.",
+      "screen": "SCR-003",
+      "state": "forced-reenrol-after-recovery-use",
+      "provenance": "verbatim",
+      "source": "D04:147–148",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.heading": {
+      "string": "Set up your authenticator",
+      "screen": "SCR-003",
+      "state": "step1-scan",
+      "provenance": "as shipped",
+      "source": "INVITE:107",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.invalid": {
+      "string": "Incorrect code. Try again.",
+      "screen": "SCR-003",
+      "state": "step2-confirm-error",
+      "provenance": "verbatim",
+      "source": "D04:95",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.owner_reset.banner": {
+      "string": "Your two-factor method was reset by an owner. You must set up a new authenticator to continue.",
+      "screen": "SCR-003",
+      "state": "owner-reset-landing",
+      "provenance": "verbatim",
+      "source": "D04:133–134",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.reenrol.banner": {
+      "string": "Adding a new device will invalidate your current authenticator. Your existing recovery codes will also be invalidated — you'll get a new set.",
+      "screen": "SCR-003",
+      "state": "re-enrol-variant",
+      "provenance": "verbatim",
+      "source": "D04:126–127",
+      "status": "held (G-12)",
+      "key_status": "PROPOSED"
+    },
+    "enrol.restart": {
+      "string": "Restart enrolment",
+      "screen": "SCR-003",
+      "state": "step2-confirm-expired",
+      "provenance": "verbatim",
+      "source": "D04:100",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.step1.continue": {
+      "string": "I've added the account — continue",
+      "screen": "SCR-003",
+      "state": "step1-scan",
+      "provenance": "verbatim",
+      "source": "D04:76",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "enrol.verifying": {
+      "string": "Verifying code…",
+      "screen": "SCR-003",
+      "state": "step2-confirm-verifying",
+      "provenance": "verbatim",
+      "source": "D04:90",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "invite.accept": {
+      "string": "Accept invitation",
+      "screen": "SCR-017",
+      "state": "step 1",
+      "provenance": "as shipped",
+      "source": "INVITE:79",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "invite.checking": {
+      "string": "Checking your invitation...",
+      "screen": "SCR-017",
+      "state": "loading",
+      "provenance": "as shipped",
+      "source": "INVITE:58",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "invite.demo": {
+      "string": "You can trade Demo meanwhile.",
+      "screen": "SCR-017",
+      "state": "step 4",
+      "provenance": "14",
+      "source": "`14`:455",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "invite.invalid": {
+      "string": "This invitation is no longer valid. Ask the owner for a new one.",
+      "screen": "SCR-017",
+      "state": "invalid",
+      "provenance": "RULED",
+      "source": "R194 (BQ-22)",
+      "status": "RULED",
+      "security": "frozen (7): no token oracle (`22`:12908)",
+      "breaks": "naming expired, used or unknown tells which invitation tokens existed",
+      "key_status": "PROPOSED"
+    },
+    "invite.open": {
+      "string": "Open the terminal",
+      "screen": "SCR-017",
+      "state": "step 4",
+      "provenance": "14",
+      "source": "`14`:456",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "invite.role": {
+      "string": "You're set up as: {role}",
+      "screen": "SCR-017",
+      "state": "step 4",
+      "provenance": "14",
+      "source": "`14`:451",
+      "status": "merged",
+      "params": {
+        "{role}": "getMe role"
+      },
+      "key_status": "PROPOSED"
+    },
+    "invite.welcome": {
+      "string": "Welcome, {display_name}",
+      "screen": "SCR-017",
+      "state": "step 1",
+      "provenance": "as shipped",
+      "source": "INVITE:76",
+      "status": "merged",
+      "params": {
+        "{display_name}": "getInvite display_name"
+      },
+      "key_status": "PROPOSED"
+    },
+    "lock.announce": {
+      "string": "Screen locked after N minutes idle. Market data continues. Order entry is disabled. Enter your password to resume.",
+      "screen": "SCR-005",
+      "state": "locked",
+      "provenance": "verbatim",
+      "source": "S03:134",
+      "status": "merged",
+      "params": {
+        "N": "idle_timeout_s / 60"
+      },
+      "key_status": "PROPOSED"
+    },
+    "lock.body": {
+      "string": "You were inactive for N minutes. Your layout is preserved. Unsent ticket inputs are preserved while locked; discarded on sign-out or expiry.",
+      "screen": "SCR-005",
+      "state": "locked",
+      "provenance": "verbatim",
+      "source": "S03:133",
+      "status": "merged",
+      "params": {
+        "N": "idle_timeout_s / 60"
+      },
+      "key_status": "PROPOSED"
+    },
+    "lock.expired.action": {
+      "string": "Sign in",
+      "screen": "SCR-005",
+      "state": "absolute-expiry",
+      "provenance": "verbatim",
+      "source": "S03:140",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.expired.announce": {
+      "string": "Session expired. Signed out. Sign in again.",
+      "screen": "SCR-005",
+      "state": "absolute-expiry",
+      "provenance": "verbatim",
+      "source": "S03:141",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.expired.badge": {
+      "string": "NOT SENT · DISCARDED · DISARMED",
+      "screen": "SCR-005",
+      "state": "absolute-expiry",
+      "provenance": "verbatim",
+      "source": "S03:140",
+      "status": "merged",
+      "security": "frozen (6): nothing sent after expiry",
+      "breaks": "a vaguer badge hides that a draft was dropped",
+      "key_status": "PROPOSED"
+    },
+    "lock.expired.body": {
+      "string": "Your session reached its maximum lifetime and you were signed out. Not sent. Discarded. One-click disarmed.",
+      "screen": "SCR-005",
+      "state": "absolute-expiry",
+      "provenance": "verbatim",
+      "source": "S03:140",
+      "status": "merged",
+      "security": "frozen (6): nothing sent after expiry (D06:35)",
+      "breaks": "a vaguer line hides that a draft was dropped and one-click disarmed",
+      "key_status": "PROPOSED"
+    },
+    "lock.expired.title": {
+      "string": "Session expired",
+      "screen": "SCR-005",
+      "state": "absolute-expiry",
+      "provenance": "verbatim",
+      "source": "S03:140",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.failed_body": {
+      "string": "Sign in again to continue.",
+      "screen": "SCR-005",
+      "state": "wrong-password",
+      "provenance": "verbatim",
+      "source": "S03:138",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.password": {
+      "string": "Password",
+      "screen": "SCR-005",
+      "state": "locked",
+      "provenance": "verbatim",
+      "source": "S03:135",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.password.hint": {
+      "string": "Enter your password",
+      "screen": "SCR-005",
+      "state": "locked",
+      "provenance": "verbatim",
+      "source": "S03:135",
+      "status": "merged",
+      "notes": "the field's placeholder",
+      "key_status": "PROPOSED"
+    },
+    "lock.sign_out_instead": {
+      "string": "Sign out instead",
+      "screen": "SCR-005",
+      "state": "locked",
+      "provenance": "verbatim",
+      "source": "S03:136",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.signout.back": {
+      "string": "Back to unlock",
+      "screen": "SCR-005",
+      "state": "sign-out-instead",
+      "provenance": "verbatim",
+      "source": "S03:139",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.signout.body": {
+      "string": "Unsent ticket inputs will be discarded. Open orders stay live on the exchange with their native stop-loss.",
+      "screen": "SCR-005",
+      "state": "sign-out-instead",
+      "provenance": "verbatim",
+      "source": "S03:139",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.signout.confirm": {
+      "string": "Sign out",
+      "screen": "SCR-005",
+      "state": "sign-out-instead",
+      "provenance": "verbatim",
+      "source": "S03:139",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.signout.title": {
+      "string": "Sign out?",
+      "screen": "SCR-005",
+      "state": "sign-out-instead",
+      "provenance": "verbatim",
+      "source": "S03:139",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.throttled": {
+      "string": "Too many attempts. Wait a minute, then try again.",
+      "screen": "SCR-005",
+      "state": "throttled",
+      "provenance": "verbatim",
+      "source": "S03:129",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "lock.title": {
+      "string": "Session locked",
+      "screen": "SCR-005",
+      "state": "locked",
+      "provenance": "verbatim",
+      "source": "S03:133",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.unlock": {
+      "string": "Unlock",
+      "screen": "SCR-005",
+      "state": "locked",
+      "provenance": "verbatim",
+      "source": "S03:136",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.unreachable": {
+      "string": "Couldn't reach the server. Try again.",
+      "screen": "SCR-005",
+      "state": "unreachable",
+      "provenance": "verbatim",
+      "source": "S03:130",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "lock.verifying": {
+      "string": "Verifying...",
+      "screen": "SCR-005",
+      "state": "verifying",
+      "provenance": "verbatim",
+      "source": "S03:137",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "lock.wrong_password": {
+      "string": "Incorrect password. Try again.",
+      "screen": "SCR-005",
+      "state": "wrong-password",
+      "provenance": "verbatim",
+      "source": "S03:132",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "sessions.all": {
+      "string": "Sign out everywhere",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:168",
+      "status": "merged",
+      "key_status": "merged"
+    },
+    "sessions.all.body": {
+      "string": "Every session, this one included, will be signed out.",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:170",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.all.title": {
+      "string": "Sign out everywhere?",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:169",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.cancel": {
+      "string": "Cancel",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:171",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.caption": {
+      "string": "Signed-in sessions",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:152",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.columns": {
+      "string": "\"Device\", \"IP address\", \"Signed in\", \"Last seen\", \"Action\"",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:153",
+      "status": "PROPOSED",
+      "notes": "the five column headers, in order",
+      "key_status": "merged"
+    },
+    "sessions.current": {
+      "string": "This session",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:154",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.empty": {
+      "string": "No active sessions.",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:160",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.forbidden": {
+      "string": "This was refused. Reload the page, then try again.",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:172",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.heading": {
+      "string": "Sessions",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:151",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.loading": {
+      "string": "Loading sessions…",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:159",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.no_device": {
+      "string": "Unknown device",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:156",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.no_ip": {
+      "string": "Not recorded",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:155",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.no_time": {
+      "string": "Unknown",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:157",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.not_found": {
+      "string": "That session has already ended.",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:173",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.page.heading": {
+      "string": "Security settings",
+      "screen": "SCR-112",
+      "state": "page",
+      "provenance": "verbatim",
+      "source": "S03:150",
+      "status": "merged",
+      "notes": "the page heading (R-201), `14`'s screen name",
+      "key_status": "PROPOSED"
+    },
+    "sessions.refused": {
+      "string": "Signing out everywhere needs a fresh sign-in. Sign in again, then try.",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:174",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.retry": {
+      "string": "Try again",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:161",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.time_format": {
+      "string": "YYYY-MM-DD hh:mm UTC",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:158",
+      "status": "PROPOSED",
+      "notes": "the time format of every session time",
+      "key_status": "PROPOSED"
+    },
+    "sessions.revoke": {
+      "string": "Revoke",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:163",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.revoke.other": {
+      "string": "{device} will be signed out.",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:165",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.revoke.self": {
+      "string": "This will sign you out on this device.",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "14",
+      "source": "`14`:2325",
+      "status": "merged",
+      "security": "frozen (9): the current session revoked knowingly",
+      "breaks": "a softer line hides that this revoke ends the session on this device",
+      "key_status": "merged"
+    },
+    "sessions.revoke.self.verb": {
+      "string": "Revoke and sign out",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:167",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.revoke.title": {
+      "string": "Revoke session?",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:164",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.revoked": {
+      "string": "Session revoked.",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:162",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "sessions.unavailable": {
+      "string": "Couldn't reach the server. Try again.",
+      "screen": "SCR-112",
+      "state": "sessions",
+      "provenance": "verbatim",
+      "source": "S03:175",
+      "status": "PROPOSED",
+      "key_status": "merged"
+    },
+    "setup.heading": {
+      "string": "Setup checklist",
+      "screen": "SCR-019",
+      "state": "any",
+      "provenance": "as shipped",
+      "source": "CHECK:95",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.state.blocked": {
+      "string": "Blocked",
+      "screen": "SCR-019",
+      "state": "blocked",
+      "provenance": "as shipped",
+      "source": "CHECK:22",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.state.error": {
+      "string": "Error",
+      "screen": "SCR-019",
+      "state": "error",
+      "provenance": "as shipped",
+      "source": "CHECK:23",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.state.not_applicable": {
+      "string": "Not yet available",
+      "screen": "SCR-019",
+      "state": "not_applicable",
+      "provenance": "as shipped",
+      "source": "CHECK:24",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.state.ok": {
+      "string": "Done",
+      "screen": "SCR-019",
+      "state": "ok",
+      "provenance": "as shipped",
+      "source": "CHECK:20",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.state.pending": {
+      "string": "Pending",
+      "screen": "SCR-019",
+      "state": "pending",
+      "provenance": "as shipped",
+      "source": "CHECK:21",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.task.api_key": {
+      "string": "API key status",
+      "screen": "SCR-019",
+      "state": "any",
+      "provenance": "as shipped",
+      "source": "CHECK:15",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.task.demo_session": {
+      "string": "Demo session",
+      "screen": "SCR-019",
+      "state": "any",
+      "provenance": "as shipped",
+      "source": "CHECK:17",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.task.profile_limits": {
+      "string": "Profile limits",
+      "screen": "SCR-019",
+      "state": "any",
+      "provenance": "as shipped",
+      "source": "CHECK:16",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.task.sub_account": {
+      "string": "Sub-account bound",
+      "screen": "SCR-019",
+      "state": "any",
+      "provenance": "as shipped",
+      "source": "CHECK:14",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.task.tailscale": {
+      "string": "Tailscale network",
+      "screen": "SCR-019",
+      "state": "any",
+      "provenance": "as shipped",
+      "source": "CHECK:12",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "setup.task.totp": {
+      "string": "TOTP enrolled",
+      "screen": "SCR-019",
+      "state": "any",
+      "provenance": "as shipped",
+      "source": "CHECK:13",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "stepup.action": {
+      "string": "Action: {action_summary}",
+      "screen": "SCR-006",
+      "state": "code-only",
+      "provenance": "14",
+      "source": "`14`:249",
+      "status": "merged",
+      "params": {
+        "{action_summary}": "the challenge's action_summary, verbatim"
+      },
+      "key_status": "PROPOSED"
+    },
+    "stepup.cancel": {
+      "string": "Cancel",
+      "screen": "SCR-006",
+      "state": "code-only",
+      "provenance": "14",
+      "source": "`14`:253",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "stepup.code": {
+      "string": "Enter your authenticator code",
+      "screen": "SCR-006",
+      "state": "code-only",
+      "provenance": "14",
+      "source": "`14`:251",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "stepup.confirm": {
+      "string": "Confirm",
+      "screen": "SCR-006",
+      "state": "code-only",
+      "provenance": "14",
+      "source": "`14`:253",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "stepup.not_sent": {
+      "string": "Not sent",
+      "screen": "SCR-006",
+      "state": "discarded",
+      "provenance": "verbatim",
+      "source": "D06:40",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "stepup.password": {
+      "string": "Password",
+      "screen": "SCR-006",
+      "state": "code-only",
+      "provenance": "14",
+      "source": "`14`:250",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "stepup.title": {
+      "string": "Confirm with two-factor",
+      "screen": "SCR-006",
+      "state": "code-only",
+      "provenance": "14",
+      "source": "`14`:248",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "stepup.typed": {
+      "string": "Type the account name to confirm",
+      "screen": "SCR-006",
+      "state": "code+confirmation",
+      "provenance": "14",
+      "source": "`14`:252",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "twofactor.reenrol": {
+      "string": "Re-enrol TOTP",
+      "screen": "SCR-112",
+      "state": "two-factor",
+      "provenance": "verbatim",
+      "source": "D04:165",
+      "status": "held (G-12)",
+      "key_status": "PROPOSED"
+    },
+    "twofactor.remove": {
+      "string": "Remove",
+      "screen": "SCR-112",
+      "state": "two-factor",
+      "provenance": "new PROPOSED",
+      "source": "none (Q-4)",
+      "status": "PROPOSED",
+      "notes": "a non-last method only (RULED BQ-18)",
+      "key_status": "PROPOSED"
+    },
+    "twofactor.remove.last": {
+      "string": "Your last two-factor method can't be removed.",
+      "screen": "SCR-112",
+      "state": "two-factor",
+      "provenance": "new PROPOSED",
+      "source": "none (Q-4)",
+      "status": "PROPOSED",
+      "notes": "the visible reason on a Remove the server would refuse (`22`:1436)",
+      "key_status": "PROPOSED"
+    },
+    "twofactor.status": {
+      "string": "Two-factor authentication: Active",
+      "screen": "SCR-112",
+      "state": "two-factor",
+      "provenance": "verbatim",
+      "source": "D04:161",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "warn.body": {
+      "string": "No activity detected. The workspace locks in 60 seconds. Live data keeps updating.",
+      "screen": "CMP-098",
+      "state": "warning",
+      "provenance": "verbatim",
+      "source": "S03:142",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "warn.countdown": {
+      "string": "Lock in m:ss",
+      "screen": "CMP-098",
+      "state": "warning",
+      "provenance": "verbatim",
+      "source": "S03:142",
+      "status": "merged",
+      "params": {
+        "m:ss": "idle_deadline minus server_time"
+      },
+      "key_status": "PROPOSED"
+    },
+    "warn.stay": {
+      "string": "Stay signed in",
+      "screen": "CMP-098",
+      "state": "warning",
+      "provenance": "verbatim",
+      "source": "S03:142",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    },
+    "warn.title": {
+      "string": "Your session will lock soon",
+      "screen": "CMP-098",
+      "state": "warning",
+      "provenance": "verbatim",
+      "source": "S03:142",
+      "status": "merged",
+      "key_status": "PROPOSED"
+    }
+  }
+}
