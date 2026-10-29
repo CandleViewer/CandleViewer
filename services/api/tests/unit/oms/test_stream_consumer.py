@@ -487,6 +487,23 @@ async def test_consumer_a_re_enabled_account_is_streamed_again_at_healths_next_r
     assert "defect" not in rig.counts and rig.pages == []
 
 
+async def test_consumer_a_disable_holds_on_healths_read_at_the_close_not_the_last_refreshs(
+    rig: Rig,
+) -> None:
+    """The hold takes health's read in place as the close comes, never the set of the consumer's
+    last refresh: health read again (equal) after that refresh and before the disable, so the
+    refresh after the close meets the read the hold took and restarts nothing: no subscribe the
+    key would refuse, no defect and no page."""
+    c = await running(rig)
+    rig.new_read()  # health's next read, after the consumer's refresh and before the disable
+    rig.port.push(status("closed", "account_disabled"))
+    await rig.until(lambda: rig.closes == [A])
+    rig.refusing.add(A)
+    await rig.refresh()
+    assert c.accounts() == set() and entries(rig, "subscribe") == [("subscribe", A)]
+    assert "defect" not in rig.counts and rig.pages == []
+
+
 async def test_consumer_a_refused_subscribe_not_closed_for_a_disable_still_pages(
     rig: Rig,
 ) -> None:
