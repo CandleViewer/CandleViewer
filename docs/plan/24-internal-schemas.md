@@ -606,7 +606,7 @@ Topic details are flat single segments (`bus/models.py` `_SEGMENT_RE` = `[a-zA-Z
 Produced by M9 `orderflow/liquidity.py` (`LiquidityTracker`) from a 100 ms book sample (`BookState.walk`, read only while `BookPhase.LIVE`) and the `TradeEvent` tape. Plain synchronous code, not a statechart (C-2.20); every time is the caller's `ts_us`, so live and replay take the same path. Bus only: no REST or WS surface (`23-ws-protocol.md` is untouched; WS exposure is E21-S07's own contract PR), and nothing is persisted (`heatmap_cells.refill_count` and the age columns stay NULL).
 
 ```python
-class LiquidityReload(MarketEvent):        # a level consumed by prints, then replenished in the window
+class LiquidityReload(MarketEvent):        # (estimated) a level consumed by prints, then replenished in the window
     side: Literal["bid", "ask"]            # the resting side of the level
     price: Px
     price_ticks: Ticks
@@ -615,7 +615,7 @@ class LiquidityReload(MarketEvent):        # a level consumed by prints, then re
     refill_count: int                      # consume -> replenish cycles at this price within the window
     estimated: Literal[True] = True        # L2-only inference, no L3/MBO
 
-class LiquidityPulled(MarketEvent):        # a level dropped without matching prints
+class LiquidityPulled(MarketEvent):        # (estimated) a level dropped without matching prints
     side: Literal["bid", "ask"]
     price: Px
     price_ticks: Ticks
@@ -636,7 +636,9 @@ class LiquidityPulled(MarketEvent):        # a level dropped without matching pr
 | `min_size`             | `10 x qty_step`        | smaller levels are ignored (base qty)                                 |
 | `tolerance_pct`        | `0.1`                  | traded volume needed to call a drop consumed: `drop x tolerance_pct`  |
 
-Rules. A drop of at least `reload_consume_pct` with traded volume at or through the price (buys through an ask, sells through a bid) of at least `drop x tolerance_pct` in the window is **consumed**, otherwise **pulled** (`LiquidityPulled`, no reload). A consumed level back at `reload_replenish_pct` of its prior size within `reload_window_ms` emits one `LiquidityReload`. A sample while the book is not LIVE (or one-sided) is an estimated gap: pending detection state of every level is reset and no event fires on the first live sample after it (the book is re-baselined). Levels that fall out of the walked depth are forgotten, not pulled.
+Rules. A drop of at least `reload_consume_pct` with traded volume at or through the price (buys through an ask, sells through a bid) of at least `drop x tolerance_pct` in the window is **consumed**, otherwise **pulled** (`LiquidityPulled`, no reload). A consumed level back at `reload_replenish_pct` of its prior size within `reload_window_ms` emits one `LiquidityReload`. A sample while the book is not LIVE (or one-sided) is an estimated gap: pending detection state of every level is reset and no event fires on the first live sample after it (the book is re-baselined). Levels that fall out of the walked depth are forgotten, not pulled. **v1 limitation:** detection compares each level with its previous sample only, so a pull spread over several sub-threshold steps is not detected (single-step comparison). A drop no print yet explains is held one sample before it is called pulled, so a print stamped before the sample but delivered after it still makes it consumed; a pending (consumed) entry for a level that leaves the walked depth lives until its window expires. A level consumed to zero that returns counts as a replenishment from 0.
+
+The tape is kept as volume per `(side, tick)` inside the window (expired on insert and on each sample, at most 16 384 prints per side); the at-or-through sum is a prefix sum over those ticks, built once per sample and only when some level dropped.
 
 Bands: `BandDepth(band_ticks, bid, ask, diff = bid - ask)`, exact `Decimal` from the book (distance to the mid measured in half ticks, so the integer arithmetic is exact).
 
