@@ -1,8 +1,9 @@
 """Generic account-reference walker over a rule IR document (E35-X02 j/k).
 
 Any key named like ``account_id`` / ``account_ids`` (case-insensitive, any depth, including
-free-form ``params`` dicts) is an account reference. The key set is derived from the IR
-pydantic models, and a test asserts the walker covers every such model field.
+free-form ``params`` dicts) is an account reference, and so is every value it holds at any depth:
+the grant check reads what an export strips (G-6). Tests assert the walker covers every such IR
+model field, and every action param the catalogue naming rule spells.
 """
 
 from __future__ import annotations
@@ -67,7 +68,8 @@ def _values(v: Any, out: list[str]) -> None:
         for x in v:
             _values(x, out)
     elif isinstance(v, dict):
-        _collect(v, out)
+        for x in v.values():
+            _values(x, out)
     else:
         out.append(str(v))
 

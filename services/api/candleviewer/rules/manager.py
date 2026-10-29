@@ -265,6 +265,20 @@ def quarantine_path(ir: dict[str, Any]) -> str | None:
     return None
 
 
+def _exported(ir: Any) -> Any:
+    """`ir` in the form an export carries (E35-X02 j): a copy without any account reference at any
+    depth, with demo its only environment, disarmed, and without its author, armer or id. Any stored
+    IR, a quarantined one's too (G-15); the stored IR itself is never changed."""
+    out = redact_account_ids(copy.deepcopy(ir))
+    if isinstance(out, dict):
+        scope = out.get("scope")
+        out["scope"] = {**(scope if isinstance(scope, dict) else {}), "environments": ["demo"]}
+        out.update(mode="disabled", enabled=False)
+        for k in ("created_by", "armed_by", "id"):
+            out.pop(k, None)
+    return out
+
+
 def _raised_limits(rule: Rule) -> dict[str, Any]:
     """Audit member for a version whose action budget is above its defaults (04 §8.3 rule 4):
     each raised field, with the default it is raised from and its value; empty when none is."""
@@ -430,20 +444,16 @@ class RulesManager:
         and armed state stripped, so a bundle never leaks identifiers or live intent."""
         row = await self._visible_row(rule_id, actor)
         ver = next((v for v in row.versions if v.id == row.active_version_id), row.versions[-1])
-        ir = redact_account_ids(copy.deepcopy(ver.ir))
-        scope = dict(ir.get("scope", {}))
-        scope["environments"] = ["demo"]
-        ir.update(scope=scope, mode="disabled", enabled=False)
-        for k in ("created_by", "armed_by", "id"):
-            ir.pop(k, None)
-        return {"format": "cv-rule-bundle/1", "ir": ir}
+        return {"format": "cv-rule-bundle/1", "ir": _exported(ver.ir)}
 
     async def import_rule(self, bundle: dict[str, Any], actor: Actor) -> dict[str, Any]:
-        """Always lands disabled. Every account id anywhere in the bundle must be granted to
-        the importer (refused + audited otherwise); they are then dropped, never remapped."""
+        """Always lands disabled, on demo. Every account id anywhere in the bundle must be granted
+        to the importer, else the bundle is refused, audited with the count refused (never the ids)
+        and nothing is stored; each one is then kept as written, never remapped (G-10). A bundle
+        naming no account lands naming none, so it applies to every account its owner is granted."""
         self.check_document(bundle.get("ir", {}))  # the bounds, before the copy and walks below
-        raw = copy.deepcopy(bundle.get("ir", {}))
-        refs = collect_account_ids(raw)
+        ir = copy.deepcopy(bundle.get("ir", {}))
+        refs = collect_account_ids(ir)
         denied = [] if actor.is_owner else [a for a in refs if a not in actor.granted_accounts]
         if denied:
             await self._audit(
@@ -451,7 +461,6 @@ class RulesManager:
                 {"actor": actor.user_id, "reason": "ungranted_account", "count": len(denied)},
             )
             raise RuleError(403, "forbidden", "The bundle references an account you cannot access.")
-        ir = redact_account_ids(raw)
         scope = dict(ir.get("scope", {}))
         scope["environments"] = ["demo"]
         ir.update(scope=scope)
@@ -515,7 +524,7 @@ class RulesManager:
                     read_only=True,
                     quarantined=True,
                     failing_path=bad,
-                    export_json=copy.deepcopy(active.ir),
+                    export_json=_exported(active.ir),
                     message=f"This rule is stored in a format the engine cannot read "
                     f"(problem at {bad}). It is read-only and disarmed. "
                     "Export it as JSON to repair it.",
@@ -660,9 +669,7 @@ class RulesManager:
         await self._require_owner_for_raised_limits(rule, actor, "create", rid)
         if is_reserved_name(rule.name):
             raise RuleError(403, "system_rule_reserved", "The 'sys.' name prefix is reserved.")
-        existing = await self._s.all()
-        if any(not r.deleted and r.name == rule.name for r in existing):
-            raise RuleError(409, "name_taken", f"A rule named '{rule.name}' already exists.")
+        await self._check_name_free(rule.name, actor)
         row = RuleRow(rid, rule.name, actor.user_id, scope=rule.scope.level)
         v = self._new_version(row, rule, h, notes, actor)
         row.active_version_id = v.id
@@ -758,8 +765,17 @@ class RulesManager:
                 {"rule_id": row.id, "name": row.name, "op": "rename", "actor": actor.user_id},
             )
             raise RuleError(403, "system_rule_reserved", "The 'sys.' name prefix is reserved.")
-        if any(not r.deleted and r.id != row.id and r.name == name for r in await self._s.all()):
-            raise RuleError(409, "name_taken", f"A rule named '{name}' already exists.")
+        await self._check_name_free(name, actor, row.id)
+
+    async def _check_name_free(self, name: str, actor: Actor, rule_id: str = "") -> None:
+        """409 `name_taken` when another live rule holding `name` is the actor's own or one
+        `rule_visible` lets them read (G-14): a rule they cannot read is never a conflict, so no
+        answer names, counts or hints at it. Names are unique per owner in the store (21
+        `ux_rules_name`), so each of the actor's own rules counts, readable or not."""
+        for r in await self._s.all():
+            clash = r.name == name and r.id != rule_id and not r.deleted
+            if clash and (r.owner == actor.user_id or self._visible(r, actor)):
+                raise RuleError(409, "name_taken", f"A rule named '{name}' already exists.")
 
     async def delete(self, rule_id: str, actor: Actor) -> None:
         row = await self._visible_row(rule_id, actor, "delete")
