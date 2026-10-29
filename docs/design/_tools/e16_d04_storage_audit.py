@@ -56,6 +56,7 @@ import difflib
 import hashlib
 import json
 import re
+import struct
 import sys
 import textwrap
 from collections.abc import Callable
@@ -2864,11 +2865,42 @@ def doc_units(spec: str) -> list[tuple[str, str, str]]:
             c = cells(ln)
             key = c[0].strip("`*")
             out.append((f"{where} table ({key[:40]})", "row", ln))
+        elif where == "§0" and re.match(REGISTER_RE, ln):
+            out.append((f"{where} register", "register", ln))
         elif ln.strip():
             for sent in re.split(r'(?<=[.!?])\s+(?=[A-Z*(`"])(?=(?:[^"]*"[^"]*")*[^"]*$)', ln):
                 if sent.strip():
                     out.append((f"{where} prose", "prose", sent))
     return out
+
+
+# Section 0's "Boards as drawn" register (the boards PR): the lead paragraph and one bullet per board. Its numbers
+# are export facts, not the fixture's: the draw date and the script shas are provenance, and a bullet's size is the
+# exported PNG's IHDR, which R-17 reads from the file instead of the `--json` register.
+REGISTER_RE = r"^(?:Boards as drawn \(|- `\d\d [a-z0-9-]+` — board id `)"
+REGISTER_BULLET = r"`(docs/design/E16/img/E16-D04-(\d\d)-[a-z0-9-]+\.png)` \((\d+) × (\d+)\)"
+
+
+def register_gate(line: str) -> list[str]:
+    """R-17 on a register unit: a bullet names its export and the size the PNG's IHDR carries (read from the file)."""
+    if line.startswith("Boards as drawn ("):
+        return []
+    m = re.search(REGISTER_BULLET, line)
+    if not m:
+        return ["R-17 §0 register: a bullet without its export path and size"]
+    rel, board, w_s, h_s = m.groups()
+    path = ROOT / rel
+    if not path.is_file():
+        return [f"R-17 §0 register: board {board} export missing ({rel})"]
+    head = path.read_bytes()[:24]
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return [f"R-17 §0 register: board {board} export is not a PNG ({rel})"]
+    w, h = struct.unpack(">II", head[16:24])
+    if (int(w_s), int(h_s)) != (w, h):
+        return [
+            f"R-17 §0 register: board {board} size reads {w_s} × {h_s}, the export is {w} × {h}"
+        ]
+    return []
 
 
 def t2_context(text: str) -> bool:
@@ -2907,6 +2939,9 @@ def doc_gates(
     for where, kind, raw0 in doc_units(spec):
         last, prev = prev, (where, kind, raw0)
         raw = raw0
+        if kind == "register":
+            bad += register_gate(raw0)
+            continue
         if kind == "prose" and last[:2] == (where, kind) and re.match(PRONOUN_LEAD, raw0):
             raw = last[2] + " " + raw0
         if kind == "sketch":
@@ -6671,22 +6706,23 @@ RULED_PIN_TXT = r"""
 @ header#1 ¶1 ‖ heading
   # E16-D04 — SCR-142 Storage and database panel with tier health and projections: hi-fi
 @ header#1 ¶2 ‖ paragraph
-  **Ticket:** E16-D04 (#372) · **Epic:** E16 · **Status:** Draft, **text-first** — this file is
-   the hi-fi spec; the ten Penpot boards (nine dark, one light twin board) are **PENDING** and land
-   in a second PR with their exports and the page id (§0); nothing here is cited as drawn. **Owner
-   approval pending** (agent-delivery adaptations, owner decision 2026-09-25): the owner's
-   `approved` comment or the merge stands in for the ticket's design sign-off (§18). **Every
-   decision not already binding is PROPOSED**; RULED items name their source (the BQ table; the
-   orchestrator's ruling on #372, issue comment 6397016433, 2026-10-25); every finding is
-   `(heuristic)`; no participant, timing or quote is invented (§17). **Method:** a desk spec over
-   the merged E16-D02 (SCR-140, the host page) and E16-D03 (the destructive-change pattern and the
-   SCR-141 / SCR-142 boundary), and the merged E09-D09 / E30-D02 / E30-D04 patterns; every number
-   here carries an `audit:` marker that `docs/design/_tools/e16_d04_storage_audit.py --check`
-   re-derives from the `22` `getStorageUsage` example, and `--self-test` proves §12's gates with
-   ⟦audit:mutations⟧ mutations.
+  **Ticket:** E16-D04 (#372) · **Epic:** E16 · **Status:** the text merged first (#4532, with
+   `Refs #372` and a `Partial:` line); this revision is the boards PR's: the ten Penpot boards
+   (nine dark, one light twin board) of §0 are **drawn** from the board script r6 (boards 05, 07
+   and 08 from r5, which r6 leaves unchanged) and exported in this PR with the page id, which
+   completes #372; §0 records them as drawn. **Owner approval pending** (agent-delivery
+   adaptations, owner decision 2026-09-25): the owner's `approved` comment or the merge stands in
+   for the ticket's design sign-off (§18). **Every decision not already binding is PROPOSED**;
+   RULED items name their source (the BQ table; the orchestrator's ruling on #372, issue comment
+   6397016433, 2026-10-25); every finding is `(heuristic)`; no participant, timing or quote is
+   invented (§17). **Method:** a desk spec over the merged E16-D02 (SCR-140, the host page) and
+   E16-D03 (the destructive-change pattern and the SCR-141 / SCR-142 boundary), and the merged
+   E09-D09 / E30-D02 / E30-D04 patterns; every number here carries an `audit:` marker that
+   `docs/design/_tools/e16_d04_storage_audit.py --check` re-derives from the `22` `getStorageUsage`
+   example, and `--self-test` proves §12's gates with ⟦audit:mutations⟧ mutations.
 @ header#1 ¶3 ‖ paragraph
-  **Penpot page:** `E16-D04 Storage and database` · id pending (the boards PR pins it; page by
-   name + id only, `docs/design/README.md` :46–48).
+  **Penpot page:** `E16-D04 Storage and database` · id `f5d056cd-3de8-808d-8008-dc7bdd2c5c5f`
+   (pinned at the draw step; page by name + id only, `docs/design/README.md` :46–48).
 @ header#1 ¶4 ‖ paragraph
   **Scope** (the ticket): SCR-142 as the one picture of the three storage tiers (QuestDB hot,
    Parquet/DuckDB cold, Postgres): per-tier size, growth rate and projected full date with units
@@ -6891,17 +6927,17 @@ RULED_PIN_TXT = r"""
    PENDING by name only; every departure a PROPOSED A / C / G-row; `15` untouched, `14` the one
    pointer line; no lane as authority.
 @ §0#1 ¶1 ‖ heading
-  ## 0. Boards (PENDING — the boards PR draws them)
+  ## 0. Boards (drawn — this boards PR)
 @ §0#1 ¶2 ‖ paragraph
-  Boards go on the self-hosted Penpot page `E16-D04 Storage and database` · id pending
-   (`docs/design/README.md` :46–48; never the host, team or file id, never a workspace URL). Boards
-   are `E16-D04 / NN slug`; frames inside them are `SCR-142/<state>`, `TIER/<state>`,
-   `JOB/<state>`, `PURGE/<state>` and `IMPORT/<state>`; exports go to
-   `docs/design/E16/img/E16-D04-NN-<slug>.png` at 1:1 via `docs/design/_tools/penpot_export.py`.
-   Every board with a PROPOSED decision carries the stamp, every RULED item its source; every
-   PROPOSED control, column or action is a captioned inset or a captioned second row ("PROPOSED —
-   D04-Gn, owner approval pending (#2701)"), never a frame's default (BQ-11 / BQ-13 / BQ-18 / BQ-22
-   RULED). Nothing from E16-D02's boards
+  Boards are on the self-hosted Penpot page `E16-D04 Storage and database` · id
+   `f5d056cd-3de8-808d-8008-dc7bdd2c5c5f`, in the file `E16-D04 boards` (`docs/design/README.md`
+   :46–48; never the host, team or file id, never a workspace URL). Boards are `E16-D04 / NN slug`;
+   frames inside them are `SCR-142/<state>`, `TIER/<state>`, `JOB/<state>`, `PURGE/<state>` and
+   `IMPORT/<state>`; exports go to `docs/design/E16/img/E16-D04-NN-<slug>.png` at 1:1 via
+   `docs/design/_tools/penpot_export.py`. Every board with a PROPOSED decision carries the stamp,
+   every RULED item its source; every PROPOSED control, column or action is a captioned inset or a
+   captioned second row ("PROPOSED — D04-Gn, owner approval pending (#2701)"), never a frame's
+   default (BQ-11 / BQ-13 / BQ-18 / BQ-22 RULED). Nothing from E16-D02's boards
    (`docs/design/E16/img/E16-D02-05-scr-140-disk-warning.png`,
    `E16-D02-19-scr-140-purge-confirm.png`) is redrawn: they are cited by name and path.
    ⟦audit:boards⟧ boards, ⟦audit:light_twins⟧ light board, ⟦audit:frames_total⟧ frames
@@ -6912,58 +6948,94 @@ RULED_PIN_TXT = r"""
   | # | Board | Draws | Theme | Export | Status |
   | --- | --------------------------------- |
    -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-   | ----- | ------------------------------------------------------- | ------- |
+   | ----- | ------------------------------------------------------- | ------ |
   | 01 | `E16-D04 / 01 anatomy-healthy` | ⟦audit:board_frames.01⟧ frames of §2: `SCR-142/healthy`
    (the full page, regions (a)…(h) lettered, the two meters, the three tier cards, the sample
    stamp; the vacuum inset captioned PROPOSED, D04-G8) · `SCR-142/healthy-200-zoom` (the reflow:
    cards stack, tables one row element per record) | dark |
-   `docs/design/E16/img/E16-D04-01-anatomy-healthy.png` | pending |
+   `docs/design/E16/img/E16-D04-01-anatomy-healthy.png` | drawn |
   | 02 | `E16-D04 / 02 tiers-and-tables` | ⟦audit:board_frames.02⟧ frames of §4: `TIER/questdb`,
    `TIER/parquet`, `TIER/postgres` (the cards, every row, PROPOSED rows captioned with the shipped
    fallback) · `TIER/tables-questdb` (the per-table CMP-049 as a captioned second row) ·
    `TIER/per-symbol` (the hot-tier symbol table; the sparkline as the one PROPOSED D04-G2 inset
    with its mirror table) · `TIER/query-performance` (a captioned second row) | dark |
-   `docs/design/E16/img/E16-D04-02-tiers-and-tables.png` | pending |
+   `docs/design/E16/img/E16-D04-02-tiers-and-tables.png` | drawn |
   | 03 | `E16-D04 / 03 states-disk` | ⟦audit:board_frames.03⟧ frames of §5:
    `SCR-142/low-disk-warning` (level 1 + the AC 2 sentence) · `SCR-142/autostop` ·
    `SCR-142/read-only-disk-full` (level 3, gate closed; every action still enabled) ·
    `SCR-142/volume-refused` · `SCR-142/view-as` (every write T2, one notice) | dark |
-   `docs/design/E16/img/E16-D04-03-states-disk.png` | pending |
+   `docs/design/E16/img/E16-D04-03-states-disk.png` | drawn |
   | 04 | `E16-D04 / 04 states-health` | ⟦audit:board_frames.04⟧ frames of §5:
    `SCR-142/tier-unreachable-questdb` (the card error, the page usable) · `SCR-142/lag-warning` ·
    `SCR-142/migration-pending` (the captioned banner with the version delta; no Apply) ·
    `SCR-142/stale-sample` · `SCR-142/loading` · `SCR-142/unavailable` | dark |
-   `docs/design/E16/img/E16-D04-04-states-health.png` | pending |
+   `docs/design/E16/img/E16-D04-04-states-health.png` | drawn |
   | 05 | `E16-D04 / 05 maintenance-jobs` | ⟦audit:board_frames.05⟧ frames of §6:
    `JOB/confirm-compact` (CMP-044 standard) · `JOB/confirm-vacuum` (captioned PROPOSED) ·
    `JOB/strip-running` (two jobs with their pct; Stop job (PROPOSED D04-G10)) ·
    `JOB/strip-refused-409` (T4) · `JOB/outcomes` (succeeded / failed / cancelled / unknown insets
    for compact and, captioned PROPOSED (D04-G8), vacuum) | dark |
-   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` | pending |
+   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` | drawn |
   | 06 | `E16-D04 / 06 purge` | ⟦audit:board_frames.06⟧ frames of §7: `PURGE/entry-points` ·
    `PURGE/dialog` (E16-D02 §6.5 reused; the typed field empty) · `PURGE/dialog-validity` (the typed
    mismatch: validity look, `validity-reason` layer, no lock) · `PURGE/pinned-refused` (T4) ·
    `PURGE/step-up` (the sentence; SCR-006 cited, not drawn) · `PURGE/outcomes` | dark |
-   `docs/design/E16/img/E16-D04-06-purge.png` | pending |
+   `docs/design/E16/img/E16-D04-06-purge.png` | drawn |
   | 07 | `E16-D04 / 07 import` | ⟦audit:board_frames.07⟧ frames of §8: `IMPORT/form` ·
    `IMPORT/form-validity` (over 366 days) · `IMPORT/running` (the bar and the days; the per-file
    table a captioned PROPOSED D04-G11 inset) · `IMPORT/running-with-skips` (AC 3: the shipped bar
    moving, the skipped row with its reason in the captioned D04-G11 inset, no banner) ·
    `IMPORT/summary` (the overlap report, the archive-derived tag) · `IMPORT/failed` (inside the
-   card) | dark | `docs/design/E16/img/E16-D04-07-import.png` | pending |
+   card) | dark | `docs/design/E16/img/E16-D04-07-import.png` | drawn |
   | 08 | `E16-D04 / 08 keyboard-a11y-copy` | ⟦audit:board_frames.08⟧ state frames: the focus-order
    map (header → meters → cards → tables → maintenance → import), the keys table, the announcement
    policy, the copy-deck counts, the measured-matrix line, the RULED stamps (§10, §13–§15) | dark |
-   `docs/design/E16/img/E16-D04-08-keyboard-a11y-copy.png` | pending |
+   `docs/design/E16/img/E16-D04-08-keyboard-a11y-copy.png` | drawn |
   | 09 | `E16-D04 / 09 redlines` | ⟦audit:board_frames.09⟧ frame of §11: `SCR-142/redlines` —
    tokens annotated on a tier card, a meter, the jobs strip, the per-file table (the PROPOSED
    D04-G11 inset), the T2 control and the validity control; the token audit counts | dark |
-   `docs/design/E16/img/E16-D04-09-redlines.png` | pending |
+   `docs/design/E16/img/E16-D04-09-redlines.png` | drawn |
   | 10 | `E16-D04 / 10 light-twins` | ⟦audit:board_frames.10⟧ twins in `semantic-light` through
    `themes.json` (BQ-21 RULED): `SCR-142/low-disk-warning` (the warning tone on the admin canvas),
    `IMPORT/running-with-skips` (the warning subtle rows), `SCR-142/view-as` (the T2 pair); the
-   measured ratios in the title | light | `docs/design/E16/img/E16-D04-10-light-twins.png` |
-   pending |
+   measured ratios in the title | light | `docs/design/E16/img/E16-D04-10-light-twins.png` | drawn
+   |
+@ §0#1 ¶4 ‖ paragraph
+  Boards as drawn (2026-10-29, from the board script r6 — sha256
+   `43fdb2f8d7d832db95b14de5bcc5aebde3d33626f5434f7c6112cc057c8b313f` — a declared patch of r5
+   (sha256 `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`) with three fixes
+   from the r5 draw's QA: board 03's `SCR-142/volume-refused` meter reads the gate's level over the
+   unchanged bytes (1,188.0 GB of 2,000.0 GB cap_bytes, 59.4 %, with the level-3 danger fill and ✗
+   glyph), never a level derived from the bytes; board 04's `SCR-142/tier-unreachable-questdb`
+   QuestDB card in `down` tags its last sizes with the `stale` chip, as the stale-sample frame
+   does; the tier cards' wrapping captions keep a date, a number with its unit and the "—" together
+   (the date's hyphens non-breaking, a no-break space before a unit and before the dash). Boards
+   01, 02, 03, 04, 06, 09 and 10 are redrawn from r6; boards 05, 07 and 08 are the r5 draw, which
+   r6 leaves unchanged; every board exported at 1:1):
+@ §0#1 ¶5 ‖ list
+  - `01 anatomy-healthy` — board id `3dabf49b-b27a-8036-8008-dc8761e1a9bb` —
+   `docs/design/E16/img/E16-D04-01-anatomy-healthy.png` (1920 × 2629)
+  - `02 tiers-and-tables` — board id `3dabf49b-b27a-8036-8008-dc87a15c81eb` —
+   `docs/design/E16/img/E16-D04-02-tiers-and-tables.png` (1920 × 2058)
+  - `03 states-disk` — board id `3dabf49b-b27a-8036-8008-dc87db88209f` —
+   `docs/design/E16/img/E16-D04-03-states-disk.png` (2664 × 4316)
+  - `04 states-health` — board id `3dabf49b-b27a-8036-8008-dc88678c7444` —
+   `docs/design/E16/img/E16-D04-04-states-health.png` (2664 × 4248)
+  - `05 maintenance-jobs` — board id `f5d056cd-3de8-808d-8008-dc7cf8aa156a` —
+   `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` (1920 × 1256) — drawn from r5 (sha256
+   `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`), unchanged by r6
+  - `06 purge` — board id `3dabf49b-b27a-8036-8008-dc88f100675c` —
+   `docs/design/E16/img/E16-D04-06-purge.png` (1920 × 1624)
+  - `07 import` — board id `f5d056cd-3de8-808d-8008-dc7d32665db1` —
+   `docs/design/E16/img/E16-D04-07-import.png` (1920 × 2029) — drawn from r5 (sha256
+   `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`), unchanged by r6
+  - `08 keyboard-a11y-copy` — board id `f5d056cd-3de8-808d-8008-dc7d5bc0ec7c` —
+   `docs/design/E16/img/E16-D04-08-keyboard-a11y-copy.png` (1920 × 1063) — drawn from r5 (sha256
+   `96932b4edef5fd15793608354eeb2a472431b54fa937a8629f8389da46a9766d`), unchanged by r6
+  - `09 redlines` — board id `3dabf49b-b27a-8036-8008-dc891ad5977c` —
+   `docs/design/E16/img/E16-D04-09-redlines.png` (1920 × 1762)
+  - `10 light-twins` — board id `3dabf49b-b27a-8036-8008-dc8936dc3903` —
+   `docs/design/E16/img/E16-D04-10-light-twins.png` (2664 × 2286)
 @ §0 › Contract-truth update (p#1 ¶1 ‖ heading
   ### Contract-truth update (post-#4597, `22` :15035 / :15040 / :15046 / :15086)
 @ §0 › Contract-truth update (p#1 ¶2 ‖ paragraph
@@ -6979,7 +7051,7 @@ RULED_PIN_TXT = r"""
   (`required: [symbol, confirm_symbol, reason, before]`, `22` :15086): its label, the help line
   "Data recorded at or after this time is kept." and the T4 reason "Choose a time no later than
   now." (`422 validation_failed before_in_future`). The three strings are `new` (PROPOSED here) in
-  §14; `PURGE/dialog` and `PURGE/dialog-validity` draw them (board script r5).
+  §14; `PURGE/dialog` and `PURGE/dialog-validity` draw them (board script r5, kept in r6).
   - **`retention_pinned_refused`:** cited at its current line (`22` :15045–15046) where the
    dialog's
   refusals are listed.
@@ -8697,21 +8769,22 @@ RULED_PIN_TXT = r"""
    "migration version" are drawn as captioned PROPOSED carriers (D04-G8, G10, G3, G5, G6, G7),
    never as shipped controls (BQ-11 / 13 / 18 RULED); (5) the ticket's audit names are `14`'s and
    differ from `22`'s (D04-C1); (6) no hand-off file (BQ-3 RULED); (7) Figma → Penpot; the boards
-   are PENDING (text-first). **Hand-offs:** the E16 implementation ticket that consumes SCR-142
-   (E16-S05 / E16-S08 per the ticket; E16-T10 for the import, E16-T07 for `DiskBudget`) — the
-   build, every `storage.*` key, the frames, and the contract-first PRs for D04-G1…G12; E16-D06 —
-   the a11y review of §10 and the hand-off of the set; E16-D07 — design QA of F1–F5; the `14` owner
-   — D04-A4…A6, D04-C1…C3; the E16-D02 owner — D04-A8, D04-C6; the `15` owner — D04-A1…A3, D04-A7,
-   D04-C4; the `22` owner — D04-G1…G12, D04-CG1, D04-CG2; the owner — D04-Q1…Q4. **Summary:** one
-   admin section with eight regions: two labelled meters and the sample stamp, three tier cards
-   with health as text, the per-tier tables and the per-symbol table, the maintenance card with its
-   jobs strip, the import card with per-file reporting; ⟦audit:frames_total⟧ frames across 9 dark
-   boards and 1 light board (PENDING); the only T2 is the view-as leg; purge is E16-D02's typed
-   dialog, compact and the PROPOSED vacuum (D04-G8) are standard confirms that delete nothing; the
-   degradation order is stated in text on every warning state; every missing field is a captioned
-   PROPOSED carrier beside its shipped fallback; every number is the tool's and every frame gate is
-   mutation-tested (⟦audit:mutations⟧ mutations, each its mutation's only FAIL with a distinct
-   message); the boards land in the second PR with the page id.
+   are drawn (§0, this boards PR). **Hand-offs:** the E16 implementation ticket that consumes
+   SCR-142 (E16-S05 / E16-S08 per the ticket; E16-T10 for the import, E16-T07 for `DiskBudget`) —
+   the build, every `storage.*` key, the frames, and the contract-first PRs for D04-G1…G12; E16-D06
+   — the a11y review of §10 and the hand-off of the set; E16-D07 — design QA of F1–F5; the `14`
+   owner — D04-A4…A6, D04-C1…C3; the E16-D02 owner — D04-A8, D04-C6; the `15` owner — D04-A1…A3,
+   D04-A7, D04-C4; the `22` owner — D04-G1…G12, D04-CG1, D04-CG2; the owner — D04-Q1…Q4.
+   **Summary:** one admin section with eight regions: two labelled meters and the sample stamp,
+   three tier cards with health as text, the per-tier tables and the per-symbol table, the
+   maintenance card with its jobs strip, the import card with per-file reporting;
+   ⟦audit:frames_total⟧ frames across 9 dark boards and 1 light board (PENDING); the only T2 is the
+   view-as leg; purge is E16-D02's typed dialog, compact and the PROPOSED vacuum (D04-G8) are
+   standard confirms that delete nothing; the degradation order is stated in text on every warning
+   state; every missing field is a captioned PROPOSED carrier beside its shipped fallback; every
+   number is the tool's and every frame gate is mutation-tested (⟦audit:mutations⟧ mutations, each
+   its mutation's only FAIL with a distinct message); the boards land in the second PR with the
+   page id.
 """
 
 
