@@ -1035,9 +1035,11 @@ class ConnectionAuthz:
 
     def _heatmap_refusal(self, sub: Subscription) -> dict[str, Any] | None:
         """E21-T02 (§6.1, §10.2): `unknown_topic` while the byte budget is off (G-04), live and
-        replay alike, never `snapshot_pending`; then depth 500 is `invalid_topic_format` while
-        `heatmap_depth_500` is off (#604 BQ-9). The spec caps (G-02) come at the lease."""
-        if self.services.heatmap_off:
+        replay alike, never `snapshot_pending`; `unknown_topic` too for a replay one while no
+        replay producer serves the family (§10.2's "topic not served"), never pending for good;
+        then depth 500 is `invalid_topic_format` while `heatmap_depth_500` is off (#604 BQ-9).
+        The spec caps (G-02) come at the lease."""
+        if self.services.heatmap_off or sub.replay_session_id is not None:
             return _fail(sub.ch, "unknown_topic", _UNSERVED)
         if int(sub.opts.get("depth", 0)) >= 500 and not self.services.depth_500:
             return _fail(sub.ch, "invalid_topic_format", "Heatmap depth 500 is not offered.")

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import itertools
 import struct
 from dataclasses import dataclass
 from time import perf_counter
@@ -183,10 +184,7 @@ def encode(frame: Frame, weight: int = 0) -> bytes:
                 for cell in cells:
                     rec.pack_into(out, off, *cell)
                     off += kind.record.size
-        for r in frame.records:
-            _check_enums(kind.record, r)
-            rec.pack_into(out, off, *r)
-            off += kind.record.size
+        off = _pack_records(out, off, kind.record, rec, frame.records)
         if kind.trailer is not None and frame.trailer is not None:
             _st(kind.trailer).pack_into(out, off, *frame.trailer)
     except struct.error as exc:
@@ -233,6 +231,26 @@ def _check_groups(groups: object, part: Part, name: str) -> None:
         flags = group[0][fields.index("flags")] if "flags" in fields else 0
         if isinstance(flags, int) and flags & ~_GROUP_KNOWN_FLAGS:
             raise FrameEncodeError(f"{name}: reserved group flag bits are 0 on send, got {flags}")
+
+
+def _pack_records(
+    out: bytearray, off: int, part: Part, rec: struct.Struct, records: tuple[Record, ...]
+) -> int:
+    """Pack `records` at `off`; the next offset. A layout with no enum field packs every record
+    in one call (#605: a 512-row heatmap column took 0.45 ms record by record), the same bytes,
+    once each record has the layout's width (a record with no length raises `TypeError`, as
+    `*record` does); else one record a call, checked."""
+    width = len(part.fields)
+    if records and not part.enums and all(map(width.__eq__, map(len, records))):
+        struct.pack_into(
+            "<" + part.fmt[1:] * len(records), out, off, *itertools.chain.from_iterable(records)
+        )
+        return off + part.size * len(records)
+    for r in records:
+        _check_enums(part, r)
+        rec.pack_into(out, off, *r)
+        off += part.size
+    return off
 
 
 def _check_enums(part: Part, record: Record) -> None:

@@ -317,6 +317,27 @@ def heatmap_part(
     )
 
 
+class HeatmapDepthDemand:
+    """E21-T02: a depth-500 heatmap spec's demand on the symbol's deep tier, through the live
+    `BookStream` (resolved per call; without one, nothing is demanded and the spec stays
+    pending), as a `book.X.500` reference demands it (`IngestionUpstreamSink`)."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        self._ctx = ctx
+
+    def _books(self) -> BookStream | None:
+        books = self._ctx.ingestion.books
+        return books if isinstance(books, BookStream) else None
+
+    def acquire_depth(self, consumer: str, symbol: str, depth: int) -> None:
+        if (books := self._books()) is not None:
+            books.acquire_depth(consumer, symbol, depth)
+
+    def release(self, consumer: str, symbol: str) -> None:
+        if (books := self._books()) is not None:
+            books.release(consumer, symbol)
+
+
 def heatmap_topic(
     ctx: AppContext,
     hub: SequencingHub,
@@ -341,6 +362,7 @@ def heatmap_topic(
         queue_bytes=queue_bytes,
         queue_frames=queue_frames,
         store=store,
+        demand=HeatmapDepthDemand(ctx),
     )
 
 

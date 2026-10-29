@@ -3698,12 +3698,22 @@ def _build_heatmap_store(settings: Settings) -> QuestDbHeatmapStore | None:
     backend (21 §4.12); `None` (nothing stored) otherwise. Connects lazily - no I/O here."""
     if settings.storage_backend != "real":
         return None
+    pg_host, _, pg_port = settings.questdb_pg.partition(":")
+    # Its own wire, labelled `storage` (the closed `WireName` set), never the bars sink's.
+    wire = LazyPgWire(
+        pg_host,
+        int(pg_port or 8812),
+        settings.questdb_pg_user,
+        settings.questdb_pg_password.get_secret_value(),
+        name="storage",
+    )
     return QuestDbHeatmapStore(
         QuestDbRowSink(
             settings.questdb_ilp,
             settings.questdb_pg,
             settings.questdb_pg_user,
             settings.questdb_pg_password.get_secret_value(),
+            pgwire=wire,
         )
     )
 

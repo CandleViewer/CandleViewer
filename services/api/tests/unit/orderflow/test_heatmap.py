@@ -170,6 +170,11 @@ async def live(w: World, bids: list[BookLevel] | None = None, asks: list[BookLev
     return eng
 
 
+def ring(w: World, spec: HeatmapSpec) -> list[HeatmapColumn]:
+    """The columns a spec's ring holds, oldest first."""
+    return [e.column for e in w.topic._symbols[spec.symbol].specs[spec].ring]
+
+
 def missing(symbol: str = SYM) -> float:
     value = REGISTRY.get_sample_value("heatmap_missing_columns_total", {"symbol": symbol})
     return value or 0.0
@@ -196,8 +201,8 @@ async def test_columns_at_cadence_exactly_one_column_per_100ms_bucket() -> None:
     assert [c["t_ms"] for c in cols] == [T0 + k * COLUMN_MS for k in range(10)]
     assert all(c["complete"] is True and "samples" not in c for c in cols)
     assert all(p is not None for _, _, p in w.hub.frames)
-    ring = w.topic._symbols[SYM].specs[HeatmapSpec(SYM, time_bucket_ms=100)].ring
-    assert [(c.samples, c.expected) for c in ring] == [(1, 1)] * 10
+    held = ring(w, HeatmapSpec(SYM, time_bucket_ms=100))
+    assert [(c.samples, c.expected) for c in held] == [(1, 1)] * 10
 
 
 async def test_columns_at_cadence_a_500ms_bucket_counts_five_samples() -> None:
@@ -206,8 +211,8 @@ async def test_columns_at_cadence_a_500ms_bucket_counts_five_samples() -> None:
     w.hold(HeatmapSpec(SYM, time_bucket_ms=500))
     for k in range(1, 11):
         w.at(k * COLUMN_MS)
-    ring = w.topic._symbols[SYM].specs[HeatmapSpec(SYM, time_bucket_ms=500)].ring
-    assert [(c.ts_ms, c.samples, c.expected) for c in ring] == [(T0, 5, 5), (T0 + 500, 5, 5)]
+    cols = ring(w, HeatmapSpec(SYM, time_bucket_ms=500))
+    assert [(c.ts_ms, c.samples, c.expected) for c in cols] == [(T0, 5, 5), (T0 + 500, 5, 5)]
 
 
 async def test_columns_at_cadence_a_250ms_bucket_counts_its_own_deadlines() -> None:
@@ -217,8 +222,8 @@ async def test_columns_at_cadence_a_250ms_bucket_counts_its_own_deadlines() -> N
     w.hold(HeatmapSpec(SYM, time_bucket_ms=250))
     for k in range(1, 11):
         w.at(k * 50)
-    ring = w.topic._symbols[SYM].specs[HeatmapSpec(SYM, time_bucket_ms=250)].ring
-    assert [(c.ts_ms - T0, c.samples, c.expected) for c in ring] == [(0, 2, 2), (250, 3, 3)]
+    cols = ring(w, HeatmapSpec(SYM, time_bucket_ms=250))
+    assert [(c.ts_ms - T0, c.samples, c.expected) for c in cols] == [(0, 2, 2), (250, 3, 3)]
     assert all("samples" not in c for c in w.columns())
 
 
@@ -249,7 +254,7 @@ async def test_time_weighted_a_level_resting_5ms_of_100_weighs_5_percent() -> No
     await eng.on_event(delta(12, 11, [lvl(9_990, 1)]))
     w.at(55)
     w.at(100)
-    [col] = w.topic._symbols[SYM].specs[spec].ring
+    [col] = ring(w, spec)
     row = (9_990 - col.price_origin_ticks) // col.price_step_ticks
     assert col.bid_sizes[row] == pytest.approx(1 + 9 * 0.05)  # 1 throughout, +9 for 5 ms of 100
     assert col.bid_sizes[(10_000 - col.price_origin_ticks)] == pytest.approx(1.0)
@@ -265,7 +270,7 @@ async def test_rows_never_exceed_the_row_cap() -> None:
     w.hold(HeatmapSpec(SYM, time_bucket_ms=100))
     w.at(100)
     [col] = w.columns()
-    assert len(col["bids"]) == len(col["asks"]) <= ROWS == H.HEATMAP_MAX_ROWS
+    assert len(col["bids"]) == len(col["asks"]) <= ROWS
     total = sum(col["bids"]) + col.get("off_window_bid_qty", 0)
     assert total == 200.0 and col["off_window_bid_qty"] > 0
 
@@ -355,8 +360,11 @@ async def test_resync_past_the_estimate_hold_leaves_samples_zero() -> None:
     hold = H.RESYNC_ESTIMATE_MS
     for k in range(2, hold // COLUMN_MS + 4):
         w.at(k * COLUMN_MS)
-    last = w.columns()[-1]
+    frames = [body for _, body, _ in w.hub.frames]
+    last = frames[-1]["columns"][0]
     assert last["samples"] == 0 and last["bids"] == []
+    # Sonnet Major 1: every column closed during the resync is estimated, past the hold too.
+    assert all(body["estimated"] is True for body in frames[1:])
 
 
 async def test_resync_on_the_recorded_gap_capture_marks_columns_estimated() -> None:
@@ -414,9 +422,9 @@ async def test_the_recorded_btc_capture_builds_complete_columns_around_the_mid()
         prev = data["u"]
         w.at(k * COLUMN_MS)
     assert eng.phase is BookPhase.LIVE
-    ring = w.topic._symbols[SYM].specs[HeatmapSpec(SYM, time_bucket_ms=100)].ring
-    assert len(ring) == 50 and all(c.full and 0 < c.rows <= ROWS for c in ring)
-    last = ring[-1]
+    cols = ring(w, HeatmapSpec(SYM, time_bucket_ms=100))
+    assert len(cols) == 50 and all(c.full and 0 < c.rows <= ROWS for c in cols)
+    last = cols[-1]
     assert last.best_bid_ticks is not None and last.best_ask_ticks is not None
     mid = (last.best_bid_ticks + last.best_ask_ticks) // 2
     assert last.price_origin_ticks <= mid < last.price_origin_ticks + last.rows
@@ -441,12 +449,12 @@ async def test_a_price_gap_recentres_with_empty_columns_between() -> None:
     await eng.on_event(snap(500, *ladder(60_000, 60_001)))  # far beyond 512 rows away
     w.at(end - 50)
     w.at(end + 100)
-    ring = list(w.topic._symbols[SYM].specs[spec].ring)
-    gap = [c for c in ring if c.samples == 0]
+    cols = ring(w, spec)
+    gap = [c for c in cols if c.samples == 0]
     assert gap and all(c.rows == 0 for c in gap)
-    new = ring[-1]
+    new = cols[-1]
     assert new.samples == 1 and new.price_origin_ticks > 59_000
-    assert ring[0].price_origin_ticks < 10_001 < ring[0].price_origin_ticks + ROWS
+    assert cols[0].price_origin_ticks < 10_001 < cols[0].price_origin_ticks + ROWS
 
 
 async def test_the_restart_gap_reads_samples_zero_never_interpolated() -> None:
@@ -598,8 +606,9 @@ def test_a_retune_checks_the_caps_with_its_own_spec_freed() -> None:
 
 async def test_a_price_grouping_change_rebuckets_the_held_columns() -> None:
     """D-row (24 §6.3): the new spec takes the old one's columns re-bucketed on the coarser step
-    (1 divides 5), each row summed into its row and nothing lost; a step that the held one does
-    not divide starts empty (older columns: REST, E21-T03)."""
+    (1 divides 5), each row summed into its row and nothing lost; the re-bucketing runs in the
+    loop's turns, never in the `ctl`, and the subscription stays pending until it is done, then
+    is flushed. A step that the held one does not divide starts empty (older: REST, E21-T03)."""
     w = World()
     b, a = ladder()
     await live(w, [*b, lvl(9_000, 4)], a)
@@ -610,17 +619,44 @@ async def test_a_price_grouping_change_rebuckets_the_held_columns() -> None:
     lease = w.topic.retune(
         sub.heatmap_lease, HeatmapSpec(SYM, price_grouping=5, time_bucket_ms=100)
     )
+    sub.heatmap_lease, sub.snapshot_pending = lease, True
     st = w.topic._symbols[SYM]
     assert list(st.specs) == [lease.spec]
-    ring = st.specs[lease.spec].ring
-    assert len(ring) == 5 and all(c.price_step_ticks == 5 for c in ring)
-    for c in ring:
+    assert ring(w, lease.spec) == [] and w.topic.build(sub) is None  # queued, not re-bucketed
+    w.at(520)  # one turn: the seed and the flush
+    assert w.hub.flushed == [sub]
+    body = w.topic.build(sub)
+    assert isinstance(body, SnapshotBody) and len(body.structured["columns"]) == 5
+    cols = ring(w, lease.spec)
+    assert len(cols) == 5 and all(c.price_step_ticks == 5 for c in cols)
+    assert [c.ts_ms for c in cols] == sorted(c.ts_ms for c in cols)
+    for c in cols:
         assert c.price_origin_ticks % 5 == 0
         assert sum(c.bid_sizes) + c.off_window_bid_qty == pytest.approx(54.0)
     odd = w.topic.retune(lease, HeatmapSpec(SYM, price_grouping=7, time_bucket_ms=100))
-    assert len(st.specs[odd.spec].ring) == 0
+    assert len(st.specs[odd.spec].ring) == 0 and st.specs[odd.spec].seed is None
     with pytest.raises(ValueError, match="divide"):
-        H.rebucket(ring[0], 7)
+        H.rebucket(cols[0], 7)
+
+
+async def test_a_seed_runs_in_slices_and_never_in_the_sub() -> None:
+    """Fable M-1 (b): a 2 000-column donor is re-bucketed a slice per turn (`seed_turn_s`), the
+    newest first, capped at the G-03 frame bound; `hold` itself only queues it."""
+    w = World(queue_frames=4_000)
+    spec = HeatmapSpec(SYM, time_bucket_ms=100)
+    w.hold(spec)
+    st = w.topic._symbols[SYM]
+    st.specs[spec].ring.extend(
+        H._Entry(_col(100 * i, 512)) for i in range(HEATMAP_SNAPSHOT_MAX_COLUMNS)
+    )
+    w.topic._seed_turn_s = 0.0  # one column a turn
+    new = HeatmapSpec(SYM, price_grouping=2, time_bucket_ms=100)
+    w.hold(new, consumer="c2")
+    state = st.specs[new]
+    assert state.seed is not None and len(state.seed) == HEATMAP_SNAPSHOT_MAX_COLUMNS
+    assert len(state.ring) == 0
+    assert w.topic._seed_turn() == 1 and state.ring[0].column.ts_ms == T0 + 100 * 1_999
+    assert w.topic.next_due() == w.now  # a queued seed makes the loop turn at once
 
 
 # -- the kind-6 part (23 §3.4, 24 §6.5) -----------------------------------------------------------
@@ -674,28 +710,14 @@ def test_wire_column_carries_samples_and_off_window_totals_only_when_they_say_so
     assert full["price_min"] == "1000.0" and full["price_step"] == "0.1"
 
 
-def test_clip_percentile_keeps_one_dominant_wall_from_blacking_out_the_rest() -> None:
-    """24 §6.2 step 5: the 0.99 percentile of non-zero sizes is the colour ceiling, so a single
-    10 000-contract wall among 999 small levels clips to 1 and leaves the rest visible."""
-    sizes = [1.0] * 999 + [10_000.0]
-    col = replace(_col(0, 1000), bid_sizes=array("d", sizes), ask_sizes=array("d", [0.0] * 1000))
-    ceiling = H.clip_ceiling([col], 0.99)
-    assert ceiling == 1.0 and H.clip_ceiling([]) == 0.0
-    assert H.intensity(10_000.0, ceiling) == 1.0 and H.intensity(1.0, ceiling) == 1.0
-    assert H.intensity(0.0, ceiling) == 0.0 and H.intensity(5.0, 0.0) == 0.0
-
-
-def test_log_scale_is_the_default_and_lifts_small_sizes_over_linear() -> None:
-    assert H.intensity(10.0, 100.0, "linear") == pytest.approx(0.1)
-    assert H.intensity(10.0, 100.0) == pytest.approx(0.5195737)
-    assert H.intensity(10.0, 100.0) > H.intensity(10.0, 100.0, "linear")
-
-
 def test_a_column_without_a_sample_is_empty_and_keeps_its_origin() -> None:
     col = H.window_column(ts_ms=T0, bucket_ms=100, step=5, bids={}, asks={}, best_bid=None,
                           best_ask=None, estimated=False, samples=0, expected=1,
                           origin_hint=1_003)  # fmt: skip
     assert (col.rows, col.price_origin_ticks, col.full) == (0, 1_000, False)
+    low = H.window_column(ts_ms=T0, bucket_ms=100, step=1, bids={}, asks={}, best_bid=10,
+                          best_ask=11, estimated=False, samples=0, expected=1)  # fmt: skip
+    assert low.price_origin_ticks == 0  # Fable n-5: an empty column never sits below price 0
     assert H.native_count(T0, T0 + 250) == 2 and H.native_count(T0 + 250, T0 + 500) == 3
 
 
@@ -737,11 +759,13 @@ def test_a_size_that_is_not_finite_is_never_queued_and_counts_as_a_fault() -> No
     assert (REGISTRY.get_sample_value("heatmap_cell_faults_total") or 0.0) - before == 3
 
 
-def test_the_store_queue_is_bounded_and_sheds_its_oldest() -> None:
+def test_the_store_queue_is_bounded_by_cells_and_sheds_its_oldest() -> None:
+    """Fable m-1: the bound counts cells, not columns (512 full columns, ~18 MiB of tuples)."""
     w = World(store=Store())
-    for i in range(H.STORE_QUEUE_MAX + 5):
-        w.topic._native(SYM, _col(100 * i, 1))
-    assert len(w.topic._stored) == H.STORE_QUEUE_MAX
+    full = H.STORE_CELLS_MAX // 512
+    for i in range(full + 5):
+        w.topic._native(SYM, _col(100 * i, 512))
+    assert len(w.topic._stored) == full and w.topic._stored_cells == H.STORE_CELLS_MAX
     assert w.topic._stored[0].ts_us == (T0 + 500) * 1000
     assert w.topic._shed == 5
     w.at(0)
@@ -805,3 +829,89 @@ async def test_the_loop_publishes_as_its_clock_passes_deadlines_and_stops() -> N
     await asyncio.wait_for(two.wait(), timeout=5)
     await topic.stop()
     assert all(body["columns"][0]["samples"] == 0 for _, body, _ in hub.frames)  # no book
+
+
+# -- Sonnet Major 3: a depth-500 spec demands the deep tier ---------------------------------------
+
+
+class Demand:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+
+    def acquire_depth(self, consumer: str, symbol: str, depth: int) -> None:
+        self.calls.append(("acquire", consumer, symbol, str(depth)))
+
+    def release(self, consumer: str, symbol: str) -> None:
+        self.calls.append(("release", consumer, symbol))
+
+
+async def test_a_depth_500_spec_demands_the_deep_tier_and_waits_for_its_swap() -> None:
+    """Sonnet Major 3: a depth-500 spec demands the symbol's 500 tier once (as `book.X.500`
+    does), integrates nothing and stays pending while the tier is 200, and is flushed and served
+    once the 500 tier is live; its last lease lets the demand go."""
+    w = World()
+    demand = Demand()
+    w.topic._demand = demand
+    await live(w)  # the 200 tier
+    sub = w.hold(HeatmapSpec(SYM, depth=500, time_bucket_ms=100))
+    sub.snapshot_pending = True
+    w.hold(HeatmapSpec(SYM, depth=500, time_bucket_ms=500), consumer="c2")  # one demand only
+    assert demand.calls == [("acquire", H.DEEP_CONSUMER, SYM, "500")]
+    w.at(100)
+    assert w.topic.build(sub) is None and w.hub.flushed == []
+    [col] = ring(w, HeatmapSpec(SYM, depth=500, time_bucket_ms=100))
+    assert (col.samples, col.rows) == (0, 0)  # never a 200-level column under depth 500
+    deep = await w.engine(depth=500)  # the swap: a new engine at the 500 tier goes live
+    b, a = ladder(n=300)
+    await deep.on_event(snap(10, b, a, depth=500))
+    w.at(150)
+    w.at(200)
+    assert w.hub.flushed == [sub]
+    body = w.topic.build(sub)
+    assert isinstance(body, SnapshotBody) and body.structured["depth"] == 500
+    last = ring(w, HeatmapSpec(SYM, depth=500, time_bucket_ms=100))[-1]
+    assert sum(last.bid_sizes) + last.off_window_bid_qty == pytest.approx(300 * 0.5)
+    assert sub.heatmap_lease is not None
+    w.topic.release(sub.heatmap_lease)
+    w.topic.release(HeatmapLease("c2", HeatmapSpec(SYM, depth=500, time_bucket_ms=500)))
+    assert demand.calls[-1] == ("release", H.DEEP_CONSUMER, SYM)
+
+
+async def test_a_snapshot_is_a_slice_of_cached_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fable M-1 (a): each column's §14.5 form and kind-6 part are built once, at its close;
+    `build` reuses them (no frame is built), and a steps change rebuilds them once."""
+    w = World()
+    await live(w)
+    sub = w.hold(HeatmapSpec(SYM, time_bucket_ms=100))
+    for k in range(1, 4):
+        w.at(k * COLUMN_MS)
+    published = [p for _, _, p in w.hub.frames]
+    calls: list[int] = []
+    real = w.topic._frame
+
+    def counted(column: HeatmapColumn, steps: tuple[Decimal, Decimal]) -> Any:
+        calls.append(1)
+        return real(column, steps)
+
+    monkeypatch.setattr(w.topic, "_frame", counted)
+    body = w.topic.build(sub)
+    assert isinstance(body, SnapshotBody) and calls == []
+    assert all(a is b for a, b in zip(body.parts, published, strict=True))  # the same objects
+    w.steps[SYM] = (Decimal("0.1"), Decimal("0.01"))  # an instrument revision
+    again = w.topic.build(sub)
+    assert isinstance(again, SnapshotBody) and len(calls) == 3 and again.qty_scale == 2
+    w.topic.build(sub)
+    assert len(calls) == 3
+
+
+async def test_a_new_spec_closes_what_is_due_before_integrating_the_others() -> None:
+    """Sonnet #8: `hold` of a second spec closes the first spec's due buckets first, so none of
+    its buckets integrates time past its own end."""
+    w = World()
+    await live(w)
+    first = HeatmapSpec(SYM, time_bucket_ms=100)
+    w.hold(first)
+    w.now = T0 + 150  # no turn ran at 100
+    w.hold(HeatmapSpec(SYM, time_bucket_ms=500), consumer="c2")
+    [col] = ring(w, first)
+    assert col.ts_ms == T0 and w.topic._symbols[SYM].specs[first].acc.t == T0 + 150

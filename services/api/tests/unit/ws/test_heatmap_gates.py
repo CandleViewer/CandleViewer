@@ -119,23 +119,31 @@ def test_heatmap_is_served_with_the_byte_budget_on() -> None:
     assert sub.heatmap_lease is not None
     assert sub.heatmap_lease.spec == HeatmapSpec("BTCUSDT", 200, 1, 100)
     assert [k[1] for k in sink.opened] == ["heatmap"]
-    assert topic.build(sub) is not None  # the spec's snapshot (no column yet)
+    assert topic.build(sub) is None  # pending until the symbol's book is live (no engine here)
     assert conn.unsubscribe(CH) is not None and topic._symbols == {}
 
 
 # -- depth 200 vs 500 ----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("rs", [None, RS], ids=["live", "replay"])
-def test_heatmap_depth_500_is_refused_while_heatmap_depth_500_is_off(rs: str | None) -> None:
+def test_heatmap_depth_500_is_refused_while_heatmap_depth_500_is_off() -> None:
     """D-row (#604 BQ-9): depth 500 is `invalid_topic_format` while the flag is off; depth 200
     is served. G-04 is checked first: with the budget off the same `sub` is `unknown_topic`."""
-    body = {} if rs is None else {"replay_session_id": rs}
     conn, _ = _conn(_topic())
-    deep, normal = _sub(conn, _hm(depth=500), _hm("ETHUSDT", depth=200), **body)
+    deep, normal = _sub(conn, _hm(depth=500), _hm("ETHUSDT", depth=200))
     assert (_code(deep), _code(normal)) == ("invalid_topic_format", None)
     off, _ = _conn(_topic(), heatmap_off=True)
-    assert _code(_sub(off, _hm(depth=500), **body)[0]) == "unknown_topic"
+    assert _code(_sub(off, _hm(depth=500))[0]) == "unknown_topic"
+
+
+def test_a_replay_heatmap_is_unknown_topic_with_the_byte_budget_on() -> None:
+    """Fable m-3: no replay producer serves `heatmap` yet, so a replay `sub` is refused
+    `unknown_topic` (§10.2 "topic not served"), never left `snapshot_pending` for good."""
+    topic = _topic()
+    conn, sink = _conn(topic, heatmap_off=False, depth_500=True)
+    (refused,) = _sub(conn, _hm(depth=500), replay_session_id=RS)
+    assert _code(refused) == "unknown_topic"
+    assert conn.by_id == {} and sink.opened == [] and topic._symbols == {}
 
 
 def test_heatmap_depth_500_is_served_with_heatmap_depth_500_on() -> None:
@@ -177,8 +185,7 @@ def test_a_ctl_of_the_bucket_resnapshots_on_a_new_spec() -> None:
     assert sub.snapshot_pending and sub.pending_reason == "reconfigure"
     assert sub.heatmap_lease is not None and sub.heatmap_lease.spec.time_bucket_ms == 500
     assert list(topic._symbols["BTCUSDT"].specs) == [sub.heatmap_lease.spec]
-    body = topic.build(sub)
-    assert body is not None and body.structured["time_bucket_ms"] == 500
+    assert topic.build(sub) is None  # the new spec's snapshot waits for the live book
 
 
 def test_a_ctl_past_a_cap_or_to_depth_500_changes_nothing() -> None:
