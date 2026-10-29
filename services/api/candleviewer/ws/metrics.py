@@ -151,11 +151,12 @@ cv_ws_frames_emitted_total = Counter(
     "Frames a topic publisher emitted, per topic family (E22-T02: `trades`).",
     labelnames=("topic",),
 )
-#: Bounded `cv_ws_tape_prints_dropped_total{reason}` values: a print below the set's `min_size`.
-TAPE_DROP_REASONS: Final = frozenset({"min_size"})
+#: Bounded `cv_ws_tape_prints_dropped_total{reason}` values: a print below the set's `min_size`,
+#: or one shed when more than `PENDING_MAX` items waited for one frame (`overflow`).
+TAPE_DROP_REASONS: Final = frozenset({"min_size", "overflow"})
 cv_ws_tape_prints_dropped_total = Counter(
     "cv_ws_tape_prints_dropped_total",
-    "Prints a `trades` option set dropped before clustering, by reason (`min_size`).",
+    "Prints a `trades` option set dropped, by reason (`min_size`, `overflow`).",
     labelnames=("reason",),
 )
 cv_ws_tape_frames_coalesced_total = Counter(

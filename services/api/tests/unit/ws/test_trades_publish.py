@@ -123,6 +123,28 @@ def test_trades_min_size_drops_are_counted_in_dropped_across_frame_boundaries() 
     assert _value(cv_ws_tape_prints_dropped_total, reason="min_size") - before == 4
 
 
+def test_trades_pending_is_bounded_and_an_overflow_is_counted_in_dropped() -> None:
+    """More items than the pending bound before one frame: the oldest are shed, and their prints
+    are counted in `dropped` (`overflow`), beside the `min_size` drops: never silent."""
+    w = World()
+    w.topic._pending_max = 3
+    conn = w.conn()
+    _, sub = w.sub(conn, {"min_size": "0.05", "encoding": "structured"})
+    assert sub is not None
+    conn.take()
+    over = _value(cv_ws_tape_prints_dropped_total, reason="overflow")
+    small = _value(cv_ws_tape_prints_dropped_total, reason="min_size")
+    w.window([event(i, "0.1") for i in range(1, 6)] + [event(6, "0.01")])
+    [frame] = _data(conn)
+    assert [t["id"] for t in frame["p"]["trades"]] == ["t00003", "t00004", "t00005"]
+    assert frame["p"]["dropped"] == 3  # two shed, one below min_size
+    assert _value(cv_ws_tape_prints_dropped_total, reason="overflow") - over == 2
+    assert _value(cv_ws_tape_prints_dropped_total, reason="min_size") - small == 1
+    w.window([event(7, "0.1")])
+    [after] = _data(conn)
+    assert (after["p"]["dropped"], [t["id"] for t in after["p"]["trades"]]) == (0, ["t00007"])
+
+
 # -- Scenario: Clustering is signalled on both encodings ---------------------------------------
 
 

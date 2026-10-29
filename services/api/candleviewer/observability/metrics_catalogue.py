@@ -2662,12 +2662,13 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "prints",
         ("reason",),
-        "Prints a `trades` option set dropped before clustering, also carried in the frames' "
-        "`dropped` (23 section 14.2); reason `min_size`.",
+        "Prints a `trades` option set dropped, also carried in the frames' `dropped` (23 "
+        "section 14.2); reason `min_size` (before clustering) or `overflow` (shed past the "
+        "pending bound).",
         "dashboard only",
         _L,
         "E22",
-        max_series=1,  # `min_size`
+        max_series=2,  # `min_size`, `overflow`
         exported=True,
     ),
     _s(

@@ -23,10 +23,12 @@ the `trades` family's snapshot source, publisher and subscription leases, over t
   `CV_WS_BACKPRESSURE_ENABLED` on the pacer windows after it. A frame appends the items closed
   since the last one (a cluster closes by print time, or once the reader's clock passes its
   deadline plus `LATE_GRACE_US`), `dropped` since the last one (a frame goes out for drops alone:
-  never silent), the symbol's `big_trade_threshold`, and `coalesced_count`, the source batches it
-  appended. It carries a kind-3 part only when one can say everything (§3.4): no cluster of more
-  than one print, no drop, the threshold unchanged since the option tape's last frame, and the
-  instrument scales known and exact; else it leaves structured, binary subscribers included.
+  never silent; prints `min_size` filtered, plus those shed when more than `PENDING_MAX` items
+  waited for one frame, `overflow`), the symbol's `big_trade_threshold`, and `coalesced_count`,
+  the source batches it appended. It carries a kind-3 part only when one can say everything
+  (§3.4): no cluster of more than one print, no drop, the threshold unchanged since the option
+  tape's last frame, and the instrument scales known and exact; else it leaves structured, binary
+  subscribers included.
 - **Snapshot.** The option tape's last `SNAPSHOT_ITEMS` sent items, oldest first, `dropped` 0 and
   the current threshold; kind 3 beside it unless an item is a cluster. `generation` moves with
   every frame and threshold change; continuity is never proven (§7.6).
@@ -90,6 +92,12 @@ LATE_GRACE_US: Final = 500_000
 BUS_QUEUE_MAX: Final = 16_384
 #: Symbols held at once (the catalogue lists some 600).
 MAX_SYMBOLS: Final = 1024
+#: One window's print budget: budget #5's 5 000 prints/s (`PRINTS_PER_MS_BUDGET`) over the
+#: family's 100 ms window, 500 prints.
+WINDOW_PRINT_BUDGET: Final = L.PRINTS_PER_MS_BUDGET * 100
+#: Items an option tape keeps between two frames: ten windows' budget, room for a paced or late
+#: flush. Past it the oldest are shed and their prints counted in `dropped` (`overflow`).
+PENDING_MAX: Final = 10 * WINDOW_PRINT_BUDGET
 _U32_MAX: Final = 2**32 - 1
 _SIDES: Final = {"buy": 0, "sell": 1}
 _DEFAULTS: Final[Mapping[str, int]] = {"cluster_window_ms": 0, "cluster_tolerance_ticks": 0}
@@ -134,7 +142,8 @@ class _OptionState:
     tape: OptionTape | None = None  # None while its symbol waits for the stream
     consumers: set[str] = field(default_factory=set)
     history: deque[TapeItem] = field(default_factory=lambda: deque(maxlen=SNAPSHOT_ITEMS))
-    pending: list[TapeItem] = field(default_factory=list)
+    pending: deque[TapeItem] = field(default_factory=lambda: deque(maxlen=PENDING_MAX))
+    overflow: int = 0  # prints shed from `pending` since the last frame
     batches: int = 0
     version: int = 0
     sent_threshold: Decimal | None = None
@@ -189,12 +198,13 @@ class TradesTopic:
         now_us: Callable[[], int] = _now_us,
         window_s: float = WINDOW_S,
         max_symbols: int = MAX_SYMBOLS,
+        pending_max: int = PENDING_MAX,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._hub, self._reader, self._bus, self._env = hub, reader, bus, env
         self._scales, self._floor, self._config = scales, floor, config
         self._clock, self._now_us, self._window_s = clock, now_us, window_s
-        self._max, self._sleep = max_symbols, sleep
+        self._max, self._pending_max, self._sleep = max_symbols, pending_max, sleep
         self._symbols: dict[str, _SymbolState] = {}
         self._per_user: Counter[str] = Counter()
         self._sets: dict[tuple[str, str], Counter[Options]] = {}
@@ -301,7 +311,8 @@ class TradesTopic:
             self._start(state)
         opt = state.options.get(options)
         if opt is None:
-            opt = state.options[options] = _OptionState(options)
+            opt = _OptionState(options, pending=deque(maxlen=self._pending_max))
+            state.options[options] = opt
             self._open(state, opt)
         return opt
 
@@ -401,7 +412,7 @@ class TradesTopic:
             before = opt.tape.dropped
             items = opt.tape.add(prints)
             if items or opt.tape.dropped != before:
-                opt.pending.extend(items)
+                _queue(opt, items)
                 opt.batches += 1
 
     def tick(self) -> int:
@@ -418,9 +429,10 @@ class TradesTopic:
                     continue
                 items = opt.tape.expire(now_us - LATE_GRACE_US)
                 if items:
-                    opt.pending.extend(items)
+                    _queue(opt, items)
                     opt.batches += 1
-                if (opt.pending or opt.tape.dropped) and now >= opt.last_flush + self._window_s:
+                due = opt.pending or opt.tape.dropped or opt.overflow
+                if due and now >= opt.last_flush + self._window_s:
                     sent += self._flush(state, opt, now)
         return sent
 
@@ -428,9 +440,11 @@ class TradesTopic:
         if state.tape is None or opt.tape is None:
             return 0
         symbol, threshold = state.tape.symbol, state.tape.threshold
-        items, opt.pending = opt.pending, []
-        dropped, count = opt.tape.take_dropped(), max(opt.batches, 1)
-        opt.batches, opt.last_flush = 0, now
+        items = list(opt.pending)
+        opt.pending.clear()
+        filtered, overflow = opt.tape.take_dropped(), opt.overflow
+        dropped, count = filtered + overflow, max(opt.batches, 1)
+        opt.overflow, opt.batches, opt.last_flush = 0, 0, now
         changed = threshold != opt.sent_threshold
         opt.sent_threshold = threshold
         opt.history.extend(items)
@@ -453,8 +467,10 @@ class TradesTopic:
             self._resync()
             return 0
         cv_ws_frames_emitted_total.labels(topic=FAMILY).inc(sent)
-        if dropped:
-            cv_ws_tape_prints_dropped_total.labels(reason="min_size").inc(dropped)
+        if filtered:
+            cv_ws_tape_prints_dropped_total.labels(reason="min_size").inc(filtered)
+        if overflow:
+            cv_ws_tape_prints_dropped_total.labels(reason="overflow").inc(overflow)
         if count > 1:
             cv_ws_tape_frames_coalesced_total.inc()
         return sent
@@ -558,6 +574,14 @@ class TradesTopic:
                 await self._sleep(self._window_s)  # a fault that persists: one resync per window
 
 
+def _queue(opt: _OptionState, items: Iterable[TapeItem]) -> None:
+    """Append `items` to the bounded `pending`; an item it sheds counts its prints in `overflow`."""
+    for item in items:
+        if len(opt.pending) == opt.pending.maxlen:
+            opt.overflow += opt.pending[0].cluster_size
+        opt.pending.append(item)
+
+
 def _leased(sub: Subscription, options: Options) -> bool:
     lease = sub.trades_lease
     return lease is not None and lease.options == options
@@ -580,6 +604,7 @@ def _stopped(task: asyncio.Task[None]) -> None:
 
 __all__ = [
     "BUS_QUEUE_MAX",
+    "PENDING_MAX",
     "SNAPSHOT_ITEMS",
     "WINDOW_S",
     "TradeTape",
