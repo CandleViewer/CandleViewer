@@ -61,6 +61,7 @@ Negative / risks:
 ## Validation
 
 - M0 benchmark report covering all five criteria above, published in `docs/plan/` and linked from this ADR.
+- M0 findings report (E06-T02): `docs/plan/spikes/E06-M0-report.md` — criteria 1–5 in §4, the Electron runs in §3.
 - Whichever shell wins runs the full E2E suite in CI on every release.
 
 ### E10-K01 addendum — criterion-5 evidence (ShellPort spike, 2026-09-29)

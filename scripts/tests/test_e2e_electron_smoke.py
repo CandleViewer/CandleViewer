@@ -75,4 +75,8 @@ def test_every_job_that_launches_electron_runs_the_allowlist_runner_after_its_in
             where = f"{workflow.name} {name}"
             assert installs and fetches, f"{where}: no pnpm install or no allowlist runner step"
             assert max(installs) < min(fetches) and max(fetches) < min(launches), where
-    assert launching == [("_job-e2e.yml", "e2e-electron"), ("_job-js.yml", "build")]
+    assert launching == [
+        ("_job-e2e.yml", "e2e-electron"),
+        ("_job-js.yml", "build"),
+        ("perf-engine-matrix.yml", "electron"),
+    ]

@@ -1,6 +1,7 @@
 // E06-T01 matrix: pure helpers (no DOM, no process control) shared by run-matrix.mjs,
 // compare-matrix.mjs and the unit tests.
-import { medianOfP95 } from "../stats.mjs";
+import { medianOfP95, MIN_ADMISSIBLE_REPETITIONS } from "../stats.mjs";
+import { assertDescriptorComplete, missingManifestFields } from "../machine.mjs";
 
 export const MATRIX_SCENARIOS = Object.freeze(["B1", "B2", "B3", "B4", "B5", "B7", "B9", "B10"]);
 export const RUNTIMES = Object.freeze(["chromium", "electron", "tauri"]);
@@ -99,4 +100,56 @@ export function summariseCell(raw) {
 export function withinNoiseBand(a, b, bandPct) {
   if (!(a > 0) || !(b > 0)) return false;
   return (Math.abs(a - b) / Math.min(a, b)) * 100 <= bandPct + 1e-9;
+}
+
+/** Scenarios whose report cell is a frame-time cell (B7 and B9 are summarised differently). */
+const FRAME_CELL = (c) => c?.status === "ok" && c.scenario !== "B7" && c.scenario !== "B9";
+
+/**
+ * E06-T02: validates one committed `cv-matrix-report/1` file before anything reads a number from
+ * it (the M0 report generator and the CI comparison share it). Returns the problems found, empty
+ * when the report is usable. A missing machine descriptor or version field, a dry run, and a
+ * frame cell with fewer than 3 repetitions (06 section 7.4; the once-per-runtime B10 soak
+ * excepted, as `summariseCell` rules) are all problems, never silently accepted.
+ * @param {any} report
+ * @returns {string[]}
+ */
+export function validateReport(report) {
+  const problems = [];
+  if (!report || typeof report !== "object") return ["not a JSON object"];
+  if (report.schema !== REPORT_SCHEMA)
+    problems.push(`schema is ${report.schema}, not ${REPORT_SCHEMA}`);
+  if (report.dryRun !== false) problems.push("a --dry-run report carries no measurements");
+  if (!RUNTIMES.includes(report.runtime)) problems.push(`unknown runtime ${report.runtime}`);
+  const manifest = report.manifest;
+  if (manifest?.schema !== "cv-version-manifest/1" || !manifest.machine || !manifest.versions) {
+    problems.push("version manifest missing (machine descriptor and versions required)");
+  } else {
+    try {
+      assertDescriptorComplete(manifest.machine);
+    } catch (e) {
+      problems.push(String(/** @type {Error} */ (e).message));
+    }
+    if (RUNTIMES.includes(manifest.runtime))
+      for (const f of missingManifestFields(manifest)) problems.push(`missing version: ${f}`);
+  }
+  if (Array.isArray(report.manifestIncomplete) && report.manifestIncomplete.length)
+    problems.push(`manifest marked incomplete: ${report.manifestIncomplete.join("; ")}`);
+  if (!report.fixture?.sha256 || report.seed == null)
+    problems.push("seed or fixture sha256 missing");
+  if (!Array.isArray(report.cells) || report.cells.length === 0) {
+    problems.push("no scenario cells");
+    return problems;
+  }
+  for (const c of report.cells.filter(FRAME_CELL)) {
+    const soak = c.scenario === "B10";
+    if (!soak && !(c.repetitions >= MIN_ADMISSIBLE_REPETITIONS))
+      problems.push(
+        `${c.scenario}: inadmissible, ${c.repetitions} repetition(s) < ${MIN_ADMISSIBLE_REPETITIONS}`,
+      );
+    else if (c.admissibleForAdrEvidence !== true)
+      problems.push(`${c.scenario}: marked inadmissible by the harness`);
+    if (typeof c.p95 !== "number") problems.push(`${c.scenario}: no p95`);
+  }
+  return problems;
 }

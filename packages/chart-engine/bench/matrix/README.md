@@ -71,6 +71,12 @@ Criterion 3's "no progressive degradation" has no number in ADR-0011. The tool c
 first third of the soak's per-minute `texSubImage2D` medians and uses **10 %** (our assumption, printed in the
 table, change with `--degradation-tolerance`). Confirm or replace it at Architect review.
 
+## In CI (E06-T02)
+
+The same runner runs per PR (Chromium) and nightly (Electron) in `.github/workflows/perf-engine-matrix.yml`,
+recording only; the baseline-update policy is in the package README (`packages/chart-engine/README.md`).
+`m0-report.mjs` regenerates the tables of `docs/plan/spikes/E06-M0-report.md` from `results/`.
+
 ## Where reports land and what to paste into #220
 
 `reports/matrix/<runtime>-<timestamp>.json` (repo root). Each carries seed, fixture sha256, driver-script hash, the full

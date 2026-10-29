@@ -62,4 +62,5 @@ Negative / risks:
 ## Validation
 
 - Spike S1 / milestone M0 report with measured p95 frame times across Chromium, Electron and Tauri/WebView2.
+- M0 findings report (E06-T02): `docs/plan/spikes/E06-M0-report.md` — verdict §2, fallback trigger §3.3.
 - CI performance gates B1–B10 in `26-chart-engine-design.md` §13 as required checks on the package.

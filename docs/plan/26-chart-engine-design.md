@@ -708,6 +708,8 @@ Each milestone is independently demoable and maps to backlog epics; estimates ar
 | **M7** | Drawings                        | Drawing tool kit (§3.10), magnet mode, multi-select, undo/redo, persistence, per-workspace scoping                                                                                                                                | B8 green; golden images per tool; persistence round-trip test                                              | 4    |
 | **M8** | Replay + accessibility + polish | Virtual-now marker, coverage-gap rendering, step semantics, accessible data cursor and DOM mirror, reduced motion, screenshot export, final perf pass                                                                             | B6, B10 green; axe-core clean; a11y manual pass signed off                                                 | 4    |
 
+**M0 findings report (E06-T02):** `spikes/E06-M0-report.md` — §10 states what M1–M8 must budget.
+
 **Sequencing constraints.** M1 must precede everything (it is the "parity work" the research warned costs 4–8 weeks). M3 and M4 are the two highest-risk items and are deliberately separated so a slip in one does not block the other. M6 depends on backend OMS endpoints being available in demo.
 
 ### 15.1 Calendar mapping (sprint numbers and dates)
