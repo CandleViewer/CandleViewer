@@ -406,10 +406,11 @@ def test_x02_frames_near_the_cap_past_the_rate_are_refused_unread_counted_and_au
 
 
 def _near_cap_sub(c: Client) -> dict[str, Any]:
-    """A `sub` just under the 256 KiB inbound cap, refused whole before any entry is read: 20 000
-    bare names on JSON and, as its arrays hold at most 128 entries, 128 names of 2 009 characters
-    on MessagePack. (The model's literal 21 842-name frame is `test_ws_s1.py`'s.)"""
-    names = ["positions" + "x" * 2_000] * 128 if c.msgpack else ["positions"] * 20_000
+    """A `sub` just under the 256 KiB inbound cap, refused whole before any entry is read: 10 000
+    names of 22 characters on JSON, within the value bound (#4924), and, as its arrays hold at most
+    128 entries, 128 names of 2 009 characters on MessagePack. (The model's literal 21 842-name
+    frame, past the value bound, is `test_ws_s1.py`'s.)"""
+    names = ["positions" + "x" * 2_000] * 128 if c.msgpack else ["positions" + "x" * 13] * 10_000
     frame = {"t": "sub", "id": "big", "p": {"topics": names}}
     assert 250_000 < len(msgpack.packb(frame) if c.msgpack else json.dumps(frame)) <= 256 * 1024
     return frame

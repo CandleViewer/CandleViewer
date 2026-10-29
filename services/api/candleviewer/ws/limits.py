@@ -10,8 +10,10 @@ Single home for every bound the gateway enforces. Overflow policy:
 - Every inbound frame is charged against the connection's inbound rate (§8.5) before it is
   decoded, so a refused frame is never decoded; from the first `auth_ok` a frame that opens with
   `t: "pong"` takes from its own `pong` budget first.
-- JSON text frame with > `MAX_JSON_CONTAINERS` `[` and `{` characters -> `frame_malformed` (a
-  protocol violation); it is never decoded. One within it is decoded (the cap bounds the C
+- JSON text frame with > `MAX_JSON_CONTAINERS` `[` and `{` characters, or whose value count
+  (`json_values_over_count`) is past the SR-185 value bound the gateway applies to both
+  encodings (`codec.MAX_MSGPACK_VALUES`) -> `frame_malformed` (a protocol violation); it is never
+  decoded. One within it is decoded (the cap bounds the C
   decoder's nesting), and a value nested deeper than `MAX_JSON_DEPTH` -> `frame_malformed` too.
 - From the first `auth_ok`, a `pong` > `MAX_PONG_BYTES` -> `bye protocol_violation` + close `1002`
   (§8.5); one whose first member is `t: "pong"` is never decoded.
@@ -258,6 +260,20 @@ def json_depth_exceeds(text: str, limit: int) -> bool:
         elif ch in "]}":
             depth -= 1
     return False
+
+
+def json_values_over_count(text: str) -> int:
+    """An upper bound on the values JSON `text` holds, counted as SR-185 charges a MessagePack
+    frame (each container, array element, object key and object value is one), from its characters
+    alone and before any decode.
+
+    In valid JSON every value but the top-level one, and every key, comes right after exactly one
+    structural `[`, `{`, `,` or `:`: an array's first element after its `[`, an object's first key
+    after its `{`, each later element or key after a `,`, each value after its key's `:`. So the
+    count of those four characters, plus one, is at least the frame's values. It can only
+    over-count: an empty container's `[` or `{` precedes nothing, and the characters inside
+    strings are counted too. Each count is one pass in C."""
+    return 1 + text.count("[") + text.count("{") + text.count(",") + text.count(":")
 
 
 #: The containers a decoded JSON value holds (`json_nests_deeper`): `json.loads` builds exact lists

@@ -21,7 +21,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import candleviewer.ws.gateway as gateway
-from candleviewer.ws.codec import decode_client_frame
+from candleviewer.ws.codec import MAX_MSGPACK_VALUES, decode_client_frame
 from candleviewer.ws.gateway import _REFUSED, _Connection
 from candleviewer.ws.lifecycle import PONG_BUDGET_BURST, RATE_PER_SECOND
 from candleviewer.ws.limits import (
@@ -30,9 +30,16 @@ from candleviewer.ws.limits import (
     MAX_JSON_DEPTH,
     json_depth_exceeds,
     json_nests_deeper,
+    json_values_over_count,
 )
-from tests.unit.ws.test_inbound_frame_limits import _bye, _connection, _decode, _Handed
-from tests.unit.ws.test_lifecycle_socket import JSON, MSGPACK
+from tests.unit.ws.test_inbound_frame_limits import (
+    _bye,
+    _connection,
+    _decode,
+    _Handed,
+    _widest_sub,
+)
+from tests.unit.ws.test_lifecycle_socket import JSON, MSGPACK, _auth, _hello, _recv, _send, _World
 
 _ENCODINGS: Final = pytest.mark.parametrize(
     "encoding", [JSON[0], MSGPACK[0]], ids=["json", "msgpack"]
@@ -225,3 +232,76 @@ def test_decode_after_auth_ok_depth_counts_the_envelope(lists: int, malformed: b
     text = '{"t":"ping","p":' + "[" * lists + "]" * lists + "}"
     frame = _decode(_connection(JSON[0], authed=True), text)
     assert (frame == []) is malformed
+
+
+# -- the JSON value bound (#4924): SR-185's number, over-counted on the text before decode ------
+
+
+def _values(value: Any) -> int:
+    """The values SR-185 charges for `value`: one for it, and those of each element, or of each
+    key (one) and value of an object."""
+    if isinstance(value, list):
+        return 1 + sum(_values(v) for v in value)
+    if isinstance(value, dict):
+        return 1 + sum(1 + _values(v) for v in value.values())
+    return 1
+
+
+@settings(max_examples=300, deadline=None, derandomize=True)
+@given(value=_JSON_VALUES)
+def test_json_values_over_count_is_never_below_the_values_a_frame_holds(value: Any) -> None:
+    text = json.dumps(value)
+    assert json_values_over_count(text) >= _values(value)
+    assert json_values_over_count(json.dumps(value, indent=1)) == json_values_over_count(text)
+
+
+def test_json_values_over_count_is_exact_without_empty_containers_or_strings_that_hold_them() -> (
+    None
+):
+    frame = {"t": "sub", "id": "s", "p": {"topics": [{"ch": "a", "opts": {"x": [1, 2, 3]}}]}}
+    assert json_values_over_count(json.dumps(frame)) == _values(frame)
+
+
+def _at_values(values: int) -> str:
+    """A `ping` that `json_values_over_count` puts at `values` exactly."""
+    head, tail = '{"t":"ping","id":"p","p":{"pad":[0', "]}}"
+    text = head + ",0" * (values - json_values_over_count(head + tail)) + tail
+    assert json_values_over_count(text) == values
+    return text
+
+
+def test_decode_a_json_frame_at_the_value_bound_is_decoded(handed: _Handed) -> None:
+    text = _at_values(MAX_MSGPACK_VALUES)
+    assert _decode(_connection(JSON[0], authed=True), text)["t"] == "ping"
+    assert handed.decoded == [("json", len(text))]
+
+
+def test_decode_a_json_frame_one_past_the_value_bound_is_malformed_and_never_decoded(
+    handed: _Handed,
+) -> None:
+    """After `auth_ok`; before it the 8 KiB cap holds fewer values than the bound."""
+    conn = _connection(JSON[0], authed=True)
+    assert _decode(conn, _at_values(MAX_MSGPACK_VALUES + 1)) == []
+    assert handed.nothing and not conn.closing
+
+
+def test_gateway_a_json_frame_past_the_value_bound_is_a_frame_malformed_strike() -> None:
+    w = _World()
+    with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _hello(ws)
+        assert _auth(ws)["t"] == "auth_ok"
+        ws.send_text(_at_values(MAX_MSGPACK_VALUES + 1))
+        assert _recv(ws)["p"]["code"] == "frame_malformed"
+        _send(ws, {"t": "ping", "id": "p"})
+        assert _recv(ws)["t"] == "pong"  # one strike of three: the socket is served
+
+
+def test_limits_value_bound_holds_the_widest_schema_valid_sub_and_ctl_with_room() -> None:
+    """The widest `sub` the schema allows (every list option full, 50 topics) and a `ctl` with all
+    of one topic's options stay under two thirds of the bound, and are served."""
+    sub = _widest_sub()
+    ctl = {"t": "ctl", "id": "k", "ch": "t.0", "p": sub["p"]["topics"][0]["opts"]}
+    for frame in (sub, ctl):
+        text = json.dumps(frame)
+        assert 3 * json_values_over_count(text) <= 2 * MAX_MSGPACK_VALUES
+        assert _decode(_connection(JSON[0], authed=True), text)["t"] == frame["t"]

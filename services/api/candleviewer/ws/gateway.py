@@ -61,7 +61,9 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   before the frame is decoded, so a refused frame is never decoded and its `err` has no `id`.
   From the first `auth_ok` a frame that opens with `t: "pong"` is counted only once its
   `PongBudget` is spent, and one over `MAX_PONG_BYTES` closes `protocol_violation` (§8.5), never
-  decoded. JSON decodes through the C decoder, its depth checked on the decoded value (SR-184).
+  decoded. A JSON frame past the container cap or the SR-185 value bound (over-counted on its
+  text) is malformed and never decoded; one within them decodes through the C decoder, its depth
+  checked on the decoded value (SR-184).
   An envelope `id` that is not a string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped
   before the frame is handled, so no reply echoes it (§13.1, #2572). Fair scheduling between
   connections: the reader yields to the loop after each frame it handles, and `handle_sub` within
@@ -178,6 +180,7 @@ from candleviewer.ws.limits import (
     MAX_PREAUTH_FRAME_BYTES,
     MAX_UNAUTHENTICATED_SOCKETS,
     json_nests_deeper,
+    json_values_over_count,
 )
 from candleviewer.ws.metrics import (
     FANOUT_SECONDS,
@@ -1082,8 +1085,9 @@ class _Connection:
         Until the first `auth_ok` (which sets `user_id`), the frame before `hello` included, the
         size cap is the smaller `MAX_PREAUTH_FRAME_BYTES` (SR-040) and a MessagePack frame is
         decoded under the smaller value budget `MAX_PREAUTH_MSGPACK_VALUES` (SR-185). A JSON
-        frame with more than `MAX_JSON_CONTAINERS` `[` and `{` characters is malformed, and is
-        never depth-scanned or decoded (SR-184).
+        frame with more than `MAX_JSON_CONTAINERS` `[` and `{` characters, or more values than
+        `MAX_MSGPACK_VALUES` by `json_values_over_count` (the one value bound of both encodings,
+        #4924), is malformed, and is never decoded or depth-checked (SR-184).
 
         Size is checked on the raw payload BEFORE any decoding (1009). Each subprotocol has one
         frame kind (§2.2): a text frame on `cv.v1.msgpack` and a binary one on `cv.v1.json` are
@@ -1159,6 +1163,8 @@ class _Connection:
             openers = raw.count("[") + raw.count("{")  # not string-aware: it can only over-count
             if openers > MAX_JSON_CONTAINERS:
                 return []  # SR-184: too many containers -> protocol violation, never decoded
+            if json_values_over_count(raw) > MAX_MSGPACK_VALUES:
+                return []  # #4924: past the SR-185 value bound, as on msgpack -> never decoded
             value = json.loads(raw)  # the C decoder; its nesting is bounded by the cap above
             if openers > MAX_JSON_DEPTH and json_nests_deeper(value, MAX_JSON_DEPTH):
                 return []  # SR-184: too deep -> protocol violation (fewer openers cannot nest so)

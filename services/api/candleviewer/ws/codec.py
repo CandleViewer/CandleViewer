@@ -82,7 +82,8 @@ MAX_MSGPACK_ARRAY_LEN: Final = 128
 #: schema-conforming client sends one.
 MAX_MSGPACK_MAP_LEN: Final = 32
 #: SR-185: values charged per frame (see `_Budget`). A `sub` of 50 `rules` topics with every
-#: list that family accepts full costs about 7 500.
+#: list that family accepts full costs about 7 500. #4924: also the JSON value bound, over-counted
+#: on the text before decode (`limits.json_values_over_count`): one number for both encodings.
 MAX_MSGPACK_VALUES: Final = 16_384
 #: SR-185: the value budget the gateway passes until the first `auth_ok`. The widest conforming
 #: frames there, a `hello` and an `auth` with each enum list naming every member once, are charged
