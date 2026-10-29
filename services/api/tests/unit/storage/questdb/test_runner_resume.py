@@ -281,7 +281,9 @@ async def test_the_guard_reads_columns_only_after_the_alter_was_applied() -> Non
 
     await run_migrations(engine, DDL_DIR, sleep=record)  # "already exists" if it read too early
 
-    assert engine.records == NAMES and slept == [0.02, 0.02]  # the record read's and the guard's
+    # The record read's and the guard's, then one before each 0007 ALTER after its first: each
+    # waits for the one before it on `heatmap_cells` to be applied.
+    assert engine.records == NAMES and slept == [0.02] * 5
 
 
 async def test_a_suspended_data_table_stops_the_run_before_any_drop() -> None:
@@ -297,7 +299,7 @@ async def test_a_suspended_data_table_stops_the_run_before_any_drop() -> None:
 
 
 async def test_a_resumed_file_logs_each_skipped_statement_and_one_warning_with_names_only() -> None:
-    engine = await _migrated(records_kept=3)  # 0004, 0005 and 0006 re-run over their own effects
+    engine = await _migrated(records_kept=3)  # 0004 to 0007 re-run over their own effects
 
     with capture_logs() as logs:
         await run_migrations(engine, DDL_DIR, sleep=_no_sleep)
@@ -311,11 +313,16 @@ async def test_a_resumed_file_logs_each_skipped_statement_and_one_warning_with_n
         (NAMES[5], "add_column", "orderbook_deltas", "prev_update_id"),
         (NAMES[5], "add_column", "orderbook_deltas", "ts_match"),
         (NAMES[5], "add_column", "orderbook_snapshots", "ts_match"),
+        *[
+            (NAMES[6], "add_column", "heatmap_cells", column)
+            for column in ("estimated", "samples", "off_window_bid_qty", "off_window_ask_qty")
+        ],
     ]
     assert [(r["filename"], r["log_level"], r["statements_skipped"]) for r in resumed] == [
         (NAMES[3], "warning", 6),
         (NAMES[4], "warning", 1),
         (NAMES[5], "warning", 3),
+        (NAMES[6], "warning", 4),
     ]
     # Names and counts only, never a value (C-12.6).
     assert {frozenset(s) - {"column"} for s in skipped} == {

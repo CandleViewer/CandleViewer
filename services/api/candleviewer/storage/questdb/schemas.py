@@ -97,6 +97,13 @@ FUNDING_RATES_SCHEMA = TableSchema(
     tag_columns=("symbol", "source"),
 )
 
+# E21-T02 (#605, 21 Sec.4.12): the heatmap engine's native column, one row a populated level.
+HEATMAP_CELLS_SCHEMA = TableSchema(
+    name="heatmap_cells",
+    tag_columns=("symbol",),
+    boolean_field_columns=("estimated",),
+)
+
 ALL_SCHEMAS: dict[str, TableSchema] = {
     "trades": TRADES_SCHEMA,
     "orderbook_deltas": ORDERBOOK_DELTAS_SCHEMA,
@@ -107,5 +114,6 @@ ALL_SCHEMAS: dict[str, TableSchema] = {
     "footprint_cells": FOOTPRINT_CELLS_SCHEMA,
     "orderflow_metrics": ORDERFLOW_METRICS_SCHEMA,
     "funding_rates": FUNDING_RATES_SCHEMA,
+    "heatmap_cells": HEATMAP_CELLS_SCHEMA,
     **{schema.name: schema for schema in BAR_SCHEMAS_BY_FAMILY.values()},
 }
