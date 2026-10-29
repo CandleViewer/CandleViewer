@@ -5,7 +5,12 @@ a print every sample; no network. Run:
 
     uv run python bench/liquidity_tracker.py [--samples 6000] [--budget-ms 2.0]
 
-Exit status 1 when the p99 exceeds the budget."""
+Two cases, both gated on the p99: the steady book above, and a burst (about 5 000 prints in the
+5 s window, 40 levels dropping in one sample). The timed call includes the `islice` list copies
+of both sides (up to `max_levels` each) that `on_sample` allocates, and this file's fake book
+sorts its levels inside `walk`, which the real `BookState.walk` does not.
+
+Exit status 1 when either p99 exceeds the budget."""
 
 from __future__ import annotations
 
@@ -73,17 +78,67 @@ def measure(samples: int, seed: int = 7) -> list[float]:
     return out
 
 
+def _print(i: int, ts: int, tick: int, side: str) -> TradeEvent:
+    return TradeEvent(
+        event_id=EventId(uuid.UUID(int=i + 1)),
+        ts_event=ts,
+        ts_ingest=ts,
+        source="live",
+        symbol="BTCUSDT",
+        trade_id=f"b{i}",
+        price=Decimal(tick) * TICK,
+        qty=Decimal("0.5"),
+        side=side,
+        is_block_trade=False,
+        price_ticks=tick,
+        notional=Decimal(1),
+        seq=i,  # type: ignore[arg-type]
+    )
+
+
+def measure_burst(rounds: int = 300, seed: int = 11) -> list[float]:
+    """Steady ~5 000 prints in the window; every other sample 40 levels halve at once."""
+    rng = random.Random(seed)  # noqa: S311 - reproducible synthetic data, not crypto
+    mid = 600_000
+    sizes = [Decimal(rng.randint(100, 900)) / 100 for _ in range(DEPTH)]
+    full = _Book(
+        {mid - i: sizes[i] for i in range(DEPTH)}, {mid + 1 + i: sizes[i] for i in range(DEPTH)}
+    )
+    halved = _Book(dict(full.bids), dict(full.asks))
+    for i in range(20):  # 20 bid + 20 ask levels drop by exactly 50 %
+        halved.bids[mid - i * 3] = sizes[i * 3] / 2
+        halved.asks[mid + 1 + i * 3] = sizes[i * 3] / 2
+    tracker, n, out = LiquidityTracker("BTCUSDT", TICK, STEP), 0, []
+    for r in range(rounds):
+        for i in range(200):  # 1 000 prints/s for 5 s keeps ~5 000 in the window
+            ts = r * 200_000 + i * 1_000
+            n += 1
+            tracker.on_trade(
+                _print(n, ts, mid + rng.randint(-100, 100), rng.choice(("buy", "sell")))
+            )
+        for k, book in enumerate((halved, full)):
+            ts = r * 200_000 + 100_000 * k
+            t0 = time.perf_counter_ns()
+            tracker.on_sample(ts, BookPhase.LIVE, book)
+            out.append((time.perf_counter_ns() - t0) / 1e6)
+    return out[60:]  # the first 30 rounds fill the window
+
+
+def _report(name: str, ms: list[float]) -> float:
+    ms = sorted(ms)
+    p50, p99 = statistics.median(ms), ms[int(len(ms) * 0.99) - 1]
+    print(f"{name} depth={DEPTH} n={len(ms)} p50={p50:.3f} ms p99={p99:.3f} ms max={ms[-1]:.3f} ms")
+    return p99
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--samples", type=int, default=6000)
     ap.add_argument("--budget-ms", type=float, default=2.0)
     args = ap.parse_args()
-    ms = sorted(measure(args.samples))
-    p50, p99 = statistics.median(ms), ms[int(len(ms) * 0.99) - 1]
-    print(
-        f"on_sample depth={DEPTH} n={len(ms)} p50={p50:.3f} ms p99={p99:.3f} ms max={ms[-1]:.3f} ms"
-    )
-    return 0 if p99 <= args.budget_ms else 1
+    steady = _report("on_sample", measure(args.samples))
+    burst = _report("on_sample burst(5000 prints, 40 drops)", measure_burst())
+    return 0 if max(steady, burst) <= args.budget_ms else 1
 
 
 if __name__ == "__main__":
