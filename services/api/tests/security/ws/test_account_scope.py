@@ -22,6 +22,7 @@ import pytest
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.ws import gateway
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.topics import FAMILIES
 from tests.contract.ws._harness import SCHEMAS
 from tests.security.ws._raw import (
@@ -202,7 +203,7 @@ def test_x02_a_sub_naming_a_frozen_and_a_live_account_is_narrowed_to_the_live_on
 
 @pytest.mark.parametrize("how", ["drop", "freeze"])
 def test_x02_a_grant_frozen_mid_session_is_revoked_and_narrowed_like_a_withdrawal(
-    world: RawWorld, how: str
+    world: RawWorld, how: str, flag: BackpressureConfig | None
 ) -> None:
     m1 = world.login("m1", ACC_A, ACC_B)
     revoked = delta("cv_ws_revoked_total", reason="account_scope_changed")
@@ -215,8 +216,22 @@ def test_x02_a_grant_frozen_mid_session_is_revoked_and_narrowed_like_a_withdrawa
         assert publish(world, "orders", ACC_B) == 0  # the ended topic is routed to no one
         assert [publish(world, "positions", a) for a in (ACC_B, ACC_A)] == [0, 1]  # A stays served
         got = drained(c)
-    change, *ends = frames
+    change, *rest = frames
+    ends = [f for f in rest if f["t"] == "revoked"]
+    snaps = [f for f in rest if f["t"] != "revoked"]
     assert (change["t"], change["p"]["account_scope"]) == ("permission_change", [str(ACC_A)])
+    # 23 §9.5, §8.6 "Invalidation": flag on, the narrowed `positions` is re-snapped once under the
+    # new scope (`reconfigure`); flag off, nothing follows the `revoked` frames.
+    if flag is None:
+        assert snaps == []
+    else:
+        (snap,) = snaps
+        assert (snap["t"], snap["ch"], snap["meta"]["reason"]) == (
+            "snap",
+            "positions",
+            "reconfigure",
+        )
+        assert naming(snaps, ACC_B) == []
     assert {f["ch"]: f["p"]["resubscribe_allowed"] for f in ends} == {
         "orders": False,
         "positions": True,

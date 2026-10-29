@@ -9,6 +9,7 @@ import re
 import statistics
 import time
 import uuid
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import UTC, datetime, timedelta
@@ -33,6 +34,7 @@ from tests.contract.rbac.rbac_harness import (
     SCOPE_KEY_ID,
     World,
     bearer,
+    build_world,
     fill_path,
     grant_viewer_a,
     observed,
@@ -803,6 +805,40 @@ def _until_mark(ws: Any, hub: Any) -> list[Any]:
     return seen
 
 
+def _until_body(ws: Any, hub: Any, ch: str, wanted: Any) -> list[Any]:
+    """Every `ch` body that reaches `ws` up to and after `wanted`'s arrival.
+
+    `_until_mark` is a FIFO marker, which holds only with the outbound pipeline off. With it on
+    (the default since #4883) `system` rides the priority lane and overtakes a delta held in its
+    topic's throttle window, so a marker read can return before the frame under test. Read until
+    `wanted` arrives (bounded by `_recv`'s deadline), then send a second marker and read it too:
+    whatever the gateway queued behind `wanted` has then been delivered as well. The RTT probe
+    `ping` is answered (§9.1: unanswered, the connection is classed `saturated` and its windows
+    widen); any other channel's frame (the `system` notices) is not a `ch` body."""
+    seen: list[Any] = []
+    marks = sent = 0
+
+    def read() -> None:
+        nonlocal marks
+        frame = _recv(ws)
+        if frame["t"] == "ping":
+            ws.send_json({"t": "pong", "id": frame["id"]})
+        elif frame.get("p") == _MARK:
+            marks += 1
+        elif frame["t"] == "d" and frame.get("ch") == ch:
+            seen.append(frame["p"])
+
+    ws.portal.call(hub.broadcast_system, _MARK)
+    sent += 1
+    while wanted not in seen:
+        read()
+    ws.portal.call(hub.broadcast_system, _MARK)
+    sent += 1
+    while marks < sent:
+        read()
+    return seen
+
+
 def test_system_kind_matrix_is_total_over_the_contract_kinds() -> None:
     rows = _system_rows()
     assert set(rows) == {*_KINDS_ENUM, "unknown"} == set(_SYSTEM_SAMPLES)
@@ -1033,18 +1069,40 @@ def test_account_scope_topic_cell_matches_the_matrix(
     assert got == _SCOPE[key]["cells"][role][where], f"{key} {role} {where}: {result}"
 
 
+@pytest.fixture(params=["flag-off", "flag-on"])
+def flag_world(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[World]:
+    """A world of its own with `CV_WS_BACKPRESSURE_ENABLED` off or on (the default), so a test
+    proves both outbound paths; the module's shared `world` runs with the Settings default."""
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setenv("CV_WS_BACKPRESSURE_ENABLED", "true" if request.param == "flag-on" else "false")
+        (root := tmp_path / "bars-state").mkdir()
+        yield build_world(mp, bars_state_root=root)
+    finally:
+        mp.undo()
+
+
 @pytest.mark.parametrize("role", ["manager", "viewer"])
 def test_a_raw_frame_naming_a_foreign_account_never_receives_its_frames(
-    world: World, role: str
+    flag_world: World, role: str
 ) -> None:
     """AC 'A raw WS frame cannot widen scope': `[A, B, absent]` narrows to A, the refusal of a
     foreign and of an absent account is one entry, and a delta for B never arrives. `wallet`
     only: the CI app has no `positions` source, so a `positions` subscription stays pending its
     snap and receives nothing for A either (a vacuous pass); both go through `in_scope`."""
+    world = flag_world
     topic = "wallet"
     if role == "viewer":
         grant_viewer_a(world)
     hub, seq = world.app.state.ws_hub, world.app.state.ws_registry.services.sequencing
+
+    def delta(account: uuid.UUID) -> dict[str, Any]:
+        # a real `WalletUpdate`: with the outbound pipeline on, `wallet` is merged per
+        # (account, coin) in its throttle window (§8.2), and a body of another shape merges to none
+        balance = {"exchange_account_id": str(account), "coin": "USDT", "equity": "1"}
+        return {"balances": [balance | {"updated_at_ms": 1}]}
+
+    granted_body = delta(GRANTED)
     with world.client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
         assert _auth(ws, SCOPE_ACTOR[role])["t"] == "auth_ok"
         denied = [_sub_accounts(ws, topic, [a]) for a in (FOREIGN, ABSENT)]
@@ -1053,7 +1111,6 @@ def test_a_raw_frame_naming_a_foreign_account_never_receives_its_frames(
         assert result["effective"]["exchange_account_ids"] == [str(GRANTED)]
         _until_mark(ws, hub)  # its `snap`
         for account in (FOREIGN, ABSENT, GRANTED):
-            body = {"items": [{"exchange_account_id": str(account)}]}
-            ws.portal.call(functools.partial(seq.publish, topic, body, account=account))
-        got = _until_mark(ws, hub)
-    assert got == [{"items": [{"exchange_account_id": str(GRANTED)}]}], got
+            ws.portal.call(functools.partial(seq.publish, topic, delta(account), account=account))
+        got = _until_body(ws, hub, topic, granted_body)  # lane-aware: see `_until_body`
+    assert got == [granted_body], got

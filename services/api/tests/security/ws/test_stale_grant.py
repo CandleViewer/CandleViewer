@@ -2,7 +2,7 @@
 queued frames are dropped before `permission_change` (23-ws-protocol.md §9.5). M1 holds A and B and
 the owner withdraws B (the grant store, then the registry's notice) while B's snapshot and deltas
 are queued behind a parked writer, while a `sub` awaits its upstream, during the first `auth` and
-during an in-place re-`auth`: with the backpressure flag off (today's default) and on, under both
+during an in-place re-`auth`: with the backpressure flag off and on (the default), under both
 subprotocols. Each test asserts what the AC-13 and AC-14 rows of the threat model's §7 list: the
 announcing frames in order, each `revoked` stamped at the withdrawal on the fake clock
 (`0 <= ts - at_ms <= 1000`), and no `snap` or `d` naming B from the withdrawal on.

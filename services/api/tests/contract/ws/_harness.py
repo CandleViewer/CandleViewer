@@ -488,6 +488,7 @@ class Client:
             self.ws.send_bytes(text.encode())
 
     def recv(self, *, skip_ping: bool = True, validate: bool = True) -> dict[str, Any]:
+        """Next frame; a server `ping` is answered with its `pong` and, by default, skipped."""
         while True:
             frame: dict[str, Any] = recv_json(self.ws)
             assert frame.get("e") != ("b64" if self.msgpack else "b"), frame  # §3.2 per encoding
@@ -499,6 +500,11 @@ class Client:
             if validate:
                 validate_frame(frame)
             self.seen.append(frame)
+            if frame["t"] == "ping" and skip_ping:
+                # §9.1: a client MUST answer the server's RTT probe, else it ages and the
+                # connection is classed `saturated`; a skipped ping is answered, as a conformant
+                # client's would be.
+                self.send_raw({"t": "pong", "id": frame["id"]})
             if frame["t"] != "ping" or not skip_ping:
                 return frame
 

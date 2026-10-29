@@ -4,7 +4,8 @@ Without a config the router bounds a connection's outbound queue at `OUTBOUND_QU
 frames) and closes `slow_consumer`; with one, the budgeted pipeline bounds it (S2a,
 `test_pipeline_outbound.py`). A config also sets `welcome.features.coalescing`, which mirrors the
 flag (`23-ws-protocol.md` §4.2): a router built without a config now advertises `false` (it was
-hard-coded `true`). Nothing coalesces yet, so the flag stays off until the pipeline is complete.
+hard-coded `true`). The flag's default is on since #4883 (an owner ruling of 2026-10-29 on E17-Q03
+profile B, #568).
 
 The real router runs on the test's own loop behind a fake socket: no threads, no sleeps. Frames
 are queued in one synchronous turn, so the writer cannot drain them meanwhile.

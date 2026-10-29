@@ -393,32 +393,40 @@ def test_a_bars_series_leases_its_symbols_trades() -> None:  # #399 D2: built fr
     assert ingestion_streams(ctx)("bars") is trades and ingestion_streams(ctx)("footprint") is None
 
 
+def _next(ws: Any) -> dict[str, Any]:
+    """The next frame that is not a server `ping`: with the outbound pipeline on (the default,
+    #571) the RTT probe may ping at any point of a session (23 §8.3)."""
+    while (frame := ws.receive_json())["t"] == "ping":
+        pass
+    return frame  # type: ignore[no-any-return]  # receive_json is untyped
+
+
 def test_kill_switch_event_pushes_system_then_revokes(world: tuple[TestClient, _Kill]) -> None:
     client, k = world
     events: WsEvents = client.app.state.ws_events  # type: ignore[attr-defined]
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         ws.send_json({"t": "sub", "id": "s", "p": {"topics": ["system"]}})
-        assert ws.receive_json()["t"] == "sub_ok"
+        assert _next(ws)["t"] == "sub_ok"
         orders = {"ch": "orders", "opts": {"exchange_account_ids": [str(ACC)]}}
         ws.send_json({"t": "sub", "id": "o", "p": {"topics": [orders]}})
-        assert ws.receive_json()["p"]["results"][0]["ok"] is True
+        assert _next(ws)["p"]["results"][0]["ok"] is True
         k.engaged = True
         assert client.portal is not None
         client.portal.call(lambda: events.kill_switch_changed(engaged=True, reason="halt"))
-        sys_frame = ws.receive_json()
+        sys_frame = _next(ws)
         assert (sys_frame["t"], sys_frame["ch"]) == ("d", "system")
         assert sys_frame["p"]["kind"] == "kill_switch"
         assert sys_frame["p"]["kill_switch"]["engaged"] is True
-        change = ws.receive_json()
+        change = _next(ws)
         assert change["t"] == "permission_change"
         assert "orders:read" not in change["p"]["permissions"]
-        revoked = ws.receive_json()
+        revoked = _next(ws)
         assert (revoked["t"], revoked["ch"]) == ("revoked", "orders")
         assert revoked["p"]["reason"] == "permission_revoked"
         # the live provider now reports engaged on a fresh auth_ok
         ws.send_json({"t": "auth", "id": "a2", "p": {"access_token": "tok"}})
-        assert ws.receive_json()["p"]["kill_switch"]["engaged"] is True
+        assert _next(ws)["p"]["kill_switch"]["engaged"] is True
 
 
 def test_user_disabled_event_sends_bye_4403(world: tuple[TestClient, _Kill]) -> None:

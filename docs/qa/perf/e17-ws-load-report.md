@@ -161,6 +161,20 @@ flag, feeder, machine profile, loop, length and placement, or that has an INVALI
 and exits 1 when the CPU delta is at or over 2 %. With `--feeder inproc` the feeder's CPU is in both denominators,
 which understates the fan-out path's share, so `--feeder proc` is the pair to read.
 
+**Result (2026-10-28).** Three interleaved pairs on `cv-bench-01`: profile A, flag on, `--feeder proc`, 900 s
+after the warm-up, all PASS, dispatched on, off, on, off, on, off.
+
+| Pair | On run      | Off run     | Backend CPU on / off (core-s/s) |  Δ CPU |
+| ---- | ----------- | ----------- | ------------------------------- | -----: |
+| 1    | 40696826943 | 40700157046 | 0.4067 / 0.4074                 | −0.2 % |
+| 2    | 40703589466 | 40707111963 | 0.4018 / 0.3940                 | +2.0 % |
+| 3    | 40710658908 | 40714269856 | 0.4019 / 0.4173                 | −3.7 % |
+
+The median is −0.16 % and no pair is over the 2 % line. The cost sits inside the harness's run-to-run noise:
+these runs cannot resolve it below about ±3 %, so "under 2 %" means "not measurable at this resolution".
+
+**Rollout ruling (2026-10-29).** The owner ruling of 2026-10-29 (#2701 ledger A row A15) took 23 §8.6's "E17-Q03's load run must pass" as met on this record. E17-Q03's run is recorded (#568). Profile B's full-rate shortfall is the capacity finding of the R1 note on #571 (about 1.6 gateway event loops on the bench host), not a pipeline defect, and the flag-on overhead above is within noise. So `CV_WS_BACKPRESSURE_ENABLED` defaults on with #4883, and profile B at full rate is re-homed as a GA-host measurement under E49 (release readiness). The budget is not lowered.
+
 ### Recorded deviations from the written shapes
 
 - **The 8-series cap binds below the written shapes.** `bars.*` and `footprint.*` each lease a bar series, and the

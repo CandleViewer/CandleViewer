@@ -48,11 +48,11 @@ def _spy_on_the_router(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 def test_create_app_passes_no_backpressure_config_while_the_flag_is_off(
     monkeypatch: pytest.MonkeyPatch, budget: dict[str, int]
 ) -> None:
-    """Off is the default, and the budget settings alone change nothing: only the flag selects
-    the pipeline."""
+    """Off stays selectable until #2900, and the budget settings alone change nothing: only the
+    flag selects the pipeline."""
     seen = _spy_on_the_router(monkeypatch)
 
-    create_app(_settings(**budget))
+    create_app(_settings(ws_backpressure_enabled=False, **budget))
 
     (kwargs,) = seen
     assert kwargs.get("backpressure") is None
