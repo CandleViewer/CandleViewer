@@ -112,3 +112,6 @@ packages/chart-engine/bench/matrix/results/**/adr-0011-table.md
 # E06-T02 (#221): the CI matrix baselines are the unmodified report JSON of a CI artefact of `main`
 # (the baseline policy in packages/chart-engine/README.md); prettier would refold their arrays
 packages/chart-engine/bench/matrix/baselines/*.json
+# publish_board.py writes its ledger as `json.dump(indent=2, sort_keys=True)` + LF and rewrites it whole on
+# every run; prettier would refold its arrays and the next tool run would undo that (a 6,000-line diff each way)
+docs/plan/backlog/_tools/published.json
