@@ -5,9 +5,9 @@
   6284192190), as decision D1 on #889 says (issuecomment-6297993224), and ratified by main-orchestrator, whose rulings
   of 2026-10-21, recorded in the #889 plan (issuecomment-6323419345), refine D1; where D1's first text differs (item
   1's signed bytes, item 3's module edge and item 5's step-up class), this record follows the rulings. The
-  ratification then due (`docs/plan/27-adrs/README.md:5`), the owner's on #2701 as for every delegated decision, is
-  given above, and the owner may revoke it there. If a review finds the injection of decision 3 materially worse than
-  an import edge, the CONSTITUTION §3 amendment slice opens (C-16.1, the owner personally).
+  ratification then due (`docs/plan/27-adrs/README.md:5`) was given by main-orchestrator under the owner's delegation
+  (#2701 ledger 2 row 35); the owner may revoke it on #2701. If a review finds the injection of decision 3 materially
+  worse than an import edge, the CONSTITUTION §3 amendment slice opens (C-16.1, the owner personally).
 - Date: 2026-10-21
 - Deciders: Owner (`@basiltt`) through main-orchestrator (the delegation on #2701; D1 and the rulings on #889); the
   Security engineer through the `security-review` label (C-10.2); the architect as CODEOWNER of `docs/plan/`.

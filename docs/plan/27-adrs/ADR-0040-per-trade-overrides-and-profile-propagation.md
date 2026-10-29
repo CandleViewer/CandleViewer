@@ -495,8 +495,8 @@ button's accessible name states why it is disabled. This record designs no contr
 
 ## Owner sign-off items (#2701)
 
-The status stayed `proposed` until the owner and the Architect signed off, on #2701, on the items below; ratified as
-proposed 2026-10-29 (#2701 ledger 2 (comment 6493096777), row 33):
+The status stayed `proposed` until these items were signed off on #2701. They were ratified as proposed on 2026-10-29
+by main-orchestrator under the owner's delegation (#2701 ledger 2 row 33):
 
 1. the decision table and the comparator R (Decision 1);
 2. the net risk ceiling for every _B_: the remaining daily-loss headroom minus the committed risk (one ledger of
