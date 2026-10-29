@@ -17,7 +17,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 | Density notes            | [x] compact; fixed 24 px rows (spec §5)                                   | [x] widths per mode (spec §5)                                                                         | [x] compact                                    |
 | Essential exceptions     | [x] none                                                                  | [x] none                                                                                              | [x] none                                       |
 | Tokens used              | [x] spec §14                                                              | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
-| Data contract            | [ ] NO: D07-G1 … D07-G4                                                   | [x] spec §3.1                                                                                         | [x] E11-D04's                                  |
+| Data contract            | [ ] NO: D07-G1 … D07-G5                                                   | [x] spec §3.1                                                                                         | [x] E11-D04's                                  |
 | Contrast                 | [x] spec §14 (computed)                                                   | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
 | Storybook                | [x] §D                                                                    | [x] §D                                                                                                | [x] §D                                         |
 | Sign-off                 | [ ] owner approval pending                                                | [ ] owner approval pending                                                                            | [ ] owner approval pending                     |
@@ -67,7 +67,7 @@ Old is a verbatim fragment of the cited line at `83f18fd4c` (the tool checks it)
 
 | Consumer                | Builds from                               | Waits on                                                  |
 | ----------------------- | ----------------------------------------- | --------------------------------------------------------- |
-| E11-S14 (#521)          | spec §2–§12, §C's A-rows for E11-D04, §D  | D07-G1 … D07-G4 through E12-T05 (#398) and E12-T06 (#399) |
+| E11-S14 (#521)          | spec §2–§12, §C's A-rows for E11-D04, §D  | D07-G1 … D07-G5 through E12-T05 (#398) and E12-T06 (#399) |
 | E12-D12 (#313)          | spec §3 (the per-mode table), §6, §7      | —                                                         |
 | E12-Q03 (#419), E12-Q07 | spec §3, §4, §6, §7, §9                   | —                                                         |
 | E12-S10 (#396)          | spec §6 (`forming`, `stale`, `corrected`) | D07-G3                                                    |
