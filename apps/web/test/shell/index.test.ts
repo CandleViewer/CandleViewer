@@ -30,6 +30,8 @@ describe("createShellPort", () => {
         hardwareAccelerated: true,
         webgl2CapabilityParity: true,
       }),
+      gpuRetry: async () => {},
+      onGpuCrashed: () => () => {},
       onDeepLink: () => () => {},
     };
     const port = createShellPort();

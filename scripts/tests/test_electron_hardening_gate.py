@@ -39,16 +39,28 @@ function invokeAllowed(channel, ...args) {
   if (!isChannelAllowed(channel, ALLOWED_IPC_CHANNELS)) throw new Error("no");
   return ipcRenderer.invoke(channel, ...args);
 }
+function subscribeAllowed(channel, listener) {
+  if (!isChannelAllowed(channel, ALLOWED_IPC_EVENTS)) throw new Error(`no ${channel} {`);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
 var ALLOWED_IPC_CHANNELS = ["cv:gpu:info"];
+var ALLOWED_IPC_EVENTS = ["cv:gpu:crashed"];
 var cv = Object.freeze({
   gpuInfo: () => invokeAllowed("cv:gpu:info"),
+  onGpuCrashed: (listener) => subscribeAllowed("cv:gpu:crashed", (_e, p) => listener(p)),
 });
 contextBridge.exposeInMainWorld("cv", cv);
 """
-GOOD_ALLOW = 'export const ALLOWED_IPC_CHANNELS = ["cv:gpu:info"];\n'
+GOOD_ALLOW = (
+    'export const ALLOWED_IPC_CHANNELS = ["cv:gpu:info"];\n'
+    'export const ALLOWED_IPC_EVENTS = ["cv:gpu:crashed"];\n'
+)
+GOOD_SEND = 'win.webContents.send("cv:gpu:crashed", crash);\n'
 GOOD_MAIN = (
     'ipcMain.handle("cv:gpu:info", () => 1);\n'
-    "protocol.registerSchemesAsPrivileged("
+    + GOOD_SEND
+    + "protocol.registerSchemesAsPrivileged("
     "[{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }]);\n"
     "void win.loadURL(APP_ENTRY_URL);\n"
     'const APP_ROOT_DIR = path.resolve(__dirname, "../../../web/dist");\n'
@@ -967,6 +979,93 @@ def test_main_handler_outside_table_fails_sr111(tree: Tree) -> None:
     tree.files["desktop/main/index.js"] = (
         GOOD_MAIN + 'ipcMain.handle("cv:shell:run", () => 1);'
     )
+    assert srs(tree.violations()) == {"SR-111"}
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        'ipcRenderer.on("cv:gpu:crashed", (e, p) => p);',
+        "function sneaky(channel, l) {\n  ipcRenderer.on(channel, l);\n}",
+        "function twin(channel, l) { if (!isChannelAllowed(channel, ALLOWED_IPC_EVENTS)) throw 1; ipcRenderer.on(channel, l); }",
+    ],
+    ids=["a-literal-channel", "guarded-only-elsewhere", "a-second-guarded-helper"],
+)
+def test_a_second_on_call_site_fails_sr111(tree: Tree, extra: str) -> None:
+    tree.files["desktop/preload/index.js"] = GOOD_PRELOAD.replace(
+        "var cv =", extra + "\nvar cv ="
+    )
+    vs = tree.violations()
+    assert srs(vs) == {"SR-111"} and "on() call sites" in vs[0].message
+
+
+def test_the_helper_unsubscribes_on_its_channel_only_sr111(tree: Tree) -> None:
+    assert "ipcRenderer.removeListener(channel, listener)" in GOOD_PRELOAD
+    assert tree.violations() == []
+    tree.files["desktop/preload/index.js"] = GOOD_PRELOAD.replace(
+        "removeListener(channel,", 'removeListener("cv:gpu:crashed",'
+    )
+    assert srs(tree.violations()) == {"SR-111"}
+
+
+GUARD = "  if (!isChannelAllowed(channel, ALLOWED_IPC_EVENTS)) throw new Error(`no ${channel} {`);\n"
+SIBLING = "function sibling(channel) {\n  return isChannelAllowed(channel, ALLOWED_IPC_EVENTS);\n}\n"
+
+
+@pytest.mark.parametrize("sibling", ["", SIBLING], ids=["no-guard", "in-a-sibling"])
+def test_a_helper_without_its_own_guard_fails_sr111(tree: Tree, sibling: str) -> None:
+    tree.files["desktop/preload/index.js"] = GOOD_PRELOAD.replace(GUARD, "").replace(
+        "function subscribeAllowed(", sibling + "function subscribeAllowed("
+    )
+    vs = tree.violations()
+    assert srs(vs) == {"SR-111"} and "named function" in vs[0].message
+
+
+def test_a_channel_in_both_tables_fails_sr111(tree: Tree) -> None:
+    tree.files["desktop/preload/allowList.js"] = GOOD_ALLOW.replace(
+        '["cv:gpu:info"]', '["cv:gpu:info", "cv:gpu:crashed"]'
+    )
+    assert srs(tree.violations()) == {"SR-111"}
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        'ipcRenderer.once("cv:gpu:crashed", f)',
+        'ipcRenderer.send("cv:gpu:info")',
+        'ipcRenderer.sendSync("cv:gpu:info")',
+        'ipcRenderer.postMessage("cv:gpu:info", 1)',
+        'ipcRenderer.on.call(ipcRenderer, "cv:gpu:crashed", f)',
+        'ipcRenderer.invoke("cv:gpu:crashed")',
+        'ipcRenderer.addListener("cv:gpu:crashed", f)',
+        'ipcRenderer.prependListener("cv:gpu:crashed", f)',
+        'ipcRenderer.prependOnceListener("cv:gpu:crashed", f)',
+        'ipcRenderer.off("cv:gpu:crashed", f)',
+        'ipcRenderer.removeAllListeners("cv:gpu:crashed")',
+        'ipcRenderer.emit("cv:gpu:crashed", {})',
+        'ipcRenderer.removeListener("cv:gpu:crashed", f)',
+        "ipcRenderer.removeListener.call(ipcRenderer, channel, f)",
+        "function off(channel, f) { ipcRenderer.removeListener(channel, f); }",
+        'ipcRenderer.sendToHost("cv:gpu:info")',
+        'ipcRenderer.listeners("cv:gpu:crashed")',
+    ],
+)
+def test_other_ipcrenderer_uses_still_fail_sr111(tree: Tree, call: str) -> None:
+    tree.files["desktop/preload/index.js"] = GOOD_PRELOAD + call + ";\n"
+    assert srs(tree.violations()) == {"SR-111"}
+
+
+@pytest.mark.parametrize(
+    "main_js",
+    [
+        GOOD_MAIN + 'ipcMain.handle("cv:gpu:crashed", () => 1);\n',
+        GOOD_MAIN.replace(GOOD_SEND, ""),
+        GOOD_MAIN + 'win.webContents.send("cv:shell:run", 1);\n',
+    ],
+    ids=["event-handled", "event-never-sent", "send-off-the-event-table"],
+)
+def test_main_events_off_the_event_table_fail_sr111(tree: Tree, main_js: str) -> None:
+    tree.files["desktop/main/index.js"] = main_js
     assert srs(tree.violations()) == {"SR-111"}
 
 
