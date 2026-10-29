@@ -1581,12 +1581,17 @@ export interface paths {
      *     login fails closed and mints no session (C-12.2 forbids such a user; see "Enrolment-only
      *     session").
      *
-     *     Failures are deliberately uniform (`unauthenticated`) whether the user is unknown,
-     *     the password is wrong, or the account is disabled — no user enumeration.
+     *     Every failed sign-in gets one answer, whatever the account's state (SR-014, #4961). An
+     *     unknown identifier, a wrong password, a disabled or a locked account and a user without
+     *     `mfa_required`, whether the password sent is right or wrong, are all answered `401`
+     *     `unauthenticated`, with the same body and the same headers. No state has a status, a
+     *     header or a problem member of its own, and a refused password step returns no sooner
+     *     than the same minimum time. The audit record, never the answer, keeps the cause.
      *     Five consecutive failures lock the account for 15 minutes (`user_status = locked`).
      *     Sign-in verification runs for at most `CV_AUTH_LOGIN_VERIFY_CONCURRENCY` attempts at a
      *     time; an attempt beyond that is refused at once with `429` `rate_limited` and a
-     *     `Retry-After` of 1 second (#4663).
+     *     `Retry-After` of 1 second (#4663). That refusal is decided before the identifier is
+     *     read, so it says nothing about any account.
      */
     post: operations["authLogin"];
     delete?: never;
