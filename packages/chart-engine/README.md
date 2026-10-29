@@ -73,12 +73,16 @@ missing any required field fails rather than reporting anonymous numbers.
 ## Matrix benchmark in CI and the baseline-update policy (E06-T02)
 
 `.github/workflows/perf-engine-matrix.yml` runs the E06-T01 matrix (`bench/matrix/`) on every PR that
-touches this package (headless Chromium, B1 B2 B3 B4 B5 B7 B9) and nightly (Electron, the full set with
-the 30-minute B10 soak). It is **recording only** in R0: `bench/matrix/ci-compare.mjs` publishes the
-comparison with the committed baseline in the job summary and the run's report as an artefact, and a
-regression never fails the build. A run that produces no valid report does fail the job. Making it a
-required gate is E11-T06. These hosted software-GL numbers are not reference-hardware evidence (the
-committed matrix on `main` is); they are regression tracking only. The M0 findings report it keeps alive is `docs/plan/spikes/E06-M0-report.md`.
+touches this package (headless Chromium, B1 B2 B3 B4 B5 B9) and nightly (Electron, the full set with
+B7 and the 30-minute B10 soak). B7 is nightly-only because it stalls on the hosted runner's software GL
+(the M0 report's U5): its first PR run hung until the harness timeout.
+
+It is **recording only** in R0: `bench/matrix/ci-compare.mjs` publishes the comparison with the
+committed baseline in the job summary and the run's report as an artefact, and a regression never
+fails the build. A run that produces no valid report does fail the job. Making it a required gate is
+E11-T06. These hosted software-GL numbers are not reference-hardware evidence (the committed matrix
+on `main` is); they are regression tracking only. The M0 findings report it keeps alive is
+`docs/plan/spikes/E06-M0-report.md`.
 
 Baselines live in `bench/matrix/baselines/<runtime>-ubuntu-latest.json`, one per runtime and runner
 class. The policy (`docs/plan/06-performance-and-load-standard.md` §7.4): baselines **move forward only**
@@ -94,4 +98,5 @@ figure without any code change; such a move still follows rules 1–3.
 3. A baseline is never re-taken to make a regression disappear; a regression is fixed, or accepted in
    the PR with the rationale on record.
 4. Until a runtime's file exists the job records "no baseline yet" and still publishes its report; the
-   first file is committed from the first green `main` run.
+   first file is committed from the first green `main` run (for Chromium, a `workflow_dispatch` on `main`;
+   that job runs on PRs and on dispatch, never on a push).
