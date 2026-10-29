@@ -40,6 +40,7 @@ from candleviewer.bars.metrics import (
     bar_build_latency_seconds,
     bar_renko_multi_brick_total,
     bar_renko_reversals_total,
+    bars_print_rejected_total,
 )
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate, BuilderState, check_renko_bounds
 from candleviewer.bars.time_builder import _NONE, _Draft, bars_built_total
@@ -124,6 +125,7 @@ class RenkoBarBuilder:
             n -= self._rev - 1
             self._revs.inc()
         if n > MAX_BRICKS_PER_TRADE:  # bad print / outlier: refuse, the set quarantines us
+            bars_print_rejected_total.labels(reason="renko").inc()  # BR-11 (#2294)
             raise BarsError(
                 f"One trade would complete {n} renko bricks (cap {MAX_BRICKS_PER_TRADE})."
             )

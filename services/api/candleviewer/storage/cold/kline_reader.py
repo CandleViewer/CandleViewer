@@ -31,6 +31,7 @@ import pyarrow.compute as pc
 import structlog
 
 from candleviewer.observability.cold_kline_cache_metrics import (
+    bars_cold_read_duplicate_inflight_total,
     cv_cold_kline_page_cache_bytes,
     cv_cold_kline_page_cache_evictions_total,
     cv_cold_kline_page_cache_hits_total,
@@ -142,6 +143,9 @@ class ParquetKlineReader:
         self._db: _SharedDuckDB | None = None
         # #2523 lever 5: `page()`'s cache, bound `CV_COLD_KLINE_PAGE_CACHE_BYTES` (0: off).
         self._pages = _PageCache(page_cache_bytes)
+        # BR-36 (#2294): page keys being scanned, with how many reads scan each. An entry lives
+        # only while its reads run (bounded by them), so it holds no more than the reads do.
+        self._inflight: dict[_PageKey, int] = {}
 
     def close(self) -> None:
         """Release the shared DuckDB instance; it closes once no read still holds a cursor.
@@ -269,8 +273,15 @@ class ParquetKlineReader:
         key: _PageKey = (symbol, interval, lo, hi, self._max_rows, tuple(sorted(found)))
         if (hit := self._pages.get(key)) is not None:
             return hit
-        async with self._sem:
-            got = await self._query_unbounded(_read_page, [p for p, *_ in found], lo, hi)
+        if key in self._inflight:  # BR-36: no single-flight, so this read scans again
+            bars_cold_read_duplicate_inflight_total.inc()
+        self._inflight[key] = self._inflight.get(key, 0) + 1
+        try:
+            async with self._sem:
+                got = await self._query_unbounded(_read_page, [p for p, *_ in found], lo, hi)
+        finally:
+            if (left := self._inflight.pop(key) - 1) > 0:
+                self._inflight[key] = left
         if isinstance(got, ColdKlinePage):
             self._pages.put(key, got)
         return got

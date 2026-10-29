@@ -226,7 +226,8 @@ class BarWriter:
                 bars_write_saturation_total.inc()
                 _log().warning("bars_write_saturated", depth=self._queue.qsize(), table=table)
             await self._queue.put((table, row))  # awaits space - never discards
-        bars_write_queue_depth.set(self._queue.qsize())
+            # BR-34 (#2294): per row, so a stalled sink shows while its producers wait.
+            bars_write_queue_depth.set(self._queue.qsize())
 
     async def _drain(self) -> None:
         while True:

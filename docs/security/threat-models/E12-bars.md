@@ -358,16 +358,19 @@ below already exist in the ticket text or are requested.
 | `bars_source_overwrite_refused_total`                              | BR-07        | requested (SR-E12-10)       |
 | `bars_spec_cap_rejected_total{reason}` (reason = the cap)          | BR-30        | shipped E12-T03 (#2030)     |
 | `bars_backfill_pages_total`, `bars_backfill_aborted_total{reason}` | BR-33        | requested (SR-E12-08)       |
-| `bars_print_rejected_total{reason}`                                | BR-11        | instrumentation #2294       |
-| `ws_bars_seq_gap_total`                                            | BR-13        | instrumentation #2294       |
-| `bars_read_stale_build_version_total`                              | BR-10        | instrumentation #2294       |
-| `bars_write_roundtrip_mismatch_total`                              | BR-14        | instrumentation #2294       |
-| `bars_spec_registry_conflict_total`                                | BR-15        | instrumentation #2294       |
-| `parquet_hot_cold_parity_mismatch_total`                           | BR-16        | instrumentation #2294       |
-| `bars_write_buffer_depth`, `bars_write_dropped_total`              | BR-34        | instrumentation #2294       |
-| `bars_cold_read_duplicate_inflight_total`                          | BR-36        | instrumentation #2294       |
-| `bars_snapshot_write_seconds`, `bars_snapshot_bytes_total`         | BR-37        | instrumentation #2294       |
-| `bars_subscribe_snapshot_total{history}`                           | BR-38        | instrumentation #2294       |
+| `bars_print_rejected_total{reason}`                                | BR-11        | shipped #2294               |
+| `ws_bars_seq_gap_total`                                            | BR-13        | shipped #2294               |
+| `bars_stale_build_version_total`                                   | BR-10        | shipped E12-T02 (#1998)     |
+| `bars_write_roundtrip_mismatch_total`                              | BR-14        | shipped #2294               |
+| `bars_spec_registry_conflict_total`                                | BR-15        | shipped #2294, not wired    |
+| `parquet_hot_cold_parity_mismatch_total{stream}`                   | BR-16        | shipped #2294               |
+| `bars_write_queue_depth`, `bars_write_saturation_total`            | BR-34        | shipped #1998, #2294        |
+| `bars_write_failed_total{reason}`                                  | BR-34        | shipped E12-T02 (#1998)     |
+| `bars_cold_read_duplicate_inflight_total`                          | BR-36        | shipped #2294               |
+| `bars_snapshot_write_seconds`, `bars_snapshot_bytes_total`         | BR-37        | shipped #2294               |
+| `bars_subscribe_snapshot_total{history}`                           | BR-38        | shipped #2294               |
+
+Issue #2294 reused shipped series rather than add a second name for one count: BR-10's `bars_read_stale_build_version_total` is `bars_stale_build_version_total`, and BR-34's `bars_write_buffer_depth` and `bars_write_dropped_total` are `bars_write_queue_depth` (now set on every queued row, so a stalled sink shows while its producers wait) and `bars_write_failed_total` (the buffer itself never drops). BR-16's count covers every roll-off stream; bars are not rolled off to Parquet yet. BR-36's counts the cold kline reads that `/market/klines` serves; a `bars_cold_read_coalesced_total` waits for the single-flight that E12-T05 names. BR-15's is emitted by `SpecRegistry`, which the composed app does not build yet (the live `bar_param` path re-parses the wire grammar), so it reads 0 there. BR-13's is client-reported: a client can send a `sequence_gap` resync with no real gap, bounded by the 23-ws §7.5 resync limit, so it is cross-checked with `cv_ws_resync_total` before it is read as tampering.
 
 ## 11. Control-to-ticket map
 
@@ -513,3 +516,4 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
 | 2026-10-19 | author (SR-E12-02, #2787 D2-M4)                         | WS non-time scan bounded by table rows                   |
 | 2026-10-20 | code + security review r1 (#2787 D2-M4)                 | APPROVE ×2; minors folded                                |
 | 2026-10-21 | author (SR-E12-02, #399 R1)                             | WS time scan bounded by table rows                       |
+| 2026-10-29 | author (#2294)                                          | Section 10 detection signals built                       |

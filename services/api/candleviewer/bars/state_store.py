@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -32,6 +33,7 @@ from typing import Final
 import orjson
 
 from candleviewer.bars.errors import BarsError
+from candleviewer.bars.metrics import bars_snapshot_bytes_total, bars_snapshot_write_seconds
 from candleviewer.bars.models import BuilderState
 from candleviewer.bars.rows import MAX_GENERATION
 from candleviewer.observability.context import run_in_thread
@@ -87,7 +89,12 @@ class StateStore:
             "wm": None if wm is None else [wm.ts_us, sorted(wm.ids)],
             "generation": stored.generation,
         }
-        await run_in_thread(self._write, self.path(st.symbol, st.spec_hash), orjson.dumps(doc))
+        data = orjson.dumps(doc)
+        started = time.perf_counter()
+        await run_in_thread(self._write, self.path(st.symbol, st.spec_hash), data)
+        # BR-37 (#2294): write amplification and IO stalls, per blob written (none on a failure).
+        bars_snapshot_write_seconds.observe(time.perf_counter() - started)
+        bars_snapshot_bytes_total.inc(len(data))
 
     @staticmethod
     def _write(path: Path, data: bytes) -> None:

@@ -12,6 +12,9 @@ from candleviewer.observability.metrics import (
     Histogram,
     ReexportCollector,
 )
+from candleviewer.observability.parquet_parity_metrics import (  # noqa: F401 - registers it
+    parquet_hot_cold_parity_mismatch_total,
+)
 
 recorder_cap_refused_total = Counter(
     "recorder_cap_refused_total",
@@ -129,6 +132,8 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "recorder_rolloff_failures_total",
         "recorder_rolloff_streams_unlisted_total",
         "recorder_watermark_lag_days",
+        # BR-16 (#2294): the roll-off read-back's hot/cold parity (`storage.cold.rolloff_ops`).
+        "parquet_hot_cold_parity_mismatch_total",
     }
 )
 

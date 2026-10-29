@@ -8,6 +8,8 @@ the only place a `Decimal` becomes a `DOUBLE`.
 as `0.0`. A value that is not exactly representable (e.g. `0.1`) therefore reads back as the
 nearest double, never as a neighbour; it never goes through an intermediate `float` of a
 `float`. Reads convert back with `Decimal(repr(x))`, which round-trips every stored double.
+An OHLC price that does not read back as itself (more digits than a double holds) is still
+stored, and counted (`to_price_double`, `bars_write_roundtrip_mismatch_total`, BR-14).
 
 Persistence refuses `synthetic` bars (`assert_persistable`) and any spec whose options have no
 wire form (so `bar_param` is always rendered from a *validated* spec, never from client text).
@@ -22,6 +24,7 @@ from decimal import Decimal
 from typing import Final
 
 from candleviewer.bars.errors import BarsError
+from candleviewer.bars.metrics import bars_write_roundtrip_mismatch_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.series import assert_persistable
 from candleviewer.bars.spec import to_wire
@@ -74,6 +77,16 @@ def to_double(value: Decimal) -> float:
     if out != out or out in (float("inf"), float("-inf")):
         raise BarPersistError(f"The value {value} overflows a DOUBLE.")
     return out + 0.0  # -0.0 -> 0.0
+
+
+def to_price_double(value: Decimal) -> float:
+    """`to_double` for an OHLC price, counting one whose double reads back as another decimal
+    (BR-14: two reads, or a read and a rebuild, would then differ). Volumes and the derived
+    `vwap` / `delta_pct` are not checked: a quotient is inexact by construction."""
+    out = to_double(value)
+    if Decimal(repr(out)) != value:
+        bars_write_roundtrip_mismatch_total.inc()
+    return out
 
 
 def bar_param_for(spec: BarSpec) -> str:
@@ -133,10 +146,10 @@ def bar_row(bar: Bar, spec: BarSpec, *, source: str = "tape", generation: int) -
         "close_ts": bar.close_time,
         "symbol": bar.symbol,
         "bar_param": bar_param_for(spec),
-        "open": to_double(bar.open),
-        "high": to_double(bar.high),
-        "low": to_double(bar.low),
-        "close": to_double(bar.close),
+        "open": to_price_double(bar.open),
+        "high": to_price_double(bar.high),
+        "low": to_price_double(bar.low),
+        "close": to_price_double(bar.close),
         "volume": to_double(bar.volume),
         "buy_volume": to_double(bar.buy_volume),
         "sell_volume": to_double(bar.sell_volume),

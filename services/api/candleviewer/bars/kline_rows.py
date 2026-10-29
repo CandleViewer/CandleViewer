@@ -29,6 +29,7 @@ from candleviewer.bars.rows import (
     bar_param_for,
     row_checksum,
     to_double,
+    to_price_double,
 )
 from candleviewer.bars.spec import from_wire
 from candleviewer.bars.writer import SourceOverwriteRefused, bars_source_overwrite_refused_total
@@ -81,10 +82,10 @@ def kline_row(event: KlineEvent, spec: BarSpec) -> dict[str, object]:
         "close_ts": event.start + spec.interval_ms * 1000,
         "symbol": event.symbol,
         "bar_param": bar_param_for(spec),
-        "open": to_double(event.open),
-        "high": to_double(event.high),
-        "low": to_double(event.low),
-        "close": to_double(event.close),
+        "open": to_price_double(event.open),
+        "high": to_price_double(event.high),
+        "low": to_price_double(event.low),
+        "close": to_price_double(event.close),
         "volume": to_double(event.volume),
         **dict.fromkeys(ORDERFLOW_NULL_COLUMNS),
         "is_closed": True,
