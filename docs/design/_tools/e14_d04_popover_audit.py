@@ -29,7 +29,7 @@ its source so a reviewer can re-grep it:
    on its row; T2 rows never carry ``color.text.disabled`` or ``opacity.disabled``; validity rows
    carry ``opacity.disabled`` and never "T2" or "lock" (gated).
 7. String gates on the spec and the handoff (the T2 rule once, the view-as leg first, no closing
-   keyword, no local path or Penpot host, every board row PENDING, no placeholder words, no
+   keyword, no local path or Penpot host, every board row drawn, no placeholder words, no
    "merges as is" qualifier, the frame count in sections 0 and 17 and in the handoff, the
    colour-custom legend word, G-T11 named in the handoff, the Q1-Q16 rulings cited by issuecomment
    id with no pending ruling left, the PROPOSED quota key named, rendering 2b named in section 8,
@@ -1280,8 +1280,8 @@ def string_report(fails: list[str], spec: str, hand: str, fill: dict[str, Any]) 
         "rendering 2b named in section 8": "(2b)" in section(spec, "\n## 8.", "\n## 9."),
     }
     boards = table_rows(section(spec, "\n## 0.", "\n## 1."))
-    checks["ten board rows, every one PENDING"] = len(boards) == len(BOARDS) and all(
-        r[-1] == "PENDING" for r in boards
+    checks["ten board rows, every one drawn"] = len(boards) == len(BOARDS) and all(
+        r[-1] == "drawn" for r in boards
     )
     anatomy = section(spec, "\n## 2.", "\n## 3.")
     checks["no trading word in the anatomy"] = not re.search(
