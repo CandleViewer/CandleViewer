@@ -10,9 +10,10 @@ import pytest
 from prometheus_client import REGISTRY
 
 from candleviewer.book.models import BookPhase
+from candleviewer.orderflow import heatmap as H
 from candleviewer.orderflow.heatmap import COLUMN_MS, DEEP_DEPTH, HeatmapSpec, NativeLevels
 from tests.unit.book._builders import delta, lvl, snap
-from tests.unit.orderflow.test_heatmap import SYM, T0, World, ladder, live
+from tests.unit.orderflow.test_heatmap import SYM, T0, Demand, World, ladder, live
 
 Seen = list[tuple[str, int, dict[int, float] | None, dict[int, float] | None]]
 
@@ -179,3 +180,100 @@ def test_pin_depth_stays_below_the_deep_tier(depth: int) -> None:
     with pytest.raises(ValueError, match="deep tier"):
         w.topic.pin_native(SYM, depth)
     assert w.topic.pinned == frozenset()
+
+
+# -- a pin holds the book demand itself (fold 1) ---------------------------------------------------
+
+
+async def test_a_pin_demands_the_book_at_its_depth_and_unpin_releases_it() -> None:
+    w = World()
+    demand = w.topic._demand = Demand()
+    w.topic.pin_native(SYM, 200)
+    w.topic.pin_native(SYM, 200)  # a repeat asks again, under the same consumer (idempotent)
+    assert demand.calls == [("acquire", H.PIN_CONSUMER, SYM, "200")] * 2
+    w.topic.unpin_native(SYM)
+    w.topic.unpin_native(SYM)  # nothing left to release
+    assert demand.calls[2:] == [("release", H.PIN_CONSUMER, SYM)]
+
+
+async def test_a_pin_demand_is_its_own_reference_beside_a_deep_spec() -> None:
+    w = World()
+    demand = w.topic._demand = Demand()
+    w.topic.pin_native(SYM, 200)
+    sub = w.hold(HeatmapSpec(SYM, depth=500, time_bucket_ms=100))
+    assert sub.heatmap_lease is not None
+    w.topic.release(sub.heatmap_lease)
+    assert demand.calls == [
+        ("acquire", H.PIN_CONSUMER, SYM, "200"),
+        ("acquire", H.DEEP_CONSUMER, SYM, "500"),
+        ("release", H.DEEP_CONSUMER, SYM),
+    ]  # the deep spec's release leaves the pin's demand held
+
+
+async def test_stop_releases_every_pin_demand() -> None:
+    w = World()
+    demand = w.topic._demand = Demand()
+    w.topic.pin_native(SYM, 200)
+    w.topic.pin_native("ETHUSDT", 100)
+    await w.topic.stop()
+    assert sorted(c for c in demand.calls if c[0] == "release") == [
+        ("release", H.PIN_CONSUMER, "BTCUSDT"), ("release", H.PIN_CONSUMER, "ETHUSDT"),
+    ]  # fmt: skip
+    assert w.topic.pinned == frozenset() and _pinned_gauge() == 0
+
+
+class _Refusing(Demand):
+    def __init__(self) -> None:
+        super().__init__()
+        self.listed = False
+
+    def acquire_depth(self, consumer: str, symbol: str, depth: int) -> None:
+        super().acquire_depth(consumer, symbol, depth)
+        if not self.listed:
+            raise LookupError(symbol)  # `BookStream`: `UnknownSymbolError`
+
+
+async def test_a_refused_pin_demand_is_inert_and_asked_again_on_the_retry_cadence() -> None:
+    w = World()
+    demand = w.topic._demand = _Refusing()
+    w.topic.pin_native(SYM, 200)  # logged, never raised: the pin is held, inert
+    assert w.topic.pinned == {SYM} and len(demand.calls) == 1
+    w.at(100)  # the first retry is due at once
+    assert len(demand.calls) == 2
+    w.at(H.PIN_RETRY_MS - 100)
+    assert len(demand.calls) == 2  # not before the cadence
+    demand.listed = True
+    w.at(H.PIN_RETRY_MS + 200)
+    assert len(demand.calls) == 3 and SYM not in w.topic._pin_owed
+    w.at(3 * H.PIN_RETRY_MS)
+    assert len(demand.calls) == 3  # held: never asked again
+
+
+async def test_unpin_of_a_refused_pin_releases_nothing() -> None:
+    w = World()
+    demand = w.topic._demand = _Refusing()
+    w.topic.pin_native(SYM, 200)
+    w.topic.unpin_native(SYM)
+    assert [c[0] for c in demand.calls] == ["acquire"] and w.topic._pin_owed == set()
+
+
+# -- a native depth change reads the book at the new depth (fold 5) --------------------------------
+
+
+async def test_a_native_depth_change_never_leaves_the_next_sample_without_levels() -> None:
+    """Pin 100 and a 200 lease: the native column reads 200. Its release takes the native depth
+    back to 100, which nothing had read; the book is read then, so the next deadline samples it
+    instead of reading a spurious gap."""
+    w = World()
+    await live(w)
+    seen = _recorder(w)
+    w.topic.pin_native(SYM, 100)
+    sub = w.hold(HeatmapSpec(SYM, depth=200, time_bucket_ms=100))
+    st = w.topic._symbols[SYM]
+    assert st.native.spec.depth == 200
+    st.levels.pop(100, None)  # only the 200 levels are held, as after a turn at depth 200
+    assert sub.heatmap_lease is not None
+    w.topic.release(sub.heatmap_lease)
+    assert st.native.spec.depth == 100 and 100 in st.levels
+    w.at(100)
+    assert seen[-1][2] is not None

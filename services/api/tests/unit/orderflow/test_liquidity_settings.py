@@ -99,6 +99,42 @@ async def test_ws_wiring_builds_the_engine_from_the_settings() -> None:
     assert pins.pinned == {}
 
 
+async def test_a_pinned_symbol_demands_its_book_with_no_viewer() -> None:
+    """Fold 1, through the composition: `heatmap_topic` + `liquidity_engine` over a real
+    `BookStream` (no ingestion behind it). Starting the engine pins the symbol, and the pin's
+    own demand makes the stream want the symbol's depth-200 book topic with no WS reference; the
+    stop releases it. Fold 4: the heatmap's pin cap is `liquidity_pin_max`."""
+    from candleviewer.bus import Bus
+    from candleviewer.orderbook_wiring import BookStream
+    from candleviewer.orderflow import heatmap as H
+    from candleviewer.ws_wiring import heatmap_topic
+
+    s = _settings(liquidity_pinned_symbols=("BTCUSDT",), liquidity_pin_max=3)
+    bus, desired = Bus(), list[set[str]]()
+
+    async def resub(_topic: str) -> None:
+        return None
+
+    books = BookStream(
+        bus=bus, env="live", set_desired=desired.append, parse_frame=lambda f: None,
+        topic_for=lambda sym, depth: f"orderbook.{depth}.{sym}", resubscribe=resub,
+        is_listed=lambda sym: sym == "BTCUSDT", touch=lambda _t: None, clock=lambda: 0.0,
+    )  # fmt: skip
+    ingestion = SimpleNamespace(books=books, instruments=None)
+    ctx = SimpleNamespace(settings=s, bus=SimpleNamespace(bus=bus), ingestion=ingestion)
+    heatmap = heatmap_topic(cast(Any, ctx), cast(Any, object()), queue_bytes=1 << 20,
+                            queue_frames=64)  # fmt: skip
+    assert heatmap._max_pinned == 3
+    engine = liquidity_engine(cast(Any, ctx), heatmap)
+    engine.start()
+    assert desired[-1] == {"orderbook.200.BTCUSDT"}  # wanted with no viewer
+    assert books._wants == {"BTCUSDT": {H.PIN_CONSUMER: PIN_DEPTH}}
+    assert books.tier("BTCUSDT") == 200  # a pin never moves the tier
+    await engine.stop()
+    assert books._wants == {} and heatmap.pinned == frozenset()
+    await books.stop()
+
+
 def test_metrics_are_registered_exported_and_label_bounded() -> None:
     by_name = {spec.name: spec for spec in CATALOGUE}
     for name in (*lm.EXPORTED_NAMES, "heatmap_pinned_symbols"):

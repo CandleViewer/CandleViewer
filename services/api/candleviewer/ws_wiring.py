@@ -384,7 +384,8 @@ def heatmap_part(
 class HeatmapDepthDemand:
     """E21-T02: a depth-500 heatmap spec's demand on the symbol's deep tier, through the live
     `BookStream` (resolved per call; without one, nothing is demanded and the spec stays
-    pending), as a `book.X.500` reference demands it (`IngestionUpstreamSink`)."""
+    pending), as a `book.X.500` reference demands it (`IngestionUpstreamSink`). E21-T04: a pin's
+    demand on the symbol's book at its depth, so a pinned symbol's book runs with no viewer."""
 
     def __init__(self, ctx: AppContext) -> None:
         self._ctx = ctx
@@ -427,6 +428,7 @@ def heatmap_topic(
         queue_frames=queue_frames,
         store=store,
         demand=HeatmapDepthDemand(ctx),
+        max_pinned=ctx.settings.liquidity_pin_max,  # E21-T04: the liquidity tracker's pins
     )
 
 
