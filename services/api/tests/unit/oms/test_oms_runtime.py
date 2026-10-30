@@ -810,7 +810,8 @@ STOPPED = ["sink.stop", "audit.stop", "pool.release", "heartbeat.end", "lock.rel
 #: trading port, its signing, its writer and the pool, everything that can sign or send, close
 #: before the heartbeat's cancel and, last, the environment's lock's release; the private streams
 #: the lane's bridge still holds close on the serving loop ahead of the port (#913 L1d-2b). The
-#: position sweeps (#915) close first: their cancels go through the commands, which close later.
+#: position sweeps (#915) close first: their cancels go through the trading port and their fill
+#: wait through the machines, both of which close later.
 CLOSERS = [
     "position_sweeps", "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink",
     "private_streams", "trading_port", "loop_signing", "audit", "pool", "heartbeat",
