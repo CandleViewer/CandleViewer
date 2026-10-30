@@ -77,6 +77,21 @@ merged into one chip — see CMP-227/CMP-239 in `15-component-catalogue.md`. A l
 outside this set of eight opens a design-system change request against `CMP-239`/this section rather than
 inventing a local variant (`02-definition-of-ready-done.md` §3.1).
 
+### 2.1b Dock and panel-chrome tokens (E15-D13)
+
+Product-wide chrome promoted from E15's hi-fi (E15-D03, E15-D04, E15-D06; `docs/design/E15/E15-D13.md` §5): every addition is a Tier-2 alias of an existing primitive, with no `e15.*` namespace, and lands in the token source through E15-D13's token PR (§11.2). The reasons behind each rule are in `docs/design/specs/e15-design-system-contributions.md`.
+
+- `space.dockgrid.gutter` = `{space.1}` (both densities): the gap between docked panels, on `color.surface.app`; never zero (the splitter's line sits in it) and never a density step.
+- `space.panelheader.height.compact` / `.comfortable` = `{size.control.compact}` / `{size.control.comfortable}`: CMP-082's one header row and CMP-251's tab-group row; a panel never stacks a second header row.
+- `space.dock.tray.height.compact` / `.comfortable` = `{size.control.compact}` / `{size.control.comfortable}`: CMP-250's row, present only while a panel is minimised. The workspace tab strip's row (CMP-252, CMP-249) is no token: §3 derives it.
+- `size.dock.splitter.hit` = `{size.target.min}`: CMP-083's hit band, centred on the gutter; never below the 24 px target.
+- `border.panel.focus` = `{border.focus}`: the inset panel focus frame in `color.focus.ring`, painted inside the box; with the header bar (`border.thick` + `border.hairline` in `color.focus.ring`, a composite) it is the focus-affordance set. Normative: it never changes the content box (§8 rule 5) and measures ≥ 3:1 against every panel surface in both themes and high contrast.
+- `color.sync.a` / `.b` / `.c`: the sync-group hues, palette references per theme and never a semantic-to-semantic alias — dark and high contrast `{palette.cyan.300}`, `{palette.amber.300}`, `{palette.purple.500}`; light `{palette.light.cyan.300}`, `{palette.light.amber.300}`, `{palette.purple.600}`; green, red and blue are excluded; the tile edge only, never a fill. **A group colour is never used without the group letter; the hue only repeats the letter.**
+- **Measurement method** (`color.sync.*` and the drop-zone carriers sit over arbitrary content): each pair is measured against the darkest and the lightest hosted content of each theme, the surfaces `color.surface.sunken`, `.app`, `.canvas`, `.raised`, `.overlay` and a dense footprint's `color.footprint.bid`, `.ask`, `.imbalance` (E15-D03 §11.2's lo / hi); the focused panel bar's `color.surface.selected` is reported beside them (`color.sync.c` measures below 3:1 there in dark and high contrast, where the letter carries the group); an epic that adds a panel background re-runs the measurement against it.
+- **Confirmed with a dock rule, no new name**: `color.border.default` (the panel frame's hairline, structure), `elevation.card` and `radius.card` (a docked panel, focused or not), `color.focus.ring` (every dock focus carrier, with a `color.surface.canvas` halo over content), `color.env.*` (the environment's rule in every window: never the sole carrier — the word is mandatory — ≥ 3:1 for the rule and ≥ 4.5:1 for the word in focused and unfocused chrome, never redefined by a consuming epic).
+- **Retired names** (named in `15`, never shipped): `color.border.panel` (→ `color.border.default`), `color.accent.subtle` (the drop-zone carriers are `color.focus.ring` with a `color.surface.canvas` halo, measured), `color.surface.base` (E15-D10's call), `motion.fast` and `motion.toast` (→ `motion.duration.fast`; names only, the timings are E15-D14's).
+- **Deprecated, still shipped**: `elevation.dock-focus` (= `elevation.2`) is bound by no dock surface (focus is the inset frame, §8 rule 5); it stays in the token source, and removing it is the token owner's MINOR (§11.2 step 7).
+
 ### 2.2 Typography
 
 - **UI family** (`font.family.ui`): **Inter** (variable, OFL-1.1; https://github.com/rsms/inter) — **locked by owner decision 2026-09-25**. Fallback stack `Inter, system-ui, "Segoe UI", sans-serif`. Chosen for x-height and legibility at the 11–13 px sizes dense trading rows use; also Penpot's default font, so design and code share the exact family.
@@ -89,15 +104,15 @@ inventing a local variant (`02-definition-of-ready-done.md` §3.1).
 ### 2.3 Spacing
 
 - 4px base unit, scale `space.{0,1,2,3,4,6,8,12,16,24,32,48,64}` (px), i.e. 0/4/8/12/16/24/32/48/64/96/128/192/256 — a single geometric-ish scale shared by both density modes; density modes (§3) select _which_ scale steps a given component's padding/gap tokens resolve to, rather than defining a second parallel scale, keeping the token count bounded.
-- Component-level spacing aliases (`space.button.paddingX`, `space.field.gap`, `space.row.height.compact/comfortable`) resolve to specific scale steps per density mode — this indirection is what makes CMP-* "density-aware" per the component catalogue's cross-cutting rule 2.
+- Component-level spacing aliases (`space.button.paddingX`, `space.field.gap`, `space.row.height.compact/comfortable`) resolve to specific scale steps per density mode — this indirection is what makes CMP-* "density-aware" per the component catalogue's cross-cutting rule 2; the dock's aliases (`space.dockgrid.gutter`, `space.panelheader.height.*`, `space.dock.tray.height.*`, `size.dock.splitter.hit`) are §2.1b's.
 
 ### 2.4 Radii
 
-- `radius.{none,xs,sm,md,lg,xl,pill,circle}` — xs/sm for inputs and chips, md for cards/dialogs/dock panels, lg for larger surfaces (settings cards, onboarding), pill for tags/toggles, circle for avatars. A single consistent radius scale reused everywhere avoids the "every team invents its own corner rounding" drift common in ad-hoc dashboards.
+- `radius.{none,xs,sm,md,lg,xl,pill,circle}` — xs/sm for inputs and chips, md for cards/dialogs (a dock panel through `radius.card`, §2.1b), lg for larger surfaces (settings cards, onboarding), pill for tags/toggles, circle for avatars. A single consistent radius scale reused everywhere avoids the "every team invents its own corner rounding" drift common in ad-hoc dashboards.
 
 ### 2.5 Elevation
 
-- `elevation.{0,1,2,3,4,5}` — a combined shadow+z-index+(dark-theme-appropriate) subtle-lightening recipe per step, since drop-shadows alone read poorly on near-black surfaces; each step instead primarily raises `surface` lightness slightly and adds a restrained shadow, keeping elevation legible without a "glowing box" look. 0=flush chrome, 1=cards/panels, 2=dock-panel focused state, 3=popovers/tooltips/toasts, 4=dialogs, 5=full-screen scrims (ReconnectOverlay).
+- `elevation.{0,1,2,3,4,5}` — a combined shadow+z-index+(dark-theme-appropriate) subtle-lightening recipe per step, since drop-shadows alone read poorly on near-black surfaces; each step instead primarily raises `surface` lightness slightly and adds a restrained shadow, keeping elevation legible without a "glowing box" look. 0=flush chrome, 1=cards/panels, 2=no dock state (a docked panel stays at `elevation.card` focused or not: focus is the inset frame, §2.1b, §8 rule 5), 3=popovers/tooltips/toasts, 4=dialogs, 5=full-screen scrims (ReconnectOverlay).
 
 ### 2.6 Motion
 
@@ -129,6 +144,19 @@ Rules:
 4. Zoom/text-scale (`Ctrl+=`/`Ctrl+-`, up to 200%) composes with density: at high zoom, compact-mode dense tables reflow toward a card/stacked layout per `05-accessibility-standard.md` §5.7 rather than clipping — this reflow behavior is a required state for every CMP-049-based table, tested explicitly (§12).
 
 **Chart surfaces have a third, chart-only density `dense`** (`26-chart-engine-design.md` §5 rule 5; `docs/design/E11/E11-D02.md` D6): a per-panel override of `compact` set in SCR-031 Appearance, which tightens canvas padding, gutters and tick density (`cellPadPx` 1, `axisFontSizeClass` 0, density gap `G` 64 / 32 px) and never the 24 px targets or the `LOD_PROFILE_M0` legibility floors; `data-density` keeps two values, and `comfortable` UI implies `comfortable` chart (`docs/design/E11/E11-D05.md` §6).
+
+**The dock surface (E15-D13)**: one table for the dock's chrome, from §2.1b's tokens; the chart-only `dense` changes no chrome height (a "cosy" chart is compact chrome over a dense chart), and at 1280×800 compact the chrome allowance holds E15-D03 §3's budget, recomputed from these tokens (`docs/design/E15/E15-D13.md` §7). The workspace tab strip's row is a derivation, not a token, and this table is the one place its rule is stated.
+
+| Element                               | Compact | Comfortable | Token or derivation                                       |
+| ------------------------------------- | ------- | ----------- | --------------------------------------------------------- |
+| Gutter                                | 4       | 4           | `space.dockgrid.gutter`                                   |
+| Panel header row, tab-group row       | 24      | 32          | `space.panelheader.height.*`                              |
+| Workspace tab strip, MoveModeBar      | 32      | 40          | control height + 2 × `space.1`                            |
+| Minimised tray                        | 24      | 32          | `space.dock.tray.height.*`                                |
+| Sync badge pill (its hit box the row) | 20      | 28          | `size.control.*` less `space.1`                           |
+| Splitter line, rest / active          | 1 / 2   | 1 / 2       | `border.hairline` / `border.thick`                        |
+| Splitter hit band                     | 24      | 24          | `size.dock.splitter.hit`                                  |
+| Focus frame / header bar              | 2 / 3   | 2 / 3       | `border.panel.focus` / `border.thick` + `border.hairline` |
 
 ---
 
@@ -241,11 +269,11 @@ a running transition completes on its clock when the mode flips (no re-mount on 
 - **No responsive breakpoints below desktop.** This is a desktop-only professional tool (Electron shell primary, browser dev target secondary) — there is no tablet/mobile layout, no hamburger-menu collapse, no Android (locked scope). The system instead defines a **minimum supported viewport**: **1280×800px**, below which the app shows a "increase window size" advisory state rather than attempting a cramped reflow; **recommended/primary target 1920×1080 and above**, with dense multi-pane layouts (footprint + heatmap + positions + ticket simultaneously visible) assuming ≥2560×1440 as the "comfortable multi-pane" reference resolution cited in the performance budget (`14-screens-catalogue.md` §0.5.7: engine ≥58fps at 2560×1440 with footprint+heatmap).
 - **Base layout grid**: a 4px spacing grid underlies all component spacing (§2.3); the docking system itself is **not** a fixed column grid (unlike a marketing site) — panels resize freely along a flexible split-pane tree, snapping to the 4px grid for pixel-perfect alignment between adjacent panel edges only.
 - **Docking rules** (implemented by CMP-080 DockPanel / CMP-081 DockGrid):
-  1. The workspace is a binary split-tree (each split is horizontal or vertical, recursively nestable) — this is the same model used by VS Code/Dockview-style layout managers, chosen because it's well-understood, keyboard-navigable, and serializable to a saved-workspace JSON.
+  1. The workspace is a tree of n-ary row / column splits with tabsets holding leaves (E15-D02 D-5), bounded by `22-api-openapi.yaml`'s `LayoutGridSpec` (depth at most 6 counting the root, at most 64 nodes and 16 leaves) — not a binary split-tree; it stays keyboard-navigable and serializable to a saved-workspace JSON.
   2. Panels have a documented `minWidth`/`minHeight` (component-level prop, §"CMP-080") below which they refuse to shrink further — the split-tree instead scrolls or the sibling panel absorbs the constraint, never rendering a panel below its legible minimum (e.g. a footprint pane's minimum width is derived from one legible cell-column plus its axis).
   3. Preset layouts (`Ctrl+1..9`) are named, saved split-trees; a user can save any current arrangement as a new preset. Presets are per-workspace, workspaces are per-user (not shared across managers, since each manager's monitor setup/symbol focus differs).
   4. Floating/undocked panels (e.g. a detached DOM ladder on a second monitor) are supported by the same panel component rendered inside a separate OS-level window (Electron `BrowserWindow`) sharing the same app state via the existing WS/state layer — this is a docking-system requirement, not a separate component.
-  5. Panel focus (which panel receives global hotkeys like Buy/Sell/Flatten) is always visually indicated (elevation step-up + accent border, never colour-alone) and is keyboard-settable (`Ctrl+Alt+Arrow` cycles panel focus) independent of mouse hover.
+  5. Panel focus (which panel receives global hotkeys like Buy/Sell/Flatten) is always visually indicated by the 2 px inset frame (`border.panel.focus`) plus the header bar, both in `color.focus.ring` — no elevation step and never a change of the content box, because focusing a panel must never resize a WebGL canvas — and never by colour alone (the frame's thickness and the bar's presence carry it); it is keyboard-settable by E15-D02 AD-7's keys (`Ctrl+\`, `F6` / `Shift+F6` as the alias, `Ctrl+Alt+←/→`) independent of mouse hover; the splitter's hit band is 24 px (`size.target.min`).
 - **Multi-window (multi-monitor) support**: explicitly in scope for the Electron shell given the professional multi-monitor trading-desk use case — the workspace model (§ above) is monitor-count-agnostic; a workspace's split-tree can span declared "window" nodes at the tree root, each opening as its own OS window.
 
 ---
