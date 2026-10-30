@@ -152,6 +152,39 @@ its keys are the option's `aria-keyshortcuts`. One polite status says the count 
 settled query and a re-shown reason once per press. Every string is a prop (E15's SCR-012 keys); `Ctrl+K` is the
 host's binding (#305).
 
+### SymbolSearchInput (CMP-160, APG Combobox: editable, list autocomplete, the list in place)
+
+| Keys                                  | Action                                                                                                   |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Typing                                | Edits the query; the host re-ranks and the list follows at once; the count is said once it rests 300 ms. |
+| ↓ / ↑                                 | Next / previous option, no wrap: ↓ from the text reaches the first, ↑ on the first returns to it.        |
+| PageDown / PageUp                     | By the visible rows, no wrap; PageUp never returns to the text.                                          |
+| Enter                                 | Chooses the active option (`onSelect`); an unavailable one says its reason; none active: the host's.     |
+| Shift+Enter, Shift+F10, Menu key, Esc | The host's: `onKeyDown(event, active)` runs first, and its `preventDefault()` skips the input's own.     |
+| ← / →, Home / End                     | Move the caret.                                                                                          |
+| Any key while T2                      | Changes nothing; the first refused key of a focus visit says the reason once.                            |
+
+The input is `role="combobox"` (`aria-autocomplete="list"`, `maxlength` 32), named "Search symbols", with the
+`search` glyph in its well; `aria-expanded` and `aria-controls` hold while the list shows or loads, and
+`aria-activedescendant` names the active option. The list is CMP-213 FuzzyList, drawn in place, so a blur closes
+nothing and the active option stays while a host's menu has focus: `Esc` there returns to the input on the same
+option. A "Recent" group leads while the query is empty. One polite status says the count once per rested query, the
+host's `message` at once (an empty query too) and when it changes, and an unavailable option's reason once per press. The target chip names the pane a commit
+changes, with E30-D02's ARMED pill (word and glyph) when armed.
+
+### FuzzyList (CMP-213, the listbox half of the APG Combobox)
+
+No keys of its own: the host's input moves `activeId` (its `aria-activedescendant`, `fuzzyOptionId`), and the list is
+never a Tab stop; a press activates through the host and keeps focus where it is, and a right-click is the host's
+menu. The listbox takes the host's name; a group is `role="group"` named by its label (its header row is hidden from
+assistive technology). An option holds text and chips only. Its name is its label, hint, values, chip and tag words,
+in the order they show ("BTCUSDT, BTC / USDT, ▲ +1.23 %, 3.41 B USDT, Recording"; an absent value's "—" is left out),
+with a space between the cells in the DOM, so it holds the row's visible text (WCAG 2.5.3). Its description is the
+host's words or, `aria-disabled`, its reason.
+Windowed above twice the visible rows, options carry `aria-posinset` and `aria-setsize`, and the active option is
+always drawn, so `aria-activedescendant` never dangles; while loading the listbox is `aria-busy` over static skeleton
+rows.
+
 ### Tabs (CMP-042, APG Tabs)
 
 | Keys                                    | Action                                                                                                                                 |

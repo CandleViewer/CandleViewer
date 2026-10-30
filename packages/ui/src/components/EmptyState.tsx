@@ -27,9 +27,13 @@ export interface EmptyStateAction extends EmptyStateCta {
   disabledReason?: string;
 }
 
-/** One action or two, in order. */
+/**
+ * One action or two, in order. A sole action is never gated, by type: with its only action T2 the block is the
+ * sentence form instead (E09-D09 §8, `32-design-specs` G-T2.1c): no `actions`, the reason as the `description`.
+ */
 export type EmptyStateActions =
-  readonly [EmptyStateAction] | readonly [EmptyStateAction, EmptyStateAction];
+  | readonly [EmptyStateAction & { readonly disabledReason?: never }]
+  | readonly [EmptyStateAction, EmptyStateAction];
 
 export interface EmptyStateLink {
   label: string;

@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useRef, useState, type JSX } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
+import { FROZEN } from "../../.storybook/copy.js";
 import { Button } from "./Button.js";
 import { Dialog } from "./Dialog.js";
 import { IconButton } from "./IconButton.js";
@@ -251,6 +252,36 @@ export const DisabledWithReason: Story = {
       "Only the owner can change account settings.",
     );
     await expect(caps).toBeVisible();
+  },
+};
+
+/** A T2 item's long label and reason (#4703 carry 3): the menu grows to the viewport, then wraps; nothing is cut. */
+export const LongLabelAndReason: Story = {
+  render: () => (
+    <Demo
+      label="Symbol actions"
+      items={[
+        { id: "open", label: "Open in Chart 1", onSelect: noop },
+        {
+          id: "ticket",
+          label: "Open the order ticket for BTCUSDT on every account in the trade group…",
+          disabledReason: FROZEN,
+          onSelect: noop,
+        },
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Symbol actions");
+    await userEvent.keyboard("{ArrowDown}");
+    const item = page.getByRole("menuitem", { name: /^Open the order ticket for BTCUSDT/ });
+    await expect(item).toHaveFocus();
+    await expect(item).toHaveAccessibleDescription(FROZEN);
+    const menu = page.getByRole("menu", { name: "Symbol actions" });
+    const second = item.parentElement?.querySelector<HTMLElement>(".cv-menu__second");
+    await expect(second).toHaveTextContent(FROZEN);
+    for (const box of [menu, item, second ?? menu])
+      await expect(box.scrollWidth).toBeLessThanOrEqual(box.clientWidth);
   },
 };
 

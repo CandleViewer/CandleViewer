@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState, type JSX, type ReactNode } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
+import { FROZEN } from "../../.storybook/copy.js";
 import { Icon } from "../icons/Icon.js";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "./Combobox.js";
 import { FormField } from "./FormField.js";
@@ -226,6 +227,20 @@ export const LongLabel: Story = {
   play: async ({ canvasElement }) => {
     await userEvent.type(input(canvasElement), "long");
     await waitFor(() => expect(list()).toBeVisible(), { timeout: 3000 });
+  },
+};
+
+/** A gated option's long reason (#4703 carry 3): it wraps under the label, whole; nothing cuts it. */
+export const LongReason: Story = {
+  render: () => <Host options={[{ value: "ETHUSDT", label: "ETHUSDT", disabledReason: FROZEN }]} />,
+  play: async ({ canvasElement }) => {
+    await userEvent.type(input(canvasElement), "eth");
+    await waitFor(() => expect(list()).toBeVisible(), { timeout: 3000 });
+    const option = page.getByRole("option", { name: "ETHUSDT" });
+    await expect(option).toHaveAccessibleDescription(FROZEN);
+    // jsdom lays nothing out (every width 0); Chromium measures the wrapped line.
+    const reason = document.getElementById(option.getAttribute("aria-describedby") ?? "");
+    await expect(reason?.scrollWidth).toBeLessThanOrEqual(reason?.clientWidth ?? 0);
   },
 };
 

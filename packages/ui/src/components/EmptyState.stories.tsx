@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
+import { FROZEN } from "../../.storybook/copy.js";
 import { EmptyState, type EmptyStateErrorProps } from "./EmptyState.js";
 import { ProgressBar } from "./ProgressBar.js";
 import { formatRbacReason } from "./rbacReasons.js";
@@ -246,6 +247,39 @@ export const LongText: Story = {
       />
     </div>
   ),
+};
+
+/**
+ * A T2 action's long label and long reason in a narrow column (#4703 carry 3): the reason wraps under its button and
+ * nothing cuts it; the label keeps CMP-001's one line and its whole accessible name.
+ */
+export const LongActionAndReason: Story = {
+  render: () => (
+    <div style={{ width: "16rem" }}>
+      <EmptyState
+        variant="error"
+        title="Couldn't load the instrument list."
+        description="CandleViewer can't reach its server. Next try in 30 s."
+        actions={[
+          { label: "Retry now", onClick: fn() },
+          {
+            label: "Refresh the instrument list from Bybit",
+            onClick: fn(),
+            disabledReason: FROZEN,
+          },
+        ]}
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const refresh = within(canvasElement).getByRole("button", {
+      name: "Refresh the instrument list from Bybit",
+    });
+    await expect(refresh).toHaveAccessibleDescription(FROZEN);
+    const reason = canvasElement.querySelector<HTMLElement>(".cv-empty-state__reason");
+    await expect(reason).toHaveTextContent(FROZEN);
+    await expect(reason?.scrollWidth).toBeLessThanOrEqual(reason?.clientWidth ?? 0);
+  },
 };
 
 /** Every variant under the light and high-contrast themes; axe checks each theme. */
