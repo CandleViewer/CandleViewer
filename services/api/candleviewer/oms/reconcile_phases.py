@@ -37,6 +37,7 @@ from candleviewer.domain.primitives import AccountId
 from candleviewer.statechart.bindings.b19_reconciliation import FetchFailed
 
 from .reconcile_report import (
+    HANDOVER_UNREADABLE,
     STALE_NOTICE,
     TRIGGERS,
     Notice,
@@ -307,7 +308,7 @@ class ReconcilePhases:
             fetched.account.account_id, fetched.pass_id, fetched.trigger, fetched.window
         )
         for entry_id in fetched.unreadable:
-            draft.error("1", "handover_unreadable", str(entry_id))
+            draft.error("1", HANDOVER_UNREADABLE, str(entry_id))
         return draft
 
     # --- The effects (B19's actions; synchronous, never raising past `_effect`) ----------------

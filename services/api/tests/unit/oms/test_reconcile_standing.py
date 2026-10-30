@@ -185,11 +185,18 @@ async def _pass(job: Job, trigger: str = "periodic", *, episode: bool = False) -
 async def test_the_report_is_recorded_ahead_and_the_watermark_is_the_reads_upper_bound() -> None:
     job = Job()
     job.world.oms.seed(row(1))
-    summary = await _pass(job)
+    await job.phases.fetch(str(ACCOUNT), pass_id=SWEEP_ID, trigger="periodic")
+    job.world.now_us += 7_000_000  # the pass runs on after its reads
+    await job.phases.diff(str(ACCOUNT), pass_id=SWEEP_ID)
+    await job.phases.remediate(str(ACCOUNT), pass_id=SWEEP_ID)
+    summary = await job.phases.report(
+        str(ACCOUNT), pass_id=SWEEP_ID, trigger="periodic", episode_open=False, failure=None
+    )
     [(account, pass_id, state)] = job.records.rows
     assert (account, pass_id, state["stage"], state["newly_unknown"]) == (
         ACCOUNT, SWEEP_ID, "finished", [row(1).order_link_id],
     )  # fmt: skip
+    assert state["duration_ms"] == 7000  # the report's instant, 7 s after the read's end
     assert job.watermarks.advanced == [NOW_US]  # the read's end, not the report's own instant
     assert summary == {
         "unresolved": 0, "outcome": "corrected",

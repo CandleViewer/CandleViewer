@@ -270,13 +270,24 @@ def test_24_repeats_errors_back_to_back_as_the_code_does() -> None:
     )
 
 
-def test_24_skips_and_counts_a_trigger_that_finds_the_job_locked() -> None:
+def test_24_skips_and_logs_a_trigger_that_finds_the_job_locked() -> None:
+    """No series counts a skipped trigger, so 24 says it is logged."""
     section = _section("24-internal-schemas.md", "### 8.5 Reconciliation", "### 8.6 ")
     assert "**While B19 is `stale_lockout`.** Only `RECONNECTED`" in section
     assert (
-        "A trigger that finds the job locked is therefore skipped and counted, never sent"
-        in section
+        "A trigger that finds the job locked is therefore skipped and logged, never sent" in section
     )
+
+
+def test_24_lists_the_missed_fills_steps_2_and_3d_apply_as_corrections() -> None:
+    """The `corrected` row names what the code lists there (`test_reconciler.py`'s step 2 pin):
+    a missed fill sent to an order is a correction (BQ-6, 23 Sec.15.9)."""
+    section = _section("24-internal-schemas.md", "### 8.5 Reconciliation", "### 8.6 ")
+    [row] = [line for line in section.splitlines() if line.startswith("| `corrected` ")]
+    assert (
+        "Rows a 3a finding or fact moved, and rows steps 2 and 3d applied a missed fill to: a "
+        "step sent to an order is a correction (BQ-6, 23 §15.9)"
+    ) in row
 
 
 def test_24_step_5_cites_bq_9_for_the_entry_it_does_not_hold() -> None:
