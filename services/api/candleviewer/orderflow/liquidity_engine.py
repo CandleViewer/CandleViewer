@@ -15,13 +15,15 @@ fed by the `HeatmapTopic`'s native sampler and the trade bus, publishing `Liquid
   gap too, as the tape it would judge by is incomplete.
 - **Pins.** `liquidity_pinned_symbols` (at most `liquidity_pin_max`) are pinned at `start` and
   released at `stop`: the configured set stands in for the rule engine's tracked symbols until
-  that API exists (24 §2.11). The heatmap engine runs only with the public WS wired, so detection
-  does too.
+  that API exists (24 §2.11). Each pin holds the symbol's book at `PIN_DEPTH` itself (the
+  heatmap's `heatmap:pin` demand), so detection runs with no WS viewer. The heatmap engine runs
+  only with the public WS wired, so detection does too.
 - **Bounds (C-2.18).** At most `max_events` events a sample (the rest counted as `sample_cap`),
   an outbound queue of `OUT_MAX` (oldest shed and counted as `publish_queue`), each publish
   bounded by `PUBLISH_TIMEOUT_S`, the trade subscription bounded at `TRADE_QUEUE_MAX`.
 - **Tasks.** One owned task runs a `TaskGroup` of the trade reader and the publisher; `stop`
-  cancels it, releases the pins and the sampler, and unsubscribes. The sample path is plain
+  releases the pins and the sampler, cancels it and waits for it, and unsubscribes; a `start`
+  that fails part-way releases what it took. The sample path is plain
   synchronous code (C-2.20): no statechart, no await, no wall clock beyond `perf_counter` for its
   own histogram.
 - **Call-once (carry b).** `distance_to_liquidity_cluster` reads the tracker's per-sample cache.
@@ -30,7 +32,6 @@ fed by the `HeatmapTopic`'s native sampler and the trade bus, publishing `Liquid
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -44,7 +45,7 @@ from candleviewer.bus import Bus, QueuePolicy, StreamInvalidated, Topic, TopicPa
 from candleviewer.bus import Subscription as BusSubscription
 from candleviewer.bus.models import WILDCARD
 from candleviewer.exchange.base.models import TradeEvent
-from candleviewer.observability.context import spawn
+from candleviewer.observability.context import spawn, spawn_child
 from candleviewer.orderflow import liquidity_metrics as lm
 from candleviewer.orderflow.heatmap import COLUMN_MS, NativeLevels, Sampler
 from candleviewer.orderflow.liquidity import LiquidityTracker
@@ -64,8 +65,9 @@ PUBLISH_TIMEOUT_S: Final = 1.0
 #: The trade subscription (INVALIDATE_ON_FULL: an overflow is a tape gap, never a stall upstream).
 TRADE_QUEUE_MAX: Final = 16_384
 DETAIL: Final = "liquidity"
-#: Quantised sizes remembered per symbol (a size in steps -> its `Decimal`).
-DECIMALS_MAX: Final = 65_536
+#: Quantised sizes remembered per symbol (a size in steps -> its `Decimal`): a sample reads at
+#: most 2 x `PIN_DEPTH` sizes, so 4 096 holds about ten samples' worth, under 1 MB a symbol.
+DECIMALS_MAX: Final = 4_096
 
 Event = LiquidityReload | LiquidityPulled
 Steps = Callable[[str], tuple[Decimal, Decimal] | None]
@@ -75,9 +77,20 @@ def _log() -> Any:
     return structlog.get_logger(__name__)
 
 
+def _causes(exc: BaseException) -> list[str]:
+    """The exception types inside `exc` (a `TaskGroup` raises a group), names only: a message
+    may carry what must never be logged."""
+    if isinstance(exc, BaseExceptionGroup):
+        return sorted({name for sub in exc.exceptions for name in _causes(sub)})
+    return [type(exc).__name__]
+
+
 def _stopped(task: asyncio.Task[None]) -> None:
-    if not task.cancelled() and task.exception() is not None:
-        _log().error("liquidity_tracker_stopped", error=type(task.exception()).__name__)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        _log().error("liquidity_tracker_stopped", error=type(exc).__name__, causes=_causes(exc))
 
 
 class Pins(Protocol):
@@ -166,32 +179,45 @@ class LiquidityEngine:
         self._sub = self._bus.subscribe(
             "liquidity-tracker", pattern, QueuePolicy.INVALIDATE_ON_FULL, maxsize=TRADE_QUEUE_MAX
         )
-        self._pins.set_sampler(self.on_deadline)
-        for symbol in self._wanted:
-            self._pins.pin_native(symbol, PIN_DEPTH)
-        self._task = spawn(self._main(), name="liquidity-tracker")
+        try:
+            self._pins.set_sampler(self.on_deadline)
+            for symbol in self._wanted:
+                self._pins.pin_native(symbol, PIN_DEPTH)
+            self._task = spawn(self._main(), name="liquidity-tracker")
+        except BaseException:  # a partial start holds nothing: the pins and the tape go
+            self._unpin()
+            self._unsubscribe()
+            raise
         self._task.add_done_callback(_stopped)
 
     async def stop(self) -> None:
-        """Release the sampler and the pins, cancel the task, unsubscribe; queued events go."""
+        """Release the sampler and the pins, cancel the task, unsubscribe; queued events go.
+        The task is waited, never awaited: the caller's own cancellation is not swallowed."""
+        task, self._task = self._task, None
+        self._unpin()
+        try:
+            if task is not None:
+                task.cancel()
+                await asyncio.wait({task})
+        finally:  # a cancelled `stop` still lets the tape go
+            self._unsubscribe()
+            self._out.clear()
+            self._symbols.clear()
+
+    def _unpin(self) -> None:
         self._pins.set_sampler(None)
         for symbol in self._wanted:
-            self._pins.unpin_native(symbol)
-        task, self._task = self._task, None
-        if task is not None:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            self._pins.unpin_native(symbol)  # idempotent: a symbol never pinned is a no-op
+
+    def _unsubscribe(self) -> None:
         sub, self._sub = self._sub, None
         if sub is not None:
             self._bus.unsubscribe(sub)
-        self._out.clear()
-        self._symbols.clear()
 
     async def _main(self) -> None:
         async with asyncio.TaskGroup() as group:
-            group.create_task(self._read(), name="liquidity-trades")
-            group.create_task(self._publish(), name="liquidity-publish")
+            spawn_child(group, self._read(), name="liquidity-trades")
+            spawn_child(group, self._publish(), name="liquidity-publish")
 
     # -- inputs ----------------------------------------------------------------------------------
 
@@ -231,7 +257,8 @@ class LiquidityEngine:
                 return None  # the instrument is not known yet: no tracker, no sample
             tick, qty_step = steps
             tracker = LiquidityTracker(symbol, tick, qty_step, self._config)
-            topic = Topic(env=self._env, domain="md", symbol=symbol, detail=DETAIL)
+            # `DETAIL`, spelt out: the E08 handshake scan reads a literal detail (24 §2.9).
+            topic = Topic(env=self._env, domain="md", symbol=symbol, detail="liquidity")
             sym = self._symbols[symbol] = _Symbol(tracker, qty_step, topic)
             lm.liquidity_tracker_memory_bytes.labels(symbol=sym.label).set(tracker.memory_bytes)
         return sym

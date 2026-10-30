@@ -349,3 +349,62 @@ def test_quantised_sizes_are_cached_within_a_bound(monkeypatch: pytest.MonkeyPat
     sizes = [q for _, q in view.walk(bids=True)]
     assert sizes == [Decimal("1.000"), Decimal("2.000"), Decimal("3.000"), Decimal("1.000")]
     assert len(cache) <= 2
+
+
+async def test_stop_never_swallows_the_callers_cancellation() -> None:
+    """Fold 2: `stop` waits for its task; a cancel of `stop` itself propagates, and the tape
+    subscription still goes."""
+    rig = Rig()
+    rig.engine.start()
+    task = rig.engine._task
+    assert task is not None
+    stopper = asyncio.create_task(rig.engine.stop())
+    await asyncio.sleep(0)  # `stop` is waiting for the engine's task now
+    stopper.cancel()
+    await asyncio.wait({stopper})
+    assert stopper.cancelled()
+    assert rig.engine._sub is None and rig.engine._task is None
+    await asyncio.wait({task})
+    assert task.cancelled()
+
+
+class _FailingPins(Pins):
+    def pin_native(self, symbol: str, depth: int) -> None:
+        if symbol == "ETHUSDT":
+            raise ValueError("At most 1 symbols may be pinned.")
+        super().pin_native(symbol, depth)
+
+
+async def test_a_start_that_fails_part_way_releases_the_pins_and_the_tape() -> None:
+    """Fold 6: nothing a failed `start` took is left held."""
+    bus, pins = Bus(), _FailingPins()
+    engine = LiquidityEngine(bus, "live", pins=pins, steps=lambda s: (TICK, STEP),
+                             symbols=(SYM, "ETHUSDT"))  # fmt: skip
+    with pytest.raises(ValueError, match="At most 1"):
+        engine.start()
+    assert pins.pinned == {} and pins.sampler is None
+    assert engine._sub is None and engine._task is None
+    assert bus._subscriptions == []
+
+
+async def test_a_task_group_failure_logs_its_cause_types_never_their_messages() -> None:
+    """Fold 8: the `TaskGroup`'s group is logged with the types inside it, names only."""
+    import structlog
+
+    async def boom() -> None:
+        inner = ExceptionGroup("in", [KeyError(1)])
+        raise ExceptionGroup("tg", [ValueError("api_key=secret"), inner])
+
+    task = asyncio.create_task(boom())
+    await asyncio.wait({task})
+    with structlog.testing.capture_logs() as logs:
+        E._stopped(task)
+    [entry] = [e for e in logs if e["event"] == "liquidity_tracker_stopped"]
+    assert entry["error"] == "ExceptionGroup"
+    assert entry["causes"] == ["KeyError", "ValueError"]
+    assert "secret" not in repr(logs)
+
+
+def test_the_quantised_cache_bound_is_small() -> None:
+    """Fold 3: a depth-200 sample reads at most 400 sizes; the cache keeps about ten of them."""
+    assert 2 * E.PIN_DEPTH <= E.DECIMALS_MAX <= 4_096
