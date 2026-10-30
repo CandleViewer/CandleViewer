@@ -807,7 +807,7 @@ Design total: **49 pts** across 15 tickets.
 | `E08-X02` | Abuse cases and adversarial input testing against the exchange boundary | Task | 5 | data-feeds | `E08-X01`, `E08-Q02`, `E08-S05` |
 | `E09-D11` | Design QA of the built auth, session and RBAC surfaces | Task | 3 | web | `E09-D03`, `E09-D04`, `E09-D05`, `E09-D06`, `E09-D07`, `E09-D09`, `E09-D10` |
 | `E09-K02` | Publish the auth/RBAC operator runbook and ADR-0010 implementation addendum | Chore | 2 | docs | `E09-X04`, `E09-Q06` |
-| `E09-Q02` | Playwright E2E suite for login, TOTP, idle lock, step-up and onboarding | Task | 5 | auth | `E09-Q01`, `E09-S03`, `E09-S05` |
+| `E09-Q02` | Playwright E2E suite for login, TOTP, idle lock, step-up and onboarding | Task | 8 | auth | `E09-Q01`, `E09-S03`, `E09-S05` |
 | `E09-Q03` | RBAC allow/deny matrix regression pack across every route and WS topic | Task | 5 | auth | `E09-T03`, `E09-S03` |
 | `E09-Q04` | Accessibility audit of the auth, onboarding and settings surfaces | Task | 3 | auth | `E09-S02`, `E09-S05` |
 | `E09-Q05` | Auth perf profile and chaos: k6 load, clock skew, Postgres restart | Task | 3 | auth | `E09-S01`, `E09-S03` |
@@ -902,7 +902,7 @@ Design total: **81 pts** across 22 tickets.
 | `E08-Q02` | Contract & integration test pack for the adapter against recorded Bybit fixtures | 5 | `E08-Q01`, `E08-T05`, `E08-S05`, `E08-S06` |
 | `E08-Q03` | Chaos & failure-injection scenarios for the exchange boundary | 5 | `E08-Q02`, `E08-T04`, `E08-S05`, `E08-S07` |
 | `E08-Q04` | Ingestion performance pack: 24h soak, 5x burst injector and k6 REST load | 5 | `E08-Q02`, `E08-T06` |
-| `E09-Q02` | Playwright E2E suite for login, TOTP, idle lock, step-up and onboarding | 5 | `E09-Q01`, `E09-S03`, `E09-S05` |
+| `E09-Q02` | Playwright E2E suite for login, TOTP, idle lock, step-up and onboarding | 8 | `E09-Q01`, `E09-S03`, `E09-S05` |
 | `E09-Q03` | RBAC allow/deny matrix regression pack across every route and WS topic | 5 | `E09-T03`, `E09-S03` |
 | `E09-Q04` | Accessibility audit of the auth, onboarding and settings surfaces | 3 | `E09-S02`, `E09-S05` |
 | `E09-Q05` | Auth perf profile and chaos: k6 load, clock skew, Postgres restart | 3 | `E09-S01`, `E09-S03` |
