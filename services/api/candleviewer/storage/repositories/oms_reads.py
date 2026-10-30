@@ -33,6 +33,9 @@ from candleviewer.storage.repositories.orders import (
 )
 from candleviewer.storage.repositories.positions import PositionRow
 
+#: The fills that close size (#915, the #848 notes): a settlement or a funding row carries a PnL
+#: and closes nothing, so `listClosedPnl` never carries one.
+CLOSING_EXEC_TYPES: Final = ("Trade", "AdlTrade", "BustTrade")
 #: The final order states (24 Sec.8.2); 22's `open_only` is the rest, the non-terminal set, which
 #: holds `held` and `untracked` too, as 22 `OrderState` has a client show both as live.
 TERMINAL_STATES: Final = frozenset[OrderState](
@@ -167,8 +170,10 @@ class OmsReadStore(Protocol):
         after: Keyset | None,
         limit: int,
     ) -> tuple[ListedExecution, ...]:
-        """`listClosedPnl`'s interim source (22): the fills that carry a closed PnL, as
-        `executions` lists them."""
+        """`listClosedPnl`'s interim source (22): the fills that carry a closed PnL and close
+        size (`CLOSING_EXEC_TYPES`), as `executions` lists them. A fill recovered by REST holds
+        no closed PnL (the venue's execution list has none), so it is absent until the venue's
+        closed-PnL backfill lands."""
         ...  # fmt: skip
 
     async def positions(

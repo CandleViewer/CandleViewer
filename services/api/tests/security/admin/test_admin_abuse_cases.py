@@ -332,11 +332,15 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _UI_FLAG = "rules.graph_editor"
 
 
-#: The protective writes registered so far (E29-T04's cancel-all, cancel and amend,
-#: `PROTECTIVE_WRITES`).
+#: The protective writes registered so far (E29-T04's cancel-all, cancel and amend, E29-T07's
+#: close and close-all, `PROTECTIVE_WRITES`).
 _CANCEL_ALL = ("POST", "/orders/cancel-all")
 _CANCEL = ("DELETE", "/orders/{orderId}")
 _AMEND = ("PATCH", "/orders/{orderId}")
+_CLOSE = ("POST", "/positions/{positionId}/close")
+_CLOSE_ALL = ("POST", "/positions/close-all")
+#: A close reads its position before the OMS, and this world composes no OMS reads: its `503`.
+_CLOSE_ANSWER = (503, "store_unavailable")
 #: The rig's limit buy entry holds its stop at 58000 (`command_rig.STOP`): raised, it is tightened.
 _TIGHTER = {"stop_loss": {"unit": "price", "value": "58500"}}
 
@@ -444,7 +448,7 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     unsafe = {op for op in served_operations(admin.app) if op[0] in _UNSAFE_METHODS}
     protective = [operation for operation, _ in PROTECTIVE_WRITES.values()]
     registered = {op for op in protective if admin.app.state.protective_writes.is_registered(op)}
-    assert registered == {_CANCEL_ALL, _CANCEL, _AMEND}  # their handlers decide; the next must say
+    assert registered == {_CANCEL_ALL, _CANCEL, _AMEND, _CLOSE, _CLOSE_ALL}  # their handlers decide
     # The contract's list, read from its prose, less what it names ahead of the code (#4743).
     assert _contract_own_operations() - set(_OWN_AHEAD) == OWN_OPERATIONS
     carved_out = {op for op in unsafe if op in OWN_OPERATIONS}
@@ -494,15 +498,21 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     assert refused - counted == len(swept)
 
     # The registered protective writes reach their handlers, which decide them: with no OMS composed
-    # here, each its own `501`. The guard records no refusal for them, and nothing changes.
-    for operation, path, body in (
-        (_CANCEL_ALL, _CANCEL_ALL[1], {"json": {}}),
-        (_CANCEL, f"/orders/{uuid.uuid4()}", {}),
-        (_AMEND, f"/orders/{uuid.uuid4()}", {"json": _TIGHTER}),
-    ):
+    # here, each its own `501` (a close first reads its position, which this world does not compose:
+    # its `503`). The guard records no refusal for them, and nothing changes.
+    keyed = {"headers": {"Idempotency-Key": str(uuid.uuid4())}}
+    for operation, path, body, expected in (
+        (_CANCEL_ALL, _CANCEL_ALL[1], {"json": {}}, (501, "not_implemented")),
+        (_CANCEL, f"/orders/{uuid.uuid4()}", {}, (501, "not_implemented")),
+        (_AMEND, f"/orders/{uuid.uuid4()}", {"json": _TIGHTER}, (501, "not_implemented")),
+        (_CLOSE, f"/positions/{uuid.uuid4()}/close", {"json": {"order_type": "market",
+                                                              "pct": "100"}} | keyed,
+         _CLOSE_ANSWER),
+        (_CLOSE_ALL, _CLOSE_ALL[1], {"json": {}} | keyed, (501, "not_implemented")),
+    ):  # fmt: skip
         routed, mark = len(admin.reached), len(admin.audit.records)
         passed = admin.send("owner", operation[0], path, body)
-        assert _coded(passed) == (501, "not_implemented"), operation
+        assert _coded(passed) == expected, operation
         assert admin.reached[routed:] == [(operation[0], path)]
         assert (admin.audit.records[mark:], _held(admin)) == ([], before)
 

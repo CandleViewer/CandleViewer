@@ -38,6 +38,10 @@ ALLOWED = frozenset(
         "storage/repositories/trade_groups_sqlalchemy.py",
         "accounts/trade_group_repository.py",
         "oms/submit.py",
+        # #915 (Fable m1): a reversal's step 11 reads `find_anchor` keyed by the caller's own
+        # `created_by`, as `oms/submit.py` does, so its entry group's raw key is a 409 before the
+        # close. It reaches only this creator's anchors, writes nothing and returns no group.
+        "oms/position_writes.py",
         "oms_wiring.py",
     }
 )

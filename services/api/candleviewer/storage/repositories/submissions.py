@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from candleviewer.storage.repositories.idempotency_anchors import NewAnchor
 from candleviewer.storage.repositories.orders import (
@@ -104,7 +104,7 @@ class FirstPersist:
         anchor = self.anchor
         if anchor.trade_group_id != group.id or anchor.order_id is not None:
             raise ValueError("the anchor of an entry names its group (ia_target)")
-        twin = (group.created_by, group.client_group_ref, group.client_body_sha256)
+        twin = (group.created_by, _anchored_ref(anchor, group), group.client_body_sha256)
         if twin != (anchor.created_by, anchor.client_ref, anchor.request_sha256):
             raise ValueError("an entry's group holds its anchor's principal, key and fingerprint")
         if (group.symbol, group.side) != (order.symbol, order.side):
@@ -170,3 +170,21 @@ class SubmissionStore(Protocol):
         `OrderConstraintError` for a refused row (`ux_orders_link`, `ux_rs_in_flight`, ...);
         `WriteAheadTimeout` when the hook outlasts its bound."""
         ...
+
+
+#: A reversal's entry anchor's ref, derived from the key its group keeps (21 Sec.3.3.10, #915).
+_REVERSAL_OPEN: Final = "open"
+
+
+def _anchored_ref(anchor: NewAnchor, group: NewTradeGroup) -> str:
+    """The ref the anchor of `group`'s entry must hold: the group's own key, or, for a reversal's
+    entry, `str(uuid5(UUID(key), "open"))`, as 21 Sec.3.3.10 names it (E29-T07 #915): the group
+    keeps the raw key, so the key stays in the group-level namespace. A key that is no UUID text
+    names no reversal's anchor, so it is answered unchanged and fails the comparison."""
+    ref = group.client_group_ref
+    if anchor.operation != "reversePosition":
+        return ref
+    try:
+        return str(uuid5(UUID(ref), _REVERSAL_OPEN))
+    except (TypeError, ValueError, AttributeError):
+        return ref

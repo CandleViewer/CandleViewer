@@ -114,6 +114,24 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("POST", "/trade-groups/preview"): (
         "previewTradeGroup: no step-up (04 row 19a); the submit's dry run, it places nothing"
     ),
+    # 04 §7.2.2 row 18 (#915): setting leverage takes no step-up; a live account needs the
+    # session's arm token in either direction (22 `ArmToken`, SR-043).
+    ("PUT", "/positions/{positionId}/leverage"): (
+        "setPositionLeverage: no step-up (04 row 18); live needs the arm token (SR-043)"
+    ),
+    # 04 §7.2.2 rows 15 and 33 (#915): a close and a close-all take no step-up; like every exit
+    # they reduce risk and are never gated by the arm token (C-2.6, 22 `ArmToken`).
+    ("POST", "/positions/{positionId}/close"): (
+        "closePosition: no step-up (04 row 15); a risk-reducing exit, never armed (C-2.6)"
+    ),
+    ("POST", "/positions/close-all"): (
+        "closeAllPositions: no step-up (04 rows 15, 33); a risk-reducing exit (C-2.6)"
+    ),
+    # #915: a reversal takes no step-up (no 04 §7.2.2 row names it yet); it opens exposure, so a
+    # live account needs the session's arm token (22 `ArmToken`, SR-043).
+    ("POST", "/positions/{positionId}/reverse"): (
+        "reversePosition: no step-up; live needs the arm token (SR-043)"
+    ),
     # 04 §7.2.2 row 14: cancel-all takes no step-up; like every cancel it is a risk-reducing exit,
     # never gated by the arm token or the switches either (C-2.6).
     ("POST", "/orders/cancel-all"): (

@@ -51,8 +51,8 @@ class Spy:
     def __init__(self, inner: Any) -> None:
         self.inner, self.decided = inner, list[bool]()
 
-    async def find(self, *args: Any) -> AnchorRow | None:
-        found: AnchorRow | None = await self.inner.find(*args)
+    async def find(self, *args: Any, **kw: Any) -> AnchorRow | None:
+        found: AnchorRow | None = await self.inner.find(*args, **kw)
         return found
 
     async def record_outcome(self, anchor_id: UUID, outcome: AnchorOutcome) -> bool:
@@ -191,11 +191,11 @@ class LostDecision:
     def __init__(self, inner: Any, *, vanished: bool) -> None:
         self.inner, self.vanished, self.reads = inner, vanished, 0
 
-    async def find(self, *args: Any) -> AnchorRow | None:
+    async def find(self, *args: Any, **kw: Any) -> AnchorRow | None:
         self.reads += 1
         if self.vanished and self.reads > 1:
             return None
-        found: AnchorRow | None = await self.inner.find(*args)
+        found: AnchorRow | None = await self.inner.find(*args, **kw)
         return found
 
     async def record_outcome(self, anchor_id: UUID, outcome: AnchorOutcome) -> bool:

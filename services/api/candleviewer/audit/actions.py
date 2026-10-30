@@ -229,6 +229,14 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # never a figure; the preview route writes it ahead (`previewed_entry`).
         "trade_group.previewed",
         "positions.flatten",
+        # E29-T07 (#915, 24 Sec.15.5; 22's position writes, ruling BQ-5): a position's leverage
+        # change, written ahead of the venue's call with its outcome after (`oms.leverage`), the
+        # position its object; and the names `closePosition`, `reversePosition` and
+        # `closeAllPositions` write, registered with it, before those routes land.
+        "position.leverage_changed",
+        "position.closed",
+        "position.reversed",
+        "position.flattened",
         "risk.freeze_manager",
         "risk.unfreeze_manager",
         "rules.arm",

@@ -42,6 +42,7 @@ from candleviewer.storage.repositories.executions import (
     OrderFill,
 )
 from candleviewer.storage.repositories.idempotency_anchors import (
+    AnchorOperation,
     AnchorOutcome,
     AnchorRow,
     IdempotencyAnchorStore,
@@ -427,11 +428,16 @@ class IdempotencyAnchorRepository:
         self._timer = timer
 
     async def find(
-        self, created_by: UUID, client_ref: UUID, request_sha256: str
+        self,
+        created_by: UUID,
+        client_ref: UUID,
+        request_sha256: str,
+        *,
+        operation: AnchorOperation = "placeOrder",
     ) -> AnchorRow | None:
-        """The principal's `placeOrder` anchor of the key, its canonical text the column's
+        """The principal's anchor of the key on `operation`, its canonical text the column's
         (`ia_ref_fmt`); another principal's reads as missing."""
-        return await self._store.find(created_by, "placeOrder", str(client_ref), request_sha256)
+        return await self._store.find(created_by, operation, str(client_ref), request_sha256)
 
     async def record_outcome(self, anchor_id: UUID, outcome: AnchorOutcome) -> bool:
         """The first answer, by compare-and-set from NULL: False when one was recorded first."""

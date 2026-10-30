@@ -879,9 +879,11 @@ def scope_request(
     """One `account_scope` cell (E27-X03, #902): `key` as `role` on `account`, with the row's
     `request` (body, headers). A viewer cell needs `grant_viewer_a(world)` first."""
     method, path = key.split(" ", 1)
-    assert "{positionId}" not in path, f"{key}: seed a position per situation before executing it"
     body = req.get("json")
+    # A position route's situation is its position's account (4.2): the CI app composes no
+    # position store, so the id is the situation's account id, which names no position there.
     ids = {"accountId": str(account), "keyId": SCOPE_KEY_ID, "profileId": SCOPE_PROFILE_ID}
+    ids["positionId"] = str(account)
     return world.client.request(
         method,
         fill_path(path, ids),

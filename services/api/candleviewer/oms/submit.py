@@ -37,7 +37,8 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
 5. the risk gate on that order (403 `risk_limit_breached`);
 6. the synchronous switches (live trading, the B18 kill switch, the order-entry gate), ruling R1's
    second check, just before anything is recorded (403 `trading_disabled`, the gate's with its
-   `reason`);
+   `reason`); a reduce-only order whose route marked it `SubmitContext.protective` (a close, the
+   C-2.6 carve-out of 24 Sec.8.10) passes those three here and at `SEND`, never the fence;
 7. rate point 1: the account's headroom in the order's lane, which takes no token (429
    `exchange_rate_limited` with `Retry-After`, nothing recorded and no key bound);
 8. the `order_link_id` (24 Sec.8.3 rules 1 and 5; spent: 500, which pages);
@@ -145,6 +146,7 @@ from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.idempotency_anchors import (
     MAX_RET_CODE,
     MIN_RET_CODE,
+    AnchorOperation,
     AnchorOutcome,
     AnchorStatus,
     NewAnchor,
@@ -404,6 +406,22 @@ class SubmitContext:
     client_ref: UUID = field(repr=False)
     request_sha256: str = field(repr=False)
     request_id: UUID | None = None
+    #: The operation the anchor is kept under (21 Sec.3.3.10, `ia_operation`), and the anchor's
+    #: own ref when it is not the key: a reversal's `uuid5(key, "close" | "open")` (E29-T07 #915).
+    #: An entry's group keeps the raw key (`client_ref`) as its `client_group_ref` either way.
+    operation: AnchorOperation = "placeOrder"
+    anchor_ref: UUID | None = field(default=None, repr=False)
+    #: The C-2.6 carve-out (24 Sec.8.10, 22 `Forbidden`): set only by the `closePosition` and
+    #: `closeAllPositions` routes, in code, for their reduce-only flatten, never from request data.
+    #: On a reduce-only order it lets live trading not enabled, the B18 kill switch and the
+    #: order-entry gate pass at step 6 and at `SEND` (`_switched_off`); the environment lock's
+    #: fence, the serving loop's stall, RBAC, scope and every other step still refuse.
+    protective: bool = False
+
+    @property
+    def anchored_ref(self) -> UUID:
+        """The ref the anchor is written and found under: `anchor_ref`, else the key."""
+        return self.client_ref if self.anchor_ref is None else self.anchor_ref
 
 
 @dataclass(frozen=True, slots=True)
@@ -819,7 +837,7 @@ class OrderSubmission:
             )
             raise RiskRefused()
         trace.step = "switches"
-        switched_off = self._deps.switches.refusal(account.account_id, account.environment)
+        switched_off = self._switched_off(trace, account)
         if switched_off is not None:
             raise switched_off
         trace.step = "rate"
@@ -1330,8 +1348,9 @@ class OrderSubmission:
         refused."""
         context = trace.context
         lookup = await self._anchors.after_taken(
-            taken.constraint, context.actor.user_id, context.client_ref, context.request_sha256
-        )
+            taken.constraint, context.actor.user_id, context.anchored_ref, context.request_sha256,
+            operation=context.operation,
+        )  # fmt: skip
         if isinstance(lookup, InFlight | KeyReuse):
             raise lookup.refusal()
         if not isinstance(lookup, Replay):  # a held key is never fresh
@@ -1491,7 +1510,7 @@ class OrderSubmission:
         except OrderStepUnknown:
             live = self._machines.state(order.id)
             if live is None or live[0] == "validated":
-                raise await self._unsent(order, account) from None
+                raise await self._unsent(trace, order, account) from None
             _log().warning(
                 "oms_submit_send_followed", order_link_id=order.order_link_id, state=live[0]
             )
@@ -1501,17 +1520,36 @@ class OrderSubmission:
                 order_link_id=order.order_link_id,
                 failure=type(exc).__name__,
             )
-            raise await self._unsent(order, account) from None
+            raise await self._unsent(trace, order, account) from None
         return watch
 
-    async def _unsent(self, order: NewOrder, account: AccountRef) -> OmsError:
+    async def _unsent(self, trace: _Trace, order: NewOrder, account: AccountRef) -> OmsError:
         """A recorded order this request did not send: its registration dropped, the order
         abandoned, and the refusal to answer, the switch that refuses it now if one does (the kill
-        switch engaged since step 6), else 503 `store_unavailable`."""
+        switch engaged since step 6; a protective close's carve-out applies here too), else 503
+        `store_unavailable`."""
         self._commands.forget(order.id)
         await self._abandon(order)
-        switched_off = self._deps.switches.refusal(account.account_id, account.environment)
+        switched_off = self._switched_off(trace, account)
         return switched_off if switched_off is not None else StoreUnavailable()
+
+    def _switched_off(self, trace: _Trace, account: AccountRef) -> OmsError | None:
+        """The synchronous switches' refusal (step 6, and at `SEND`), or None. The C-2.6 carve-out
+        (24 Sec.8.10): for a reduce-only order whose route marked it `protective` (a close or a
+        close-all leg), live trading not enabled, the kill switch and the order-entry gate
+        (`TradingDisabled`, the gate's `OrderEntryRefused` among them) do not refuse; the fence
+        (`OmsNotReady`, returned or raised) still does, so a lane that lost its lock sends
+        nothing."""
+        refusal = self._deps.switches.refusal(account.account_id, account.environment)
+        carved = trace.context.protective and trace.request.reduce_only
+        if carved and isinstance(refusal, TradingDisabled):
+            _log().info(
+                "oms_submit_protective_close_admitted",
+                account_id=str(account.account_id),
+                code=problem_for(refusal).code,
+            )
+            return None
+        return refusal
 
     async def _abandon(self, order: NewOrder) -> None:
         """S2-Q5: a `validated` order no request will send is killed, never sent (`abandon`): tried
@@ -1789,8 +1827,8 @@ def _anchor(
     return NewAnchor(
         id=anchor_id,
         created_by=context.actor.user_id,
-        operation="placeOrder",
-        client_ref=str(context.client_ref),
+        operation=context.operation,
+        client_ref=str(context.anchored_ref),
         request_sha256=context.request_sha256,
         trade_group_id=trade_group_id,
         order_id=order_id,

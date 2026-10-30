@@ -589,6 +589,8 @@ _PERMISSION = {
     "setPositionTpSl": Permission.POSITIONS_WRITE,
     "cancelOrder": Permission.ORDERS_WRITE,
     "cancelAllOrders": Permission.ORDERS_WRITE,
+    "closePosition": Permission.POSITIONS_WRITE,
+    "closeAllPositions": Permission.POSITIONS_WRITE,
 }
 
 
@@ -596,7 +598,7 @@ _PERMISSION = {
 def test_the_guard_reads_each_protective_writes_permission_from_the_contract(
     source: Callable[[], dict[str, Any]],
 ) -> None:
-    """From 22 and from the packaged subset `create_app` reads: each maps all six."""
+    """From 22 and from the packaged subset `create_app` reads: each maps all eight."""
     permissions = rbac_permissions(source())
     assert {i: permissions[operation] for i, (operation, _) in PROTECTIVE_WRITES.items()} == {
         i: {permission} for i, permission in _PERMISSION.items()

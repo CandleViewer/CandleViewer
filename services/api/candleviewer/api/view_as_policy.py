@@ -7,8 +7,8 @@ or its operation is one of these:
   viewer, so none of the view-as rules applies to them, and leaving view-as is one call that
   nothing refuses. The contract lists them in prose only; a test reads that list from its text.
 - The protective writes (C-2.6, `PROTECTIVE_WRITES`). Their handlers decide after validation, by
-  the classification of 24-internal-schemas.md section 8.10, or need none for a cancel, which is
-  protective in whole; so the guard passes them on once a handler has registered
+  the classification of 24-internal-schemas.md section 8.10, or need none for a cancel or a close,
+  each protective in whole; so the guard passes them on once a handler has registered
   (`ProtectiveWrites`). Until then it refuses them as any write: fail closed.
 """
 
@@ -47,6 +47,8 @@ PROTECTIVE_WRITES: Final[Mapping[str, tuple[tuple[str, str], str]]] = MappingPro
         "setPositionTpSl": (("PUT", "/positions/{positionId}/tpsl"), "E29-T07"),
         "cancelOrder": (("DELETE", "/orders/{orderId}"), "E29-T04"),
         "cancelAllOrders": (("POST", "/orders/cancel-all"), "E29-T04"),
+        "closePosition": (("POST", "/positions/{positionId}/close"), "E29-T07"),
+        "closeAllPositions": (("POST", "/positions/close-all"), "E29-T07"),
     }
 )
 
@@ -54,17 +56,18 @@ PROTECTIVE_WRITES: Final[Mapping[str, tuple[tuple[str, str], str]]] = MappingPro
 class ProtectiveWrites:
     """The protective writes' registry and its tripwire.
 
-    Three of the six handlers are registered, `cancelAllOrders`, `cancelOrder` and `amendOrder`
-    (E29-T04, #913 slice 4); E39-S03 mounts `setKillSwitch`, E29-T07 `setPositionTpSl` and E34-S03
-    `amendTradeGroup`. Each handler registers its operation as it is mounted (`register`). It then
-    decides view-as itself, after validation and before it asks for a step-up (#3223 item 4,
-    option a), by the classification of 24 Sec.8.10 (`oms.exits.protective_amend` for an amend).
-    A request with any non-protective component is refused `view_as_read_only`, or
-    `view_as_expired` in a hold, before any effect, binds no key and writes its refusal record
-    (`ViewAsRefusalRecorder.refuse_operation`, through `view_as_guard.refuse_component`); a cancel
-    has none, as every cancel is a risk-reducing exit (C-2.6; 22 "View-as session", Protective
-    writes). The write runs as the viewer and is admitted only when both the viewer's own RBAC and
-    the target's allow it; in the hold it runs in the viewer's own scope.
+    Five of the eight handlers are registered, `cancelAllOrders`, `cancelOrder` and `amendOrder`
+    (E29-T04, #913 slice 4), `closePosition` and `closeAllPositions` (E29-T07, #915); E39-S03
+    mounts `setKillSwitch`, E29-T07 `setPositionTpSl` and E34-S03 `amendTradeGroup`. Each handler
+    registers its operation as it is mounted (`register`). It then decides view-as itself, after
+    validation and before it asks for a step-up (#3223 item 4, option a), by the classification of
+    24 Sec.8.10 (`oms.exits.protective_amend` for an amend). A request with any non-protective
+    component is refused `view_as_read_only`, or `view_as_expired` in a hold, before any effect,
+    binds no key and writes its refusal record (`ViewAsRefusalRecorder.refuse_operation`, through
+    `view_as_guard.refuse_component`); a cancel and a close have none, as every cancel and every
+    reduce-only close is a risk-reducing exit (C-2.6; 22 "View-as session", Protective writes, and
+    `ArmToken`'s carve-out set). The write runs as the viewer and is admitted only when both the
+    viewer's own RBAC and the target's allow it; in the hold it runs in the viewer's own scope.
 
     The contract makes engaging the kill switch on an account set (`engaged: true`,
     `scope: accounts`) protective, and refuses its release and `scope: global`. Any default

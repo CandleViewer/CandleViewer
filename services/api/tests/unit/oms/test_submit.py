@@ -673,6 +673,53 @@ async def test_the_switches_refuse_just_before_the_persist(rig: SubmitRig) -> No
     assert rig.port.switches.asked == [(cr.ACCOUNT, "demo")] * 2
 
 
+_GATE_PAUSED = OrderEntryRefusal("maintenance", "Order entry is paused for maintenance.")
+
+
+@pytest.mark.parametrize(
+    "switched", [TradingDisabled(), OrderEntryRefused(_GATE_PAUSED)], ids=["kill_or_live", "gate"]
+)
+async def test_a_protective_close_passes_the_kill_switch_live_and_the_gate_c26(
+    rig: SubmitRig, switched: TradingDisabled
+) -> None:
+    """24 Sec.8.10, C-2.6 (Fable B1): a reduce-only close its route marked `protective` is never
+    refused by FREEZE, live trading not enabled or the paused gate: it is recorded and sent."""
+    rig.port.demo.seed_position(_position())
+    rig.port.switches.refusals[cr.ACCOUNT] = switched
+    outcome = await rig.submit(flatten(), context(protective=True))
+    assert (outcome.status, outcome.lifecycle) == (202, "submitted")
+    assert rig.calls() == ["positions", "place_order"] and _denied(rig) == []
+
+
+@pytest.mark.parametrize(
+    ("request_of", "protective"),
+    [(flatten, False), (entry, True)],
+    ids=["reduce_only_unmarked", "entry_marked"],
+)
+async def test_the_carve_out_needs_both_the_marker_and_a_reduce_only_order(
+    rig: SubmitRig, request_of: Any, protective: bool
+) -> None:
+    """The other side of B1: a reduce-only `placeOrder` (no marker) is still refused under FREEZE
+    (24 Sec.8.10: it is a submission), and the marker on an entry opens nothing."""
+    rig.port.demo.seed_position(_position())
+    rig.port.switches.refusals[cr.ACCOUNT] = TradingDisabled()
+    refused = await _refused(rig, request_of(), context(protective=protective))
+    assert isinstance(refused, TradingDisabled)
+    assert [(r.detail["step"], r.reason) for r in _denied(rig)] == [
+        ("switches", "trading_disabled")
+    ]
+    assert "place_order" not in rig.calls()
+
+
+async def test_a_protective_close_still_meets_the_lost_locks_fence(rig: SubmitRig) -> None:
+    """The carve-out never passes the fence: a lane that lost its lock sends nothing."""
+    rig.port.demo.seed_position(_position())
+    rig.port.switches.refusals[cr.ACCOUNT] = cast(Any, OmsNotReady())  # the fence
+    with pytest.raises(OmsNotReady):
+        await rig.submit(flatten(), context(protective=True))
+    assert "place_order" not in rig.calls() and rig.written()[0] == 0
+
+
 async def test_the_lost_locks_fence_refuses_a_lane_side_submit_at_the_switches(
     rig: SubmitRig,
 ) -> None:
@@ -1128,6 +1175,24 @@ async def test_a_send_refused_while_the_kill_switch_engaged_answers_the_switch(
     monkeypatch.setattr(rig.machines, "command", killed)
     assert isinstance(await _refused(rig), TradingDisabled)
     assert rig.calls() == []
+
+
+async def test_a_protective_close_unsent_under_freeze_answers_the_store_not_the_switch(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At `SEND` the carve-out holds too: a close whose send did not commit while FREEZE engaged
+    is answered as the store's failure, never `trading_disabled` (C-2.6)."""
+    rig.port.demo.seed_position(_position())
+    original = rig.machines.command
+
+    async def killed(*args: Any, **kwargs: Any) -> str:
+        rig.port.switches.refusals[cr.ACCOUNT] = TradingDisabled()
+        rig.store.fail_next(StorageTierUnavailable("postgres unreachable"))
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(rig.machines, "command", killed)
+    refused = await _refused(rig, flatten(), context(protective=True))
+    assert isinstance(refused, StoreUnavailable)
 
 
 # --- step 11: the answer is the state B1 recorded -------------------------------------------------
@@ -1957,7 +2022,7 @@ async def test_a_held_key_whose_anchor_cannot_be_read_is_503(
     anchor = next(iter(rig.store._anchors.values()))
     read = anchor.read(SHA)
 
-    async def after_taken(*_args: Any) -> Any:
+    async def after_taken(*_args: Any, **_kw: Any) -> Any:
         if answer == "fresh":
             return Fresh()
         return Replay(replace(read, outcome_status=200))

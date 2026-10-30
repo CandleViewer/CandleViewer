@@ -758,7 +758,8 @@ async def test_the_lock_is_released_last_when_an_exchange_feed_composes_a_catalo
     # the tickers' demand after the sink, the tier requests after the pool, both before the lock
     demand = ["ticker_demand"] if tickers else []
     assert names == [
-        "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink", *demand,
+        "position_sweeps", "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink",
+        *demand,
         "private_streams", "trading_port", "loop_signing", "audit", "pool", "tier_requests",
         "heartbeat", "environment_lock",
     ]  # fmt: skip
@@ -791,7 +792,7 @@ async def test_the_private_streams_closer_runs_on_the_serving_loop_before_the_tr
         assert isinstance(call.private_streams, LaneStreams)
         await call.private_streams.open(STREAMED)  # the inline lane is this loop
     assert names == CLOSERS
-    assert names[:4] == ["exits", "stop_gate", "machines", "cancel_all_folds"]
+    assert names[:5] == ["position_sweeps", "exits", "stop_gate", "machines", "cancel_all_folds"]
     [stream] = world.venue.streams
     assert stream.closes == [threading.current_thread()]
     assert not [hop for hop, _ in lane.hops if hop.startswith("LaneStreams.")]
@@ -808,10 +809,13 @@ STOPPED = ["sink.stop", "audit.stop", "pool.release", "heartbeat.end", "lock.rel
 #: The closers a composed runtime's stop runs, by name, in order (#913 L1d-1 on L2b-2): the lane's
 #: trading port, its signing, its writer and the pool, everything that can sign or send, close
 #: before the heartbeat's cancel and, last, the environment's lock's release; the private streams
-#: the lane's bridge still holds close on the serving loop ahead of the port (#913 L1d-2b).
+#: the lane's bridge still holds close on the serving loop ahead of the port (#913 L1d-2b). The
+#: position sweeps (#915) close first: their cancels go through the trading port and their fill
+#: wait through the machines, both of which close later.
 CLOSERS = [
-    "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink", "private_streams",
-    "trading_port", "loop_signing", "audit", "pool", "heartbeat", "environment_lock",
+    "position_sweeps", "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink",
+    "private_streams", "trading_port", "loop_signing", "audit", "pool", "heartbeat",
+    "environment_lock",
 ]  # fmt: skip
 _SINK_WAL = Path(Settings().machine_event_wal_path)
 _BESIDE = str(_SINK_WAL.with_name(f"oms_lane.{_SINK_WAL.name}"))
