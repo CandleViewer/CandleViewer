@@ -81,7 +81,7 @@ _CASES: list[tuple[str, str, int, Callable[[World], None], str, str, Any, dict[s
     ("close_no_key", CLOSE_PATH, 400, _keep, "owner", ON_A, _FULL, {"idempotency-key": None}),
     ("close_forbidden", CLOSE_PATH, 403, _keep, "viewer", ON_A, _FULL, {}),
     ("close_read_only", CLOSE_PATH, 403, _keep, "reader", ON_A, _FULL, {}),
-    ("close_switch", CLOSE_PATH, 403, _switch_off, "owner", ON_A, _FULL, {}),
+    ("close_switch_carved_out", CLOSE_PATH, 202, _switch_off, "owner", ON_A, _FULL, {}),  # C-2.6
     ("close_foreign", CLOSE_PATH, 404, _keep, "manager", ON_B, _FULL, {}),
     ("close_missing", CLOSE_PATH, 404, _keep, "owner", str(MISSING), _FULL, {}),
     ("close_in_flight", CLOSE_PATH, 409, _in_flight("closePosition", _KEY), "owner", ON_A, _FULL,

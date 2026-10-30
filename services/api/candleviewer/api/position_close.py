@@ -14,9 +14,12 @@ the position in scope with a trade grant), each step before the next:
    (`closePosition`, 21 Sec.3.3.10): a decided one answers the rows as read now, or its recorded
    `429`/`502`, nothing sent; an undecided one is 409 in flight within `CV_OMS_INFLIGHT_STUCK_S`,
    then decided `202` (`AnchorService`);
-12. the switches B1's `SEND` asks too (`trading.oms_enabled` lets a reduce-only order through, as
-    on `placeOrder`); 13. the position against the body: a flat position, or a `qty` above its
-    size, is 422 `validation_failed`;
+12. the fence only (the environment's lock lost, or the serving loop stalled: 503
+    `oms_not_ready`). The C-2.6 carve-out (24 Sec.8.10, 22 `Forbidden`): `trading.oms_enabled`,
+    live trading not enabled, the B18 kill switch and the order-entry gate never refuse a close,
+    and its `SubmitContext` is `protective`, which this code alone sets, so the pipeline passes
+    them too; 13. the position against the body: a flat position, or a `qty` above its size, is
+    422 `validation_failed`;
 14. the close (`oms.position_writes.close_request`) through the submission pipeline, as a task the
     runtime tracks, shielded from the client's disconnect: its `202` is 22 `OrderAcceptance`
     (`order` set, `trade_group` null), kept 24 h; at 100 % the closed size's Partial-mode
@@ -29,7 +32,8 @@ the symbol, `cancel_open_orders`), the key and the 24 h record, the guard, the r
 scope, all or nothing (SR-E29-13: one account outside the caller's trade grants, or missing,
 refuses the whole request 403 `account_scope_denied`, audited, nothing sent); then per account, its
 open orders cancelled when asked (`CancelAll`, never a recorded stop, C-2.6), each open position
-closed whole as above, and one `position.flattened` record. Its answer is 22 `BulkAccountResult`.
+closed whole as above (`protective`, so the kill switch, live enablement and the gate refuse no
+leg), and one `position.flattened` record. Its answer is 22 `BulkAccountResult`.
 It is not anchored by this amendment (#5013): its repeats are answered from the 24 h record; each
 close it sends still carries the pipeline's anchor under `closeAllPositions`, so a later repeat's
 persist meets it and sends nothing.
@@ -438,11 +442,11 @@ def make_position_close_router(
                 return await replayed(adm, await oms.submission.answer_replay(account, found))
             if isinstance(found, InFlight | KeyReuse):
                 raise found.refusal()
-            step = "switches"
-            switched = oms.route.switches.refusal(AccountId(row.exchange_account_id),
-                                                  oms.route.environment)  # fmt: skip
-            if switched is not None:
-                raise switched
+            step = "fence"  # C-2.6: only the fence; live, the kill switch and the gate never refuse
+            fenced = oms.route.switches.refusal(AccountId(row.exchange_account_id),
+                                                oms.route.environment)  # fmt: skip
+            if isinstance(fenced, OmsNotReady):
+                raise fenced
             step = "position"
             errors = position_errors(row, terms)
             if errors:
@@ -451,7 +455,8 @@ def make_position_close_router(
             if step == "key":
                 return order_problem(exc)  # 400: no key to bind, unaudited as the body is
             return await refused(exc, caller, step)
-        context = SubmitContext(caller.actor, key, digest, caller.request_id, operation=_OPERATION)
+        context = SubmitContext(caller.actor, key, digest, caller.request_id,
+                                operation=_OPERATION, protective=True)  # fmt: skip
         order, full = close_request(row, terms), is_full_close(row, terms)
         running.add(held)
         try:
@@ -498,8 +503,8 @@ def make_position_close_router(
             affected, error = 0, None
             for row in (r for r in rows if r.exchange_account_id == account):
                 ref = uuid.uuid5(key, str(row.id))
-                context = SubmitContext(actor, key, digest, request_id,
-                                        operation=_ALL_OPERATION, anchor_ref=ref)  # fmt: skip
+                context = SubmitContext(actor, key, digest, request_id, operation=_ALL_OPERATION,
+                                        anchor_ref=ref, protective=True)  # fmt: skip
                 order = close_request(row, CloseTerms("market", pct=_HUNDRED))
                 try:
                     outcome = await oms.submission.submit(order, context)

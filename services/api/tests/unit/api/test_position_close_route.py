@@ -5,24 +5,35 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import uuid
+import warnings
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+import candleviewer
 from candleviewer.api.position_close import (
     CLOSE_ALL_PATH,
     CLOSE_PATH,
     CloseAllBody,
     close_all_body,
 )
-from candleviewer.oms.errors import ExchangeRejected, OmsNotReady, RiskRefused, TradingDisabled
+from candleviewer.domain.order_entry import OrderEntryRefusal
+from candleviewer.oms.errors import (
+    ExchangeRejected,
+    OmsNotReady,
+    OrderEntryRefused,
+    RiskRefused,
+    TradingDisabled,
+)
 from candleviewer.oms.idempotency import InFlight, KeyReuse, Replay
 from candleviewer.oms.position_writes import CLOSE_ACTION, FLATTEN_ACTION
-from candleviewer.oms.submit import SubmitOutcome
+from candleviewer.oms.submit import SubmitContext, SubmitOutcome
 from candleviewer.storage.repositories.idempotency_anchors import AnchorRow
 from tests.unit.api import test_order_acceptance as acc
 from tests.unit.api.oms_reads_world import MISSING
@@ -39,6 +50,7 @@ from tests.unit.api.position_writes_world import (
     on,
     post,
 )
+from tests.unit.oms.submit_rig import ACTOR
 
 FULL: dict[str, Any] = {"order_type": "market", "pct": "100"}
 HALF: dict[str, Any] = {"order_type": "market", "pct": "50"}
@@ -145,12 +157,24 @@ async def test_close_position_the_oms_flag_off_does_not_refuse_a_close() -> None
     assert (await close(world)).status_code == 202
 
 
-async def test_close_position_a_switch_refusal_is_403_recorded_nothing_sent() -> None:
-    world = World()
-    world.route.switches.refusal_of = TradingDisabled()
-    answer = await close(world)
-    assert (answer.status_code, answer.json()["code"]) == (403, "trading_disabled")
-    assert closes(world) == [("denied", "trading_disabled")] and world.submitted() == []
+_PAUSED = OrderEntryRefusal("maintenance", "Order entry is paused for maintenance.")
+
+
+@pytest.mark.parametrize(
+    "switched", [TradingDisabled(), OrderEntryRefused(_PAUSED)], ids=["freeze_or_live", "gate"]
+)
+async def test_close_position_c26_freeze_live_off_or_a_paused_gate_never_refuse_a_close(
+    switched: TradingDisabled,
+) -> None:
+    """24 Sec.8.10, 22 `Forbidden` (Fable B1): FREEZE, live trading not enabled and the paused
+    order-entry gate never refuse a close: it is sent, marked `protective` for the pipeline."""
+    world = World(environment="live")
+    world.route.switches.refusal_of = switched
+    answer = await close(world, ON_LIVE)
+    assert answer.status_code == 202, answer.text
+    [(request, context)] = world.pipeline.submitted
+    assert request.reduce_only and context.protective is True
+    assert closes(world) == []
 
 
 async def test_close_position_a_fenced_switch_is_503_not_ready_unrecorded() -> None:
@@ -374,12 +398,48 @@ async def test_close_position_a_pipeline_refusal_is_its_problem_nothing_kept() -
 
 
 async def test_close_position_an_unrecorded_refusal_is_audit_unavailable_key_unbound() -> None:
-    world = World()
-    world.route.switches.refusal_of = TradingDisabled()
+    world, key = World(), uuid.uuid4()
+    world.anchors.answers[("closePosition", key)] = KeyReuse()
     world.records.fail = True
-    answer = await close(world)
+    answer = await close(world, key=key)
     assert (answer.status_code, answer.json()["code"]) == (503, "audit_unavailable")
-    assert len(world.cache) == 0
+    assert len(world.cache) == 0 and world.submitted() == []
+
+
+async def test_close_position_a_forged_protective_field_is_422_and_never_reaches_the_pipeline(
+) -> None:  # fmt: skip
+    """The carve-out's marker is route code's alone: a body naming it is refused whole."""
+    world = World()
+    answer = await close(world, body=FULL | {"protective": True})
+    assert (answer.status_code, answer.json()["code"]) == (422, "validation_failed")
+    assert "extra_forbidden" in [e["rule"] for e in answer.json()["errors"]]
+    assert world.submitted() == []
+
+
+def test_close_position_only_the_close_routes_set_the_protective_marker() -> None:
+    """The marker is unforgeable by request data: no module but the close routes' passes
+    `protective=` to a `SubmitContext` (or a `replace` of one), and there only as `True`, a
+    constant; it defaults off."""
+    root = Path(candleviewer.__file__).resolve().parent
+    found: list[tuple[str, str]] = []
+    for path in sorted(root.rglob("*.py")):
+        with warnings.catch_warnings():  # a module's own escape warnings are not this test's
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                for kw in node.keywords:
+                    if kw.arg == "protective" and _names_context(node.func):
+                        value = kw.value
+                        shown = repr(value.value) if isinstance(value, ast.Constant) else "dynamic"
+                        found.append((path.relative_to(root).as_posix(), shown))
+    assert found == [("api/position_close.py", "True")] * 2
+    assert SubmitContext(ACTOR, uuid.uuid4(), "0" * 64).protective is False
+
+
+def _names_context(func: ast.expr) -> bool:
+    name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+    return name in ("SubmitContext", "replace")
 
 
 # --- closeAllPositions ------------------------------------------------------------------------
@@ -405,6 +465,29 @@ async def test_close_all_flattens_each_open_position_of_the_granted_accounts() -
     assert len({c.anchored_ref for c in contexts}) == 2  # one anchor per position
     assert [r.action for r in world.positions.records] == [FLATTEN_ACTION]
     assert len(world.positions.sweeps) == 2  # each close is whole
+
+
+@pytest.mark.parametrize(
+    "switched", [TradingDisabled(), OrderEntryRefused(_PAUSED)], ids=["freeze_or_live", "gate"]
+)
+async def test_close_all_c26_freeze_live_off_or_a_paused_gate_never_refuse_a_leg(
+    switched: TradingDisabled,
+) -> None:
+    """24 Sec.8.10 (Fable B1): the panic flatten goes while FREEZE is engaged, live is not enabled
+    or the gate pauses; every leg is reduce-only and marked `protective` for the pipeline."""
+    world = World()
+    world.route.switches.refusal_of = switched
+    answer = await flatten(world)
+    assert answer.status_code == 200 and answer.json()["succeeded"] == 1
+    sent = world.pipeline.submitted
+    assert len(sent) == 2 and all(r.reduce_only and c.protective for r, c in sent)
+
+
+async def test_close_all_a_forged_protective_field_is_422_nothing_sent() -> None:
+    world = World()
+    answer = await flatten(world, {"protective": True})
+    assert (answer.status_code, answer.json()["code"]) == (422, "validation_failed")
+    assert world.submitted() == []
 
 
 async def test_close_all_arm_is_never_required_on_live() -> None:

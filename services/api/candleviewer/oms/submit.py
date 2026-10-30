@@ -37,7 +37,8 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
 5. the risk gate on that order (403 `risk_limit_breached`);
 6. the synchronous switches (live trading, the B18 kill switch, the order-entry gate), ruling R1's
    second check, just before anything is recorded (403 `trading_disabled`, the gate's with its
-   `reason`);
+   `reason`); a reduce-only order whose route marked it `SubmitContext.protective` (a close, the
+   C-2.6 carve-out of 24 Sec.8.10) passes those three here and at `SEND`, never the fence;
 7. rate point 1: the account's headroom in the order's lane, which takes no token (429
    `exchange_rate_limited` with `Retry-After`, nothing recorded and no key bound);
 8. the `order_link_id` (24 Sec.8.3 rules 1 and 5; spent: 500, which pages);
@@ -410,6 +411,12 @@ class SubmitContext:
     #: An entry's group keeps the raw key (`client_ref`) as its `client_group_ref` either way.
     operation: AnchorOperation = "placeOrder"
     anchor_ref: UUID | None = field(default=None, repr=False)
+    #: The C-2.6 carve-out (24 Sec.8.10, 22 `Forbidden`): set only by the `closePosition` and
+    #: `closeAllPositions` routes, in code, for their reduce-only flatten, never from request data.
+    #: On a reduce-only order it lets live trading not enabled, the B18 kill switch and the
+    #: order-entry gate pass at step 6 and at `SEND` (`_switched_off`); the environment lock's
+    #: fence, the serving loop's stall, RBAC, scope and every other step still refuse.
+    protective: bool = False
 
     @property
     def anchored_ref(self) -> UUID:
@@ -830,7 +837,7 @@ class OrderSubmission:
             )
             raise RiskRefused()
         trace.step = "switches"
-        switched_off = self._deps.switches.refusal(account.account_id, account.environment)
+        switched_off = self._switched_off(trace, account)
         if switched_off is not None:
             raise switched_off
         trace.step = "rate"
@@ -1503,7 +1510,7 @@ class OrderSubmission:
         except OrderStepUnknown:
             live = self._machines.state(order.id)
             if live is None or live[0] == "validated":
-                raise await self._unsent(order, account) from None
+                raise await self._unsent(trace, order, account) from None
             _log().warning(
                 "oms_submit_send_followed", order_link_id=order.order_link_id, state=live[0]
             )
@@ -1513,17 +1520,36 @@ class OrderSubmission:
                 order_link_id=order.order_link_id,
                 failure=type(exc).__name__,
             )
-            raise await self._unsent(order, account) from None
+            raise await self._unsent(trace, order, account) from None
         return watch
 
-    async def _unsent(self, order: NewOrder, account: AccountRef) -> OmsError:
+    async def _unsent(self, trace: _Trace, order: NewOrder, account: AccountRef) -> OmsError:
         """A recorded order this request did not send: its registration dropped, the order
         abandoned, and the refusal to answer, the switch that refuses it now if one does (the kill
-        switch engaged since step 6), else 503 `store_unavailable`."""
+        switch engaged since step 6; a protective close's carve-out applies here too), else 503
+        `store_unavailable`."""
         self._commands.forget(order.id)
         await self._abandon(order)
-        switched_off = self._deps.switches.refusal(account.account_id, account.environment)
+        switched_off = self._switched_off(trace, account)
         return switched_off if switched_off is not None else StoreUnavailable()
+
+    def _switched_off(self, trace: _Trace, account: AccountRef) -> OmsError | None:
+        """The synchronous switches' refusal (step 6, and at `SEND`), or None. The C-2.6 carve-out
+        (24 Sec.8.10): for a reduce-only order whose route marked it `protective` (a close or a
+        close-all leg), live trading not enabled, the kill switch and the order-entry gate
+        (`TradingDisabled`, the gate's `OrderEntryRefused` among them) do not refuse; the fence
+        (`OmsNotReady`, returned or raised) still does, so a lane that lost its lock sends
+        nothing."""
+        refusal = self._deps.switches.refusal(account.account_id, account.environment)
+        carved = trace.context.protective and trace.request.reduce_only
+        if carved and isinstance(refusal, TradingDisabled):
+            _log().info(
+                "oms_submit_protective_close_admitted",
+                account_id=str(account.account_id),
+                code=problem_for(refusal).code,
+            )
+            return None
+        return refusal
 
     async def _abandon(self, order: NewOrder) -> None:
         """S2-Q5: a `validated` order no request will send is killed, never sent (`abandon`): tried
