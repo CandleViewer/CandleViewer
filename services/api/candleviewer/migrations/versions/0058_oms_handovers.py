@@ -28,8 +28,8 @@ exists already.
 * The downgrade (C-5.2) locks the table and refuses while any entry exists, since dropping it would
   lose hand-overs nobody has recorded elsewhere; an empty table is dropped with its guard.
 
-Its number and parent are provisional until the PR opens: re-parenting is the `down_revision` line
-below, and the lockfile entry follows it (C-5.3).
+Its number is 0058, on `0057_se_component_statechart` (#1025), and the lockfile entry pins it
+(C-5.3).
 """
 
 from __future__ import annotations
