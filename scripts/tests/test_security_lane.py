@@ -103,6 +103,9 @@ SCANNERS = (SEMGREP_INSTALL, '"pip-audit==', '"bandit[sarif]==')
 # #4048: Semgrep skips a target over 1 MB by default and CI-SEC-005 fails the scan on it; the REST
 # contract crossed that size, so both scans raise the limit to 5 MB.
 MAX_TARGET_BYTES = "--max-target-bytes 5000000"
+# #5062: a slow runner must not turn a clean file into a CI-SEC-005 refusal; the per-rule-per-file
+# budget is 15 s (Semgrep's default is 5 s), and the gate still fails the scan on any timeout.
+SEMGREP_TIMEOUT = "--timeout 15"
 FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js", "py", "infra"))
 # The pr.yml caller as it stood before the fold; #3104 leaves it and the resolver lane alone.
 CALLER = {
@@ -218,7 +221,10 @@ def test_semgrep_step_hands_its_json_report_to_the_gate() -> None:
     (step,) = [s for s in _steps("semgrep-bandit") if s.get("id") == "semgrep"]
     run = step["run"].replace("\\\n", " ")
     lines = [" ".join(line.split()) for line in run.splitlines()]
-    scan = f"semgrep scan $CONFIG_ARGS --verbose {MAX_TARGET_BYTES} --sarif --output semgrep.sarif"
+    scan = (
+        f"semgrep scan $CONFIG_ARGS --verbose {MAX_TARGET_BYTES} {SEMGREP_TIMEOUT}"
+        " --sarif --output semgrep.sarif"
+    )
     gate = "python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif"
     assert scan + " --json-output semgrep.json" in lines
     assert lines[-1] == gate + " --semgrep-json semgrep.json --sarif-out semgrep.gate.sarif"
@@ -258,9 +264,12 @@ def test_security_auth_step_hands_its_verbose_json_report_to_the_gate() -> None:
     run = step["run"].replace("\\\n", " ")
     lines = [" ".join(line.split()) for line in run.splitlines()]
     report = '"$RUNNER_TEMP/semgrep-auth.json"'
-    scan = "semgrep scan --config security/semgrep/auth --error --metrics=off --verbose"
+    scan = (
+        "semgrep scan --config security/semgrep/auth --error --metrics=off --verbose"
+        f" {MAX_TARGET_BYTES}"
+    )
     targets = "--exclude fixtures services/api/candleviewer apps packages/ui"
-    assert f"{scan} {MAX_TARGET_BYTES} --json-output {report} {targets}" in lines
+    assert f"{scan} {SEMGREP_TIMEOUT} --json-output {report} {targets}" in lines
     assert lines[-1] == f"python tools/ci/security_gate.py --tool semgrep-auth --report {report}"
 
 
@@ -292,6 +301,7 @@ def test_semgrep_scans_keep_the_timeout_threshold_the_gate_counts() -> None:
     local = (ROOT / "tools" / "ci" / "run_security_local.py").read_text(encoding="utf-8")
     assert len(runs) == 2
     assert not [text for text in [*runs, local] if "timeout-threshold" in text]
+    assert all(f"{SEMGREP_TIMEOUT} " in text for text in runs)  # #5062: both scans, a 15 s budget
     assert SEMGREP_TIMEOUT_THRESHOLD == 3
 
 

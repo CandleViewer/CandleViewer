@@ -210,7 +210,8 @@ jobs:
           # Semgrep skipped (one over the size limit, say). The gate fails on them (#3549).
           set +e
           # CI-SEC-005, #4048: the 1 MB default skipped 22-api-openapi.yaml (exceeded_size_limit); allow up to 5 MB.
-          semgrep scan $CONFIG_ARGS --verbose --max-target-bytes 5000000 --sarif --output semgrep.sarif --json-output semgrep.json
+          # --timeout 15: per-rule-per-file budget; CI-SEC-005 still fails the gate on any timeout (#5062).
+          semgrep scan $CONFIG_ARGS --verbose --max-target-bytes 5000000 --timeout 15 --sarif --output semgrep.sarif --json-output semgrep.json
           status=$?
           set -e
           if [ "$status" -gt 1 ]; then
@@ -416,7 +417,8 @@ jobs:
           # --error fails the step on any finding. The gate reads the JSON report as it does the
           # main scan's, with every auth rule counted like a cv-* rule (#3549).
           # CI-SEC-005, #4048: the same 5 MB limit as the main scan, so no target is skipped as exceeded_size_limit.
-          semgrep scan --config security/semgrep/auth --error --metrics=off --verbose --max-target-bytes 5000000 \
+          # --timeout 15: per-rule-per-file budget; CI-SEC-005 still fails the gate on any timeout (#5062).
+          semgrep scan --config security/semgrep/auth --error --metrics=off --verbose --max-target-bytes 5000000 --timeout 15 \
             --json-output "$RUNNER_TEMP/semgrep-auth.json" \
             --exclude fixtures services/api/candleviewer apps packages/ui
           python tools/ci/security_gate.py --tool semgrep-auth --report "$RUNNER_TEMP/semgrep-auth.json"

@@ -719,7 +719,10 @@ index alone, removing nothing.
   `type X = ...`), but not both in one module: such a module shows as a
   `Syntax error` with no line span, so write the rf-string as an `f`-string
   (doubling any backslash). For a timeout, look at what changed in the file
-  or the rule. A target over the 5 MB size bound
+  or the rule: each rule has 15 s per file (`--timeout 15`, #5062; the default
+  5 s timed out a generic `metavariable-pattern` arm on a 2,400-line module),
+  and CI-SEC-005 still refuses the scan when an auth rule times out. A target
+  over the 5 MB size bound
   (`--max-target-bytes 5000000`, #4048; CI-SEC-005 still fails closed above
   it), reported as `exceeded_size_limit`, is data or generated: list it in
   `.semgrepignore` with its reason (security review), or split it. The
