@@ -302,7 +302,9 @@ async def test_the_stop_closes_the_port_then_the_signing_then_its_writer_each_on
         "environment_lock",
     ]  # fmt: skip
     closing = [step for step in steps if step[0] not in ("bind", "self_check")]
-    assert closing == [(name, on_lane) for name in names[7:]]
+    # anchored by name, not index, so a closer added ahead (#915's sweeps) cannot shift it
+    lane_tail = names[names.index("trading_port") :]
+    assert closing == [(name, on_lane) for name in lane_tail]
 
 
 async def test_each_start_binds_a_new_signing_and_its_stop_closes_it() -> None:
