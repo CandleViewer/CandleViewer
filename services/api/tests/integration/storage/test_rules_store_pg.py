@@ -87,19 +87,23 @@ async def test_versions_dedupe_conflict_arm_and_delete_survive_a_reload(
         _retire(pg_dsn, rid)
 
 
-async def test_conflict_after_restart_names_the_other_session(pg_dsn: str) -> None:
+async def test_conflict_after_restart_carries_the_stored_version_and_time(pg_dsn: str) -> None:
     repo = SqlAlchemyRelationalRepository(pg_dsn, "rules-it-sess")
     uid = await _owner(repo)
     a = Actor(uid, "session-A", frozenset({"rules:write"}), is_owner=True)
     b = Actor(uid, "session-B", frozenset({"rules:write"}), is_owner=True)
-    mgr = RulesManager(PostgresRuleStore(repo), default_registry())
+    store = PostgresRuleStore(repo)
+    mgr = RulesManager(store, default_registry(), now_us=lambda: 1_790_000_000_123_456)
     rid = (await mgr.create(_ir("1"), a))["id"]
     await mgr.update(rid, _ir("2"), 1, a)
     fresh = RulesManager(PostgresRuleStore(repo), default_registry())  # restart / other worker
     with pytest.raises(RuleError) as e:
         await fresh.update(rid, _ir("3"), 1, b)
     assert e.value.status == 412  # #4674: a stale version is a failed precondition
-    assert e.value.extra["session"] == "session-A"
+    assert (e.value.extra["version"], e.value.extra["updated_at"]) == (
+        2,
+        "2026-09-21T14:13:20.123456Z",
+    )
 
 
 def _scope_ir(level: str, accounts: tuple[uuid.UUID, ...]) -> dict[str, object]:

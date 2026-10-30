@@ -5,6 +5,14 @@ described here; the completeness tests enforce it. Permissions are advisory
 for the UI - the authoritative check happens at execution time (E35-S03/S04).
 The exception is `RETIRED_ACTIONS`: the IR still parses them, nothing here
 offers them, and the validator refuses them for every caller.
+
+The naming rule (G-6) binds every `params_schema` property. A param that names
+an account, by any word this domain or the exchange uses for one (account, acct,
+acc, acnt, sub-account, UID or sub-UID, member id, wallet), is spelled
+`account_id` or `account_ids`, alone or after a snake_case prefix
+(`target_account_id`): the account walker reads only those keys, for the grant
+check and the export strip alike. A unit-test lint fails any other spelling of
+these words; a reviewer of a new `ActionSpec` applies the words, not only the lint.
 """
 
 # ruff: noqa: E501

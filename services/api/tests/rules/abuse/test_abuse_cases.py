@@ -248,7 +248,7 @@ async def test_ac_k_import_lands_disabled_and_never_remaps_accounts() -> None:
     assert out["mode"] == "disabled"
     row = e.mgr._s._rows[out["id"]]  # type: ignore[attr-defined]
     ir = row.versions[0].ir
-    assert not ir["scope"].get("account_ids") and ir["scope"]["environments"] == ["demo"]
+    assert ir["scope"]["account_ids"] == [str(A)] and ir["scope"]["environments"] == ["demo"]
     # a bundle naming an account the importer cannot access is refused, never remapped
     bad = {
         "ir": {

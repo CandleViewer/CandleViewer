@@ -142,11 +142,11 @@ async def test_import_with_ungranted_metric_account_is_refused_and_audited() -> 
     assert await e.mgr._s.all() == []
 
 
-async def test_import_with_granted_metric_account_lands_without_it() -> None:
+async def test_import_with_granted_metric_account_keeps_it() -> None:
     e = _Env()
     out = await e.mgr.import_rule({"ir": _metric_ir(str(A), name="imp")}, LOW)
     ir = e.mgr._s._rows[out["id"]].versions[0].ir  # type: ignore[attr-defined]
-    assert out["mode"] == "disabled" and collect_account_ids(ir) == ()
+    assert out["mode"] == "disabled" and collect_account_ids(ir) == (str(A),)
 
 
 async def test_non_owner_create_with_metric_account_outside_grants_is_refused() -> None:

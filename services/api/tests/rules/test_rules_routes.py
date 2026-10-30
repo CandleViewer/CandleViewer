@@ -174,7 +174,7 @@ def test_delete_armed_is_409_then_204_after_disarm() -> None:
     assert e.c.get(f"/rules/{rid}").status_code == 404
 
 
-def test_update_creates_version_and_conflict_names_session() -> None:
+def test_update_creates_version_and_a_conflict_carries_the_version_and_time() -> None:
     """Scenarios: new immutable version; concurrent edit rejected (HTTP)"""
     e = _Env()
     rid = e.create()
@@ -183,8 +183,8 @@ def test_update_creates_version_and_conflict_names_session() -> None:
     stale = e.c.put(f"/rules/{rid}", json={"ir": _ir("3")}, headers={"If-Match": "1"})
     assert stale.status_code == 412
     body = stale.json()
-    assert body["code"] == "version_conflict" and body["session"] == "s1"
-    assert body["action"] == "reload_and_reapply"
+    assert body["code"] == "version_conflict" and body["version"] == 2
+    assert set(body) == {"type", "title", "status", "code", "detail", "version", "updated_at"}
     same = e.c.put(f"/rules/{rid}", json={"ir": _ir("2")}, headers={"If-Match": "2"})
     assert same.json()["created"] is False
     assert e.c.put(f"/rules/{rid}", json={"ir": _ir("4")}).status_code == 400
