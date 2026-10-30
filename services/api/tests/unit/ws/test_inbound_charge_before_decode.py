@@ -104,10 +104,13 @@ def _wire(encoding: str, frame: dict[str, Any]) -> str | bytes:
 
 
 def _queued(conn: _Connection) -> list[Any]:
-    """Every frame `conn` queued so far, in order (the writer is not running)."""
+    """Every frame `conn` queued so far, in order, from its pipeline's queue (§8.4; the writer
+    is not running)."""
+    assert conn.pipeline is not None
     items: list[Any] = []
-    while not conn.outbound.empty():
-        items.append(conn.outbound.get_nowait())
+    while (item := conn.pipeline.queue.pop()) is not None:
+        raw = item.payload
+        items.append(msgpack.unpackb(raw) if isinstance(raw, bytes) else json.loads(raw))
     return items
 
 
@@ -119,7 +122,7 @@ def _spent(conn: _Connection, encoding: str) -> None:
 
 @_ENCODINGS
 @pytest.mark.parametrize("authed", [False, True], ids=["before-auth_ok", "after-auth_ok"])
-def test_charge_a_frame_past_the_rate_is_refused_before_any_decode_work(
+async def test_charge_a_frame_past_the_rate_is_refused_before_any_decode_work(
     handed: _Handed, encoding: str, authed: bool
 ) -> None:
     conn = _connection(encoding, authed=authed)
@@ -134,7 +137,7 @@ def test_charge_a_frame_past_the_rate_is_refused_before_any_decode_work(
 
 
 @_ENCODINGS
-def test_charge_the_second_refusal_closes_4429_unread(handed: _Handed, encoding: str) -> None:
+async def test_charge_the_second_refusal_closes_4429_unread(handed: _Handed, encoding: str) -> None:
     conn = _connection(encoding, authed=True)
     _spent(conn, encoding)
     handed.clear()
@@ -356,7 +359,7 @@ def test_inbound_rate_limiter_counts_tokens_in_both_windows() -> None:
 
 
 @_ENCODINGS
-def test_charge_a_frame_whose_weight_the_tokens_left_cannot_cover_is_refused_unread(
+async def test_charge_a_frame_whose_weight_the_tokens_left_cannot_cover_is_refused_unread(
     handed: _Handed, encoding: str
 ) -> None:
     """Three frames near the cap take 27 of the second's 30; the fourth (9) is refused before it is
@@ -439,7 +442,7 @@ def test_inbound_rate_limiter_refund_gives_back_to_the_last_frame_admitted() -> 
 
 
 @_ENCODINGS
-def test_charge_a_small_frame_led_by_t_pong_that_decodes_to_another_kind_is_charged_to_the_rate(
+async def test_charge_a_small_frame_led_by_t_pong_that_decodes_to_another_kind_counts_to_the_rate(
     encoding: str,
 ) -> None:
     """From `auth_ok`, a frame that opens with `t: "pong"` takes the `pong` budget; one that turns
@@ -547,7 +550,7 @@ def test_hub_budgets_stay_bounded_under_connect_and_close_of_many_users() -> Non
     assert len(hub._budgets) == 1
 
 
-def test_charge_a_frame_past_one_token_is_refused_when_the_users_budget_is_spent() -> None:
+async def test_charge_a_frame_past_one_token_is_refused_when_the_users_budget_is_spent() -> None:
     """Two sockets of one user: the first spends the shared budget with frames near the cap; the
     second's next such frame is refused on its own socket, as the rate refuses one, and counted;
     its frames of one token still pass on its own rate."""

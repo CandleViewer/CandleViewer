@@ -92,6 +92,10 @@ async def _no_sleep(_s: float) -> None:
     return None
 
 
+#: #2409: the rigs run the budgeted pipeline (the flag-on path) unless a test passes None.
+_ON = BackpressureConfig()
+
+
 def _unlisted_kinds_pass(
     body: object, principal: PrincipalSnapshot | None, *, flag_visible: FlagVisible | None = None
 ) -> Mapping[str, Any] | None:
@@ -191,7 +195,7 @@ class _Rig:
 
     def __init__(
         self,
-        backpressure: BackpressureConfig | None = None,
+        backpressure: BackpressureConfig | None = _ON,
         *,
         system_notices: Callable[[], list[dict[str, Any]]] | None = None,
         tick_s: float = 0.005,

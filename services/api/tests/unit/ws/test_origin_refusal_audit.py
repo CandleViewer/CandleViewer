@@ -35,6 +35,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.settings import Settings
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.lifecycle import ORIGIN_FORBIDDEN, OriginRefusal
 from candleviewer.ws.metrics import cv_ws_audit_failures_total, cv_ws_closes_total
@@ -375,6 +376,7 @@ def _app(spy: _Spy, hub: GatewayHub, origin_audit: OriginRefusalAudit | None) ->
             hub=hub,
             origin_audit=origin_audit,
             tick_s=0.005,
+            backpressure=BackpressureConfig(),
         )
     )
     return app

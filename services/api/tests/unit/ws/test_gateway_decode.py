@@ -18,6 +18,7 @@ import pytest
 from fastapi import WebSocket
 
 import candleviewer.ws.gateway as gateway
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.codec import decode_client_frame
 from candleviewer.ws.gateway import _OVERSIZE, _Connection
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
@@ -35,6 +36,7 @@ def _conn(encoding: str) -> _Connection:
         clock=lambda: 0.0,
         wall_ms=lambda: 0,
         auth_timeout_s=10.0,
+        backpressure=BackpressureConfig(),
     )
 
 
@@ -95,16 +97,19 @@ def _decode_over_the_cap(conn: _Connection) -> Any:
     return conn.decode({"type": "websocket.receive", "text": "x" * 11}, 10)
 
 
-def test_decode_over_the_cap_answers_the_oversize_sentinel() -> None:
+async def test_decode_over_the_cap_answers_the_oversize_sentinel() -> None:
     """The reader stops on this answer by identity (`frame is _OVERSIZE`). Any other value, `[]`
     (every refusal) or `None` (`null`, nil), is a frame to dispatch and must not stop it."""
     assert _decode_over_the_cap(_conn(_JSON)) is _OVERSIZE
 
 
-def test_decode_over_the_cap_queues_a_frame_too_big_bye_and_the_1009_close() -> None:
-    """S11: `decode` itself queues the close, a `bye frame_too_big` and then 1009."""
+async def test_decode_over_the_cap_queues_a_frame_too_big_bye_and_the_1009_close() -> None:
+    """S11: `decode` itself queues the close, a `bye frame_too_big` and then 1009, in the
+    pipeline's terminal slot (§8.4; it takes the loop's time for its flush deadline)."""
     conn = _conn(_JSON)
     _decode_over_the_cap(conn)
     assert conn.closing
     assert conn.bye_frame is not None
     assert (conn.bye_frame["p"]["reason"], conn.bye_frame["p"]["code"]) == ("frame_too_big", 1009)
+    terminal = conn.pipeline.terminal if conn.pipeline is not None else None
+    assert terminal is not None and (terminal.bye, terminal.code) == (conn.bye_frame, 1009)

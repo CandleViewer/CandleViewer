@@ -31,6 +31,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.metrics import LOGIN_FAILURE_METHODS
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.correlation import CorrelationMiddleware
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.lifecycle import MAX_AUTHS_PER_USER_PER_MIN
 from candleviewer.ws.permissions import ConnectionRegistry
@@ -117,6 +118,7 @@ class _World:
                 tick_s=0.005,
                 server_version="1.2.3",
                 git_sha="a91f0c3",
+                backpressure=BackpressureConfig(),
             )
         )
         self.client = TestClient(app, headers={"origin": ORIGIN})
@@ -129,14 +131,26 @@ def world() -> Any:
         yield w
 
 
+def _paced(frame: dict[str, Any]) -> bool:
+    """#2409: the budgeted pipeline's own §8.3 traffic, sent on its classification schedule as the
+    fake clock moves: the RTT probe's `ping` (`s-rtt-…`) and the `connection_quality` notice."""
+    if frame["t"] == "ping":
+        return str(frame.get("id", "")).startswith("s-rtt-")
+    body = frame.get("p")
+    quality = isinstance(body, dict) and body.get("kind") == "connection_quality"
+    return frame["t"] == "d" and frame.get("ch") == "system" and quality
+
+
 def _receive(ws: Any) -> dict[str, Any]:
-    """One frame in the negotiated encoding (§2.2): binary MessagePack on `cv.v1.msgpack` (a text
-    frame there fails the test), else JSON text."""
-    if ws.accepted_subprotocol == "cv.v1.msgpack":
-        frame: dict[str, Any] = msgpack.unpackb(ws.receive_bytes())
-        return frame
-    text_frame: dict[str, Any] = ws.receive_json()
-    return text_frame
+    """The next frame in the negotiated encoding (§2.2): binary MessagePack on `cv.v1.msgpack` (a
+    text frame there fails the test), else JSON text; the pipeline's own (`_paced`) are skipped."""
+    while True:
+        if ws.accepted_subprotocol == "cv.v1.msgpack":
+            frame: dict[str, Any] = msgpack.unpackb(ws.receive_bytes())
+        else:
+            frame = ws.receive_json()
+        if not _paced(frame):
+            return frame
 
 
 def _send(ws: Any, frame: dict[str, Any]) -> None:

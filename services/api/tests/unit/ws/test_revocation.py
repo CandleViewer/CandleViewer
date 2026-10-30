@@ -20,6 +20,7 @@ from structlog.testing import capture_logs
 from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import _Connection
 from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import (
@@ -553,6 +554,7 @@ async def test_the_gateway_close_is_observed_once_sealed_before_its_socket_is_cl
         clock=lambda: 0.0,
         wall_ms=lambda: BASE_MS,
         auth_timeout_s=10.0,
+        backpressure=BackpressureConfig(),
     )
     hub = RevocationHub()
     hub.register("s1", conn.closer)

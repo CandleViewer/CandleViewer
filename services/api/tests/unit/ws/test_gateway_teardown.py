@@ -42,6 +42,10 @@ _DEADLINE_S = 5.0
 _UVICORN_CANCEL = "Task cancelled, timeout graceful shutdown exceeded"
 
 
+#: #2409: the rigs run the budgeted pipeline (the flag-on path) unless a test passes None.
+_ON = BackpressureConfig()
+
+
 class _Socket:
     """The slice of Starlette's `WebSocket` the handler uses; the test feeds and reads it."""
 
@@ -93,7 +97,7 @@ class _Socket:
 class _Rig:
     """One gateway on the test's loop: every collaborator the teardown tail touches."""
 
-    def __init__(self, backpressure: BackpressureConfig | None = None) -> None:
+    def __init__(self, backpressure: BackpressureConfig | None = _ON) -> None:
         self.audit = _Audit()
         self.hub = GatewayHub()
         self.hub.shutting_down = True  # uvicorn cancels handlers only inside its own shutdown

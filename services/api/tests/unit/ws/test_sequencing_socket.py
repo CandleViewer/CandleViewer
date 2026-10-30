@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
@@ -23,10 +24,17 @@ from tests.unit.ws.test_lifecycle_socket import JSON, ORIGIN, _recv
 
 #: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
 _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
+#: #2409: the budgeted pipeline (the flag-on path) unless a test passes None.
+_ON = BackpressureConfig()
+#: #2409: a clock step past a paced book window even at the `saturated` x4 (50 ms each), so
+#: every delta leaves at once as its own frame (§8.1).
+_PAST_WINDOW_S = 0.25
 
 
 class _World:
-    def __init__(self, upstream: UpstreamRefs | None = None) -> None:
+    def __init__(
+        self, upstream: UpstreamRefs | None = None, backpressure: BackpressureConfig | None = _ON
+    ) -> None:
         self.source = Source()
         book = Book("BTCUSDT")
         book.apply([["100.0", "1.000"]], [["101.0", "2.000"]])
@@ -60,6 +68,7 @@ class _World:
                 allowed_origins=frozenset({ORIGIN}),
                 clock=self.clock,
                 tick_s=0.005,
+                backpressure=backpressure,
             )
         )
         self.client = TestClient(app, headers={"origin": ORIGIN})
@@ -206,8 +215,9 @@ def test_socket_ctl_resume_after_a_pause_re_snapshots_before_any_delta() -> None
 _BOOK = {"ch": "book.BTCUSDT.50", "opts": {"encoding": "structured"}}
 
 
-def _publish(hub: SequencingHub, count: int) -> None:
+def _publish(hub: SequencingHub, count: int, clock: Clock) -> None:
     for i in range(count):
+        clock.now += _PAST_WINDOW_S
         hub.publish(
             _BOOK["ch"], {"symbol": "BTCUSDT", "bids": [[str(100 + i % 7), "1"]], "asks": []}
         )
@@ -222,24 +232,28 @@ def _data(ws: Any) -> dict[str, Any]:
 
 def test_socket_reauth_keeps_the_sequence_5000_then_5001_without_a_snap() -> None:
     """#2484 gap 1 (E17-S01 "Re-auth preserves everything", §16.4): after an in-place re-auth
-    the next delta carries `s` 5001 after 5000, and no `snap` comes in between."""
+    the next delta carries `s` 5001 after 5000, and no `snap` comes in between. Each delta leaves
+    in its own window (`_PAST_WINDOW_S`); a `ping` after each batch keeps the heartbeat."""
     w = _World()
     with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         ws.send_json({"t": "sub", "id": "s1", "p": {"topics": [_BOOK]}})
         assert _rx(ws)["t"] == "sub_ok"
         assert _rx(ws)["s"] == 1
-        last = 1
+        last, portal = 1, w.client.portal
+        assert portal is not None  # set while the client context is open
         while last < 5000:
-            batch = min(500, 5000 - last)  # stays under OUTBOUND_QUEUE_MAX
-            w.client.portal.call(_publish, w.hub, batch)  # type: ignore[union-attr]  # set in ctx
+            batch = min(100, 5000 - last)  # 25 s (the heartbeat is 45 s), 5 % of the budget
+            portal.call(_publish, w.hub, batch, w.clock)
             for _ in range(batch):
                 frame = _data(ws)
                 assert (frame["t"], frame["s"]) == ("d", last + 1)
                 last += 1
+            ws.send_json({"t": "ping", "id": "k"})
+            assert _rx(ws)["t"] == "pong"
         ws.send_json({"t": "auth", "id": "a2", "p": {"access_token": "good"}})
         assert _rx(ws)["t"] == "auth_ok"
-        w.client.portal.call(_publish, w.hub, 1)  # type: ignore[union-attr]  # set in ctx
+        portal.call(_publish, w.hub, 1, w.clock)
         frame = _rx(ws)
         assert (frame["t"], frame["s"]) == ("d", 5001)
         assert "meta" not in frame

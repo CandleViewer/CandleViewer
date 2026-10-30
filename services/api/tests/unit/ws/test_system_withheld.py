@@ -26,6 +26,7 @@ from hypothesis import strategies as st
 
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import _Connection
 from candleviewer.ws.metrics import WITHHELD_REASONS, cv_ws_system_frames_withheld_total
 from candleviewer.ws.permissions import ConnectionAuthz
@@ -79,10 +80,17 @@ def _conn(who: PrincipalSnapshot | None, flag_visible: FlagVisible | None = None
         wall_ms=lambda: 0,
         auth_timeout_s=10.0,
         flag_visible=flag_visible,
+        backpressure=BackpressureConfig(),
     )
     conn.authz = None if who is None else ConnectionAuthz(who)
     conn.system_snapped = True  # past its first `auth_ok` (§12.1, #4992): a frame is a delta
     return conn
+
+
+def _queued(conn: _Connection) -> int:
+    """How many frames `conn`'s pipeline holds (§8.4; the writer is not running)."""
+    assert conn.pipeline is not None
+    return len(conn.pipeline.queue)
 
 
 def _counts() -> dict[str, float]:
@@ -256,9 +264,9 @@ def test_push_system_queues_no_notice_naming_only_accounts_the_socket_may_not_vi
     nothing counted, so the next notice the socket may view follows with `s` 1, no gap (S3)."""
     conn, before = _conn(who), _counts()
     conn.push_system(ONLY_B)
-    assert (conn.outbound.qsize(), conn.system_seq) == (0, 0)
+    assert (_queued(conn), conn.system_seq) == (0, 0)
     conn.push_system(ONLY_A)
-    assert (conn.outbound.qsize(), conn.system_seq) == (1, 1)
+    assert (_queued(conn), conn.system_seq) == (1, 1)
     assert _since(before) == {}
 
 
@@ -273,7 +281,7 @@ def test_push_system_counts_no_flag_frame_with_the_predicate_wired_or_not(
     conn, before = _conn(who, visible), _counts()
     conn.push_system(body)
     assert _since(before) == {}
-    assert conn.outbound.qsize() == (0 if _not_meant(body, who, visible) else 1)
+    assert _queued(conn) == (0 if _not_meant(body, who, visible) else 1)
 
 
 def test_the_label_never_carries_frame_content() -> None:

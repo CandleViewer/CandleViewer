@@ -216,7 +216,7 @@ def allowed(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
 
 
 @pytest.mark.parametrize(("subprotocols", "decoder"), _CODECS)
-def test_decode_before_auth_ok_cap_exact_is_decoded_and_one_over_is_refused_unread(
+async def test_decode_before_auth_ok_cap_exact_is_decoded_and_one_over_is_refused_unread(
     handed: _Handed, subprotocols: list[str], decoder: str
 ) -> None:
     conn = _connection(subprotocols[0])
@@ -231,7 +231,7 @@ def test_decode_before_auth_ok_cap_exact_is_decoded_and_one_over_is_refused_unre
     assert (conn.bye_frame["p"]["reason"], conn.bye_frame["p"]["code"]) == ("frame_too_big", 1009)
 
 
-def test_decode_before_auth_ok_cap_counts_encoded_bytes_not_characters() -> None:
+async def test_decode_before_auth_ok_cap_counts_encoded_bytes_not_characters() -> None:
     half = MAX_PREAUTH_FRAME_BYTES // 2
     at_cap = '"' + "é" * (half - 1) + '"'  # 2 + 2 x 4 095 = 8 192 bytes, 4 097 characters
     assert len(at_cap.encode()) == MAX_PREAUTH_FRAME_BYTES
@@ -252,7 +252,7 @@ class _Unencodable(str):
 
 
 @_AUTHED
-def test_decode_of_a_text_frame_longer_than_the_cap_in_characters_is_refused_unencoded(
+async def test_decode_of_a_text_frame_longer_than_the_cap_in_characters_is_refused_unencoded(
     authed: bool,
 ) -> None:
     """A character is at least one byte, so a text frame with more characters than the cap is over
@@ -267,7 +267,7 @@ def test_decode_of_a_text_frame_longer_than_the_cap_in_characters_is_refused_une
 
 
 @pytest.mark.parametrize(("subprotocols", "decoder"), _CODECS)
-def test_decode_after_auth_ok_cap_is_the_inbound_cap_not_the_pre_auth_cap(
+async def test_decode_after_auth_ok_cap_is_the_inbound_cap_not_the_pre_auth_cap(
     handed: _Handed, subprotocols: list[str], decoder: str
 ) -> None:
     conn = _connection(subprotocols[0], authed=True)
@@ -284,7 +284,7 @@ def test_decode_after_auth_ok_cap_is_the_inbound_cap_not_the_pre_auth_cap(
     [(bytes, True), (bytearray, True), (memoryview, False)],
     ids=["bytes", "bytearray", "memoryview"],
 )
-def test_decode_sizes_a_binary_payload_by_its_length_whatever_its_buffer_type(
+async def test_decode_sizes_a_binary_payload_by_its_length_whatever_its_buffer_type(
     make: Callable[[bytes], Any], decoded: bool
 ) -> None:
     """The size check measures a `bytes`, a `bytearray` and a `memoryview` alike, by length. The
@@ -325,7 +325,7 @@ _SHAPES: Final = [
 
 @pytest.mark.parametrize("size", [MAX_PREAUTH_FRAME_BYTES, MAX_INBOUND_FRAME_BYTES])
 @pytest.mark.parametrize(("encoding", "build"), _SHAPES)
-def test_decode_before_auth_ok_hands_the_scan_and_decoders_nothing_over_the_cap(
+async def test_decode_before_auth_ok_hands_the_scan_and_decoders_nothing_over_the_cap(
     handed: _Handed, encoding: str, build: Callable[[int], str | bytes], size: int
 ) -> None:
     _decode(_connection(encoding), build(size))
@@ -648,7 +648,7 @@ def _schema_valid_long_pong() -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(("subprotocols", "decoder"), _CODECS)
-def test_an_oversized_pong_after_auth_ok_closes_protocol_violation(
+async def test_an_oversized_pong_after_auth_ok_closes_protocol_violation(
     handed: _Handed, subprotocols: list[str], decoder: str
 ) -> None:
     """Past 256 bytes, padded, at the schemas' bounds or as a 15-key map, a `pong` led by its `t`
@@ -678,7 +678,7 @@ def test_an_oversized_pong_after_auth_ok_closes_protocol_violation(
         pytest.param(MSGPACK, {"id": "p", "t": "pong"}, True, id="msgpack-t-later"),
     ],
 )
-def test_an_oversized_pong_closes_protocol_violation_however_its_t_is_written(
+async def test_an_oversized_pong_closes_protocol_violation_however_its_t_is_written(
     handed: _Handed, subprotocols: list[str], raw: str | dict[str, Any], read: bool
 ) -> None:
     """However its `t` is written, it closes. It is decoded first when its `t` comes later, is
@@ -731,7 +731,7 @@ _EMOJI_ID: Final = {"t": "pong", "id": "\U0001f600" * 64}  # 64 characters, 256 
         pytest.param(MSGPACK[0], msgpack.packb(_LONG_PONG)[:-1], id="msgpack-malformed"),
     ],
 )
-def test_a_frame_led_by_t_pong_past_256_bytes_closes_even_if_non_ascii_or_malformed(
+async def test_a_frame_led_by_t_pong_past_256_bytes_closes_even_if_non_ascii_or_malformed(
     handed: _Handed, encoding: str, raw: str | bytes
 ) -> None:
     """The bound counts bytes: a 64-character non-ASCII `id` passes it in under 100 characters of

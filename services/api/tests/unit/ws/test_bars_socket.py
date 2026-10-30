@@ -18,6 +18,7 @@ from candleviewer.bars.emit import EmitRouter
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.reader import BarTail
 from candleviewer.bars.series_store import SeriesStore
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.binary import decode_b64
@@ -67,7 +68,7 @@ class _World:
         app.include_router(make_ws_router(
             authenticate=authenticate, registry=ConnectionRegistry(resolve, lambda: 1, services),
             revocation_hub=RevocationHub(), allowed_origins=frozenset({ORIGIN}), clock=Clock(),
-            tick_s=0.005,
+            tick_s=0.005, backpressure=BackpressureConfig(),
         ))  # fmt: skip
         self.client = TestClient(app, headers={"origin": ORIGIN})
 
