@@ -93,27 +93,31 @@ rules:
               - metavariable-regex:
                   metavariable: $NAME
                   regex: (?i)^b?["']set-cookie["']$
-          # A raw (ASGI) header pair; bytes only, so a tuple of header names is not a write.
+          # A raw (ASGI) header pair; bytes only, so a tuple of header names is not a write. The arm
+          # stays generic: its regex is case-insensitive (b"SET-COOKIE"), which a literal tuple
+          # pattern is not, and measured on ws/gateway.py it costs no more than parsing the file.
           - patterns:
               - pattern: ($NAME, $V)
               - metavariable-regex:
                   metavariable: $NAME
                   regex: (?i)^b["']set-cookie["']$
           # Any write to a response's raw header list (raw_headers, or headers.raw, the same list),
-          # slices included, since its header name may be a variable.
-          - patterns:
-              - pattern-either:
-                  - pattern: $L.append(...)
-                  - pattern: $L.extend(...)
-                  - pattern: $L.insert(...)
-                  - pattern: $L[$I] = $V
-                  - pattern: $L += $V
-                  - pattern: $L = $V
-              - metavariable-pattern:
-                  metavariable: $L
-                  pattern-either:
-                    - pattern: $R.raw_headers
-                    - pattern: $R.headers.raw
+          # slices included, since its header name may be a variable. Each write names the list in
+          # its own pattern, as a deep expression <... ...>, so a subscript, a slice or a wrapped
+          # receiver on the way to the list still counts. The arm used to bind the target to $L and
+          # filter it with metavariable-pattern, a nested match per assignment and append in the
+          # file: several times the cost of the rest of the rule on the 2,400-line ws/gateway.py,
+          # where the rule timed out and failed CI-SEC-005 (#5062). The matches are the same.
+          - pattern: <... $R.raw_headers ...>.append(...)
+          - pattern: <... $R.raw_headers ...>.extend(...)
+          - pattern: <... $R.raw_headers ...>.insert(...)
+          - pattern: <... $R.raw_headers ...> += $V
+          - pattern: <... $R.raw_headers ...> = $V
+          - pattern: <... $R.headers.raw ...>.append(...)
+          - pattern: <... $R.headers.raw ...>.extend(...)
+          - pattern: <... $R.headers.raw ...>.insert(...)
+          - pattern: <... $R.headers.raw ...> += $V
+          - pattern: <... $R.headers.raw ...> = $V
       - pattern-not-inside: |
           def write_auth_cookie(...):
               ...

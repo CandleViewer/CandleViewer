@@ -296,13 +296,19 @@ def cookie_raw_header_bad(response, message, headers, pair, pairs, value):
     response.headers.raw += [pair]  # ruleid: cookie-flags-raw-header
     response.headers.raw = [pair]  # ruleid: cookie-flags-raw-header
     response.headers . raw.append(pair)  # ruleid: cookie-flags-raw-header
+    response.headers.raw.extend([(b"set-cookie", value)])  # ruleid: cookie-flags-raw-header
+    response.raw_headers[1:] = pairs  # ruleid: cookie-flags-raw-header
+    response.raw_headers[0] += pair  # ruleid: cookie-flags-raw-header
 
 
-def cookie_raw_header_ok(response, token):
+def cookie_raw_header_ok(response, token, ws):
     response.headers.append("x-csrf-token", token)  # ok: cookie-flags-raw-header
     response.headers["Cache-Control"] = "no-store"  # ok: cookie-flags-raw-header
     redacted = ("set-cookie", "authorization")  # ok: cookie-flags-raw-header
     count = len(response.headers.raw)  # ok: cookie-flags-raw-header
+    # Header names, not a Set-Cookie pair, and a read of the request's raw headers (ws/gateway.py).
+    names = (b"origin", b"sec-fetch-site")  # ok: cookie-flags-raw-header
+    raw_headers = ws.scope.get("headers") or ()  # ok: cookie-flags-raw-header
 
 
 # --- argon2-params (SR-011) -----------------------------------------------
