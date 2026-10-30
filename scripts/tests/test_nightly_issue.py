@@ -8,7 +8,8 @@ or opens one. Other authors' issues never match: no account can take the bot's l
 #3449: a workflow-level group shared by scheduled and manual runs let a pending run replace the
 scheduled one, so the per-signal group sits on the seconds-long report job instead.
 #410 (E17-Q02): chaos-ws-nightly.yml is a caller too: its `chaos-ws-issue` job reports a failed
-`chaos-ws` job, and registers here or this suite fails."""
+`chaos-ws` job, and registers here or this suite fails. So is e2e-auth-real.yml (#2490, E09-Q02's
+real-backend auth lane), from main only."""
 
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ NIGHTLIES = (
     "perf-ingestion-nightly.yml",
     "dast-admin-nightly.yml",
     "chaos-ws-nightly.yml",
+    "e2e-auth-real.yml",
 )
 BOT = "github-actions[bot]"
 #: Jobs that read more than `contents` and write nothing: #2825's guard lists runs and jobs.
@@ -94,6 +96,14 @@ SIGNALS = {
         "chaos-ws",
         "chaos: ws gateway nightly failed",
         "qa,area/backend-platform,priority/p1",
+    ),
+    # #2490 (E09-Q02): the real-backend auth lane; any failed step of its one job is the verdict.
+    ("e2e-auth-real.yml", "report"): (
+        "e2e-auth-real",
+        "${{ always() && needs.e2e-auth-real.result == 'failure' && github.ref == 'refs/heads/main' }}",
+        "e2e-auth-real",
+        "test: e2e-auth-real nightly failed",
+        "type/test,area/auth-rbac",
     ),
 }
 #: The verdicts the measuring jobs hand over: the conditions of the issue steps they replace, less
