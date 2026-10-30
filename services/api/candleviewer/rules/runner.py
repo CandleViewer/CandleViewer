@@ -3,7 +3,8 @@
 Market/bar/snapshot producers call `submit()` (non-blocking, sync). A single tracked task
 drains a bounded queue (C-2.18, drop-oldest + counter on overflow) and, per tick, evaluates
 each simulate/armed rule whose trigger type matches (C-2.20: per snapshot, never per book
-delta). Results go to `on_result` (`RulesService.evaluation_sink()`).
+delta). Results go to `on_result` (`RulesService.evaluation_sink()`); `on_fire` also gets each
+result with the stored facts of the work-list entry it was evaluated for (E35-S03, 24 §11.5).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from candleviewer.rules.evaluator import (
 from candleviewer.rules.evaluator.engine import EvaluationResult, scope_instance
 from candleviewer.rules.evaluator.snapshot import Value
 from candleviewer.rules.ir.models import MetricRef, Rule
+from candleviewer.rules.manager import EvaluableRule
 
 
 def _log() -> Any:
@@ -63,14 +65,16 @@ def _instances(rule: Rule, tick: EvalTick) -> list[str]:
 class RuleEvaluationRunner:
     def __init__(
         self,
-        rules: Callable[[], Awaitable[list[Rule]]],
+        rules: Callable[[], Awaitable[list[EvaluableRule]]],
         snapshots: SnapshotBuilder,
         factory: EvaluatorFactory,
         on_result: Callable[[EvaluationResult], None],
         on_error: Callable[[Exception], None] = _log_error,
+        *,
+        on_fire: Callable[[EvaluableRule, EvaluationResult], None] | None = None,
     ) -> None:
         self._rules, self._snapshots, self._factory = rules, snapshots, factory
-        self._on_result, self._on_error = on_result, on_error
+        self._on_result, self._on_error, self._on_fire = on_result, on_error, on_fire
         self._queue: asyncio.Queue[EvalTick] = asyncio.Queue(maxsize=QUEUE_BOUND)
         self._evaluators: dict[str, Evaluator] = {}
         self._task: asyncio.Task[None] | None = None
@@ -107,12 +111,13 @@ class RuleEvaluationRunner:
                 self._on_error(exc)
 
     async def process(self, tick: EvalTick) -> None:
-        rules = await self._rules()
-        live = {str(r.rule_id) for r in rules}
+        items = await self._rules()
+        live = {str(i.rule.rule_id) for i in items}
         for rid in set(self._evaluators) - live:
             del self._evaluators[rid]  # disarmed / deleted: state dropped
         self._snapshots.new_tick()
-        for rule in rules:
+        for item in items:
+            rule = item.rule
             if rule.trigger.type != tick.trigger_type:
                 continue
             ev = self._evaluators.get(str(rule.rule_id))
@@ -121,7 +126,11 @@ class RuleEvaluationRunner:
             else:
                 ev.set_active_version(rule)
             for inst in _instances(rule, tick):
-                ev.on_trigger(inst, tick.trigger_type)  # sync: no await mid-evaluation (E2)
+                # Sync: no await mid-evaluation (E2). The fire is handed over with this tick's
+                # stored facts, never the ones a cached evaluator was built with.
+                result = ev.on_trigger(inst, tick.trigger_type)
+                if self._on_fire is not None:
+                    self._on_fire(item, result)
 
 
 def default_clocks() -> tuple[Callable[[], int], Callable[[], int]]:

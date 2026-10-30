@@ -268,7 +268,7 @@ async def test_evaluable_rules_skips_an_armed_rule_above_the_cap() -> None:
     m, rec = _mgr()
     await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
     kept = await _seed(m, rec, DAY, LIMIT_DEFAULTS[DAY], mode="armed", name="kept")
-    assert [str(r.rule_id) for r in await m.evaluable_rules()] == [kept]
+    assert [str(r.rule.rule_id) for r in await m.evaluable_rules()] == [kept]
     await _settle(m)
 
 
@@ -424,7 +424,7 @@ async def test_evaluable_rules_keeps_a_simulating_rule_above_the_cap() -> None:
     """A simulation sends nothing, so a rule above a cap still simulates; arming it is refused."""
     m, rec = _mgr()
     rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="simulate")
-    assert [str(r.rule_id) for r in await m.evaluable_rules()] == [rid]
+    assert [str(r.rule.rule_id) for r in await m.evaluable_rules()] == [rid]
     assert (rec.audits, _tick_disarms(), m.lifecycle.leaf(rid)) == ([], [], None)
 
 
@@ -441,7 +441,7 @@ async def test_an_armed_rule_above_the_default_but_under_the_cap_keeps_running()
     """Decision 9's accepted residual: armed by a Manager before the caps, it runs till re-armed."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR], mode="armed")
-    assert [str(r.rule_id) for r in await m.evaluable_rules()] == [rid]
+    assert [str(r.rule.rule_id) for r in await m.evaluable_rules()] == [rid]
     assert (await m.get(rid, MANAGER))["mode"] == "armed"
     assert rec.audits == []
 

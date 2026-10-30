@@ -9,9 +9,10 @@ module, but it does no real work until its owning epic lands.
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -23,6 +24,8 @@ from candleviewer.rules.ir.models import Rule
 from candleviewer.rules.manager import (
     Audit,
     Broadcast,
+    EvaluableMode,
+    EvaluableRule,
     InMemoryRuleStore,
     RulesManager,
     RuleStore,
@@ -49,8 +52,9 @@ def _owner_uuid(rule: Rule) -> UUID | None:
         return None
 
 
-async def _discard_actions(_req: object) -> None:
-    """Default action sink until E35-S03 lands the executor (nothing is executed)."""
+async def _discard_actions(_req: ActionRequest) -> None:
+    """A sink that runs nothing: the simulation sink until E35-S05 swaps it, and the executor's
+    downstream until E35-T09 to E35-T12 bind the handlers behind it."""
 
 
 if TYPE_CHECKING:
@@ -77,7 +81,12 @@ class RulesService:
         self.scope_resolver: ScopeResolver | None = None
         self._scope_audit: AuditSink | None = None
         self._scope_env: str | None = None
-        self._action_sink: ActionSink = _discard_actions  # private: only reachable via the gate
+        # Private: only reachable through the scope gate, then `_route`.
+        self._action_sink: ActionSink = _discard_actions  # the executor's downstream: no OMS yet
+        self._simulation_sink: ActionSink = _discard_actions
+        #: `rule_actions_blocked_total{reason}` until E35-T09 makes it a metric (24 §11.9): the
+        #: armed actions a dispatch dropped, so far only as `mode_changed`.
+        self.actions_blocked_total: Counter[str] = Counter()
 
     def bind(
         self,
@@ -86,12 +95,17 @@ class RulesService:
         audit: Audit | None = None,
         broadcast: Broadcast | None = None,
         action_sink: ActionSink | None = None,
+        simulation_sink: ActionSink | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
 
-        `action_sink` is stored privately and only ever invoked by `ScopedActionEmitter`."""
+        `action_sink` is the executor's downstream and `simulation_sink` where the actions of a
+        simulate rule go (E35-S05 swaps it). Both are stored privately and reached only through
+        `ScopedActionEmitter`, which routes by the stored row's mode (`_route`)."""
         if action_sink is not None:
             self._action_sink = action_sink
+        if simulation_sink is not None:
+            self._simulation_sink = simulation_sink
         if store is not None:
             self._store = store
         self._audit, self._broadcast = audit, broadcast
@@ -180,6 +194,29 @@ class RulesService:
             raise RuntimeError("rule scope not wired; refusing to emit ungated actions")
         return ScopedActionEmitter(self.scope_resolver, self._scope_audit, sink)
 
+    async def _route(self, req: ActionRequest) -> None:
+        """Where a gated action goes (24 §11.5): by the mode the stored row had when the rule was
+        evaluated, never the IR's own `mode`. An armed rule's action goes to the executor, unless
+        it is `dry_run_only`: that one is simulated, as every action of a simulate rule is."""
+        if req.mode == "armed" and not req.payload.dry_run_only:
+            await self._execute(req)
+        else:
+            await self._simulation_sink(req)
+
+    async def _execute(self, req: ActionRequest) -> None:
+        """The executor sink: nothing is handed on before the stored row is read again (24 §11.5
+        check 1), one point read per action, in the task that emits it and never on the evaluation
+        tick (C-2.20). A rule that is gone, no longer armed or on another active version than the
+        fire was evaluated under drops the action as `skipped`, `mode_changed`: counted and logged
+        until E35-T09 records results, and never sent."""
+        manager = self._manager
+        stored = await manager.current_mode(req.rule_id) if manager is not None else None
+        if stored is None or stored.mode != "armed" or stored.version != req.version:
+            self.actions_blocked_total["mode_changed"] += 1
+            _log().info("rules.action_skipped", rule_id=req.rule_id, reason="mode_changed")
+            return
+        await self._action_sink(req)
+
     def registry(self) -> MetricRegistry | None:
         """Metric registry while the engine module is running; `None` otherwise (-> 503)."""
         return self._registry if self._started else None
@@ -206,15 +243,17 @@ class RulesService:
         self.metric_source = PushedMetricSource()
 
         scoped = self.scope_resolver is not None and self._scope_audit is not None
-        emitter = self.action_emitter(self._action_sink) if scoped else None
+        emitter = self.action_emitter(self._route) if scoped else None
         env = self._scope_env
 
-        def _on_result(result: EvaluationResult, rule: Rule) -> None:
-            self.evaluation_sink()(result)
+        def _on_fire(item: EvaluableRule, result: EvaluationResult) -> None:
+            """Hand a fire's actions (a scope-skipped evaluation's too, to be audited) to the
+            emitter, each stamped with the stored row's mode as read with this tick's work list."""
             if emitter is None or env is None:
                 return
             if not (result.fired or result.skipped_reason == "scope"):
                 return
+            rule = item.rule
             owner = _owner_uuid(rule)
             if owner is None:
                 return  # fail closed: no owner => no scope to resolve => no action
@@ -223,8 +262,14 @@ class RulesService:
                 result.scope_instance, None if sym == "*" else sym,
                 None if acct == "*" else UUID(acct),
             )  # fmt: skip
+            run_id = uuid4()  # the fire's id: its actions share it (24 §11.9)
             for action in rule.actions:
-                req = ActionRequest(rule.scope, owner, env, ref, action.type, action)
+                req = ActionRequest(
+                    rule_scope=rule.scope, owner=owner, environment=env, instance=ref,
+                    action_type=action.type, payload=action, mode=item.mode,
+                    rule_id=str(rule.rule_id), version=rule.version, ir_hash=item.ir_hash,
+                    run_id=run_id, armed_by=item.armed_by,
+                )  # fmt: skip
                 task = spawn(emitter.emit(req), name="rule-action-emit")
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
@@ -237,21 +282,24 @@ class RulesService:
             owner = _owner_uuid(rule)
             return self.build_evaluator(
                 rule, snaps, wall, mono, owner=owner or UUID(int=0),
-                environment=env, on_result=lambda r: _on_result(r, rule),
+                environment=env, on_result=self.evaluation_sink(),
             )  # fmt: skip
 
-        async def _evaluable() -> list[Rule]:
-            modes = ("simulate", "armed") if emitter is not None else ("simulate",)
-            rules = await manager.evaluable_rules(modes)
-            await self._refresh_scope_for(rules)  # revocation/freeze reach every tick (AC1/AC5)
-            return rules
+        async def _evaluable() -> list[EvaluableRule]:
+            modes: tuple[EvaluableMode, ...] = (
+                ("simulate", "armed") if emitter is not None else ("simulate",)
+            )
+            items = await manager.evaluable_rules(modes)
+            # Revocation/freeze reach every tick (AC1/AC5).
+            await self._refresh_scope_for([item.rule for item in items])
+            return items
 
         def _on_error(exc: Exception) -> None:
             _log().error("rule evaluator tick failed", exc_info=exc)
 
         self.runner = RuleEvaluationRunner(
             _evaluable, SnapshotBuilder(self.metric_source), _factory,
-            self.evaluation_sink(), _on_error,
+            self.evaluation_sink(), _on_error, on_fire=_on_fire,
         )  # fmt: skip
         self.runner.start()
 
