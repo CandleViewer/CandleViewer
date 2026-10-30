@@ -1464,11 +1464,13 @@ class _Remediation:
             self._listed.add((name, value))
             getattr(self._draft, name).append(value)
 
-    async def _command(self, row: OrderRow, event: CommandEvent, payload: Mapping[str, Any]) -> str:
+    async def _b1_command(
+        self, row: OrderRow, event: CommandEvent, payload: Mapping[str, Any]
+    ) -> str:
         call = self._p.machines.command(self._account, row.id, event, payload, actor="system")
         return await _bounded(call, FACADE_TIMEOUT_S)
 
-    async def _push(self, row: OrderRow, event: PushEvent, payload: Mapping[str, Any]) -> None:
+    async def _b1_push(self, row: OrderRow, event: PushEvent, payload: Mapping[str, Any]) -> None:
         await _bounded(
             self._p.machines.push(self._account, row.id, event, payload), FACADE_TIMEOUT_S
         )
@@ -1488,14 +1490,14 @@ class _Remediation:
                 else:
                     await self._fill(recorded, e, entry_id)
             case PushFact(_, row, order, event, listed):
-                await self._push(row, event, fact_push(order, row, self._f.window[1]))
+                await self._b1_push(row, event, fact_push(order, row, self._f.window[1]))
                 self._list(listed, row.order_link_id)
             case Find(_, row, sends, listed, entry_ids):
                 for send in sends:  # the finding first; a send that fails ends the sequence
                     if isinstance(send, FoundCommand):
-                        await self._command(row, send.event, send.payload)
+                        await self._b1_command(row, send.event, send.payload)
                     else:
-                        await self._push(row, send.event, send.payload)
+                        await self._b1_push(row, send.event, send.payload)
                 self._list(listed, row.order_link_id)
                 self._settled.extend(entry_ids)
                 if row.state == "untracked":
@@ -1504,7 +1506,7 @@ class _Remediation:
                 await self._no_intent("order", order.exchange_order_id, order.exchange_placed)
                 await _bounded(p.handovers.hand_over_order(self._account, order), PORT_TIMEOUT_S)
                 xid = order.exchange_order_id
-                await self._command(
+                await self._b1_command(
                     row, "MISMATCH", {"exchange_order_id": xid, "pass_id": self._pid}
                 )
                 self._list("held", row.order_link_id)
@@ -1513,7 +1515,7 @@ class _Remediation:
                 payload: dict[str, Any] = {"pass_id": self._pid}
                 if code is not None:
                     payload["reject_code"] = code
-                state = await self._command(row, "RECON_MISS", payload)
+                state = await self._b1_command(row, "RECON_MISS", payload)
                 if row.state not in ("unknown", "untracked"):
                     self._list("newly_unknown", row.order_link_id)
                 elif state in ("rejected", "cancelled"):  # the second miss in a row
@@ -1562,7 +1564,7 @@ class _Remediation:
         """A fill to its row, as the stream sends it; one the row's final state refuses is an S6
         anomaly, audited by the facade, and the row is listed."""
         try:
-            await self._push(row, "EXEC", fill_push(e, row))
+            await self._b1_push(row, "EXEC", fill_push(e, row))
         except ReconcileAnomaly:
             self._list("anomalies", row.order_link_id)
             return
