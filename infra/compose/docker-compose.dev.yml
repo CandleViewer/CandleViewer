@@ -21,5 +21,7 @@ services:
       # production leave CV_ALLOWED_ORIGINS empty (fail closed) until an operator sets it.
       CV_ALLOWED_ORIGINS: ${CV_ALLOWED_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173}
     volumes:
-      - ../../services/api/candleviewer:/app/candleviewer:ro
+      # #2893: the builder stage keeps the package at /build/candleviewer, the copy the api imports,
+      # under the working directory --reload watches; /app/candleviewer is the runtime stage's.
+      - ../../services/api/candleviewer:/build/candleviewer:ro
     read_only: false
