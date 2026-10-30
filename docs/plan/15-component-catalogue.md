@@ -1293,6 +1293,7 @@ interface HeatmapCanvasProps {
 - **Data contract**: driven by the engine's `BigTradeEvent` / `TradeClusterEvent` once E22-T02 echoes them on `trades.{symbol}`; never a client-side threshold; no REST dependency.
 - **Storybook**: `ChartEngine/BigTradeBubble` — Circle, Square, Diamond, TextMode, LogScale, SqrtScale, LinearScale, Aged, Capped, CappedOutline, Clustered, ClusterBadgeSmall, Hover, FocusVisible, Stale, Hidden, LodShed, CvdPalette, HighContrast, Light, Greyscale, ReducedMotionIdentical.
 - **Tests**: unit, visual, axe (mirror), interaction (hover/focus detail tooltip), the one-draw-call assertion (`bench/bubbles-sdf-labels`), the shape-carries-side assertion in greyscale, the `aria-label` format test, the "(estimated)" word test on cluster tooltips and the legend row, the aged-band contrast assertion (≥ 3:1 on the canvas in three themes).
+- **Motion spec**: [E22-D04.md](../design/E22/E22-D04.md) (E22-D04 §2; the appear is a 0 ms flip and the fresh → aged band a one-frame step 60 s after the print on the data clock, both identical under reduced motion; no pop, no scale-in, no flash).
 
 ### CMP-113 HeatmapLegend
 
