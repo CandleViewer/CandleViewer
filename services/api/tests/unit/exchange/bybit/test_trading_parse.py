@@ -640,10 +640,18 @@ def test_an_execution_carries_the_venues_pnl_of_the_size_it_closed(
     assert fill.closed_pnl == closed_pnl
 
 
-@pytest.mark.parametrize("closed_size", ["-0.01", "abc", 0.01])
+@pytest.mark.parametrize("closed_size", ["-0.01", "abc", 0.01, None])
 def test_an_execution_whose_closed_size_is_no_quantity_fails_the_read(closed_size: object) -> None:
     with pytest.raises(UnknownStateError):
         tp.parse(tp.ExecutionRow, EXEC_ROW | {"closedSize": closed_size}, "executions")
+
+
+@pytest.mark.parametrize("exec_pnl", ["abc", 0.05, None])
+def test_an_execution_whose_pnl_is_no_amount_fails_the_read(exec_pnl: object) -> None:
+    """A stated `execPnl` that is no decimal text fails the reply, as every venue figure does."""
+    fill = EXEC_ROW | {"closedSize": "0.01", "execPnl": exec_pnl}
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.ExecutionRow, fill, "executions")
 
 
 #: A unit input with every field the closed-PnL parser reads (names as documented).

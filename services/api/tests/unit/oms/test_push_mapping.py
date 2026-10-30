@@ -157,14 +157,14 @@ def test_exec_payload_carries_the_rows_ids_and_the_fill_exactly() -> None:
         "exec_id": "0ab1bdf7-4219-438b-b30a-32ec863018f7", "exchange_order_id": XID,
         "order_id": str(ROW_ID), "order_link_id": ROW_LINK, "account_id": str(ACCOUNT_A),
         "symbol": "BTCUSDT", "side": "sell", "qty": "0.5", "price": "95900.1",
-        "fee": "26.3725275", "fee_rate": "0.00055", "fee_currency": "USDT", "closed_pnl": None,
+        "fee": "26.3725275", "fee_rate": "0.00055", "fee_currency": "USDT", "closed_pnl": "0.05",
         "exec_type": "trade", "is_maker": False, "ts_exec": 1746270400353000,
         "ts_ingest": NOW_US, "seq": 140612148849382,
     }  # fmt: skip
 
 
 def test_exec_payload_passes_b1s_exec_schema_and_names_the_rows_pairing_keys() -> None:
-    """Derived: the documented fill with a closed PnL, which no adapter row carries yet."""
+    """Derived: the documented fill with a loss as its closed PnL (the frame's own is a gain)."""
     fill = _as(_one(raw("execution")), Execution)
     fill = fill.model_copy(update={"closed_pnl": Decimal("-1.50")})
     payload = pm.exec_payload(fill, order_id=ROW_ID, order_link_id=ROW_LINK)

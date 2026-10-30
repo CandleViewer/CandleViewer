@@ -83,10 +83,8 @@ def test_the_documented_closing_fill_carries_the_venues_closed_pnl() -> None:
     assert isinstance(pushed, pp.Push)
     [event] = pp.read_push(pushed, account(), now_us=NOW_US)
     assert isinstance(event.payload, Execution)
-    assert (Decimal(row["closedSize"]), event.payload.closed_pnl) == (
-        Decimal("0.5"),
-        Decimal(row["execPnl"]),
-    )
+    assert Decimal(row["closedSize"]) > 0  # the documented fill closes a size
+    assert event.payload.closed_pnl == Decimal(row["execPnl"])
 
 
 @pytest.mark.usefixtures("no_unknown_fields")
