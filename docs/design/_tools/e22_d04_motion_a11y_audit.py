@@ -17,13 +17,14 @@ luminance is imported by function. Eleven gates, each FAIL led by its code:
 - [G4-DNA] DNA-1 and DNA-2 stand byte for byte in `E22.json`:134 at the base; DNA-3 to DNA-7
   stand with their pinned sentences; each DNA id in DNA_ON is applied on its rows.
 - [G5-ARITH] the announcement simulation (60 s at 2 000 prints/s, seeded, the A38 throttle:
-  at most 12 writes, every one whale-class, none closer than 5 000 ms), the tier-2 flash
+  at most 12 writes, every one whale-class, none closer than 5 000 ms; and again with a row
+  focused over SIM_HOLD: no write inside it, none closer than 5 000 ms), the tier-2 flash
   classification per theme from D03's resolved values, the burst count, the frame, byte and
   lateness figures, each recomputed and found in the spec.
 - [G6-RULED] every A37, A38 and A28-applied stamp at every site (SITE_ROWS, SITE_LEADS) in its
   form and with its date, and no stamp elsewhere; the walkthrough line, never written as pending;
   R577's and the ledger rows' words (RULING_PINS), and with `--source NAME=FILE` in that saved
-  copy too.
+  copy too; AN-01's, AN-02's and AN-08's Gate cells read A38's suppression (AN_GATES).
 - [G7-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base;
   pins and cited spans match both ways, so a cite moved to other lines fails; every cited span
   reads the same at the BQ list's base, bar the files re-read at the base (REREAD).
@@ -35,7 +36,8 @@ luminance is imported by function. Eleven gates, each FAIL led by its code:
   `non-compliant` with a Blocking row; the cross-walk holds every SC in CROSSWALK.
 - [G10-ASSERT] every D4, DNA, AN, KR, FP, layer-1 and F row names one assertion id with a
   statement, no id twice; section 14's counts per consumer match.
-- [G11-BOARDS] "BOARDS: none, by A37" stands and nothing refers to a board, an export or a page.
+- [G11-BOARDS] "BOARDS: none, by A37" stands as section 0's own bold statement and nothing refers
+  to a board, an export or a page.
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL, 0 WARN is the bar);
 `--self-test` applies one mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory copy
@@ -67,7 +69,7 @@ from typing import Any, NamedTuple
 ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC = ROOT / "docs" / "design" / "E22" / "E22-D04.md"
-BASE = "ae63372b70"  # origin/main; every cite is read here
+BASE = "595be3eff9"  # origin/main; every cite is read here
 BQ_BASE = "7e23e4667c"  # where the BQ list (6516622879) read every cite
 REREAD = {"E05-D03"}  # changed by its PR 2 (#5036) after BQ_BASE; cited by id, lines re-read
 KEYS = {
@@ -103,7 +105,8 @@ TOKEN_FILES = (
 CITE_PINS = """\
 05|55|Cycle timeframe ¦ 05|56|`F` / `H` / `P` ¦ 05|96|**Focus is never silently stolen**
 05|99|Focus Not Obscured ¦ 05|100|SC 2.5.8 (Target Size, Minimum, AA) ¦ 05|131|200% browser/OS zoom
-05|140|"canvas control surrogate" pattern ¦ 05|206|big-trade-bubble pop/scale-in
+05|140|"canvas control surrogate" pattern ¦ 05|147|default 1 update / 2s per field
+05|149|a master "reduce announcements" toggle ¦ 05|206|big-trade-bubble pop/scale-in
 05|206|a single low-amplitude cross-fade ¦ 05|207|remain functional
 05|208|No content flashes more than 3 times per second ¦ 06|25|≤16.6ms/frame (60fps)
 06|91|Coalesce big-trade-bubble/CVD/indicator pane redraws to every 2nd frame
@@ -127,12 +130,12 @@ D02|279|so at r 3 px only the row, the tooltip and the mirror carry it
 D02|287|header controls → status-row buttons ¦ D02|290|**Jump to live**
 D02|291|locate on synced charts ¦ D02|292|innermost cancel ¦ D02|295|`Shift+F10` / `Menu`
 D02|301|| K15 | ¦ D02|309|The a11y tree ¦ D02|313|"3 whale sells in 5 s, largest 410k at 64,012.0"
-D02|315|"Resumed, 412 prints inserted" ¦ D02|317|the chip is visible; the list stops
-D02|322|"Filter applied: 2 filters active"
+D02|314|on-demand summary ¦ D02|315|"Resumed, 412 prints inserted" ¦ D02|317|the chip is visible; the list stops
+D02|321|over-threshold strip ¦ D02|322|"Filter applied: 2 filters active"
 D02|325|the readout, the buffered count, every row arrival
 D02|327|E22-D04 owns the announcement policy
 D02|370|N rows per rAF in one fragment write, the readout at ≤ 2 Hz
-D02|412|**Contradictions — inherited from the memo ¦ D02|416|"live-region-throttled table"
+D02|348|(tooltip "Side (taker): Buy / Sell") ¦ D02|412|**Contradictions — inherited from the memo ¦ D02|416|"live-region-throttled table"
 D02|432|the pulse is 0 (E22-D04) ¦ D02|456|| D02-C14 | ¦ D02|479|| D02-G1 | ¦ D02|481|| D02-G3 |
 D02|485|| D02-G7 | ¦ D02|498|≤1 whale announcement per 5 s is tolerable
 D03|202|**aged = the PROPOSED token `opacity.bubble.aged` = 0.8**
@@ -179,6 +182,12 @@ SITE_ROWS = {
 }
 SITE_LEADS = {"Every cut is ": "A37", "The policy is ": "A38", "The sign-off is ": "A28"}
 WALK = "owner walkthrough: post-Done (#2701)"
+# A38's gates, per announcement row's Gate cell (section 7): the suppression may not be weakened
+AN_GATES = {
+    "AN-01": "the opt-in on; no tape row focused; `verbosity` not `low`",
+    "AN-02": "as AN-01",
+    "AN-08": "suppressed: a tape row focused, or `verbosity` `low`; `announce_prices` not read",
+}
 # The ruled words, by ruling (R577 = #577 6516721939; LA = the #2701 ledger addendum A rows A37 and
 # A38, 6516702193); each stands in the spec, and in the saved copy given with --source. Compared
 # case-blind with backticks and bold marks removed.
@@ -258,6 +267,7 @@ CITED_COLS = ("property", "fromto", "timing", "ac1", "reduce", "cost")
 DASHES = {"—", "-", "–", "n/a", "N/A"}
 # the announcement simulation (A38; L577 BQ-09): seconds, prints/s, whale share, seed, window ms
 SIM_S, SIM_RATE, SIM_SHARE, SIM_SEED, WINDOW_MS, SIM_MAX = 60, 2000, 0.0016, 577, 5000, 12
+SIM_HOLD = (20_000.0, 30_000.0)  # the second run: a row focused (or `verbosity` `low`), ms
 HZ, RUNG_HZ, BYTES, AGED_MS = 60, 30, 4, 60_000
 THEMES = ("dark", "light", "hc")
 FLASH_DL, FLASH_DARK = 0.1, 0.8  # WCAG 2.3.1's general flash, as E05-D03 applies it
@@ -521,15 +531,25 @@ def trunc(x: float, nd: int) -> str:
     return f"{v:,.{nd}f}".replace(",", " ")
 
 
-def simulate() -> tuple[int, int, list[float]]:
-    """A38's throttle over SIM_S s of prints at SIM_RATE /s: (prints, whales, write times).
+class Sim(NamedTuple):
+    prints: int
+    whales: int
+    dropped: int
+    writes: list[float]
+
+
+def simulate(hold: tuple[float, float] | None = None) -> Sim:
+    """A38's throttle over SIM_S s of prints at SIM_RATE /s, suppressed over `hold` (ms, half-open).
 
     Every print reaches the announcer; only a whale enters it. A whale after a quiet is written at
     once and opens a half-open window; whales inside it are summed and written at its close, which
-    opens the next; a window that closes empty ends the run. The latest window replaces."""
+    opens the next; a window that closes empty ends the run. The latest window replaces. While
+    suppressed (a row focused, or `verbosity` `low`) a whale is dropped, not held; when suppression
+    begins the open window's pending sum is dropped and the window keeps its clock."""
     rng, step, horizon = random.Random(SIM_SEED), 1000 / SIM_RATE, SIM_S * 1000
     writes: list[float] = []
-    pending, end, whales, prints = 0, -1.0, 0, SIM_S * SIM_RATE
+    pending, end, whales, prints, dropped = 0, -1.0, 0, SIM_S * SIM_RATE, 0
+    begun = hold is None
 
     def close_until(t: float) -> float:
         nonlocal pending
@@ -544,17 +564,22 @@ def simulate() -> tuple[int, int, list[float]]:
 
     for i in range(prints):
         t = i * step
-        if rng.random() >= SIM_SHARE:
+        whale = rng.random() < SIM_SHARE
+        if hold is not None and not begun and t >= hold[0]:
+            end, pending, begun = close_until(hold[0] - 1e-6), 0, True  # the pending sum dropped
+        if not whale:
             continue  # not a whale: never announced
         whales += 1
         end = close_until(t)
-        if end < 0:
+        if hold is not None and hold[0] <= t < hold[1]:
+            dropped += 1  # suppressed: dropped, not held
+        elif end < 0:
             writes.append(t)
             end = t + WINDOW_MS
         else:
             pending += 1
     close_until(horizon - 1e-6)
-    return prints, whales, [w for w in writes if w < horizon]
+    return Sim(prints, whales, dropped, [w for w in writes if w < horizon])
 
 
 def lum(hex6: str) -> float:
@@ -581,10 +606,16 @@ def gate_arith(ctx: Ctx, r: Result) -> None:
     limits = ctx.base["limits.py"]
     vis = int((re.search(r"VISIBLE_BUBBLES_MAX: Final = (\d+)", limits) or [0, 0])[1])
     cap = int((re.search(r"BUBBLE_FLASH_MAX_HZ: Final = (\d+)", limits) or [0, 0])[1])
-    prints, whales, writes = simulate()
+    prints, whales, _, writes = simulate()
     gap = min((b - a for a, b in itertools.pairwise(writes)), default=0.0)
     if len(writes) > SIM_MAX or gap < WINDOW_MS:
         r.fail("G5-ARITH", f"the throttle wrote {len(writes)} times, closest {gap} ms apart")
+    held = simulate(SIM_HOLD)
+    hgap = min((b - a for a, b in itertools.pairwise(held.writes)), default=0.0)
+    inside = [w for w in held.writes if SIM_HOLD[0] <= w < SIM_HOLD[1]]
+    if len(held.writes) > SIM_MAX or hgap < WINDOW_MS or inside:
+        r.fail("G5-ARITH", f"the suppressed run wrote {inside} inside the span, closest {hgap} ms")
+    lo, hi = (trunc(x, 0) for x in SIM_HOLD)
     late, vs = trunc(1000 / RUNG_HZ, 1), trunc(vis, 0)
     sentences = [
         (
@@ -592,6 +623,12 @@ def gate_arith(ctx: Ctx, r: Result) -> None:
             f"whale share of {SIM_SHARE * 100:.2f} % (seed {SIM_SEED}, L577 BQ-09), the opt-in on "
             f"and no row focused: {whales} whales, {len(writes)} announcements, every one "
             f"whale-class, the closest two {trunc(gap, 0)} ms apart."
+        ),
+        (
+            f"A second run with the same prints and a row focused from {lo} ms up to {hi} ms "
+            f"(`verbosity` `low` is the same input): {held.dropped} whales seen while suppressed "
+            f"and dropped, {len(held.writes)} announcements, none inside the focused span, the "
+            f"closest two {trunc(hgap, 0)} ms apart."
         ),
         f"At {HZ} Hz one frame is {trunc(1000 / HZ, 1)} ms.",
         f"{trunc(SIM_RATE, 0)} prints/s is {SIM_RATE // HZ} prints a frame.",
@@ -618,6 +655,7 @@ def gate_arith(ctx: Ctx, r: Result) -> None:
         if got.get(rid) != cells:
             r.fail("G5-ARITH", f"{rid}: section 6 reads {got.get(rid)}, recomputed {cells}")
     r.numbers["simulation"] = {"prints": prints, "whales": whales, "writes": len(writes)}
+    r.numbers["suppressed_run"] = {"dropped": held.dropped, "writes": len(held.writes)}
     r.numbers["flash"] = [x[-1] for x in want]
 
 
@@ -648,6 +686,10 @@ def gate_ruled(ctx: Ctx, r: Result) -> None:
             seen[lead] = seen.get(lead, 0) + 1
     if missing := sorted(k.strip() for k in (*SITE_ROWS, *SITE_LEADS) if k not in seen):
         r.fail("G6-RULED", f"no stamp at {missing}")
+    an = by_id(section(ctx.spec, "7"), "AN")
+    for rid, gate in AN_GATES.items():
+        if len(an.get(rid, [])) != 8 or an[rid][6] != gate:
+            r.fail("G6-RULED", f"{rid}'s Gate cell does not read A38's {gate!r}")
     text = norm(ctx.spec)
     for name, pins in RULING_PINS.items():
         for pin in pins:
@@ -820,7 +862,7 @@ def gate_assert(ctx: Ctx, r: Result) -> None:
 # --- G11: no boards ---------------------------------------------------------------------------
 def gate_boards(ctx: Ctx, r: Result) -> None:
     hits = [p for p in BOARD_REFS if re.search(p, ctx.spec)]
-    if BOARDS_LINE not in ctx.spec or hits:
+    if f"**{BOARDS_LINE}.**" not in section(ctx.spec, "0") or hits:
         r.fail("G11-BOARDS", f"{BOARDS_LINE!r} does not stand alone; board references {hits}")
 
 
@@ -888,6 +930,12 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G9-FROW", regex(r"^(\| §3\.4 item 7: .*?\| at risk +\| )interim path: ", r"\1")),
     ("G10-ASSERT", regex(r"^(\| FP-07 .*?)Q02-24: ", r"\1")),
     ("G11-BOARDS", sub(BOARDS_LINE + ".**", BOARDS_LINE + ".** PENDING.")),
+    ("G11-BOARDS", sub("**" + BOARDS_LINE + ".**", "**Boards.**")),
+    ("G6-RULED", regex(r"^(\| AN-01 .*?)`verbosity` not `low`", r"\1any verbosity")),
+    ("G6-RULED", regex(r"^(\| AN-01 .*?)no tape row focused; ", r"\1")),
+    ("G6-RULED", regex(r"^(\| AN-08 .*?); `announce_prices` not read", r"\1")),
+    ("G5-ARITH", sub("none inside the focused span", "one inside the focused span")),
+    ("G10-ASSERT", regex(r"^(\| AN-08 .*?)Q04-17: ", r"\1")),
 )
 
 
@@ -951,7 +999,8 @@ def main(argv: list[str]) -> int:
         out = [f"FAIL {line}" for line in res.fails] + [f"WARN {line}" for line in res.warns]
         out.append(
             f"rows {n.get('rows')} (cuts {n.get('cuts')}); DNA {n.get('dna')}; simulation "
-            f"{n.get('simulation')}; flash {n.get('flash')}; stamps {n.get('stamps')}; cites "
+            f"{n.get('simulation')} (suppressed run {n.get('suppressed_run')}); flash "
+            f"{n.get('flash')}; stamps {n.get('stamps')}; cites "
             f"{n.get('cites')} ({n.get('spans')} spans, {n.get('pins')} pins; BQ base "
             f"{n.get('bq_base')}); ruling pins {n.get('ruling_pins')} (saved copies "
             f"{n.get('sources_checked')}); findings {n.get('findings')}; verdicts "
