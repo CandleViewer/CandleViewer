@@ -653,7 +653,7 @@ describe("the page's host env", () => {
       vi.advanceTimersByTime(16);
       expect(cb).toHaveBeenCalledTimes(2);
       expect(typeof bare.now()).toBe("number");
-      expect(bare.probe()).toBe("full");
+      expect(bare.probe().profile).toBe("full");
       expect(bare.correlationId()).toMatch(/^cv-[0-9a-f]{12}-\d+$/);
     } finally {
       vi.unstubAllGlobals();

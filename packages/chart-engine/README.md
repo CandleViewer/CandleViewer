@@ -209,6 +209,28 @@ render runtime runs each chart's frames through a `FrameScheduler` on its one sh
 | BQ-46 | Sub-range patches | §3.3: each mutation's range feeds a partial `bufferSubData`.           | `patch(nodeId, range)` unions a frame's ranges per batch, rebasing a pending range by `indexShift` (+ after a prepend, − after an evicting append); a `replace` keeps only its own range. One `uploadSubRange` per batch per frame, in logical indices after the rebase: E11-S02 maps them to physical slots through the store's current head, and uploads in full after a `BarStore` reallocation (`grow()` re-linearises the slots and does not signal the builder). A new batch uploads its whole range once. A batch is never released (no node removal yet): the PR that adds removal frees it, so a re-added id uploads in full. The store-to-node mapping stays the runtime's (BQ-31). |
 | BQ-47 | Faults (`26` §11) | Never take down the chart.                                             | A throwing mutation or hook ends its frame and the throw reaches the runtime's per-chart catch; the scheduler re-wakes only for the queue left (in order, nothing lost), else it parks, re-wakeable, so a throwing collect does not spin.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
+## WebGL2 backend (E11-S02 PR1)
+
+`src/gl/` holds the WebGL2 backend's foundation: `GlRegistry`, the single owner of every GL object
+(branded handles, a generation counter, invalidate-all and recreate in dependency order, the
+`engine.gl.*` counts); context acquisition with the E10 attributes; and the capability probe
+with the pure `selectProfile(caps)`, whose report rides on the worker's `ready` message.
+Programs, draw submission and context-loss recovery follow in PR2 and PR3.
+
+## Design deltas (E11-S02 PR1; from BQ-48, as BQ-42 to BQ-47 are E11-S01 PR3's)
+
+| BQ    | Where      | `26` / the ticket                                              | Shipped                                                                                                                                                                                                                                                                                                                                                                   |
+| ----- | ---------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BQ-48 | Layout     | `src/gl/GLBackend.ts`; the four `ENGINE_*` codes.              | Kebab-case modules in `src/gl/`, DOM-free under `tsconfig.core.json` with a hand-written `GL2Like` and `GL` enum table (no DOM lib). ESLint bans every DOM global there; depcruise forbids `src/(core\|layers\|scene\|model)` → `src/gl` and `src/gl` → `src/(host\|api\|worker)`. The four codes are constants in `protocol.ts`, posted with `recoverable` from PR2/PR3. |
+| BQ-50 | Profiles   | `full` needs "adequate `MAX_TEXTURE_SIZE`" and the extensions. | `full`: WebGL2, `MAX_TEXTURE_SIZE` ≥ 4096, `MAX_VERTEX_ATTRIBS` ≥ 16, `MAX_TEXTURE_IMAGE_UNITS` ≥ 8; the float extensions are recorded, not required. `reduced` below; `degraded-2d` without WebGL2 or with a failed context. Each reduced limit is one plain-language reason in `ready.capabilities` (table in `26` §3.4).                                               |
+| BQ-57 | Ownership  | BQ-19: detection was E11-T05's.                                | E11-S02 owns the probe and `selectProfile`; E11-T05 owns the 2D drawing. The throwaway probes in `render-worker.ts` and `host/mount.ts` now run `probeCanvas`. Only `registry.ts` calls `create*`, and no module outside `src/gl` names its `Handle` brand (`test/gl/ownership.test.ts`).                                                                                 |
+| BQ-62 | Attributes | `desynchronized: true`, `powerPreference: 'high-performance'`. | Both are hints a browser may ignore, so the attributes `getContextAttributes()` reports are recorded, not the ones asked for; a throwing `getContext` is a failed context (`degraded-2d`).                                                                                                                                                                                |
+| BQ-63 | Tests      | A GL backend under unit test.                                  | No new dependency (no headless-gl, no ADR): `test/gl/fake-gl.ts` is hand-written, with a call log, loss behaviour and fault injection at call N. `bench/scenes/gl-registry.ts` invalidates and recreates 1 000 resources (counted in `unit`, timed in `*.perf.test.ts` at ≤ 5 ms).                                                                                        |
+
+Shader sources (`src/gl/shaders/**`, PR2) may not use an interpolated template literal (ticket
+Security: no GLSL built from data). The unmasked GPU string in the report comes only from
+`WEBGL_debug_renderer_info` and is for SCR-046 alone.
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/chart-engine build` — tsup ESM build with `.d.ts` (entries:

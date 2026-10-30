@@ -5,6 +5,7 @@
 import { startWorker } from "../../src/worker/render-worker.js";
 import type { HostEnv, WorkerLike } from "../../src/worker/host.js";
 import type { FromWorker } from "../../src/worker/protocol.js";
+import { FakeGl, FULL, ROOMY } from "../gl/fake-gl.js";
 
 const move = (b: ArrayBuffer): ArrayBuffer => structuredClone(b, { transfer: [b] });
 
@@ -45,7 +46,7 @@ export class FakeWorker implements WorkerLike {
       },
       OffscreenCanvas: class {
         getContext(): unknown {
-          return webgl2 ? {} : null;
+          return webgl2 ? new FakeGl({ params: ROOMY }) : null;
         }
       },
     };
@@ -86,7 +87,7 @@ export function fakeEnv(over: Partial<HostEnv> = {}): HostEnv {
     },
     // Fake timers fake Date, so this clock advances with vi.advanceTimersByTime.
     now: () => Date.now(),
-    probe: () => "full",
+    probe: () => FULL,
     correlationId: () => {
       ids += 1;
       return `cv-test-${ids}`;

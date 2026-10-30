@@ -95,7 +95,7 @@ export function createChart(opts: ChartOptions): Chart {
 
   function stats(): FrameStats {
     if (lastStats !== null) return lastStats;
-    renderProfile ??= probeRenderProfile(doc);
+    renderProfile ??= probeRenderProfile(doc).profile;
     return {
       fps: 0,
       frameTimeMsP50: 0,

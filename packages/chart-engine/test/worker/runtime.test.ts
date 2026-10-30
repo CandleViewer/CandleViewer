@@ -1,5 +1,6 @@
 // The render runtime on a synchronous bus (E11-T02): the one implementation both run modes use.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NO_WEBGL2_REASON } from "../../src/gl/capability.js";
 import { probeWorker, startWorker } from "../../src/worker/render-worker.js";
 import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtime.js";
 import {
@@ -10,6 +11,7 @@ import {
   type FromWorker,
   type ToWorker,
 } from "../../src/worker/protocol.js";
+import { FakeGl, FULL, ROOMY } from "../gl/fake-gl.js";
 
 interface Ctx {
   fillStyle: unknown;
@@ -75,7 +77,7 @@ beforeEach(() => {
     now: () => Date.now(),
     probe: () => {
       probes += 1;
-      return "full";
+      return FULL;
     },
   });
 });
@@ -91,8 +93,8 @@ describe("render loop", () => {
     expect(out).toEqual([]);
     frame();
     expect(of("ready")).toEqual([
-      { t: "ready", id: 1, runMode: "inline", renderProfile: "full" },
-      { t: "ready", id: 2, runMode: "inline", renderProfile: "full" },
+      { t: "ready", id: 1, runMode: "inline", renderProfile: "full", capabilities: FULL },
+      { t: "ready", id: 2, runMode: "inline", renderProfile: "full", capabilities: FULL },
     ]);
     expect(probes).toBe(1);
     expect(a.ctx.fills).toEqual(["#000000"]);
@@ -434,10 +436,11 @@ describe("worker entry", () => {
       id: 1,
       runMode: "worker",
       renderProfile: "degraded-2d",
+      capabilities: { profile: "degraded-2d", reasons: [NO_WEBGL2_REASON], caps: null },
     });
     const gl = class {
       getContext(): unknown {
-        return {};
+        return new FakeGl({ params: ROOMY });
       }
     };
     const throws = class {
@@ -445,7 +448,7 @@ describe("worker entry", () => {
         throw new Error("no");
       }
     };
-    expect(probeWorker({ ...scope, OffscreenCanvas: gl })).toBe("full");
-    expect(probeWorker({ ...scope, OffscreenCanvas: throws as never })).toBe("degraded-2d");
+    expect(probeWorker({ ...scope, OffscreenCanvas: gl }).profile).toBe("full");
+    expect(probeWorker({ ...scope, OffscreenCanvas: throws as never }).profile).toBe("degraded-2d");
   });
 });

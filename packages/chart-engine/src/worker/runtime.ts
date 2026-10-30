@@ -15,11 +15,11 @@ import {
   rejectReason,
   STORE_IDS,
   type ChartConfig,
+  type CapabilityReport,
   type ChartId,
   type Command,
   type FromWorker,
   type LodLevels,
-  type RenderProfile,
   type RunMode,
   type StoreId,
   type ThemeLut,
@@ -49,7 +49,7 @@ export interface RuntimeDeps {
   requestFrame(cb: () => void): void;
   now(): number;
   /** The capability probe behind the `ready` report; run once, on the first frame. */
-  probe(): RenderProfile;
+  probe(): CapabilityReport;
 }
 
 export interface RenderRuntime {
@@ -103,7 +103,7 @@ const describe = (n: scene.FrameNotice): string => {
 export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   const charts = new Map<ChartId, Instance>();
   let scheduled = false;
-  let profile: RenderProfile | null = null;
+  let report: CapabilityReport | null = null;
 
   const fail = (id: ChartId | null, message: string): void => {
     deps.post({ t: "error", id, code: ENGINE_DECODE_ERROR, message, recoverable: true });
@@ -307,10 +307,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
 
   function render(inst: Instance): void {
     const start = deps.now();
-    const renderProfile = (profile ??= deps.probe());
+    const capabilities = (report ??= deps.probe());
+    const renderProfile = capabilities.profile;
     if (!inst.ready) {
       inst.ready = true;
-      deps.post({ t: "ready", id: inst.id, runMode: deps.runMode, renderProfile });
+      deps.post({ t: "ready", id: inst.id, runMode: deps.runMode, renderProfile, capabilities });
     }
     const ctx = inst.canvas.getContext("2d") as Context2DLike | null;
     if (ctx !== null) {
