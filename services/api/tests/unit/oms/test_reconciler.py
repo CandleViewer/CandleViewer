@@ -89,6 +89,31 @@ async def test_fetch_fails_on_a_row_of_another_account(monkeypatch: pytest.Monke
     assert w.oms.log == []
 
 
+async def test_a_row_of_another_account_pages_once_per_episode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BQ-12, C-2.11: the fetch's row of another account pages once while it recurs; an order
+    diff that meets none ends the episode, so the next one pages again."""
+    w = World()
+    real = w.venue.open_orders
+
+    async def foreign(*_a: object, **_k: object) -> list[object]:
+        return [remote(account_id=OTHER)]
+
+    page = ("page", "Reconciliation read a row of another account.")
+    monkeypatch.setattr(w.venue, "open_orders", foreign)
+    for _ in range(2):
+        with pytest.raises(FetchError):
+            await w.run()
+    assert w.oms.pages == [page]
+    monkeypatch.setattr(w.venue, "open_orders", real)
+    await w.run()  # read none: the episode is over
+    monkeypatch.setattr(w.venue, "open_orders", foreign)
+    with pytest.raises(FetchError):
+        await w.run()
+    assert w.oms.pages == [page, page]
+
+
 async def test_fetch_lists_an_unreadable_handover_by_its_id_as_a_standing_item() -> None:
     w = World()
     w.oms.unreadable = [7]

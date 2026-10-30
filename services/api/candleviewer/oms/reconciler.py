@@ -11,7 +11,8 @@ root binds any of it yet (PR 2b), so nothing here runs in production.
   as a rate-limited read does; the reads run one after another, so the fetch stops at the first
   rate-limit answer (C-12.7). Every row must name the account asked for (BQ-12, C-2.11): the
   adapter drops and counts another account's row (ruling R12), and a row that reaches the pass all
-  the same fails the fetch, as a failed read does. A hand-over entry that no longer reads is listed
+  the same fails the fetch, as a failed read does, and pages once per episode, as one the diff's
+  reads meet does. A hand-over entry that no longer reads is listed
   in `errors` (`handover_unreadable`, by its id), a standing item.
 * `diff` plans steps 2 to 3d and steps 4 and 5's tests, and applies nothing. One row it cannot plan
   goes to `errors` and the plan goes on; steps 4 and 5 are planned from step 1's reads alone, so no
@@ -174,6 +175,9 @@ _EXEC_TYPES: Final[Mapping[str, ExecType]] = {
     "settle": "Settle", "session_settle_pnl": "SessionSettlePnl",
 }  # fmt: skip
 _RATE_LIMITED: Final = (RateLimitError, RateBudgetExceededError)
+#: The page for a row of another account met in the pass (BQ-12, C-2.11): a key and an account
+#: mixed up. Its episode ends with an order diff that met none.
+_ANOTHER: Final = "oms_rows_of_another_account"
 
 
 # --- Ports ---------------------------------------------------------------------------------------
@@ -1005,6 +1009,7 @@ class Reconciler:
         if foreign:
             _log().critical("reconcile_rows_of_another_account", account_id=str(account_id),
                             rows=foreign, pass_id=pass_id)  # fmt: skip
+            self.page_once(_ANOTHER, account_id)
             raise FetchError("other_account")  # BQ-12, C-2.11: a key and an account mixed up
         return Fetched(
             account=account,
@@ -1193,7 +1198,7 @@ class _OrderDiff:
         self._port = p.router.port_for(self._f.account.environment)
         rows = tuple(await _bounded(p.orders.unfinished_for(self._account), PORT_TIMEOUT_S))
         if any(row.exchange_account_id != self._account for row in rows):
-            raise _AnotherAccount
+            raise self._another("unfinished_for")
         self._bound = {r.exchange_order_id: r for r in rows if r.exchange_order_id}
         self._unbound = {r.order_link_id: r for r in rows if not r.exchange_order_id}
         self._by_xid.update(self._bound)
@@ -1206,6 +1211,8 @@ class _OrderDiff:
             self._plan.actions.extend(KeepFill(e, empty_read=False) for e in fills)
         await self._step_3c(rest)
         await self._step_3d()
+        if all(e.kind != _AnotherAccount.__name__ for e in self._draft.errors):
+            self._r.rearm((_ANOTHER,), self._account, lambda _key: True)  # read none: over
 
     async def _unapplied(self) -> list[Execution]:
         """Step 1's fills and the hand-overs', deduped by `exec_id`, less those stored already
@@ -1430,7 +1437,7 @@ class _OrderDiff:
                 self._account,
                 xid,
             ):
-                raise _AnotherAccount
+                raise self._another("get_by_exchange_order_id", xid)
             self._by_xid[xid] = row
         return self._by_xid[xid]
 
@@ -1439,7 +1446,7 @@ class _OrderDiff:
             call = self._p.orders.get_by_link_id(self._account, link)
             row = await _bounded(call, PORT_TIMEOUT_S)
             if row is not None and row.exchange_account_id != self._account:
-                raise _AnotherAccount
+                raise self._another("get_by_link_id", link)
             self._by_link[link] = row
         return self._by_link[link]
 
@@ -1477,7 +1484,7 @@ class _OrderDiff:
             self._failed[key] = type(exc).__name__
             raise _Unread(type(exc).__name__) from None
         if any(o.account_id != self._account for o in orders):
-            raise _AnotherAccount
+            raise self._another("order_history", value)
         found = {
             o.exchange_order_id: o
             for o in orders
@@ -1487,6 +1494,17 @@ class _OrderDiff:
             raise _Unread("ambiguous")
         self._reads[key] = next(iter(found.values()), None)
         return self._reads[key]
+
+    def _another(self, read: str, subject: str | None = None) -> _AnotherAccount:
+        """A read of the diff answered a row of another account (BQ-12, C-2.11): logged by the
+        read and the id it asked for, never the row, and paged once per episode; the step that
+        made the read lists it in `errors`."""
+        _log().critical(
+            "reconcile_row_of_another_account", account_id=str(self._account), read=read,
+            subject=subject, pass_id=self._f.pass_id,
+        )  # fmt: skip
+        self._r.page_once(_ANOTHER, self._account)
+        return _AnotherAccount()
 
     def _matching(self, order: Order) -> RecordedStopRow | None:
         """The record of the order's own position it matches (Sec.8.8 rule 6), from the copy."""
@@ -1511,6 +1529,7 @@ _PAGES: Final[Mapping[str, str]] = {
     "oms_stop_tighter_than_recorded": "A position's stop is tighter than the recorded one.",
     "oms_position_drift": "Reconciliation corrected a position the OMS held otherwise.",
     "oms_freeze_failed": "Reconciliation could not freeze an account for a finding with no intent.",
+    _ANOTHER: "Reconciliation read a row of another account.",
 }
 #: Each alert's summary, as fixed as a page's.
 _ALERTS: Final[Mapping[str, str]] = {"oms_reconcile_anomaly": "Reconciliation met an anomaly."}

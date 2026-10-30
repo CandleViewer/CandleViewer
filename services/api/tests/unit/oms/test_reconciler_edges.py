@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.domain.order_link import ext_key
 from candleviewer.oms import reconciler as rc
@@ -38,6 +39,9 @@ from tests.unit.oms.reconcile_rig import (
     row,
     waiting,
 )
+
+#: The page a row of another account raises (BQ-12, C-2.11).
+_ANOTHER_PAGE = ("page", "Reconciliation read a row of another account.")
 
 
 async def test_the_whole_pass_runs_its_phases_and_reports() -> None:
@@ -75,9 +79,13 @@ async def test_a_store_answering_another_accounts_row_plans_nothing_from_it(
     monkeypatch.setattr(w.oms, read, answers)
     w.venue.seed_order(remote(5), uid="1001")
     w.venue.seed_execution(fill("e5", n=5))
-    report = await w.run()
+    with capture_logs() as logs:
+        report = await w.run()
     assert w.oms.effects("push", "command", "discover") == []
     assert any(e.kind == "_AnotherAccount" for e in report.errors)
+    met = [e for e in logs if e["event"] == "reconcile_row_of_another_account"]
+    assert {(e["log_level"], e["read"]) for e in met} == {("critical", read)}
+    assert w.oms.pages == [_ANOTHER_PAGE]  # paged once (C-2.11), however many reads met it
 
 
 async def test_a_history_read_answering_another_accounts_order_is_refused(
@@ -90,10 +98,13 @@ async def test_a_history_read_answering_another_accounts_order_is_refused(
         return [remote(1, account_id=OTHER, state="cancelled")]
 
     monkeypatch.setattr(w.venue, "order_history", foreign)
-    report = await w.run()
+    with capture_logs() as logs:
+        report = await w.run()
     assert (w.oms.effects("command", "push"), report.errors) == (
         [], (PassError("3b", "_AnotherAccount", LINK.format(1)),),
     )  # fmt: skip
+    [met] = [e for e in logs if e["event"] == "reconcile_row_of_another_account"]
+    assert (met["read"], met["subject"], w.oms.pages) == ("order_history", "x1", [_ANOTHER_PAGE])
 
 
 async def test_two_orders_under_one_link_id_decide_nothing() -> None:
