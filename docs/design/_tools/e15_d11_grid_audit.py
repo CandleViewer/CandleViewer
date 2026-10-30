@@ -34,7 +34,7 @@ anchored value. The gates, each FAIL led by its code:
   A-17's 0.6.
 - [G-HEADER] the disclosure steps never widen; the never-dropped five stay at the minimum; the
   DOM-node and interactive-element budgets; each hostile case's verdict (a step, or the switcher)
-  follows from the minimums.
+  follows from the minimums, and so does the switcher's one cell (a step, or "scrolls").
 - [G-FOCUS] the plot rectangle is equal with and without the active-cell marker in every case;
   the marker sits inside the row; it never uses `color.focus.ring`.
 - [G-CUE] the measured cues: the divider thinner than the gutter, one move handle against the
@@ -58,13 +58,15 @@ anchored value. The gates, each FAIL led by its code:
   ledger rows cited where the ruling names them.
 - [G-ENTRY] CMP-253 carries every §0.1 field plus Forbidden, Performance, Motion spec and "Why a
   new entry, not a variant", and its Storybook tree.
-- [G-DEPUTY] the dry run and the blind check are open and the deputy's (lesson 3): the section
-  says so, the AC and DoD lines that depend on them stay `[ ]`, the brief stands in the appendix.
+- [G-DEPUTY] the deputy's runs (lesson 3): §21 cites the dry run's run of record (DRYRUN_ID) and
+  its AC row and DoD line read MET citing it; the blind check, which the record does not cover,
+  stays the deputy's, its AC and DoD lines `[ ]`; the brief stands in the appendix.
 - [G-MUTLIST] §19 lists the tool's mutations, one per gate, by name.
 - [G-ARM] the C-2.6 carve-out sentence stands verbatim in the spec, the pack and the hand-off
   (LOCKED covers entry and arming only; cancel, close, flatten and a stop change never gated); the
   maximised cell's arm state, the "Disarming" moment and the disarm-failure path stand in the spec,
-  their strings in the deck and their stories in the hand-off and A-8; the maximised row's budget.
+  their strings in the deck and their stories in the hand-off and A-8; the carve-out sentence
+  quoted in A-8's Forbidden field; the maximised row's budget.
 
 `--a-rows` prints §C as JSON, one record per row with its target file; `--self-test` applies one
 mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory copy and passes only when each
@@ -117,6 +119,7 @@ BQ_ID = "6522925619"  # #365's BQ list
 D12_RULING = "6522684771"  # #366's ruling of record (E15-D12)
 DELEGATION_ID = "6490317249"  # the 2026-10-29 delegation directive on #2701
 D13_RULING = "6519042539"  # #367's ruling of record (E15-D13)
+DRYRUN_ID = "6525266596"  # #365: the deputy's dry run, the run of record (lesson 3)
 E15 = "docs/design/E15/E15-"
 KEYS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -443,6 +446,17 @@ def wh(p: tuple[int, int]) -> str:
     return f"{p[0]}×{p[1]}"
 
 
+def switcher_h(dens: str) -> int:
+    """The switcher row: CMP-251's row (`space.panelheader.height.*`) and its bottom hairline."""
+    return px(f"space.panelheader.height.{dens}") + px("border.hairline")
+
+
+def one_cell(name: str, dens: str) -> tuple[int, int]:
+    """The one cell the switcher shows: the grid body less the switcher row."""
+    w, h = inner(name, dens)
+    return w, h - switcher_h(dens)
+
+
 # ---------------------------------------------------------------------------- the cell header
 
 
@@ -516,6 +530,14 @@ def verdict(cell: tuple[int, int], dens: str) -> str:
     return "switcher"
 
 
+def one_verdict(name: str, dens: str) -> str:
+    """The switcher's one cell: the first step whose row fits, or "scrolls" when the one cell is
+    itself under either minimum (it keeps its minimum and the grid body scrolls to it)."""
+    cell = one_cell(name, dens)
+    got = verdict(cell, dens)
+    return "scrolls" if got == "switcher" else got
+
+
 # (element, DOM nodes, interactive elements) of one cell header row at its fullest (BQ-08)
 ANATOMY: tuple[tuple[str, int, int], ...] = (
     ("the row (`role` none; the marker is its bottom border)", 1, 0),
@@ -539,6 +561,7 @@ CASES: tuple[tuple[str, str, str, str], ...] = (
     ("col", "3x3", "col", "compact"),
     ("colc", "3x3", "col", "comfortable"),
     ("z200", "2x2", "z200", "compact"),
+    ("z200c", "2x2", "z200", "comfortable"),
 )
 
 
@@ -556,9 +579,11 @@ def budget_values() -> dict[str, str]:
         "BUDGET:interactive.budget": str(INTERACTIVE_BUDGET),
         "BUDGET:nodes.max": str(sum(n for _, n, _ in ANATOMY_MAX)),
         "BUDGET:interactive.max": str(sum(i for _, _, i in ANATOMY_MAX)),
+        "BUDGET:col.width": str(slot("col", "compact")[0]),
     }
     for dens in DENSITIES:
         v[f"BUDGET:row.{dens}"] = str(ctl(dens))
+        v[f"BUDGET:switcher.{dens}"] = str(switcher_h(dens))
         v[f"BUDGET:minh.{dens}"] = str(min_h(dens))
         for s in STEPS:
             v[f"BUDGET:hdr.s{s}.{dens}"] = str(header_w(dens, s))
@@ -575,6 +600,8 @@ def budget_values() -> dict[str, str]:
         small = cells(arr, name, dens)[1]
         v[f"BUDGET:case.{case}.cell"] = wh(small)
         v[f"BUDGET:case.{case}.step"] = verdict(small, dens)
+        v[f"BUDGET:case.{case}.one"] = wh(one_cell(name, dens))
+        v[f"BUDGET:case.{case}.onestep"] = one_verdict(name, dens)
     return v
 
 
@@ -635,6 +662,12 @@ def header_problems() -> list[str]:
         fits = small[1] >= min_h(dens) and small[0] >= header_w(dens, STEPS[-1])
         if (got == "switcher") == fits:
             bad.append(f"{case}: the verdict {got} does not follow from the minimums")
+        one, step = one_cell(name, dens), one_verdict(name, dens)
+        if one[0] < small[0] or one[1] < small[1]:
+            bad.append(f"{case}: the switcher's one cell is smaller than a grid cell")
+        one_fits = one[1] >= min_h(dens) and one[0] >= header_w(dens, STEPS[-1])
+        if (step == "scrolls") == one_fits:
+            bad.append(f"{case}: the one cell's verdict {step} does not follow from the minimums")
     return bad
 
 
@@ -1220,6 +1253,7 @@ CITED: dict[tuple[str, int], str] = {
     ("15", 2892): "### CMP-227 EstimatedBadge",
     ("15", 2921): '"Arm state unknown — submit off", fails closed',
     ("15", 2922): "announces the change assertively",
+    ("15", 3120): "a long label truncates with its full name in the accessible name",
     ("15", 3160): "**246 — E08-D04, E36-D05, E12-D09, E15-D13 addenda (below)**",
     ("D02", 150): 'no separate "propagate symbol" toggle',
     ("D02", 532): "its env badge when chart trading can act from it",
@@ -1235,6 +1269,7 @@ CITED: dict[tuple[str, int], str] = {
     ("D03", 323): "CMP-229's attention pill",
     ("D04", 227): "`Esc` never restores",
     ("D04", 234): "the arm state (`LOCKED`)",
+    ("D06", 118): "the words become a count",
     ("D06", 557): "E15-D02 D-32 / A-13 removed the toggle",
     ("D06", 585): '"a cell\'s workspace group governs it"',
     ("D13", 307): "the §8 count lock",
@@ -1302,7 +1337,9 @@ def cite_problems(t: Texts) -> list[str]:
 
 SHA_OR_ID = re.compile(r"(?<![\w#/-])([0-9a-f]{10})(?![\w-])")
 KNOWN_SHAS = frozenset({BASE, BQ_BASE})
-KNOWN_IDS = frozenset({RULING_ID, LEDGER_ID, BQ_ID, D12_RULING, DELEGATION_ID, D13_RULING})
+KNOWN_IDS = frozenset(
+    {RULING_ID, LEDGER_ID, BQ_ID, D12_RULING, DELEGATION_ID, D13_RULING, DRYRUN_ID}
+)
 
 
 def pin_ref_problems(t: Texts) -> list[str]:
@@ -1597,21 +1634,43 @@ def in_order(text: str, phrases: tuple[str, ...]) -> bool:
 
 # ---------------------------------------------------------------------------- the deputy (lesson 3)
 
-DEPUTY_LINE = "to be run by the orchestrator's deputy (a reader outside E15), requested at READY"
+DEPUTY_LINE = (
+    "still to be run by the orchestrator's deputy (a reader outside E15), requested at PR 3's READY"
+)
+DRYRUN_LINE = f"The run of record is #365 comment {DRYRUN_ID}"
+DRYRUN_MET = f"MET: the deputy's run of record, #365 comment {DRYRUN_ID}"
 APPENDIX = "## Appendix — the dry-run and blind-check brief (verbatim)"
-DEPUTY_WORDS = re.compile(r"dry run|blind check", re.IGNORECASE)
+BLIND_WORDS = re.compile(r"blind check", re.IGNORECASE)
+DRY_WORDS = re.compile(r"dry run", re.IGNORECASE)
 
 
 def deputy_problems(pack: str) -> list[str]:
+    """The dry run is recorded (the run of record cited, its lines MET); the blind check, which the
+    record does not cover, stays open and the deputy's."""
     bad: list[str] = []
-    if norm(DEPUTY_LINE) not in norm(section(pack, "21.")):
-        bad.append("§21 does not leave the dry run and the blind check to the deputy")
+    s21 = norm(section(pack, "21."))
+    if norm(DEPUTY_LINE) not in s21:
+        bad.append("§21 does not leave the blind check to the deputy")
+    if norm(DRYRUN_LINE) not in s21:
+        bad.append("§21 does not cite the dry run's run of record")
+    met = 0
     for ln in lines(section(pack, "20.")):
-        if ln.startswith("- [x]") and DEPUTY_WORDS.search(ln):
-            bad.append(f"a DoD line on the dry run or the blind check is ticked: {ln[:50]!r}")
+        if BLIND_WORDS.search(ln):
+            if ln.startswith("- [x]"):
+                bad.append(f"a DoD line on the blind check is ticked: {ln[:50]!r}")
+        elif DRY_WORDS.search(ln) and ln.startswith("- ["):
+            met += 1
+            if not ln.startswith("- [x]") or norm(DRYRUN_MET) not in norm(ln):
+                bad.append(f"the dry run's DoD line is not MET citing the record: {ln[:50]!r}")
+    if met != 1:
+        bad.append(f"{met} DoD lines on the dry run (want 1)")
     for r in table_rows(section(pack, "Acceptance")):
-        if DEPUTY_WORDS.search(" ".join(r)) and "[ ]" not in r[-1]:
-            bad.append(f"the AC row {r[0][:30]!r} is not left open `[ ]`")
+        row = " ".join(r)
+        if BLIND_WORDS.search(row):
+            if "[ ]" not in r[-1]:
+                bad.append(f"the AC row {r[0][:30]!r} is not left open `[ ]`")
+        elif DRY_WORDS.search(row) and norm(DRYRUN_MET) not in norm(r[-1]):
+            bad.append(f"the AC row {r[0][:30]!r} is not MET citing the record")
     body = pack.split(APPENDIX, 1)
     if len(body) != 2 or "```text" not in body[1]:
         bad.append("the appendix with the verbatim brief is missing")
@@ -1870,6 +1929,9 @@ def arm_problems(t: Texts) -> list[str]:
         if not any(want in x for x in strings):
             bad.append(f"the arm string {want!r} is not in the deck")
     a8 = t.pack.split("#### A-8 ", 1)[-1].split("#### A-9 ", 1)[0]
+    forbidden = [ln for ln in lines(a8) if ln.startswith("- **Forbidden**:")]
+    if len(forbidden) != 1 or norm(CARVE_OUT) not in norm(forbidden[0]):
+        bad.append("A-8: the C-2.6 carve-out sentence is not quoted in CMP-253's Forbidden field")
     for name, text in (("hand-off", section(t.hand, "5.")), ("A-8", a8)):
         for story in ARM_STORIES:
             if not re.search(rf"\b{story}\b", text):
@@ -2107,7 +2169,26 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "a pinned cite whose words moved",
         _patch(CITED, ("14", 1141), "propagate the symbol"),
     ),
-    ("G-DEPUTY", "§21 no longer leaves the runs to the deputy", _sub("pack", DEPUTY_LINE, "run")),
+    (
+        "G-DEPUTY",
+        "§21 no longer leaves the blind check to the deputy",
+        _sub("pack", DEPUTY_LINE, "run"),
+    ),
+    (
+        "G-DEPUTY",
+        "the dry run's DoD line drops the record id",
+        _sub(
+            "pack",
+            f"- [x] The dry run rebuilding a cell header from the spec alone: {DRYRUN_MET}",
+            "- [x] The dry run rebuilding a cell header from the spec alone: MET",
+        ),
+    ),
+    ("G-DEPUTY", "§21 drops the run of record", _sub("pack", DRYRUN_LINE, "The run")),
+    (
+        "G-ARM",
+        "drop the carve-out from A-8's Forbidden field",
+        _sub("pack", f'(C-2.6): "{CARVE_OUT}"', "(C-2.6)"),
+    ),
     ("G-COPY", "a subsystem word in a deck string", _sub("spec", "this device", "this GPU")),
     (
         "G-ARM",

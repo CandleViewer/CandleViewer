@@ -30,26 +30,26 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason (`16` §11
 
 ## 3. Names and descriptions
 
-Names fixed at every width, step and zoom; the interval spelled; the sync group in the description, never the name (E15-D15 R-5; pack §7).
+Names fixed at every width, step and zoom; the interval spelled; the sync group in the description, never the name (E15-D15 R-5; pack §7); each description in the spec §6's order.
 
-| Element                           | Role     | Name                                                  | Description                                                                                               |
-| --------------------------------- | -------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| the grid                          | `region` | "Chart grid, 2 by 2, Live"                            | "4 charts. New charts join sync group A."                                                                 |
-| a cell                            | `region` | "Chart, BTCUSDT 4 hours, Live"                        | "Chart 1 of 4. Sync group A: symbol and crosshair. Chart trading locked: Maximise this chart to trade."   |
-| a demo cell                       | `region` | "Chart, ETHUSDT 1 hour, Demo"                         | "Chart 2 of 4. Sync group B: interval and crosshair. Chart trading locked: Maximise this chart to trade." |
-| an empty cell                     | `region` | "Empty chart cell, 3 of 4"                            | "Add a chart to this grid cell." (no chart, so no arm state to state)                                     |
-| the arrangement button            | `button` | "Grid arrangement, 2 by 2"                            | "Opens the arrangements."                                                                                 |
-| the grid's sync button            | `button` | "Sync for new charts, group A"                        | "Each chart follows its own sync group."                                                                  |
-| the symbol picker                 | `button` | "Symbol, BTCUSDT"                                     | —                                                                                                         |
-| the interval picker               | `button` | "Interval, 4 hours"                                   | —                                                                                                         |
-| the sync badge                    | `button` | "Sync group A"                                        | "Symbol and crosshair. Opens the sync menu."                                                              |
-| the environment badge             | text     | "Live"                                                | —                                                                                                         |
-| the cell menu                     | `button` | "Chart menu, BTCUSDT 4 hours"                         | —                                                                                                         |
-| a switcher tab                    | `tab`    | "Chart 1, BTCUSDT 4 hours, Live"                      | "Sync group A."                                                                                           |
-| the Restore button                | `button` | "Restore grid"                                        | —                                                                                                         |
-| the arm control (maximised cell)  | `button` | "Chart trading: locked" (CMP-229; "armed" when armed) | the time left (CMP-035), never in the name                                                                |
-| the Disarm button (disarm failed) | `button` | "Disarm chart trading, chart 3"                       | "Chart trading is still armed on chart 3."                                                                |
-| the Reduced chip                  | `button` | "Reduced detail"                                      | the reductions in words (spec CP-27)                                                                      |
+| Element                           | Role     | Name                                                  | Description                                                                                                                                                      |
+| --------------------------------- | -------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the grid                          | `region` | "Chart grid, 2 by 2, Live"                            | "4 charts. New charts join sync group A."                                                                                                                        |
+| a cell                            | `region` | "Chart, BTCUSDT 4 hours, Live"                        | "Chart 1 of 4. Sync group A: symbol and crosshair. Feed: Live; mark 64,011.5; last 64,011.0. Chart trading locked (entry only): Maximise this chart to trade."   |
+| a demo cell                       | `region` | "Chart, ETHUSDT 1 hour, Demo"                         | "Chart 2 of 4. Sync group B: interval and crosshair. Feed: Live; mark 3,412.25; last 3,412.20. Chart trading locked (entry only): Maximise this chart to trade." |
+| an empty cell                     | `region` | "Empty chart cell, 3 of 4"                            | "Add a chart to this grid cell." (no chart, so no arm state to state)                                                                                            |
+| the arrangement button            | `button` | "Grid arrangement, 2 by 2"                            | "Opens the arrangements."                                                                                                                                        |
+| the grid's sync button            | `button` | "Sync for new charts, group A"                        | "Each chart follows its own sync group."                                                                                                                         |
+| the symbol picker                 | `button` | "Symbol, BTCUSDT"                                     | —                                                                                                                                                                |
+| the interval picker               | `button` | "Interval, 4 hours"                                   | —                                                                                                                                                                |
+| the sync badge                    | `button` | "Sync group A"                                        | "Symbol and crosshair. Opens the sync menu."                                                                                                                     |
+| the environment badge             | text     | "Live"                                                | —                                                                                                                                                                |
+| the cell menu                     | `button` | "Chart menu, BTCUSDT 4 hours"                         | —                                                                                                                                                                |
+| a switcher tab                    | `tab`    | "Chart 1, BTCUSDT 4 hours, Live"                      | "Sync group A."                                                                                                                                                  |
+| the Restore button                | `button` | "Restore grid"                                        | —                                                                                                                                                                |
+| the arm control (maximised cell)  | `button` | "Chart trading: locked" (CMP-229; "armed" when armed) | the time left (CMP-035), never in the name                                                                                                                       |
+| the Disarm button (disarm failed) | `button` | "Disarm chart trading, chart 3"                       | "Chart trading is still armed on chart 3."                                                                                                                       |
+| the Reduced chip                  | `button` | "Reduced detail"                                      | the reductions in words (spec CP-27)                                                                                                                             |
 
 ## 4. Keyboard
 
