@@ -110,6 +110,15 @@ describe("what a close means (C7)", () => {
     expect(decision).toEqual({ ...OVER, fatal: true });
   });
 
+  // 23 4.4, 9.5: a revoked session's `bye` then 4401. Fatal, and never a refresh first: unlike a bare 4401
+  // (above), the client does not refresh its token to retry the close.
+  it("bye{4401, session_revoked, reconnect:false} never reconnects and never refreshes first", () => {
+    const revoked = bye(4401, { reason: "session_revoked", reconnect: false });
+    expect(decideClose({ code: 4401, bye: revoked, attempt: 1 })).toEqual({ ...OVER, fatal: true });
+    // the transport may drop after the bye, with a 1006 and no close frame
+    expect(decideClose({ code: 1006, bye: revoked, attempt: 1 })).toEqual({ ...OVER, fatal: true });
+  });
+
   it.each([1000, 1011, 4401])("a client stop on %i never reconnects and is not a fault", (code) => {
     const decision = decideClose({ code, attempt: 1, stoppedByClient: true });
     expect(decision).toEqual({ ...OVER, fatal: false });

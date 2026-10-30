@@ -72,34 +72,53 @@ export async function stubSessionsList(page: Page): Promise<void> {
 }
 
 export interface LeakGuard {
-  /** Awaits every pending body check, then fails if any forbidden value was seen (SR-012). */
+  /**
+   * Awaits every pending body check, then fails if any forbidden value was seen (SR-012), or if any body could
+   * not be read (fail closed): only a redirect's, which has none, is passed over.
+   */
   readonly flush: () => Promise<void>;
 }
 
 /**
- * Records the response bodies the page receives and fails on any forbidden value. It reads a body once its request
- * has finished, never on the `response` event: a request a navigation cancels never finishes and its `text()` never
- * settles, so `flush` would wait on it until the test timed out.
+ * Checks the response bodies the page receives, and those only (not request bodies, headers or cookies, not
+ * WebSocket frames, not other pages' or workers' requests), and fails on any forbidden value. It reads a body once
+ * its request has finished, never on the `response` event: a request a navigation cancels never finishes and its
+ * `text()` never settles, so `flush` would wait on it until the test timed out (nothing reached the page, so
+ * nothing is checked). It fails closed: a finished request whose body it cannot read fails the flush, so "read
+ * nothing" never passes as "found nothing". Playwright reads a body lazily and the page drops it on navigating
+ * away, so a test flushes before a navigation of its own.
  */
 export function watchForLeaks(page: Page, forbidden: readonly string[]): LeakGuard {
+  if (forbidden.some((f) => f === ""))
+    throw new Error("an empty forbidden value matches every body");
   const leaks: string[] = [];
+  const unread: string[] = [];
   const pending: Promise<void>[] = [];
   page.on("requestfinished", (request) => {
-    pending.push(
-      request
-        .response()
-        .then((res) => res?.text() ?? "")
-        .then((t) => {
-          for (const f of forbidden)
-            if (t.includes(f)) leaks.push(`${request.url()} leaked a ${f.length}-char value`);
-        })
-        .catch(() => undefined),
-    );
+    const where = `${request.method()} ${new URL(request.url()).pathname}`;
+    // never rejects: whatever stops a read lands in `unread`, which `flush` fails on
+    const check = async (): Promise<void> => {
+      let status = 0;
+      let text: string;
+      try {
+        const res = await request.response();
+        status = res?.status() ?? 0;
+        if (status >= 300 && status <= 399) return; // a redirect has no body to leak
+        if (res === null) throw new Error("no response");
+        text = await res.text();
+      } catch {
+        unread.push(`${where} (${status}): its body was not read, so not checked`);
+        return;
+      }
+      for (const f of forbidden)
+        if (text.includes(f)) leaks.push(`${request.url()} leaked a ${f.length}-char value`);
+    };
+    pending.push(check());
   });
   return {
     flush: async () => {
       await Promise.all(pending);
-      if (leaks.length > 0) throw new Error(leaks.join("; "));
+      if (leaks.length + unread.length > 0) throw new Error([...leaks, ...unread].join("; "));
     },
   };
 }

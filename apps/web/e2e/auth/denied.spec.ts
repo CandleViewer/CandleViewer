@@ -81,6 +81,7 @@ test("E09-TC-E06 a viewer's deep link to a denied route fetches none of the data
   for (const [path, heading] of DENIED) {
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+    await guard.flush(); // before the next navigation drops this page's bodies unread
   }
   expect(calls()).toContain("/api/v1/me"); // positive control: the watcher sees the SPA's own reads
   expect(calls().filter((call) => GUARDED.test(call.split("?")[0] ?? ""))).toEqual([]);

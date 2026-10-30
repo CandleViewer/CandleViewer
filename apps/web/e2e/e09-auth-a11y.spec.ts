@@ -26,6 +26,8 @@ export const E09_SCREENS: ReadonlyArray<{
   reason?: string;
   // Real-UI marker to assert instead of "no placeholder" (screen is mounted beside a StubRoute).
   marker?: string;
+  // A built screen with no page of its own to scan here: the spec whose tests scan it.
+  scannedIn?: string;
 }> = [
   { scr: "SCR-001", path: "/login" }, // LoginScreen (#1824), R-001
   {
@@ -45,7 +47,8 @@ export const E09_SCREENS: ReadonlyArray<{
     scr: "SCR-005",
     shipped: false,
     path: "/locked",
-    reason: "re-auth modal not built; R-005 is a stub",
+    reason: "a dialog over the current route (#1640): R-005 /locked only redirects to the terminal",
+    scannedIn: "auth/session.spec.ts (E09-TC-C02 scans the warning and the lock)",
   },
   { scr: "SCR-006", path: "/admin/users/new" },
   { scr: "SCR-017", path: "/invite/tok-a11y-0123456789" },
@@ -107,7 +110,7 @@ test("not-assessed screens are still placeholders (fails when one ships: audit i
   // A route a shipped screen also renders on (R-201: SCR-111 beside SCR-112) is no longer a placeholder.
   const shippedPaths = new Set(E09_SCREENS.filter((s) => s.shipped !== false).map((s) => s.path));
   for (const { path } of E09_SCREENS.filter(
-    (s) => s.shipped === false && !shippedPaths.has(s.path),
+    (s) => s.shipped === false && s.scannedIn === undefined && !shippedPaths.has(s.path),
   )) {
     await page.goto(path);
     await expect(page.getByText("This screen has not shipped yet.")).toBeVisible();
@@ -116,13 +119,18 @@ test("not-assessed screens are still placeholders (fails when one ships: audit i
 
 const SHIPPED = E09_SCREENS.filter((s) => s.shipped !== false);
 
-for (const { scr, path, shipped, marker } of E09_SCREENS) {
+for (const { scr, path, shipped, marker, scannedIn } of E09_SCREENS) {
   test(`${scr} ${path}: axe serious/critical`, async ({ page }) => {
     await stub(page);
     await page.goto(path);
     await page.waitForLoadState("networkidle");
     // Placeholder screens are reported as SKIPPED (not passed): axe on a stub proves nothing.
-    test.skip(shipped === false, "not-assessed: placeholder screen, no real UI to audit");
+    test.skip(
+      shipped === false,
+      scannedIn === undefined
+        ? "not-assessed: placeholder screen, no real UI to audit"
+        : `scanned in ${scannedIn}`,
+    );
     if (marker) await expect(page.getByText(marker)).toBeVisible();
     else await expect(page.getByText("This screen has not shipped yet.")).toHaveCount(0);
     const res = await new AxeBuilder({ page }).withTags([...AXE_GATE_TAGS]).analyze();
@@ -158,7 +166,7 @@ for (const { scr, path } of SHIPPED) {
 // ---- SCR-017 enrolment wizard: every step, not just the landing step (E09-Q04 review) ----
 // This is the only implemented enrolment flow (TOTP secret + recovery codes). It covers the
 // SR-enrolment, SC 3.3.1 (error identification), reflow/200% zoom and reduced-motion criteria
-// for what exists. SCR-002/003/005 remain not-assessed (not built).
+// for what exists. SCR-002/003 remain not-assessed (not built); SCR-005 is scanned in auth/session.spec.ts.
 const TOK = "tok-a11y-0123456789";
 
 async function stubWizard(page: Page, opts: { reject?: boolean } = {}): Promise<void> {

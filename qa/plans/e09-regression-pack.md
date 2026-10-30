@@ -89,16 +89,16 @@ uv run pytest -p no:randomly --no-cov -m perf tests/unit/auth/test_login_timing_
 
 ## B. Manual steps (run on a staging deploy)
 
-| Id  | Step                                                                                                                | Pass when                                                                                      |
-| --- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| M1  | Idle-lock and session-expiry screens (C02/C03 UI half): idle past the configured timeout, then unlock with password | Screen appears, data feed stays on, unlock works. Blocked on #1640 until SCR-005/112 are built |
-| M2  | Real-browser cookie behaviour: sign in on two contexts, sign out everywhere, reload both                            | Both land on sign-in; no stale shell                                                           |
-| M3  | Standalone TOTP enrolment and recovery-code screen (B01-B05)                                                        | Codes shown once; reload does not show them. Blocked on #1640 (SCR-003 not built)              |
-| M4  | Time 20 consecutive TOTP verifies on staging                                                                        | p95 within the SCR-002 budget in `docs/plan/14-screens-catalogue.md`                           |
-| M5  | From outside the tailnet, try to reach the API (E08)                                                                | Connection refused or timeout                                                                  |
-| M6  | Keyboard-only pass of login, step-up dialog, invite wizard                                                          | Every control reachable with visible focus; no trap                                            |
-| M7  | Re-run the four charters in `docs/qa/charters/` against staging with a browser and record real debriefs             | Debriefs updated; anomalies filed                                                              |
-| M8  | Log scan after one login, MFA and refresh on staging for session id, token, cookie and TOTP values (SR-122)         | No match in API or web logs                                                                    |
+| Id  | Step                                                                                                                | Pass when                                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| M1  | Idle-lock and session-expiry screens (C02/C03 UI half): idle past the configured timeout, then unlock with password | Screen appears, data feed stays on, unlock works (SCR-005 and SCR-112 are built)             |
+| M2  | Real-browser cookie behaviour: sign in on two contexts, sign out everywhere, reload both                            | Both land on sign-in; no stale shell                                                         |
+| M3  | Standalone TOTP enrolment and recovery-code screen (B01-B05)                                                        | Codes shown once; reload does not show them. Blocked: SCR-003 is not built (no owner ticket) |
+| M4  | Time 20 consecutive TOTP verifies on staging                                                                        | p95 within the SCR-002 budget in `docs/plan/14-screens-catalogue.md`                         |
+| M5  | From outside the tailnet, try to reach the API (E08)                                                                | Connection refused or timeout                                                                |
+| M6  | Keyboard-only pass of login, step-up dialog, invite wizard                                                          | Every control reachable with visible focus; no trap                                          |
+| M7  | Re-run the four charters in `docs/qa/charters/` against staging with a browser and record real debriefs             | Debriefs updated; anomalies filed                                                            |
+| M8  | Log scan after one login, MFA and refresh on staging for session id, token, cookie and TOTP values (SR-122)         | No match in API or web logs                                                                  |
 
 ## B2. Security controls (SR-xxx) not covered by a case row above
 
@@ -124,7 +124,7 @@ Every unsafe request needs the SR-041 double-submit token, except the five pre-s
 ## C. Gaps and deferrals (each cites an open issue unless marked untracked)
 
 - Server-side E2E clock for step-up and session expiry: #2086.
-- Session screens RTL/axe/Playwright, SCR-002/003/005/112 cases: #1640.
+- Session screens: SCR-005 and SCR-112 are built and covered (`apps/web/e2e/auth/session.spec.ts`; the real-backend lane, `e2e-auth-real.yml`, #2490). SCR-002 cases: #2711. SCR-003 cases: untracked (no owner ticket; to be filed at the post-GA sweep, #293 BQ-8).
 - Rules-manager grant isolation test: #2094; owner check shape: #2096.
 - k6 Argon2 timing header: #2097.
 - Password change during a live step-up: #2099.
