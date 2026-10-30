@@ -210,7 +210,7 @@ class ExecutionPushRow(ExecutionRow):
     """A row of the `execution` topic: G-8's execution row and its category."""
 
     metric_model = "execution_push"
-    documented = ExecutionRow.documented | frozenset({"isLeverage", "marketUnit", "execPnl"})
+    documented = ExecutionRow.documented | frozenset({"isLeverage", "marketUnit"})
 
     category: Literal["linear"]
 

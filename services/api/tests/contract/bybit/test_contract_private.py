@@ -11,7 +11,9 @@ USDT row is derived in-test (`_private.py`), never presented as evidence.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
+from decimal import Decimal
 
 import pytest
 
@@ -69,6 +71,20 @@ def test_every_documented_push_is_read_field_for_field(path: str) -> None:
     events = pp.read_push(pushed, account(), now_us=NOW_US)
     expected = PUSHES[path]
     assert [type(e.payload) for e in events] == ([] if expected is None else [expected])
+
+
+@pytest.mark.usefixtures("no_unknown_fields")
+def test_the_documented_closing_fill_carries_the_venues_closed_pnl() -> None:
+    """#848's post-Done note: the frame's fill closes `closedSize`, so its `execPnl` is the
+    execution's `closed_pnl` (24 §8.1), which the OMS stores in `executions.closed_pnl`."""
+    [frame] = frames("ws/private-execution.jsonl")
+    [row] = json.loads(frame)["data"]
+    pushed = pp.classify(frame)
+    assert isinstance(pushed, pp.Push)
+    [event] = pp.read_push(pushed, account(), now_us=NOW_US)
+    assert isinstance(event.payload, Execution)
+    assert Decimal(row["closedSize"]) > 0  # the documented fill closes a size
+    assert event.payload.closed_pnl == Decimal(row["execPnl"])
 
 
 @pytest.mark.usefixtures("no_unknown_fields")

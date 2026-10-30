@@ -146,6 +146,11 @@ def _optional_amount(value: object) -> Decimal | None:
     return None if value == "" else _decimal(value)
 
 
+def _optional_qty(value: object) -> Decimal | None:
+    """The venue writes "" for a quantity it does not state (`execution/list`'s `closedSize`)."""
+    return None if value == "" else _qty(value)
+
+
 def _ms(value: object) -> int:
     if not isinstance(value, str) or _MS_DIGITS.fullmatch(value) is None:
         raise ValueError("time must be ms digits")
@@ -170,6 +175,7 @@ OptAmount = Annotated[Decimal | None, BeforeValidator(_optional_amount)]
 #: it fails the reply here, never the neutral model after the parse.
 FeeRateText = Annotated[FeeRateValue, BeforeValidator(_decimal)]
 Quantity = Annotated[Decimal, BeforeValidator(_qty)]
+OptQuantity = Annotated[Decimal | None, BeforeValidator(_optional_qty)]
 #: A non-negative price, `0` included: a market order's row may carry one.
 Unsigned = Annotated[Decimal, BeforeValidator(_qty)]
 Millis = Annotated[int, BeforeValidator(_ms)]
@@ -345,7 +351,7 @@ class ExecutionRow(_Venue):
         {
             "orderPrice", "orderQty", "leavesQty", "createType", "orderType", "stopOrderType",
             "execFeeV2", "execValue", "tradeIv", "markIv", "markPrice", "indexPrice",
-            "underlyingPrice", "blockTradeId", "closedSize", "extraFees",
+            "underlyingPrice", "blockTradeId", "extraFees",
         }
     )  # fmt: skip
 
@@ -365,6 +371,10 @@ class ExecutionRow(_Venue):
     feeCurrency: Annotated[str, StringConstraints(max_length=16)]
     isMaker: bool
     seq: Annotated[int, Field(ge=0)]
+    #: The size this fill closed and the venue's closed PnL of it: "" or absent where a reply does
+    #: not state them (`execution/list` writes `closedSize: ""` and no `execPnl`).
+    closedSize: OptQuantity = None
+    execPnl: OptAmount = None
 
 
 class PositionRow(_Venue):
@@ -748,7 +758,8 @@ def to_execution(row: ExecutionRow, account: AccountRef, ts_ingest: TsUs) -> Exe
         fee_currency=row.feeCurrency,
         is_maker=row.isMaker,
         exec_type=EXEC_TYPES[row.execType],
-        closed_pnl=None,
+        # 24 §8.1: present on reducing fills, the venue's `execPnl` of the size the fill closed.
+        closed_pnl=row.execPnl if row.closedSize else None,
         ts_exec=row.execTime * 1000,
         ts_ingest=ts_ingest,
         seq=row.seq,
