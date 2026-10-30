@@ -2882,7 +2882,7 @@ export interface paths {
     };
     /**
      * Realised PnL per closed position (journal source)
-     * @description Mirrors `GET /v5/position/closed-pnl`, backfilled nightly and used to seed journal entries. Until that backfill lands it is served from the stored fills that carry a closed PnL (#915), one item per fill, newest first by fill time: `id` is the fill's, `side` the closed position's (the fill's opposite), `avg_exit_price` the fill's price, `closed_at` its time. A fill holds no entry price, closed size, entry or exit value, leverage or opening time, so `avg_entry_price`, `qty`, `cum_entry_value`, `cum_exit_value`, `leverage` and `opened_at` are absent, never estimated. An `exchange_account_ids` entry outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied`, audited (SR-E29-13); with none named, the list is every account the caller may view, of this server's environment. A malformed, foreign or expired `cursor` is `400 invalid_cursor`, a malformed parameter `400 validation_failed`.
+     * @description Mirrors `GET /v5/position/closed-pnl`, backfilled nightly and used to seed journal entries. Until that backfill lands it is served from the stored fills that carry a closed PnL (#915), one item per fill, newest first by fill time: `id` is the fill's, `side` the closed position's (the fill's opposite), `avg_exit_price` the fill's price, `closed_at` its time, and `closed_pnl` the fill's PnL less its own fee, the closing fill's (the venue's figure, which the backfill serves, is net of the opening fees too). A settlement or funding row, which carries a PnL and closes no size, is not carried, and a fill recovered by REST holds no closed PnL (the venue's execution list has none), so a complete listing needs the venue's closed-PnL endpoint. A fill holds no entry price, closed size, entry or exit value, leverage or opening time, so `avg_entry_price`, `qty`, `cum_entry_value`, `cum_exit_value`, `leverage` and `opened_at` are absent, never estimated. An `exchange_account_ids` entry outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied`, audited (SR-E29-13); with none named, the list is every account the caller may view, of this server's environment. A malformed, foreign or expired `cursor` is `400 invalid_cursor`, a malformed parameter `400 validation_failed`.
      */
     get: operations["listClosedPnl"];
     put?: never;
@@ -4831,6 +4831,15 @@ export interface paths {
      *     not exist, refuses the whole request alike with `403 account_scope_denied`: nothing is
      *     closed, no exchange call is made, and the refusal is audited. Once the scope check
      *     passes, `results` reports exchange outcomes only.
+     *
+     *     As shipped (E29-T07, #915): each account's open orders are cancelled first when
+     *     `cancel_open_orders` is true (never a position's recorded stop, C-2.6), then each open
+     *     position is closed whole as `closePosition` closes it, reduce-only and never refused for
+     *     want of the arm. It is not anchored by #5013's amendment: a repeat is answered from the
+     *     24 h record. Each close goes through the submission pipeline, whose first persist keeps
+     *     an anchor per position under `closeAllPositions` (`uuid5(key, position id)`), so a later
+     *     repeat's persist meets it and sends nothing; no replay reads those anchors yet. One
+     *     `position.flattened` record per account correlates its closes.
      */
     post: operations["closeAllPositions"];
     delete?: never;
@@ -19113,6 +19122,7 @@ export interface operations {
           "application/json": components["schemas"]["OrderAcceptance"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description). Nothing was sent for this request. `idempotency_in_flight` carries `Retry-After`. */
@@ -19140,6 +19150,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      501: components["responses"]["NotImplemented"];
       502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -19292,6 +19303,7 @@ export interface operations {
           "application/json": components["schemas"]["ReverseAcceptance"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description). Nothing was sent for this request. `idempotency_in_flight` carries `Retry-After`. */
@@ -19319,6 +19331,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      501: components["responses"]["NotImplemented"];
       502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -19436,8 +19449,13 @@ export interface operations {
           "application/json": components["schemas"]["BulkAccountResult"];
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
+      501: components["responses"]["NotImplemented"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

@@ -7728,6 +7728,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrderAcceptance" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
@@ -7755,6 +7756,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
         "502": { $ref: "#/components/responses/OrderExchangeError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -7837,6 +7839,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReverseAcceptance" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
@@ -7864,6 +7867,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
         "502": { $ref: "#/components/responses/OrderExchangeError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -7954,6 +7958,15 @@ paths:
         not exist, refuses the whole request alike with `403 account_scope_denied`: nothing is
         closed, no exchange call is made, and the refusal is audited. Once the scope check
         passes, `results` reports exchange outcomes only.
+
+        As shipped (E29-T07, #915): each account's open orders are cancelled first when
+        `cancel_open_orders` is true (never a position's recorded stop, C-2.6), then each open
+        position is closed whole as `closePosition` closes it, reduce-only and never refused for
+        want of the arm. It is not anchored by #5013's amendment: a repeat is answered from the
+        24 h record. Each close goes through the submission pipeline, whose first persist keeps
+        an anchor per position under `closeAllPositions` (`uuid5(key, position id)`), so a later
+        repeat's persist meets it and sends nothing; no replay reads those anchors yet. One
+        `position.flattened` record per account correlates its closes.
       x-rbac: { permissions: [positions:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -7981,8 +7994,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BulkAccountResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   # ===========================================================================
@@ -8067,7 +8085,11 @@ paths:
         entries. Until that backfill lands it is served from the stored fills that carry a
         closed PnL (#915), one item per fill, newest first by fill time: `id` is the fill's,
         `side` the closed position's (the fill's opposite), `avg_exit_price` the fill's price,
-        `closed_at` its time. A fill holds no entry price, closed size, entry or exit value,
+        `closed_at` its time, and `closed_pnl` the fill's PnL less its own fee, the closing
+        fill's (the venue's figure, which the backfill serves, is net of the opening fees too).
+        A settlement or funding row, which carries a PnL and closes no size, is not carried, and
+        a fill recovered by REST holds no closed PnL (the venue's execution list has none), so a
+        complete listing needs the venue's closed-PnL endpoint. A fill holds no entry price, closed size, entry or exit value,
         leverage or opening time, so `avg_entry_price`, `qty`, `cum_entry_value`,
         `cum_exit_value`, `leverage` and `opened_at` are absent, never estimated.
         An `exchange_account_ids` entry outside the caller's grants, or one that
