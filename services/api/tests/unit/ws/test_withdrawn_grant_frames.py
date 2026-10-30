@@ -1,10 +1,10 @@
 """#415 (E17-X02, `23-ws-protocol.md` §9.5): a withdrawn grant's queued frames are dropped before
-`permission_change`, whatever the backpressure flag, on both subprotocols, and a permission that a
-role change removes is withdrawn the same way (C-12.4). M1 holds A and B; the writer is parked in a
-send (a reader that stopped), frames of B, of A and of a public topic queue behind it, and B is
-withdrawn: its grant removed or frozen, its topics' permission removed, both at once, or B narrowed
-out of a subscription that keeps A. The real router runs behind `_Wire` on the test's loop: a fake
-clock, no sleeps, every wait bounded.
+`permission_change` on the budgeted pipeline (#2409: flag on only), on both subprotocols, and a
+permission that a role change removes is withdrawn the same way (C-12.4). M1 holds A and B; the
+writer is parked in a send (a reader that stopped), frames of B, of A and of a public topic queue
+behind it, and B is withdrawn: its grant removed or frozen, its topics' permission removed, both
+at once, or B narrowed out of a subscription that keeps A. The real router runs behind `_Wire` on
+the test's loop: a fake clock, no sleeps, every wait bounded.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant
 from candleviewer.bars.errors import BarsError
 from candleviewer.ws.backpressure_config import BackpressureConfig
-from candleviewer.ws.gateway import OUTBOUND_QUEUE_MAX, _Connection
+from candleviewer.ws.gateway import _Connection
 from candleviewer.ws.metrics import SAMPLE_EVERY
 from candleviewer.ws.outbound import PRIORITY_FAMILIES, QUEUE_FRAMES
 from candleviewer.ws.permissions import ConnectionAuthz, Subscription
@@ -32,24 +32,14 @@ from tests.unit.ws.test_pipeline_invalidation import _RS, _STRUCTURED, _connecte
 from tests.unit.ws.test_pipeline_outbound import (
     _BOOK,
     _ENCODINGS,
-    _JSON,
-    _MSGPACK,
     _closes,
     _overflow,
     _Rig,
     _Wire,
 )
 
-_EACH = pytest.mark.parametrize(
-    ("flag", "encoding"),
-    [
-        pytest.param(flag, encoding, id=f"flag-{'on' if flag else 'off'}-{encoding[6:]}")
-        for flag in (False, True)
-        for encoding in (_JSON, _MSGPACK)
-    ],
-)
 _PRIVATE = ("orders", "positions", "executions", "wallet")
-#: B's two topics: `orders` rides the priority lane with the flag on, `positions` the normal one.
+#: B's two topics: `orders` rides the priority lane, `positions` the normal one.
 _OF_B = ("orders", "positions")
 Sent = list[tuple[str, str | None]]
 _REVOKED: Sent = [("revoked", "orders"), ("revoked", "positions")]
@@ -73,10 +63,10 @@ def _body(family: str, *accounts: uuid.UUID, at: int = 1) -> dict[str, Any]:
     return {family: [row | {"id": f"{family}-{row['exchange_account_id']}-{at}"} for row in rows]}
 
 
-def _rig(flag: bool, monkeypatch: pytest.MonkeyPatch, max_frames: int = QUEUE_FRAMES) -> _Rig:
+def _rig(monkeypatch: pytest.MonkeyPatch, max_frames: int = QUEUE_FRAMES) -> _Rig:
     """A rig whose user reads the four private families on A and B, audited; a private snapshot
     holds one row per account of its subscription as it is when it is built."""
-    rig = _Rig(BackpressureConfig(max_frames=max_frames) if flag else None)
+    rig = _Rig(BackpressureConfig(max_frames=max_frames))
     rig.perms, rig.grants = PERMS | {Permission.ACCOUNTS_READ}, _grants(ACC_A, ACC_B)
     rig.registry.services.audit = rig.audit
     build = rig.source.build
@@ -101,8 +91,8 @@ def _withdraw(rig: _Rig, how: str) -> None:
 
 def _publish(rig: _Rig, plan: Planned, step: float = 0.6) -> Sent:
     """One update per `(family, account)` of `plan`, a book delta for `(_BOOK, None)`, `step`
-    seconds apart (a book delta paces itself, 50 ms after the last), so with the flag on each
-    leaves its window at once (D12): one queued `d` each. Returns them as (`d`, ch), in the order
+    seconds apart (a book delta paces itself, 50 ms after the last), so each leaves its window at
+    once (D12): one queued `d` each. Returns them as (`d`, ch), in the order
     they were queued."""
     for i, (ch, account) in enumerate(plan):
         if account is None:
@@ -113,12 +103,12 @@ def _publish(rig: _Rig, plan: Planned, step: float = 0.6) -> Sent:
     return [("d", ch) for ch, _ in plan]
 
 
-def _order(flag: bool, queued: Sent) -> Sent:
-    """How the writer sends `queued` once it is released: as queued with the flag off; with it on,
-    the priority lane first: control frames, `orders` and `executions` (§8.4 Lanes)."""
+def _order(queued: Sent) -> Sent:
+    """How the writer sends `queued` once it is released: the priority lane first: control
+    frames, `orders` and `executions` (§8.4 Lanes)."""
 
     def first(q: tuple[str, str | None]) -> bool:
-        return not flag or q[0] not in ("d", "snap") or q[1] in PRIORITY_FAMILIES
+        return q[0] not in ("d", "snap") or q[1] in PRIORITY_FAMILIES
 
     return [q for q in queued if first(q)] + [q for q in queued if not first(q)]
 
@@ -137,15 +127,15 @@ def _sent(frames: list[dict[str, Any]]) -> Sent:
 async def _drained(sock: _Wire, conn: _Connection) -> list[dict[str, Any]]:
     """Let the parked writer go and wait until it is quiet: its held frame, then one more while
     anything is still queued. Every frame it sent, for the caller to compare, so a frame too many
-    or too few shows as a diff, not as a timeout; with the flag on, the budget's accounting is
-    back at zero."""
+    or too few shows as a diff, not as a timeout; the budget's accounting is back at zero."""
     sock.release()
     pipe = conn.pipeline
+    assert pipe is not None
     frames = await sock.next()
-    while conn.outbound.qsize() if pipe is None else len(pipe.queue):
+    while len(pipe.queue):
         frames += await sock.next()
     frames += [sock.sent.get_nowait() for _ in range(sock.sent.qsize())]
-    assert pipe is None or (pipe.queue.bytes, pipe.queue.key_bytes()) == (0, {})
+    assert (pipe.queue.bytes, pipe.queue.key_bytes()) == (0, {})
     return frames
 
 
@@ -173,9 +163,9 @@ class _Run(NamedTuple):
 
 
 async def _withdraw_b(
-    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch, plan: Planned, how: str = "removed"
+    encoding: str, monkeypatch: pytest.MonkeyPatch, plan: Planned, how: str = "removed"
 ) -> _Run:
-    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
+    rig, sock = _rig(monkeypatch), _Wire(encoding)
     async with _connected(rig, sock) as conn:
         queued = await _parked(rig, sock, plan)
         before, mark = _overflow("withdrawn"), len(rig.audit.records)
@@ -192,30 +182,30 @@ _ROUND: Planned = [("positions", ACC_B), ("executions", ACC_A), ("orders", ACC_B
 _ROUND += [("wallet", ACC_A), (_BOOK, None)]
 
 
-@_EACH
+@_ENCODINGS
 @pytest.mark.parametrize("how", _HOW)
 async def test_withdrawal_with_bs_frames_queued_drops_them_and_keeps_the_rest_in_order(
-    flag: bool, encoding: str, how: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, how: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B withdrawn while four of its frames wait behind the parked writer, two on each lane with
-    the flag on: none of them reaches the client, and each counts as dropped. `permission_change`
-    and the two `revoked` do, and A's frames and the book's follow in their own order."""
-    run = await _withdraw_b(flag, encoding, monkeypatch, _ROUND * 2, how)
+    """B withdrawn while four of its frames wait behind the parked writer, two on each lane: none
+    of them reaches the client, and each counts as dropped. `permission_change` and the two
+    `revoked` do, and A's frames and the book's follow in their own order."""
+    run = await _withdraw_b(encoding, monkeypatch, _ROUND * 2, how)
     kept = [q for q in run.queued if q[1] not in _OF_B]
-    assert _sent(run.frames) == [("d", "system"), *_order(flag, kept + _CHANGE)]
+    assert _sent(run.frames) == [("d", "system"), *_order(kept + _CHANGE)]
     assert _rows(run.frames, ACC_B) == [] and len(_rows(run.frames, ACC_A)) == 4
     assert run.dropped == len(run.queued) - len(kept) == 4
 
 
-@_EACH
+@_ENCODINGS
 @pytest.mark.parametrize("how", _HOW)
 async def test_withdrawal_revokes_bs_topics_audited_and_routes_nothing_of_b_after(
-    flag: bool, encoding: str, how: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, how: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The change itself is unchanged: one `revoked` per topic of B, `account_scope_changed`
     naming B for a grant and `permission_revoked` for a permission (also when both go at once),
     one `ws.subscription.revoked` row each, and no update of B published after it is routed."""
-    run = await _withdraw_b(flag, encoding, monkeypatch, _ROUND, how)
+    run = await _withdraw_b(encoding, monkeypatch, _ROUND, how)
     revoked = [f["p"] for f in run.frames if f["t"] == "revoked"]
     grant = how in ("removed", "frozen")
     want = ("account_scope_changed", [str(ACC_B)]) if grant else ("permission_revoked", None)
@@ -223,40 +213,40 @@ async def test_withdrawal_revokes_bs_topics_audited_and_routes_nothing_of_b_afte
     assert run.audited == ["ws.subscription.revoked"] * 2 and run.late == 0
 
 
-@_EACH
+@_ENCODINGS
 async def test_withdrawal_keeps_the_sequence_of_every_kept_channel_unbroken(
-    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """S3: A's channels and the book lose no frame and skip no sequence number. The book queues
-    `SAMPLE_EVERY` deltas, so its sampled frame (flag off: a `(received, frame)` pair) is kept."""
+    `SAMPLE_EVERY` deltas, so its sampled frame is kept."""
     plan = _ROUND * 2 + [(_BOOK, None)] * (SAMPLE_EVERY - 2)
-    run = await _withdraw_b(flag, encoding, monkeypatch, plan)
+    run = await _withdraw_b(encoding, monkeypatch, plan)
     for ch in ("executions", "wallet", _BOOK):
         n = sum(1 for c, _ in plan if c == ch)
         assert [f["s"] for f in run.frames if f.get("ch") == ch] == list(range(2, n + 2))
     assert SAMPLE_EVERY in [f["s"] for f in run.frames if f.get("ch") == _BOOK]
 
 
-@_EACH
+@_ENCODINGS
 async def test_withdrawal_with_nothing_of_b_queued_drops_nothing(
-    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """B's topics hold nothing in the queue when B is withdrawn: nothing is dropped, and every frame
     of A and of the book is delivered in order with the change."""
     plan = [q for q in _ROUND if q[0] not in _OF_B] * 2
-    run = await _withdraw_b(flag, encoding, monkeypatch, plan)
-    assert _sent(run.frames) == [("d", "system"), *_order(flag, run.queued + _CHANGE)]
+    run = await _withdraw_b(encoding, monkeypatch, plan)
+    assert _sent(run.frames) == [("d", "system"), *_order(run.queued + _CHANGE)]
     assert run.dropped == 0
 
 
-@_EACH
+@_ENCODINGS
 async def test_a_role_change_drops_a_replay_subscriptions_frames_with_its_live_twins(
-    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Market data removed by a role change revokes a public topic live and replay alike. A live
     book subscription and a replay one (`rs` set) hold three queued deltas each: the purge keys
     on `(ch, rs)`, so all six go before `permission_change`."""
-    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
+    rig, sock = _rig(monkeypatch), _Wire(encoding)
     async with _connected(rig, sock) as conn:
         await rig.sub(sock)
         entry = {"ch": _BOOK, "opts": _STRUCTURED}
@@ -277,14 +267,14 @@ async def test_a_role_change_drops_a_replay_subscriptions_frames_with_its_live_t
     assert _overflow("withdrawn") - before == 6
 
 
-@_EACH
+@_ENCODINGS
 async def test_withdrawal_drops_bs_queued_snaps_and_keeps_their_sub_ok(
-    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A `sub` of `orders` and `positions` on B while the writer is parked queues its `sub_ok` and
-    a `snap` of each, one on each lane with the flag on; then B is withdrawn. Neither `snap` nor
+    a `snap` of each, one on each lane; then B is withdrawn. Neither `snap` nor
     any row of B reaches the client, both count as dropped, and the `sub_ok` is delivered."""
-    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
+    rig, sock = _rig(monkeypatch), _Wire(encoding)
     both, build, built = asyncio.Event(), rig.source.build, []
 
     def counted(sub: Subscription) -> SnapshotBody | None:
@@ -324,33 +314,20 @@ def _settled(rig: _Rig, monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
 def _queued_at_next_row(
     rig: _Rig, conn: _Connection, monkeypatch: pytest.MonkeyPatch
 ) -> list[Sent]:
-    """#415 (E17-R-13): what `conn` queued from now on, as (`t`, `ch`) whatever the flag, as it
-    stood when the audit sink's next emit began: one entry once that emit has run. Data frames are
-    left out: with the flag off, a purge queues the ones it keeps again."""
+    """#415 (E17-R-13): what `conn` queued from now on, as (`t`, `ch`), as it stood when the
+    audit sink's next emit began: one entry once that emit has run. Data frames are left out."""
     queued: Sent = []
     at_row: list[Sent] = []
+    pipe = conn.pipeline
+    assert pipe is not None
+    push = pipe.push
 
-    def note(item: Any) -> None:
-        frame = item[1] if isinstance(item, tuple) else item  # a stamped one is `(received, f)`
-        if isinstance(frame, Mapping) and frame["t"] != "d":
+    def pushed(frame: Mapping[str, Any], received: float | None = None) -> None:
+        if frame["t"] != "d":
             queued.append((frame["t"], frame.get("ch")))
+        push(frame, received)
 
-    if (pipe := conn.pipeline) is not None:
-        push = pipe.push
-
-        def pushed(frame: Mapping[str, Any], received: float | None = None) -> None:
-            note(frame)
-            push(frame, received)
-
-        monkeypatch.setattr(pipe, "push", pushed)
-    else:
-        put = conn.outbound.put_nowait
-
-        def put_nowait(item: Any) -> None:
-            note(item)
-            put(item)
-
-        monkeypatch.setattr(conn.outbound, "put_nowait", put_nowait)
+    monkeypatch.setattr(pipe, "push", pushed)
     emit = rig.audit.emit
 
     async def emitted(action: str, **kw: Any) -> None:
@@ -362,17 +339,17 @@ def _queued_at_next_row(
     return at_row
 
 
-@_EACH
+@_ENCODINGS
 @pytest.mark.parametrize("path", ["grant_change", "reauth"])
 async def test_narrowing_to_a_drops_the_topics_queued_frames_and_snaps_a_after_revoked(
-    flag: bool, encoding: str, path: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, path: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`orders` and `positions` held on A and B, rows of both queued, B narrowed out mid-stream by
     a grant change or on an in-place re-`auth` (`auth_ok` announces it). A frame is never split,
     so their queued frames all go; each is re-pended `reconfigure`, and its `snap`, built under the
     new scope with A's row only, follows its `revoked`: a new baseline at the next `s`, whose
     `previous_seq` is the last one the dropped frames took. The book's frames keep their order."""
-    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
+    rig, sock = _rig(monkeypatch), _Wire(encoding)
     async with _connected(rig, sock) as conn:
         for family in _OF_B:
             await rig.sub(sock, family, exchange_account_ids=[str(ACC_A), str(ACC_B)])
@@ -394,7 +371,7 @@ async def test_narrowing_to_a_drops_the_topics_queued_frames_and_snaps_a_after_r
     first = "permission_change" if path == "grant_change" else "auth_ok"
     kept = [q for q in queued if q[1] == _BOOK]
     changed: Sent = [(first, None), *_REVOKED, ("snap", "orders"), ("snap", "positions")]
-    assert _sent(frames) == [("d", "system"), *_order(flag, kept + changed)]
+    assert _sent(frames) == [("d", "system"), *_order(kept + changed)]
     revoked = [f["p"] for f in frames if f["t"] == "revoked"]
     assert [(p["removed_accounts"], p["resubscribe_allowed"]) for p in revoked] == [
         ([str(ACC_B)], True)
@@ -431,16 +408,16 @@ async def _until_reply(sock: _Wire, fid: str) -> list[dict[str, Any]]:
     return frames
 
 
-@_EACH
+@_ENCODINGS
 async def test_a_reauth_onto_another_session_names_it_in_the_rows_that_follow(
-    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#415 (E17-R-16): the gateway sets the session on the connection at each accepted `auth`, an
     in-place re-`auth` onto another session too. `orders` and `positions` held on A and B, one
     refusal recorded, then a re-`auth` with a second token, which names a second session and
     narrows both topics to A: its two `ws.subscription.revoked` rows and the `ws.subscribe.denied`
     row of the refusal after it name the second session; the refusal before it named the first."""
-    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
+    rig, sock = _rig(monkeypatch), _Wire(encoding)
     rig.sessions["tok2"] = _ROTATED
     async with _connected(rig, sock):
         for family in _OF_B:
@@ -462,13 +439,13 @@ async def test_a_reauth_onto_another_session_names_it_in_the_rows_that_follow(
 
 
 @_ENCODINGS
-async def test_flag_off_narrowing_snaps_only_the_topic_whose_frames_were_dropped(
+async def test_narrowing_snaps_a_topic_too_whose_frames_were_not_queued(
     encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Flag off, `orders` and `positions` narrowed from A and B to A, frames queued for `positions`
-    alone: only it is re-pended and gets its `reconfigure` `snap` (`s` 4, after the dropped 2 and
-    3). `orders` goes on in place: its next `d` takes `s` 2, with no `snap`."""
-    rig, sock = _rig(False, monkeypatch), _Wire(encoding)
+    """`orders` and `positions` narrowed from A and B to A, frames queued for `positions` alone:
+    both are re-pended `reconfigure` whether frames of theirs went or not (§9.5), so `orders`
+    gets its `snap` too, ahead of a `d` published after the change."""
+    rig, sock = _rig(monkeypatch), _Wire(encoding)
     async with _connected(rig, sock) as conn:
         for family in _OF_B:
             await rig.sub(sock, family, exchange_account_ids=[str(ACC_A), str(ACC_B)])
@@ -478,22 +455,24 @@ async def test_flag_off_narrowing_snaps_only_the_topic_whose_frames_were_dropped
         await rig.registry.grants_changed(USER)
         assert rig.sequencing.publish("orders", _body("orders", ACC_A), account=ACC_A) == 1
         frames = await _drained(sock, conn)
-    assert _sent(frames) == [("d", "system"), *_CHANGE, ("snap", "positions"), ("d", "orders")]
-    snap, delta = frames[4:]
-    meta = snap["meta"]
-    assert (meta["reason"], snap["s"], meta["previous_seq"], delta["s"]) == ("reconfigure", 4, 3, 2)
+    after = [("snap", "orders"), ("d", "orders"), ("snap", "positions")]
+    assert _sent(frames) == [("d", "system"), *_CHANGE, *after]
+    # `orders` lost no frame: a new baseline at `s` 2; `positions` after its dropped 2 and 3
+    snap_a, delta, snap_b = frames[4:]
+    reset = [(f["meta"]["reason"], f["s"], f["meta"]["previous_seq"]) for f in (snap_a, snap_b)]
+    assert (reset, delta["s"]) == ([("reconfigure", 2, 1), ("reconfigure", 4, 3)], 3)
 
 
-@_EACH
+@_ENCODINGS
 async def test_withdrawal_at_the_queue_bound_queues_the_change_and_stays_open(
-    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """C-2.18 with §9.5: the queue holds its bound (1 024 frames flag off, a 12-frame budget flag
-    on), all of it B's `orders` frames but one of A's `executions`. The withdrawal frees that room
-    before `permission_change` is queued, so the change and its `revoked` are queued and the socket
-    stays open: queued first, they would find the bound full and close it `slow_consumer`."""
-    bound = 12 if flag else OUTBOUND_QUEUE_MAX
-    rig, sock = _rig(flag, monkeypatch, max_frames=bound), _Wire(encoding)
+    """C-2.18 with §9.5: the queue holds its bound (a 12-frame budget), all of it B's `orders`
+    frames but one of A's `executions`. The withdrawal frees that room before `permission_change`
+    is queued, so the change and its `revoked` are queued and the socket stays open: queued
+    first, they would find the bound full and close it `slow_consumer`."""
+    bound = 12
+    rig, sock = _rig(monkeypatch, max_frames=bound), _Wire(encoding)
     async with _connected(rig, sock) as conn:
         await rig.sub(sock, "executions", exchange_account_ids=[str(ACC_A)])
         await rig.sub(sock, "orders", exchange_account_ids=[str(ACC_B)])
@@ -527,14 +506,14 @@ def _failing_swap(conn: _Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(conn.authz, "_drop", raises)
 
 
-@_EACH
+@_ENCODINGS
 async def test_a_swap_that_raises_evicts_the_socket_with_none_of_the_queued_frames(
-    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A swap that raises mid-way never reaches the purge, so the registry evicts the socket. The
-    eviction is sealed whatever the flag: the client gets its `bye`, none of B's queued frames and
+    eviction is sealed: the client gets its `bye`, none of B's queued frames and
     nothing else that was queued (a stalled consumer cannot flush anyway)."""
-    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
+    rig, sock = _rig(monkeypatch), _Wire(encoding)
     async with _connected(rig, sock) as conn:
         await _parked(rig, sock, _ROUND)
         _failing_swap(conn, monkeypatch)
@@ -546,16 +525,16 @@ async def test_a_swap_that_raises_evicts_the_socket_with_none_of_the_queued_fram
     assert (frames[1]["p"]["reason"], closed) == ("slow_consumer", 4429)
 
 
-@_EACH
+@_ENCODINGS
 @pytest.mark.parametrize("first", ["shutdown", "slow_consumer"])
 async def test_eviction_of_a_closing_socket_seals_it_and_counts_no_second_close(
-    flag: bool, encoding: str, first: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, first: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A close is under way, its `bye` queued behind B's frames (with the flag on, behind what that
-    close kept of the priority lane), when a swap that raises evicts the socket. That close stays
-    the connection's one close, whatever the flag: counted once, logged once as `ws close`, its
+    """A close is under way, its `bye` queued behind what that close kept of the priority lane,
+    when a swap that raises evicts the socket. That close stays the connection's one close:
+    counted once, logged once as `ws close`, its
     `bye` sent next (sealed). The eviction logs `ws eviction sealed`, not a close."""
-    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
+    rig, sock = _rig(monkeypatch), _Wire(encoding)
     seen = ("shutdown", "slow_consumer")
     before = {reason: _closes(reason) for reason in seen}
     async with _connected(rig, sock) as conn:
@@ -567,9 +546,9 @@ async def test_eviction_of_a_closing_socket_seals_it_and_counts_no_second_close(
             await rig.registry.grants_changed(USER)
         frames = await _drained(sock, conn)
         closed = sock.closed_with
-    # what the first close left queued: all of it with the flag off; with it on, the priority
-    # lane for a close that flushes it, nothing for a `slow_consumer` close (§8.4)
-    left = [q for q in queued if not flag or (first == "shutdown" and q[1] in PRIORITY_FAMILIES)]
+    # what the first close left queued: the priority lane for a close that flushes it, nothing
+    # for a `slow_consumer` close (§8.4)
+    left = [q for q in queued if first == "shutdown" and q[1] in PRIORITY_FAMILIES]
     assert _sent(frames) == [("d", "system"), ("bye", None)]
     assert (frames[1]["p"]["reason"], closed) == (first, frames[1]["p"]["code"])
     assert {r: _closes(r) - before[r] for r in seen} == {r: int(r == first) for r in seen}

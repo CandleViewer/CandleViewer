@@ -381,18 +381,37 @@ def test_flag_on_a_waking_publish_contains_a_refused_d_meta_too() -> None:
     assert [(f["t"], f["s"]) for f in _queued(pipe)] == [("snap", 2)]
 
 
+def _hold_back(sub: Subscription, state: str) -> None:
+    """Put `sub` in a state in which the emitter holds a `d` back (or leave it live)."""
+    if state == "pending":
+        sub.snapshot_pending = True
+    elif state == "paused":
+        sub.effective["paused"] = True
+    elif state == "ended":
+        sub.ended = True
+
+
 @_REFUSED
-def test_flag_on_a_refused_d_meta_is_contained_and_re_snapshotted(meta: Mapping[str, Any]) -> None:
-    """The pipeline contains it: the update is dropped, no `s` is taken, and a `backpressure`
-    `snap` follows at the writer's turn, the connection open."""
+@pytest.mark.parametrize("state", ["live", "pending", "paused", "ended"])
+def test_flag_on_a_refused_d_meta_is_contained_and_re_snapshotted(
+    meta: Mapping[str, Any], state: str
+) -> None:
+    """The pipeline contains it, whatever the subscription's state: the update is dropped, no `s`
+    is taken, nothing is queued and the connection stays open. A live subscription gets its
+    `backpressure` `snap` at the writer's turn; one held back (pending, paused) keeps the mark it
+    had, and an ended one is never snapped (#2409: the deleted flag-off case's four states)."""
     hub = SequencingHub()
     pipe, asked, conn = _routed(hub)
     sub = _structured(conn, _BARS)
     _queued(pipe)
+    _hold_back(sub, state)
     hub.publish(_BARS, {**_SERIES, "bars": [{**_BAR, "confirm": False}]}, meta=meta)
-    assert (sub.seq, sub.pending_reason, _queued(pipe), asked) == (1, "backpressure", [], [])
+    assert (sub.seq, _queued(pipe), asked) == (1, [], [])
+    if state != "ended":
+        reason = "backpressure" if state == "live" else "initial"
+        assert (sub.snapshot_pending, sub.pending_reason) == (state != "paused", reason)
     pipe.service(0.0)
-    assert [(f["t"], f["s"]) for f in _queued(pipe)] == [("snap", 2)]
+    assert [(f["t"], f["s"]) for f in _queued(pipe)] == ([("snap", 2)] if state == "live" else [])
 
 
 @pytest.mark.parametrize("form", [dict, MappingProxyType])
