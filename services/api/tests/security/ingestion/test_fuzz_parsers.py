@@ -203,9 +203,7 @@ def test_instrument_regression_launchtime_inf() -> None:
 )
 def test_checked_in_regressions_never_crash(name: str) -> None:
     frame = (REG / name).read_text(encoding="utf-8")
-    # deep nesting fixed by #1898 (#1889); non-finite ts still escapes parse_book_frame
-    if name == "book_ts_infinity.frame":
-        pytest.xfail("#1889 residual: ts=Infinity -> OverflowError escapes parse_book_frame")
+    # deep nesting fixed by #1898 (#1889); a non-finite ts by #5040
     for fn, _ in PARSERS.values():
         _contract(fn, frame)
 
