@@ -1,0 +1,476 @@
+# E15-D15 pins: KEY|line|words that stand on that line at the base (the tool's G10).
+# Written by `--repin-ruled` only; `--check` reads it (never hand-edit).
+02|53|- [ ] Design has been Done for ≥2 sprints (design-ahead rule) OR an expl
+05|30|1. Every interactive element (buttons, chart drawing tools, DOM ladder c
+05|31|2. A **single global hotkey layer** governs the whole app (confirmed des
+05|32|3. Hotkeys are **user-remappable** (Options → Settings → Shortcuts, mirr
+05|35|6. No functionality may depend on hover-only or drag-only interaction: e
+05|45|| | Switch workspace layout preset | `Ctrl+1`..`Ctrl+9` | Per View 11 |
+05|46|| | Toggle sidebar / panel focus cycle | `Ctrl+\` | Cycles focus between
+05|48|| | Toggle keyboard-hotkey cheat-sheet overlay | `Shift+/` (i.e. `?`) |
+05|65|| | Toggle 1-click trading | `Ctrl+Shift+1` | Shows persistent armed ind
+05|83|1. **Precedence order** when a user tries to bind an already-used key: (
+05|84|2. **Detection algorithm**: on every rebind attempt, compute the new key
+05|85|3. **Reserved, non-remappable keys**: `Esc` (universal cancel) and `Ctrl
+05|86|4. **OS/Electron-reserved combos are blocklisted** (e.g. `Ctrl+W`, `Ctrl
+05|94|1. **Landmark regions**: each major panel (Chart, DOM/Heatmap, Order Tic
+05|95|2. **Roving tabindex** within composite widgets (DOM ladder rows, footpr
+05|96|3. **Focus is never silently stolen**: a live price update, a new fill n
+05|97|4. **Modal dialogs** (order confirm, flatten-all confirm, Demo→Live swit
+05|99|6. **Visible focus indicator**: WCAG 2.2 SC 2.4.11 (Focus Not Obscured,
+05|100|7. **Target size**: WCAG 2.2 SC 2.5.8 (Target Size, Minimum, AA) — all c
+05|101|8. **Dragging alternatives**: WCAG 2.2 SC 2.5.7 (Dragging Movements, AA)
+05|102|9. **Consistent help mechanism**: WCAG 2.2 SC 3.2.6 (Consistent Help, A)
+05|107|**Rule (non-negotiable, applies everywhere)**: colour is always a _reinf
+05|116|- Demo vs Live: colour (documented owner decision: Live = red-accented c
+05|117|2. **Deuteranopia/protanopia/tritanopia validation**: the design-system
+05|125|1. **Text contrast (WCAG 1.4.3, AA)**: body text and labels ≥4.5:1 again
+05|126|2. **Non-text/UI component contrast (WCAG 1.4.11, AA)**: buttons, form-f
+05|130|6. **User-adjustable contrast**: a high-contrast theme toggle (`Ctrl+Shi
+05|131|7. **Text resize (WCAG 1.4.4, AA)**: UI must remain usable with 200% bro
+05|147|- `aria-live="polite"` region for ambient updates (best bid/ask, mark pr
+05|148|- `aria-live="assertive"` (or `role="alert"`) reserved for discrete, low
+05|149|- A user-facing "Announcements" settings panel lets the user choose whic
+05|150|- **Region hygiene**: live regions are pre-rendered empty containers on
+05|211|## 8. Screen-reader test protocol
+05|217|| # | Platform + OS version | Browser/shell (pinned) | Screen reader (pi
+05|219|| 1 | Windows 11 23H2+ | Electron shell (production build, primary AT su
+05|222|| 4 | macOS 14 Sonoma+ | Electron shell (production build) | VoiceOver (
+05|230|3. **Task-based pass** — the tester performs, keyboard+SR only, each of
+05|238|5. **Defect severity bar**: any task in the script that cannot be comple
+05|257|## 10. Accessibility acceptance-criteria template
+11|2754|NFR: ≥55 fps with four active order-flow panes on the reference machine;
+11|2847|When I press Ctrl+Tab
+11|2849|Scenario: Conflict
+11|2851|Then the conflict is flagged in settings and must be resolved before sav
+11|5089|Scenario: Conflict detection
+11|5091|Then the conflict is shown with both actions and must be resolved before
+14|334|- **A11y:** `role="tree"` with arrow-key navigation; badge counts includ
+14|525|- **Interactions/hotkeys:** `Ctrl+1..9` layout presets; `Ctrl+S` save; `
+14|528|- **A11y:** each panel is a `region` with an accessible name ("Chart, BT
+14|550|- **Behaviour:** five drop zones (left, right, top, bottom, and the cent
+14|553|- **A11y:** the panel menu (`Shift+F10` or the ⋮ button) exposes Move/Sp
+14|578|- **A11y:** Preset gallery is a listbox of cards with an accessible name
+14|602|- **Interactions:** `Ctrl+Shift+1..3` assign the active panel to group A
+14|604|- **A11y:** the badge is text ("A"); group changes are announced.
+14|619|- **A11y:** Searchable list with category headings as real headings; eac
+14|632|- **A11y:** Standard modal form: labelled fields, grouped fieldsets for
+14|647|- **A11y:** File input has a visible label and an accessible drop zone w
+14|654|### SCR-027 — Floating panel window (Electron)
+14|660|- **A11y:** The floating window is an independent document with its own
+14|670|- **A11y:** full keyboard menu with type-ahead and shortcut hints. **Sto
+14|684|- **A11y:** `role="alertdialog"`; the three choices are explicit buttons
+14|1124|### SCR-049 — Multi-chart grid panel
+14|1137|- **A11y:** each sub-chart is a labelled region; `Ctrl+Alt+1..9` focuses
+14|2977|### SCR-150 — Global loading / app boot
+14|2980|- **A11y:** progress is announced politely at each phase; never a bare s
+14|3025|### SCR-153 — Degraded-mode state
+14|3030|- **A11y:** A `role="status"` banner naming exactly which capability is
+15|269|- **Props**: `keys: string[]` (e.g. `["Ctrl","Shift","H"]`). `keys` hold
+15|270|- **A11y**: `<kbd>` semantic element, visually-hidden expansion text for
+15|506|- **A11y**: `role="dialog"` `aria-modal="true"` `aria-labelledby` (the t
+15|529|- **A11y**: a toast is never its own live region: its sentence is writte
+15|817|- **A11y**: Combobox pattern (CMP-048); delete is a ConfirmDialog (CMP-0
+15|883|- **A11y**: propagates `disabledReason` to the wrapped atom's native pro
+15|892|- **A11y**: `role="region"` `aria-label={title}`, drag-to-reposition has
+15|901|- **A11y**: layout changes announced via polite live region ("Layout cha
+15|910|- **A11y**: heading (`h2`/`h3` depending on nesting) + toolbar (`role="t
+15|919|- **A11y**: divider is `role="separator"` `aria-orientation` `aria-value
+15|2682|- **A11y**: one `aria-live="polite"` region for informational toasts and
+15|2686|- **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner a
+15|2692|- **A11y**: implements the listbox half of the combobox pattern — `aria-
+15|2703|- **A11y**: drag-and-drop has a **mandatory keyboard equivalent** — "Mov
+15|2712|- **A11y**: the window title includes the environment word so the OS win
+15|2721|- **A11y**: built on CMP-041 Menu; opens from a named "Panel options" bu
+15|2730|- **A11y**: each preset's accessible name describes the arrangement in w
+15|2739|- **A11y**: sync-group membership is conveyed by group **name and letter
+15|2864|- **A11y**: `aria-pressed` switch whose name states the scope and state
+CAL|13|SPRINT01_START = datetime.date(2026, 9, 25) # Friday
+CAL|14|SPRINT_DAYS = 7
+D01|244|| Cycle regions | `Ctrl+\` (`05` §3.2), with `F6` / `Shift+F6` as an ali
+D01|245|| Cycle panels | `Ctrl+Alt+←/→` | yes | replaces `Ctrl+Tab` (US-LAY-001,
+D01|250|| Resize | focused splitter (CMP-083, `role="separator"`): arrows, `Shif
+D01|252|| Workspaces | tab strip: arrows, then `Enter`; a next/previous chord fr
+D01|425|| OQ-8 | the region key, and whether the desktop app adds `Ctrl+Tab` as
+D02|267|| Apply a preset (SCR-022) | the preset's tree replaces the working copy
+D02|520|- **Done:** the new workspace opens in a tab; "Imported Scalping (2): 7
+D02|538|One stage list replaces the catalogue's two (§14.2), each stage with its
+D02|542|E15 owns the GPU cause of SCR-153 and US-LAY-008; the other causes (back
+D02|544|- `gpu-suggestion` (both widths), one line that fits 1280×800: "This dev
+D02|545|- `gpu-reduced`: "Reduced quality: lower heatmap depth; panels you aren'
+D02|547|- `exit`: the banner leaves; "Full quality restored." (polite).
+D02|548|- `narrow-1100` (a 1100×800 window): every panel shown as a tab of one g
+D02|549|- `short-720` (a 1280×720 window: a 1920×1080 display at 150 % scaling):
+D02|578|Checked against `apps/web/src/keymap/keymap.json` (71 commands) and `app
+D02|582|| 1 | Switch layout | `Ctrl+1..9` | Workspace, workspace open | `workspa
+D02|583|| 2 | Save layout | `Ctrl+S` | Workspace, always; while Save is T2 it se
+D02|584|| 3 | Save as new layout | `Ctrl+Shift+S` | Workspace, always; while Sav
+D02|585|| 4 | Move panel by pointer | drag the header handle (the keymap's `Alt+
+D02|586|| 5 | Maximise, restore | `F11` | Workspace, panel focused | `workspace.
+D02|587|| 6 | Cycle panels | `Ctrl+Alt+←/→` | Workspace, always | `workspace.pan
+D02|588|| 7 | Cycle regions | `Ctrl+\`; `F6` and `Shift+F6` as an alias in the d
+D02|589|| 8 | Join sync group A, B, C | `Ctrl+Shift+1..3` | Workspace, panel foc
+D02|590|| 9 | Leave sync group | `Ctrl+Shift+0` | Workspace, panel focused | non
+D02|591|| 10 | Panel menu | `Shift+F10`, the context-menu key | the focused pane
+D02|592|| 11 | Swap with the neighbour | `Ctrl+Shift+←/→/↑/↓` | Workspace, panel
+D02|593|| 12 | Pop out, or focus its window | `Ctrl+Shift+O` | desktop app, pane
+D02|594|| 13 | Move mode | arrows, `Tab`, `Shift+Tab`, `Enter`, `Backspace`, `Es
+D02|595|| 14 | Resize a focused splitter | arrows 2 %, `Shift`+arrows 10 %, `Hom
+D02|596|| 15 | Focus a grid cell | `Ctrl+Alt+1..9` | the grid panel focused | no
+D02|597|| 16 | Close a panel | none: `Shift+F10`, `End`, `Enter` | — | — | `Ctrl
+D02|598|| 17 | Next or previous workspace | none yet: the tab strip's arrows and
+D02|599|| 18 | Panel focus by `Ctrl+Tab` | dropped | — | — | browser next tab |
+D02|600|| 19 | Undo a layout change | the toast, or Undo move in the menu | — |
+D02|602|**The lint, run on copies** of `apps/web/src/keymap/keymap.json` and `do
+D02|604|**Defects for the keymap's owner,** read in `apps/web/src/keymap/`, not
+D02|606|**The list US-LAY-006's conflict check runs against** (the chords co-act
+D02|610|- **Regions and names.** Each panel is a `role="region"` named by kind,
+D02|611|- **Order.** The region ring (`Ctrl+\`, and `F6` in the desktop app) run
+D02|612|- **Focus.** Never moved by a sync change, a restore, a crash notice or
+D02|617|| Layout switched or preset applied | polite | "Layout changed to Order-
+D02|620|| Panel added, closed, minimised, restored | polite | "CVD added to the
+D02|623|| One-click trading disarmed by sync, on the server's answer (§5.8) | as
+D02|624|| An armed panel entering the compact view, on the server's answer | pol
+D02|625|| Restore at launch; partial restore | polite | "Restored your layout fr
+D02|627|| A T2 control pressed, or its chord (§8.1) | polite | its reason, once:
+D02|629|- **Targets** are at least 24×24 px in compact (`05` §3.4 item 7): heade
+D02|630|- **Colour is never the signal:** sync by letter and words, environment
+D02|631|- **Reduced motion:** the ghost, the zones and the tray appear and leave
+D02|632|- **Zoom and text size** (`05` §5 item 7): at 125 % OS scaling a 1280×80
+D02|633|- **Forced colours** (`forced-colors: active`): backgrounds and transluc
+D02|639|- **Legs, in the server's order** (E09-D09 §2.1 step 3; `22` View-as ses
+D02|640|- **Client state is T1.** Only the server calls are writes. Applying a p
+D02|641|- **Anatomy** (E09-D09 §2.2, §9.1, §9.2): the control keeps its native r
+D02|643|- **Keys** (E09-D09 §9.3): `Enter` or `Space` on a T2 control, and `Ctrl
+D02|645|- **Not T2**, each owned elsewhere: Save with nothing to save, and the t
+D02|651|| `[Save]`, `Ctrl+S`, `[Layout ▾]` › Save layout, the `Ctrl+K` palette's
+D02|652|| Save as new layout… in `[⋯]` and `[Layout ▾]`, the palette's Save layo
+D02|653|| SCR-029 Save layout; Keep mine, Save mine as new layout… (§5.7) | `upd
+D02|654|| "+" › New workspace…; the rail's New workspace (§5.1, §5.2, §5.6) | `c
+D02|655|| "+" › Import… (§5.11) | `createWorkspace` (no bundle operation yet, G-
+D02|656|| SCR-011 Rename…, Duplicate, Set as default, Move up, Move down, Delete
+D02|657|| SCR-022 Your layouts: Rename, the key picker, Delete… (§5.6) | `update
+D02|658|| SCR-025's fields, autosave switch, [Save] and [Delete workspace…] (§5.
+D02|659|| `[Add panel]`, the `Ctrl+K` palette's Add panel command, SCR-024's [Ad
+D02|660|| Move to ▸ outcomes and the picker's Place options that break a limit (
+D02|661|| SCR-024 Order ticket, Trade-group ticket (§5.9) | `placeOrder`, `creat
+D02|662|| SCR-024 an entry that needs a recorded symbol (§5.9) | none | the symb
+D02|663|| "Link scale to group A" in the price-scale menu (§5.8; SCR-043, A-21)
+D02|669|| `layout.limit.panels` | "This layout has the most panels it can hold."
+D02|670|| `layout.limit.count` | "This workspace has the most layouts it can hol
+D02|671|| `layout.limit.min_size` | "A panel would be smaller than its minimum s
+D02|673|| `layout.limit.tab_group` | "This tab group can't hold another panel."
+D02|674|| `workspace.limit.count` | "You have the most workspaces you can have."
+D02|675|| `workspace.limit.last` | "You need at least one workspace." | 32 | E15
+D02|676|| `scale.link.no_group` | "Join a sync group to link its scale." | 36 |
+D02|677|| `recording.symbol_not_recorded` | "This panel needs a recorded symbol.
+D02|819|| A-6 | `14` SCR-020 Interactions and A11y; `17` §7 | "`Ctrl+1..9` layou
+D02|820|| A-7 | `11` US-LAY-001 NFR, US-LAY-006 | `Ctrl+Tab` for panel focus; "l
+D02|857|| OQ-G | No direct chord for closing a panel (`Shift+F10`, `End`, `Enter
+D02|859|| OQ-I | A compact view takes no orders, and entering it disarms an arme
+D02|860|| OQ-J | E15-D01 OQ-6 (an armed DOM or ticket), extended here to an arme
+D02|866|| OQ-P | The ticket's event names win; `workspace.restored`, `workspace.
+D02|869|| OQ-S | The move-mode target model: a panel first (arrows by shared edg
+D02|966|| E10, E30 | OQ-A (the collapsed rail's 48 px launcher strip, the drawer
+D03|242|### 3.4 The focus geometry and the reflow proof (AC6)
+D03|317|| focused | the bar fills (§4.1); nothing else | announced "{name}, focu
+D03|323|| armed | CMP-229's attention pill (E30's tokens) | E30's |
+D03|324|| stale / disconnected | E17-D02's header words in a fixed-width status
+D03|325|| reduced | "Reduced" chip (CMP-011 neutral) right of the sync badge, al
+D03|715|### 11.2 Contrast (the tool's section "contrast"; `lo` = against the dar
+D03|760|### 11.4 Forced colours, high contrast and zoom
+D03|772|| `Ctrl+\` (desktop alias `F6`, `Shift+F6`) | cycle regions: TopBar → Na
+D03|773|| `Ctrl+Alt+←` / `→` | previous / next panel; the arrival is announced "
+D03|777|| `Shift+F10`, context-menu key | the panel menu (focus in a header) or
+D03|778|| `F2` | rename the focused tab in place | D-10 | none: PROPOSED-PENDING
+D03|779|| `←` / `→`, `Home` / `End` in the tab strip | move focus between tabs;
+D03|780|| `←` / `→` in a header toolbar | roving focus among the panel's own act
+D03|781|| arrows, `Shift`+arrows, `Home`, `End` on a splitter | resize 2 %, 10 %
+D03|782|| `Esc` | closes the topmost menu, list, input or dialog | never a tradi
+D03|786|Inside a panel, `Tab` follows the handle, the heading's pickers, the syn
+D03|790|Each panel is `role="region"` named per D-5; the tab strip is a `tablist
+D03|941|| C-4 | `D02`:610 the environment in the region's description | in the n
+D03|951|| C-14 | T:93 "`F6` cycles regions" | `Ctrl+\`, `F6` a desktop alias (A-
+D03|954|| C-17 | `11`:2754 US-LAY-001's NFR "pane focus is keyboard-navigable (C
+D04|115|| D04-D-14 | **200 % zoom at 1280×800:** the dock is E15-D02's tabbed co
+D04|165|| P10 | `SCR-021/undone` | After Undo: the layout of P1, still dirty if
+D04|169|## 5. Keyboard move mode K1–K6, the directional chooser and the parity a
+D04|171|The same move without the pointer: CMP-214's mandatory keyboard equivale
+D04|175|| K1 `menu` | `SCR-021/move-menu` | Positions' header focused (2 px `col
+D04|176|| K2 `mode` | `SCR-021/move-mode` | `Enter`: stage one. The MoveModeBar
+D04|178|| K3 `step` | `SCR-021/move-step-side` | `Enter` takes it: stage two sta
+D04|181|| K6 `esc` | `SCR-021/move-esc` | `Esc` at any step: the exact layout of
+D04|183|**The directional chooser (D-19's target model, carried; board 05).** St
+D04|189|| `SCR-021/move-to-submenu` | Move to ▸ › Chart · BTCUSDT 1m ▸ Left of ·
+D04|191|**Keys captured ahead of panel bindings** (AD-9): in move mode `Enter`,
+D04|193|**Parity audit (AC1).** Every pointer operation has a keyboard route thr
+D04|195|| Operation | Pointer | Keyboard, through CMP-216 | Key(s) and status |
+D04|198|| Split (left, right, top, bottom) | drop on an edge zone | Move panel →
+D04|199|| Tabify | drop on the centre zone | Move panel → "Tab with …"; Move to
+D04|200|| Resize | drag a splitter | `Tab` to the splitter, arrows; Equal sizes
+D04|201|| Pop out (the ticket's "float") | menu › Pop out | Pop out (desktop app
+D04|202|| Return to workspace | the window's button or × | the window's ⋮ › Retu
+D04|203|| Close | × in the header | Close (last item) | `Shift+F10` (PROPOSED),
+D04|204|| Maximise and restore | menu, or the header's Restore | Maximise; Resto
+D04|205|| Minimise and restore | menu; the tray's tab | Minimise; the tray tab's
+D04|207|| Undo a layout change | the toast's Undo | Undo move (top of the menu w
+D04|209|Eleven operations, none pointer-only; the tool's parity gate reads every
+D04|223|Both neighbours give up width before any panel is squeezed below its min
+D04|238|A mis-drop is reverted from the toast or from the menu, never from a cho
+D04|240|## 10. Keyboard, focus and announcements (board 09; E15-D02 §7, §8 carri
+D04|244|| Function | Key(s) | Status at the base | Source |
+D04|246|| Move a panel by pointer | drag the header handle | **existing** `works
+D04|247|| Maximise / restore | `F11` | **existing** `workspace.fullscreen_panel`
+D04|250|| Undo a drawing | `Ctrl+Z` | **existing** `chart.undo` 266 — never layo
+D04|251|| Panel menu | `Shift+F10`, the context-menu key | **PROPOSED** `workspa
+D04|253|| Move-mode keys | `↑` `↓` `←` `→`, `Tab` / `Shift+Tab`, `Enter`, `Backs
+D04|254|| Swap with the neighbour | `Ctrl+Shift+←` / `→` / `↑` / `↓` | **PROPOSE
+D04|255|| Pop out | `Shift+F10` › Pop out; `Ctrl+Shift+O` | the item by design (
+D04|256|| Resize a focused splitter | `↑` `↓` `←` `→` 2 %, `Shift`+arrows 10 %,
+D04|257|| Resize alias | `Alt+Shift+↑` / `↓` / `←` / `→` | **PROPOSED-PENDING**
+D04|259|| Close a panel | `Shift+F10`, `End`, `Enter` — no chord | **CARRIED** n
+D04|260|| Undo a layout change | the toast's Undo; menu › Undo move — no chord |
+D04|261|| Cycle regions | `Ctrl+\`; `F6` / `Shift+F6` as a desktop alias | **PRO
+D04|264|**Focus.** Initial focus in move mode is the moving panel's header and n
+D04|266|**Announcements**, polite and once per discrete event (`05` §6.2; E15-D0
+D04|270|| AN-1 | Move mode entered | polite | "Move mode. Positions. Choose a pa
+D04|271|| AN-2 | Stage-one step | polite | "Chart, BTCUSDT 1m." · "No panel furt
+D04|272|| AN-3 | Stage-two step | polite | "Tab with Chart." · "Below Chart." |
+D04|273|| AN-4 | A refused target (keyboard) or a hatched zone entered (pointer,
+D04|274|| AN-5 | A move dropped | polite | "Positions moved below Chart." (the t
+D04|275|| AN-6 | A move cancelled (`Esc`, pointer or keyboard) | polite | "Move
+D04|276|| AN-7 | A move undone | polite | "Move undone." |
+D04|277|| AN-8 | A splitter at its minimum (its value is the separator's own `ar
+D04|278|| AN-9 | Maximised · restored · minimised · restored from the tray · pop
+D04|279|| AN-10 | An armed panel entering the compact view, on the server's answ
+D04|280|| AN-11 | A T2 Save pressed, or `Ctrl+S` while Save is T2 (§11) | polite
+D04|282|**Targets** are at least 24×24 px in compact: the handle (24 px tall row
+D04|286|**The rule, once.** A control the session may not use — gated by a role,
+D04|290|**Not T2, each an outcome at the point of action** (E09-D09 §9.1; E15-D0
+D04|292|## 12. Themes, densities, contrast and CVD — the measured matrix (boards
+D04|366|| D04-A-2 | `14` SCR-021 Behaviour (line 538), the splitter clause | "sp
+D04|422|| D04-C-1 | E15-D02 P2–P6 light all five zones of the Chart in `dense` a
+D04|427|| D04-C-6 | the ticket's announcement examples ("Chart moved to bottom r
+D04|428|| D04-C-7 | `color.text.link` as the toast action's colour fails the 7:1
+D04|435|| D04-G-4 | no keymap rows for the panel menu, the mode keys, the splitt
+D04|438|| D04-G-7 | the MoveModeBar's visible lines are `aria-hidden`, so the in
+D04|451|| E15-D13 | D04-A-1, A-3, A-5, A-6; the five requested tokens; the three
+D04|453|| E15-D15 | §10 keys and announcements; the target model (OQ-S); `Alt+Sh
+D05|176|| `SCR-022/delete-layout-confirm` | 04 | "Delete layout Wide chart? It c
+D05|212|**Three nouns, one each (E15-D02 D-4; E15-D01 §5).** A **preset** is an
+D05|234|### 5.4 Loading, error, 200 % and the text scales
+D05|344|**Clean** (`SCR-022/apply-clean`): Apply (or `Enter` on a card) closes t
+D05|346|**Dirty** (`SCR-022/apply-dirty`; CARRIED D-10, OQ-C; RULED Q-10): Apply
+D05|360|Selecting another workspace in the rail (or its tab) while the current l
+D05|370|| Switch layout | `Ctrl+1..9` | Workspace, workspace open | `workspace.p
+D05|372|| Save as new layout | `Ctrl+Shift+S` | Workspace, always | `workspace.s
+D05|373|| Navigate the rail's items | `Alt+1..9` | Global | `global.nav_rail` :8
+D05|375|| The focused row's context menu | `Shift+F10` (PROPOSED), the Menu key
+D05|376|| Presets listbox | arrows, `Home`, `End`, `Enter` (apply), `Space` (sel
+D05|377|| Rail tree | arrows, `Enter` (open), type-ahead | the rail | component
+D05|379|| Search | typing, arrows, `Enter` (open the first match), `Esc` (clear)
+D05|380|| Rename-in-place | `Enter` (save), `Esc` (revert) | the "Workspace name
+D05|381|| Next or previous workspace | none yet; `Ctrl+Tab` is the browser's (E1
+D05|387|| The gallery (CMP-043 `lg`) | the Presets listbox's first card (CARRIED
+D05|390|| Save as new layout… (CMP-043 `sm`) | Name | Name → the slot select → S
+D05|391|| Delete layout (CMP-044 `alertdialog`) | Cancel | Cancel → Delete layou
+D05|392|| SCR-029 unsaved variant (`alertdialog`) | Cancel (CARRIED, OQ-D) | Can
+D05|393|| `[Layout ▾]` menu (CMP-041) | the active layout | arrows; `Tab` closes
+D05|394|| The rail tree | the current workspace | one Tab stop for the tree; arr
+D05|396|| Rename-in-place | the input, text selected | the input is the row's on
+D05|397|| The search combobox | the field | field → the filtered tree | opens th
+D05|398|| New workspace… (CMP-043) | Name | Name → Start from → Create workspace
+D05|400|Pointer → keyboard parity: every pointer action here (choose a card, app
+D05|408|| AN-1 | a preset applied | polite | "Layout changed to Order-flow, 4 pa
+D05|409|| AN-2 | a saved layout switched (the menu or its chord) | polite | "Lay
+D05|410|| AN-3 | Save as new layout… saved | polite | "Saved as Layout 2 on Ctrl
+D05|411|| AN-4 | a layout deleted | polite | "Wide chart deleted." | PROPOSED |
+D05|412|| AN-5 | a rename committed (layout or workspace) | polite | "Renamed to
+D05|413|| AN-6 | a 409 refusal (`name_taken`, `hotkey_slot_taken`, `limit_reache
+D05|416|| AN-9 | a workspace opened from the rail or a tab | polite | "Opened Sw
+D05|417|| AN-10 | a workspace created | polite | "Created Swing 1D. Layout 1, 3
+D05|418|| AN-11 | SCR-029 opens | assertive | "You have unsaved layout changes."
+D05|419|| AN-12 | the search settles | polite | "{n} of {total} workspaces" ("3
+D05|420|| AN-13 | a validity-look submit pressed | assertive | the error summary
+D05|592|| C-6 | E15-D02 §8 has no workspace-opened announcement; the shell's ann
+D05|600|| C-14 | the ticket AC 6 "selecting another workspace while dirty routes
+D05|602|| C-16 | Condition 1 read "renaming" as T1 and Save / Save as under view
+D05|624|| OQ-5 | Who owns the workspace-opened announcement — this spec's AN-9,
+D06|202|### 4.3 Colour, and why the letter carries (D-2, §12)
+D06|225|### 5.3 The modal at 200 % and the text scale (D-3)
+D06|307|| Open the panel menu (Sync group ▸ inside) | `Shift+F10` | a panel focu
+D06|308|| Join group A / B / C | `Ctrl+Shift+1` · `Ctrl+Shift+2` · `Ctrl+Shift+3
+D06|309|| Leave the group (No sync) | `Ctrl+Shift+0` | Workspace, a panel focuse
+D06|310|| Open the badge's Sync group ▸ | `Enter` · `Space` | the badge button f
+D06|313|| Move through the popover | `Tab` · `Shift+Tab` | SCR-023 open | CMP-01
+D06|314|| Close the popover or the modal | `Esc` | SCR-023 open | CMP-017 (CMP-0
+D06|318|| Cancel the refusal | `Esc` | the refusal dialog | CMP-043 | component
+D06|321|| Next / previous panel | `Ctrl+Alt+→` · `Ctrl+Alt+←` | Workspace | `wor
+D06|325|**Popover:** initial focus on the current group's radio; `Tab` as the ro
+D06|329|| Pointer action | Keyboard path | Frame |
+D06|345|| Zoom a linked pane | focus the axis, `↑` / `↓` | `SCR-043/linked-zoom-
+D06|349|The chords are drawn with CMP-022 and a PROPOSED stamp under the group r
+D06|357|| Sync badge | `button` (in CMP-082's `toolbar`) | "Sync group A" / "No
+D06|358|| Panel region | `region` | "Chart, BTCUSDT 15m" (E15-D02 §3) | descript
+D06|359|| Popover / modal | `dialog` (non-modal / modal) | "Sync — Chart · BTCUS
+D06|361|| Axis switch | `switch` (CMP-004) | "Symbol", "Crosshair", "Interval",
+D06|362|| Account switch | `switch` | "Account and trade group" | `aria-disabled
+D06|366|| Link scale item (SCR-043) | `menuitemcheckbox` | "Link scale to group
+D06|367|| Refusal dialog | `alertdialog` | "Can't link these price scales" | `ar
+D06|369|| Hotkey hint | `<kbd>` (CMP-022) | "Control plus Shift plus 1" (visuall
+D06|373|Polite for membership and status, assertive only for the two discrete hi
+D06|377|| AN-1 | a panel joins a group | polite | "Chart 15m joined sync group A
+D06|378|| AN-2 | a panel leaves (No sync) | polite | "Chart 15m left sync group
+D06|379|| AN-3 | a propagated symbol change reaches an order panel | polite | "D
+D06|380|| AN-4 | the disarm answered by the server | assertive | "One-click trad
+D06|381|| AN-5 | a conflict first arises | polite | "Chart 15m has a different i
+D06|382|| AN-6 | an axis switch toggled | polite | "Interval sync on for group A
+D06|383|| AN-7 | a panel moves between groups | polite | "Chart 15m moved from s
+D06|384|| AN-8 | the group first spans DEMO and LIVE | polite | "Account sync re
+D06|385|| AN-9 | a scale linked | polite | "Price scale linked to group A." |
+D06|386|| AN-10 | a scale unlinked | polite | "Independent scale." |
+D06|387|| AN-11 | `Enter` / `Space` on the T2 link item | polite | "Join a sync
+D06|388|| AN-12 | the link refused | assertive | "Can't link these price scales.
+D06|389|| AN-13 | the percent suggestion accepted | polite | "Both scales now sh
+D06|393|E09-D09's grammar is applied once here and cited from the two places tha
+D06|500|| A-7 | `14` SCR-023 Interactions; `apps/web/src/keymap` | `Ctrl+Shift+1
+D06|554|| C-12 | `05` §3.2 :65 binds `Ctrl+Shift+1` to "Toggle 1-click trading";
+D06|558|| C-16 | `14` SCR-023 :591 and E15-D02 §12 :762 list CMP-043 Dialog for
+D06|561|| C-19 | the ticket's `{symbolA, symbolB}` payload for the refusal event
+D06|574|| G-10 | `keymap.json` has no sync rows; H-3 blocks shifted-digit chords
+D07|140|Per E09-D09 §2.2 and RULED A1: the control keeps its native role (a menu
+D07|144|**In the picker** (AC1) the reason is also joined into the option's acce
+D07|152|An item or entry whose reason is a key outside condition 1, or an availa
+D07|154|**Absence** is a third form: an item a build can never offer (Pop out in
+D07|585|| R-1 | SCR-024 | Order ticket, Trade-group ticket | view-as; `orders:wr
+D07|586|| R-2 | SCR-024 | an entry needing a recorded symbol (Deep Stats, illust
+D07|587|| R-3 | SCR-024 | an owner-only entry (illustrative) | permission held b
+D07|589|| R-5 | SCR-024, SCR-028 | [Add panel]; Duplicate | 16 panels | `layout.
+D07|590|| R-6 | SCR-028 | Move to ▸ outcomes | the tree; minimum sizes | `layout
+D07|591|| R-7 | the workspace (inset only) | Save | view-as; `workspaces:write`
+D07|667|### 11.2 Contrast (the tool's section "contrast"; bars: text 4.5, UI and
+D07|694|### 11.4 Forced colours, high contrast and zoom
+D07|704|| panel header | ⋮ "Panel options" + `Enter` / `Space` | opens the menu
+D07|705|| panel header | `Shift+F10`, the context-menu key | opens the menu | no
+D07|706|| menu | (on open) | focus on the first item that is neither T2 nor sent
+D07|715|| menu | `Tab` | closes every open menu; focus moves on from the opener
+D07|716|| menu | `F11` on Maximise | `workspace.fullscreen_panel` | shipped |
+D07|717|| SCR-024 | (on open) | focus in the search field | component |
+D07|718|| SCR-024 | `↓` / `↑` | move through results while the field keeps focus
+D07|722|| SCR-024 | `Esc` | closes the dialog, focus back on the trigger (`D02`:
+D07|726|Focus is never moved by a background change (a flag loading, an undo exp
+D07|732|| menu opens | "Panel options, {region name}" (+ the footnote in the bro
+D07|737|| Close | "{Kind} closed. Undo is available." | polite |
+D07|738|| search typing | "{n} panels found" (throttled to once per 500<!--=BUDG
+D07|739|| no results | `No panel matches "{term}"[ in {category}].` | polite |
+D07|741|| add | "{Kind} added to the {outcome} of {panel}." | polite |
+D07|872|| C-4 | `D02`:677 `recording.symbol_not_recorded` "This panel needs a re
+D07|873|| C-5 | `14`:606 "CVD added to the right column" | "CVD added to the rig
+D07|892|| A-6 | `D02` §8.1 state keys (registered by E09-D09 §3.1, A-24) | add `
+D07|894|| A-8 | the same | add `layout.panel.at_defaults` "Already at default se
+D07|897|| A-11 | `14`:606 SCR-024 A11y | "('CVD added to the right column')" → "
+D07|898|| A-12 | E15-S02 copy (the browser menu) | add the second footnote sente
+D08|153|| D08-D13 | after a delete the neighbouring tab takes focus and "Deleted
+D08|523|**T2 — disabled with a visible reason, one rule for both screens (every
+D08|531|| Name, Open this workspace at startup, Save (SCR-025) | `updateWorkspac
+D08|533|| Delete workspace… (SCR-025) | `deleteWorkspace` · `workspaces:write` (
+D08|536|| Save layout (SCR-029 unsaved) | `updateLayout`, or `createLayout` for
+D08|538|| Save mine as new layout… (SCR-029 conflict) | `createLayout` · `worksp
+D08|545|- **Validity** (form validity, `D09:224–231`; `S3:103`): the Name empty,
+D08|546|- **Busy** (`D09:224–231`, its loading row): Save and Save layout in fli
+D08|547|- **Availability** (`D02:645`): Export… on the session's unsaved default
+D08|553|- **The exits:** Cancel, `Esc`, Close, Keep editing, Discard changes, Lo
+D08|555|## 6. Exits, keyboard, focus and live regions
+D08|557|**The exits, stated once (A3; AC 1, AC 2).** Cancel, `Esc`, Close and Ke
+D08|563|| SCR-025, CMP-043 `dialog` — `SCR-025/default` and every SCR-025 form f
+D08|565|| The typed delete, CMP-044 `typed`, stacked — `SCR-025/delete-confirm`,
+D08|566|| SCR-029 unsaved, CMP-043 `alertdialog` — `SCR-029/unsaved`, `SCR-029/u
+D08|568|| SCR-029 conflict, CMP-043 `alertdialog` — `SCR-029/conflict`, `SCR-029
+D08|570|| The settings conflict, CMP-043 `alertdialog`, stacked over SCR-025 — `
+D08|572|**Keys.** `Tab` and `Shift+Tab` cycle inside the topmost dialog only; th
+D08|576|| Event | Frames | How it speaks | String (§8) |
+D08|578|| a dialog opens | every dialog frame | no live region: read as focus en
+D08|579|| blur validation shows or changes a Name message | `SCR-025/invalid-emp
+D08|580|| Save pressed with a field invalid, or the name clash refused | the sam
+D08|584|| the save fails | `SCR-025/failed` | the CMP-027 banner, `role="alert"`
+D08|587|| the workspace is deleted | after `SCR-025/delete-confirm` | polite, on
+D08|589|| a leg is lost while a dialog is open | `SCR-025/leg-lost`, `SCR-029/le
+D08|590|| a layout write from SCR-029 succeeds | `SCR-029/unsaved-saving`, `SCR-
+D08|593|| an autosave conflict waits | `SCR-029/conflict-queued` | polite, once;
+D08|594|| a third racing write refreshes the conflict | `SCR-029/conflict-refres
+D08|595|| Load theirs replaces the copy, or Save mine as new layout… stores it |
+D08|596|| the difference summary | `SCR-029/unsaved`, `SCR-029/unsaved-overflow`
+D08|598|**200 % zoom and text size** (`05:131`; `S4:209`; `D02:632`). At 200 % z
+D08|600|**Forced colours** (`S4:202`). The card keeps its edge as a real border,
+D08|602|**Motion** is E15-D14's (out of scope); these dialogs only use CMP-043's
+D08|608|| `SCR-029/unsaved` opens | `alertdialog` · "You have unsaved layout cha
+D08|609|| `SCR-029/conflict` opens | `alertdialog` · "This layout changed in ano
+D08|611|| `SCR-025/viewer-read-only`, focus on Save | button · "Save" · unavaila
+D08|613|| `SCR-025/delete-confirm` opens | `alertdialog` · "Delete Scalping?" ·
+D08|615|## 7. Tokens, contrast, greyscale and CVD
+D08|891|| D08-C19 | the clean Save's class: this spec reads SCR-025's "No unsave
+D08|892|| D08-C20 | the opening of SCR-029: this spec keeps the assertive channe
+D08|894|| D08-C22 | D08-A22 not taken: E15-D05's `SCR-022/delete-layout-confirm`
+D09|744|**The exits, stated once (A3; Condition 4).** Cancel, `Esc`, ×, Close an
+D09|750|| the menus: `SCR-025/export-entry`, `SCR-025/export-unavailable`, `SCR-
+D09|751|| `SCR-025/export-preparing` | Cancel | × → Cancel | Cancel's action | C
+D09|754|| `SCR-025/export-done` | Close | × → Close | Close's action | Close | a
+D09|755|| `SCR-026/pick`, `SCR-026/drag-over`, `SCR-026/drag-over-rejected`, `SC
+D09|763|| `SCR-026/report` | the heading "Import report" (`tabindex="-1"`), on a
+D09|765|| `SCR-025/export-reflow-200`, `SCR-026/reflow-200`, `SCR-026/compact` |
+D09|769|**Keys.** `Tab` and `Shift+Tab` cycle inside the topmost layer only, and
+D09|771|**Announcements** (`05:144`; `05:150`; `S4:140`). Polite, and once. A di
+D09|773|| Event | Frames | How it speaks | String (§9) |
+D09|775|| a dialog opens | every dialog frame | no live region: read as focus en
+D09|782|| the check fails | the six rejections | the CMP-027 message, polite, on
+D09|783|| a file is dragged over the zone | `SCR-026/drag-over`, `SCR-026/drag-o
+D09|786|| the import succeeds | `SCR-026/report` | polite, once: the success lin
+D09|790|| a refusal at the send | `SCR-026/refused-limit`, `SCR-026/refused-serv
+D09|792|| a press on a T2 control | `SCR-026/entry-view-as`, `SCR-026/entry-perm
+D09|793|| a leg goes while the dialog is open | `SCR-026/import-leg-lost` | the
+D09|801|| `Tab` reaches the preview's table | the scroll region · named by its c
+D09|805|| the report arrives | heading · "Import report" (focused) inside a `reg
+D09|807|| the export dialog opens on `SCR-025/export-preview` | `dialog` · "Expo
+D09|809|**200 % zoom and text size** (`05:131`; `S4:209`; `14:639`). At 200 % zo
+D09|813|## 8. Tokens, contrast, greyscale and CVD
+DS|15|orchestrator's round. A **G-T2 miss is a Major** in the pre-lens; a **Re
+DS|17|## G-T2 — the controls E09-D09 §2.1 routes to T2 are specified as T2
+DS|36|- **G-T2.1d** (§2.2, §8): CMP-079 RbacGate wraps every §2.1 step-3 contr
+DS|39|the icon; the sentence form has no glyph and no button).
+DS|61|covers those surfaces.
+DS|65|- **R1 Text resize** (`05` §5 item 7, WCAG 1.4.4): for every dialog, dra
+DS|83|assembled from split string literals).
+E09-D09|85|Every T2 reason is one of these seven keys, or a key of a registered **s
+E09-D09|90|| `rbac.owner_only` | "Only the owner can {verb}." | the operation's per
+E09-D09|142|| `permission_change`, no focused or armed control affected | `role="sta
+E09-D09|143|| `permission_change` disabling the focused control or an armed ticket |
+E09-D09|243|| `Enter` / `Space` / the bound hotkey (`Ctrl+Enter`, `Alt+…`) | nothing
+E29-D05|64|- **R-1 Severity.** **Blocking:** a clause or a WCAG 2.2 A / AA criterio
+E29-D05|66|- **R-3 Verdicts.** `compliant` · `at risk` · `non-compliant` · `out of
+KM|68|"id": "global.fullscreen",
+KM|81|"id": "global.nav_rail",
+KM|91|"id": "workspace.preset",
+KM|98|"reservedOverride": {
+KM|103|"id": "workspace.save",
+KM|121|"id": "workspace.save_as",
+KM|130|"id": "workspace.move_panel",
+KM|139|"id": "workspace.fullscreen_panel",
+KM|157|"id": "workspace.panel_prev",
+KM|166|"id": "workspace.panel_next",
+KM|266|"id": "chart.undo",
+KM|721|"id": "rules.rename",
+PREF|5|export type AnnouncePrices = "off" | "significant" | "always";
+PREF|6|export type Verbosity = "low" | "normal" | "high";
+PREF|14|readonly announce_prices: AnnouncePrices;
+PREF|15|readonly verbosity: Verbosity;
+PREF|25|announce_prices: "significant",
+PREF|26|verbosity: "normal",
+PREF|86|/** Live-region throttle used by E47-S01/S02: should this price update b
+PREF|95|}
+README|78|2. `docs/design/<epic>/<ticket>.md` — spec: purpose, states, data, inter
+RK|2|"Ctrl+W": "browser/OS (close tab)",
+RK|16|"Ctrl+Tab": "browser (next tab)",
+RK|17|"Ctrl+Shift+Tab": "browser (previous tab)",
+RK|18|"Ctrl+1..9": "browser (switch tab)",
+RK|25|"F11": "browser (full screen)",
+RK|26|"Ctrl+S": "browser (save page)",

@@ -338,6 +338,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Stories:** US-LAY-006, US-SET-001.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.2 (Penpot page `E15-D02`, board 08; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design (wireframe → hi-fi):** [E15-D05.md](../design/E15/E15-D05.md) §10 (E15-D05; PROPOSED, owner approval pending: the expanded rail and CMP-073 in colour: markers, search above 20, rename-in-place, the context menu, the typed-delete entry, the T2 states; Penpot page `E15-D05 Presets and switcher`, boards pending).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; the rail tree's keys, the switch's focus rule and the workspace-opened announcement; owner approval pending).
 - **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the rail in colour: item states, the markers, the collapsed tooltips, the > 20 search, the eight-item menu's T2 writes, the 125 % and 200 % reflow; Penpot page `E10-D03 Shell chrome hi-fi`; the twelve board exports in `docs/design/E10/img/`; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] collapsed (icon) and expanded (label) variants [ ] workspace switcher with >20 workspaces (scroll + search) [ ] active-route indication is not colour-only [ ] tooltips on collapsed icons reachable by keyboard focus
 - **As built (E10-S01, #304)**: the rail in the CMP-071 entry: a `nav` of seven links with `aria-current`, not a tree; the workspace list is E15's (no sub-items under Terminal yet); `Alt+1..7`.
@@ -532,6 +533,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Stories:** US-LAY-001, US-LAY-002, US-LAY-005.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.1 (Penpot page `E15-D02`, boards 01–07; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Hi-fi (E15-D03):** [E15-D03.md](../design/E15/E15-D03.md) · [E15-D03-handoff.md](../design/E15/E15-D03-handoff.md) (E15-D03; the workspace page in colour: the inset focus affordance with identical content rectangles, CMP-082's header per kind and its collapse with ⋮ at every width, the environment on every order-capable panel and the crop test, the tab strip with the Restored marker and rename in place, the toolbar's T2 and availability states, the measured chrome budget at two densities × two widths, the state × density × theme matrix, the measured contrast; Penpot page `E15-D03 Workspace page hi-fi`; the ten board exports follow in `docs/design/E15/img/` (pending); owner approval pending).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; the consolidated keyboard model, the region ring and the panel-naming rule; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] default owner layout, manager layout and viewer layout drawn [ ] panel focus ring and active-panel affordance visible [ ] symbol-group colour tags carry a letter/number too [ ] layout restore after crash drawn [ ] DEMO and LIVE chrome variants [ ] 1280x800 minimum supported layout has no overlap
 
 ### SCR-021 — Dock / panel system (drag, split, float)
@@ -556,6 +558,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `layout.panel_added`, `layout.panel_removed`, `layout.panel_moved`, `layout.split_created`, `layout.panel_floated`, `layout.maximised`, `layout.saved`, `layout.reset` (analytics only - layout is user preference, not a security-relevant state change).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.3–§5.5 (Penpot page `E15-D02`, boards 09–10; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design (wireframe → hi-fi):** [E15-D04.md](../design/E15/E15-D04.md) §3–§12 (E15-D04; PROPOSED, owner approval pending: the zone geometry, the drop preview, the refusals, the keyboard move mode, the splitters, the compact view, maximise / minimise / Pop out and undo; Penpot page `E15-D04 Dock system`, boards pending).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; move mode's keys and announcements, the splitter keys with `Alt+Shift+arrows` withdrawn, the focus table; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] drop-zone affordances for all five zones (N/S/E/W/centre-tabify; float is the panel menu's "Pop out" command, not a zone) [ ] invalid-drop feedback [ ] keyboard move mode drawn with its own visible instructions [ ] minimum panel size and the 'panel too small - showing compact view' state [ ] drag preview does not obscure the drop target
 
 ### SCR-022 — Layout preset gallery
@@ -580,6 +583,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `layout.preset_previewed`, `layout.preset_applied`, `layout.preset_saved_as`, `layout.preset_deleted` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.6 (Penpot page `E15-D02`, board 12; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design (wireframe → hi-fi):** [E15-D05.md](../design/E15/E15-D05.md) §5–§9 (E15-D05; PROPOSED, owner approval pending: the gallery and thumbnails in colour, the reconciled inventory, Your layouts with rename / key / delete, the SCR-029 route, CMP-217's menu; Penpot page `E15-D05 Presets and switcher`, boards pending).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; the preset-apply focus default, the gallery's focus table and the one-utterance apply; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] built-in presets drawn (the eleven built-in presets of E15-D05 §6; the legacy checklist names map there) [ ] user presets with rename/delete [ ] 'applying replaces your current layout' confirmation [ ] empty user-preset state
 
 ### SCR-023 — Multi-chart sync configuration
@@ -607,6 +611,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `sync.group_created`, `sync.group_changed`, `sync.axis_toggled`, `sync.panel_joined_group`, `sync.panel_left_group` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.8 (Penpot page `E15-D02`, boards 14–15; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Hi-fi (E15-D06):** [E15-D06.md](../design/E15/E15-D06.md) (E15-D06; SCR-023 in colour: the sync badge per density and the narrow case, the 440 px popover and its 200 % modal, the conflict and drawings disclosures, the account axis as a plain unavailable row with the environment notice, the per-panel scale link on the axis and as the proposed SCR-043 item, the refusal with percent offered, the retention and disarm storyboard, the synced crosshair over footprint, the measured matrix; heuristic; owner approval pending).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; the sync chords kept pending the `05` ruling and the H-3 fix, the join / leave script and the disarm's level; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] all sync axes drawn as independent toggles (symbol / interval / crosshair / time range / drawings / indicator set) [ ] group colour tag is paired with a letter [ ] conflicting-sync warning drawn ('Chart 3 has a different interval - crosshair sync will align by timestamp') [ ] leaving a group does not reset the panel's own settings
 
 ### SCR-024 — Panel picker ("Add panel")
@@ -621,6 +626,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `panel.added` with `{type, placement}` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.9 (Penpot page `E15-D02`, board 16; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Hi-fi (E15-D07):** [E15-D07.md](../design/E15/E15-D07.md) · [E15-D07-handoff.md](../design/E15/E15-D07-handoff.md) (E15-D07; SCR-024 in colour: the five categories in order — Charts · Order flow · Market context · Account · Trading — and the growth rule (a new kind lands by the data it shows; fixed order inside a category; a sixth category needs an amendment here), the fourteen R1 entries with icon, thumbnail, description and chips, search with synonyms, the category filter, no results keeping the term and naming the categories, disabled entries with the reason in the accessible name, the placement preview; Penpot page `E15-D07 Picker and menu hi-fi`, ten boards pending; heuristic; owner approval pending).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; the picker's T2 rows and the add announcement; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] all panel types listed with an icon + description [ ] panels unavailable to the role are shown disabled with a reason [ ] search with no results [ ] placement choice (where it will be inserted) is previewed
 
 ### SCR-025 — Workspace settings modal
@@ -637,6 +643,7 @@ Drag preview                Drop zones
 - **Design sign-off acceptance checklist:** [ ] rename, default symbol/interval, environment binding, autosave toggle and sharing (owner) drawn [ ] 'this workspace is pinned to LIVE' warning drawn [ ] unsaved-changes handling [ ] delete-workspace confirmation path
 - **Design (hi-fi):** [E15-D08.md](../design/E15/E15-D08.md) (E15-D08; owner approval pending; text-first, the Penpot boards follow; the settings modal with only its stored fields live: the name, open on startup, the per-device autosave opt-in, Export… and the typed Delete… with its last-workspace T2 reason; the unstored fieldsets as planned insets, each waiting for its contract; no environment control, as a workspace never stores one; the name validation with its error summary, the save states and the discard prompt; Penpot page by name + id in the spec).
 - **Design (hi-fi):** [E15-D09.md](../design/E15/E15-D09.md) §2 (E15-D09; owner approval pending; text-first, the boards follow in a second PR: Export… in its three places, never gated; the export preview's Included and Excluded lists; the file name with its format version; the completion).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; the settings dialog's focus table, the error summary's reading and the safety disclosures; owner approval pending).
 
 ### SCR-026 — Workspace import
 
@@ -650,6 +657,7 @@ Drag preview                Drop zones
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.11 (Penpot page `E15-D02`, board 18; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] file-picker and drag-drop paths [ ] version-mismatch state ('exported from a newer version - 2 panels will be dropped') [ ] preview of what will be imported before applying [ ] rejection state for malformed or oversized files [ ] import never carries credentials or account bindings (verified in copy)
 - **Design (hi-fi):** [E15-D09.md](../design/E15/E15-D09.md) §3–§5 (E15-D09; owner approval pending; text-first, the boards follow in a second PR: the import dialog, the five check steps, the preview table with drops and remaps first, the six rejections with no Import verb, the report, T2 view-as first and the keyboard path).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; the import's focus and announcement rows and its drop zone's keyboard equal; owner approval pending).
 
 ### SCR-027 — Floating panel window (Electron)
 
@@ -674,6 +682,7 @@ Drag preview                Drop zones
 - **Stories:** US-LAY-005.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.5 (Penpot page `E15-D02`, board 11; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Hi-fi (E15-D07):** [E15-D07.md](../design/E15/E15-D07.md) · [E15-D07-handoff.md](../design/E15/E15-D07-handoff.md) (E15-D07; SCR-028 in colour: one fixed item order for every panel kind with Reset settings… and Close last, Reset settings… confirming and Close never, the Move to ▸ and Sync group ▸ submenus, flipping and clamping at the four corners and at 200 %, the `F11` hint and the proposed chords, disabled items with their reasons, the viewer and view-as menus, the browser footnote in place of Pop out; Penpot page `E15-D07 Picker and menu hi-fi`, ten boards pending; heuristic; owner approval pending).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; the panel menu's keys, the close focus rule and the live-binding footnote; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] full item set drawn (settings, duplicate, float, maximise, link to sync group, rename, close) [ ] disabled items show a reason [ ] keyboard invocation via the context-menu key and Shift+F10 [ ] submenu behaviour and overflow near the viewport edge
 
 ### SCR-029 — Unsaved-changes / layout-conflict dialog
@@ -687,6 +696,7 @@ Drag preview                Drop zones
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.7 (Penpot page `E15-D02`, board 13; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] unsaved-changes variant and cross-session conflict variant both drawn [ ] a plain-language summary of what differs [ ] no default destructive button [ ] Esc maps to Cancel, never to Discard
 - **Design (hi-fi):** [E15-D08.md](../design/E15/E15-D08.md) (E15-D08; owner approval pending; text-first, the Penpot boards follow; the dialog as a CMP-043 alertdialog with Cancel first and focused and `Esc` cancelling on every route; the unsaved variant with its plain-language difference summary and the overflow line; the per-layout conflict on the 412 with its side-by-side summary and one consequence line per choice; the entry-point matrix; Penpot page by name + id in the spec).
+- **A11y review (E15-D15):** [E15-D15.md](../design/E15/E15-D15.md) (E15-D15; the alertdialog read by role as focus enters it, the conflict dialog's focus rule and the error summary read by the focus move; owner approval pending).
 
 ---
 
