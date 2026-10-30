@@ -4701,7 +4701,7 @@ export interface paths {
      *     compare-and-set from NULL, the close's row first. An entry already persisted is B1's: a
      *     `submitting` one is resumed under its `orderLinkId` after a restart (24-internal-schemas.md
      *     section 8.2, Recovery), and a `validated` one never sent is ended by the startup sweep
-     *     (section 8.3 rule 1). When the
+     *     (section 8.4, the pipeline's own rules). When the
      *     entry's anchor exists, the answer is `reversed` with `open` the entry in its reconciled
      *     state (`open.reconciling` true while unresolved), never `entry_refused`. When it does
      *     not, the deadline has long passed, so no entry is sent and the answer follows the
@@ -5838,12 +5838,11 @@ export interface paths {
      * Create a hotkey profile
      * @description Conflict detection runs server-side: "two bindings sharing the same `keys` within an"
      *     overlapping `scope` are rejected with `conflict` and the offending pair named. Bindings
-     *     whose action opens or increases exposure (the mutations `ArmToken` names: an order
-     *     entry, `position.reverse`, a leverage change) must set `requires_arm: true`: the server
-     *     rewrites `false` to `true` and returns a warning header rather than silently accepting
-     *     an unsafe binding. The C-2.6 carve-out's actions (`position.flatten`, a close, a cancel,
-     *     engaging the kill switch) are never forced and may be `false`, as a flatten is never
-     *     refused for want of the arm (#915).
+     *     whose action is one of the mutations `ArmToken` requires the token for must set
+     *     `requires_arm: true`: the server rewrites `false` to `true` and returns a warning header
+     *     rather than silently accepting an unsafe binding. A binding whose action is in the C-2.6
+     *     carve-out `ArmToken` lists is never forced and may be `false`, and engaging the kill
+     *     switch, which is no order mutation, is never forced either (#915).
      */
     post: operations["createHotkeyProfile"];
     delete?: never;
@@ -8395,7 +8394,7 @@ export interface components {
         [key: string]: unknown;
       };
       /**
-       * @description Forced true for actions that open or increase exposure (the mutations `ArmToken` names); never forced for the C-2.6 carve-out's actions (`position.flatten`, a close, a cancel, engaging the kill switch).
+       * @description Forced true for exactly the mutations `ArmToken` requires the token for; never forced for the C-2.6 carve-out `ArmToken` lists, nor for engaging the kill switch (no order mutation).
        * @default true
        */
       requires_arm: boolean;
@@ -10201,7 +10200,7 @@ export interface components {
       /** @description The entry, or null when none was sent (`outcome` other than `reversed`). */
       open: components["schemas"]["OrderAcceptance"] | null;
       /**
-       * @description `reversed`: the close filled and the entry was accepted or, for a reversal decided from its anchors after a crash, the entry as it ended (`open` names it, `rejected` or `cancelled` included), never an assumed success; while `open.reconciling` is true the entry is not yet known to rest or fill, and reconciliation settles the symbol's exposure. `close_unfilled`: the close had not filled at the deadline, so no entry was sent and the position is as it was. `close_partially_filled`: the close had partly filled at the deadline, so no entry was sent and the position is smaller. `entry_refused`: the close filled but no entry rests: a check refused it (risk cap, rate reserve, kill switch, the deadline) or the exchange rejected it, so the account is flat on this symbol. The last three are outcomes, not failures to hide: a client shows them as they are.
+       * @description `reversed`: the close filled and the entry was accepted or, for a reversal decided from its anchors after a crash, the entry as it ended (`open` names it, `rejected` or `cancelled` included), never an assumed success; while `open.reconciling` is true the entry is not yet known to rest or fill, and reconciliation settles the symbol's exposure. `close_unfilled`: the close had not filled at the deadline, so no entry was sent and the position is as it was. `close_partially_filled`: the close had partly filled at the deadline, so no entry was sent and the position is smaller. `entry_refused`: the close filled but no entry rests: a check refused it (risk cap, rate reserve, kill switch, the deadline) or the exchange rejected it, so the account is flat on this symbol. The last three are outcomes, not failures to hide: a client shows them as they are. A reversal decided from its anchors after a crash never answers `entry_refused`: when its entry's anchor exists, the entry's end is in `open`, so a client reads `open.state` as well as `outcome`.
        * @enum {string}
        */
       outcome: "reversed" | "close_unfilled" | "close_partially_filled" | "entry_refused";
