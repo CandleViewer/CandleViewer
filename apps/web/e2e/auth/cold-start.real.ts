@@ -12,9 +12,10 @@ import {
   same,
   sessionByCookie,
   tamperOneByte,
+  valueOf,
 } from "../support/real/cookies";
 import { expect, test } from "../support/real/failureArtefacts";
-import { signIn, submitPassword } from "../support/real/signIn";
+import { completeMfa, signIn, submitPassword } from "../support/real/signIn";
 
 // E09-Q02 (#293) PR 2 (#2490): AC1, the cold start on the seeded stack, against the real API and the
 // browser's own cookie jar. The cookie checks are #293's BQ-3 wording of record: no `Set-Cookie` after
@@ -24,7 +25,7 @@ import { signIn, submitPassword } from "../support/real/signIn";
 // SCR-002's OTP form lands (#2711, BQ-2). Each test signs in a fixture user of its own. Values are
 // compared as booleans (`same`), never printed: a failure shows flags, statuses and codes only.
 // The per-address refresh budget is 10 a minute (`api/sessions.py`): these tests present a cookie to
-// `POST /auth/refresh` 7 times in all, the page loads that carry one included.
+// `POST /auth/refresh` 8 times in all, the page loads that carry one included.
 
 const SIGN_IN = "Sign in to CandleViewer";
 const SHELL = /R-101/u;
@@ -110,6 +111,15 @@ test("E09-TC-C01 GET /auth/session gives the user and permissions, the cold star
   });
   const rotated = await requiredValue(context, REFRESH_COOKIE);
   expect(same(rotated, cookie), "the page load's refresh rotated cv_refresh").toBe(false);
+  // `booting` forbids the cookie from before the boot, which no body echoes. The value a leaking
+  // body would carry is the one a refresh issues next, unknown until it runs: so read a refresh's
+  // answer after the boot (a 200 with a bundle, so the `false` is not a 401's empty body).
+  expect(await refreshByCookie(page)).toEqual({
+    status: 200,
+    code: null,
+    bundle: true,
+    refreshInBody: false,
+  });
   await booting.flush();
 });
 
@@ -150,9 +160,21 @@ test("E09-TC-C09 a planted cv_refresh is replaced at sign-in, never adopted", as
   baseURL,
 }) => {
   const origin = originOf(baseURL);
+  const user = lane.user();
   const planted = randomBytes(32).toString("hex");
   await plantRefresh(context, origin, planted); // before SCR-001 loads: its page load presents it
-  await signIn(page, lane.stack, lane.user());
+  await page.goto("/login");
+  const step = await submitPassword(page, user, lane.stack.password());
+  expect(step.mfaRequired, "the password step asks for the second factor").toBe(true);
+  await expect(page.getByRole("heading", { name: "Two-factor code" })).toBeVisible();
+  // The planted value is still the jar's cv_refresh when MFA is completed: neither the page load's
+  // failed refresh nor the password step clears it. So the value after MFA is a replacement.
+  expect(
+    same(await valueOf(context, REFRESH_COOKIE), planted),
+    "the planted cv_refresh was in the jar when MFA completed",
+  ).toBe(true);
+  const mfa = await completeMfa(page, step.mfaToken, lane.stack.clock.totpAt(user.seed()));
+  expect(mfa.authenticated, "MFA by in-page fetch authenticated the session").toBe(true);
   const issued = await requiredValue(context, REFRESH_COOKIE);
   expect(same(issued, planted), "MFA replaced the planted cv_refresh").toBe(false);
   expect(await jarFlags(context)).toEqual(afterMfa(origin));
@@ -218,7 +240,16 @@ test("E09-TC-C09 a deep link with no session lands on SCR-001 with next, from th
   page,
   context,
 }) => {
+  // The boot's refresh has no cv_refresh to present: the real API's 401 is what sends the SPA to
+  // SCR-001. Registered before `goto`, so the answer cannot be missed.
+  const refreshed = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === "/api/v1/auth/refresh",
+  );
   await page.goto("/positions");
+  const res = await refreshed;
+  expect(res.status()).toBe(401);
+  const body = (await res.json().catch(() => ({}))) as { code?: unknown };
+  expect(body.code).toBe("refresh_token_invalid");
   await expect(page).toHaveURL(/\/login\?next=%2Fpositions$/u);
   await expect(page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
   expect(await jarFlags(context)).toEqual([]);
