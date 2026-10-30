@@ -1583,7 +1583,8 @@ STAMP_SITES: dict[str, str] = {
     "- **BQ-23.**": STAMP_R365,
 }
 STAMP_ANY = re.compile(r"RULED \(orchestrator[^)]*\)")
-STAMPS = frozenset({STAMP_R365, *(stamp_a(n) for n in (43, 44, 45, 46))})
+STAMP_R20 = "RULED (orchestrator, 2026-10-30, #365 lane ruling R20)"
+STAMPS = frozenset({STAMP_R365, STAMP_R20, *(stamp_a(n) for n in (43, 44, 45, 46))})
 # The ruled words, by source (R365 = #365's ruling of record; A4346 = #2701 ledger addendum A rows
 # A43 ... A46): each stands in the pack, and in the saved copy given with --source.
 RULING_PINS: dict[str, tuple[str, ...]] = {
@@ -1944,12 +1945,14 @@ GATES: tuple[tuple[str, Callable[[Texts], list[Finding]]], ...] = (
 
 
 # E15-D15 R-5 item 2 (`D15`:282): a description is never a live value. A cell's description is
-# its position, its sync group and axes, the feed's state word and its state words: after the
-# position sentence no number, no mark and no last; the environment word only in the name.
+# its position, its sync group and axes, the feed's state word only when degraded, and its state
+# words: after the position sentence no number, no mark and no last, no healthy feed word ("Live",
+# which collides with the environment word; RULED, #365 lane ruling R20); the environment word
+# only in the name.
 DESC_RULE = "- **The description, assembled in one order:**"
 DESC_QUOTE = re.compile(r'"(Chart [^"]*)"')
 POSITION = re.compile(r"Chart (?:\{position\} of \{count\}|\d of \d)\. ")
-LIVE_VALUE = re.compile(r"\d|\bmark\b|\blast\b|\bDemo\b|\bMixed\b|, Live\b", re.IGNORECASE)
+LIVE_VALUE = re.compile(r"\d|\bmark\b|\blast\b|\bDemo\b|\bMixed\b|\bLive\b", re.IGNORECASE)
 
 
 def descriptions(t: Texts) -> list[tuple[str, str]]:
@@ -2255,7 +2258,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-DESC",
         "put the mark back into the spec's description copy",
         _sub(
-            "spec", "Feed: Live. Chart trading locked", "Feed: Live; mark 64,011.5. Chart trading"
+            "spec", "A: symbol and crosshair. Chart trading", "A: symbol. Feed: Live. Chart trading"
         ),
     ),
     (
