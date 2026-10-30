@@ -2,7 +2,7 @@
 `marketdata:read`. The next frames are `permission_change`, `revoked` for `book`, then `sub_ok`
 with `book` refused (`forbidden`, no `sub_id`) and the unrevoked `orders` topic accepted, then
 `orders`' `snap`: nothing more of `book`, whose upstream ref is released. Both wires (conftest),
-the backpressure flag off and on; every frame is validated (§13-§15)."""
+on the budgeted pipeline (#2409: the flag-off row went); every frame is validated (§13-§15)."""
 
 from __future__ import annotations
 
@@ -10,10 +10,7 @@ import asyncio
 import threading
 from typing import Any
 
-import pytest
-
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.upstream import UpstreamRefs
 from tests.contract.ws import _harness as h
 from tests.unit.ws._seq_support import ACC_A, USER
@@ -35,11 +32,10 @@ class _GatedSink:
     async def drop(self, key: Any) -> None: ...
 
 
-@pytest.mark.parametrize("flag", [None, BackpressureConfig()], ids=["flag-off", "flag-on"])
-def test_contract_a_topic_revoked_while_its_sub_awaits_the_upstream_is_refused_after_revoked(
-    flag: BackpressureConfig | None,
-) -> None:
-    w, sink = h.World(backpressure=flag), _GatedSink()
+def test_contract_a_topic_revoked_while_its_sub_awaits_the_upstream_is_refused_after_revoked() -> (
+    None
+):
+    w, sink = h.World(), _GatedSink()
     refs = w.registry.services.upstream = UpstreamRefs(sink)
     orders = {"ch": "orders", "opts": {"exchange_account_ids": [str(ACC_A)]}}
     with h.connect(w) as c:

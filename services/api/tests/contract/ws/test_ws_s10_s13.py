@@ -202,7 +202,10 @@ def test_s11_every_server_initiated_close_is_preceded_by_bye(label: str, expecte
                 c.send_undecodable("not json")
         elif label == "heartbeat_timeout":
             w.clock.now = 20.0
-            c.recv(skip_ping=False)  # the server's unsolicited ping, left unanswered
+            # the server's unsolicited ping, left unanswered, as is every RTT probe (§9.1): a
+            # `pong` to either is inbound traffic, which the heartbeat counts
+            while not c.recv(skip_ping=False).get("id", "").startswith("s-hb-"):
+                pass
             w.clock.now = 45.0
         elif label == "client_rate_limited":
             for i in range(60):
@@ -214,7 +217,7 @@ def test_s11_every_server_initiated_close_is_preceded_by_bye(label: str, expecte
         elif label == "too_many_connections":
             return _too_many_connections()  # opens its own sockets
         while True:
-            f = c.recv(validate=False, skip_ping=True)
+            f = c.recv(validate=False, skip_ping=label != "heartbeat_timeout")
             if f["t"] == "bye":
                 break
         assert f["p"]["code"] == expected and c.closed() == expected

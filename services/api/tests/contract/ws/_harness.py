@@ -358,15 +358,20 @@ def publish(
     return sent
 
 
+#: The outbound budget a `World` runs on unless told otherwise: the contract values (§8.4).
+ON = BackpressureConfig()
+
+
 class World:
-    """Production wiring of the gateway with fake time, identity and snapshot source; with
-    `backpressure`, the gateway runs with `CV_WS_BACKPRESSURE_ENABLED` on (§8.4)."""
+    """Production wiring of the gateway with fake time, identity and snapshot source, on the
+    outbound budget `backpressure` (§8.4): `CV_WS_BACKPRESSURE_ENABLED` on, as it ships; `None`
+    runs it off (#2409: only the cases that alone cover a flag-off branch still do)."""
 
     def __init__(
         self,
         *,
         system_notices: Callable[[], list[dict[str, Any]]] | None = None,
-        backpressure: BackpressureConfig | None = None,
+        backpressure: BackpressureConfig | None = ON,
         flag_snapshot: FlagSnapshot | None = None,
         system_baseline: SystemBaseline | None = None,
     ) -> None:

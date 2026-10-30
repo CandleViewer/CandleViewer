@@ -101,7 +101,8 @@ def test_independent_depth_subscriptions_and_kind_1_2_round_trip(mode: str) -> N
             data = json.loads(line)["data"]
             ref.apply(data["b"], data["a"])
             w.call(topic.pump)
-            clock.now += 1.0  # every window due
+            clock.now += 1.0  # every window due: the topic's, and the pipeline's (§8.1)
+            w.clock.now += 1.0
             n = w.call(topic.tick)  # one `d` per subscription that got the window
             sent += n
             for d in (c.next_of("d") for _ in range(n)):

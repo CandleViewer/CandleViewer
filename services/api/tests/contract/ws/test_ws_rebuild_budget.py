@@ -23,11 +23,13 @@ BOOK, HEAT = "book.BTCUSDT.50", "heatmap.BTCUSDT"
 
 
 def _until_pong(c: Client) -> list[dict[str, Any]]:
-    """Every frame the server sent before it answered a fence ping."""
+    """Every frame the server sent before it answered a fence ping, but a `system` notice of a
+    change in the connection's class (§8.3), which the clock steps of `World.advance` can cause."""
     c.send({"t": "ping", "id": "fence"})
     out: list[dict[str, Any]] = []
     while (frame := c.recv())["t"] != "pong":
-        out.append(frame)
+        if frame.get("ch") != "system":
+            out.append(frame)
     return out
 
 

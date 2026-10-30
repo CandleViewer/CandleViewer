@@ -4,8 +4,8 @@ reads. Every frame the client gets is validated against 23-ws-protocol.md Sec.13
 test sees it (`_harness`), under both subprotocols. The Gherkin scenarios of the wire: a snapshot,
 then deltas in sequence; the server's account scope (C-12.4); one account event in causal order on
 one connection (Sec.16.1 S5); and a slow consumer of `orders` or of `executions`, closed
-`slow_consumer` (4429) with the backpressure flag off and on, never coalesced or dropped (S4,
-E17-T03's close)."""
+`slow_consumer` (4429) on the budgeted pipeline (#2409: the flag-off rows went), never coalesced
+or dropped (S4, E17-T03's close)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ import pytest
 
 from candleviewer.auth.scopes import AccountGrant
 from candleviewer.oms import ws_topics as wt
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws_wiring import SnapshotRouter, oms_topics
 from tests.contract.ws._harness import World, connect
 from tests.unit.oms.test_ws_topics import new_fill, order, position, stored
@@ -40,9 +39,9 @@ class Lane:
         return wt.View(1, (items[family],))
 
 
-def wired(**kw: Any) -> tuple[World, wt.OmsTopics[Any]]:
+def wired() -> tuple[World, wt.OmsTopics[Any]]:
     """The harness's gateway, its three families served by the production adapter."""
-    world = World(**kw)
+    world = World()
     topics = oms_topics(world.hub)
     topics.attach(Lane())
     world.registry.services.snapshots = SnapshotRouter(dict.fromkeys(wt.FAMILIES, topics))
@@ -99,13 +98,10 @@ def test_account_scoping_is_server_side() -> None:
         assert (result["ok"], result["error"]["code"]) == (False, "account_scope_denied")
 
 
-@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
-def test_one_account_event_reaches_a_connection_in_causal_order(
-    backpressure: BackpressureConfig | None,
-) -> None:
+def test_one_account_event_reaches_a_connection_in_causal_order() -> None:
     """Sec.16.1 S5 on one connection: a fill's execution, then its order's step, then the position
     it moved, whatever the topics' lanes and windows (Sec.8.4)."""
-    world, topics = wired(backpressure=backpressure)
+    world, topics = wired()
     with connect(world) as c:
         subscribed(c, "positions", "orders", "executions")
         [c.next_of("snap") for _ in range(3)]
@@ -116,15 +112,14 @@ def test_one_account_event_reaches_a_connection_in_causal_order(
 
 
 @pytest.mark.parametrize("family", ["orders", "executions"])
-@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
 def test_a_slow_consumer_of_orders_or_executions_is_closed_never_coalesced_or_dropped(
-    backpressure: BackpressureConfig | None, family: str
+    family: str,
 ) -> None:
     """Sec.6.2, Sec.8.4 step 3 (E17-T03): `orders` and `executions` ride the priority lane and are
     never coalesced or dropped, so a client of either that cannot keep up is closed
     `bye slow_consumer` / 4429; every `d` it got before is whole and in sequence. Produced in one
     event-loop turn, so the writer cannot drain."""
-    world, topics = wired(backpressure=backpressure)
+    world, topics = wired()
     with connect(world) as c:
         subscribed(c, family)
         snap = c.next_of("snap")

@@ -20,13 +20,15 @@ CH = f"book.{SYM}.50"
 
 def _session(w: World) -> list[dict[str, Any]]:
     """`sub` (its `snap` is `s` 1), deltas `s` 2 to 2N - 1, a client resync (its `snap` is `s`
-    2N), N + 1 `system` notices (their `s` passes N) and a ping: every frame received, in order."""
+    2N), N + 1 `system` notices (their `s` passes N) and a ping: every frame received, in order.
+    A book delta paces itself, 50 ms after the last (§8.1), so each leaves its window at once."""
     with connect(w) as c:
         c.sub({"ch": CH, "opts": {"encoding": "binary"}})
         c.next_of("snap")
         for _ in range(2 * N - 2):
+            w.clock.now += 0.05
             publish(w, "book", CH, "binary")
-        c.drain(2 * N - 2)
+            assert c.recv()["t"] == "d"
         c.send({"t": "resync", "id": "r", "ch": CH, "p": {"reason": "manual"}})
         c.next_of("snap")
         for _ in range(N + 1):
