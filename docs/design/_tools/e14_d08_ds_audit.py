@@ -17,16 +17,21 @@ Gates (at least one mutation each in `--self-test`; the pins gate besides):
   (b) G-TOKEN     the token-proposal table: every target resolves in the three themes (TP-1 ... TP-8
                   through E13-D03 CR-1's primitives), no alias already shipped, the resolved hex
                   computed; the five parents' token tables hold no name that is neither shipped
-                  nor a proposal row nor a cited proposal; the status-hue collisions are the two
+                  nor a proposal row nor a cited proposal; the status-hue collisions are the four
                   recorded ones; every colour an `engine` row of §3 or A-6's Tokens cell binds is
                   an `ENGINE_CATEGORY_PREFIXES` name (BQ-04), the fallback clauses exempt.
   (c) G-CONTRAST  every pair of §8 and §7 unrounded in three themes, gated vs decorative per row,
-                  the `PAIRS` column a read-only cross-check of `tools/contrast/pairs.mjs`.
+                  the `PAIRS` column a read-only cross-check of `tools/contrast/pairs.mjs`; the
+                  §4.3 union (`--pairs`): this pack's rows and the parents' (D03 §9.1's gated
+                  rows, D04 CR-2, D05 CR-4's rows of §10.1, D06 §13's PROPOSED rows, D07 §10.4),
+                  read at their lines and de-duplicated by {fg, bg}, every gated row passing its
+                  bar in three themes; the reported rows travel as `exemptions.json` candidates.
   (d) G-CVD       the V-rows via `docs/design/_tools/cvd_sim.py`'s swatch math (Rec. 601 grey,
                   the Machado matrices in sRGB), the matrices asserted equal to the script's.
   (e) G-HANDLE    the handle arithmetic of §6 and the forbidden-treatments sentence.
   (f) G-STORIES   the Storybook unions: A-10 covers `15`'s six, D05 §12.1's eighteen, D06H's
-                  PositionTool and the thirteen added; A-17 equals D03 §11's eighteen and covers
+                  PositionTool, one story per R1 tool of D02 §2.2's registry named by the tool
+                  (§10 step 7) and the fourteen added; A-17 equals D03 §11's eighteen and covers
                   `15`'s four; the band strings.
   (g) G-ENTRY     every field bullet in a New cell is declared (`15` §0.1, E09-D07 A-1's four, the
                   E37-D03 Motion / Usage lead-ins); the hand-off's checklists carry `16` §11.4's
@@ -34,7 +39,9 @@ Gates (at least one mutation each in `--self-test`; the pins gate besides):
                   table equals the derivation from §2 and §C.
   (h) G-HYGIENE   placeholders filled and re-derived, no `{{` left anywhere (code spans included),
                   every §C Old cell equal to its line at the base (a code line after stripping),
-                  every cite in range and non-blank at the base, `git diff` against the merge-base
+                  every cite in range, non-blank and content-pinned at the base (the pins file
+                  hashes every cited line; a rebase that moves or edits one fails `--check` until
+                  the cite is verified by content and `--repin-ruled` re-pins it), `git diff` against the merge-base
                   empty outside the pack (PR 1) or equal to `15` + the `14` line with §C applied
                   (PR 2), no closing keyword, no hex outside an anchor, no local path, no agent
                   name, no URL or Penpot host, the mutation list equal to the tool's.
@@ -47,6 +54,7 @@ Usage (from the repo root):
   python3 -I docs/design/_tools/e14_d08_ds_audit.py --self-test
   python3 -I docs/design/_tools/e14_d08_ds_audit.py --repin-ruled
   python3 -I docs/design/_tools/e14_d08_ds_audit.py --a-rows
+  python3 -I docs/design/_tools/e14_d08_ds_audit.py --pairs   (the §4.3 union E14-S10 pastes)
 Exit 0 = no FAIL; 1 = at least one FAIL. The `--json` dump carries values and findings only.
 """
 
@@ -135,7 +143,11 @@ LEAD_FIELDS = ("Motion (E14-D08)", "Usage (E14-D08)")
 # is D05 §12.1's, not an addition)
 ADDED_191 = ("Handles", "Selected", "MultiSelected", "Locked", "Hidden", "Unsaved", "Conflict",
              "ViewerReadOnly", "ViewAsReadOnly", "Palette", "TwoHundredDrawings",
-             "KeyboardDrawOneAnchor", "KeyboardDrawThreeAnchors")  # fmt: skip
+             "KeyboardDrawOneAnchor", "KeyboardDrawThreeAnchors", "KeyboardDrawUnbounded")  # fmt: skip
+# §10 step 7: one story per R1 tool, named by the tool (the `22` value in words); each is checked
+# against an R1 row of D02 §2.2's registry at the base (`15`'s five legacy names cover the rest)
+TOOL_STORIES_191 = ("ExtendedLine", "VerticalLine", "Ellipse", "Triangle", "ParallelChannel",
+                    "Text", "Callout", "Arrow", "Polyline")  # fmt: skip
 BAND_191 = "`ChartEngine/DrawingToolOverlay`"
 BAND_223 = "`Organisms/DrawingToolbar`"
 DISPOSITIONS = ("applied", "applied-as-amended", "routed", "held")
@@ -727,6 +739,192 @@ def disposition(cell: str) -> str:
     return m[0] if m else ""
 
 
+# ---------------------------------------------------------------------------- the §4.3 union (`--pairs`)
+
+PAIR_LITERAL = re.compile(
+    r'\{ fg: "([a-z0-9.\-]+N?)", bg: "([a-z0-9.\-]+)", (?:threshold: THRESHOLD\.)?(TEXT|NON_TEXT) \}'
+)
+ROLE_BAR = {"text": "TEXT", "ui": "NON_TEXT", "non-text": "NON_TEXT"}
+BAR_RANK = {None: 0, "NON_TEXT": 1, "TEXT": 2}
+# this pack's encoding row (§4.3); D06's two are read from its DS-requests line at the base
+ENCODING_191: dict[str, dict[str, list[str]]] = {
+    "drawing-state": {"drawing on canvas": ["glyph", "text", "pattern"]}
+}
+PairSrc = tuple[str, str, str | None, str]  # fg, bg, bar (None = reported), source
+
+
+def literal_pairs(text: str, source: str) -> list[PairSrc]:
+    """`{ fg, bg, THRESHOLD }` literals in `text`; `color.drawing.palette.N` expands to 1 … 8."""
+    out: list[PairSrc] = []
+    for fg, bg, bar in PAIR_LITERAL.findall(text):
+        for name in [fg.replace(".N", f".{n}") for n in range(1, 9)] if fg.endswith(".N") else [fg]:
+            out.append((name, bg, bar, source))
+    return out
+
+
+def row_at(env: Env, key: str, lead: str) -> tuple[int, str]:
+    """(1-based line, text) of the table row starting `| lead |` in a parent at the base."""
+    for i, ln in enumerate(lines_of(env.at_base(PATHS[key])), 1):
+        if re.match(rf"^\|\s*{re.escape(lead)}\s*\|", ln):
+            return i, ln
+    return 0, ""
+
+
+def expand_rows(text: str) -> set[int]:
+    """`rows 8, 10, 11, 29–36` -> {8, 10, 11, 29, …, 36}."""
+    m = re.search(r"rows ([\d, –-]+)\)", text)
+    out: set[int] = set()
+    for part in (m[1] if m else "").split(","):
+        a, _, b = part.strip().replace("–", "-").partition("-")
+        if a.isdigit():
+            out |= set(range(int(a), int(b or a) + 1))
+    return out
+
+
+def parent_pairs(env: Env, spec: str) -> list[PairSrc]:
+    """Every proposed `pairs.mjs` row of this pack and the five parents, at their lines."""
+    rows = literal_pairs(sec(spec, "### 4.3"), "E14-D08 §4.3")
+    d03 = env.at_base(PATHS["D03"])
+    n = next((i for i, ln in enumerate(lines_of(d03), 1)
+              if "`tools/contrast/pairs.mjs` rows (PROPOSED)" in ln), 0)  # fmt: skip
+    for r in table_after(section(d03, "### 9.1"), "fg"):
+        if len(r) > 6 and r[6] == "PASS":
+            rows.append((r[0].strip("`"), r[1].strip("`"), ROLE_BAR.get(r[2]), f"D03:{n} (§9.1)"))
+    n, ln = row_at(env, "D04", "CR-2")
+    rows += literal_pairs(ln, f"D04:{n} (CR-2)")
+    n, ln = row_at(env, "D05", "CR-4")
+    wanted = expand_rows(ln)
+    for r in table_after(section(env.at_base(PATHS["D05"]), "### 10.1"), "#"):
+        if len(r) > 4 and r[0].isdigit() and int(r[0]) in wanted:
+            rows.append((r[2].strip("`"), r[3].strip("`"), ROLE_BAR.get(r[4]), f"D05:{n} (CR-4)"))
+    n, _ = row_at(env, "D06", "A12")
+    for r in table_after(section(env.at_base(PATHS["D06"]), "## 13."), "Element"):
+        if len(r) > 8 and r[8] == "PROPOSED":
+            rows.append((r[1].strip("`"), r[2].strip("`"), ROLE_BAR.get(r[3]), f"D06:{n} (A12)"))
+    rows += literal_pairs(section(env.at_base(PATHS["D07"]), "### 10.4"), "D07 §10.4")
+    return rows
+
+
+@dataclass
+class UnionRow:
+    fg: str
+    bg: str
+    bar: str | None
+    sources: list[str]
+    ratios: dict[str, float]
+    registered: bool
+
+
+def pairs_union(env: Env, spec: str) -> list[UnionRow]:
+    """De-duplicated by {fg, bg}, the stricter bar kept, in first-seen order."""
+    pairs = env.at_base(PAIRS_REL)
+    by: dict[tuple[str, str], UnionRow] = {}
+    for fg, bg, bar, src in parent_pairs(env, spec):
+        row = by.get((fg, bg))
+        if row is None:
+            ratios = {}
+            for t in THEMES:
+                a, b = resolve_any(env, spec, t, fg), resolve_any(env, spec, t, bg)
+                if a and b:
+                    ratios[t] = contrast(a, b)
+            reg = re.search(rf'fg: "{re.escape(fg)}", bg: "{re.escape(bg)}"', pairs) is not None
+            row = by[(fg, bg)] = UnionRow(fg, bg, bar, [], ratios, reg)
+        if BAR_RANK[bar] > BAR_RANK[row.bar]:
+            row.bar = bar
+        if src not in row.sources:
+            row.sources.append(src)
+    return list(by.values())
+
+
+def union_problems(env: Env, spec: str) -> list[str]:
+    bad: list[str] = []
+    rows = pairs_union(env, spec)
+    if not literal_pairs(sec(spec, "### 4.3"), ""):
+        bad.append("§4.3 carries no `{ fg, bg, THRESHOLD }` row of this pack's own")
+    for r in rows:
+        if r.bar is None:
+            continue
+        if len(r.ratios) != len(THEMES):
+            # a TP alias that does not resolve is G-TOKEN's finding; a parent's name is this one's
+            if not {r.fg, r.bg} & set(tp_targets(spec)):
+                bad.append(f"the union row `{r.fg}` on `{r.bg}` does not resolve in every theme")
+            continue
+        bar = BARS["text" if r.bar == "TEXT" else "non-text"]
+        below = [t for t in THEMES if r.ratios[t] < bar]
+        if below:
+            bad.append(
+                f"the union row `{r.fg}` on `{r.bg}` ({', '.join(r.sources)}) is below "
+                f"{r.bar} in {', '.join(below)}: not copy-ready as a gated row"
+            )
+    return bad
+
+
+def encodings_export(env: Env) -> dict[str, dict[str, dict[str, list[str]]]]:
+    """`encodings.json` rows in the file's shape: this pack's and D06's two, read at the base."""
+    out: dict[str, dict[str, dict[str, list[str]]]] = {
+        k: {"surfaces": v} for k, v in ENCODING_191.items()
+    }
+    d06 = env.at_base(PATHS["D06"])
+    for name, body in re.findall(r'`"(long-short|risk-reward)": (\{[^`]+\})`', d06):
+        try:
+            surfaces = json.loads(body)
+        except ValueError:
+            continue
+        if isinstance(surfaces, dict):
+            out[name] = {"surfaces": surfaces}
+    return out
+
+
+def pairs_export(env: Env, spec: str) -> str:
+    rows = pairs_union(env, spec)
+    shipped = shipped_names(env)
+    gated = [r for r in rows if r.bar is not None]
+    new = [r for r in gated if not r.registered]
+    out = [
+        (
+            f"// E14-D08 §4.3 — the de-duplicated PAIRS union for E14-S10 (#432), read at the base "
+            f"{env.base[:10]} by `--pairs`;"
+        ),
+        (
+            f"// {len(gated)} distinct gated pairs, {len(gated) - len(new)} already in pairs.mjs "
+            f"(listed below, not re-added), {len(new)} new rows. Paste into PAIRS:"
+        ),
+    ]
+    for r in new:
+        pending = sorted({n for n in (r.fg, r.bg) if n not in shipped})
+        tail = f" // {', '.join(r.sources)}"
+        if pending:
+            tail += f"; after the token PR lands {', '.join(f'`{n}`' for n in pending)}"
+        out.append(f'  {{ fg: "{r.fg}", bg: "{r.bg}", threshold: THRESHOLD.{r.bar} }},{tail}')
+    out.append("// already registered at the base:")
+    for r in gated:
+        if r.registered:
+            out.append(f"//   {r.fg} on {r.bg} ({', '.join(r.sources)})")
+    out.append(
+        "// exemptions.json candidates — reported, never gated (D02 §15): one entry per token with "
+        "`reason` + `owner`; the pairs and their lowest ratio:"
+    )
+    for r in rows:
+        if r.bar is None:
+            lo = show_ratio(min(r.ratios.values())) if r.ratios else "unresolved"
+            out.append(f"//   {r.fg} on {r.bg}: {lo} ({', '.join(r.sources)})")
+    out.append('// encodings.json rows (merge under "encodings"):')
+    out.append(json.dumps(encodings_export(env), ensure_ascii=False, indent=2))
+    return "\n".join(out)
+
+
+def union_values(env: Env, spec: str) -> dict[str, str]:
+    rows = pairs_union(env, spec)
+    gated = [r for r in rows if r.bar is not None]
+    reg = sum(r.registered for r in gated)
+    return {
+        "COUNT:pairs.union": str(len(gated)),
+        "COUNT:pairs.union.registered": str(reg),
+        "COUNT:pairs.union.new": str(len(gated) - reg),
+        "COUNT:pairs.union.reported": str(len(rows) - len(gated)),
+    }
+
+
 # ---------------------------------------------------------------------------- BQ-04: engine rows
 
 
@@ -787,6 +985,7 @@ def compute(env: Env, spec: str, hand: str) -> dict[str, str]:
     for k, paths in SHA_INPUTS.items():
         vals[f"SHA:{k}"] = sha_of(env, paths)
     vals.update(pair_values(env, spec))
+    vals.update(union_values(env, spec))
     vals.update(palette_values(env, spec))
     vals.update(cvd_values(env, spec))
     for g, c in (("g24", 24), ("g8", 8), ("t10", 10)):
@@ -910,22 +1109,72 @@ def all_units(spec: str, hand: str) -> list[Unit]:
     return units(spec, "spec") + units(hand, "hand")
 
 
-def write_pins(us: list[Unit]) -> str:
+CITE_REGION = "cite"
+CITE_PIN = "cite "
+
+
+def cite_hashes(env: Env, spec: str, hand: str) -> dict[str, str]:
+    """Every distinct cite of the pack and the hand-off -> a hash of its cited line(s) at the
+    base (whitespace-normalised); a cite past the end of the file is left to `cite_problems`.
+    §2's rows of record are pinned by id (G-LEDGER), so that column is not hashed here."""
+    text = spec
+    for r in ledger_rows(spec):
+        text = text.replace(r[1], "", 1)
+    out: dict[str, str] = {}
+    for key, a, b in cites_in(text) + cites_in(hand):
+        label = f"{key}:{a}" if a == b else f"{key}:{a}–{b}"
+        if label in out:
+            continue
+        ls = lines_of(env.at_base(PATHS[key]))
+        if 0 < a <= b <= len(ls):
+            body = pin_norm(ls[a - 1]) + "\n" + pin_norm(ls[b - 1])
+            out[label] = hashlib.sha256(body.encode()).hexdigest()[:12]
+    return out
+
+
+def write_pins(us: list[Unit], cites: dict[str, str]) -> str:
     head = (
         "# E14-D08 pins (every unit of the pack and the hand-off): region, location, the exact "
-        f"normalised text; {len(us)} units.\n# Written by `--repin-ruled` only; `--check` reads it "
-        "(never hand-edit; see the tool's G-RULED-PIN).\n"
+        f"normalised text; {len(us)} units, then {len(cites)} cite pins (`cite`, the cite, a hash "
+        "of the cited line at the base).\n# Written by `--repin-ruled` only; `--check` reads it "
+        "(never hand-edit; see the tool's G-RULED-PIN and G-HYGIENE).\n"
     )
-    return head + "".join("\t".join(u) + "\n" for u in us)
+    body = "".join("\t".join(u) + "\n" for u in us)
+    body += "".join(f"{CITE_REGION}\t{k}\t{h}\n" for k, h in cites.items())
+    return head + body
 
 
 def parse_pins(text: str) -> list[Unit]:
     out: list[Unit] = []
     for ln in text.split("\n"):
         parts = ln.split("\t")
-        if ln and not ln.startswith("#") and len(parts) == 3:
+        if ln and not ln.startswith("#") and len(parts) == 3 and parts[0] != CITE_REGION:
             out.append((parts[0], parts[1], parts[2]))
     return out
+
+
+def parse_cite_pins(text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for ln in text.split("\n"):
+        parts = ln.split("\t")
+        if len(parts) == 3 and parts[0] == CITE_REGION:
+            out[parts[1]] = parts[2]
+    return out
+
+
+def cite_pin_problems(t: Texts) -> list[str]:
+    """A cite whose line at the base is not the pinned content: moved by a rebase, or edited."""
+    pinned = parse_cite_pins(t.pins)
+    bad: list[str] = []
+    for label, h in cite_hashes(t.env, t.spec, t.hand).items():
+        if label not in pinned:
+            bad.append(f"{CITE_PIN}{label} is unpinned: verify it by content, then --repin-ruled")
+        elif pinned[label] != h:
+            bad.append(
+                f"{CITE_PIN}{label}: the line at the base is not the pinned content (moved or "
+                "edited) — re-point it by content, then --repin-ruled"
+            )
+    return bad
 
 
 def pin_problems(pinned: list[Unit], current: list[Unit]) -> list[str]:
@@ -1141,6 +1390,7 @@ def g_contrast(t: Texts) -> list[Finding]:
             bad.append(f"{r[0]}: claims a PROPOSED `pairs.mjs` row; it is registered at the base")
         if reg not in ("registered", "PROPOSED", "—"):
             bad.append(f"{r[0]}: the `PAIRS` cell is not registered / PROPOSED / —")
+    bad += union_problems(t.env, t.spec)
     for doc, text in (("spec", t.spec), ("hand", t.hand)):
         for i, ln in enumerate(lines_of(text), 1):
             for m in HEX.finditer(ln):
@@ -1183,9 +1433,17 @@ def g_stories(t: Texts) -> list[Finding]:
     want = set(base_stories(t, 2427))
     d05 = lines_of(t.env.at_base(PATHS["D05"]))[431]
     want |= {x.strip("`") for x in re.findall(r"`(\w+)`", d05)}
-    want |= {"PositionTool"} | set(ADDED_191)
+    want |= {"PositionTool"} | set(ADDED_191) | set(TOOL_STORIES_191)
     for s in sorted(want - set(s191)):
         bad.append(f"A-10 lacks the story {s}")
+    d02 = lines_of(t.env.at_base(PATHS["D02"]))
+    for s in TOOL_STORIES_191:
+        snake = re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
+        row = next((ln for ln in d02 if re.match(rf"^\|\s*{snake}\s*\|", ln)), "")
+        if "| R1" not in row:
+            bad.append(
+                f"the story {s}: D02 §2.2's registry has no R1 row for `{snake}` (§10 step 7)"
+            )
     if len(set(s191)) != len(s191):
         bad.append("A-10 repeats a story")
     if BAND_191 not in a10:
@@ -1322,6 +1580,7 @@ def g_hygiene(t: Texts) -> list[Finding]:
             if URL_OR_HOST.search(ln):
                 bad.append(f"{doc}:{i} carries a URL, a host or a Penpot id parameter")
     bad += old_cell_problems(t)
+    bad += cite_pin_problems(t)
     # the diff against the merge-base
     if t.changed is None:
         bad.append("cannot list the changed paths (`git diff` / `git status` failed)")
@@ -1403,9 +1662,11 @@ def a_rows_export(spec: str, base15: str, base14: str) -> list[dict[str, object]
         head = next((lines[i] for i in range(min(n, len(lines)) - 1, -1, -1)
                      if lines[i].startswith("### ")), "")  # fmt: skip
         new = strip_anchors(unescape(r[5]))
+        old = [] if r[4] == "—" else [unescape(r[4])]
         if r[3] == "replace code line":
             indent = anchor[: len(anchor) - len(anchor.lstrip())]
             new = indent + new.strip("`")
+            old = [indent + o.strip("`") for o in old]
         out.append(
             {
                 "id": r[0],
@@ -1415,7 +1676,7 @@ def a_rows_export(spec: str, base15: str, base14: str) -> list[dict[str, object]
                 "entry": head,
                 "anchor": anchor,
                 "op": r[3],
-                "old": [] if r[4] == "—" else [unescape(r[4])],
+                "old": old,
                 "new": new.split("<br>"),
                 "from": r[6],
             }
@@ -1513,6 +1774,7 @@ MUTATIONS: tuple[Mutation, ...] = (
       subst("| stroke | engine | the drawing's colour: `color.drawing.default` or TP-1 … TP-8",
             "| stroke | engine | the drawing's colour: `color.text.primary` or TP-1 … TP-8")),
     M("G-CONTRAST", "type a ratio by hand in §8", anchor_edit("CONTRAST:p9.dark", "8.51")),
+    M("G-CONTRAST", "type the §4.3 union's count by hand", anchor_edit("COUNT:pairs.union", "999")),
     M("G-CVD", "alter a simulated value in §8's V-table", anchor_edit("CVD:v1.grey.dark", "9.99")),
     M("G-HANDLE", "alter the 8 px glyph's row coverage in §6", anchor_edit("HANDLE:g8.c12", "0.68")),
     M("G-STORIES", "drop D05's MeasurePinned from A-10", subst("MeasurePinned, MeasureAcrossGap, DensityComposite, HighContrast, ForcedColors, ReducedMotion, Greyscale, PositionTool", "MeasureAcrossGap, DensityComposite, HighContrast, ForcedColors, ReducedMotion, Greyscale, PositionTool")),
@@ -1525,6 +1787,8 @@ MUTATIONS: tuple[Mutation, ...] = (
       subst("**Nothing here is built or published.**", "**Nothing here is built or published.** (`{{SHA:BASE}}`)")),
     M("G-HYGIENE", "misquote A-3's Old cell by one letter",
       subst("base drawing-tools primitive kit (per digest 10", "base drawing-tool primitive kit (per digest 10")),
+    M("G-HYGIENE", "re-point a `22` cite one line off its pinned content (a rebase's drift)",
+      subst("`22`:21697–21742 (`DrawingTool`)", "`22`:21698–21742 (`DrawingTool`)")),
     M("G-RULED-PIN", "re-word one pinned sentence of §5",
       subst("Until the field exists, D04's client rule stands as the fallback", "Until the field exists, D04's client rule is the fallback")),
 )  # fmt: skip
@@ -1588,6 +1852,7 @@ def main(argv: list[str]) -> int:
     g.add_argument("--self-test", action="store_true")
     g.add_argument("--repin-ruled", action="store_true")
     g.add_argument("--a-rows", action="store_true")
+    g.add_argument("--pairs", action="store_true", help="the §4.3 PAIRS / encodings union export")
     ap.add_argument("--json", action="store_true", help="--check's dump; alone it implies --check")
     ap.add_argument("--fill", action="store_true")
     a = ap.parse_args(argv)
@@ -1600,16 +1865,26 @@ def main(argv: list[str]) -> int:
         rows = a_rows_export(t.spec, t.env.at_base(CAT_REL), t.env.at_base(SCR_REL))
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
+    if a.pairs:
+        print(pairs_export(t.env, t.spec))
+        return 0
     if a.repin_ruled:
         for doc, text in (("spec", t.spec), ("hand", t.hand)):
             if unfilled(text):
                 print(f"refused: {doc} has an unfilled placeholder (run --check --fill)")
                 return 1
-        other = [f for f in audit(t) if f.level == "FAIL" and f.gate != "G-RULED-PIN"]
+        # the cite pins are this mode's own output, so their findings do not refuse it
+        other = [
+            f
+            for f in audit(t)
+            if f.level == "FAIL" and f.gate != "G-RULED-PIN" and not f.msg.startswith(CITE_PIN)
+        ]
         if other:
             print(f"refused: {len(other)} FAIL outside the pins (first: {other[0].gate}); fix them")
             return 1
-        write_text(PINS_REL, write_pins(all_units(t.spec, t.hand)))
+        write_text(
+            PINS_REL, write_pins(all_units(t.spec, t.hand), cite_hashes(t.env, t.spec, t.hand))
+        )
         print(f"wrote {PINS_REL}")
         return 0
     if a.fill:
@@ -1629,8 +1904,9 @@ def main(argv: list[str]) -> int:
     else:
         for ln in render(found):
             print(ln)
-        notes = len(found) - len(fails)
-        print(f"{len(fails)} FAIL / 0 WARN / {notes} NOTE ({len(GATES) + 1} gates)")
+        notes = sum(f.level == "NOTE" for f in found)
+        warns = sum(f.level == "WARN" for f in found)
+        print(f"{len(fails)} FAIL / {warns} WARN / {notes} NOTE ({len(GATES) + 1} gates)")
     return 1 if fails else 0
 
 
