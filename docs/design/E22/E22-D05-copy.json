@@ -1,8 +1,8 @@
 {
   "pack": "E22-D05",
   "version": "v1",
-  "base": "a584e5ef9b",
-  "note": "The copy deck of the E22-D05 hand-off pack: D02 §13's rows verbatim, D04 §7's new strings and D03's strings not in D02 §13. Keys are stable row ids. Checked by docs/design/_tools/e22_d05_handoff_audit.py.",
+  "base": "9c16743339",
+  "note": "The copy deck of the E22-D05 hand-off pack: D02 §13's rows verbatim, D04 §7's new strings, D03's strings not in D02 §13, D02's worded but un-keyed strings, two PROPOSED rows and one named-elsewhere row. Keys are stable row ids. Status vocabulary: as D02 §13 / §12 / §4, PROPOSED, PROPOSED (D03), proposed, named-elsewhere. Checked by docs/design/_tools/e22_d05_handoff_audit.py.",
   "strings": {
     "d02.13.cp01": {
       "row": "CP1",
@@ -354,7 +354,9 @@
       "source": "D02:358",
       "provenance": "memo §5 lines 269, 271; `15` CMP-112 line 1234",
       "status": "as D02 §13",
-      "story": "E22-S01"
+      "story": "E22-S01",
+      "template": "side first whatever the column order, the tier word (\"big\" / \"whale\") only on tiers 1–2, then the tags; the full `HH:MM:SS.mmm` is in the Time cell's name whatever the prefix dimming",
+      "template_source": "D02:112"
     },
     "d04.07.an01": {
       "row": "AN-01",
@@ -438,6 +440,60 @@
       "provenance": "E22-D03 §4.9 / §5, not in D02 §13",
       "status": "PROPOSED (D03)",
       "story": "E22-S03"
+    },
+    "d02.12.r22": {
+      "row": "Table 3: filter applied / removed, Big only",
+      "surface": "announcement (user action)",
+      "text": "\"Filter applied: 2 filters active\" / \"Big only on\"",
+      "strings": ["Filter applied: 2 filters active", "Big only on"],
+      "source": "D02:322",
+      "provenance": "D02 §12 Table 3, worded in D02 and un-keyed before this pack (AN-05)",
+      "status": "as D02 §12",
+      "story": "E22-S05"
+    },
+    "d02.04.s10": {
+      "row": "S10",
+      "surface": "the SCR-152 strip above the scrim",
+      "text": "\"Disconnected — last data 00:12\"",
+      "strings": ["Disconnected — last data 00:12"],
+      "source": "D02:129",
+      "provenance": "D02 §4 S10, worded in D02 and un-keyed before this pack",
+      "status": "as D02 §4",
+      "story": "E22-S01"
+    },
+    "d05.07.feed": {
+      "row": "AN-06 / D4-10",
+      "surface": "feed episodes on the tape: stale, disconnected, reconnected",
+      "text": "",
+      "strings": [],
+      "source": "D04:280",
+      "provenance": "D04 §7 AN-06 and §2 D4-10 route these to E17-D01 §7's sentences; this pack words none",
+      "status": "named-elsewhere",
+      "owner": "E17-D01 §7",
+      "story": "E22-S01"
+    },
+    "d05.05.range": {
+      "row": "T4",
+      "surface": "the threshold value field's range message",
+      "text": "\"Enter a value of 0 or more; a percentile is 0 to 100.\"",
+      "strings": ["Enter a value of 0 or more; a percentile is 0 to 100."],
+      "source": "D02:218",
+      "provenance": "D02 D18 names the field's validation (a value below 0, a percentile outside 0–100) and words no message; D02:305 and D03:125 name the range message",
+      "status": "proposed",
+      "stamp": "PROPOSED by E22-D05; the orchestrator rules at the delta",
+      "story": "E22-S02"
+    },
+    "d05.06.memory": {
+      "row": "F3",
+      "surface": "the buffer-size control's memory estimate",
+      "text": "\"10 000 prints ≈ 2.4 MB\"",
+      "strings": ["10 000 prints ≈ 2.4 MB"],
+      "source": "E22J:485",
+      "provenance": "E22-S05's own example; an estimate, and its label says so",
+      "status": "proposed",
+      "label": "an estimate",
+      "stamp": "PROPOSED by E22-D05; the orchestrator rules at the delta",
+      "story": "E22-S05"
     }
   }
 }

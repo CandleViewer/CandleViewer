@@ -73,7 +73,7 @@ from typing import TypeVar
 _T = TypeVar("_T")
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "a584e5ef9b"  # every cite was read here (the pack's Inputs line)
+BASE = "9c16743339"  # every cite was read here (the pack's Inputs line)
 HEAD = "origin/main"  # G-VERSION: a cited range edited at origin/main FAILs
 
 SPEC_REL = "docs/design/E22/E22-D05.md"
@@ -115,12 +115,12 @@ PINNED_DOCS = {
     "D03H": "87e90e8392",
     "D04": "757b765334",
     "11": "1044c4f602",
-    "14": "028382b987",
-    "15": "028382b987",
-    "21": "9b30a1f372",
+    "14": "c179308446",
+    "15": "c179308446",
+    "21": "174c691e18",
     "23": "9b30a1f372",
-    "22": "9b2f41fb0b",
-    "26": "dfba666479",
+    "22": "174c691e18",
+    "26": "d9da6b2f05",
     "LIM": "0836869e2f",
     "E22J": "13f5a32644",
 }
@@ -147,6 +147,7 @@ RULING_QUOTES = (
     "Hand-off pack:",
     "filled at READY by the orchestrator's deputy",
     "re-sync needed",
+    "named, never worded",  # the outside dry run's own words (#578 6533399589)
 )
 REPORT_WIDTH = 100
 QUOTE_MIN = 12
@@ -194,23 +195,24 @@ REJECTED_KEY = "bigtrade.BTCUSDT.threshold_mode"
 T_STORIES = ("Circle", "Square", "Diamond", "TextMode", "LogScale")
 # the dry-run roles (G-WALK), in order
 WALK_ROLES = (
-    "E22-S01",
-    "E22-S02",
-    "E22-S03",
-    "E22-S04",
-    "E22-S05",
-    "E22-Q01",
-    "E22-Q02",
-    "E22-Q03",
-    "E22-Q04",
-    "E22-D06",
-    "FE-lead",
-    "chart-engine-lead",
+    ("E22-S01", "E22-S01"),
+    ("E22-S02", "E22-S02"),
+    ("E22-S03", "E22-S03"),
+    ("E22-S04", "E22-S04"),
+    ("E22-S05", "E22-S05"),
+    ("motion and a11y", "Motion / a11y"),
+    ("E22-Q01 and E22-Q04", "E22-Q01 / Q04"),
+    ("FE lead", "FE lead"),
+    ("chart-engine lead", "Engine lead"),
 )
+WALK_TABLE_HEAD = "12.4 The dry run's needs"
+VERDICTS = ("FOUND", "NOT FOUND", "AMBIGUOUS")
 # the parents' open-row tables (G-OPENROWS): (doc, first, last, lead-cell id pattern)
 OPEN_SOURCES = (
     ("D02", 408, 534, r"C\d+|D02-C\d+|G\d+|D02-G\d+|Q\d+"),
+    ("D02", 376, 389, r"A15-\d+"),
     ("D03", 325, 332, r"CR-\d+"),
+    ("D03", 367, 386, r"A-\d+"),
     ("D03", 415, 487, r"D03-[CGQ]\d+"),
     ("D04", 450, 495, r"F-\d\d|[CGAD]-\d+"),
 )
@@ -223,7 +225,26 @@ STATUS_PROBES: dict[str, tuple[str, str, str, str, str]] = {
     "a15.6": ("cmp", "CMP-056", "reorder via keyboard (`Alt+↑/↓`", "open", "applied"),
     "a15.7": ("cmp", "CMP-055", "`space.filterbar.*`", "open", "applied"),
     "web.tape": ("tree", "apps/web/src", "tape", "present", "absent"),
-    "engine.bubble": ("tree", "packages/chart-engine", "bubble", "present", "absent"),
+    "engine.options": (
+        "ggrep",
+        "packages/chart-engine",
+        "interface BubbleOptions",
+        "present",
+        "absent",
+    ),
+    "engine.layer": (
+        "ggrep",
+        "packages/chart-engine",
+        "BigTradeBubble|BubbleLayer",
+        "present",
+        "absent",
+    ),
+    "G3": ("cite", "15", '`sizeScale: "sqrt"', "served", "open"),
+    "G7": ("ggrep", "packages/ui/tokens", "text\\.(buy|sell)", "served", "open"),
+    "G11": ("cite", "22", "tape.paused", "served", "open"),
+    "a15.4": ("cmp", "CMP-049", "`aria-sort`", "open", "applied"),
+    "a15.5": ("cmp", "CMP-049", "`font.mono`", "open", "applied"),
+    "a15.8": ("cmp", "CMP-011", '|"estimated"|', "open", "applied"),
     "token.aged": ("grep", "packages/ui/tokens", "opacity.bubble.aged", "present", "absent"),
     "sot.tape": ("grep", "scripts/sot-registry.json", "bubble|tape", "an entry", "no entry"),
 }
@@ -258,8 +279,9 @@ REDLINE_HEAD = "8.1 SCR-053 redlines"
 DECK_HEAD = "8.4 The deck"
 D04_HEAD = "9. The motion"
 ENTRY_HEAD = "9.2 The entry table"
-COPY_HEADS = (ENTRY_HEAD, "9.3 Reduced motion", "9.4 Announcements")
-COPYCITE_HEAD = "9.4.1 Cites inside the copied blocks"
+ROWCOPY_HEAD = "8.1.1 Row anatomy"
+COPY_HEADS = (ENTRY_HEAD, "9.3 Reduced motion", "9.4 Announcements", ROWCOPY_HEAD)
+COPYCITE_HEAD = "9.4.1 After the copy"
 STATUS_HEAD = "0. Status and evidence"
 LIFT_HEAD = "9.5 Lifted by hash"
 AHEAD_HEAD = "10. The design-ahead record"
@@ -681,6 +703,9 @@ def status_values() -> Values:
             hit = needle in cmp_block(where)
         elif kind == "tree":
             hit = any(needle in p.lower() for p in tree_paths(where))
+        elif kind == "ggrep":
+            ok, found = git_ok("grep", "-l", "-E", needle, BASE, "--", where)
+            hit = ok and bool(found.strip())
         else:
             texts = [git_show(BASE, p) or "" for p in tree_paths(where)]
             hit = any(re.search(needle, x, re.IGNORECASE) for x in texts)
@@ -716,12 +741,25 @@ def shift_14() -> int:
     return line_of("14", needle) - at if at else -1
 
 
+def walk_rows(spec: str) -> list[list[str]]:
+    return [r for r in rows_of(spec, WALK_TABLE_HEAD) if len(r) >= 5]
+
+
 def count_values(spec: str, deck: str) -> Values:
     entries = deck_entries(deck)
     return {
         "pngs": str(len(img_names())),
         "deck": str(len(entries)),
-        "deck.d02": str(sum(1 for k in entries if k.startswith("d02."))),
+        "deck.d02": str(sum(1 for k in entries if k.startswith("d02.13."))),
+        "deck.unkeyed": str(
+            sum(1 for k in entries if k.startswith("d02.") and not k.startswith("d02.13."))
+        ),
+        "deck.named": str(sum(1 for e in entries.values() if e.get("status") == "named-elsewhere")),
+        "deck.proposed": str(sum(1 for e in entries.values() if e.get("status") == "proposed")),
+        "walk.needs": str(len(walk_rows(spec))),
+        "walk.found": str(sum(1 for r in walk_rows(spec) if r[3] == "FOUND")),
+        "walk.notfound": str(sum(1 for r in walk_rows(spec) if r[3] == "NOT FOUND")),
+        "walk.ambiguous": str(sum(1 for r in walk_rows(spec) if r[3] == "AMBIGUOUS")),
         "deck.d04": str(sum(1 for k in entries if k.startswith("d04."))),
         "deck.d03": str(sum(1 for k in entries if k.startswith("d03."))),
         "stories.cmp112": str(len(cmp112_list(spec))),
@@ -1109,7 +1147,7 @@ REDLINE_SRC: dict[str, tuple[tuple[tuple[int, str], ...], tuple[tuple[int, str],
     ),
     "Cells and gaps": (
         ((91, r"at `type\.num\.sm` (\d+) px"), (91, r"`space\.2` (\d+) px gaps")),
-        ((91, r"`space\.3` (\d+) px gaps and (\d+) px cells"),),
+        ((91, r"px gaps and (\d+) px cells"), (91, r"`space\.3` (\d+) px gaps and")),
     ),
     "Panel width": (
         ((91, r"\*\*(\d+) px minimum width compact\*\*"), (91, r"drawn at \*\*(\d+) px\*\*")),
@@ -1155,8 +1193,9 @@ def redline_expected(slot: str) -> tuple[list[str], list[str]] | None:
 
 
 def cell_numbers(cell: str) -> list[str]:
+    """The figures of a cell in reading order (positional: an in-cell swap fails)."""
     cell = re.sub(r"D02-C\d+|\d+×\d+", "", strip_comments(cell))
-    return sorted(NUMBER.findall(cell))
+    return NUMBER.findall(cell)
 
 
 def g_redline(t: Texts) -> list[Finding]:
@@ -1175,10 +1214,40 @@ def g_redline(t: Texts) -> list[Finding]:
             bad.append(F("G-REDLINE", f"{r[0][:24]}: not a known slot row", "spec", sec))
             continue
         for col, label in ((1, "compact"), (2, "comfortable")):
-            got, exp = cell_numbers(r[col]), sorted(want[col - 1])
+            got, exp = cell_numbers(r[col]), want[col - 1]
             if got != exp:
                 msg = f"{r[0][:24]}: {label} reads {got}, D02 states {exp}"
                 bad.append(F("G-REDLINE", msg, "spec", sec))
+    bad += row_copy_findings(t)
+    return bad
+
+
+def row_copy_findings(t: Texts) -> list[Finding]:
+    """§8.1.1 is D02:101-112 cell for cell: each table row's cells by position, the rule row's
+    width, and the D8-D12 and row-name paragraphs byte for byte."""
+    bad: list[Finding] = []
+    sec = spec_sec(t, ROWCOPY_HEAD)
+    want = base_lines("D02")[100:112]
+    got = [ln for ln in section(t.spec, ROWCOPY_HEAD).split("\n")]
+    while got and not got[0].strip():
+        got.pop(0)
+    while got and not got[-1].strip():
+        got.pop()
+    if len(got) != len(want):
+        return [
+            F("G-REDLINE", f"§8.1.1 has {len(got)} lines, D02:101-112 has {len(want)}", "spec", sec)
+        ]
+    for k, (a, b) in enumerate(zip(got, want, strict=True), 101):
+        if b.startswith("|") and not is_rule(b):
+            ca, cb = split_row(a), split_row(b)
+            for col, (x, y) in enumerate(zip(ca, cb, strict=False)):
+                if x != y:
+                    msg = f"§8.1.1 D02:{k} cell {col} reads {x[:24]!r}, not {y[:24]!r}"
+                    bad.append(F("G-REDLINE", msg, "spec", sec))
+            if len(ca) != len(cb):
+                bad.append(F("G-REDLINE", f"§8.1.1 D02:{k} has {len(ca)} cells", "spec", sec))
+        elif a != b:
+            bad.append(F("G-REDLINE", f"§8.1.1 differs from D02:{k}", "spec", sec))
     return bad
 
 
@@ -1271,11 +1340,11 @@ def g_deck(t: Texts) -> list[Finding]:
     seen: set[str] = set()
     for key, e in entries.items():
         src = str(e.get("source", ""))
-        m = re.fullmatch(r"(D0[234]):(\d+)", src)
+        m = re.fullmatch(r"(D0[234]|E22J):(\d+)", src)
         strings = str_list(e.get("strings"))
         text = str(e.get("text", ""))
         if not m:
-            f(f"{key}: source {src!r} is not a D02/D03/D04 line")
+            f(f"{key}: source {src!r} is not a D02/D03/D04/E22J line")
             continue
         cid, n = m[1], int(m[2])
         if not str(e.get("status", "")) or not re.fullmatch(
@@ -1289,16 +1358,34 @@ def g_deck(t: Texts) -> list[Finding]:
             seen.add(rid)
             if rid not in cps or cps[rid][0] != n or pin_norm(cps[rid][1][2]) != pin_norm(text):
                 f(f"{key}: the text is not D02 §13's {rid} cell at D02:{n}")
+        elif e.get("status") == "named-elsewhere":
+            owner = str(e.get("owner", ""))
+            if strings or not owner or owner.split(" ")[0] not in base_line(cid, n):
+                f(f"{key}: a named-elsewhere row words a string or misses its owner on {cid}:{n}")
+        elif e.get("status") == "proposed" and cid != "E22J":
+            one = strings[0] if len(strings) == 1 else ""
+            line = base_line(cid, n).replace("–", "-")
+            sentence = len(re.findall(r"[.!?](?:\s|$)", one)) == 1 and one.endswith(".")
+            nums = NUMBER.findall(one)
+            if not (one and len(one) <= 60 and sentence and nums and all(x in line for x in nums)):
+                f(f"{key}: a proposed row is not one sentence of <= 60 naming its source's bounds")
         else:
             for s in strings:
                 if s not in base_line(cid, n):
                     f(f"{key}: {s[:40]!r} is not on {cid}:{n}")
-            if key.startswith("d03.") and any(s in d02_text for s in strings):
+            if key.startswith("d05.06") and "estimate" not in str(e.get("label", "")):
+                f(f"{key}: the memory figure is not labelled an estimate")
+            if key.startswith(("d03.", "d02.")) and any(s in d02_text for s in strings):
                 f(f"{key}: a D03 string already in D02 §13")
             if key.startswith("d04.") and "A38" not in str(e.get("stamp", "")):
                 f(f"{key}: no A38 stamp")
     if seen != set(cps):
         f(f"the deck carries {len(seen)} of D02 §13's {len(cps)} rows")
+    cp26 = entries.get("d02.13.cp26", {})
+    tsrc = re.fullmatch(r"D02:(\d+)", str(cp26.get("template_source", "")))
+    tmpl = str(cp26.get("template", ""))
+    if not tsrc or not tmpl or tmpl not in base_line("D02", int(tsrc[1])):
+        f("d02.13.cp26: the row-name template is not verbatim at its source")
     return bad
 
 
@@ -1613,24 +1700,33 @@ def g_walk(t: Texts) -> list[Finding]:
     bad: list[Finding] = []
     sec = spec_sec(t, WALK_HEAD)
     rows = rows_of(t.spec, WALK_HEAD)
+    needs = walk_rows(t.spec)
     if len(rows) != len(WALK_ROLES) or any(
-        role not in r[0] for r, role in zip(rows, WALK_ROLES, strict=False)
+        not r[0].startswith(role) for r, (role, _p) in zip(rows, WALK_ROLES, strict=False)
     ):
-        bad.append(
-            F("G-WALK", f"§12.3 does not list the {len(WALK_ROLES)} roles in order", "spec", sec)
-        )
-    for r in rows:
-        pending = any(c in ("—", "") for c in r[1:4])
-        if pending and (STRICT_WALK or "filled at READY" not in r[4]):
-            bad.append(F("G-WALK", f"{r[0][:30]}: a pending dry-run row", "spec", sec))
-        if not pending:
-            try:
-                needs, found, nf = (int(x) for x in r[1:4])
-            except ValueError:
-                bad.append(F("G-WALK", f"{r[0][:30]}: a count is not a number", "spec", sec))
-                continue
-            if needs != found + nf:
-                bad.append(F("G-WALK", f"{r[0][:30]}: Needs != Found + Not found", "spec", sec))
+        bad.append(F("G-WALK", f"§12.3 does not list the {len(WALK_ROLES)} roles", "spec", sec))
+    for r, (_role, prefix) in zip(rows, WALK_ROLES, strict=False):
+        mine = [x for x in needs if x[1].startswith(prefix)]
+        want = [len(mine), *(sum(1 for x in mine if x[3] == v) for v in VERDICTS)]
+        try:
+            got = [int(x) for x in r[1:5]]
+        except ValueError:
+            bad.append(F("G-WALK", f"{r[0][:30]}: a pending or non-numeric count", "spec", sec))
+            continue
+        if got != want:
+            bad.append(F("G-WALK", f"{r[0][:30]}: counts {got}, §12.4 gives {want}", "spec", sec))
+    tsec = spec_sec(t, WALK_TABLE_HEAD)
+    if not needs:
+        bad.append(F("G-WALK", "§12.4 has no needs", "spec", tsec))
+    for r in needs:
+        if r[3] not in VERDICTS:
+            bad.append(F("G-WALK", f"{r[0]}: verdict {r[3]!r}", "spec", tsec))
+        answer = r[4].strip()
+        cited = bool(cite_refs(" " + answer)) or "§" in answer or "`d0" in answer
+        if r[3] != "FOUND" and (not answer or answer in ("—", "-") or not cited):
+            bad.append(F("G-WALK", f"{r[0]}: a {r[3]} need with no answer", "spec", tsec))
+        if STRICT_WALK and not answer:
+            bad.append(F("G-WALK", f"{r[0]}: an empty answer", "spec", tsec))
     items = numbered_items(t.spec, PROTO_HEAD)
     if not 1 <= items <= 10:
         bad.append(F("G-WALK", f"the protocol has {items} items", "spec", spec_sec(t, PROTO_HEAD)))
@@ -2025,6 +2121,13 @@ def deck_edit(fn: Callable[[dict[str, dict[str, object]]], None]) -> Edit:
     return edit
 
 
+def deck_field(key: str, fld: str, value: str) -> Edit:
+    def fn(s: dict[str, dict[str, object]]) -> None:
+        s[key][fld] = value
+
+    return deck_edit(fn)
+
+
 def deck_text(key: str, text: str) -> Edit:
     def fn(s: dict[str, dict[str, object]]) -> None:
         s[key]["text"] = text
@@ -2080,7 +2183,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-1",
         "G-ANCHOR",
         "a count anchor drifts",
-        spec=sub("34<!--=COUNT:deck-->", "35<!--=COUNT:deck-->"),
+        spec=sub("39<!--=COUNT:deck-->", "40<!--=COUNT:deck-->"),
     ),
     Mutation("M-2", "G-HASH", "a lifted block's hash drifts", spec=hash_mutation()),
     Mutation(
@@ -2160,7 +2263,12 @@ MUTATIONS: tuple[Mutation, ...] = (
         spec=sub("| F-01–F-08 ", "| F-01–F-07 "),
     ),
     Mutation("M-17", "G-UNTOUCHED", "a contract file changed", lever=lever_extra_path),
-    Mutation("M-18", "G-WALK", "the dry run pending under --strict-walk", lever=lever_strict_walk),
+    Mutation(
+        "M-18",
+        "G-WALK",
+        "a NOT FOUND need left without an answer",
+        spec=cell_set("T4", 4, "—"),
+    ),
     Mutation("M-19", "G-PNG", "a board's PNG missing", lever=lever_png_missing),
     Mutation(
         "M-20",
@@ -2281,13 +2389,52 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-38",
         "G-COPY",
         "a copy-cite re-found on the wrong line",
-        spec=sub("| `21`:3724 ", "| `21`:3711 "),
+        spec=sub("| `21`:3732 ", "| `21`:3719 "),
     ),
     Mutation(
         "M-39",
         "G-AHEAD",
         "E22-Q02 dropped from the Readers line",
         spec=sub("E22-Q02 (#752) takes", "the E2E suite takes"),
+    ),
+    Mutation(
+        "M-40",
+        "G-REDLINE",
+        "a copied tier cell changed in §8.1.1",
+        spec=sub("| `font.weight.medium` 500 ", "| `font.weight.medium` 600 "),
+    ),
+    Mutation(
+        "M-41",
+        "G-REDLINE",
+        "an in-cell swap (positional)",
+        spec=cell_set("The log at 1280", 1, "25 px, 604 rows"),
+    ),
+    Mutation(
+        "M-42",
+        "G-DECK",
+        "the proposed range sentence past 60 characters",
+        deck=deck_text(
+            "d05.05.range",
+            '"Enter a value of 0 or more; a percentile is between 0 and 100 inclusive."',
+        ),
+    ),
+    Mutation(
+        "M-43",
+        "G-OPENROWS",
+        "a D03 A-row dropped from the log",
+        spec=sub("| A-1–A-20 ", "| A-1–A-19 "),
+    ),
+    Mutation(
+        "M-44",
+        "G-WALK",
+        "a role's dry-run counts off the needs table",
+        spec=cell_set("E22-S04 clustering", 2, "3"),
+    ),
+    Mutation(
+        "M-45",
+        "G-DECK",
+        "the row-name template reworded",
+        deck=deck_field("d02.13.cp26", "template", "side first, then the tier word, then the tags"),
     ),
     Mutation(
         "M-27",
