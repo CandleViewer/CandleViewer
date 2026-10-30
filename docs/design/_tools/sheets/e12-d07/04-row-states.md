@@ -51,7 +51,7 @@ Board 04 of ten (§0 L78: every `state` word of §6 on one board, the closed row
 ## Sources (2)
 
 - E12-D07 §6 L219-232 (the words and name additions), §6.2 L240-242, §5 (equi-volume state width), §0 L78; E11-D04 :183 (Est.·POC), :254 (forming describedby), :264 (values as of), :59 (stale chip)
-- spec E12-D07.md md5 299bc3f6 (§0 L78); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 55948c5b (§0 L78); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (33)
 

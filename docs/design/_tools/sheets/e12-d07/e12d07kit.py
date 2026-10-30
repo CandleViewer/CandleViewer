@@ -57,7 +57,7 @@ SPEC = _repo("docs/design/E12/E12-D07.md")
 HANDOFF = _repo("docs/design/E12/E12-D07-handoff.md")
 SHELL = _repo("docs/design/E11/E11-D04.md")
 D06 = _repo("docs/design/E12/E12-D06.md")
-SPEC_MD5 = {SPEC.name: "299bc3f63790220d0aa71a682442010f", HANDOFF.name: "5f7f9099d51cd9182539b94221f8b627",
+SPEC_MD5 = {SPEC.name: "55948c5b68e82aba86b9fe996a440cbc", HANDOFF.name: "5f7f9099d51cd9182539b94221f8b627",
             SHELL.name: "02f3ff690f4c840aebb734889d0a17c6", D06.name: "b9a9bc5790d48a240c24e915d4d046a6"}
 
 FILE_NAME = "E12-D07 boards"

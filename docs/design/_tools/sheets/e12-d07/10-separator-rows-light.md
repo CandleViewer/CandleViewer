@@ -65,7 +65,7 @@ Board 10 of ten (§0 L84: light twin of 05). Grid (24000, 3200); 3280 x 1981 px;
 
 ## Sources (1)
 
-- spec E12-D07.md md5 299bc3f6 (§0 L84); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 55948c5b (§0 L84); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (32)
 
