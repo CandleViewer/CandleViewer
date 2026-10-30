@@ -23,6 +23,7 @@ from candleviewer.exchange.base.models import Execution, Order
 from candleviewer.oms.errors import HandoverUnavailable
 from candleviewer.oms.handovers import (
     HANDOVER_TIMEOUT_S,
+    HandoverRead,
     StoreHandovers,
     WaitingExecution,
     WaitingOrder,
@@ -199,15 +200,19 @@ async def test_the_pass_reads_its_orders_and_executions_back_as_their_models() -
         _row(6, "execution", _fill(exec_id="e2").model_dump(mode="json"), decided_at=_T),
     )
     handovers = StoreHandovers(_Store(rows=rows), source="reconcile")
-    assert await handovers.waiting_orders(ACCOUNT) == (WaitingOrder(3, order),)
-    assert await handovers.waiting_executions(ACCOUNT) == (
-        WaitingExecution(5, fill, 1, _T, decided=False),
-        WaitingExecution(6, _fill(exec_id="e2"), 0, None, decided=True),
+    assert await handovers.waiting_orders(ACCOUNT) == HandoverRead((WaitingOrder(3, order),))
+    assert await handovers.waiting_executions(ACCOUNT) == HandoverRead(
+        (
+            WaitingExecution(5, fill, 1, _T, decided=False),
+            WaitingExecution(6, _fill(exec_id="e2"), 0, None, decided=True),
+        )
     )
 
 
-async def test_an_unreadable_entry_is_logged_and_skipped_never_ending_the_read() -> None:
-    """24 Sec.8.5 (BQ-18): the pass never fails over one row. The entry stays in the table."""
+async def test_an_unreadable_entry_is_answered_by_its_id_never_ending_the_read() -> None:
+    """24 Sec.8.5 (BQ-18): the pass never fails over one row, and an entry that no longer reads is
+    surfaced by its id for the report's `errors` (`handover_unreadable`), never its record. The
+    entry stays in the table."""
     rows = (
         _row(
             4, "execution", {"account_id": str(ACCOUNT), "exchange_order_id": "x9", "exec_id": "e0"}
@@ -218,9 +223,17 @@ async def test_an_unreadable_entry_is_logged_and_skipped_never_ending_the_read()
         read = await StoreHandovers(_Store(rows=rows), source="reconcile").waiting_executions(
             ACCOUNT
         )
-    assert [w.entry_id for w in read] == [5]
+    assert ([w.entry_id for w in read.entries], read.unreadable) == ([5], (4,))
     [entry] = [e for e in logs if e["event"] == "oms_handover_unreadable"]
     assert (entry["log_level"], entry["entry_id"]) == ("error", 4)
+    assert "x9" not in repr(entry) and "e0" not in repr(entry)  # the id alone, never the record
+
+
+async def test_an_unreadable_order_entry_is_answered_by_its_id() -> None:
+    unreadable = {"account_id": str(ACCOUNT), "exchange_order_id": "x7"}
+    rows = (_row(7, "order", unreadable), _row(8, "order", _order().model_dump(mode="json")))
+    read = await StoreHandovers(_Store(rows=rows), source="reconcile").waiting_orders(ACCOUNT)
+    assert ([w.entry_id for w in read.entries], read.unreadable) == ([8], (7,))
 
 
 async def test_a_read_the_store_cannot_answer_is_handover_unavailable() -> None:
