@@ -28,7 +28,8 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
   (d) G-REDUCE    every §2 reduce cell is `none` (E05-D03 §3); §5 carries one proof row per
                   inventory row.
   (e) G-BINDING   every fade names a §3 binding row, every follow its D04 rule, every routed row
-                  its candidate; every binding row names an E05-D03 row or a candidate row; the
+                  its candidate or its owner's cited binding (the rail: E10-D04 T-01 / T-02); every
+                  binding row names an E05-D03 row or a candidate row; the
                   pairs in §3 equal E05-D03's at the base, and the binding rule's premise holds
                   there (rows 1 and 4a share the enter pair; rows 2a, 2b, 3 and 4a the exit pair).
   (f) G-SAFETY    every §4 never-animates row is a cut in both modes; no inventory row that names a
@@ -36,7 +37,10 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
                   reason pill, the `alertdialog` ...) animates — an `alertdialog` row only when its
                   safe and reduce cells say the card is at frame 0; every fade on CMP-080 (§2, §3,
                   §6.3's mount row, a §C line) states the header exclusion — "outside the fading
-                  layer" — or I-15's exemption; §4 states the rule; the outline areas are the tool's.
+                  layer" — or I-15's exemption, which is I-15's alone and holds one way (its binding
+                  the exit pair B-2 alone; the restore row a cut); a non-cut row whose carrier cell
+                  names a safety carrier puts it at frame 0 or outside the fading layer; §4 states
+                  the rule; the outline areas are the tool's.
   (g) G-STRING    every §5 quoted string equals its source line's text at the base, verbatim.
   (h) G-CITE      every cite in range, non-blank and content-pinned (a moved cite is a WARN until
                   `--repin-ruled` records it or the spec re-points it; an edited one a FAIL).
@@ -48,7 +52,11 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
                   at the base, a replace's or a confirmation's Old the Motion line #5073 wrote,
                   standing once inside its entry at the Field's number (PR-1 mode; by content alone
                   in PR-2 mode); Via names #5073 for those and `—` for a new line; every New is one
-                  `- **Motion spec**:` line in `15`:523's form, marked PROPOSED.
+                  `- **Motion spec**:` line in `15`:523's form, marked PROPOSED — except the one
+                  ruled replacement (Via `#2701`, the owner's ledger): its Old is the CMP-212
+                  E40-D02 line as it stands at the base, its New that line with the ruled span
+                  alone swapped (A47's two spans, typed once below as RULED_A47), its From carrying
+                  A47's RULED stamp.
   (k) G-HYGIENE   placeholders filled and re-derived, no `{{` left, no closing keyword, no local
                   path, no agent name, no URL or host; the tree against the merge-base: PR 1 may
                   differ only in the pack's three files; PR 2 (`15` changed, the spec and the tool
@@ -111,6 +119,7 @@ PATHS: dict[str, str] = {
     "TOK": TOK_REL,
     "CAL": CAL_REL,
     "E05D03": "docs/design/E05/E05-D03.md",
+    "E10D04": "docs/design/E10/E10-D04.md",
     "D02": "docs/design/E15/E15-D02.md",
     "D03": "docs/design/E15/E15-D03.md",
     "D03H": "docs/design/E15/E15-D03-handoff.md",
@@ -130,6 +139,7 @@ PATHS: dict[str, str] = {
 }
 SHA_INPUTS: dict[str, tuple[str, ...]] = {
     "E05D03": (PATHS["E05D03"],),
+    "E10D04": (PATHS["E10D04"],),
     "D02": (PATHS["D02"],),
     "D03": (PATHS["D03"], PATHS["D03H"]),
     "D04": (PATHS["D04"], PATHS["D04H"]),
@@ -161,6 +171,9 @@ CARD_AT_0 = re.compile(r"\bthe card\b.*\bat frame 0\b")
 PANEL_ID = "CMP-080"
 HEADER_OUT = "outside the fading layer"
 EXEMPT = "not perceivable (C-p"
+EXEMPT_ROW = "I-15"  # the one row that may write EXEMPT; its binding is the exit pair alone
+RESTORE_ROW = "I-16"  # the restore: a cut, never a fade-in of the panels beneath
+CARRIER_AT_0 = re.compile(r"\bat frame 0\b")
 DISPOSITIONS = ("applied-as-amended", "applied", "routed", "held", "confirmed", "superseded by #")
 E05_ROWS = ("1", "2a", "4a")  # the rows the §3 pairs are read from
 # the sprint values §10 anchors (key in the backlog JSON -> anchor id)
@@ -172,6 +185,17 @@ SPRINT_KEYS = {
 CONSUMERS = ("t02", "s01", "s02", "s03", "s04")
 PANELS = ("chart", "dom", "tape", "positions")
 NEW_LINE_HEAD = "- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14"
+# the one ruled replacement in §C (C-e): #2701's ledger row A47 (comment 6524798809) over the
+# CMP-212 E40-D02 line — the Via, the span the line loses, the span it gains, the From's stamp
+RULED_VIA = "#2701"
+RULED_A47 = (
+    "fade only under motion-reduce (X-9, X-20)",
+    (
+        "none under motion-reduce — the end state at frame 0 (E05-D03 §2 row 4a, `16` §7 "
+        '"reduce → instant"; E15-D14 §5 C-e)'
+    ),
+    "RULED (orchestrator, 2026-10-30, #2701 ledger row A47 — 6524798809)",
+)
 
 PLACEHOLDER = re.compile(r"\{\{([A-Z0-9]+:[^{}]+?)\}\}")
 # a value never starts with "(": a parenthesis in front of an anchored number stays in the text
@@ -181,7 +205,7 @@ HEADING = re.compile(r"^(#{1,6}) (.+)$")
 RULE = re.compile(r"^\s*\|?\s*:?-{3,}")
 MOTION_NAME = re.compile(r"`(motion\.[a-z.]+)`")
 CITE = re.compile(
-    r"(?:`([0-9]{2})`|`?\b(D0[2-9]H?|D1[35]|USAGE|E05D03|CAL|CONST|RULE|README|TOK)`?)"
+    r"(?:`([0-9]{2})`|`?\b(D0[2-9]H?|D1[35]|USAGE|E05D03|E10D04|CAL|CONST|RULE|README|TOK)`?)"
     r":(\d+)(?:[–-](\d+))?"
 )
 FIELD_BASE = re.compile(r"`15`:(\d+)")
@@ -751,7 +775,10 @@ def count_values(t: Texts) -> dict[str, str]:
     vals["COUNT:grows"] = str(len(g_rows(spec)))
     ar = a_rows(spec)
     vals["COUNT:arows"] = str(len(ar))
-    vals["COUNT:arows.replace"] = str(sum(len(r) > 3 and r[3] == "replace" for r in ar))
+    vals["COUNT:arows.replace"] = str(
+        sum(len(r) > 4 and r[3] == "replace" and r[4] != RULED_VIA for r in ar)
+    )
+    vals["COUNT:arows.ruled"] = str(sum(len(r) > 4 and r[4] == RULED_VIA for r in ar))
     vals["COUNT:arows.confirm"] = str(sum(len(r) > 3 and r[3] == "confirm" for r in ar))
     vals["COUNT:arows.new"] = str(sum(len(r) > 3 and r[3] == "insert after" for r in ar))
     bq = bq_rows(spec)
@@ -1163,6 +1190,8 @@ def g_token(t: Texts) -> list[Finding]:
         if ln.startswith("| A-"):  # a §C row's Old quotes another owner's line verbatim
             cells = split_row(ln)
             scan = cells[6] if len(cells) == 8 else ln
+            if len(cells) == 8 and cells[4] == RULED_VIA:  # the ruled New is the owner's line too
+                scan = RULED_A47[1]
         for name in MOTION_NAME.findall(scan):
             if name not in shipped:
                 bad.append(f"spec:{i}: `{name}` is not a shipped primitive")
@@ -1225,8 +1254,10 @@ def g_binding(t: Texts) -> list[Finding]:
                 bad.append(f"{r[0]}: a fade names no §3 binding row")
         elif v == "follow" and "D04" not in binding:
             bad.append(f"{r[0]}: a follow names no D04 rule")
-        elif v == "routed" and "CR-" not in binding:
-            bad.append(f"{r[0]}: a routed row names no candidate row")
+        elif v == "routed" and "CR-" not in binding and not cites_in(binding):
+            bad.append(
+                f"{r[0]}: a routed row names neither a candidate row nor its owner's binding"
+            )
     enter = {k: pair_of(e05[k][5]) for k in ("1", "4a") if k in e05}
     exit_ = {k: pair_of(e05[k][6]) for k in ("2a", "2b", "3", "4a") if k in e05}
     if len(enter) != 2 or len(set(enter.values())) != 1:
@@ -1258,6 +1289,20 @@ def g_safety(t: Texts) -> list[Finding]:
                     )
             else:
                 bad.append(f"{r[0]}: a safety carrier animates ({', '.join(hits)}; §4's rule)")
+        carried = [w for w in SAFETY_WORDS if safety_word(w).search(r[7])]
+        if verdict != "cut" and carried and not (CARRIER_AT_0.search(r[7]) or HEADER_OUT in r[7]):
+            bad.append(
+                f"{r[0]}: the carrier cell names {', '.join(carried)} without frame 0 or the "
+                "header exclusion (a carrier never lives in a fading layer)"
+            )
+        if EXEMPT in r[5] and r[0] != EXEMPT_ROW:
+            bad.append(f"{r[0]}: the maximise exemption is {EXEMPT_ROW}'s alone")
+        if r[0] == EXEMPT_ROW and ("B-1" in r[10] or not r[10].startswith("B-2")):
+            bad.append(
+                f"{r[0]}: the exemption holds one way — the exit pair B-2 alone; the restore is a cut"
+            )
+        if r[0] == RESTORE_ROW and verdict != "cut":
+            bad.append(f"{r[0]}: the restore from a maximise is a cut (no fade-in on screen)")
         if verdict == "fade" and PANEL_ID in r[2] and not header_excluded(r[5]):
             bad.append(f"{r[0]}: a fade on {PANEL_ID} that does not state the header exclusion")
     for r in b_rows(t.spec):
@@ -1401,14 +1446,35 @@ def g_arow(t: Texts) -> list[Finding]:
                     f"{aid}: Old stands at `15`:{bullets[-1] + 1}, not at `15`:{n} (PR 1's base)"
                 )
         else:
-            if via != f"#{PR2_NUMBER}":
-                bad.append(f"{aid}: a replace or a confirmation names #{PR2_NUMBER} as its Via")
+            ruled = via == RULED_VIA
+            if not ruled and via != f"#{PR2_NUMBER}":
+                bad.append(
+                    f"{aid}: a replace or a confirmation names #{PR2_NUMBER} as its Via "
+                    f"({RULED_VIA} for the ruled replacement alone)"
+                )
             if len(hits) != 1:
                 bad.append(f"{aid}: Old stands {len(hits)} times inside {cmp} at the base")
             elif not pr2 and hits[0] != n - 1:
                 bad.append(
                     f"{aid}: Old stands at `15`:{hits[0] + 1}, not at `15`:{n} (PR 1's base)"
                 )
+            if ruled:
+                lose, gain, stamp = RULED_A47
+                old_text = unescape(old)
+                new_text = strip_anchors(unescape(new))
+                if op != "replace":
+                    bad.append(f"{aid}: the ruled row is a replace")
+                if old_text.count(lose) != 1:
+                    bad.append(f"{aid}: the ruled row's Old does not carry A47's span once")
+                elif new_text != old_text.replace(lose, gain):
+                    bad.append(
+                        f"{aid}: the ruled row's New is not its Old with A47's span alone swapped"
+                    )
+                if stamp not in r[7]:
+                    bad.append(f"{aid}: the ruled row's From lacks A47's RULED stamp")
+                if "<br>" in new_text or "\n" in new_text:
+                    bad.append(f"{aid}: New is more than one line")
+                continue
         if op == "confirm":
             if new != "—":
                 bad.append(f"{aid}: a confirmation writes nothing")
@@ -1721,7 +1787,7 @@ MUTATIONS: tuple[Mutation, ...] = (
       subst("| cut (RULED BQ-06) | `none` | one mutation from the pre-drop tree",
             "| snap (RULED BQ-06) | `none` | one mutation from the pre-drop tree")),
     M("G-TABLE", "drop BQ-22 from §R",
-      subst("| BQ-22 | the seventeen contradictions", "| BQ-XX | the seventeen contradictions")),
+      subst("| BQ-22 | the nineteen contradictions", "| BQ-XX | the nineteen contradictions")),
     M("G-TABLE", "swap a ledger row's needle for one its cited line does not carry",
       subst("| L-2 | `E15-D14 fixes the curve` (`D04H`:88)", "| L-2 | `E15-D14 fixes the easing` (`D04H`:88)")),
     M("G-PROPERTY", "give the drop commit the property `width`",
@@ -1794,7 +1860,18 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("G-HYGIENE+G-CITE", "simulate PR 2 with one cite pin dropped",
       lambda t: pr2_moved(t, drop="CONST:930")),
     M("G-RULED-PIN", "re-word one pinned sentence of §3",
-      subst("E05-D03 is not edited. **Alternative rejected:**", "E05-D03 is never edited. **Alternative rejected:**")),
+      subst("E05-D03 is not edited. **Which mounts take B-3", "E05-D03 is never edited. **Which mounts take B-3")),
+    M("G-AROW", "alter the ruled row's New outside A47's span",
+      subst("E15-D14 §5 C-e). AM-8's \"Toasts\" landmark name rides DF-19;",
+            "E15-D14 §5 C-e). AM-8's \"Toast\" landmark name rides DF-19;")),
+    M("G-AROW", "drop A47's RULED stamp from the ruled row's From",
+      subst("| C-e; RULED (orchestrator, 2026-10-30, #2701 ledger row A47 — 6524798809) |",
+            "| C-e; ruled on #2701 |")),
+    M("G-SAFETY", "bind the hidden panels' restore to B-1 (I-15 both pairs)",
+      subst("| B-2 (CR-1)       | `D04`:397; `D04`:227; `D02`:387", "| B-1 / B-2 (CR-1) | `D04`:397; `D04`:227; `D02`:387")),
+    M("G-SAFETY", "name the arm state in I-12's carrier cell without frame 0",
+      subst("the header — heading, badge, arm state — and focus at frame 0, outside the fading layer; SR-11",
+            "the header — heading, badge, arm state — and focus, with the body; SR-11")),
 )  # fmt: skip
 
 NEGATIVES: tuple[tuple[str, Callable[[Texts], Texts]], ...] = (
