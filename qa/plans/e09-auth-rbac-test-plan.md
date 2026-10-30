@@ -74,9 +74,9 @@ Screens: `SCR-005` (Session expired / re-auth modal), `SCR-006` (Step-up auth mo
 | Case | Preconditions | Steps | Expected result | Verifies | Automation |
 |---|---|---|---|---|---|
 | E09-TC-C01 | Signed-in `manager-with-grants`, frozen clock at session start | 1. `GET /auth/session` immediately. | `200` within the `≤100 ms p95` smoke budget noted in `14-screens-catalogue.md` (SCR-006 budgets section); returns current session metadata, no secrets. | US-ONB-004 | E09-Q02 |
-| E09-TC-C02 | Same session | 1. Advance frozen clock (§6.3) by 8 h + 1 min with no requests in between. | Next authenticated request is rejected as idle-expired; UI shows `SCR-005`. | US-ONB-004, SR-024 | manual-only → follow-up `E09-Q02-idle-timeout` |
-| E09-TC-C03 | Same session, activity every 4 h so it never idles out | 1. Advance frozen clock by 7 days + 1 min total, issuing one authenticated request every 4 h. | Despite continuous activity, the session is rejected once the **absolute** 7-day lifetime is exceeded (SR-024: "remember this device" never extends past the absolute cap). Documented in this plan as **manual-only** per the acceptance-criteria "plan stays honest" scenario — the time-travel technique is frozen-clock advancement in the fixed increments above, with a follow-up ticket `E09-Q02-absolute-lifetime` to automate it via the same frozen-clock harness. | SR-024 | manual-only → `E09-Q02-absolute-lifetime` |
-| E09-TC-C04 | Session authenticated 13 h ago (frozen clock), trading capability required | 1. Attempt an action gated on "trading capability requires a session authenticated within the last 12 h" (SR-024). | Rejected; `SCR-006` step-up modal is required before the action proceeds. | SR-024, SR-025 | E09-Q02 |
+| E09-TC-C02 | Same session; idle lock 15 min by default (5-60 min per user, `22-api-openapi.yaml` "Idle lock") | 1. Advance the server clock (§6.3) by the idle timeout + 1 min with no `POST /auth/session/extend` or `POST /auth/unlock` in between (reads, WS traffic and client input are not activity). | The session is idle-locked, not revoked: the next gated request is `401 session_idle_locked`; the UI shows `SCR-005` over the preserved route, and a password-only unlock returns to the same route (no step-up survives the lock). | US-ONB-004, SR-024 (the `22` contract sets the figures) | E09-Q02: SPA half stubbed (`session.spec.ts`); server half → #2086 |
+| E09-TC-C03 | Same session, kept active with `POST /auth/session/extend` so it never idles out | 1. Advance the server clock by 12 h + 1 min in steps no longer than the idle timeout, extending at each step. | Despite continuous activity the session is rejected once the **absolute** 12 h lifetime is exceeded (`expires_at` never moves: neither refresh nor extend lengthens it): `401 session_revoked` at unlock, the uniform `401 unauthenticated` elsewhere. The UI ends at `SCR-001`, or shows the `SCR-005` expiry card when the lifetime lapsed while locked. | SR-024 (the `22` contract sets the figures) | E09-Q02: SPA half stubbed (`session.spec.ts`); server half → #2086 |
+| E09-TC-C04 | Session authenticated 12 h + 1 min ago (server clock), past its absolute lifetime | 1. Attempt an action gated on trading capability (SR-024: a session authenticated within the last 12 h; the 12 h is the absolute lifetime). | Rejected: the session is gone (`401`), so `SCR-001` (sign in again), never `SCR-006`: step-up elevates a live session per action class (SR-025) and does not revive an expired one. | SR-024, SR-025 | E09-Q02: SPA half stubbed; server half → #2086 |
 | E09-TC-C05 | Manager attempting to enable live trading | 1. Attempt the live-enablement route without a fresh step-up. | `403`/step-up-required response; `SCR-006` shown. 2. `POST /auth/step-up` with password + TOTP. | Step 1 blocked; step 2 returns `200` and a step-up token/marker valid 5 minutes (SR-025); the `≤400 ms p95` smoke budget noted for step-up issue in `SCR-006` is observed and recorded (informational only — measured budget run is `E09-Q05`). | SR-025 | E09-Q02 |
 | E09-TC-C06 | Continue C05, step-up granted | 1. Advance frozen clock 6 minutes. 2. Retry the gated action. | Step-up has expired (>5 min); action is blocked again, `SCR-006` re-shown. | SR-025 | E09-Q02 |
 | E09-TC-C07 | Signed-in session | 1. `POST /auth/refresh`. | `200`, cookie refreshed; SR-013 rotation does **not** apply here unless the refresh itself is a checkpoint the contract lists — assert against `22-api-openapi.yaml`'s documented behaviour for this route, not assumption. | US-ONB-004 | E09-Q02 |
@@ -171,8 +171,8 @@ No case in this plan waits on wall-clock time.
 | US-ONB-001 | Password sign-in | A01, A03, A07, A08 | E09-Q02 |
 | US-ONB-002 | TOTP second factor | A01, A02, A04, A05, A06, A09, A10 | E09-Q02 |
 | US-ONB-003 | TOTP enrolment & recovery codes | B01–B09 | E09-Q02 |
-| US-ONB-004 | Session lifetime & idle lock | C01, C02, C03, C07 | C02/C03 manual-only; rest E09-Q02 |
-| US-ONB-005 | Step-up re-authentication | C04, C05, C06 | E09-Q02 |
+| US-ONB-004 | Session lifetime & idle lock | C01, C02, C03, C07 | C01, C07 E09-Q02; C02, C03: SPA half E09-Q02 (stubbed), server half → #2086 |
+| US-ONB-005 | Step-up re-authentication | C04, C05, C06 | E09-Q02 (C04, C06: SPA half stubbed, server half → #2086) |
 | US-ONB-006 | Invite-based user creation | E01–E04 | E09-Q03 (E01), E09-Q02 (E02–E04) |
 | US-ONB-007 | Guided first-run for a new manager | E03, E05 | E09-Q02 |
 | US-ONB-008 | Tailscale-only reachability enforcement | E06, E08 | E06 → E09-Q03; E08 manual/deployment-level |
@@ -210,10 +210,13 @@ B05, B06, D02, D04, E01). A missing or malformed audit row is filed as a defect 
 
 ## 8b. Accessibility note
 
-Each manual-only case above (A08, C02, C03, C08, E08) records whether it is executable keyboard-only.
-A08 (lockout), C02/C03 (frozen-clock idle/absolute timeout) and C08 (timing sanity) are pure API/timing
-checks with no UI interaction and are keyboard-only by construction. E08 is a network-topology check, not
-a UI interaction. Any case in Groups A–E that turns out to require a mouse to complete is itself filed as
+Each manual-only case above (A08, C08, E08) records whether it is executable keyboard-only.
+A08 (lockout) and C08 (timing sanity) are pure API/timing checks with no UI interaction and are
+keyboard-only by construction. E08 is a network-topology check, not a UI interaction. C02 and C03 are neither
+manual-only nor API-only any more: their rows end on `SCR-005`, so their SPA half is automated at stub level
+(`apps/web/e2e/auth/session.spec.ts`), which asserts SCR-005's keyboard path (focus on the password field, Esc does
+not dismiss it, type and Enter unlock); their server half is an API/timing check on the server clock (#2086),
+keyboard-only by construction. Any case in Groups A–E that turns out to require a mouse to complete is itself filed as
 a defect against `docs/plan/05-accessibility-standard.md` §3, separate from the deep audit in `E09-Q04`.
 
 ---

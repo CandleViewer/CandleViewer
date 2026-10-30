@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { json, stubSession } from "../support/api";
 import { OTP_SEED, totp } from "../support/totp";
 
@@ -94,4 +94,50 @@ test("E09-TC-E05 skip persists: dismissed checklist stays hidden after reload", 
   await expect(page.getByText("Setup complete.")).toHaveCount(0);
   await page.reload();
   await expect(page.getByText("Setup complete.")).toHaveCount(0);
+});
+
+/**
+ * Presses Tab, at most three times, until `target` holds focus. E09-D12 9.2 and E09-D05 9.1 want a step change to
+ * focus the step's first control (#291 owns that); today each phase unmounts the control that had focus, so the next
+ * Tab reaches it. The path stays on the keyboard and passes whether or not the step manages focus.
+ */
+async function tabTo(page: Page, target: Locator): Promise<void> {
+  for (let presses = 0; presses < 3; presses += 1) {
+    if (await target.evaluate((el) => el === el.ownerDocument.activeElement)) break;
+    await page.keyboard.press("Tab");
+  }
+  await expect(target).toBeFocused();
+}
+
+test("E09-TC-E03 keyboard-only: the whole wizard is reachable and submittable with Tab, Space and Enter", async ({
+  page,
+}) => {
+  await page.route(`**/api/v1/invites/${INVITE_ID}`, (r) =>
+    r.request().method() === "GET"
+      ? r.fulfill(json({ display_name: "Ann", role: "viewer", expires_at: "2026-02-01T00:00:00Z" }))
+      : r.fulfill(json({ method_id: "m1", otpauth_uri: "otpauth://x", secret_base32: OTP_SEED })),
+  );
+  const confirms: unknown[] = [];
+  await page.route(`**/api/v1/invites/${INVITE_ID}/confirm`, (r) => {
+    confirms.push(r.request().postDataJSON());
+    return r.fulfill(json({ status: "active", role: "viewer", recovery_codes: ["rc-1", "rc-2"] }));
+  });
+  await page.goto(`/invite/${INVITE_ID}`);
+  await expect(page.getByRole("heading", { name: "Welcome, Ann" })).toBeVisible();
+  await tabTo(page, page.getByRole("button", { name: "Accept invitation" }));
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("heading", { name: "Choose a password" })).toBeVisible();
+  await tabTo(page, page.getByLabel("New password"));
+  await page.keyboard.type("correct horse battery");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Set up your authenticator" })).toBeVisible();
+  await tabTo(page, page.getByLabel("Authenticator code"));
+  const code = totp(OTP_SEED, Date.UTC(2026, 0, 1));
+  await page.keyboard.type(code);
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Activate account" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "You are set up" })).toBeVisible();
+  await tabTo(page, page.getByRole("link", { name: "Go to sign in" }));
+  expect(confirms).toEqual([{ method_id: "m1", code }]);
 });

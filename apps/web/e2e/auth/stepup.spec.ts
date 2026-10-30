@@ -1,7 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import AxeBuilder from "@axe-core/playwright";
-import { AXE_GATE_TAGS } from "../a11y/tags";
 import { assertNoClientSecrets, json, stubSession, watchForLeaks } from "../support/api";
+import { seriousAxe } from "../support/axe";
 import { OTP_SEED, totp } from "../support/totp";
 
 // E09-Q02 (#293) stepup.spec, revised for #2725: there is no client-side `/admin` step-up
@@ -17,11 +16,19 @@ interface Wire {
   readonly stepUps: string[];
   readonly creates: string[];
 }
+/** One answer of `POST /auth/step-up`. */
+interface Answer {
+  readonly status: number;
+  readonly body: unknown;
+}
 
-/** An owner on SCR-123 whose first invite is refused with a step-up challenge. */
+/**
+ * An owner on SCR-123 whose first invite is refused with a step-up challenge. The nth step-up gets `answers[n]`
+ * (the last one answers every call past the list).
+ */
 async function inviteWithChallenge(
   page: Page,
-  stepUp: { status: number; body: unknown },
+  ...answers: readonly [Answer, ...Answer[]]
 ): Promise<Wire> {
   const wire: Wire = { stepUps: [], creates: [] };
   await page.clock.install({ time: T0 });
@@ -64,7 +71,8 @@ async function inviteWithChallenge(
   });
   await page.route("**/api/v1/auth/step-up", (r) => {
     wire.stepUps.push(r.request().postData() ?? "");
-    return r.fulfill(json(stepUp.body, stepUp.status));
+    const answer = answers[Math.min(wire.stepUps.length, answers.length) - 1] ?? answers[0];
+    return r.fulfill(json(answer.body, answer.status));
   });
   await page.goto("/admin/users/new");
   await page.getByLabel("Username").fill("annie");
@@ -104,12 +112,7 @@ test("E09-TC-C05 the step-up answers the server's challenge and the held invite 
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAccessibleDescription(SUMMARY);
   await expect(page.getByLabel("Password", { exact: true })).toBeFocused();
-  const axe = await new AxeBuilder({ page }).withTags([...AXE_GATE_TAGS]).analyze();
-  expect(
-    axe.violations
-      .filter((v) => v.impact === "serious" || v.impact === "critical")
-      .map((v) => `${v.id}: ${v.help}`),
-  ).toEqual([]);
+  expect(await seriousAxe(page)).toEqual([]);
   const code = totp(OTP_SEED, T0.getTime());
   await page.getByLabel("Password", { exact: true }).fill("e2e-step-up-pw");
   await page.getByLabel("Authenticator code").fill(code);
@@ -161,4 +164,119 @@ test("E09-TC-C05 non-owner is denied (404) rather than offered step-up", async (
   await expect(page.getByRole("heading", { name: "Not found" })).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
+});
+
+// ---- SCR-006's exits and keyboard (E09-D06 5, 6): Esc and Cancel drop the held request unsent, the third
+// refused code does too, and Tab never leaves the dialog.
+const DIALOG = { name: "Confirm with two-factor" };
+const NOT_SENT = (page: Page) => page.getByRole("status").filter({ hasText: /^Not sent$/u });
+const CLOSERS: readonly (readonly [string, (page: Page) => Promise<void>])[] = [
+  ["Cancel", (page) => page.getByRole("button", { name: "Cancel" }).click()],
+  ["Esc", (page) => page.keyboard.press("Escape")],
+];
+
+for (const [name, close] of CLOSERS) {
+  test(`E09-TC-C05 ${name} drops the held invite unsent: Not sent, no step-up sent, focus back on the form`, async ({
+    page,
+  }) => {
+    const wire = await inviteWithChallenge(page, GRANTED);
+    await expect(page.getByRole("alertdialog", DIALOG)).toBeVisible();
+    await close(page);
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    await expect(NOT_SENT(page)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create invitation" })).toBeFocused();
+    expect(wire.stepUps).toEqual([]);
+    expect(wire.creates).toHaveLength(1); // the held invite is never re-sent
+  });
+}
+
+test("E09-TC-C05 the third refused code drops the held invite unsent: three step-ups sent, Not sent, no re-send", async ({
+  page,
+}) => {
+  const wire = await inviteWithChallenge(page, { status: 401, body: { code: "mfa_invalid" } });
+  const password = page.getByLabel("Password", { exact: true });
+  const code = page.getByLabel("Authenticator code");
+  const refused = async (n: number): Promise<void> => {
+    await password.fill(`pw-${n}`);
+    await code.fill("000000");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => wire.stepUps.length).toBe(n);
+  };
+  // each refusal keeps the dialog, shows an alert, clears the fields and refocuses the password
+  await refused(1);
+  await expect(password).toHaveValue("");
+  await refused(2);
+  await expect(password).toHaveValue("");
+  await expect(password).toBeFocused();
+  await expect(page.getByRole("alertdialog", DIALOG)).toBeVisible();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(code).toHaveAttribute("aria-invalid", "true");
+  expect(await seriousAxe(page)).toEqual([]);
+  await refused(3);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(NOT_SENT(page)).toBeVisible();
+  const bodies = wire.stepUps.map((body) => JSON.parse(body) as { challenge_id?: string });
+  expect(bodies.map((body) => body.challenge_id)).toEqual([
+    CHALLENGE_ID,
+    CHALLENGE_ID,
+    CHALLENGE_ID,
+  ]);
+  expect(wire.creates).toHaveLength(1);
+});
+
+// The server ends the challenge itself on the third wrong code: `403 session_read_only` (22 `authStepUp`), after two
+// `401 mfa_invalid` that count the strikes left. The test above is the client's own count of three `401`s.
+const strike = (failuresRemaining: number): Answer => ({
+  status: 401,
+  body: { status: 401, code: "mfa_invalid", failures_remaining: failuresRemaining },
+});
+const READ_ONLY: Answer = {
+  status: 403,
+  body: {
+    status: 403,
+    code: "session_read_only",
+    readonly_until: new Date(T0.getTime() + 5 * MIN).toISOString(),
+  },
+};
+
+test("E09-TC-C05 the server's 403 session_read_only on the third code drops the held invite unsent: Not sent, no re-send", async ({
+  page,
+}) => {
+  const wire = await inviteWithChallenge(page, strike(2), strike(1), READ_ONLY);
+  const password = page.getByLabel("Password", { exact: true });
+  for (const n of [1, 2, 3]) {
+    await password.fill(`pw-${n}`);
+    await page.getByLabel("Authenticator code").fill("000000");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => wire.stepUps.length).toBe(n);
+    if (n < 3) await expect(password).toHaveValue(""); // the dialog stays, and the form is reset
+  }
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(NOT_SENT(page)).toBeVisible();
+  expect(wire.stepUps).toHaveLength(3); // no fourth step-up
+  expect(wire.creates).toHaveLength(1); // the held invite is never re-sent
+});
+
+test("E09-TC-C05 keyboard-only: Tab and Shift+Tab cycle inside the dialog and never reach the form behind it", async ({
+  page,
+}) => {
+  await inviteWithChallenge(page, GRANTED);
+  const dialog = page.getByRole("alertdialog", DIALOG);
+  const password = dialog.getByLabel("Password", { exact: true });
+  const code = dialog.getByLabel("Authenticator code");
+  const cancel = dialog.getByRole("button", { name: "Cancel" });
+  const confirm = dialog.getByRole("button", { name: "Confirm" });
+  await expect(password).toBeFocused();
+  await page.keyboard.type("pw-trap");
+  await page.keyboard.press("Tab");
+  await expect(code).toBeFocused();
+  await page.keyboard.type("123456"); // a valid code enables Confirm, the last stop
+  for (const next of [cancel, confirm, password, code]) {
+    await page.keyboard.press("Tab");
+    await expect(next).toBeFocused();
+  }
+  await page.keyboard.press("Shift+Tab");
+  await expect(password).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(confirm).toBeFocused();
 });

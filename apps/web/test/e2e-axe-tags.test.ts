@@ -58,10 +58,10 @@ describe("the a11y gate's axe tags (#3700)", () => {
     // selects them (target-size, aria-roledescription, audio-caption). Add any new tagged scan here.
     expect(calls.map((c) => c.file).sort()).toEqual([
       "a11y/axe.collect.ts",
-      "auth/stepup.spec.ts", // SCR-006 with the step-up dialog open (#2725)
       "e09-auth-a11y.spec.ts",
       "e09-auth-a11y.spec.ts",
       "shell-chrome.spec.ts", // the shell chrome per theme and role (#304)
+      "support/axe.ts", // the one scan the E09-Q02 auth specs call (#293), SCR-006's step-up dialog (#2725) included
       "system-states/break-glass-notice.spec.ts", // SR-023's SCR-153 notice row (#306)
     ]);
   });
