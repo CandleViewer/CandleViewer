@@ -347,6 +347,8 @@ Worker → main:
 | `a11y`     | `{ cursorSummary }` — the text the live region should announce                                |
 | `error`    | `{ code, message, recoverable }`                                                              |
 
+Shipped by E11-T02 (package README "Design deltas" BQ-10 to BQ-19): worker → main also sends `ack { id, store }` per `data` (the host keeps ≤ 2 unacknowledged per store) and `exported { id, reqId, blob }` (the `export` reply); main → worker `command { release }` deregisters a chart; `frame` carries `runMode` and `renderProfile`. Every message carries the chart `id` (`null` on a worker-wide `error`); `ready`'s capability report is the selected `RenderProfile` until E11-T05; `pick` has no `cell` before E11-S08 / E12. One dedicated worker serves every chart on the page.
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---

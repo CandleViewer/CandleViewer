@@ -3,6 +3,13 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["src/index.ts", "src/api", "src/host", "test/api"],
+  "include": [
+    "src/index.ts",
+    "src/api",
+    "src/host",
+    "src/worker/host.ts",
+    "test/api",
+    "test/worker"
+  ],
   "exclude": ["dist", "node_modules", "coverage"]
 }

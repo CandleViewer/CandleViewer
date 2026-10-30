@@ -113,6 +113,9 @@ describe("Scenario: A chart mounts and reports frame stats through the stub", ()
     expect(canvas?.width).toBe(640);
     expect(canvas?.height).toBe(360);
     expect(canvas).toHaveAttribute("aria-hidden", "true");
+    act(() => {
+      vi.advanceTimersByTime(16); // the render runtime paints on its frame (E11-T02, 26 §3.2)
+    });
     expect(fills).toEqual(["#0b0e11"]);
   });
 

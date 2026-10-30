@@ -5,6 +5,9 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     compat: "src/compat.ts",
+    // The render worker is its own same-origin module (no `blob:` URL; E11-T02, E10 CSP): the
+    // host loads it as `new URL("./render-worker.js", import.meta.url)`.
+    "render-worker": "src/worker/render-worker.ts",
     bench: "bench/harness.ts",
   },
   format: ["esm"],
