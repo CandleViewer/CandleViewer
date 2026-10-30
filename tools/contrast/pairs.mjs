@@ -257,6 +257,16 @@ export const PAIRS = [
     threshold: THRESHOLD.NON_TEXT,
   },
   { fg: "color.border.selected", bg: "color.surface.selected", threshold: THRESHOLD.NON_TEXT },
+
+  // --- Dock sync-group edges (E15-D13 §6 P-1 … P-6) --------------------
+  // The tile edge sits on the panel header (`raised`) or a grid cell's header (`canvas`);
+  // the group letter always carries the group, the hue only repeats it.
+  { fg: "color.sync.a", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sync.b", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sync.c", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sync.a", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sync.b", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.sync.c", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
 ];
 
 /**

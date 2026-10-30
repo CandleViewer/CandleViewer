@@ -4,6 +4,37 @@ Versioned independently from `@candleviewer/ui` (docs/plan/16-design-system-brie
 "the `tokens/` directory is versioned independently ... since a token-only
 change should be shippable and reviewable without touching component code").
 
+## [0.1.2] - 2026-10-30
+
+### Added
+
+The dock and panel-chrome tokens of E15-D13 (#367), `docs/design/E15/E15-D13.md` §5. Every one is
+a Tier-2 alias of an existing primitive; no primitive is added and no value changes.
+
+- `space.dockgrid.gutter` = `{space.1}` (4 px in both densities): the gap between docked panels
+  on `color.surface.app` (CMP-081); never zero, never a density step.
+- `space.panelheader.height.compact` / `.comfortable` = `{size.control.compact}` /
+  `{size.control.comfortable}` (24 / 32 px): CMP-082's one header row and CMP-251's tab-group row.
+- `space.dock.tray.height.compact` / `.comfortable` = `{size.control.compact}` /
+  `{size.control.comfortable}` (24 / 32 px): CMP-250's row, present only while a panel is
+  minimised. Both height pairs join the density pointers in `themes.json` (`density.resolves`).
+- `size.dock.splitter.hit` = `{size.target.min}` (24 px): CMP-083's hit band, centred on the
+  gutter; never below the target minimum.
+- `color.sync.a` / `.b` / `.c`, the sync-group hue on the tile edge only, as palette references
+  (never semantic-to-semantic, so a later warning retune never moves a hue), E15-D06's hues: dark
+  and high contrast `palette.cyan.300` `#6ED0E8`, `palette.amber.300` `#F5C86B`,
+  `palette.purple.500` `#8B5CF6`; light `palette.light.cyan.300` `#12798F`,
+  `palette.light.amber.300` `#9A6A05`, `palette.purple.600` `#7040E0`. A group colour is never
+  used without the group letter; the hue only repeats it. Six non-text pairs in
+  `tools/contrast/pairs.mjs`, each edge on `color.surface.raised` and `.canvas`: dark and high
+  contrast 4.09 to 11.65:1, light 4.11 to 5.60:1.
+- `border.panel.focus` = `{border.focus}` (2 px): the width of the dock panel focus frame (E15-D13,
+  CMP-081 and CMP-082). A Tier-2 alias of the same width primitive `border.focus` uses, in all three
+  themes; `border.focus` itself is untouched (a token path cannot be both a value and a group, 16 §2).
+
+Not added: `space.workspacetabs.height.*` (32 / 40 px): no token,
+a derivation rule in `16` §3 (control height + 2 × space.1) (E15-D13 G-1).
+
 ## [0.1.1] - 2026-10-20
 
 ### Added

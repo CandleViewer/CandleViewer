@@ -24,6 +24,10 @@
       "size.row.height",
       "space.row.height.compact",
       "space.row.height.comfortable",
+      "space.panelheader.height.compact",
+      "space.panelheader.height.comfortable",
+      "space.dock.tray.height.compact",
+      "space.dock.tray.height.comfortable",
       "space.inset.*",
       "space.field.gap"
     ]
