@@ -7,6 +7,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,11 +45,32 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const clock = (fs?: ClockFs) => serverClock(file, { now: () => NOW, ...(fs && { fs }) });
 const stored = (): string => readFileSync(file, "ascii");
 
+/** What the reader's source says `name` is, or a failure that says where to look when the source was reshaped. */
+function readerConstant(source: string, name: string, shape: RegExp): string {
+  const value = shape.exec(source)?.[1];
+  if (value === undefined) {
+    throw new Error(
+      `could not find \`${name}\` in ${READER}: the reader was reshaped, so re-point this test`,
+    );
+  }
+  return value;
+}
+
 describe("the offset grammar", () => {
   it("is the reader's: the same pattern and the same byte cap, read from testnet_clock.py", () => {
     const source = readFileSync(READER, "utf8");
-    expect(/_OFFSET_RE = re\.compile\(r"(.*)"\)/u.exec(source)?.[1]).toBe(OFFSET_PATTERN);
-    expect(Number(/_MAX_FILE_BYTES = (\d+)/u.exec(source)?.[1])).toBe(MAX_OFFSET_BYTES);
+    expect(readerConstant(source, "_OFFSET_RE", /_OFFSET_RE = re\.compile\(r"(.*)"\)/u)).toBe(
+      OFFSET_PATTERN,
+    );
+    expect(Number(readerConstant(source, "_MAX_FILE_BYTES", /_MAX_FILE_BYTES = (\d+)/u))).toBe(
+      MAX_OFFSET_BYTES,
+    );
+  });
+
+  it("names the constant it could not find when the reader's source was reshaped", () => {
+    expect(() => readerConstant("no such line", "_OFFSET_RE", /_OFFSET_RE = (.*)/u)).toThrow(
+      "could not find `_OFFSET_RE`",
+    );
   });
 
   it.each([
@@ -75,7 +97,7 @@ describe("the offset grammar", () => {
   );
 
   it.each(["", " ", "1e3", "0x10", "1.", ".5", "--1", "1.1234567", "1234567890", "12 3", "NaN"])(
-    "reads %j as no offset, as the reader refuses it",
+    "refuses %j, as the reader does",
     (text) => {
       expect(() => parseOffset(text)).toThrow(SyntaxError);
     },
@@ -106,6 +128,16 @@ describe("serverClock.advance", () => {
     expect(join(temp, "..")).toBe(dir);
     expect(readdirSync(dir)).toEqual(["clock-offset"]); // no temp file is left behind
     expect(stored()).toBe("901");
+  });
+
+  it("leaves the file world-readable whatever the umask, for an API that runs as another user", () => {
+    const umask = process.umask(0o077); // a strict umask would make the file's `mode` 0600
+    try {
+      clock().advance(60);
+    } finally {
+      process.umask(umask);
+    }
+    expect(statSync(file).mode & 0o777).toBe(0o644);
   });
 
   it("carries on from the file: its own calls add up, and so does a second clock on it", () => {
@@ -145,13 +177,31 @@ describe("serverClock.advance", () => {
     expect(readdirSync(dir)).toEqual(["clock-offset"]);
   });
 
+  it("keeps the old offset and removes what a failed create left of the temp file", () => {
+    clock().advance(60);
+    const failing: ClockFs = {
+      readFile: (path) => readFileSync(path, "ascii"),
+      createFile: (path, data) => {
+        writeFileSync(path, data.slice(0, 1)); // part of the text reached the disk, then the write failed
+        throw new Error("disk full");
+      },
+      rename: () => {
+        throw new Error("rename must not run after a failed create");
+      },
+      remove: (path) => rmSync(path, { force: true }),
+    };
+    expect(() => clock(failing).advance(60)).toThrow("disk full");
+    expect(stored()).toBe("60");
+    expect(readdirSync(dir)).toEqual(["clock-offset"]);
+  });
+
   it("fails closed on a file the reader would refuse, instead of writing over it", () => {
     writeFileSync(file, "not a number");
     expect(() => clock().advance(1)).toThrow(SyntaxError);
     expect(stored()).toBe("not a number");
   });
 
-  it("takes only the absolute path without `..` that Settings accepts", () => {
+  it("takes only an absolute path without `..`, the first two of the four rules Settings applies", () => {
     expect(() => serverClock("clock-offset")).toThrow(RangeError);
     expect(() => serverClock(`${dir}${sep}..${sep}clock-offset`)).toThrow(RangeError); // join() would fold it away
     mkdirSync(join(dir, "sub"));

@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { totp } from "./totp";
 
@@ -8,7 +8,8 @@ import { totp } from "./totp";
 // (`services/api/candleviewer/auth/testnet_clock.py`). The file is written as a temp file and then renamed over the
 // target, so the server never reads a half-written offset. The stub specs do not use it: their clock is
 // `SessionStore.advance` (`contexts.ts`) and `page.clock`. Forward only: rows written under an earlier offset
-// (sessions, lockouts) would otherwise be judged by a clock that ran backwards.
+// (sessions, lockouts) would otherwise be judged by a clock that ran backwards. One writer at a time: `advance`
+// reads the offset and then writes it, so two at once could lose an update (the real lane's specs run serially).
 
 /** The reader's grammar (`_OFFSET_RE`): signed decimal seconds, at most 9 integer digits, microsecond precision. */
 export const OFFSET_PATTERN = "[+-]?[0-9]{1,9}(?:\\.[0-9]{1,6})?";
@@ -31,8 +32,12 @@ export interface ClockFs {
 
 const nodeFs: ClockFs = {
   readFile: (path) => readFileSync(path, "ascii"),
-  // world-readable: the API may run as another user (a container); the file holds no secret
-  createFile: (path, data) => writeFileSync(path, data, { flag: "wx", mode: 0o644 }),
+  // world-readable whatever the umask (it filters `mode`): the API may run as another user (a container); the
+  // file holds no secret
+  createFile: (path, data) => {
+    writeFileSync(path, data, { flag: "wx", mode: 0o644 });
+    chmodSync(path, 0o644);
+  },
   rename: renameSync,
   remove: (path) => rmSync(path, { force: true }),
 };
@@ -72,8 +77,9 @@ export interface ServerClock {
 }
 
 /**
- * The clock of the API whose `CV_TEST_CLOCK_FILE` is `file`: absolute, without `..`, as `Settings` requires. The
- * file is the state, so a second clock on it carries on from the first.
+ * The clock of the API whose `CV_TEST_CLOCK_FILE` is `file`: absolute and without `..`, the first two of the four
+ * rules `Settings` applies (it also refuses a symlink in the path, so give a real one). The file is the state, so a
+ * second clock on it carries on from the first.
  */
 export function serverClock(
   file: string,
@@ -104,11 +110,11 @@ export function serverClock(
       const text = formatOffset(next); // refuses an offset the reader would refuse, before anything is written
       writes += 1;
       const temp = join(dirname(file), `${basename(file)}.${process.pid}.${writes}.tmp`);
-      fs.createFile(temp, text);
       try {
+        fs.createFile(temp, text);
         fs.rename(temp, file);
       } catch (error) {
-        fs.remove(temp);
+        fs.remove(temp); // a failed create may have left part of the temp file, a failed rename all of it
         throw error;
       }
       return next;
