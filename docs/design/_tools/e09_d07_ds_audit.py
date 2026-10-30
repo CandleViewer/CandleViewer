@@ -21,11 +21,14 @@ working tree.
 2. **Cites.** Every `NN`:line and declared-key:line cite (with `, :n` continuations and `n-m`
    ranges) is read at the base; a missing or blank line FAILs (G-CITE), and the load-bearing
    fragments of CITED must sit on their lines, each reached by a cite of at most 24 lines.
-   G-VERSION is content-based: each cited range must
-   stand, in order and contiguous, somewhere in its file at `origin/main` (a move is fine, an edit
-   FAILs, an unresolvable `origin/main` FAILs); the version line's shas are each input's last
-   commit at the base, and a commit after the base to an input without a cited range (the token
-   JSON, the calendar, the backlog JSON, the CVD script) is a late change.
+   G-VERSION is content-based: each cited range must stand, in order and contiguous, at its own
+   line at `origin/main` or, moved, at the nearest line where it stands (a WARN; a text that
+   repeats in its file must keep the two lines before it); a range that stands nowhere (an edit)
+   FAILs, and so does an unresolvable `origin/main`. The version line's shas are each input's last
+   commit at the base. An input without a cited range is a late change by what the pack's values
+   read: a commit after the base to the token JSON or the CVD script, a change to the calendar's
+   sprint-1 start or sprint length, or to the sprint field of a ticket a DATE value names (a later
+   commit to the calendar or the backlog JSON that moves none of these is not one).
 3. **Gates.** Lexicon gates read table cells and prose after the comment strip, NFKC and
    whitespace-normalised: each ruled behaviour has its words REQUIRED where it lives and a synonym
    set FORBIDDEN where a paraphrase would reverse it (a negation in the mention's own clause, or a
@@ -54,14 +57,18 @@ working tree.
    is the only writer and refuses while a placeholder is unfilled. When another gate FAILs, every
    G-RULED-PIN finding prints as a NOTE; the exit status stays 1.
 5. **--self-test** applies every mutation of §13 in memory with the values frozen at the filled
-   baseline; each must add exactly one FAIL, from the gate it names, and every text is restored
-   byte for byte (sha256). The report is ASCII, every line at most 100 characters.
+   baseline and `origin/main` read as the base (a late change at the live head never hides a
+   mutation; `--check` is the live gate); each must add exactly one FAIL, from the gate it names
+   (a mutation marked WARN: exactly one WARN and no FAIL), and every text is restored byte for
+   byte (sha256). The report is ASCII, every line at most 100 characters. It re-runs every gate
+   once per mutation, so it is slow: about 630 s on the round-1 host (325 s on the round-2 fold's
+   host, once the head was frozen). Run it once, at the end, with a timeout of 900 s or more.
 
 The `--json` dump carries values and findings only: no key or value names a credential field.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e09_d07_ds_audit.py --check [--json] [--fill]
-  python3 -I docs/design/_tools/e09_d07_ds_audit.py --self-test
+  python3 -I docs/design/_tools/e09_d07_ds_audit.py --self-test   (slow: about 630 s, see item 5)
   python3 -I docs/design/_tools/e09_d07_ds_audit.py --repin-ruled
   python3 -I docs/design/_tools/e09_d07_ds_audit.py --a-rows
 Exit 0 = no FAIL; 1 = at least one FAIL.
@@ -80,6 +87,7 @@ import sys
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -161,15 +169,14 @@ VERSION_PINS: dict[str, str] = {
     "22": "c3119e61e7",
 }
 # inputs that feed computed values but are cited by no line range: a commit to one after the base
-# is a late change (G-VERSION)
+# is a late change (G-VERSION). The backlog JSON and the calendar are not listed: most ticket edits
+# commit to them, so `date_facts` compares only what the DATE values read from them.
 DRIFT_INPUTS: tuple[str, ...] = (
     f"{DS_SRC}/primitives.tokens.json",
     f"{DS_SRC}/semantic-dark.tokens.json",
     f"{DS_SRC}/semantic-light.tokens.json",
     f"{DS_SRC}/semantic-hc.tokens.json",
     f"{DS_SRC}/themes.json",
-    ALL_TICKETS,
-    PATHS["CAL"],
     CVD_SRC,
 )
 
@@ -571,11 +578,14 @@ def semantic_names(env: Env) -> frozenset[str]:
 
 # ---------------------------------------------------------------------------- calendar
 
+CAL_START = re.compile(r"SPRINT01_START = datetime\.date\((\d+), (\d+), (\d+)\)")
+CAL_DAYS = re.compile(r"SPRINT_DAYS = (\d+)")
+DATE_KEYS = re.compile(r"(?:\{\{|<!--=)DATE:([^}>]+?)(?:\}\}|-->)")
+
 
 def sprint_starts(env: Env) -> tuple[datetime.date, int]:
     cal = env.base(PATHS["CAL"])
-    m = re.search(r"SPRINT01_START = datetime\.date\((\d+), (\d+), (\d+)\)", cal)
-    d = re.search(r"SPRINT_DAYS = (\d+)", cal)
+    m, d = CAL_START.search(cal), CAL_DAYS.search(cal)
     if not m or not d:
         raise SystemExit("calendar_cv.py: no SPRINT01_START / SPRINT_DAYS at the base")
     return datetime.date(int(m[1]), int(m[2]), int(m[3])), int(d[1])
@@ -586,18 +596,24 @@ def sprint_date(env: Env, n: int) -> str:
     return (start + datetime.timedelta(days=(n - 1) * days)).isoformat()
 
 
-def ticket_sprint(env: Env, key: str) -> int | None:
-    if "tickets" not in env.memo:
-        data = json.loads(env.base(ALL_TICKETS))
-        env.memo["tickets"] = {
-            str(t.get("key")): str(t.get("sprint"))
-            for t in (data if isinstance(data, list) else [])
-            if isinstance(t, dict)
-        }
-    tickets = env.memo["tickets"]
-    s = tickets.get(key, "") if isinstance(tickets, dict) else ""
-    m = re.search(r"(\d+)", str(s))
+@lru_cache(maxsize=8)
+def sprint_map(text: str) -> dict[str, str]:
+    """The backlog JSON's ticket key -> sprint field (cached by text: read, never changed)."""
+    data = json.loads(text)
+    return {
+        str(t.get("key")): str(t.get("sprint"))
+        for t in (data if isinstance(data, list) else [])
+        if isinstance(t, dict)
+    }
+
+
+def sprint_no(sprints: dict[str, str], key: str) -> int | None:
+    m = re.search(r"(\d+)", sprints.get(key, ""))
     return int(m[1]) if m else None
+
+
+def ticket_sprint(env: Env, key: str) -> int | None:
+    return sprint_no(sprint_map(env.base(ALL_TICKETS)), key)
 
 
 def date_value(env: Env, key: str) -> str | None:
@@ -606,6 +622,33 @@ def date_value(env: Env, key: str) -> str | None:
         return sprint_date(env, int(m[1]))
     n = ticket_sprint(env, key)
     return sprint_date(env, n) if n is not None else None
+
+
+def date_keys(spec: str, hand: str) -> list[str]:
+    """The keys of the pack's DATE values: a ticket key, or `Sprint N`."""
+    return sorted(set(DATE_KEYS.findall(spec + "\n" + hand)))
+
+
+def date_facts(env: Env, rev: str, keys: list[str]) -> dict[str, str]:
+    """All that the DATE values read at `rev`: the calendar's sprint-1 start and its sprint length,
+    and the sprint number of each ticket a DATE key names. A later commit to the calendar or the
+    backlog JSON that changes none of these leaves the facts equal (content, never a commit)."""
+    cal = env.show(rev, PATHS["CAL"]) or ""
+    out: dict[str, str] = {}
+    for label, rx in (("the calendar's sprint-1 start", CAL_START),
+                      ("the calendar's sprint length", CAL_DAYS)):  # fmt: skip
+        m = rx.search(cal)
+        out[label] = m[0] if m else "unreadable"
+    text = env.show(rev, ALL_TICKETS)
+    try:
+        sprints = sprint_map(text) if text else None
+    except ValueError:
+        sprints = None
+    for key in keys:
+        if not key.startswith("Sprint "):
+            n = sprint_no(sprints, key) if sprints is not None else None
+            out[f"{key}'s sprint in the backlog JSON"] = str(n) if n is not None else "none"
+    return out
 
 
 # ---------------------------------------------------------------------------- cites
@@ -701,21 +744,65 @@ def lines_of(text: str) -> list[str]:
     return text.split("\n")
 
 
-def block_in(block: list[str], head: list[str]) -> bool:
-    """`block` stands, in order and contiguous, somewhere in `head`."""
+def line_index(lines: list[str]) -> dict[str, list[int]]:
+    """A line's text -> its 0-based positions."""
+    out: dict[str, list[int]] = {}
+    for i, ln in enumerate(lines):
+        out.setdefault(ln, []).append(i)
+    return out
+
+
+def stands(lines: list[str], index: dict[str, list[int]], block: list[str]) -> list[int]:
+    """Every 0-based line where `block` stands in `lines`, in order and contiguous."""
     n = len(block)
-    return any(head[i : i + n] == block for i in range(len(head) - n + 1))
+    return [p for p in index.get(block[0], ()) if lines[p : p + n] == block]
+
+
+CONTEXT = 2  # lines before a repeated text that a moved copy must keep (G-VERSION)
+
+
+def locate(
+    base: list[str],
+    head: list[str],
+    bidx: dict[str, list[int]],
+    hidx: dict[str, list[int]],
+    lo: int,
+    hi: int,
+) -> int | None:
+    """Where the cited base block (1-based `lo`..`hi`) stands in `head`, as a 0-based line: its own
+    line when unchanged there, else the nearest line where it stands (a move). A text that repeats
+    in either file proves nothing alone, so a moved copy must keep the CONTEXT lines before it.
+    None when it stands nowhere (an edit)."""
+    block, at = base[lo - 1 : hi], lo - 1
+    if head[at : at + len(block)] == block:
+        return at
+    found = stands(head, hidx, block)
+    if len(found) > 1 or len(stands(base, bidx, block)) > 1:
+        k = min(CONTEXT, at)
+        found = [p for p in found if p >= k and head[p - k : p] == base[at - k : at]]
+    return min(found, key=lambda p: abs(p - at), default=None)
+
+
+CiteHit = tuple[str, Cite]
 
 
 def cite_problems(
-    env: Env, cites: list[Cite]
-) -> tuple[list[tuple[str, Cite]], list[tuple[str, Cite]]]:
-    """(FAILs, drifted) for every cite: a gone or blank line, a missing fragment, a moved edit."""
-    bad: list[tuple[str, Cite]] = []
-    drift: list[tuple[str, Cite]] = []
-    head_ok = env.head_resolves()
+    env: Env, cites: list[Cite], at_head: bool = True
+) -> tuple[list[CiteHit], list[CiteHit], list[CiteHit]]:
+    """(FAILs, edited, moved) for every cite. FAILs: a gone or blank line, a missing fragment, at
+    the base. At `origin/main` (unless `at_head` is off): the range stands nowhere (edited) or at
+    another line (moved)."""
+    bad: list[CiteHit] = []
+    edited: list[CiteHit] = []
+    moved: list[CiteHit] = []
+    head_ok = at_head and env.head_resolves()
+    bases: dict[str, tuple[list[str], dict[str, list[int]]]] = {}
+    heads: dict[str, tuple[list[str], dict[str, list[int]]] | None] = {}
     for c in cites:
-        base = lines_of(env.base(PATHS[c.key]))
+        if c.key not in bases:
+            lines = lines_of(env.base(PATHS[c.key]))
+            bases[c.key] = (lines, line_index(lines))
+        base, bidx = bases[c.key]
         if c.hi < c.lo or c.hi > len(base) or any(not base[n - 1].strip() for n in (c.lo, c.hi)):
             bad.append((f"{c.key}:{c.lo}-{c.hi} is gone or blank at {BASE}", c))
             continue
@@ -725,16 +812,21 @@ def cite_problems(
                 if frag not in span:
                     bad.append((f"{c.key}:{n} no longer holds {frag!r}", c))
         if head_ok:
-            head_text = env.show(HEAD_REF, PATHS[c.key])
-            if head_text is None:
-                drift.append((f"{PATHS[c.key]} is gone at {HEAD_REF}", c))
+            if c.key not in heads:
+                text = env.show(HEAD_REF, PATHS[c.key])
+                hl = None if text is None else lines_of(text)
+                heads[c.key] = None if hl is None else (hl, line_index(hl))
+            found = heads[c.key]
+            if found is None:
+                edited.append((f"{PATHS[c.key]} is gone at {HEAD_REF}", c))
                 continue
-            head = lines_of(head_text)
-            if head[c.lo - 1 : c.hi] != base[c.lo - 1 : c.hi] and not block_in(
-                base[c.lo - 1 : c.hi], head
-            ):
-                drift.append((f"{c.key}:{c.lo}-{c.hi} was edited at {HEAD_REF}", c))
-    return bad, drift
+            at = locate(base, found[0], bidx, found[1], c.lo, c.hi)
+            if at is None:
+                edited.append((f"{c.key}:{c.lo}-{c.hi} was edited at {HEAD_REF}", c))
+            elif at != c.lo - 1:
+                to = f"{at + 1}-{at + 1 + c.hi - c.lo}"
+                moved.append((f"{c.key}:{c.lo}-{c.hi} moved to {to} at {HEAD_REF}", c))
+    return bad, edited, moved
 
 
 # ---------------------------------------------------------------------------- the pack's tables
@@ -956,7 +1048,7 @@ def compute(env: Env, spec: str, hand: str, comp: str) -> dict[str, str]:
     v = pair_values(env)
     v.update(count_values(env, spec, comp))
     both = spec + "\n" + hand
-    for key in set(re.findall(r"(?:\{\{|<!--=)DATE:([^}>]+?)(?:\}\}|-->)", both)):
+    for key in date_keys(spec, hand):
         d = date_value(env, key)
         if d:
             v[f"DATE:{key}"] = d
@@ -1147,7 +1239,7 @@ def pin_problems(pinned: list[Unit], current: list[Unit]) -> list[str]:
 
 @dataclass(frozen=True)
 class Finding:
-    level: str  # FAIL or NOTE
+    level: str  # FAIL, WARN or NOTE
     gate: str
     msg: str
 
@@ -1163,12 +1255,12 @@ class Texts:
     env: Env
 
 
-def one(gate: str, problems: list[str]) -> list[Finding]:
-    """Each gate reports one FAIL line: its first problem and the count of the rest."""
+def one(gate: str, problems: list[str], level: str = "FAIL") -> list[Finding]:
+    """Each gate reports one line per level: its first problem and the count of the rest."""
     if not problems:
         return []
     more = f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""
-    return [Finding("FAIL", gate, problems[0] + more)]
+    return [Finding(level, gate, problems[0] + more)]
 
 
 def docs(t: Texts) -> list[tuple[str, str]]:
@@ -1298,7 +1390,7 @@ NARROW = 24  # `22`:1777–1800, the authLock block, is the widest load-bearing 
 
 def g_cite(t: Texts) -> list[Finding]:
     cites = all_cites(t)
-    bad, _ = cite_problems(t.env, cites)
+    bad, _, _ = cite_problems(t.env, cites, at_head=False)
     out = [f"{c.doc}:{c.line_no}: {m}" for m, c in bad]
     for key, n in CITED:  # a narrow cite (a block of at most NARROW lines) reaches each one
         if not any(c.key == key and c.lo <= n <= c.hi <= c.lo + NARROW for c in cites):
@@ -1313,8 +1405,8 @@ def version_line(spec: str) -> str:
 def g_version(t: Texts) -> list[Finding]:
     if not t.env.head_resolves():
         return one("G-VERSION", [f"{HEAD_REF} does not resolve: the drift check cannot run"])
-    _, drift = cite_problems(t.env, all_cites(t))
-    bad = [f"{c.doc}:{c.line_no}: {m}" for m, c in drift]
+    _, edited, moved = cite_problems(t.env, all_cites(t))
+    bad = [f"{c.doc}:{c.line_no}: {m}" for m, c in edited]
     vline = version_line(t.spec)
     if f"**v1 at base `{BASE}`**" not in vline:
         bad.append(f"the version line does not read v1 at base `{BASE}`")
@@ -1330,7 +1422,18 @@ def g_version(t: Texts) -> list[Finding]:
     for rel in DRIFT_INPUTS:
         if t.env.last_commit(HEAD_REF, rel) != t.env.last_commit(BASE, rel):
             bad.append(f"{rel} changed at {HEAD_REF} after the base: a late change (§0)")
-    return one("G-VERSION", bad)
+    # the backlog JSON and the calendar feed only the DATE values: a late change is a change to
+    # what those read, never a commit that moves none of it
+    keys = date_keys(t.spec, t.hand)
+    was, now = date_facts(t.env, BASE, keys), date_facts(t.env, HEAD_REF, keys)
+    for fact, value in was.items():
+        if now[fact] != value:
+            bad.append(
+                f"{fact} reads {value} at the base and {now[fact]} at {HEAD_REF}: "
+                "a late change (§0)"
+            )
+    warn = [f"{c.doc}:{c.line_no}: {m}" for m, c in moved]
+    return one("G-VERSION", bad) + one("G-VERSION", warn, "WARN")
 
 
 # ---------------------------------------------------------------------------- PR 2: applying §C
@@ -1812,6 +1915,25 @@ DECLARED_EVENTS = {
     "the route",
 }
 SOURCE = re.compile(rf"^(?:{CITE_KEY}):\d+(?:–\d+)?$|^D\d\d §[\d.]+(?: \(\d+\))?$")
+KEY_EXCEPTION = "**Recorded exception**"  # the §8 line that records a shared key (BQ-28)
+
+
+def key_problems(t: Texts) -> list[str]:
+    """BQ-28 asks one record per (screen · state · element) key. A key several records share must
+    be recorded in §8's exception line, which names those records and no others."""
+    keys: dict[tuple[str, str, str], list[str]] = {}
+    for r in comp_records(t.comp):
+        key = (str(r.get("screen")), str(r.get("state")), str(r.get("element")))
+        keys.setdefault(key, []).append(str(r.get("id")))
+    shared = {k: ids for k, ids in keys.items() if len(ids) > 1}
+    note = next((ln for ln in sec(t.spec, "8").split("\n") if ln.startswith(KEY_EXCEPTION)), "")
+    want = {i for ids in shared.values() for i in ids}
+    named = set(re.findall(r"\bR-\d+\b", note))
+    if named != want or not all(" · ".join(k) in note for k in shared):
+        return [
+            f"the records {sorted(want)} share a key and §8's exception line names {sorted(named)}"
+        ]
+    return []
 
 
 def comp_problems(t: Texts) -> list[str]:
@@ -1850,6 +1972,7 @@ def comp_problems(t: Texts) -> list[str]:
             bad.append(f"{rid}: a registered event carries an event_status")
         if not SOURCE.match(str(r["source"])):
             bad.append(f"{rid}: source {r['source']!r} is not a cite")
+    bad += key_problems(t)
     rows = table_after(sec(t.spec, "8"), "Screen")
     if [[unescape(c) for c in r] for r in rows] != render_comp(t.comp):
         bad.append("§8's table is not the map rendered (re-render it from the JSON)")
@@ -2365,7 +2488,7 @@ def g_entry(t: Texts) -> list[Finding]:
 
 # §4 / §9: an operation a design-ahead consumer still builds is never "served" (lens 3, M-2)
 SERVED = re.compile(r"\b(?:served|live|shipped) (?:since|as of|from) #\d+|\bserved by #(\d+)")
-AHEAD_LOCK = "(`authLock`, `22`:1780, declared by #4941, served by #4743)"
+AHEAD_LOCK = "(`authLock`, `22`:1780, declared by #4941, to be served by #4743)"
 
 
 def g_ahead(t: Texts) -> list[Finding]:
@@ -2378,7 +2501,7 @@ def g_ahead(t: Texts) -> list[Finding]:
                 if m[1] is None or m[1] not in ahead:
                     bad.append(f"{doc}:{i}: {m[0]!r} claims a served operation")
     if AHEAD_LOCK not in sec(t.spec, "4"):
-        bad.append("§4 does not read 'declared by #4941, served by #4743' for authLock")
+        bad.append("§4 does not read 'declared by #4941, to be served by #4743' for authLock")
     return one("G-AHEAD", bad)
 
 
@@ -2665,7 +2788,7 @@ def audit(t: Texts) -> list[Finding]:
     for g in GATES:
         found += g(t)
     pins = g_pins(t)
-    if found:  # a pin finding beside another FAIL is a NOTE: fix the FAILs and re-run
+    if any(f.level == "FAIL" for f in found):  # beside another FAIL a pin finding is a NOTE
         pins = [replace(f, level="NOTE") for f in pins]
     return found + pins
 
@@ -2678,6 +2801,7 @@ class Mutation:
     gate: str
     what: str
     apply: Callable[[Texts], Texts]
+    level: str = "FAIL"  # a WARN mutation adds exactly one WARN and no FAIL
 
 
 def set_doc(t: Texts, doc: str, text: str) -> Texts:
@@ -2784,6 +2908,57 @@ def touched(path: str) -> Callable[[Env], None]:
 def cvd_drift(e: Env) -> None:
     src = e.base(CVD_SRC)
     e.base_cache[CVD_SRC] = src.replace("17.8824", "17.8825", 1)
+
+
+def frozen_head() -> Env:
+    """The self-test's environment: `origin/main` reads as the base for every input G-VERSION
+    compares, so a late change at the live head never hides a mutation (`--check` is the live
+    gate)."""
+    e = Env(head_ok=True)
+    for rel in {*PATHS.values(), ALL_TICKETS}:
+        e.head_override[rel] = e.base(rel)
+    for rel in DRIFT_INPUTS:
+        e.last_override[f"{HEAD_REF}:{rel}"] = e.last_commit(BASE, rel)
+    return e
+
+
+def backlog_edit(change: Callable[[list[dict[str, object]]], None]) -> Callable[[Env], None]:
+    """The head's backlog JSON: the base's tickets with `change` applied."""
+
+    def f(e: Env) -> None:
+        tickets = json.loads(e.base(ALL_TICKETS))
+        change(tickets)
+        e.head_override[ALL_TICKETS] = json.dumps(tickets, ensure_ascii=False)
+
+    return f
+
+
+def sprint_moves(tickets: list[dict[str, object]]) -> None:
+    """Move E42-S07 (a ticket §9 dates) one sprint on."""
+    for t in tickets:
+        if t.get("key") == "E42-S07":
+            t["sprint"] = f"Sprint {int(str(t['sprint']).split()[-1]) + 1:02d}"
+
+
+def title_edit(tickets: list[dict[str, object]]) -> None:
+    """Edit a title only: no sprint moves."""
+    tickets[0]["title"] = str(tickets[0].get("title")) + " (edited)"
+
+
+def calendar_days(e: Env) -> None:
+    """The head's calendar with a longer sprint."""
+    e.head_override[PATHS["CAL"]] = CAL_DAYS.sub(
+        lambda m: f"SPRINT_DAYS = {int(m[1]) + 1}", e.base(PATHS["CAL"]), count=1
+    )
+
+
+def head_front(key: str) -> Callable[[Env], None]:
+    """`key`'s file at the head with one line added at its top: every cited range moves down."""
+
+    def f(e: Env) -> None:
+        e.head_override[PATHS[key]] = "added line\n" + e.base(PATHS[key])
+
+    return f
 
 
 def pr2(extra: str) -> Callable[[Texts], Texts]:
@@ -3209,9 +3384,9 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-LOCK",
         "let Escape keep the session alive in §4's CMP-098 contract (prose is read)",
         subst(
-            "(`authLock`, `22`:1780, declared by #4941, served by #4743); Esc dismisses and "
+            "(`authLock`, `22`:1780, declared by #4941, to be served by #4743); Esc dismisses and "
             "extends nothing;",
-            "(`authLock`, `22`:1780, declared by #4941, served by #4743); Esc dismisses and "
+            "(`authLock`, `22`:1780, declared by #4941, to be served by #4743); Esc dismisses and "
             "extends nothing; pressing Escape keeps the session alive;",
         ),
     ),
@@ -3325,7 +3500,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     M(
         "G-AHEAD",
         "call authLock served since its contract PR",
-        subst("declared by #4941, served by #4743)", "served since #4941)"),
+        subst("declared by #4941, to be served by #4743)", "served since #4941)"),
     ),
     M(
         "G-DOD",
@@ -3354,6 +3529,37 @@ MUTATIONS: tuple[Mutation, ...] = (
             "A divergence is resolved in the pack or routed",
             "A divergence is settled in the pack or routed",
         ),
+    ),
+    M(
+        "G-VERSION",
+        "simulate a moved sprint of E42-S07 in the backlog JSON at origin/main",
+        with_env(backlog_edit(sprint_moves)),
+    ),
+    M(
+        "G-VERSION",
+        "simulate a longer sprint in the calendar at origin/main",
+        with_env(calendar_days),
+    ),
+    M(
+        "G-VERSION",
+        "edit a cited `15` line whose text repeats elsewhere, in place, at origin/main",
+        with_env(head_edit("15", 1048)),
+    ),
+    M(
+        "G-VERSION",
+        "simulate every cited D05 range moved down at origin/main (a WARN, no FAIL)",
+        with_env(head_front("D05")),
+        "WARN",
+    ),
+    M(
+        "G-COMP",
+        "drop §8's recorded exception for a shared key",
+        drop_line("spec", KEY_EXCEPTION),
+    ),
+    M(
+        "G-COMP",
+        "share the key of R-21 and R-23 with a third record",
+        comp_edit("R-22", "state", "warning"),
     ),
 )
 
@@ -3401,8 +3607,16 @@ def render(found: list[Finding]) -> list[str]:
     return [ascii_line(f"{f.level} {f.gate}: {f.msg}") for f in found]
 
 
+# negative controls: a tree that must add no FAIL (PR 2's exact catalogue; a later commit to the
+# backlog JSON that moves no sprint)
+NEGATIVES: tuple[tuple[str, Callable[[Texts], Texts]], ...] = (
+    ("N-1 PR 2 with §C applied exactly", pr2("")),
+    ("N-2 a backlog JSON commit that moves no sprint", with_env(backlog_edit(title_edit))),
+)
+
+
 def selftest() -> tuple[bool, list[str]]:
-    base = load()
+    base = load(frozen_head())
     disk = [hashlib.sha256(read(r).encode()).hexdigest() for r in OWN_PATHS]
     before = digest(base)
     base_found = [f for f in audit(base) if f.level == "FAIL"]
@@ -3411,18 +3625,19 @@ def selftest() -> tuple[bool, list[str]]:
     for f in base_found:
         out.append(ascii_line(f"  baseline {f.gate}: {f.msg}"))
     for i, m in enumerate(MUTATIONS, 1):
-        t = m.apply(base)
-        fails = [f for f in audit(t) if f.level == "FAIL"]
-        gates = sorted({f.gate for f in fails})
-        good = len(fails) == 1 and gates == [m.gate]
+        found = audit(m.apply(base))
+        fails = [f for f in found if f.level == "FAIL"]
+        hits = [f for f in found if f.level == m.level]
+        gates = sorted({f.gate for f in hits})
+        good = len(hits) == 1 and gates == [m.gate] and (m.level == "FAIL" or not fails)
         ok &= good
         mark = "ok  " if good else "FAIL"
         out.append(ascii_line(f"{mark} M-{i} {m.gate}: {m.what} -> {', '.join(gates) or 'none'}"))
-    clean = pr2("")(base)
-    extra = [f for f in audit(clean) if f.level == "FAIL"]
-    ok &= not extra
-    out.append(ascii_line(f"{'ok  ' if not extra else 'FAIL'} N-1 PR 2 with §C applied exactly -> "
-                          f"{', '.join(sorted({f.gate for f in extra})) or 'none'}"))  # fmt: skip
+    for name, scenario in NEGATIVES:
+        extra = [f for f in audit(scenario(base)) if f.level == "FAIL"]
+        ok &= not extra
+        shown = ", ".join(sorted({f.gate for f in extra})) or "none"
+        out.append(ascii_line(f"{'ok  ' if not extra else 'FAIL'} {name} -> {shown}"))
     restored = digest(base) == before and disk == [
         hashlib.sha256(read(r).encode()).hexdigest() for r in OWN_PATHS
     ]
@@ -3500,8 +3715,9 @@ def main(argv: list[str]) -> int:
     else:
         for ln in render(found):
             print(ln)
-        notes = len(found) - len(fails)
-        print(f"{len(fails)} FAIL / 0 WARN / {notes} NOTE ({len(GATES) + 1} gates)")
+        warns = [f for f in found if f.level == "WARN"]
+        notes = len(found) - len(fails) - len(warns)
+        print(f"{len(fails)} FAIL / {len(warns)} WARN / {notes} NOTE ({len(GATES) + 1} gates)")
     return 1 if fails else 0
 
 
