@@ -176,6 +176,17 @@ async def test_step5_a_recorded_trail_the_position_still_reports_is_left_alone()
     assert (report.sl_tighter, report.sl_restored) == ((), ())
 
 
+async def test_step5_a_looser_stop_on_a_trailed_position_is_put_back() -> None:
+    """24 Sec.8.5 exempts a recorded native trail from the tighter test only: a trail moves its
+    stop toward the market, so one looser than the record is put back all the same."""
+    w = World()
+    w.oms.records = [record(trailing_distance=Decimal(500), trailing_active_price=Decimal(63000))]
+    w.venue.seed_position(position(stop_loss=Decimal(61000), trailing_stop_distance=Decimal(500)))
+    report = await w.run()
+    assert [e[0] for e in w.oms.effects("restore_recorded")] == ["restore_recorded"]
+    assert (report.sl_restored, report.sl_tighter) == (("BTCUSDT",), ())
+
+
 async def test_step5_a_key_with_a_stop_request_in_flight_is_left_to_it() -> None:
     w = World()
     in_flight = record(id=record().id.__class__(int=0x5702), status="pending", answered_at=None,

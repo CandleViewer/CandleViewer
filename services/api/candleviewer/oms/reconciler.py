@@ -1097,11 +1097,12 @@ class Reconciler:
                 plan.actions.append(AttachStop(p, record))
             return True
         if stop is not None and record is not None and record.tpsl_mode == "Full":
-            if record.trailing_distance is not None and p.trailing_stop_distance is not None:
-                return False  # the venue moves a recorded native trail's stop (Sec.10.7)
+            # A recorded native trail moves its stop toward the market, never away (Sec.10.7):
+            # its stop is the recorded one while tighter, and is put back if ever looser.
+            trailed = record.trailing_distance is not None and p.trailing_stop_distance is not None
             if loosens(record.position_side, record.trigger_price, stop):
                 plan.actions.append(RestoreStop(p, record))
-            elif loosens(record.position_side, stop, record.trigger_price):
+            elif not trailed and loosens(record.position_side, stop, record.trigger_price):
                 plan.actions.append(PageTighter(p))
         return False
 
