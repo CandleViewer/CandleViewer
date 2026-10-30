@@ -72,11 +72,12 @@ from typing import Any, NamedTuple
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "docs" / "design" / "E14" / "E14-D09.md"
 PROTO = ROOT / "docs" / "design" / "E14" / "E14-D09-proto" / "proto-results.json"
-BASE = "57348a8ea3"  # origin/main; every cite is read here
+BASE = "e87be9b978"  # origin/main; every cite is read here
 BQ_BASE = "3bac78e344"  # where the BQ list (6511707123) read every cite
 # a cited file may differ from its BQ_BASE text only by lines added at a known place: key ->
-# (first added line, count); `26` took E11-T02's shipped-deltas paragraph and its blank line (#5017)
-ADDED_SINCE_BQ: dict[str, tuple[int, int]] = {"26": (350, 2)}
+# (first added line, count); `26` took E11-T02's shipped-deltas paragraph and its blank line (#5017);
+# `14` took the E14-D08 pointer line (#5025)
+ADDED_SINCE_BQ: dict[str, tuple[int, int]] = {"26": (350, 2), "14": (961, 1)}
 E05_PIN = "29fe3d5b2e"  # the merge commit of E05-D03 (#4990), cited by row, rule and section id
 KEYS = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -115,7 +116,7 @@ FORBIDDEN = ("16", 180, 186)  # `16` section 7's pre-E05-D03 recipe lines (R353 
 # key|line|words that must stand on that line at the base (the load-bearing cites)
 CITE_PINS = """\
 05|208|No content flashes more than 3 times per second;14|954|>=58 fps with 200 drawings
-14|1080|SCR-046;16|104|motion.duration.{instant,fast,normal,slow};26|130|Time-based animation
+14|1081|SCR-046;16|104|motion.duration.{instant,fast,normal,slow};26|130|Time-based animation
 26|133|Render on demand;26|224|drawing labels a third;26|262|optimistic local writes
 26|684|Drawing interaction: 200 drawings, drag one;D02|283|a count chip "7 selected"
 D02|291|small travel threshold;D02|326|`aria-pressed` for selected;D02|332|**Nudges never snap.**
@@ -156,7 +157,7 @@ D08|19|the 8 / 10 / 24 px handle numbers and the 12 px magnet radius travel as `
 D08|19|the 10 px ring + value text vs the 8 px dot keeps the two apart by shape
 D08|19|band `ChartEngine/DrawingToolOverlay`;D08|129|`color.drawing.handle.active`
 D08|131|`color.drawing.snap`;D08|239|none by design;D08|239|will append here
-D08|297|E14-T04 (#359);D08|307|the E14-T04 comment and the implementer's acknowledgement at pickup
+D08|299|E14-T04 (#359);D08|309|the E14-T04 comment and the implementer's acknowledgement at pickup
 D02|530|"Selection cleared.";D02|534|"Trendline removed. Undo available."
 D02|536|"200 drawings hidden." / "All drawings locked.";D02|723|motion: creation, selection
 D04|299|`save-failed`;D04H|15|the popover's open / close is `16` §7's dialog recipe
