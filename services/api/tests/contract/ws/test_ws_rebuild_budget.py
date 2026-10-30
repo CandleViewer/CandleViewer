@@ -15,7 +15,6 @@ import pytest
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from tests.contract.ws._harness import OFFERS, Client, World, connect, publish
 from tests.unit.ws._seq_support import USER
 
@@ -208,16 +207,13 @@ class _AfterReply(_Rows):
         await super().emit(action, **row)
 
 
-@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
 @pytest.mark.parametrize("offer", OFFERS.values(), ids=OFFERS.keys())
-def test_ac31_a_refused_ctl_s_record_is_written_after_its_err_is_sent(
-    offer: list[str], backpressure: BackpressureConfig | None
-) -> None:
+def test_ac31_a_refused_ctl_s_record_is_written_after_its_err_is_sent(offer: list[str]) -> None:
     """#3476 (23 §7.7): the record of a refused `ctl` follows its `err`, as a `sub`'s follows its
     `sub_ok` (`test_rebuild_audit.py`). The sink holds the write until the test thread has read
     that `err`; a record written first holds the `err` back, is cut at the writer's bound and
     keeps no row."""
-    w, sink = World(backpressure=backpressure), _AfterReply()
+    w, sink = World(), _AfterReply()
     w.registry.services.user_rebuilds.limit = 1
     w.registry.services.audit = sink
     with connect(w, offer) as c:

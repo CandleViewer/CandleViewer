@@ -1,4 +1,4 @@
-"""E17-T03 (#412), with `CV_WS_BACKPRESSURE_ENABLED` on: the `connection_quality` notice
+"""E17-T03 (#412): the `connection_quality` notice
 (`23-ws-protocol.md` §8.3) and the RTT probe (§9.1) through a socket, under both wires (#3150's
 `wire` fixture). `Client.recv` validates every frame against the §13-§15 schemas, so the notice is
 checked against §15.9's `SystemUpdate` and the probe against the heartbeat payload as they arrive.
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from tests.contract.ws._harness import Client, World, connect, entry
 
 
@@ -35,7 +34,7 @@ def test_connection_quality_validates_against_15_9() -> None:
     the probe's age passes 500 ms (D12), and the notice names the multiplier and the degraded
     topics; once it answers again the class recovers after two healthy samples, announced as
     well. Both notices and every probe are schema-valid."""
-    w = World(backpressure=BackpressureConfig())
+    w = World()
     with connect(w) as c:
         c.sub(entry("heatmap", ("symbol",)), entry("profile", ("symbol", "profile_kind")))
         c.drain(2)  # the two snapshots
