@@ -1,0 +1,6393 @@
+{
+  "pack": "E30-D06",
+  "version": "v1",
+  "base": "e607a3f104",
+  "ruling": "6528489355",
+  "ruled_row": "#2701 ledger addendum A row A50",
+  "scheme": "ticket.<surface>.<code>; <code> = the merged key with a leading segment equal to the surface dropped",
+  "surfaces": {
+    "order": "SCR-060 (and the fifteen components' strings)",
+    "group": "SCR-061 and the account / trade-group selector (D03 §8)",
+    "confirm": "SCR-076 and the arm dialog (CMP-044)",
+    "reject": "SCR-077",
+    "ratelimit": "SCR-158",
+    "defaults": "SCR-114",
+    "template": "the order templates (D03 §9)",
+    "hotkeys": "SCR-113's trading rows (the key map, by reference)"
+  },
+  "strings": {
+    "ticket.order.accepted": {
+      "string": "Accepted — stop {stop} held by the exchange",
+      "alias": ["accepted"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-17",
+        "politeness": "assertive",
+        "rate": "once per event",
+        "cite": "`D05`:305"
+      },
+      "native_sl": true,
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:418",
+          "text": "Accepted — stop {stop} held by the exchange"
+        }
+      ]
+    },
+    "ticket.order.accepted.partial": {
+      "string": "Partially filled {filled} of {qty} — stop {stop} held by the exchange",
+      "alias": ["accepted.partial"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "native_sl": true,
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:417",
+          "text": "Partially filled {filled} of {qty} — stop {stop} held by the exchange"
+        }
+      ]
+    },
+    "ticket.order.arm.armed": {
+      "string": "ARMED {mm:ss} · {account} · {size} {coin}",
+      "alias": ["arm.armed"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-08",
+        "politeness": "off; polite at 60 s and 10 s",
+        "rate": "two marks per arming",
+        "cite": "`D05`:296"
+      },
+      "where": ["SCR-060 · arm pill"],
+      "sources": [
+        {
+          "cite": "`D02`:407",
+          "text": "ARMED {mm:ss} · {account} · {size} {coin}"
+        }
+      ]
+    },
+    "ticket.order.arm.live_dialog": {
+      "string": "Arm one-click trading — LIVE · {account} · active size {size} {coin} · for {mm:ss}?",
+      "alias": ["arm.live_dialog"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · CMP-044"],
+      "sources": [
+        {
+          "cite": "`D02`:411",
+          "text": "Arm one-click trading — LIVE · {account} · active size {size} {coin} · for {mm:ss}?"
+        }
+      ]
+    },
+    "ticket.order.arm.locked": {
+      "string": "LOCKED · {account} · {size} {coin}",
+      "alias": ["arm.locked"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · arm pill"],
+      "sources": [
+        {
+          "cite": "`D02`:405",
+          "text": "LOCKED · {account} · {size} {coin}"
+        }
+      ]
+    },
+    "ticket.order.arm.locked.description": {
+      "string": "one-click off — {arm key} to arm",
+      "alias": ["arm.locked.description"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "amended",
+      "amended": "D05 F-08",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "one-click off — Ctrl+Shift+T to arm",
+          "params": {
+            "arm key": "Ctrl+Shift+T"
+          }
+        }
+      ],
+      "where": ["SCR-060 · arm pill"],
+      "note": "{arm key} is read from the current binding through CMP-022, never a literal (F-08)",
+      "sources": [
+        {
+          "cite": "`D05`:493",
+          "text": "{arm key}"
+        }
+      ]
+    },
+    "ticket.order.arm.locked.name": {
+      "string": "One-click trading: locked",
+      "alias": ["arm.locked.name"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · arm pill"],
+      "sources": [
+        {
+          "cite": "`D02`:405",
+          "text": "One-click trading: locked"
+        }
+      ]
+    },
+    "ticket.order.arm.paused.dialog": {
+      "string": "hotkeys paused — dialog open",
+      "alias": ["arm.paused.dialog"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · arm pill line 2"],
+      "sources": [
+        {
+          "cite": "`D02`:408",
+          "text": "hotkeys paused — dialog open"
+        }
+      ]
+    },
+    "ticket.order.arm.paused.field": {
+      "string": "hotkeys paused — typing in {field}",
+      "alias": ["arm.paused.field"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · arm pill line 2"],
+      "sources": [
+        {
+          "cite": "`D02`:408",
+          "text": "hotkeys paused — typing in {field}"
+        }
+      ]
+    },
+    "ticket.order.arm.refused": {
+      "string": "One-click trading is locked",
+      "alias": ["arm.refused"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-09",
+        "politeness": "polite",
+        "rate": "once per press, at the point of action",
+        "cite": "`D05`:297"
+      },
+      "where": ["SCR-060 · inline at the point of action + announcement"],
+      "sources": [
+        {
+          "cite": "`D02`:406",
+          "text": "One-click trading is locked"
+        }
+      ]
+    },
+    "ticket.order.arm.returned": {
+      "string": "LOCKED — disconnected {mm:ss}, reconnected",
+      "alias": ["arm.returned"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · arm pill"],
+      "sources": [
+        {
+          "cite": "`D02`:410",
+          "text": "LOCKED — disconnected {mm:ss}, reconnected"
+        }
+      ]
+    },
+    "ticket.order.arm.unknown": {
+      "string": "Arm state unknown — submit off",
+      "alias": ["arm.unknown"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · arm pill"],
+      "sources": [
+        {
+          "cite": "`D02`:409",
+          "text": "Arm state unknown — submit off"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.bybit_retmsg_verbatim": {
+      "string": "Bybit: {retMsg verbatim} · ret_code {code} · Attempt recorded",
+      "alias": ["banner.detail.bybit_retmsg_verbatim"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "Bybit: {retMsg verbatim} · ret_code {code} · Attempt recorded"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.change_the_symbol": {
+      "string": "change the symbol or the account, or ask the owner",
+      "alias": ["banner.detail.change_the_symbol"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "change the symbol or the account, or ask the owner"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.code_code_authority": {
+      "string": "code {code} · authority: {authority} · Attempt recorded",
+      "alias": ["banner.detail.code_code_authority"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "code {code} · authority: {authority} · Attempt recorded"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.code_code_retmsg": {
+      "string": "code {code} · {retMsg verbatim}",
+      "alias": ["banner.detail.code_code_retmsg"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "code {code} · {retMsg verbatim}"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.code_code_the": {
+      "string": "code {code} · the order is held, not sent; replay only with your confirmation",
+      "alias": ["banner.detail.code_code_the"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "code {code} · the order is held, not sent; replay only with your confirmation"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.demo_trading_is": {
+      "string": "Demo trading is available meanwhile.",
+      "alias": ["banner.detail.demo_trading_is"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "Demo trading is available meanwhile."
+        }
+      ]
+    },
+    "ticket.order.banner.detail.detail_detail_verbatim": {
+      "string": "detail: {detail verbatim} · code {code} · reason {reason} · Attempt recorded",
+      "alias": ["banner.detail.detail_detail_verbatim"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "detail: {detail verbatim} · code {code} · reason {reason} · Attempt recorded"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.exchange_id_ends": {
+      "string": "exchange id ends {id}",
+      "alias": ["banner.detail.exchange_id_ends"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "exchange id ends {id}"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.last_data_mm": {
+      "string": "Last data {mm:ss} ago. Trading is disabled while offline.",
+      "alias": ["banner.detail.last_data_mm"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "Last data {mm:ss} ago. Trading is disabled while offline."
+        }
+      ]
+    },
+    "ticket.order.banner.detail.locked_hh_mm": {
+      "string": "locked {hh:mm:ss} · cancel and close still work · the owner can override",
+      "alias": ["banner.detail.locked_hh_mm"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "locked {hh:mm:ss} · cancel and close still work · the owner can override"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.new_orders_off": {
+      "string": "new orders off until the reconciliation pass ends",
+      "alias": ["banner.detail.new_orders_off"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "new orders off until the reconciliation pass ends"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.positions_grid_updated": {
+      "string": "positions grid updated",
+      "alias": ["banner.detail.positions_grid_updated"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "positions grid updated"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.release_is_the": {
+      "string": "release is the owner's step-up action",
+      "alias": ["banner.detail.release_is_the"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "release is the owner's step-up action"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.rest_still_working": {
+      "string": "{rest} still working at {price} — cancelling the rest keeps the filled part protected",
+      "alias": ["banner.detail.rest_still_working"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "{rest} still working at {price} — cancelling the rest keeps the filled part protected"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.switch_the_workspace": {
+      "string": "switch the workspace environment (typed confirmation) or pick a DEMO account",
+      "alias": ["banner.detail.switch_the_workspace"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "switch the workspace environment (typed confirmation) or pick a DEMO account"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.the_journal_and": {
+      "string": "the journal and the audit hold the attempt",
+      "alias": ["banner.detail.the_journal_and"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "the journal and the audit hold the attempt"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.you_can_read": {
+      "string": "you can read every value; nothing can be sent from this role",
+      "alias": ["banner.detail.you_can_read"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "you can read every value; nothing can be sent from this role"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.your_equity_changed": {
+      "string": "your equity changed while you typed · press Enter to accept {qty} · Attempt recorded",
+      "alias": ["banner.detail.your_equity_changed"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "your equity changed while you typed · press Enter to accept {qty} · Attempt recorded"
+        }
+      ]
+    },
+    "ticket.order.banner.detail.your_exchange_side": {
+      "string": "Your exchange-side stop-losses are unaffected.",
+      "alias": ["banner.detail.your_exchange_side"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "native_sl": true,
+      "where": ["SCR-060 · banner second lines"],
+      "sources": [
+        {
+          "cite": "`D02`:428",
+          "text": "Your exchange-side stop-losses are unaffected."
+        }
+      ]
+    },
+    "ticket.order.blocked.profile.symbol": {
+      "string": "Blocked by profile: {symbol} is not an allowed symbol on {account} (owner setting)",
+      "alias": ["blocked.profile.symbol"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:426",
+          "text": "Blocked by profile: {symbol} is not an allowed symbol on {account} (owner setting)"
+        }
+      ]
+    },
+    "ticket.order.bracket.rounded": {
+      "string": "(rounded away from entry to the {tick} tick)",
+      "alias": ["bracket.rounded"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · stop / TP captions"],
+      "sources": [
+        {
+          "cite": "`D02`:450",
+          "text": "(rounded away from entry to the {tick} tick)"
+        }
+      ]
+    },
+    "ticket.order.defaults.unavailable": {
+      "string": "Your trading defaults could not be loaded — the ticket uses your profile's values.",
+      "alias": ["defaults.unavailable"],
+      "surface": "order",
+      "owner": "E30-D03 §12 (Q-01)",
+      "status": "ruled",
+      "ruled": "A50 item 1",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-30",
+        "politeness": "polite",
+        "rate": "once per ticket open",
+        "cite": "`D05`:318"
+      },
+      "where": ["SCR-060"],
+      "sources": [
+        {
+          "cite": "`D05`:318",
+          "text": "Your trading defaults could not be loaded — the ticket uses your profile's values."
+        },
+        {
+          "cite": "R919 6528489355",
+          "text": "Your trading defaults could not be loaded — the ticket uses your profile's values."
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "Your trading defaults could not be loaded — the ticket uses your profile's values."
+        }
+      ]
+    },
+    "ticket.order.disconnected.banner": {
+      "string": "Trading is disabled while offline. Your exchange-side stop-losses are unaffected.",
+      "alias": ["disconnected.banner"],
+      "surface": "order",
+      "owner": "`14` SCR-152 (as D02 §14 carries it)",
+      "status": "by-reference",
+      "kind": "text",
+      "native_sl": true,
+      "where": ["SCR-060 · banner / divergence line"],
+      "sources": [
+        {
+          "cite": "`D02`:423",
+          "text": "Trading is disabled while offline. Your exchange-side stop-losses are unaffected."
+        }
+      ]
+    },
+    "ticket.order.disconnected.divergence": {
+      "string": "While you were offline: {orders} order filled, {stops} stop moved by a rule",
+      "alias": ["disconnected.divergence"],
+      "surface": "order",
+      "owner": "`14` SCR-152 (as D02 §14 carries it)",
+      "status": "by-reference",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "While you were offline: 1 order filled, 1 stop moved by a rule",
+          "params": {
+            "orders": "1",
+            "stops": "1"
+          }
+        }
+      ],
+      "where": ["SCR-060 · banner / divergence line"],
+      "sources": [
+        {
+          "cite": "`D02`:423",
+          "text": "While you were offline: 1 order filled, 1 stop moved by a rule"
+        }
+      ]
+    },
+    "ticket.order.env.name": {
+      "string": "Order ticket - {symbol} - {LIVE/DEMO} - {account}",
+      "alias": ["env.name"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · region name"],
+      "sources": [
+        {
+          "cite": "`D02`:430",
+          "text": "Order ticket - {symbol} - {LIVE/DEMO} - {account}"
+        }
+      ]
+    },
+    "ticket.order.flag.close_on_trigger.needs_cond": {
+      "string": "Close on trigger is offered on conditional orders only",
+      "alias": ["flag.close_on_trigger.needs_cond"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · flag reason"],
+      "sources": [
+        {
+          "cite": "`D02`:397",
+          "text": "Close on trigger is offered on conditional orders only"
+        }
+      ]
+    },
+    "ticket.order.frozen": {
+      "string": "Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work.",
+      "alias": ["frozen"],
+      "surface": "order",
+      "owner": "E17-D01 §7 (as D02 §14 carries it)",
+      "status": "by-reference",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-20",
+        "politeness": "assertive",
+        "rate": "once on entry",
+        "cite": "`D05`:308"
+      },
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:422",
+          "text": "Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work."
+        }
+      ]
+    },
+    "ticket.order.frozen.reason": {
+      "string": "Trading frozen by the owner — new orders off.",
+      "alias": ["frozen.reason"],
+      "surface": "order",
+      "owner": "E30-D02 §14 (D04 G6)",
+      "status": "ruled",
+      "ruled": "A50 item 6",
+      "kind": "text",
+      "where": ["SCR-060"],
+      "sources": [
+        {
+          "cite": "`D04`:234",
+          "text": "Trading frozen by the owner — new orders off."
+        },
+        {
+          "cite": "R919 6528489355",
+          "text": "Trading frozen by the owner — new orders off."
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "Trading frozen by the owner — new orders off."
+        }
+      ]
+    },
+    "ticket.order.glyph.name": {
+      "string": "Not available",
+      "alias": ["glyph.name"],
+      "surface": "order",
+      "owner": "E09-D09 §3.1",
+      "status": "by-reference",
+      "kind": "text",
+      "security": true,
+      "where": ["every gated control's reason node (T2)"],
+      "sources": [
+        {
+          "cite": "`E09-D09`:264",
+          "text": "Not available"
+        }
+      ]
+    },
+    "ticket.order.guard.mismatch": {
+      "string": "Order is for a LIVE account while the workspace is DEMO",
+      "alias": ["guard.mismatch"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-060 · disabled reason"],
+      "sources": [
+        {
+          "cite": "`D02`:431",
+          "text": "Order is for a LIVE account while the workspace is DEMO"
+        }
+      ]
+    },
+    "ticket.order.helper.last_update": {
+      "string": "Last update {n} s ago",
+      "alias": ["helper.last_update"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · helper region, wallet fields"],
+      "sources": [
+        {
+          "cite": "`D02`:399",
+          "text": "Last update {n} s ago"
+        }
+      ]
+    },
+    "ticket.order.helper.rounded": {
+      "string": "(rounded to nearest tick)",
+      "alias": ["helper.rounded"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · caption"],
+      "sources": [
+        {
+          "cite": "`D02`:451",
+          "text": "(rounded to nearest tick)"
+        }
+      ]
+    },
+    "ticket.order.helper.rounded.tick": {
+      "string": "rounded to the {tick} tick",
+      "alias": ["helper.rounded.tick"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · caption"],
+      "sources": [
+        {
+          "cite": "`D02`:451",
+          "text": "rounded to the {tick} tick"
+        }
+      ]
+    },
+    "ticket.order.limits.announce": {
+      "string": "Blocked by daily loss cap: {used} of {cap} USDT used",
+      "alias": ["limits.announce"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Blocked by daily loss cap: 480 of 500 USDT used",
+          "params": {
+            "used": "480",
+            "cap": "500"
+          }
+        }
+      ],
+      "where": ["SCR-060 · announcement"],
+      "sources": [
+        {
+          "cite": "`D02`:403",
+          "text": "Blocked by daily loss cap: 480 of 500 USDT used"
+        }
+      ]
+    },
+    "ticket.order.limits.binding": {
+      "string": "binding: {name} {value} ({authority})",
+      "alias": ["limits.binding"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · limits chip", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:402",
+          "text": "binding: {name} {value} ({authority})"
+        },
+        {
+          "cite": "`D03`:470",
+          "text": "binding: {name} {value} ({authority})"
+        }
+      ]
+    },
+    "ticket.order.limits.none": {
+      "string": "Limits: none binding",
+      "alias": ["limits.none"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · limits chip", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:404",
+          "text": "Limits: none binding"
+        },
+        {
+          "cite": "`D03`:470",
+          "text": "Limits: none binding"
+        }
+      ]
+    },
+    "ticket.order.lockout": {
+      "string": "Daily loss limit reached — trading locked until 00:00 UTC. Ask the owner to override.",
+      "alias": ["lockout"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-19",
+        "politeness": "assertive",
+        "rate": "once on entry",
+        "cite": "`D05`:307"
+      },
+      "fixed": ["00", "00"],
+      "where": ["SCR-060 · CMP-117"],
+      "sources": [
+        {
+          "cite": "`D02`:421",
+          "text": "Daily loss limit reached — trading locked until 00:00 UTC. Ask the owner to override."
+        }
+      ]
+    },
+    "ticket.order.lockout.button": {
+      "string": "Close position…",
+      "alias": ["lockout.button"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "note": "the close route; never gated by the arm, FREEZE, view-as or a validity look (the C-2.6 carve-out; S-30)",
+      "where": ["SCR-060 · CMP-117"],
+      "sources": [
+        {
+          "cite": "`D02`:421",
+          "text": "Close position…"
+        }
+      ]
+    },
+    "ticket.order.lockout.reason": {
+      "string": "Locked out — reduce through Close position",
+      "alias": ["lockout.reason"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · CMP-117"],
+      "sources": [
+        {
+          "cite": "`D02`:421",
+          "text": "Locked out — reduce through Close position"
+        }
+      ]
+    },
+    "ticket.order.notice.panel_read_only.account_read_only": {
+      "string": "Read-only — you can view this account, not trade it.",
+      "alias": ["notice.panel_read_only.account_read_only"],
+      "surface": "order",
+      "owner": "E30-D04 §2.5",
+      "status": "merged",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-060 · panel notice"],
+      "sources": [
+        {
+          "cite": "`D04`:229",
+          "text": "Read-only — you can view this account, not trade it."
+        }
+      ]
+    },
+    "ticket.order.notice.panel_read_only.permission": {
+      "string": "Read-only — your role can't place orders.",
+      "alias": ["notice.panel_read_only.permission"],
+      "surface": "order",
+      "owner": "E30-D04 §2.5",
+      "status": "merged",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-060 · panel notice"],
+      "sources": [
+        {
+          "cite": "`D04`:227",
+          "text": "Read-only — your role can't place orders."
+        }
+      ]
+    },
+    "ticket.order.opens.flips": {
+      "string": "Closes {pos} {side}, opens {new} {side} — stop required for the new side",
+      "alias": ["opens.flips"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · under the side toggle"],
+      "sources": [
+        {
+          "cite": "`D02`:391",
+          "text": "Closes {pos} {side}, opens {new} {side} — stop required for the new side"
+        }
+      ]
+    },
+    "ticket.order.opens.opens": {
+      "string": "Opens {qty} {side}",
+      "alias": ["opens.opens"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · under the side toggle"],
+      "sources": [
+        {
+          "cite": "`D02`:391",
+          "text": "Opens {qty} {side}"
+        }
+      ]
+    },
+    "ticket.order.opens.reduces": {
+      "string": "Reduces {pos} {side} by {qty} → {rest} {side}",
+      "alias": ["opens.reduces"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · under the side toggle"],
+      "sources": [
+        {
+          "cite": "`D02`:391",
+          "text": "Reduces {pos} {side} by {qty} → {rest} {side}"
+        }
+      ]
+    },
+    "ticket.order.pending_key": {
+      "string": "API key pending — Bybit 48 h restriction, available after {date/time}. Demo trading is available meanwhile.",
+      "alias": ["pending_key"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-23",
+        "politeness": "polite",
+        "rate": "once on entry",
+        "cite": "`D05`:311"
+      },
+      "fixed": ["48"],
+      "security": true,
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:424",
+          "text": "API key pending — Bybit 48 h restriction, available after {date/time}. Demo trading is available meanwhile."
+        }
+      ]
+    },
+    "ticket.order.pending_key.reason": {
+      "string": "API key pending — new orders off.",
+      "alias": ["pending_key.reason"],
+      "surface": "order",
+      "owner": "E30-D02 §14 (D04 G6)",
+      "status": "ruled",
+      "ruled": "A50 item 8",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-060"],
+      "sources": [
+        {
+          "cite": "`D04`:243",
+          "text": "API key pending — new orders off."
+        },
+        {
+          "cite": "R919 6528489355",
+          "text": "API key pending — new orders off."
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "API key pending — new orders off."
+        }
+      ]
+    },
+    "ticket.order.preset.below_min": {
+      "string": "min {min}",
+      "alias": ["preset.below_min"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · preset / its name", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:401",
+          "text": "min {min}"
+        },
+        {
+          "cite": "`D03`:521",
+          "text": "min {min}"
+        }
+      ]
+    },
+    "ticket.order.preset.below_min.name": {
+      "string": "below the minimum {min} {coin}",
+      "alias": ["preset.below_min.name"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · preset / its name", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:401",
+          "text": "below the minimum {min} {coin}"
+        },
+        {
+          "cite": "`D03`:521",
+          "text": "below the minimum {min} {coin}"
+        }
+      ]
+    },
+    "ticket.order.preview.liq_pending": {
+      "string": "— (not in the preview yet)",
+      "alias": ["preview.liq_pending"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · Preview block"],
+      "sources": [
+        {
+          "cite": "`D02`:434",
+          "text": "— (not in the preview yet)"
+        }
+      ]
+    },
+    "ticket.order.preview.slippage": {
+      "string": "slippage ≈ {n} ticks (estimated)",
+      "alias": ["preview.slippage"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · footer chip, Preview block"],
+      "sources": [
+        {
+          "cite": "`D02`:429",
+          "text": "slippage ≈ {n} ticks (estimated)"
+        }
+      ]
+    },
+    "ticket.order.profile.blocked": {
+      "string": "This order is outside your profile.",
+      "alias": ["profile.blocked"],
+      "surface": "order",
+      "owner": "E30-D02 §14 (D04 G6)",
+      "status": "ruled",
+      "ruled": "A50 item 7",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-060"],
+      "sources": [
+        {
+          "cite": "`D04`:242",
+          "text": "This order is outside your profile."
+        },
+        {
+          "cite": "R919 6528489355",
+          "text": "This order is outside your profile."
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "This order is outside your profile."
+        }
+      ]
+    },
+    "ticket.order.profile.unavailable": {
+      "string": "Profile limits unavailable — new orders off.",
+      "alias": ["profile.unavailable"],
+      "surface": "order",
+      "owner": "E30-D02 §14 (G-02)",
+      "status": "ruled",
+      "ruled": "A50 item 3",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-060"],
+      "sources": [
+        {
+          "cite": "R919 6528489355",
+          "text": "Profile limits unavailable — new orders off."
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "Profile limits unavailable — new orders off."
+        }
+      ]
+    },
+    "ticket.order.rbac.account": {
+      "string": "This account isn't assigned to you.",
+      "alias": ["rbac.account"],
+      "surface": "order",
+      "owner": "E09-D09 §3.1",
+      "status": "by-reference",
+      "kind": "text",
+      "security": true,
+      "where": ["every gated control's reason node (T2)"],
+      "sources": [
+        {
+          "cite": "`E09-D09`:258",
+          "text": "This account isn't assigned to you."
+        },
+        {
+          "cite": "`D03`:526",
+          "text": "This account isn't assigned to you."
+        }
+      ]
+    },
+    "ticket.order.rbac.account_read_only": {
+      "string": "You can view this account, not trade it.",
+      "alias": ["rbac.account_read_only"],
+      "surface": "order",
+      "owner": "E09-D09 §3.1",
+      "status": "by-reference",
+      "kind": "text",
+      "security": true,
+      "where": ["every gated control's reason node (T2)"],
+      "sources": [
+        {
+          "cite": "`E09-D09`:259",
+          "text": "You can view this account, not trade it."
+        },
+        {
+          "cite": "`D03`:526",
+          "text": "You can view this account, not trade it."
+        }
+      ]
+    },
+    "ticket.order.rbac.env": {
+      "string": "Live trading isn't enabled for you.",
+      "alias": ["rbac.env"],
+      "surface": "order",
+      "owner": "E09-D09 §3.1",
+      "status": "by-reference",
+      "kind": "text",
+      "security": true,
+      "where": ["every gated control's reason node (T2)"],
+      "sources": [
+        {
+          "cite": "`E09-D09`:260",
+          "text": "Live trading isn't enabled for you."
+        },
+        {
+          "cite": "`D03`:526",
+          "text": "Live trading isn't enabled for you."
+        }
+      ]
+    },
+    "ticket.order.rbac.view_as": {
+      "string": "Read-only while viewing as {user}.",
+      "alias": ["rbac.view_as"],
+      "surface": "order",
+      "owner": "E09-D09 §3.1",
+      "status": "by-reference",
+      "kind": "text",
+      "security": true,
+      "where": ["every gated control's reason node (T2)"],
+      "sources": [
+        {
+          "cite": "`E09-D09`:262",
+          "text": "Read-only while viewing as {user}."
+        }
+      ]
+    },
+    "ticket.order.readout.clamp": {
+      "string": "reduced from {from} to {to} by {cap}",
+      "alias": ["readout.clamp"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · read-out pill"],
+      "sources": [
+        {
+          "cite": "`D02`:387",
+          "text": "reduced from {from} to {to} by {cap}"
+        }
+      ]
+    },
+    "ticket.order.readout.estimated": {
+      "string": "(estimated)",
+      "alias": ["readout.estimated"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · preview chip"],
+      "sources": [
+        {
+          "cite": "`D02`:389",
+          "text": "(estimated)"
+        }
+      ]
+    },
+    "ticket.order.readout.line": {
+      "string": "= {notional} USDT · {pct} % eq · risk {risk} USDT ({riskpct} %) · 1 R = {risk}",
+      "alias": ["readout.line"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-01",
+        "politeness": "polite",
+        "rate": "≤ 1 per 500 ms after the last input; never spoken on a WS-only recompute (LR-02)",
+        "cite": "`D05`:289"
+      },
+      "fixed": ["1"],
+      "where": ["SCR-060 · read-out"],
+      "sources": [
+        {
+          "cite": "`D02`:386",
+          "text": "= {notional} USDT · {pct} % eq · risk {risk} USDT ({riskpct} %) · 1 R = {risk}"
+        }
+      ]
+    },
+    "ticket.order.readout.provisional": {
+      "string": "(provisional)",
+      "alias": ["readout.provisional"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · read-out, Preview block"],
+      "sources": [
+        {
+          "cite": "`D02`:388",
+          "text": "(provisional)"
+        }
+      ]
+    },
+    "ticket.order.readout.server_size": {
+      "string": "Size set by server: {qty} {coin}",
+      "alias": ["readout.server_size"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · announcement"],
+      "sources": [
+        {
+          "cite": "`D02`:390",
+          "text": "Size set by server: {qty} {coin}"
+        }
+      ]
+    },
+    "ticket.order.refusal.account_locked": {
+      "string": "Trading locked on {account} until {time}",
+      "alias": ["refusal.account_locked"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["preview:account_locked"],
+      "security": true,
+      "where": ["SCR-060 · class line"],
+      "sources": [
+        {
+          "cite": "`D02`:442",
+          "text": "Trading locked on {account} until {time}"
+        },
+        {
+          "cite": "`D03`:489",
+          "text": "Trading locked on {account} until {time}"
+        }
+      ]
+    },
+    "ticket.order.refusal.cap_breached": {
+      "string": "Blocked by profile cap — {rejection.message}",
+      "alias": ["refusal.cap_breached"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["preview:cap_breached"],
+      "where": ["SCR-060 · class line, before a submit"],
+      "sources": [
+        {
+          "cite": "`D02`:440",
+          "text": "Blocked by profile cap — {rejection.message}"
+        },
+        {
+          "cite": "`D03`:489",
+          "text": "Blocked by profile cap — {rejection.message}"
+        }
+      ]
+    },
+    "ticket.order.refusal.degraded_data": {
+      "string": "Not sent — price feed stale {n} s",
+      "alias": ["refusal.degraded_data"],
+      "surface": "order",
+      "owner": "E17-D01 §6 (as D02 §14 carries it)",
+      "status": "by-reference",
+      "kind": "refusal",
+      "codes": ["problem:degraded_data"],
+      "where": ["SCR-060 · inline at the point of action"],
+      "sources": [
+        {
+          "cite": "`D02`:447",
+          "text": "Not sent — price feed stale {n} s"
+        }
+      ]
+    },
+    "ticket.order.refusal.invalid_stop_distance": {
+      "string": "Stop distance must be greater than zero — move the stop away from the entry",
+      "alias": ["refusal.invalid_stop_distance"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["sizing:invalid_stop_distance"],
+      "where": ["SCR-060 · stop field, summary"],
+      "sources": [
+        {
+          "cite": "`D02`:445",
+          "text": "Stop distance must be greater than zero — move the stop away from the entry"
+        }
+      ]
+    },
+    "ticket.order.refusal.key_invalid": {
+      "string": "{account}'s API key is invalid",
+      "alias": ["refusal.key_invalid"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["preview:key_invalid"],
+      "security": true,
+      "where": ["SCR-060 · class line"],
+      "sources": [
+        {
+          "cite": "`D02`:444",
+          "text": "{account}'s API key is invalid"
+        },
+        {
+          "cite": "`D03`:489",
+          "text": "{account}'s API key is invalid"
+        }
+      ]
+    },
+    "ticket.order.refusal.kill_switch_engaged": {
+      "string": "Trading frozen by the owner",
+      "alias": ["refusal.kill_switch_engaged"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["preview:kill_switch_engaged"],
+      "where": ["SCR-060 · class line"],
+      "sources": [
+        {
+          "cite": "`D02`:443",
+          "text": "Trading frozen by the owner"
+        },
+        {
+          "cite": "`D03`:489",
+          "text": "Trading frozen by the owner"
+        }
+      ]
+    },
+    "ticket.order.refusal.leverage_unavailable": {
+      "string": "Leverage {n}x is not available on {symbol}",
+      "alias": ["refusal.leverage_unavailable"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["preview:leverage_unavailable"],
+      "where": ["SCR-060 · class line"],
+      "sources": [
+        {
+          "cite": "`D02`:444",
+          "text": "Leverage {n}x is not available on {symbol}"
+        },
+        {
+          "cite": "`D03`:489",
+          "text": "Leverage {n}x is not available on {symbol}"
+        }
+      ]
+    },
+    "ticket.order.refusal.rate_budget_exhausted": {
+      "string": "Rate budget exhausted — retry allowed at {time}",
+      "alias": ["refusal.rate_budget_exhausted"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["preview:rate_budget_exhausted"],
+      "where": ["SCR-060 · class line"],
+      "sources": [
+        {
+          "cite": "`D02`:444",
+          "text": "Rate budget exhausted — retry allowed at {time}"
+        },
+        {
+          "cite": "`D03`:489",
+          "text": "Rate budget exhausted — retry allowed at {time}"
+        }
+      ]
+    },
+    "ticket.order.refusal.risk_state_unavailable": {
+      "string": "Not sent — risk state unavailable (private feed down); cancel and close still work",
+      "alias": ["refusal.risk_state_unavailable"],
+      "surface": "order",
+      "owner": "E17-D01 §6 (as D02 §14 carries it)",
+      "status": "by-reference",
+      "kind": "refusal",
+      "codes_pending": "G-4 (O-N: `risk_state_unavailable` 503, E39-S01)",
+      "where": ["SCR-060 · inline"],
+      "sources": [
+        {
+          "cite": "`D02`:448",
+          "text": "Not sent — risk state unavailable (private feed down); cancel and close still work"
+        }
+      ]
+    },
+    "ticket.order.refusal.symbol_not_allowed": {
+      "string": "{symbol} is not allowed on {account} (owner setting)",
+      "alias": ["refusal.symbol_not_allowed"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["preview:symbol_not_allowed"],
+      "security": true,
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:441",
+          "text": "{symbol} is not allowed on {account} (owner setting)"
+        },
+        {
+          "cite": "`D03`:489",
+          "text": "{symbol} is not allowed on {account} (owner setting)"
+        }
+      ]
+    },
+    "ticket.order.refusal.timeout": {
+      "string": "No answer from the exchange in time — check Orders before retrying",
+      "alias": ["refusal.timeout"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:timeout"],
+      "where": ["SCR-060 · transient class line"],
+      "sources": [
+        {
+          "cite": "`D02`:449",
+          "text": "No answer from the exchange in time — check Orders before retrying"
+        }
+      ]
+    },
+    "ticket.order.refusal.trading_disabled.account_disabled_by_policy": {
+      "string": "Order entry is disabled on {account} by policy",
+      "alias": ["refusal.trading_disabled.account_disabled_by_policy"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:trading_disabled:account_disabled_by_policy"],
+      "security": true,
+      "where": ["SCR-060 · class line"],
+      "sources": [
+        {
+          "cite": "`D02`:437",
+          "text": "Order entry is disabled on {account} by policy"
+        }
+      ]
+    },
+    "ticket.order.refusal.trading_disabled.account_unhealthy": {
+      "string": "{account}'s health check refuses order entry",
+      "alias": ["refusal.trading_disabled.account_unhealthy"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:trading_disabled:account_unhealthy"],
+      "security": true,
+      "where": ["SCR-060 · class line"],
+      "sources": [
+        {
+          "cite": "`D02`:439",
+          "text": "{account}'s health check refuses order entry"
+        }
+      ]
+    },
+    "ticket.order.refusal.trading_disabled.maintenance": {
+      "string": "Order entry is paused for maintenance",
+      "alias": ["refusal.trading_disabled.maintenance"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:trading_disabled:maintenance"],
+      "where": ["SCR-060 · class line"],
+      "sources": [
+        {
+          "cite": "`D02`:436",
+          "text": "Order entry is paused for maintenance"
+        }
+      ]
+    },
+    "ticket.order.refusal.trading_disabled.no_active_key": {
+      "string": "{account} has no active API key",
+      "alias": ["refusal.trading_disabled.no_active_key"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:trading_disabled:no_active_key"],
+      "security": true,
+      "where": ["SCR-060 · class line"],
+      "sources": [
+        {
+          "cite": "`D02`:438",
+          "text": "{account} has no active API key"
+        }
+      ]
+    },
+    "ticket.order.rejected.class.correctable": {
+      "string": "Not sent — the stop is missing",
+      "alias": ["rejected.class.correctable"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": [
+        "problem:validation_failed",
+        "rule:native_stop_required",
+        "problem:tick_size_violation",
+        "problem:lot_size_violation"
+      ],
+      "announce": {
+        "lr": "LR-18",
+        "politeness": "assertive",
+        "rate": "once per event",
+        "cite": "`D05`:306"
+      },
+      "native_sl": true,
+      "where": ["SCR-060 · rejected inline"],
+      "sources": [
+        {
+          "cite": "`D02`:419",
+          "text": "Not sent — the stop is missing"
+        },
+        {
+          "cite": "`D03`:490",
+          "text": "Not sent — the stop is missing"
+        }
+      ]
+    },
+    "ticket.order.rejected.class.exchange": {
+      "string": "Rejected by Bybit",
+      "alias": ["rejected.class.exchange"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:exchange_error"],
+      "announce": {
+        "lr": "LR-18",
+        "politeness": "assertive",
+        "rate": "once per event",
+        "cite": "`D05`:306"
+      },
+      "where": ["SCR-060 · rejected inline"],
+      "sources": [
+        {
+          "cite": "`D02`:419",
+          "text": "Rejected by Bybit"
+        },
+        {
+          "cite": "`D03`:490",
+          "text": "Rejected by Bybit"
+        }
+      ]
+    },
+    "ticket.order.rejected.class.limit": {
+      "string": "Blocked by profile cap: {cap}",
+      "alias": ["rejected.class.limit"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:risk_limit_breached", "problem:insufficient_balance"],
+      "announce": {
+        "lr": "LR-18",
+        "politeness": "assertive",
+        "rate": "once per event",
+        "cite": "`D05`:306"
+      },
+      "where": ["SCR-060 · rejected inline"],
+      "sources": [
+        {
+          "cite": "`D02`:419",
+          "text": "Blocked by profile cap: {cap}"
+        },
+        {
+          "cite": "`D03`:490",
+          "text": "Blocked by profile cap: {cap}"
+        }
+      ]
+    },
+    "ticket.order.rejected.class.one_lot": {
+      "string": "Not sent — size changed: server {a}, ticket {b}",
+      "alias": ["rejected.class.one_lot"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes_pending": "G-1 (the one-lot mismatch code, E30-S03 #1087)",
+      "announce": {
+        "lr": "LR-18",
+        "politeness": "assertive",
+        "rate": "once per event",
+        "cite": "`D05`:306"
+      },
+      "where": ["SCR-060 · rejected inline"],
+      "sources": [
+        {
+          "cite": "`D02`:419",
+          "text": "Not sent — size changed: server {a}, ticket {b}"
+        },
+        {
+          "cite": "`D03`:490",
+          "text": "Not sent — size changed: server {a}, ticket {b}"
+        }
+      ]
+    },
+    "ticket.order.rejected.class.transient": {
+      "string": "Not sent — rate limited, retry allowed at {hh:mm:ss} (in {n} s)",
+      "alias": ["rejected.class.transient"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": [
+        "problem:rate_limited",
+        "problem:exchange_rate_limited",
+        "problem:idempotency_in_flight",
+        "problem:exchange_unavailable",
+        "problem:store_unavailable",
+        "problem:audit_unavailable"
+      ],
+      "announce": {
+        "lr": "LR-18",
+        "politeness": "assertive",
+        "rate": "once per event",
+        "cite": "`D05`:306"
+      },
+      "where": ["SCR-060 · rejected inline"],
+      "sources": [
+        {
+          "cite": "`D02`:419",
+          "text": "Not sent — rate limited, retry allowed at {hh:mm:ss} (in {n} s)"
+        },
+        {
+          "cite": "`D03`:490",
+          "text": "Not sent — rate limited, retry allowed at {hh:mm:ss} (in {n} s)"
+        }
+      ]
+    },
+    "ticket.order.rejected.recorded": {
+      "string": "Attempt recorded",
+      "alias": ["rejected.recorded"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-18",
+        "politeness": "assertive",
+        "rate": "once per event",
+        "cite": "`D05`:306"
+      },
+      "where": ["SCR-060 · rejected inline", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:420",
+          "text": "Attempt recorded"
+        },
+        {
+          "cite": "`D03`:491",
+          "text": "Attempt recorded"
+        }
+      ]
+    },
+    "ticket.order.size.unit.stale": {
+      "string": "Equity not available — wallet data is {n} s old",
+      "alias": ["size.unit.stale"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · unit switch", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:400",
+          "text": "Equity not available — wallet data is {n} s old"
+        },
+        {
+          "cite": "`D03`:533",
+          "text": "Equity not available — wallet data is {n} s old"
+        }
+      ]
+    },
+    "ticket.order.sl.holder": {
+      "string": "held by Bybit (exchange)",
+      "alias": ["sl.holder"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "native_sl": true,
+      "where": ["SCR-060 · stop source line"],
+      "sources": [
+        {
+          "cite": "`D02`:393",
+          "text": "held by Bybit (exchange)"
+        }
+      ]
+    },
+    "ticket.order.sl.note": {
+      "string": "Every entry carries a native exchange stop: typed here, else your profile's {n} ticks, else the 2 % fallback. It is placed with the order, not after it.",
+      "alias": ["sl.note"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "fixed": ["2"],
+      "native_sl": true,
+      "where": ["SCR-060 · CMP-158", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:394",
+          "text": "Every entry carries a native exchange stop: typed here, else your profile's {n} ticks, else the 2 % fallback. It is placed with the order, not after it."
+        },
+        {
+          "cite": "`D03`:471",
+          "text": "Every entry carries a native exchange stop: typed here, else your profile's {n} ticks, else the 2 % fallback. It is placed with the order, not after it."
+        }
+      ]
+    },
+    "ticket.order.sl.reduce_only": {
+      "string": "Reduce-only: cannot open a position — no new stop; the position's stop stays",
+      "alias": ["sl.reduce_only"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "native_sl": true,
+      "where": ["SCR-060 · collapsed stop row"],
+      "sources": [
+        {
+          "cite": "`D02`:395",
+          "text": "Reduce-only: cannot open a position — no new stop; the position's stop stays"
+        }
+      ]
+    },
+    "ticket.order.sl.source.fallback": {
+      "string": "fallback 2 % — ATR warming up",
+      "alias": ["sl.source.fallback"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "fixed": ["2"],
+      "native_sl": true,
+      "where": ["SCR-060 · stop source line"],
+      "sources": [
+        {
+          "cite": "`D02`:392",
+          "text": "fallback 2 % — ATR warming up"
+        }
+      ]
+    },
+    "ticket.order.sl.source.profile": {
+      "string": "from your profile: {n} ticks",
+      "alias": ["sl.source.profile"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "native_sl": true,
+      "where": ["SCR-060 · stop source line"],
+      "sources": [
+        {
+          "cite": "`D02`:392",
+          "text": "from your profile: {n} ticks"
+        }
+      ]
+    },
+    "ticket.order.stop_pending.flatten_now": {
+      "string": "Flatten now",
+      "alias": ["stop_pending.flatten_now"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "native_sl": true,
+      "note": "the C-2.6 carve-out: never gated by the arm, FREEZE, view-as or a validity look; only permission and account scope apply (LA-33, LA-34; S-30)",
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:427",
+          "text": "Flatten now"
+        }
+      ]
+    },
+    "ticket.order.stop_pending.flattened": {
+      "string": "Position flattened: no exchange stop could be attached. Attempt recorded.",
+      "alias": ["stop_pending.flattened"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-21",
+        "politeness": "assertive",
+        "rate": "once on entry; sustained, never re-announced",
+        "cite": "`D05`:309"
+      },
+      "native_sl": true,
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:427",
+          "text": "Position flattened: no exchange stop could be attached. Attempt recorded."
+        }
+      ]
+    },
+    "ticket.order.stop_pending.pending": {
+      "string": "Order live · protective stop pending — attaching the exchange stop (attempt {n} of {max})",
+      "alias": ["stop_pending.pending"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-21",
+        "politeness": "assertive",
+        "rate": "once on entry; sustained, never re-announced",
+        "cite": "`D05`:309"
+      },
+      "native_sl": true,
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:427",
+          "text": "Order live · protective stop pending — attaching the exchange stop (attempt {n} of {max})"
+        }
+      ]
+    },
+    "ticket.order.stop_pending.reason": {
+      "string": "Protective stop pending — new entries off.",
+      "alias": ["stop_pending.reason"],
+      "surface": "order",
+      "owner": "E30-D02 §14 (D04 G6)",
+      "status": "ruled",
+      "ruled": "A50 item 9",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-21",
+        "politeness": "assertive",
+        "rate": "once on entry; sustained, never re-announced",
+        "cite": "`D05`:309"
+      },
+      "native_sl": true,
+      "where": ["SCR-060"],
+      "sources": [
+        {
+          "cite": "`D04`:244",
+          "text": "Protective stop pending — new entries off."
+        },
+        {
+          "cite": "R919 6528489355",
+          "text": "Protective stop pending — new entries off."
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "Protective stop pending — new entries off."
+        }
+      ]
+    },
+    "ticket.order.stop_pending.retrying": {
+      "string": "Stop not attached — retrying now (attempt {n} of {max})",
+      "alias": ["stop_pending.retrying"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-21",
+        "politeness": "assertive",
+        "rate": "once on entry; sustained, never re-announced",
+        "cite": "`D05`:309"
+      },
+      "native_sl": true,
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:427",
+          "text": "Stop not attached — retrying now (attempt {n} of {max})"
+        }
+      ]
+    },
+    "ticket.order.stop_pending.set_stop": {
+      "string": "Set stop by hand",
+      "alias": ["stop_pending.set_stop"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "native_sl": true,
+      "note": "the C-2.6 carve-out, scoped to attaching a missing stop or tightening one: never gated by the arm, FREEZE, view-as or a validity look (LA-33, LA-34; S-30)",
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:427",
+          "text": "Set stop by hand"
+        }
+      ]
+    },
+    "ticket.order.stop_pending.unrecoverable": {
+      "string": "Stop could not be attached after {max} attempts — the owner is paged. The position is live without a stop.",
+      "alias": ["stop_pending.unrecoverable"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-21",
+        "politeness": "assertive",
+        "rate": "once on entry; sustained, never re-announced",
+        "cite": "`D05`:309"
+      },
+      "native_sl": true,
+      "where": ["SCR-060 · banner"],
+      "sources": [
+        {
+          "cite": "`D02`:427",
+          "text": "Stop could not be attached after {max} attempts — the owner is paged. The position is live without a stop."
+        }
+      ]
+    },
+    "ticket.order.submit.awaiting": {
+      "string": "Awaiting exchange confirmation — reconciling",
+      "alias": ["submit.awaiting"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · button"],
+      "sources": [
+        {
+          "cite": "`D02`:415",
+          "text": "Awaiting exchange confirmation — reconciling"
+        }
+      ]
+    },
+    "ticket.order.submit.duplicate": {
+      "string": "Already submitting",
+      "alias": ["submit.duplicate"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-34",
+        "politeness": "polite",
+        "rate": "once per press",
+        "cite": "`D05`:322"
+      },
+      "where": ["SCR-060 · button / under it"],
+      "sources": [
+        {
+          "cite": "`D02`:414",
+          "text": "Already submitting"
+        }
+      ]
+    },
+    "ticket.order.submit.label.cond": {
+      "string": "… when {Mark} rises to {trigger} · stop {stop}",
+      "alias": ["submit.label.cond"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · submit", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:412",
+          "text": "… when {Mark} rises to {trigger} · stop {stop}"
+        },
+        {
+          "cite": "`D03`:458",
+          "text": "… when {Mark} rises to {trigger} · stop {stop}"
+        }
+      ]
+    },
+    "ticket.order.submit.label.hedge": {
+      "string": "BUY {qty} {symbol} limit {price} · long leg · stop {stop}",
+      "alias": ["submit.label.hedge"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · submit"],
+      "sources": [
+        {
+          "cite": "`D02`:433",
+          "text": "BUY {qty} {symbol} limit {price} · long leg · stop {stop}"
+        }
+      ]
+    },
+    "ticket.order.submit.label.limit": {
+      "string": "BUY {qty} {symbol} limit {price} · stop {stop}",
+      "alias": ["submit.label.limit"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · submit", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:412",
+          "text": "BUY {qty} {symbol} limit {price} · stop {stop}"
+        },
+        {
+          "cite": "`D03`:458",
+          "text": "BUY {qty} {symbol} limit {price} · stop {stop}"
+        }
+      ]
+    },
+    "ticket.order.submit.label.market": {
+      "string": "… at market · stop {stop}",
+      "alias": ["submit.label.market"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · submit", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:412",
+          "text": "… at market · stop {stop}"
+        },
+        {
+          "cite": "`D03`:458",
+          "text": "… at market · stop {stop}"
+        }
+      ]
+    },
+    "ticket.order.submit.label.reduce": {
+      "string": "SELL {qty} {symbol} limit {price} · reduce-only",
+      "alias": ["submit.label.reduce"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · submit"],
+      "sources": [
+        {
+          "cite": "`D02`:412",
+          "text": "SELL {qty} {symbol} limit {price} · reduce-only"
+        }
+      ]
+    },
+    "ticket.order.submit.name": {
+      "string": "{visible label}, {LIVE/DEMO}, {account}",
+      "alias": ["submit.name"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "amended",
+      "amended": "D05 F-13",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0, LIVE, Main",
+          "params": {
+            "visible label": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0",
+            "LIVE/DEMO": "LIVE",
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-060 · accessible name"],
+      "note": "{visible label} is the submit's rendered `ticket.order.submit.label.*`, as written; the name starts with it and appends the environment and account (SC 2.5.3)",
+      "sources": [
+        {
+          "cite": "`D05`:498",
+          "text": "{visible label}, {LIVE/DEMO}, {account}"
+        }
+      ]
+    },
+    "ticket.order.submit.not_connected": {
+      "string": "Not connected",
+      "alias": ["submit.not_connected"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · button / refusal"],
+      "sources": [
+        {
+          "cite": "`D02`:416",
+          "text": "Not connected"
+        }
+      ]
+    },
+    "ticket.order.submit.not_connected.refusal": {
+      "string": "Not connected — order not sent",
+      "alias": ["submit.not_connected.refusal"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · button / refusal"],
+      "sources": [
+        {
+          "cite": "`D02`:416",
+          "text": "Not connected — order not sent"
+        }
+      ]
+    },
+    "ticket.order.submit.submitting": {
+      "string": "Submitting…",
+      "alias": ["submit.submitting"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · button / under it"],
+      "sources": [
+        {
+          "cite": "`D02`:414",
+          "text": "Submitting…"
+        }
+      ]
+    },
+    "ticket.order.tif.unavailable.market": {
+      "string": "Market orders are always IOC on Bybit",
+      "alias": ["tif.unavailable.market"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · TIF option description", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:396",
+          "text": "Market orders are always IOC on Bybit"
+        },
+        {
+          "cite": "`D03`:522",
+          "text": "Market orders are always IOC on Bybit"
+        }
+      ]
+    },
+    "ticket.order.tp.reduce_only": {
+      "string": "Take-profit: not available on a reduce-only order (Bybit); the position's TP stays",
+      "alias": ["tp.reduce_only"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · collapsed TP row"],
+      "sources": [
+        {
+          "cite": "`D02`:432",
+          "text": "Take-profit: not available on a reduce-only order (Bybit); the position's TP stays"
+        }
+      ]
+    },
+    "ticket.order.type.emulated": {
+      "string": "(emulated)",
+      "alias": ["type.emulated"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · tab tag / reason"],
+      "sources": [
+        {
+          "cite": "`D02`:398",
+          "text": "(emulated)"
+        }
+      ]
+    },
+    "ticket.order.type.emulated.reason": {
+      "string": "Available with E33 emulated algos",
+      "alias": ["type.emulated.reason"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "fixed": ["33"],
+      "where": ["SCR-060 · tab tag / reason"],
+      "sources": [
+        {
+          "cite": "`D02`:398",
+          "text": "Available with E33 emulated algos"
+        }
+      ]
+    },
+    "ticket.order.v.leverage.cap": {
+      "string": "Your profile caps leverage at {cap}x.",
+      "alias": ["v.leverage.cap"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Your profile caps leverage at 10x.",
+          "params": {
+            "cap": "10"
+          }
+        }
+      ],
+      "where": ["SCR-060 · header / blocked-by-profile", "SCR-076 / SCR-114 (D02's string reused)"],
+      "sources": [
+        {
+          "cite": "`D02`:376",
+          "text": "Your profile caps leverage at 10x."
+        },
+        {
+          "cite": "`D03`:520",
+          "text": "Your profile caps leverage at 10x."
+        }
+      ]
+    },
+    "ticket.order.v.margin": {
+      "string": "Not enough available margin: need {needed}, have {available}.",
+      "alias": ["v.margin"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Not enough available margin: need 1 600, have 1 240.",
+          "params": {
+            "needed": "1 600",
+            "available": "1 240"
+          }
+        }
+      ],
+      "where": ["SCR-060 · size field"],
+      "sources": [
+        {
+          "cite": "`D02`:381",
+          "text": "Not enough available margin: need 1 600, have 1 240."
+        }
+      ]
+    },
+    "ticket.order.v.notional.min": {
+      "string": "Order value must be at least {min} USDT.",
+      "alias": ["v.notional.min", "refusal.below_min_notional"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["preview:below_min_notional", "sizing:below_min_notional"],
+      "examples": [
+        {
+          "text": "Order value must be at least 5 USDT.",
+          "params": {
+            "min": "5"
+          }
+        }
+      ],
+      "where": ["SCR-060 · size field", "SCR-060 · size field, summary"],
+      "sources": [
+        {
+          "cite": "`D02`:375",
+          "text": "Order value must be at least 5 USDT."
+        },
+        {
+          "cite": "`D02`:446",
+          "text": "Order value must be at least 5 USDT."
+        }
+      ]
+    },
+    "ticket.order.v.post_only.cross": {
+      "string": "Post-only would execute immediately — adjust the price or uncheck Post-only.",
+      "alias": ["v.post_only.cross"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · price field / flag"],
+      "sources": [
+        {
+          "cite": "`D02`:380",
+          "text": "Post-only would execute immediately — adjust the price or uncheck Post-only."
+        }
+      ]
+    },
+    "ticket.order.v.price.tick": {
+      "string": "Price must be a multiple of {tick}.",
+      "alias": ["v.price.tick"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Price must be a multiple of 0.1.",
+          "params": {
+            "tick": "0.1"
+          }
+        }
+      ],
+      "where": ["SCR-060 · price field"],
+      "sources": [
+        {
+          "cite": "`D02`:373",
+          "text": "Price must be a multiple of 0.1."
+        }
+      ]
+    },
+    "ticket.order.v.qty.lot": {
+      "string": "Minimum {min}, step {step}.",
+      "alias": ["v.qty.lot"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Minimum 0.001, step 0.001.",
+          "params": {
+            "min": "0.001",
+            "step": "0.001"
+          }
+        }
+      ],
+      "where": ["SCR-060 · size field"],
+      "sources": [
+        {
+          "cite": "`D02`:374",
+          "text": "Minimum 0.001, step 0.001."
+        }
+      ]
+    },
+    "ticket.order.v.reduce_only.no_position": {
+      "string": "Reduce-only needs an open position.",
+      "alias": ["v.reduce_only.no_position"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · flag"],
+      "sources": [
+        {
+          "cite": "`D02`:379",
+          "text": "Reduce-only needs an open position."
+        }
+      ]
+    },
+    "ticket.order.v.risk.no_stop": {
+      "string": "risk sizing requires a stop distance",
+      "alias": ["v.risk.no_stop"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · unit switch / size field"],
+      "sources": [
+        {
+          "cite": "`D02`:383",
+          "text": "risk sizing requires a stop distance"
+        }
+      ]
+    },
+    "ticket.order.v.sl.required": {
+      "string": "Every position-opening order requires a stop-loss.",
+      "alias": ["v.sl.required"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "ruled",
+      "ruled": "A50 item 10",
+      "kind": "text",
+      "native_sl": true,
+      "where": ["SCR-060 · stop field, summary, submit reason"],
+      "sources": [
+        {
+          "cite": "R919 6528489355",
+          "text": "Every position-opening order requires a stop-loss."
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "Every position-opening order requires a stop-loss."
+        }
+      ]
+    },
+    "ticket.order.v.sl.side.long": {
+      "string": "Stop-loss must be below entry for a long.",
+      "alias": ["v.sl.side.long"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · stop field"],
+      "sources": [
+        {
+          "cite": "`D02`:377",
+          "text": "Stop-loss must be below entry for a long."
+        },
+        {
+          "cite": "`D03`:254",
+          "text": "Stop-loss must be below entry for a long."
+        }
+      ]
+    },
+    "ticket.order.v.sl.side.short": {
+      "string": "Stop-loss must be above entry for a short.",
+      "alias": ["v.sl.side.short"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · stop field"],
+      "sources": [
+        {
+          "cite": "`D02`:377",
+          "text": "Stop-loss must be above entry for a short."
+        }
+      ]
+    },
+    "ticket.order.v.submit.reason": {
+      "string": "Fix {n} problems to submit",
+      "alias": ["v.submit.reason"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · under the submit"],
+      "sources": [
+        {
+          "cite": "`D02`:385",
+          "text": "Fix {n} problems to submit"
+        }
+      ]
+    },
+    "ticket.order.v.summary.heading": {
+      "string": "Can't submit — {n} problems",
+      "alias": ["v.summary.heading"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-24",
+        "politeness": "none (the focus move speaks)",
+        "rate": "once per press",
+        "cite": "`D05`:312"
+      },
+      "where": ["SCR-060 · error summary"],
+      "sources": [
+        {
+          "cite": "`D02`:384",
+          "text": "Can't submit — {n} problems"
+        }
+      ]
+    },
+    "ticket.order.v.tp.side.long": {
+      "string": "Take-profit must be above entry for a long.",
+      "alias": ["v.tp.side.long"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · TP field"],
+      "sources": [
+        {
+          "cite": "`D02`:378",
+          "text": "Take-profit must be above entry for a long."
+        }
+      ]
+    },
+    "ticket.order.v.tp.side.short": {
+      "string": "Take-profit must be below entry for a short.",
+      "alias": ["v.tp.side.short"],
+      "surface": "order",
+      "owner": "E30-D02 §14",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-060 · TP field"],
+      "sources": [
+        {
+          "cite": "`D02`:378",
+          "text": "Take-profit must be below entry for a short."
+        }
+      ]
+    },
+    "ticket.group.selector.divider": {
+      "string": "Trade groups",
+      "alias": ["selector.divider"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:527",
+          "text": "Trade groups"
+        }
+      ]
+    },
+    "ticket.group.selector.group": {
+      "string": "Group: {group} · {m} accounts",
+      "alias": ["selector.group"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Group: Core3 · 3 accounts",
+          "params": {
+            "group": "Core3",
+            "m": "3"
+          }
+        }
+      ],
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:528",
+          "text": "Group: Core3 · 3 accounts"
+        }
+      ]
+    },
+    "ticket.group.selector.group_row": {
+      "string": "{group} · {m} accounts · {k} of {m} ready",
+      "alias": ["selector.group_row"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Core3 · 3 accounts · 2 of 3 ready",
+          "params": {
+            "group": "Core3",
+            "m": "3",
+            "k": "2"
+          }
+        }
+      ],
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:528",
+          "text": "Core3 · 3 accounts · 2 of 3 ready"
+        }
+      ]
+    },
+    "ticket.group.selector.leg.exclude": {
+      "string": "Exclude",
+      "alias": ["selector.leg.exclude"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:529",
+          "text": "Exclude"
+        }
+      ]
+    },
+    "ticket.group.selector.leg.excluded": {
+      "string": "excluded — not sent",
+      "alias": ["selector.leg.excluded"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:529",
+          "text": "excluded — not sent"
+        }
+      ]
+    },
+    "ticket.group.selector.leg.include": {
+      "string": "Include",
+      "alias": ["selector.leg.include"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:529",
+          "text": "Include"
+        }
+      ]
+    },
+    "ticket.group.selector.leg.override": {
+      "string": "override",
+      "alias": ["selector.leg.override"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:529",
+          "text": "override"
+        }
+      ]
+    },
+    "ticket.group.selector.legs": {
+      "string": "Legs ({n})",
+      "alias": ["selector.legs"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Legs (3)",
+          "params": {
+            "n": "3"
+          }
+        }
+      ],
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:529",
+          "text": "Legs (3)"
+        }
+      ]
+    },
+    "ticket.group.selector.member_disabled": {
+      "string": "not targeted (disabled in the group)",
+      "alias": ["selector.member_disabled"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:532",
+          "text": "not targeted (disabled in the group)"
+        }
+      ]
+    },
+    "ticket.group.selector.name": {
+      "string": "Target: Group {group}, {m} accounts, {k} ready",
+      "alias": ["selector.name"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Target: Group Core3, 3 accounts, 2 ready",
+          "params": {
+            "group": "Core3",
+            "m": "3",
+            "k": "2"
+          }
+        }
+      ],
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:528",
+          "text": "Target: Group Core3, 3 accounts, 2 ready"
+        }
+      ]
+    },
+    "ticket.group.selector.narrowed": {
+      "string": "{k} of {m} legs — {member} not sent",
+      "alias": ["selector.narrowed"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "2 of 3 legs — sub_002 not sent",
+          "params": {
+            "k": "2",
+            "m": "3",
+            "member": "sub_002"
+          }
+        }
+      ],
+      "security": true,
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:531",
+          "text": "2 of 3 legs — sub_002 not sent"
+        }
+      ]
+    },
+    "ticket.group.selector.no_groups.manager": {
+      "string": "No trade groups are granted to you",
+      "alias": ["selector.no_groups.manager"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:534",
+          "text": "No trade groups are granted to you"
+        }
+      ]
+    },
+    "ticket.group.selector.no_groups.owner": {
+      "string": "No trade groups yet — the owner creates them",
+      "alias": ["selector.no_groups.owner"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:534",
+          "text": "No trade groups yet — the owner creates them"
+        }
+      ]
+    },
+    "ticket.group.selector.single": {
+      "string": "{account}",
+      "alias": ["selector.single"],
+      "surface": "group",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Main",
+          "params": {
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:527",
+          "text": "Main"
+        }
+      ]
+    },
+    "ticket.confirm.cancel": {
+      "string": "Cancel",
+      "alias": ["confirm.cancel"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:476",
+          "text": "Cancel"
+        },
+        {
+          "cite": "`CD`:264",
+          "text": "Cancel"
+        }
+      ]
+    },
+    "ticket.confirm.cmp044.restatement": {
+      "string": "What this does",
+      "alias": ["cmp044.restatement"],
+      "surface": "confirm",
+      "owner": "CMP-044 as shipped (`CD`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`CD`:260",
+          "text": "What this does"
+        }
+      ]
+    },
+    "ticket.confirm.cmp044.timeout_speech": {
+      "string": "Confirmation timed out — nothing was sent",
+      "alias": ["cmp044.timeout_speech"],
+      "surface": "confirm",
+      "owner": "CMP-044 as shipped (`CD`)",
+      "status": "by-reference",
+      "kind": "text",
+      "note": "as shipped; E30-S04 wires no 0:00 speech (C-m, LR-12)",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`CD`:154",
+          "text": "Confirmation timed out — nothing was sent"
+        }
+      ]
+    },
+    "ticket.confirm.confirm.name": {
+      "string": "{confirm label}, {LIVE/DEMO}, {account}",
+      "alias": ["confirm.confirm.name"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "amended",
+      "amended": "D05 F-14",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0, LIVE, Main",
+          "params": {
+            "confirm label": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0",
+            "LIVE/DEMO": "LIVE",
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "note": "{confirm label} is the Confirm's visible label as drawn (D02 D3's full-intent label reproduced, `D03`:557); F-14 applies F-13's grammar (`D05`:498)",
+      "sources": [
+        {
+          "cite": "`D05`:499",
+          "text": "the visible label first, then the environment and account"
+        }
+      ]
+    },
+    "ticket.confirm.confirm.name.fanout": {
+      "string": "{confirm label}, each with its native stop, {LIVE/DEMO}, {group}",
+      "alias": ["confirm.confirm.name.fanout"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "amended",
+      "amended": "D05 F-14",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Send 3 of 4 legs — BUY BTCUSDT limit 64,010.0, each with its native stop, LIVE, Desk4",
+          "params": {
+            "confirm label": "Send 3 of 4 legs — BUY BTCUSDT limit 64,010.0",
+            "LIVE/DEMO": "LIVE",
+            "group": "Desk4"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "note": "{confirm label} is `ticket.confirm.fanout.confirm` as rendered; the label replaces the merged verb-led paraphrase and the merged clause 'each with its native stop' stays, so no native-stop wording is dropped (BQ-15)",
+      "sources": [
+        {
+          "cite": "`D05`:499",
+          "text": "the visible label first, then the environment and account"
+        }
+      ]
+    },
+    "ticket.confirm.cost": {
+      "string": "Estimated cost — margin {margin} USDT (estimated) · fee {fee} USDT",
+      "alias": ["confirm.cost"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Estimated cost — margin 1,600.25 USDT (estimated) · fee 8.80 USDT",
+          "params": {
+            "margin": "1,600.25",
+            "fee": "8.80"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:467",
+          "text": "Estimated cost — margin 1,600.25 USDT (estimated) · fee 8.80 USDT"
+        }
+      ]
+    },
+    "ticket.confirm.cost.slippage": {
+      "string": "· est. slippage {n} ticks (estimated)",
+      "alias": ["confirm.cost.slippage"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "· est. slippage 0.4 ticks (estimated)",
+          "params": {
+            "n": "0.4"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:467",
+          "text": "· est. slippage 0.4 ticks (estimated)"
+        }
+      ]
+    },
+    "ticket.confirm.countdown": {
+      "string": "Cancels in {m:ss}",
+      "alias": ["confirm.countdown"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Cancels in 0:20",
+          "params": {
+            "m:ss": "0:20"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:472",
+          "text": "Cancels in 0:20"
+        }
+      ]
+    },
+    "ticket.confirm.countdown.announce10": {
+      "string": "10 seconds until this confirmation cancels",
+      "alias": ["confirm.countdown.announce10"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-12",
+        "politeness": "off; polite at 0:10 only",
+        "rate": "one spoken mark; 0:00 silent (LR-13)",
+        "cite": "`D05`:300"
+      },
+      "fixed": ["10"],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:472",
+          "text": "10 seconds until this confirmation cancels"
+        },
+        {
+          "cite": "`CD`:155",
+          "text": "10 seconds until this confirmation cancels"
+        }
+      ]
+    },
+    "ticket.confirm.countdown.name": {
+      "string": "Cancels in {n} seconds unless you act",
+      "alias": ["confirm.countdown.name"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Cancels in 20 seconds unless you act",
+          "params": {
+            "n": "20"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:472",
+          "text": "Cancels in 20 seconds unless you act"
+        }
+      ]
+    },
+    "ticket.confirm.dont_ask": {
+      "string": "Don't ask again for DEMO limit orders",
+      "alias": ["confirm.dont_ask"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:478",
+          "text": "Don't ask again for DEMO limit orders"
+        }
+      ]
+    },
+    "ticket.confirm.dont_ask.caption": {
+      "string": "DEMO limit orders will skip this confirmation while one-click is armed (Settings → Trading defaults)",
+      "alias": ["confirm.dont_ask.caption"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:478",
+          "text": "DEMO limit orders will skip this confirmation while one-click is armed (Settings → Trading defaults)"
+        }
+      ]
+    },
+    "ticket.confirm.dont_ask.live_disabled": {
+      "string": "LIVE orders always confirm.",
+      "alias": ["confirm.dont_ask.live_disabled"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:479",
+          "text": "LIVE orders always confirm."
+        }
+      ]
+    },
+    "ticket.confirm.env.demo": {
+      "string": "You are about to send a DEMO order on {account}.",
+      "alias": ["confirm.env.demo"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "You are about to send a DEMO order on Main.",
+          "params": {
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:457",
+          "text": "You are about to send a DEMO order on Main."
+        }
+      ]
+    },
+    "ticket.confirm.env.live": {
+      "string": "You are about to send a LIVE order on {account}.",
+      "alias": ["confirm.env.live"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "You are about to send a LIVE order on Main.",
+          "params": {
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:456",
+          "text": "You are about to send a LIVE order on Main."
+        }
+      ]
+    },
+    "ticket.confirm.env.live.fanout": {
+      "string": "You are about to send a LIVE order on {k} of {m} accounts ({group}).",
+      "alias": ["confirm.env.live.fanout"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "You are about to send a LIVE order on 3 of 4 accounts (Desk4).",
+          "params": {
+            "k": "3",
+            "m": "4",
+            "group": "Desk4"
+          }
+        },
+        {
+          "text": "You are about to send a LIVE order on 2 of 3 accounts (Core3).",
+          "params": {
+            "k": "2",
+            "m": "3",
+            "group": "Core3"
+          }
+        },
+        {
+          "text": "You are about to send a LIVE order on 2 of 4 accounts (Desk4).",
+          "params": {
+            "k": "2",
+            "m": "4",
+            "group": "Desk4"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:456",
+          "text": "You are about to send a LIVE order on 3 of 4 accounts (Desk4)."
+        },
+        {
+          "cite": "`D03`:456",
+          "text": "You are about to send a LIVE order on 2 of 3 accounts (Core3)."
+        },
+        {
+          "cite": "`D03`:456",
+          "text": "You are about to send a LIVE order on 2 of 4 accounts (Desk4)."
+        }
+      ]
+    },
+    "ticket.confirm.exposure": {
+      "string": "Resulting exposure — {qty} {side} · risk {risk} USDT = 1 R · {pct} % eq · est. liquidation — (not in the preview yet)",
+      "alias": ["confirm.exposure"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Resulting exposure — 0.250 long · risk 27.50 USDT = 1 R · 0.22 % eq · est. liquidation — (not in the preview yet)",
+          "params": {
+            "qty": "0.250",
+            "side": "long",
+            "risk": "27.50",
+            "pct": "0.22"
+          }
+        }
+      ],
+      "fixed": ["1"],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:468",
+          "text": "Resulting exposure — 0.250 long · risk 27.50 USDT = 1 R · 0.22 % eq · est. liquidation — (not in the preview yet)"
+        }
+      ]
+    },
+    "ticket.confirm.fanout.atomicity.all_or_none": {
+      "string": "All or none: if any leg fails, the filled legs are unwound.",
+      "alias": ["confirm.fanout.atomicity.all_or_none"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:484",
+          "text": "All or none: if any leg fails, the filled legs are unwound."
+        }
+      ]
+    },
+    "ticket.confirm.fanout.atomicity.best_effort": {
+      "string": "Best effort: a leg that fails is reported; the others stay.",
+      "alias": ["confirm.fanout.atomicity.best_effort"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:484",
+          "text": "Best effort: a leg that fails is reported; the others stay."
+        }
+      ]
+    },
+    "ticket.confirm.fanout.cols": {
+      "string": "account · profile · size · lev · stop · risk · margin · status",
+      "alias": ["confirm.fanout.cols"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:480",
+          "text": "account · profile · size · lev · stop · risk · margin · status"
+        }
+      ]
+    },
+    "ticket.confirm.fanout.confirm": {
+      "string": "Send {k} of {m} legs — {intent}",
+      "alias": ["confirm.fanout.confirm"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Send 3 of 4 legs — BUY BTCUSDT limit 64,010.0",
+          "params": {
+            "k": "3",
+            "m": "4",
+            "intent": "BUY BTCUSDT limit 64,010.0"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:485",
+          "text": "Send 3 of 4 legs — BUY BTCUSDT limit 64,010.0"
+        }
+      ]
+    },
+    "ticket.confirm.fanout.held": {
+      "string": "{k} of {m} legs — {member} not sent (held by the rate limit), {member2} not sent (symbol not allowed)",
+      "alias": ["confirm.fanout.held"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "2 of 4 legs — sub_002 not sent (held by the rate limit), sub_003 not sent (symbol not allowed)",
+          "params": {
+            "k": "2",
+            "m": "4",
+            "member": "sub_002",
+            "member2": "sub_003"
+          }
+        }
+      ],
+      "security": true,
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:487",
+          "text": "2 of 4 legs — sub_002 not sent (held by the rate limit), sub_003 not sent (symbol not allowed)"
+        }
+      ]
+    },
+    "ticket.confirm.fanout.ready": {
+      "string": "ready",
+      "alias": ["confirm.fanout.ready", "selector.leg.ready"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076", "SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:482",
+          "text": "ready"
+        },
+        {
+          "cite": "`D03`:529",
+          "text": "ready"
+        }
+      ]
+    },
+    "ticket.confirm.fanout.skipped": {
+      "string": "{k} of {m} legs — {member} not sent (view only)",
+      "alias": ["confirm.fanout.skipped"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "2 of 3 legs — sub_002 not sent (view only)",
+          "params": {
+            "k": "2",
+            "m": "3",
+            "member": "sub_002"
+          }
+        }
+      ],
+      "security": true,
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:486",
+          "text": "2 of 3 legs — sub_002 not sent (view only)"
+        }
+      ]
+    },
+    "ticket.confirm.fanout.stop": {
+      "string": "{stop} · held by Bybit (exchange)",
+      "alias": ["confirm.fanout.stop", "selector.leg.stop"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "63,900.0 · held by Bybit (exchange)",
+          "params": {
+            "stop": "63,900.0"
+          }
+        }
+      ],
+      "native_sl": true,
+      "where": ["SCR-076", "SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:481",
+          "text": "63,900.0 · held by Bybit (exchange)"
+        },
+        {
+          "cite": "`D03`:530",
+          "text": "63,900.0 · held by Bybit (exchange)"
+        }
+      ]
+    },
+    "ticket.confirm.fanout.totals": {
+      "string": "{k} of {m} accounts · {qty} {coin} · {notional} USDT · risk {risk} USDT · fee {fee} USDT",
+      "alias": ["confirm.fanout.totals"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "3 of 4 accounts · 0.460 BTC · 29,444.60 USDT · risk 50.60 USDT · fee 16.19 USDT",
+          "params": {
+            "k": "3",
+            "m": "4",
+            "qty": "0.460",
+            "coin": "BTC",
+            "notional": "29,444.60",
+            "risk": "50.60",
+            "fee": "16.19"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:483",
+          "text": "3 of 4 accounts · 0.460 BTC · 29,444.60 USDT · risk 50.60 USDT · fee 16.19 USDT"
+        }
+      ]
+    },
+    "ticket.confirm.limits.row": {
+      "string": "{limit} {value} ({authority}) — {this order}",
+      "alias": ["confirm.limits.row"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "max position 17,500 USDT (profile) — 16,002.50 USDT",
+          "params": {
+            "limit": "max position",
+            "value": "17,500 USDT",
+            "authority": "profile",
+            "this order": "16,002.50 USDT"
+          }
+        },
+        {
+          "text": "daily loss 120 of 500 USDT used (profile) — +27.50 at the stop",
+          "params": {
+            "limit": "daily loss",
+            "value": "120 of 500 USDT used",
+            "authority": "profile",
+            "this order": "+27.50 at the stop"
+          }
+        },
+        {
+          "text": "leverage ≤ 10x (profile) — 10x",
+          "params": {
+            "limit": "leverage",
+            "value": "≤ 10x",
+            "authority": "profile",
+            "this order": "10x"
+          }
+        },
+        {
+          "text": "min size 0.001 BTC (exchange) — 0.250",
+          "params": {
+            "limit": "min size",
+            "value": "0.001 BTC",
+            "authority": "exchange",
+            "this order": "0.250"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:469",
+          "text": "{limit} {value} ({authority}) — {this order}"
+        },
+        {
+          "cite": "`D03`:469",
+          "text": "max position 17,500 USDT (profile) — 16,002.50 USDT"
+        },
+        {
+          "cite": "`D03`:469",
+          "text": "daily loss 120 of 500 USDT used (profile) — +27.50 at the stop"
+        },
+        {
+          "cite": "`D03`:469",
+          "text": "leverage ≤ 10x (profile) — 10x"
+        },
+        {
+          "cite": "`D03`:469",
+          "text": "min size 0.001 BTC (exchange) — 0.250"
+        }
+      ]
+    },
+    "ticket.confirm.name": {
+      "string": "Confirm order - {symbol} - {LIVE/DEMO} - {account}",
+      "alias": ["confirm.name"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:455",
+          "text": "Confirm order - {symbol} - {LIVE/DEMO} - {account}"
+        }
+      ]
+    },
+    "ticket.confirm.name.fanout": {
+      "string": "Confirm {k} of {m} legs - {symbol} - {LIVE/DEMO} - {group}",
+      "alias": ["confirm.name.fanout"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Confirm 3 of 4 legs - BTCUSDT - LIVE - Desk4",
+          "params": {
+            "k": "3",
+            "m": "4",
+            "symbol": "BTCUSDT",
+            "LIVE/DEMO": "LIVE",
+            "group": "Desk4"
+          }
+        },
+        {
+          "text": "Confirm 2 of 4 legs - BTCUSDT - LIVE - Desk4",
+          "params": {
+            "k": "2",
+            "m": "4",
+            "symbol": "BTCUSDT",
+            "LIVE/DEMO": "LIVE",
+            "group": "Desk4"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:455",
+          "text": "Confirm 3 of 4 legs - BTCUSDT - LIVE - Desk4"
+        },
+        {
+          "cite": "`D03`:455",
+          "text": "Confirm 2 of 4 legs - BTCUSDT - LIVE - Desk4"
+        }
+      ]
+    },
+    "ticket.confirm.preview_wait": {
+      "string": "Preview updating…",
+      "alias": ["confirm.preview_wait"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:476",
+          "text": "Preview updating…"
+        }
+      ]
+    },
+    "ticket.confirm.replay.sentence": {
+      "string": "— held {n} s ago, replaying now",
+      "alias": ["confirm.replay.sentence"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "— held 42 s ago, replaying now",
+          "params": {
+            "n": "42"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:488",
+          "text": "— held 42 s ago, replaying now"
+        }
+      ]
+    },
+    "ticket.confirm.row.leverage": {
+      "string": "{lev}x · {margin_mode} · {position_mode}",
+      "alias": ["confirm.row.leverage", "selector.profile"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "10x · isolated · One-Way",
+          "params": {
+            "lev": "10",
+            "margin_mode": "isolated",
+            "position_mode": "One-Way"
+          }
+        }
+      ],
+      "where": ["SCR-076", "SCR-061 (the selector)"],
+      "sources": [
+        {
+          "cite": "`D03`:466",
+          "text": "10x · isolated · One-Way"
+        },
+        {
+          "cite": "`D03`:527",
+          "text": "10x · isolated · One-Way"
+        }
+      ]
+    },
+    "ticket.confirm.row.price": {
+      "string": "{price}",
+      "alias": ["confirm.row.price"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "64,010.0",
+          "params": {
+            "price": "64,010.0"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:463",
+          "text": "64,010.0"
+        }
+      ]
+    },
+    "ticket.confirm.row.price.cond": {
+      "string": "when {Mark} rises to {trigger} · limit {price}",
+      "alias": ["confirm.row.price.cond"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "when Mark rises to 64,100.0 · limit 64,110.0",
+          "params": {
+            "Mark": "Mark",
+            "trigger": "64,100.0",
+            "price": "64,110.0"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:463",
+          "text": "when Mark rises to 64,100.0 · limit 64,110.0"
+        }
+      ]
+    },
+    "ticket.confirm.row.price.market": {
+      "string": "at the ask ≈ {price} (estimated)",
+      "alias": ["confirm.row.price.market"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "at the ask ≈ 64,010.1 (estimated)",
+          "params": {
+            "price": "64,010.1"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:463",
+          "text": "at the ask ≈ 64,010.1 (estimated)"
+        }
+      ]
+    },
+    "ticket.confirm.row.qty": {
+      "string": "{qty} {coin} · {notional} USDT · {pct} % eq",
+      "alias": ["confirm.row.qty"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "0.250 BTC · 16,002.50 USDT · 128.0 % eq",
+          "params": {
+            "qty": "0.250",
+            "coin": "BTC",
+            "notional": "16,002.50",
+            "pct": "128.0"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:462",
+          "text": "0.250 BTC · 16,002.50 USDT · 128.0 % eq"
+        }
+      ]
+    },
+    "ticket.confirm.row.side.buy": {
+      "string": "▲ Buy / Long",
+      "alias": ["confirm.row.side.buy"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:459",
+          "text": "▲ Buy / Long"
+        }
+      ]
+    },
+    "ticket.confirm.row.side.sell": {
+      "string": "▼ Sell / Short",
+      "alias": ["confirm.row.side.sell"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:459",
+          "text": "▼ Sell / Short"
+        }
+      ]
+    },
+    "ticket.confirm.row.stop": {
+      "string": "{stop} · typed · {ticks} ticks · held by Bybit (exchange)",
+      "alias": ["confirm.row.stop"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "63,900.0 · typed · 1,100 ticks · held by Bybit (exchange)",
+          "params": {
+            "stop": "63,900.0",
+            "ticks": "1,100"
+          }
+        }
+      ],
+      "native_sl": true,
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:464",
+          "text": "63,900.0 · typed · 1,100 ticks · held by Bybit (exchange)"
+        }
+      ]
+    },
+    "ticket.confirm.row.stop.fallback": {
+      "string": "· fallback 2 % ·",
+      "alias": ["confirm.row.stop.fallback"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "fixed": ["2"],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:464",
+          "text": "· fallback 2 % ·"
+        }
+      ]
+    },
+    "ticket.confirm.row.stop.profile": {
+      "string": "· from your profile: {n} ticks ·",
+      "alias": ["confirm.row.stop.profile"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "· from your profile: 200 ticks ·",
+          "params": {
+            "n": "200"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:464",
+          "text": "· from your profile: 200 ticks ·"
+        }
+      ]
+    },
+    "ticket.confirm.row.symbol": {
+      "string": "{symbol} · USDT perpetual",
+      "alias": ["confirm.row.symbol"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "BTCUSDT · USDT perpetual",
+          "params": {
+            "symbol": "BTCUSDT"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:460",
+          "text": "BTCUSDT · USDT perpetual"
+        }
+      ]
+    },
+    "ticket.confirm.row.tp": {
+      "string": "{tp} · {r} R",
+      "alias": ["confirm.row.tp"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "64,300.0 · 2.64 R",
+          "params": {
+            "tp": "64,300.0",
+            "r": "2.64"
+          }
+        }
+      ],
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:465",
+          "text": "64,300.0 · 2.64 R"
+        }
+      ]
+    },
+    "ticket.confirm.row.tp.none": {
+      "string": "none",
+      "alias": ["confirm.row.tp.none"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:465",
+          "text": "none"
+        }
+      ]
+    },
+    "ticket.confirm.row.type": {
+      "string": "Limit · GTC · post-only off · reduce-only off",
+      "alias": ["confirm.row.type"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:461",
+          "text": "Limit · GTC · post-only off · reduce-only off"
+        }
+      ]
+    },
+    "ticket.confirm.sending": {
+      "string": "Sending…",
+      "alias": ["confirm.sending"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:476",
+          "text": "Sending…"
+        }
+      ]
+    },
+    "ticket.confirm.timeout.announce": {
+      "string": "Confirmation cancelled — nothing was sent",
+      "alias": ["confirm.timeout.announce", "confirm.cancelled.status"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "note": "as `confirm.timeout.announce` it is kept as a key and never spoken (LR-12's 0:00 mark is silent; LR-13 speaks `ticket.confirm.timeout.status`; C-m, E30-S04); as `confirm.cancelled.status` it is the status after a Cancel",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:473",
+          "text": "Confirmation cancelled — nothing was sent"
+        },
+        {
+          "cite": "`D03`:475",
+          "text": "Confirmation cancelled — nothing was sent"
+        }
+      ]
+    },
+    "ticket.confirm.timeout.status": {
+      "string": "Confirmation timed out — nothing was sent. Attempt recorded",
+      "alias": ["confirm.timeout.status"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-13",
+        "politeness": "polite",
+        "rate": "once per time-out, the only one spoken",
+        "cite": "`D05`:301"
+      },
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:474",
+          "text": "Confirmation timed out — nothing was sent. Attempt recorded"
+        }
+      ]
+    },
+    "ticket.confirm.title": {
+      "string": "Confirm order",
+      "alias": ["confirm.title"],
+      "surface": "confirm",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-076"],
+      "sources": [
+        {
+          "cite": "`D03`:454",
+          "text": "Confirm order"
+        }
+      ]
+    },
+    "ticket.reject.drawer.audit.link": {
+      "string": "Open in the audit log",
+      "alias": ["drawer.audit.link"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:498",
+          "text": "Open in the audit log"
+        }
+      ]
+    },
+    "ticket.reject.drawer.audit.sentence": {
+      "string": "This attempt is in the audit log.",
+      "alias": ["drawer.audit.sentence"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:498",
+          "text": "This attempt is in the audit log."
+        }
+      ]
+    },
+    "ticket.reject.drawer.budget.row": {
+      "string": "{class} {used} of {capacity} · reserve {n}",
+      "alias": ["drawer.budget.row"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:502",
+          "text": "{class} {used} of {capacity} · reserve {n}"
+        }
+      ]
+    },
+    "ticket.reject.drawer.budget.title": {
+      "string": "Request budget — {account} (per account)",
+      "alias": ["drawer.budget.title"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Request budget — Main (per account)",
+          "params": {
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:502",
+          "text": "Request budget — Main (per account)"
+        }
+      ]
+    },
+    "ticket.reject.drawer.code": {
+      "string": "code {code}",
+      "alias": ["drawer.code"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:493",
+          "text": "code {code}"
+        }
+      ]
+    },
+    "ticket.reject.drawer.code.ret": {
+      "string": "code {code} · ret_code {n}",
+      "alias": ["drawer.code.ret"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:493",
+          "text": "code {code} · ret_code {n}"
+        }
+      ]
+    },
+    "ticket.reject.drawer.copied": {
+      "string": "Copied",
+      "alias": ["drawer.copied"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:497",
+          "text": "Copied"
+        }
+      ]
+    },
+    "ticket.reject.drawer.copy": {
+      "string": "Copy correlation id",
+      "alias": ["drawer.copy"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:497",
+          "text": "Copy correlation id"
+        }
+      ]
+    },
+    "ticket.reject.drawer.correlation": {
+      "string": "Correlation id",
+      "alias": ["drawer.correlation"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:497",
+          "text": "Correlation id"
+        }
+      ]
+    },
+    "ticket.reject.drawer.name": {
+      "string": "Order rejected - {symbol} - {LIVE/DEMO} - {account}",
+      "alias": ["drawer.name"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:492",
+          "text": "Order rejected - {symbol} - {LIVE/DEMO} - {account}"
+        }
+      ]
+    },
+    "ticket.reject.drawer.record.collapsed": {
+      "string": "Show the exchange record — loads the audited diagnostics",
+      "alias": ["drawer.record.collapsed"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:499",
+          "text": "Show the exchange record — loads the audited diagnostics"
+        }
+      ]
+    },
+    "ticket.reject.drawer.record.loading": {
+      "string": "Loading the exchange record…",
+      "alias": ["drawer.record.loading"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:499",
+          "text": "Loading the exchange record…"
+        }
+      ]
+    },
+    "ticket.reject.drawer.record.quote_name": {
+      "string": "Exchange message, verbatim",
+      "alias": ["drawer.record.quote_name"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:499",
+          "text": "Exchange message, verbatim"
+        }
+      ]
+    },
+    "ticket.reject.drawer.record.show_all": {
+      "string": "Show all",
+      "alias": ["drawer.record.show_all"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:499",
+          "text": "Show all"
+        }
+      ]
+    },
+    "ticket.reject.drawer.record.title": {
+      "string": "Exchange record",
+      "alias": ["drawer.record.title"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:499",
+          "text": "Exchange record"
+        }
+      ]
+    },
+    "ticket.reject.drawer.role_unavailable": {
+      "string": "Exchange text and payload are available to the owner.",
+      "alias": ["drawer.role_unavailable"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:501",
+          "text": "Exchange text and payload are available to the owner."
+        }
+      ]
+    },
+    "ticket.reject.drawer.sent.bracket": {
+      "string": "stop {stop} · TP {tp} (sent with the order; not placed — rejected)",
+      "alias": ["drawer.sent.bracket"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "stop 63,900.0 · TP 64,300.0 (sent with the order; not placed — rejected)",
+          "params": {
+            "stop": "63,900.0",
+            "tp": "64,300.0"
+          }
+        }
+      ],
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:496",
+          "text": "stop 63,900.0 · TP 64,300.0 (sent with the order; not placed — rejected)"
+        }
+      ]
+    },
+    "ticket.reject.drawer.sent.title": {
+      "string": "What CandleViewer sent",
+      "alias": ["drawer.sent.title"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:496",
+          "text": "What CandleViewer sent"
+        }
+      ]
+    },
+    "ticket.reject.drawer.title": {
+      "string": "Order rejected",
+      "alias": ["drawer.title"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:492",
+          "text": "Order rejected"
+        }
+      ]
+    },
+    "ticket.reject.reason.insufficient_margin": {
+      "string": "Not enough available margin on {account}: this order needs {needed} USDT, {available} is available.",
+      "alias": ["reason.insufficient_margin"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": [
+        "problem:insufficient_balance",
+        "oms:INSUFFICIENT_MARGIN",
+        "preview:insufficient_margin"
+      ],
+      "examples": [
+        {
+          "text": "Not enough available margin on Main: this order needs 1,600.25 USDT, 1,240.00 is available.",
+          "params": {
+            "account": "Main",
+            "needed": "1,600.25",
+            "available": "1,240.00"
+          }
+        }
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:246",
+          "text": "Not enough available margin on Main: this order needs 1,600.25 USDT, 1,240.00 is available."
+        }
+      ]
+    },
+    "ticket.reject.reason.leverage": {
+      "string": "Leverage {n}x is not available: your profile caps leverage at {cap}x on {account}.",
+      "alias": ["reason.leverage"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["oms:LEVERAGE_ERROR", "preview:leverage_unavailable"],
+      "examples": [
+        {
+          "text": "Leverage 20x is not available: your profile caps leverage at 10x on Main.",
+          "params": {
+            "n": "20",
+            "cap": "10",
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:249",
+          "text": "Leverage 20x is not available: your profile caps leverage at 10x on Main."
+        }
+      ]
+    },
+    "ticket.reject.reason.lot": {
+      "string": "{qty} is not a multiple of the {step} step.",
+      "alias": ["reason.lot"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:lot_size_violation"],
+      "examples": [
+        {
+          "text": "0.2504 is not a multiple of the 0.001 step.",
+          "params": {
+            "qty": "0.2504",
+            "step": "0.001"
+          }
+        }
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:248",
+          "text": "0.2504 is not a multiple of the 0.001 step."
+        }
+      ]
+    },
+    "ticket.reject.reason.position_mode.hedge": {
+      "string": "{account} is in hedge mode; this order needs a long or short leg.",
+      "alias": ["reason.position_mode.hedge"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["oms:POSITION_MODE_MISMATCH:hedge"],
+      "examples": [
+        {
+          "text": "Main is in hedge mode; this order needs a long or short leg.",
+          "params": {
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:252",
+          "text": "Main is in hedge mode; this order needs a long or short leg."
+        }
+      ]
+    },
+    "ticket.reject.reason.position_mode.one_way": {
+      "string": "{account} is in one-way mode; a leg was given.",
+      "alias": ["reason.position_mode.one_way"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["oms:POSITION_MODE_MISMATCH:one_way"],
+      "examples": [
+        {
+          "text": "Main is in one-way mode; a leg was given.",
+          "params": {
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:252",
+          "text": "Main is in one-way mode; a leg was given."
+        }
+      ]
+    },
+    "ticket.reject.reason.post_only_cross": {
+      "string": "Your buy at {price} is at the ask, so a post-only order would take liquidity instead of resting.",
+      "alias": ["reason.post_only_cross"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Your buy at 64,010.1 is at the ask, so a post-only order would take liquidity instead of resting.",
+          "params": {
+            "price": "64,010.1"
+          }
+        }
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:253",
+          "text": "Your buy at 64,010.1 is at the ask, so a post-only order would take liquidity instead of resting."
+        }
+      ]
+    },
+    "ticket.reject.reason.rate_limit": {
+      "string": "Nothing was sent. The request is held; replay it when the budget allows, or discard it.",
+      "alias": ["reason.rate_limit"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": [
+        "problem:rate_limited",
+        "problem:exchange_rate_limited",
+        "preview:rate_budget_exhausted",
+        "oms:RATE_BUDGET_EXCEEDED"
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:251",
+          "text": "Nothing was sent. The request is held; replay it when the budget allows, or discard it."
+        }
+      ]
+    },
+    "ticket.reject.reason.reduce_only": {
+      "string": "Reduce-only was set but there is no position to reduce on {account}.",
+      "alias": ["reason.reduce_only"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["oms:REDUCE_ONLY_VIOLATION"],
+      "examples": [
+        {
+          "text": "Reduce-only was set but there is no position to reduce on Main.",
+          "params": {
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:247",
+          "text": "Reduce-only was set but there is no position to reduce on Main."
+        }
+      ]
+    },
+    "ticket.reject.reason.risk_tier": {
+      "string": "Bybit's risk-limit tier for {symbol} does not allow this size at {lev}x.",
+      "alias": ["reason.risk_tier"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["oms:RISK_LIMIT_EXCEEDED"],
+      "examples": [
+        {
+          "text": "Bybit's risk-limit tier for BTCUSDT does not allow this size at 10x.",
+          "params": {
+            "symbol": "BTCUSDT",
+            "lev": "10"
+          }
+        }
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:250",
+          "text": "Bybit's risk-limit tier for BTCUSDT does not allow this size at 10x."
+        }
+      ]
+    },
+    "ticket.reject.reason.stop_missing": {
+      "string": "Every order carries a native stop; none was attached to this one.",
+      "alias": ["reason.stop_missing"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:validation_failed", "rule:native_stop_required"],
+      "codes_pending": "G-15 (oms:NATIVE_SL_REQUIRED, E32-D07 #927)",
+      "native_sl": true,
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:254",
+          "text": "Every order carries a native stop; none was attached to this one."
+        }
+      ]
+    },
+    "ticket.reject.reason.tick": {
+      "string": "{price} is not a multiple of {symbol}'s {tick} tick.",
+      "alias": ["reason.tick"],
+      "surface": "reject",
+      "owner": "E30-D03 §5",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:tick_size_violation"],
+      "examples": [
+        {
+          "text": "64,010.03 is not a multiple of BTCUSDT's 0.1 tick.",
+          "params": {
+            "price": "64,010.03",
+            "symbol": "BTCUSDT",
+            "tick": "0.1"
+          }
+        }
+      ],
+      "where": ["SCR-077 · translation"],
+      "sources": [
+        {
+          "cite": "`D03`:248",
+          "text": "64,010.03 is not a multiple of BTCUSDT's 0.1 tick."
+        }
+      ]
+    },
+    "ticket.reject.record.never_stored": {
+      "string": "Headers, signatures and credentials are never stored, so they cannot be shown.",
+      "alias": ["record.never_stored"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:500",
+          "text": "Headers, signatures and credentials are never stored, so they cannot be shown."
+        }
+      ]
+    },
+    "ticket.reject.retry.add_stop": {
+      "string": "Add the profile stop ({n} ticks → {stop})",
+      "alias": ["retry.add_stop"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Add the profile stop (200 ticks → 63,990.0)",
+          "params": {
+            "n": "200",
+            "stop": "63,990.0"
+          }
+        }
+      ],
+      "native_sl": true,
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Add the profile stop (200 ticks → 63,990.0)"
+        },
+        {
+          "cite": "`D03`:254",
+          "text": "Add the profile stop (200 ticks → 63,990.0)"
+        }
+      ]
+    },
+    "ticket.reject.retry.guidance.margin": {
+      "string": "Reduce the size or free margin, then submit again",
+      "alias": ["retry.guidance.margin"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Reduce the size or free margin, then submit again"
+        },
+        {
+          "cite": "`D03`:246",
+          "text": "Reduce the size or free margin, then submit again"
+        }
+      ]
+    },
+    "ticket.reject.retry.guidance.risk_tier": {
+      "string": "Reduce the size or the leverage",
+      "alias": ["retry.guidance.risk_tier"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Reduce the size or the leverage"
+        },
+        {
+          "cite": "`D03`:250",
+          "text": "Reduce the size or the leverage"
+        }
+      ]
+    },
+    "ticket.reject.retry.held": {
+      "string": "Held — replay with confirmation",
+      "alias": ["retry.held"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Held — replay with confirmation"
+        }
+      ]
+    },
+    "ticket.reject.retry.leg": {
+      "string": "Retry as the long leg",
+      "alias": ["retry.leg"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Retry as the long leg"
+        },
+        {
+          "cite": "`D03`:252",
+          "text": "Retry as the long leg"
+        }
+      ]
+    },
+    "ticket.reject.retry.leverage": {
+      "string": "Retry at {cap}x",
+      "alias": ["retry.leverage"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Retry at 10x",
+          "params": {
+            "cap": "10"
+          }
+        }
+      ],
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Retry at 10x"
+        },
+        {
+          "cite": "`D03`:249",
+          "text": "Retry at 10x"
+        }
+      ]
+    },
+    "ticket.reject.retry.post_only": {
+      "string": "Submit without post-only",
+      "alias": ["retry.post_only"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Submit without post-only"
+        },
+        {
+          "cite": "`D03`:253",
+          "text": "Submit without post-only"
+        }
+      ]
+    },
+    "ticket.reject.retry.reduce_only": {
+      "string": "Submit without reduce-only",
+      "alias": ["retry.reduce_only"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Submit without reduce-only"
+        },
+        {
+          "cite": "`D03`:247",
+          "text": "Submit without reduce-only"
+        }
+      ]
+    },
+    "ticket.reject.retry.reprice": {
+      "string": "Reprice to {price} and keep post-only",
+      "alias": ["retry.reprice"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Reprice to 64,010.0 and keep post-only",
+          "params": {
+            "price": "64,010.0"
+          }
+        }
+      ],
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Reprice to 64,010.0 and keep post-only"
+        },
+        {
+          "cite": "`D03`:253",
+          "text": "Reprice to 64,010.0 and keep post-only"
+        }
+      ]
+    },
+    "ticket.reject.retry.tick": {
+      "string": "Retry with {value}",
+      "alias": ["retry.tick", "retry.lot"],
+      "surface": "reject",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Retry with 64,010.0",
+          "params": {
+            "value": "64,010.0"
+          }
+        },
+        {
+          "text": "Retry with 0.250",
+          "params": {
+            "value": "0.250"
+          }
+        }
+      ],
+      "where": ["SCR-077"],
+      "sources": [
+        {
+          "cite": "`D03`:495",
+          "text": "Retry with 64,010.0"
+        },
+        {
+          "cite": "`D03`:495",
+          "text": "Retry with 0.250"
+        },
+        {
+          "cite": "`D03`:248",
+          "text": "Retry with 64,010.0"
+        },
+        {
+          "cite": "`D03`:248",
+          "text": "Retry with 0.250"
+        }
+      ]
+    },
+    "ticket.ratelimit.announce": {
+      "string": "Rate limited — retry allowed at {hh:mm:ss} (in {n} s)",
+      "alias": ["ratelimit.announce"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-22",
+        "politeness": "polite",
+        "rate": "once per event",
+        "cite": "`D05`:310"
+      },
+      "examples": [
+        {
+          "text": "Rate limited — retry allowed at 14:32:10 (in 42 s)",
+          "params": {
+            "hh:mm:ss": "14:32:10",
+            "n": "42"
+          }
+        }
+      ],
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:506",
+          "text": "Rate limited — retry allowed at 14:32:10 (in 42 s)"
+        }
+      ]
+    },
+    "ticket.ratelimit.expired": {
+      "string": "Retry allowed now — replay to send",
+      "alias": ["ratelimit.expired"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-14",
+        "politeness": "off; polite at the expiry",
+        "rate": "≤ 1 per 10 s; the expiry once",
+        "cite": "`D05`:302"
+      },
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:506",
+          "text": "Retry allowed now — replay to send"
+        }
+      ]
+    },
+    "ticket.ratelimit.held": {
+      "string": "Rate limited — your request is held.",
+      "alias": ["ratelimit.held"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:509",
+          "text": "Rate limited — your request is held."
+        }
+      ]
+    },
+    "ticket.ratelimit.held.discard": {
+      "string": "Discard held order",
+      "alias": ["ratelimit.held.discard"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:505",
+          "text": "Discard held order"
+        }
+      ]
+    },
+    "ticket.ratelimit.held.discarded": {
+      "string": "Discarded — nothing was sent",
+      "alias": ["ratelimit.held.discarded"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:505",
+          "text": "Discarded — nothing was sent"
+        }
+      ]
+    },
+    "ticket.ratelimit.held.replay": {
+      "string": "Replay {intent}",
+      "alias": ["ratelimit.held.replay"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Replay BUY 0.250 BTCUSDT limit 64,010.0",
+          "params": {
+            "intent": "BUY 0.250 BTCUSDT limit 64,010.0"
+          }
+        }
+      ],
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:505",
+          "text": "Replay BUY 0.250 BTCUSDT limit 64,010.0"
+        },
+        {
+          "cite": "`D03`:251",
+          "text": "Replay BUY 0.250 BTCUSDT limit 64,010.0"
+        }
+      ]
+    },
+    "ticket.ratelimit.held.row": {
+      "string": "{full intent} · {account} · held {n} s ago",
+      "alias": ["ratelimit.held.row"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:505",
+          "text": "{full intent} · {account} · held {n} s ago"
+        }
+      ]
+    },
+    "ticket.ratelimit.held.title": {
+      "string": "Held orders ({n})",
+      "alias": ["ratelimit.held.title"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:505",
+          "text": "Held orders ({n})"
+        }
+      ]
+    },
+    "ticket.ratelimit.link.manager": {
+      "string": "The owner can see the request budget.",
+      "alias": ["ratelimit.link.manager"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:508",
+          "text": "The owner can see the request budget."
+        }
+      ]
+    },
+    "ticket.ratelimit.link.owner": {
+      "string": "Why — connectivity and limits",
+      "alias": ["ratelimit.link.owner"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:508",
+          "text": "Why — connectivity and limits"
+        }
+      ]
+    },
+    "ticket.ratelimit.permitted": {
+      "string": "Cancel, close and stop changes still go through (reserved budget).",
+      "alias": ["ratelimit.permitted"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:504",
+          "text": "Cancel, close and stop changes still go through (reserved budget)."
+        }
+      ]
+    },
+    "ticket.ratelimit.replay_all": {
+      "string": "Replay all {n} when the budget allows",
+      "alias": ["ratelimit.replay_all"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Replay all 3 when the budget allows",
+          "params": {
+            "n": "3"
+          }
+        }
+      ],
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:507",
+          "text": "Replay all 3 when the budget allows"
+        }
+      ]
+    },
+    "ticket.ratelimit.scope.backend": {
+      "string": "Rate limited — CandleViewer is holding your request. Retry allowed at {hh:mm:ss} (in {n} s).",
+      "alias": ["ratelimit.scope.backend"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §6",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": ["problem:rate_limited"],
+      "examples": [
+        {
+          "text": "Rate limited — CandleViewer is holding your request. Retry allowed at 14:32:10 (in 42 s).",
+          "params": {
+            "hh:mm:ss": "14:32:10",
+            "n": "42"
+          }
+        }
+      ],
+      "where": ["SCR-158 · `SCR-158/backend-per-user`"],
+      "sources": [
+        {
+          "cite": "`D03`:264",
+          "text": "Rate limited — CandleViewer is holding your request. Retry allowed at 14:32:10 (in 42 s)."
+        }
+      ]
+    },
+    "ticket.ratelimit.scope.exchange": {
+      "string": "Bybit's request budget for {account} is used up — retry allowed at {hh:mm:ss} (in {n} s). Cancel, close and stop changes still go through (reserved budget).",
+      "alias": ["ratelimit.scope.exchange"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §6",
+      "status": "merged",
+      "kind": "refusal",
+      "codes": [
+        "problem:exchange_rate_limited",
+        "oms:RATE_BUDGET_EXCEEDED",
+        "preview:rate_budget_exhausted"
+      ],
+      "examples": [
+        {
+          "text": "Bybit's request budget for Main is used up — retry allowed at 14:32:10 (in 42 s). Cancel, close and stop changes still go through (reserved budget).",
+          "params": {
+            "account": "Main",
+            "hh:mm:ss": "14:32:10",
+            "n": "42"
+          }
+        }
+      ],
+      "where": ["SCR-158 · `SCR-158/exchange-per-uid`"],
+      "sources": [
+        {
+          "cite": "`D03`:265",
+          "text": "Bybit's request budget for Main is used up — retry allowed at 14:32:10 (in 42 s). Cancel, close and stop changes still go through (reserved budget)."
+        }
+      ]
+    },
+    "ticket.ratelimit.scope.fanout": {
+      "string": "Not sent — the group would exceed the request budget on {member}. {served} could be served now: send those {k} legs now, or replay all {n} when the budget allows — either way through the confirmation.",
+      "alias": ["ratelimit.scope.fanout"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §6",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Not sent — the group would exceed the request budget on sub_002. Main and sub_001 could be served now: send those 2 legs now, or replay all 3 when the budget allows — either way through the confirmation.",
+          "params": {
+            "member": "sub_002",
+            "served": "Main and sub_001",
+            "k": "2",
+            "n": "3"
+          }
+        }
+      ],
+      "where": ["SCR-158 · `SCR-158/fanout-budget`"],
+      "sources": [
+        {
+          "cite": "`D03`:266",
+          "text": "Not sent — the group would exceed the request budget on sub_002. Main and sub_001 could be served now: send those 2 legs now, or replay all 3 when the budget allows — either way through the confirmation."
+        }
+      ]
+    },
+    "ticket.ratelimit.send_now": {
+      "string": "Send {k} of {m} legs now — {intent}…",
+      "alias": ["ratelimit.send_now"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Send 2 of 4 legs now — BUY BTCUSDT limit 64,010.0…",
+          "params": {
+            "k": "2",
+            "m": "4",
+            "intent": "BUY BTCUSDT limit 64,010.0"
+          }
+        }
+      ],
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:476",
+          "text": "Send 2 of 4 legs now — BUY BTCUSDT limit 64,010.0…"
+        },
+        {
+          "cite": "`D03`:507",
+          "text": "Send 2 of 4 legs now — BUY BTCUSDT limit 64,010.0…"
+        }
+      ]
+    },
+    "ticket.ratelimit.served": {
+      "string": "{served} could be served now; {waiting} waits",
+      "alias": ["ratelimit.served"],
+      "surface": "ratelimit",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Main and sub_001 could be served now; sub_002 waits",
+          "params": {
+            "served": "Main and sub_001",
+            "waiting": "sub_002"
+          }
+        }
+      ],
+      "where": ["SCR-158"],
+      "sources": [
+        {
+          "cite": "`D03`:507",
+          "text": "Main and sub_001 could be served now; sub_002 waits"
+        }
+      ]
+    },
+    "ticket.defaults.after.reset": {
+      "string": "Reset the ticket after send",
+      "alias": ["defaults.after.reset"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:524",
+          "text": "Reset the ticket after send"
+        }
+      ]
+    },
+    "ticket.defaults.autocancel": {
+      "string": "Confirmation auto-cancel after {n} s (10–60)",
+      "alias": ["defaults.autocancel"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "fixed": ["10", "60"],
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:518",
+          "text": "Confirmation auto-cancel after {n} s (10–60)"
+        }
+      ]
+    },
+    "ticket.defaults.confirm": {
+      "string": "Reset DEMO defaults to the deployment defaults?",
+      "alias": ["defaults.confirm"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:525",
+          "text": "Reset DEMO defaults to the deployment defaults?"
+        }
+      ]
+    },
+    "ticket.defaults.destructive.ack": {
+      "string": "I understand this action will fire without confirmation. The choice is audited.",
+      "alias": ["defaults.destructive.ack"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:517",
+          "text": "I understand this action will fire without confirmation. The choice is audited."
+        }
+      ]
+    },
+    "ticket.defaults.destructive.dialog": {
+      "string": "Dialog",
+      "alias": ["defaults.destructive.dialog"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:517",
+          "text": "Dialog"
+        }
+      ]
+    },
+    "ticket.defaults.destructive.hold": {
+      "string": "Hold to confirm (or press twice)",
+      "alias": ["defaults.destructive.hold"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:517",
+          "text": "Hold to confirm (or press twice)"
+        }
+      ]
+    },
+    "ticket.defaults.destructive.immediate": {
+      "string": "Immediate — acknowledged, audited",
+      "alias": ["defaults.destructive.immediate"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:517",
+          "text": "Immediate — acknowledged, audited"
+        }
+      ]
+    },
+    "ticket.defaults.destructive.reverse": {
+      "string": "Reverse always confirms through a dialog.",
+      "alias": ["defaults.destructive.reverse"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:517",
+          "text": "Reverse always confirms through a dialog."
+        }
+      ]
+    },
+    "ticket.defaults.dirty": {
+      "string": "Unsaved changes",
+      "alias": ["defaults.dirty"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:525",
+          "text": "Unsaved changes"
+        }
+      ]
+    },
+    "ticket.defaults.env.demo": {
+      "string": "DEMO defaults",
+      "alias": ["defaults.env.demo"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:510",
+          "text": "DEMO defaults"
+        }
+      ]
+    },
+    "ticket.defaults.env.live": {
+      "string": "LIVE defaults",
+      "alias": ["defaults.env.live"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:510",
+          "text": "LIVE defaults"
+        }
+      ]
+    },
+    "ticket.defaults.fieldset.after_send": {
+      "string": "After send",
+      "alias": ["defaults.fieldset.after_send"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:513",
+          "text": "After send"
+        }
+      ]
+    },
+    "ticket.defaults.fieldset.confirmation": {
+      "string": "Confirmation",
+      "alias": ["defaults.fieldset.confirmation"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:513",
+          "text": "Confirmation"
+        }
+      ]
+    },
+    "ticket.defaults.fieldset.leverage": {
+      "string": "Leverage",
+      "alias": ["defaults.fieldset.leverage"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:513",
+          "text": "Leverage"
+        }
+      ]
+    },
+    "ticket.defaults.fieldset.one_click": {
+      "string": "One-click",
+      "alias": ["defaults.fieldset.one_click"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:513",
+          "text": "One-click"
+        }
+      ]
+    },
+    "ticket.defaults.fieldset.order": {
+      "string": "Order",
+      "alias": ["defaults.fieldset.order"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:513",
+          "text": "Order"
+        }
+      ]
+    },
+    "ticket.defaults.fieldset.size": {
+      "string": "Size",
+      "alias": ["defaults.fieldset.size"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:513",
+          "text": "Size"
+        }
+      ]
+    },
+    "ticket.defaults.fieldset.stop_and_target": {
+      "string": "Stop and target",
+      "alias": ["defaults.fieldset.stop_and_target"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:513",
+          "text": "Stop and target"
+        }
+      ]
+    },
+    "ticket.defaults.fix": {
+      "string": "Fix {n} problem to save",
+      "alias": ["defaults.fix"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:525",
+          "text": "Fix {n} problem to save"
+        }
+      ]
+    },
+    "ticket.defaults.limit.unavailable": {
+      "string": "Limit unavailable — checked by the server when you save",
+      "alias": ["limit.unavailable"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12 (Q-02)",
+      "status": "ruled",
+      "ruled": "A50 item 2",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D05`:352",
+          "text": "Limit unavailable — checked by the server when you save"
+        },
+        {
+          "cite": "R919 6528489355",
+          "text": "Limit unavailable — checked by the server when you save"
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "Limit unavailable — checked by the server when you save"
+        }
+      ]
+    },
+    "ticket.defaults.load_error": {
+      "string": "Your trading defaults could not be loaded.",
+      "alias": ["defaults.load_error"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12 (LR-28)",
+      "status": "ruled",
+      "ruled": "A50 item 4",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-28",
+        "politeness": "polite",
+        "rate": "once per load",
+        "cite": "`D05`:316"
+      },
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "R919 6528489355",
+          "text": "Your trading defaults could not be loaded."
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "Your trading defaults could not be loaded."
+        }
+      ]
+    },
+    "ticket.defaults.notice.panel_read_only.permission": {
+      "string": "Read-only — your role can't change settings.",
+      "alias": ["notice.panel_read_only.permission"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "security": true,
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:512",
+          "text": "Read-only — your role can't change settings."
+        }
+      ]
+    },
+    "ticket.defaults.oneclick.triggers": {
+      "string": "Disarms on: expiry · manual disarm · session end · kill switch · risk-cap breach · feed disconnected, read-only or stale",
+      "alias": ["defaults.oneclick.triggers"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:523",
+          "text": "Disarms on: expiry · manual disarm · session end · kill switch · risk-cap breach · feed disconnected, read-only or stale"
+        }
+      ]
+    },
+    "ticket.defaults.oneclick.ttl": {
+      "string": "Arm for {n} s (30–3,600)",
+      "alias": ["defaults.oneclick.ttl"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "fixed": ["30", "3,600"],
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:523",
+          "text": "Arm for {n} s (30–3,600)"
+        }
+      ]
+    },
+    "ticket.defaults.oneclick.ttl_range": {
+      "string": "Arm for 30 to 3,600 seconds",
+      "alias": ["defaults.oneclick.ttl_range"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "fixed": ["30", "3,600"],
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:523",
+          "text": "Arm for 30 to 3,600 seconds"
+        }
+      ]
+    },
+    "ticket.defaults.pointer.manager": {
+      "string": "Per-account ceilings are set by the owner.",
+      "alias": ["defaults.pointer.manager"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:511",
+          "text": "Per-account ceilings are set by the owner."
+        }
+      ]
+    },
+    "ticket.defaults.pointer.owner": {
+      "string": "Per-account ceilings are set by the owner in the profile editor",
+      "alias": ["defaults.pointer.owner"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:511",
+          "text": "Per-account ceilings are set by the owner in the profile editor"
+        }
+      ]
+    },
+    "ticket.defaults.policy.always": {
+      "string": "Every order opens the confirmation.",
+      "alias": ["defaults.policy.always"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:514",
+          "text": "Every order opens the confirmation."
+        }
+      ]
+    },
+    "ticket.defaults.policy.live_only": {
+      "string": "DEMO orders skip it when one-click is armed; LIVE orders always confirm.",
+      "alias": ["defaults.policy.live_only"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:515",
+          "text": "DEMO orders skip it when one-click is armed; LIVE orders always confirm."
+        }
+      ]
+    },
+    "ticket.defaults.policy.never_armed": {
+      "string": "Armed orders are sent on the keystroke — DEMO only.",
+      "alias": ["defaults.policy.never_armed"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:516",
+          "text": "Armed orders are sent on the keystroke — DEMO only."
+        }
+      ]
+    },
+    "ticket.defaults.reset": {
+      "string": "Reset DEMO defaults",
+      "alias": ["defaults.reset"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:525",
+          "text": "Reset DEMO defaults"
+        }
+      ]
+    },
+    "ticket.defaults.save_failed": {
+      "string": "Not saved — your changes are still here. Try again.",
+      "alias": ["defaults.save_failed"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12 (LR-29)",
+      "status": "ruled",
+      "ruled": "A50 item 5",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-29",
+        "politeness": "assertive",
+        "rate": "once per press",
+        "cite": "`D05`:317"
+      },
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "R919 6528489355",
+          "text": "Not saved — your changes are still here. Try again."
+        },
+        {
+          "cite": "A50 6528462939",
+          "text": "Not saved — your changes are still here. Try again."
+        }
+      ]
+    },
+    "ticket.defaults.saved": {
+      "string": "Saved · audited",
+      "alias": ["defaults.saved"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-27",
+        "politeness": "polite",
+        "rate": "once per save",
+        "cite": "`D05`:315"
+      },
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:525",
+          "text": "Saved · audited"
+        }
+      ]
+    },
+    "ticket.defaults.saving": {
+      "string": "Saving…",
+      "alias": ["defaults.saving"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:525",
+          "text": "Saving…"
+        }
+      ]
+    },
+    "ticket.defaults.sounds.auto_flattened": {
+      "string": "Auto-flattened",
+      "alias": ["defaults.sounds.auto_flattened"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:524",
+          "text": "Auto-flattened"
+        }
+      ]
+    },
+    "ticket.defaults.sounds.disconnected": {
+      "string": "Disconnected / reconnected",
+      "alias": ["defaults.sounds.disconnected"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:524",
+          "text": "Disconnected / reconnected"
+        }
+      ]
+    },
+    "ticket.defaults.sounds.fill": {
+      "string": "Fill",
+      "alias": ["defaults.sounds.fill"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:524",
+          "text": "Fill"
+        }
+      ]
+    },
+    "ticket.defaults.sounds.note": {
+      "string": "Sounds are never the only channel.",
+      "alias": ["defaults.sounds.note"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:524",
+          "text": "Sounds are never the only channel."
+        }
+      ]
+    },
+    "ticket.defaults.sounds.rejected": {
+      "string": "Rejected",
+      "alias": ["defaults.sounds.rejected"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:524",
+          "text": "Rejected"
+        }
+      ]
+    },
+    "ticket.defaults.stop.ceiling": {
+      "string": "Your profile caps the stop distance at {n} ticks",
+      "alias": ["defaults.stop.ceiling"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Your profile caps the stop distance at 200 ticks",
+          "params": {
+            "n": "200"
+          }
+        }
+      ],
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:519",
+          "text": "Your profile caps the stop distance at 200 ticks"
+        }
+      ]
+    },
+    "ticket.defaults.stop.kept": {
+      "string": "Kept at {n} ticks — every order carries a native stop. Change it instead.",
+      "alias": ["defaults.stop.kept"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-32",
+        "politeness": "polite",
+        "rate": "once per attempt",
+        "cite": "`D05`:320"
+      },
+      "examples": [
+        {
+          "text": "Kept at 200 ticks — every order carries a native stop. Change it instead.",
+          "params": {
+            "n": "200"
+          }
+        }
+      ],
+      "native_sl": true,
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:519",
+          "text": "Kept at 200 ticks — every order carries a native stop. Change it instead."
+        }
+      ]
+    },
+    "ticket.defaults.stop.label": {
+      "string": "Default stop (required)",
+      "alias": ["defaults.stop.label"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "native_sl": true,
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:519",
+          "text": "Default stop (required)"
+        }
+      ]
+    },
+    "ticket.defaults.stop.zero": {
+      "string": "The stop distance must be greater than zero",
+      "alias": ["defaults.stop.zero"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:519",
+          "text": "The stop distance must be greater than zero"
+        }
+      ]
+    },
+    "ticket.defaults.title": {
+      "string": "Trading defaults",
+      "alias": ["defaults.title"],
+      "surface": "defaults",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["SCR-114"],
+      "sources": [
+        {
+          "cite": "`D03`:510",
+          "text": "Trading defaults"
+        }
+      ]
+    },
+    "ticket.template.applied": {
+      "string": "Template applied — stop {n} ticks kept",
+      "alias": ["template.applied"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "Template applied — stop 200 ticks kept",
+          "params": {
+            "n": "200"
+          }
+        }
+      ],
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:537",
+          "text": "Template applied — stop 200 ticks kept"
+        }
+      ]
+    },
+    "ticket.template.apply": {
+      "string": "Apply",
+      "alias": ["template.apply"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:535",
+          "text": "Apply"
+        }
+      ]
+    },
+    "ticket.template.empty": {
+      "string": "No templates yet — set up a ticket and save it",
+      "alias": ["template.empty"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:537",
+          "text": "No templates yet — set up a ticket and save it"
+        }
+      ]
+    },
+    "ticket.template.hotkey_hint": {
+      "string": "Bindable in Settings → Hotkeys",
+      "alias": ["template.hotkey_hint"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:536",
+          "text": "Bindable in Settings → Hotkeys"
+        }
+      ]
+    },
+    "ticket.template.menu.bind_a_hotkey": {
+      "string": "Bind a hotkey",
+      "alias": ["template.menu.bind_a_hotkey"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:536",
+          "text": "Bind a hotkey"
+        }
+      ]
+    },
+    "ticket.template.menu.delete": {
+      "string": "Delete",
+      "alias": ["template.menu.delete"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:536",
+          "text": "Delete"
+        }
+      ]
+    },
+    "ticket.template.menu.rename": {
+      "string": "Rename",
+      "alias": ["template.menu.rename"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:536",
+          "text": "Rename"
+        }
+      ]
+    },
+    "ticket.template.name_label": {
+      "string": "Template name (1–80 characters)",
+      "alias": ["template.name_label"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "fixed": ["1", "80"],
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:535",
+          "text": "Template name (1–80 characters)"
+        }
+      ]
+    },
+    "ticket.template.save_as": {
+      "string": "Save current as…",
+      "alias": ["template.save_as"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:535",
+          "text": "Save current as…"
+        }
+      ]
+    },
+    "ticket.template.summary": {
+      "string": "BUY · limit · {qty} {coin} · stop {n} ticks · TP {r} R · {account}",
+      "alias": ["template.summary"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "examples": [
+        {
+          "text": "BUY · limit · 0.250 BTC · stop 200 ticks · TP 2 R · Main",
+          "params": {
+            "qty": "0.250",
+            "coin": "BTC",
+            "n": "200",
+            "r": "2",
+            "account": "Main"
+          }
+        }
+      ],
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:535",
+          "text": "BUY · limit · 0.250 BTC · stop 200 ticks · TP 2 R · Main"
+        }
+      ]
+    },
+    "ticket.template.symbol_not_allowed": {
+      "string": "The profile no longer allows this symbol.",
+      "alias": ["template.symbol_not_allowed"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:538",
+          "text": "The profile no longer allows this symbol."
+        }
+      ]
+    },
+    "ticket.template.title": {
+      "string": "Templates",
+      "alias": ["template.title"],
+      "surface": "template",
+      "owner": "E30-D03 §12",
+      "status": "merged",
+      "kind": "text",
+      "where": ["the templates (SCR-114 list, the ticket's menu)"],
+      "sources": [
+        {
+          "cite": "`D03`:535",
+          "text": "Templates"
+        }
+      ]
+    },
+    "ticket.hotkeys.dom.cancel_all": {
+      "string": "Cancel all working orders for symbol",
+      "alias": ["dom.cancel_all"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:304",
+          "text": "Cancel all working orders for symbol"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.arm": {
+      "string": "Arm/disarm one-click",
+      "alias": ["ticket.arm", "dom.arm"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:486",
+          "text": "Arm/disarm one-click"
+        },
+        {
+          "cite": "`KM`:356",
+          "text": "Arm/disarm one-click"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.clear": {
+      "string": "Clear ticket",
+      "alias": ["ticket.clear"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:429",
+          "text": "Clear ticket"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.qty_preset": {
+      "string": "Quantity preset 1-4",
+      "alias": ["ticket.qty_preset"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "fixed": ["1", "4"],
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:399",
+          "text": "Quantity preset 1-4"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.reduce_only": {
+      "string": "Toggle reduce-only",
+      "alias": ["ticket.reduce_only"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:471",
+          "text": "Toggle reduce-only"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.side_buy": {
+      "string": "Set side Buy",
+      "alias": ["ticket.side_buy"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:374",
+          "text": "Set side Buy"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.side_sell": {
+      "string": "Set side Sell",
+      "alias": ["ticket.side_sell"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:390",
+          "text": "Set side Sell"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.snap_ask": {
+      "string": "Snap price to ask",
+      "alias": ["ticket.snap_ask"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:453",
+          "text": "Snap price to ask"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.snap_bid": {
+      "string": "Snap price to bid",
+      "alias": ["ticket.snap_bid"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:444",
+          "text": "Snap price to bid"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.snap_mid": {
+      "string": "Snap price to mid",
+      "alias": ["ticket.snap_mid"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:462",
+          "text": "Snap price to mid"
+        }
+      ]
+    },
+    "ticket.hotkeys.ticket.submit": {
+      "string": "Submit order",
+      "alias": ["ticket.submit"],
+      "surface": "hotkeys",
+      "owner": "the key map (`KM`)",
+      "status": "by-reference",
+      "kind": "text",
+      "where": ["SCR-113 · trading rows"],
+      "sources": [
+        {
+          "cite": "`KM`:414",
+          "text": "Submit order"
+        }
+      ]
+    }
+  },
+  "by_code": {
+    "oms:INSUFFICIENT_MARGIN": {
+      "reject": "ticket.reject.reason.insufficient_margin"
+    },
+    "oms:LEVERAGE_ERROR": {
+      "reject": "ticket.reject.reason.leverage"
+    },
+    "oms:POSITION_MODE_MISMATCH:hedge": {
+      "reject": "ticket.reject.reason.position_mode.hedge"
+    },
+    "oms:POSITION_MODE_MISMATCH:one_way": {
+      "reject": "ticket.reject.reason.position_mode.one_way"
+    },
+    "oms:RATE_BUDGET_EXCEEDED": {
+      "ratelimit": "ticket.ratelimit.scope.exchange",
+      "reject": "ticket.reject.reason.rate_limit"
+    },
+    "oms:REDUCE_ONLY_VIOLATION": {
+      "reject": "ticket.reject.reason.reduce_only"
+    },
+    "oms:RISK_LIMIT_EXCEEDED": {
+      "reject": "ticket.reject.reason.risk_tier"
+    },
+    "preview:account_locked": {
+      "order": "ticket.order.refusal.account_locked"
+    },
+    "preview:below_min_notional": {
+      "order": "ticket.order.v.notional.min"
+    },
+    "preview:cap_breached": {
+      "order": "ticket.order.refusal.cap_breached"
+    },
+    "preview:insufficient_margin": {
+      "reject": "ticket.reject.reason.insufficient_margin"
+    },
+    "preview:key_invalid": {
+      "order": "ticket.order.refusal.key_invalid"
+    },
+    "preview:kill_switch_engaged": {
+      "order": "ticket.order.refusal.kill_switch_engaged"
+    },
+    "preview:leverage_unavailable": {
+      "order": "ticket.order.refusal.leverage_unavailable",
+      "reject": "ticket.reject.reason.leverage"
+    },
+    "preview:rate_budget_exhausted": {
+      "order": "ticket.order.refusal.rate_budget_exhausted",
+      "ratelimit": "ticket.ratelimit.scope.exchange",
+      "reject": "ticket.reject.reason.rate_limit"
+    },
+    "preview:symbol_not_allowed": {
+      "order": "ticket.order.refusal.symbol_not_allowed"
+    },
+    "problem:audit_unavailable": {
+      "order": "ticket.order.rejected.class.transient"
+    },
+    "problem:degraded_data": {
+      "order": "ticket.order.refusal.degraded_data"
+    },
+    "problem:exchange_error": {
+      "order": "ticket.order.rejected.class.exchange"
+    },
+    "problem:exchange_rate_limited": {
+      "order": "ticket.order.rejected.class.transient",
+      "ratelimit": "ticket.ratelimit.scope.exchange",
+      "reject": "ticket.reject.reason.rate_limit"
+    },
+    "problem:exchange_unavailable": {
+      "order": "ticket.order.rejected.class.transient"
+    },
+    "problem:idempotency_in_flight": {
+      "order": "ticket.order.rejected.class.transient"
+    },
+    "problem:insufficient_balance": {
+      "order": "ticket.order.rejected.class.limit",
+      "reject": "ticket.reject.reason.insufficient_margin"
+    },
+    "problem:lot_size_violation": {
+      "order": "ticket.order.rejected.class.correctable",
+      "reject": "ticket.reject.reason.lot"
+    },
+    "problem:rate_limited": {
+      "order": "ticket.order.rejected.class.transient",
+      "ratelimit": "ticket.ratelimit.scope.backend",
+      "reject": "ticket.reject.reason.rate_limit"
+    },
+    "problem:risk_limit_breached": {
+      "order": "ticket.order.rejected.class.limit"
+    },
+    "problem:store_unavailable": {
+      "order": "ticket.order.rejected.class.transient"
+    },
+    "problem:tick_size_violation": {
+      "order": "ticket.order.rejected.class.correctable",
+      "reject": "ticket.reject.reason.tick"
+    },
+    "problem:timeout": {
+      "order": "ticket.order.refusal.timeout"
+    },
+    "problem:trading_disabled:account_disabled_by_policy": {
+      "order": "ticket.order.refusal.trading_disabled.account_disabled_by_policy"
+    },
+    "problem:trading_disabled:account_unhealthy": {
+      "order": "ticket.order.refusal.trading_disabled.account_unhealthy"
+    },
+    "problem:trading_disabled:maintenance": {
+      "order": "ticket.order.refusal.trading_disabled.maintenance"
+    },
+    "problem:trading_disabled:no_active_key": {
+      "order": "ticket.order.refusal.trading_disabled.no_active_key"
+    },
+    "problem:validation_failed": {
+      "order": "ticket.order.rejected.class.correctable",
+      "reject": "ticket.reject.reason.stop_missing"
+    },
+    "rule:native_stop_required": {
+      "order": "ticket.order.rejected.class.correctable",
+      "reject": "ticket.reject.reason.stop_missing"
+    },
+    "sizing:below_min_notional": {
+      "order": "ticket.order.v.notional.min"
+    },
+    "sizing:invalid_stop_distance": {
+      "order": "ticket.order.refusal.invalid_stop_distance"
+    }
+  },
+  "not_carried": [
+    {
+      "alias": "v.sl.required",
+      "text": "Every order requires a stop-loss.",
+      "cite": "`D02`:382",
+      "reason": "D02 A-5's proposal, not taken: A50 item 10 rules C-2.6's own scope",
+      "superseded_by": "ticket.order.v.sl.required"
+    },
+    {
+      "alias": "banner.detail.*",
+      "text": "verbatim",
+      "cite": "`D02`:428",
+      "reason": "an annotation word, not a string: annotations live in the board captions (`D02`:428)"
+    },
+    {
+      "alias": "preview.why_size",
+      "text": "why this size",
+      "cite": "`D02`:435",
+      "reason": "describes `sizing_explanation`, which the client shows verbatim (server text, never frozen here)"
+    },
+    {
+      "alias": "v.sl.required",
+      "text": "This account requires a stop-loss on every order.",
+      "cite": "`D02`:382",
+      "reason": "replaced by #2701 ledger addendum A row A50 item 10 (C-2.6's own scope)",
+      "superseded_by": "ticket.order.v.sl.required"
+    },
+    {
+      "alias": "viewer",
+      "text": "Viewer role: this ticket is read-only",
+      "cite": "`D02`:425",
+      "reason": "superseded by D04 §2.5's one panel notice (`D04`:227; D05 T2-02)",
+      "superseded_by": "ticket.order.notice.panel_read_only.permission"
+    },
+    {
+      "alias": "viewer.reason",
+      "text": "Viewer role: read-only",
+      "cite": "`D02`:425",
+      "reason": "superseded by D04 §2.5's one panel notice (`D04`:227; D05 T2-02)",
+      "superseded_by": "ticket.order.notice.panel_read_only.permission"
+    },
+    {
+      "alias": "stop_pending.reason_symbol",
+      "text": "Protective stop pending on {symbol}",
+      "cite": "`D02`:427",
+      "reason": "superseded for the reason node by D04 §2.5's data-free `stop_pending.reason` (`D04`:244; C16)",
+      "superseded_by": "ticket.order.stop_pending.reason"
+    },
+    {
+      "alias": "arm.locked.description",
+      "text": "one-click off — Ctrl+Shift+T to arm",
+      "cite": "`D02`:405",
+      "reason": "superseded by D05 F-08: the key is read from the current binding through CMP-022",
+      "superseded_by": "ticket.order.arm.locked.description"
+    },
+    {
+      "alias": "submit.name",
+      "text": "Submit buy 0.250 BTCUSDT limit 64,010.0 with stop 63,900.0, LIVE, Main",
+      "cite": "`D02`:413",
+      "reason": "superseded by D05 F-13: the name starts with the visible label (SC 2.5.3)",
+      "superseded_by": "ticket.order.submit.name"
+    },
+    {
+      "alias": "confirm.confirm.name",
+      "text": "Confirm: buy 0.250 BTCUSDT limit 64,010.0 with stop 63,900.0, LIVE, Main",
+      "cite": "`D03`:477",
+      "reason": "superseded by D05 F-14: the name starts with the Confirm's visible label (SC 2.5.3)",
+      "superseded_by": "ticket.confirm.confirm.name"
+    },
+    {
+      "alias": "confirm.confirm.name",
+      "text": "Confirm: send 3 of 4 legs, buy BTCUSDT limit 64,010.0, each with its native stop, LIVE, Desk4",
+      "cite": "`D03`:477",
+      "reason": "superseded by D05 F-14: the name starts with the Confirm's visible label (SC 2.5.3)",
+      "superseded_by": "ticket.confirm.confirm.name.fanout"
+    }
+  ]
+}

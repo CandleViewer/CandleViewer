@@ -1,0 +1,3950 @@
+{
+  "pack": "E30-D06",
+  "version": "v1",
+  "base": "e607a3f104",
+  "looks": ["T2", "validity", "busy", "T4", "none"],
+  "r5": ["submit — arm-gated", "carve-out — never arm-gated", "n/a"],
+  "closed_14": {
+    "SCR-061:partial-send in progress": "C-11",
+    "SCR-061:partial failure": "C-11",
+    "SCR-061:rate-limit backoff": "C-11"
+  },
+  "records": [
+    {
+      "id": "SCR-060/ready",
+      "screen": "SCR-060",
+      "state": "ready",
+      "trigger": "draft valid, feed live, arm state known",
+      "exit": "any input",
+      "carrier": "—",
+      "announce": "—",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "02"
+      },
+      "twin": "14:ready",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:275"
+    },
+    {
+      "id": "SCR-060/validating",
+      "screen": "SCR-060",
+      "state": "validating",
+      "trigger": "any input",
+      "exit": "valid → ready; invalid → the error state",
+      "carrier": "the field boundary + glyph + text",
+      "announce": "polite (read-out, ≤1 / 500 ms)",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "02"
+      },
+      "twin": "14:validating",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:276"
+    },
+    {
+      "id": "SCR-060/invalid-summary",
+      "screen": "SCR-060",
+      "state": "invalid-summary",
+      "trigger": "submit pressed with ≥1 blocking error",
+      "exit": "every error cleared → ready",
+      "carrier": "heading + list + the field boundaries",
+      "announce": "LR-24: none — the focus move to the summary heading is the one announcement (F-09)",
+      "look": "validity",
+      "gated": "the submit",
+      "t2": "T2-12",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "02"
+      },
+      "twin": "14:validating",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:277",
+      "announce_parent": "assertive, once"
+    },
+    {
+      "id": "SCR-060/submitting",
+      "screen": "SCR-060",
+      "state": "submitting",
+      "trigger": "submit accepted by the client",
+      "exit": "`202` → awaiting / WS resolves → accepted or rejected; synchronous problem → rejected",
+      "carrier": "the word \"Submitting…\" prefix + the bar",
+      "announce": "polite, once",
+      "look": "busy",
+      "gated": "the submit",
+      "r5": "submit — arm-gated",
+      "event": "order.submitted",
+      "class": "audit",
+      "audit_action": "orders.submit",
+      "frame": {
+        "page": "E30-D02",
+        "board": "02"
+      },
+      "twin": "14:submitting",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:278"
+    },
+    {
+      "id": "SCR-060/awaiting-confirmation",
+      "screen": "SCR-060",
+      "state": "awaiting-confirmation",
+      "trigger": "2 s after `202` without a terminal WS `orders` update",
+      "exit": "WS resolves; the SCR-152 reconciliation path if the feed drops",
+      "carrier": "the words; the bar paused",
+      "announce": "polite, once",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "02"
+      },
+      "twin": "A-1:awaiting exchange confirmation (2 s)",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:279"
+    },
+    {
+      "id": "SCR-060/accepted",
+      "screen": "SCR-060",
+      "state": "accepted",
+      "trigger": "WS `orders` state `accepted` / `partially_filled` / `filled` with `sl.attached` (`24` §8.8 item 1)",
+      "exit": "5 s or any input; the toast per SCR-060 is the banner's twin in the notification centre",
+      "carrier": "the word \"Accepted\" + check + the stop named",
+      "announce": "assertive, once (`05` §6.2)",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "02"
+      },
+      "twin": "14:accepted",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:280"
+    },
+    {
+      "id": "SCR-060/partially-filled",
+      "screen": "SCR-060",
+      "state": "partially-filled",
+      "trigger": "WS `orders` state `accepted` / `partially_filled` / `filled` with `sl.attached` (`24` §8.8 item 1)",
+      "exit": "5 s or any input; the toast per SCR-060 is the banner's twin in the notification centre",
+      "carrier": "the word \"Accepted\" + check + the stop named",
+      "announce": "assertive, once (`05` §6.2)",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "02"
+      },
+      "twin": "14:accepted",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:280"
+    },
+    {
+      "id": "SCR-060/rejected-correctable",
+      "screen": "SCR-060",
+      "state": "rejected-correctable",
+      "trigger": "`validation_failed` incl. `native_stop_required`, `tick_size_violation`, `lot_size_violation` (and, inside its `detail`, the internal `24` §9.3 `LegSizing` reasons `invalid_stop_distance` and `below_min_notional` — no `22` slug of their own), post-only would cross",
+      "exit": "edit → validating; a changed body is a new intent with a new `Idempotency-Key`",
+      "carrier": "class line + code + glyph",
+      "announce": "assertive, once",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejected",
+      "class": "audit",
+      "frame": {
+        "page": "E30-D02",
+        "board": "03"
+      },
+      "twin": "14:rejected",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:281"
+    },
+    {
+      "id": "SCR-060/rejected-post-only-cross",
+      "screen": "SCR-060",
+      "state": "rejected-post-only-cross",
+      "trigger": "`validation_failed` incl. `native_stop_required`, `tick_size_violation`, `lot_size_violation` (and, inside its `detail`, the internal `24` §9.3 `LegSizing` reasons `invalid_stop_distance` and `below_min_notional` — no `22` slug of their own), post-only would cross",
+      "exit": "edit → validating; a changed body is a new intent with a new `Idempotency-Key`",
+      "carrier": "class line + code + glyph",
+      "announce": "assertive, once",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejected",
+      "class": "audit",
+      "frame": {
+        "page": "E30-D02",
+        "board": "03"
+      },
+      "twin": "14:rejected",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:281"
+    },
+    {
+      "id": "SCR-060/rejected-limit",
+      "screen": "SCR-060",
+      "state": "rejected-limit",
+      "trigger": "`risk_limit_breached`, `trading_disabled` (`reason` from `24` §8.10), `insufficient_balance`, `insufficient_margin`",
+      "exit": "edit or ask the owner; nothing automatic",
+      "carrier": "class line + code + the limits chip",
+      "announce": "assertive, once",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejected",
+      "class": "audit",
+      "frame": {
+        "page": "E30-D02",
+        "board": "03"
+      },
+      "twin": "14:rejected",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:282"
+    },
+    {
+      "id": "SCR-060/rejected-transient",
+      "screen": "SCR-060",
+      "state": "rejected-transient",
+      "trigger": "`rate_limited`, `exchange_rate_limited`, `idempotency_in_flight`, `exchange_unavailable`, `store_unavailable`, `audit_unavailable`, `timeout`",
+      "exit": "explicit replay or `Esc`",
+      "carrier": "class line + code + countdown words",
+      "announce": "status (polite)",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejected",
+      "class": "audit",
+      "frame": {
+        "page": "E30-D02",
+        "board": "03"
+      },
+      "twin": "14:rejected",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:283"
+    },
+    {
+      "id": "SCR-060/rejected-exchange",
+      "screen": "SCR-060",
+      "state": "rejected-exchange",
+      "trigger": "`exchange_error` (`exchange.ret_code` / `ret_msg`), async `legs[].error`",
+      "exit": "edit or [Details]",
+      "carrier": "quoted text + code",
+      "announce": "assertive, once",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejected",
+      "class": "audit",
+      "frame": {
+        "page": "E30-D02",
+        "board": "03"
+      },
+      "twin": "14:rejected",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:284"
+    },
+    {
+      "id": "SCR-060/rejected-one-lot",
+      "screen": "SCR-060",
+      "state": "rejected-one-lot",
+      "trigger": "the server's `size_leg` differs from the client's by more than one lot (code: E30-S03 contract gap)",
+      "exit": "accept the server's number → ready",
+      "carrier": "class line + both numbers",
+      "announce": "assertive, once",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejected",
+      "class": "audit",
+      "frame": {
+        "page": "E30-D02",
+        "board": "03"
+      },
+      "twin": "14:rejected",
+      "story": "E30-S03 #1087",
+      "cite": "`D02`:285"
+    },
+    {
+      "id": "SCR-060/rejected-one-lot-stale",
+      "screen": "SCR-060",
+      "state": "rejected-one-lot-stale",
+      "trigger": "the server's `size_leg` differs from the client's by more than one lot (code: E30-S03 contract gap)",
+      "exit": "accept the server's number → ready",
+      "carrier": "class line + both numbers",
+      "announce": "assertive, once",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejected",
+      "class": "audit",
+      "frame": {
+        "page": "E30-D02",
+        "board": "03"
+      },
+      "twin": "14:rejected",
+      "story": "E30-S03 #1087",
+      "cite": "`D02`:285"
+    },
+    {
+      "id": "SCR-060/blocked-by-profile",
+      "screen": "SCR-060",
+      "state": "blocked-by-profile",
+      "trigger": "symbol not allowed, cap would be exceeded, leverage above the profile cap (pre-submit, from the profile and `/risk/summary`)",
+      "exit": "profile change (SCR-131) or symbol / account change",
+      "carrier": "banner + word \"Blocked\" + authority",
+      "announce": "status (polite)",
+      "look": "T2",
+      "gated": "the submit (a whole-ticket profile block)",
+      "t2": "T2-19",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "04"
+      },
+      "twin": "14:blocked-by-profile",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:286"
+    },
+    {
+      "id": "SCR-060/env-guard-mismatch",
+      "screen": "SCR-060",
+      "state": "env-guard-mismatch",
+      "trigger": "symbol not allowed, cap would be exceeded, leverage above the profile cap (pre-submit, from the profile and `/risk/summary`)",
+      "exit": "profile change (SCR-131) or symbol / account change",
+      "carrier": "banner + word \"Blocked\" + authority",
+      "announce": "status (polite)",
+      "look": "T2",
+      "gated": "the submit under CMP-139",
+      "t2": "T2-06",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "04"
+      },
+      "twin": "14:blocked-by-profile",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:286"
+    },
+    {
+      "id": "SCR-060/blocked-by-lockout",
+      "screen": "SCR-060",
+      "state": "blocked-by-lockout",
+      "trigger": "`risk_cap_usage.locked_out_until_ms` on `wallet` (`23` §15.4), SCR-073",
+      "exit": "the lockout clears (server) or an owner override",
+      "carrier": "lock glyph + the words + the time",
+      "announce": "assertive, once",
+      "look": "T2",
+      "gated": "the submit",
+      "t2": "T2-09",
+      "r5": "submit — arm-gated",
+      "carve_out": "Close position… (the close route) and cancels stay enabled",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "04"
+      },
+      "twin": "14:blocked-by-lockout",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:287"
+    },
+    {
+      "id": "SCR-060/frozen",
+      "screen": "SCR-060",
+      "state": "frozen",
+      "trigger": "kill switch engaged for the account or globally (SCR-072; `trading_disabled` ahead of the gate)",
+      "exit": "release by the owner (step-up)",
+      "carrier": "the word \"frozen\" + the time",
+      "announce": "assertive once + OS notification (E17-D01)",
+      "look": "T2",
+      "gated": "the submit (every submission, reduce-only included)",
+      "t2": "T2-10",
+      "r5": "submit — arm-gated",
+      "carve_out": "cancels, Close position…, Flatten now and Set stop by hand stay enabled (LA-34)",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "04"
+      },
+      "twin": "14:frozen",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:288"
+    },
+    {
+      "id": "SCR-060/disconnected",
+      "screen": "SCR-060",
+      "state": "disconnected",
+      "trigger": "client WS down (E17-D01 T6)",
+      "exit": "reconnect → the return state",
+      "carrier": "the words + the shade + last-good time",
+      "announce": "assertive, once",
+      "look": "T2",
+      "gated": "the submit",
+      "t2": "T2-11",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "05"
+      },
+      "twin": "14:disconnected",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:289"
+    },
+    {
+      "id": "SCR-060/reconnecting",
+      "screen": "SCR-060",
+      "state": "reconnecting",
+      "trigger": "client WS down (E17-D01 T6)",
+      "exit": "reconnect → the return state",
+      "carrier": "the words + the shade + last-good time",
+      "announce": "assertive, once",
+      "look": "T2",
+      "gated": "the submit",
+      "t2": "T2-11",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "05"
+      },
+      "twin": "14:disconnected",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:289"
+    },
+    {
+      "id": "SCR-060/returned-locked",
+      "screen": "SCR-060",
+      "state": "returned-locked",
+      "trigger": "reconnect, snapshots and reconciliation done",
+      "exit": "dismiss the line; re-arm deliberately",
+      "carrier": "the words",
+      "announce": "assertive, once (recovery)",
+      "look": "T2",
+      "gated": "the LIVE submit and every requires_arm affordance",
+      "t2": "T2-08",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "05"
+      },
+      "twin": "A-1:the return from a disconnect (locked with reason)",
+      "story": "E30-S04 #1088",
+      "cite": "`D02`:290"
+    },
+    {
+      "id": "SCR-060/demo",
+      "screen": "SCR-060",
+      "state": "demo",
+      "trigger": "the account's environment",
+      "exit": "the environment switch (SCR-074; disarms)",
+      "carrier": "word + weight + dot shape + accent",
+      "announce": "—",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "06"
+      },
+      "twin": "14:demo/live badge",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:291"
+    },
+    {
+      "id": "SCR-060/live",
+      "screen": "SCR-060",
+      "state": "live",
+      "trigger": "the account's environment",
+      "exit": "the environment switch (SCR-074; disarms)",
+      "carrier": "word + weight + dot shape + accent",
+      "announce": "—",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "06"
+      },
+      "twin": "14:demo/live badge",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:291"
+    },
+    {
+      "id": "SCR-060/demo-greyscale",
+      "screen": "SCR-060",
+      "state": "demo-greyscale",
+      "trigger": "the account's environment",
+      "exit": "the environment switch (SCR-074; disarms)",
+      "carrier": "word + weight + dot shape + accent",
+      "announce": "—",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "06"
+      },
+      "twin": "14:demo/live badge",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:291"
+    },
+    {
+      "id": "SCR-060/live-greyscale",
+      "screen": "SCR-060",
+      "state": "live-greyscale",
+      "trigger": "the account's environment",
+      "exit": "the environment switch (SCR-074; disarms)",
+      "carrier": "word + weight + dot shape + accent",
+      "announce": "—",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "06"
+      },
+      "twin": "14:demo/live badge",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:291"
+    },
+    {
+      "id": "SCR-060/pending-key",
+      "screen": "SCR-060",
+      "state": "pending-key",
+      "trigger": "the manager's key is inside Bybit's 48 h restriction (`14` SCR-125 states; `10` §3 scenario 1)",
+      "exit": "the restriction lapses (server) → ready",
+      "carrier": "the words + the time",
+      "announce": "status (polite)",
+      "look": "T2",
+      "gated": "the LIVE account's submit",
+      "t2": "T2-20",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "04"
+      },
+      "twin": "14:pending-key",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:292"
+    },
+    {
+      "id": "SCR-060/viewer-read-only",
+      "screen": "SCR-060",
+      "state": "viewer-read-only",
+      "trigger": "role `viewer`",
+      "exit": "role change",
+      "carrier": "the words",
+      "announce": "—",
+      "look": "T2",
+      "gated": "the whole ticket (one panel notice)",
+      "t2": "T2-02",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "04"
+      },
+      "twin": "A-1:viewer read-only",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:293"
+    },
+    {
+      "id": "SCR-060/locked",
+      "screen": "SCR-060",
+      "state": "locked",
+      "trigger": "the arm store",
+      "exit": "arm / disarm / resolve",
+      "carrier": "word + glyph + pill fill",
+      "announce": "assertive on change",
+      "look": "T2",
+      "gated": "the LIVE submit and every requires_arm affordance",
+      "t2": "T2-08",
+      "r5": "submit — arm-gated",
+      "event": "order.arm_toggled",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D02",
+        "board": "07"
+      },
+      "twin": "A-1:locked · armed · unknown (the arm store)",
+      "story": "E30-S04 #1088",
+      "cite": "`D02`:294"
+    },
+    {
+      "id": "SCR-060/armed-demo",
+      "screen": "SCR-060",
+      "state": "armed-demo",
+      "trigger": "the arm store",
+      "exit": "arm / disarm / resolve",
+      "carrier": "word + glyph + pill fill",
+      "announce": "assertive on change",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.arm_toggled",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D02",
+        "board": "07"
+      },
+      "twin": "A-1:locked · armed · unknown (the arm store)",
+      "story": "E30-S04 #1088",
+      "cite": "`D02`:294"
+    },
+    {
+      "id": "SCR-060/armed-live",
+      "screen": "SCR-060",
+      "state": "armed-live",
+      "trigger": "the arm store",
+      "exit": "arm / disarm / resolve",
+      "carrier": "word + glyph + pill fill",
+      "announce": "assertive on change",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.arm_toggled",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D02",
+        "board": "07"
+      },
+      "twin": "A-1:locked · armed · unknown (the arm store)",
+      "story": "E30-S04 #1088",
+      "cite": "`D02`:294"
+    },
+    {
+      "id": "SCR-060/unknown",
+      "screen": "SCR-060",
+      "state": "unknown",
+      "trigger": "the arm store",
+      "exit": "arm / disarm / resolve",
+      "carrier": "word + glyph + pill fill",
+      "announce": "assertive on change",
+      "look": "T2",
+      "gated": "the LIVE submit and every requires_arm affordance",
+      "t2": "T2-08",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "07"
+      },
+      "twin": "A-1:locked · armed · unknown (the arm store)",
+      "story": "E30-S04 #1088",
+      "cite": "`D02`:294"
+    },
+    {
+      "id": "SCR-060/armed-expiring",
+      "screen": "SCR-060",
+      "state": "armed-expiring",
+      "trigger": "the arm store",
+      "exit": "arm / disarm / resolve",
+      "carrier": "word + glyph + pill fill",
+      "announce": "assertive on change",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "07"
+      },
+      "twin": "A-1:locked · armed · unknown (the arm store)",
+      "story": "E30-S04 #1088",
+      "cite": "`D02`:294"
+    },
+    {
+      "id": "SCR-060/hotkeys-paused",
+      "screen": "SCR-060",
+      "state": "hotkeys-paused",
+      "trigger": "focus in a text field, `contenteditable` or a non-confirmation dialog",
+      "exit": "focus leaves the field",
+      "carrier": "the words inside the pill",
+      "announce": "polite, once per focus change",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "07"
+      },
+      "twin": "A-1:locked · armed · unknown (the arm store)",
+      "story": "E30-S05 #1089",
+      "cite": "`D02`:295"
+    },
+    {
+      "id": "SCR-060/stale-helpers",
+      "screen": "SCR-060",
+      "state": "stale-helpers",
+      "trigger": "2 s without a `ticker` frame, or `stale: true`",
+      "exit": "a fresh frame",
+      "carrier": "the shade + the words + the age",
+      "announce": "polite, once per episode",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "12"
+      },
+      "twin": "A-1:stale inputs (helpers / wallet / preview)",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:296"
+    },
+    {
+      "id": "SCR-060/stale-wallet",
+      "screen": "SCR-060",
+      "state": "stale-wallet",
+      "trigger": "`balance_stale: true` after 10 s (`22` `/exchange-accounts`), or `wallet` `stale`",
+      "exit": "a fresh `wallet` frame or REST reconciliation",
+      "carrier": "the shade + the words",
+      "announce": "polite, once per episode",
+      "look": "validity",
+      "gated": "the % eq and risk % units",
+      "t2": "T2-15",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "12"
+      },
+      "twin": "A-1:stale inputs (helpers / wallet / preview)",
+      "story": "E30-S02 #1031",
+      "cite": "`D02`:297"
+    },
+    {
+      "id": "SCR-060/preview-provisional",
+      "screen": "SCR-060",
+      "state": "preview-provisional",
+      "trigger": "the draft changed, `/trade-groups/preview` not yet answered",
+      "exit": "the preview answers (≤100 ms budget) → the highlight if the number changed",
+      "carrier": "the hatch + the chip word",
+      "announce": "—",
+      "look": "busy",
+      "gated": "the submit",
+      "t2": "T2-13",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "09"
+      },
+      "twin": "A-1:stale inputs (helpers / wallet / preview)",
+      "story": "E30-S06 #1090",
+      "cite": "`D02`:298"
+    },
+    {
+      "id": "SCR-060/preview-block",
+      "screen": "SCR-060",
+      "state": "preview-block",
+      "trigger": "the draft changed, `/trade-groups/preview` not yet answered",
+      "exit": "the preview answers (≤100 ms budget) → the highlight if the number changed",
+      "carrier": "the hatch + the chip word",
+      "announce": "—",
+      "look": "none",
+      "r5": "n/a",
+      "event": "ticket.sizing_rule_used",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D02",
+        "board": "09"
+      },
+      "twin": "A-1:stale inputs (helpers / wallet / preview)",
+      "story": "E30-S06 #1090",
+      "cite": "`D02`:298"
+    },
+    {
+      "id": "SCR-060/reduce-only",
+      "screen": "SCR-060",
+      "state": "reduce-only",
+      "trigger": "the flag",
+      "exit": "the flag cleared",
+      "carrier": "the words",
+      "announce": "polite, once",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "10"
+      },
+      "twin": "C-12",
+      "story": "E30-S03 #1087",
+      "cite": "`D02`:299"
+    },
+    {
+      "id": "SCR-060/stop-pending-1",
+      "screen": "SCR-060",
+      "state": "stop-pending-1",
+      "trigger": "entry accepted, `sl.attached` not yet true; `SL_ATTACH_FAILED` (`24` §8.8 items 2–3)",
+      "exit": "`sl.attached` true → accepted banner; flattened → the last step, dismissible",
+      "carrier": "the words + the hatch + the glyph; never looks like accepted",
+      "announce": "LR-21: assertive, once on entry; sustained, never re-announced",
+      "look": "T2",
+      "gated": "every new-entry submit",
+      "t2": "T2-21",
+      "r5": "submit — arm-gated",
+      "carve_out": "Flatten now and Set stop by hand stay enabled (LA-34)",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "11"
+      },
+      "twin": "A-1:order live, protective stop pending",
+      "story": "E30-S03 #1087",
+      "cite": "`D02`:300",
+      "announce_parent": "assertive, once per step"
+    },
+    {
+      "id": "SCR-060/stop-pending-4",
+      "screen": "SCR-060",
+      "state": "stop-pending-4",
+      "trigger": "entry accepted, `sl.attached` not yet true; `SL_ATTACH_FAILED` (`24` §8.8 items 2–3)",
+      "exit": "`sl.attached` true → accepted banner; flattened → the last step, dismissible",
+      "carrier": "the words + the hatch + the glyph; never looks like accepted",
+      "announce": "LR-21: assertive, once on entry; sustained, never re-announced",
+      "look": "T2",
+      "gated": "every new-entry submit",
+      "t2": "T2-21",
+      "r5": "submit — arm-gated",
+      "carve_out": "Flatten now and Set stop by hand stay enabled (LA-34)",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "11"
+      },
+      "twin": "A-1:order live, protective stop pending",
+      "story": "E30-S03 #1087",
+      "cite": "`D02`:300",
+      "announce_parent": "assertive, once per step"
+    },
+    {
+      "id": "SCR-060/accepted-vs-pending",
+      "screen": "SCR-060",
+      "state": "accepted-vs-pending",
+      "trigger": "entry accepted, `sl.attached` not yet true; `SL_ATTACH_FAILED` (`24` §8.8 items 2–3)",
+      "exit": "`sl.attached` true → accepted banner; flattened → the last step, dismissible",
+      "carrier": "the words + the hatch + the glyph; never looks like accepted",
+      "announce": "assertive, once per step",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D02",
+        "board": "11"
+      },
+      "twin": "14:accepted",
+      "story": "E30-S01 #1030",
+      "cite": "`D02`:300"
+    },
+    {
+      "id": "SCR-076/live-limit",
+      "screen": "SCR-076",
+      "state": "live-limit",
+      "trigger": "submit on a LIVE limit draft with a settled preview",
+      "exit": "Confirm / Cancel / `Esc` / 0:00",
+      "carrier": "word LIVE, bold, filled dot",
+      "announce": "dialog name + describedby",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.confirmation_shown",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "01"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:166"
+    },
+    {
+      "id": "SCR-076/live-limit-comfortable",
+      "screen": "SCR-076",
+      "state": "live-limit-comfortable",
+      "trigger": "the same at `data-density=\"comfortable\"`",
+      "exit": "as above",
+      "carrier": "as above",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "01"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:167"
+    },
+    {
+      "id": "SCR-076/demo-limit",
+      "screen": "SCR-076",
+      "state": "demo-limit",
+      "trigger": "submit on a DEMO limit draft under policy `always`",
+      "exit": "as above; the checkbox sets the policy",
+      "carrier": "word DEMO, regular, outline dot",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.confirmation_shown",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:168"
+    },
+    {
+      "id": "SCR-076/live-market",
+      "screen": "SCR-076",
+      "state": "live-market",
+      "trigger": "submit on a LIVE market draft",
+      "exit": "as above",
+      "carrier": "the word \"market\", the tag",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.confirmation_shown",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:169"
+    },
+    {
+      "id": "SCR-076/live-conditional",
+      "screen": "SCR-076",
+      "state": "live-conditional",
+      "trigger": "submit on a LIVE conditional draft",
+      "exit": "as above",
+      "carrier": "the Trigger row",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.confirmation_shown",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:170"
+    },
+    {
+      "id": "SCR-076/countdown-10s",
+      "screen": "SCR-076",
+      "state": "countdown-10s",
+      "trigger": "10 s without a key or pointer event",
+      "exit": "any event restarts at 0:20",
+      "carrier": "the number",
+      "announce": "one polite announcement",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:171"
+    },
+    {
+      "id": "SCR-076/countdown-5s",
+      "screen": "SCR-076",
+      "state": "countdown-5s",
+      "trigger": "5 s left",
+      "exit": "as above",
+      "carrier": "the number",
+      "announce": "none (`aria-live=\"off\"`)",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:172"
+    },
+    {
+      "id": "SCR-076/timed-out",
+      "screen": "SCR-076",
+      "state": "timed-out",
+      "trigger": "0:00 reached",
+      "exit": "the next submit",
+      "carrier": "the sentence",
+      "announce": "LR-13: polite, once — `ticket.confirm.timeout.status`; LR-12's 0:00 mark is silent (C-m)",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.confirmation_cancelled",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:173",
+      "announce_parent": "polite (the 0:00 announcement)"
+    },
+    {
+      "id": "SCR-076/cancelled",
+      "screen": "SCR-076",
+      "state": "cancelled",
+      "trigger": "Cancel, `Esc` or the close `×`",
+      "exit": "the next submit",
+      "carrier": "the sentence",
+      "announce": "polite",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.confirmation_cancelled",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:174"
+    },
+    {
+      "id": "SCR-076/confirmed",
+      "screen": "SCR-076",
+      "state": "confirmed",
+      "trigger": "Confirm (`Enter`, `Space` or pointer — each ≥400 ms after open)",
+      "exit": "`202` / rejection → the ticket",
+      "carrier": "the label",
+      "announce": "the ticket's region",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.submitted",
+      "class": "audit",
+      "audit_action": "orders.submit",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:175"
+    },
+    {
+      "id": "SCR-076/dont-ask-demo",
+      "screen": "SCR-076",
+      "state": "dont-ask-demo",
+      "trigger": "the DEMO checkbox checked",
+      "exit": "Confirm / Cancel",
+      "carrier": "the checkbox + caption",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:176"
+    },
+    {
+      "id": "SCR-076/dont-ask-live-disabled",
+      "screen": "SCR-076",
+      "state": "dont-ask-live-disabled",
+      "trigger": "LIVE",
+      "exit": "—",
+      "carrier": "the lock glyph + reason",
+      "announce": "the reason via `aria-describedby`",
+      "look": "T2",
+      "gated": "the don't-ask checkbox",
+      "t2": "T2-22",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:177"
+    },
+    {
+      "id": "SCR-076/preview-stale-refused",
+      "screen": "SCR-076",
+      "state": "preview-stale-refused",
+      "trigger": "submit while `/trade-groups/preview` is in flight",
+      "exit": "the preview answers → the dialog opens on the next press",
+      "carrier": "the submit label",
+      "announce": "one polite announcement",
+      "look": "busy",
+      "gated": "the Confirm",
+      "t2": "T2-13",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "02"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:178"
+    },
+    {
+      "id": "SCR-076/fanout",
+      "screen": "SCR-076",
+      "state": "fanout",
+      "trigger": "submit with a trade-group target (3 of 4 legs would submit)",
+      "exit": "as live-limit",
+      "carrier": "row status words",
+      "announce": "dialog name \"Confirm 3 of 4 legs - BTCUSDT - LIVE - Desk4\"",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.confirmation_shown",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "03"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:179"
+    },
+    {
+      "id": "SCR-076/fanout-all-or-none",
+      "screen": "SCR-076",
+      "state": "fanout-all-or-none",
+      "trigger": "the group's `atomicity: all_or_none`",
+      "exit": "as above",
+      "carrier": "the sentence",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "03"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:180"
+    },
+    {
+      "id": "SCR-076/fanout-narrowed",
+      "screen": "SCR-076",
+      "state": "fanout-narrowed",
+      "trigger": "a group with a read-only member (BQ-4)",
+      "exit": "as above",
+      "carrier": "the T2 row: lock glyph + reason",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "03"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:181"
+    },
+    {
+      "id": "SCR-076/replay",
+      "screen": "SCR-076",
+      "state": "replay",
+      "trigger": "Replay on a held intent (SCR-158) → the fresh preview settled",
+      "exit": "as above; a fresh refusal lands on the held row instead (`SCR-158/replay-previewing`); Discard stays on the banner",
+      "carrier": "the sentence",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "08"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:182"
+    },
+    {
+      "id": "SCR-076/fanout-send-now",
+      "screen": "SCR-076",
+      "state": "fanout-send-now",
+      "trigger": "\"Send 2 of 4 legs now — BUY BTCUSDT limit 64,010.0…\" on the fan-out budget banner (SCR-158) → the fresh preview of the served legs settled",
+      "exit": "as live-limit; `24` §9.4 rule 4 then checks exactly this intent; a fresh refusal lands on the banner row (`SCR-158/send-now-previewing`); the held legs stay queued",
+      "carrier": "the struck rows + the sentence",
+      "announce": "dialog name \"Confirm 2 of 4 legs - BTCUSDT - LIVE - Desk4\"",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "08"
+      },
+      "twin": "A-6",
+      "story": "E30-S04 #1088",
+      "cite": "`D03`:183"
+    },
+    {
+      "id": "SCR-077/open",
+      "screen": "SCR-077",
+      "state": "open",
+      "trigger": "[Details] on an inline rejection (D02 D17)",
+      "exit": "Close / `Esc` / retry",
+      "carrier": "class line + code",
+      "announce": "the drawer `role=\"dialog\"`; the class banner `role=\"alert\"` once",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejection_viewed",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "04"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:219"
+    },
+    {
+      "id": "SCR-077/insufficient-margin",
+      "screen": "SCR-077",
+      "state": "insufficient-margin",
+      "trigger": "`insufficient_balance` 422 / `INSUFFICIENT_MARGIN`",
+      "exit": "as above",
+      "carrier": "class line",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "05"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:220"
+    },
+    {
+      "id": "SCR-077/reduce-only",
+      "screen": "SCR-077",
+      "state": "reduce-only",
+      "trigger": "`REDUCE_ONLY_VIOLATION` 110017",
+      "exit": "as above",
+      "carrier": "class line",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "05"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:221"
+    },
+    {
+      "id": "SCR-077/tick-lot",
+      "screen": "SCR-077",
+      "state": "tick-lot",
+      "trigger": "`tick_size_violation` / `lot_size_violation` 400",
+      "exit": "as above",
+      "carrier": "class line",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "05"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:222"
+    },
+    {
+      "id": "SCR-077/leverage-limit",
+      "screen": "SCR-077",
+      "state": "leverage-limit",
+      "trigger": "`LEVERAGE_ERROR` / preview `leverage_unavailable` / `v.leverage.cap`",
+      "exit": "as above",
+      "carrier": "class line",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "05"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:223"
+    },
+    {
+      "id": "SCR-077/risk-limit-tier",
+      "screen": "SCR-077",
+      "state": "risk-limit-tier",
+      "trigger": "`RISK_LIMIT_EXCEEDED`",
+      "exit": "as above",
+      "carrier": "class line",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "05"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:224"
+    },
+    {
+      "id": "SCR-077/rate-limit",
+      "screen": "SCR-077",
+      "state": "rate-limit",
+      "trigger": "`rate_limited` / `exchange_rate_limited` / `rate_budget_exhausted`",
+      "exit": "as above",
+      "carrier": "class line + countdown",
+      "announce": "as above; countdown off",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "05"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:225"
+    },
+    {
+      "id": "SCR-077/position-mode",
+      "screen": "SCR-077",
+      "state": "position-mode",
+      "trigger": "`POSITION_MODE_MISMATCH`",
+      "exit": "as above",
+      "carrier": "class line",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "05"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:226"
+    },
+    {
+      "id": "SCR-077/post-only-cross",
+      "screen": "SCR-077",
+      "state": "post-only-cross",
+      "trigger": "`v.post_only.cross` (the ticket's own guard)",
+      "exit": "as above",
+      "carrier": "class line",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "05"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:227"
+    },
+    {
+      "id": "SCR-077/stop-missing",
+      "screen": "SCR-077",
+      "state": "stop-missing",
+      "trigger": "`native_stop_required` / `v.sl.side.*`",
+      "exit": "as above",
+      "carrier": "class line",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "05"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:228"
+    },
+    {
+      "id": "SCR-077/record-loading",
+      "screen": "SCR-077",
+      "state": "record-loading",
+      "trigger": "the disclosure pressed (the owner)",
+      "exit": "served / error",
+      "carrier": "the label",
+      "announce": "polite",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "06"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:229"
+    },
+    {
+      "id": "SCR-077/record-served",
+      "screen": "SCR-077",
+      "state": "record-served",
+      "trigger": "diagnostics returned",
+      "exit": "collapse",
+      "carrier": "the quote rule + mono",
+      "announce": "polite (\"Exchange record loaded\")",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejection_payload_expanded",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "06"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:230"
+    },
+    {
+      "id": "SCR-077/record-role-unavailable",
+      "screen": "SCR-077",
+      "state": "record-role-unavailable",
+      "trigger": "a non-owner session",
+      "exit": "—",
+      "carrier": "the sentence",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "06"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:231"
+    },
+    {
+      "id": "SCR-077/audit-link-owner",
+      "screen": "SCR-077",
+      "state": "audit-link-owner",
+      "trigger": "session holds `admin:read`",
+      "exit": "the link",
+      "carrier": "the link",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "06"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:232"
+    },
+    {
+      "id": "SCR-077/audit-link-manager",
+      "screen": "SCR-077",
+      "state": "audit-link-manager",
+      "trigger": "no `admin:read`",
+      "exit": "—",
+      "carrier": "the sentence",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "06"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:233"
+    },
+    {
+      "id": "SCR-077/budget-graph",
+      "screen": "SCR-077",
+      "state": "budget-graph",
+      "trigger": "the transient class",
+      "exit": "—",
+      "carrier": "numbers + the reserve mark",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "06"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:234"
+    },
+    {
+      "id": "SCR-077/copied",
+      "screen": "SCR-077",
+      "state": "copied",
+      "trigger": "Copy correlation id pressed",
+      "exit": "the label returns",
+      "carrier": "the word",
+      "announce": "polite",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "06"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:235"
+    },
+    {
+      "id": "SCR-077/retry-pressed",
+      "screen": "SCR-077",
+      "state": "retry-pressed",
+      "trigger": "a retry-with-fix button",
+      "exit": "the ticket's lifecycle",
+      "carrier": "the highlight",
+      "announce": "the ticket's region",
+      "look": "none",
+      "r5": "n/a",
+      "event": "order.rejection_retried",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "06"
+      },
+      "twin": "A-9",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:236"
+    },
+    {
+      "id": "SCR-158/backend-per-user",
+      "screen": "SCR-158",
+      "state": "backend-per-user",
+      "trigger": "`rate_limited` 429",
+      "exit": "the retry time passes → the submit and Replay enabled (`SCR-158/countdown-expired`)",
+      "carrier": "clock glyph + words; the lock + reason",
+      "announce": "`role=\"status\"`, ≤1 per 10 s",
+      "look": "T2",
+      "gated": "the submit and every Replay before the retry time",
+      "t2": "T2-29",
+      "r5": "submit — arm-gated",
+      "event": "ratelimit.hit",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "07"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:272"
+    },
+    {
+      "id": "SCR-158/exchange-per-uid",
+      "screen": "SCR-158",
+      "state": "exchange-per-uid",
+      "trigger": "`exchange_rate_limited` / `RATE_BUDGET_EXCEEDED`",
+      "exit": "as above",
+      "carrier": "as above",
+      "announce": "as above",
+      "look": "T2",
+      "gated": "the submit and every Replay before the retry time",
+      "t2": "T2-29",
+      "r5": "submit — arm-gated",
+      "carve_out": "cancel, close and stop changes still go through (reserved budget)",
+      "event": "ratelimit.hit",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "07"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:273"
+    },
+    {
+      "id": "SCR-158/fanout-budget",
+      "screen": "SCR-158",
+      "state": "fanout-budget",
+      "trigger": "the pre-send budget check denies",
+      "exit": "Replay all 3 → `SCR-158/replay-previewing` · Send 2 of 4 legs now — BUY BTCUSDT limit 64,010.0… → `SCR-158/send-now-previewing` · Discard",
+      "carrier": "the account names",
+      "announce": "as above",
+      "look": "T2",
+      "gated": "the submit and every Replay before the retry time",
+      "t2": "T2-29",
+      "r5": "submit — arm-gated",
+      "carve_out": "cancel, close and stop changes still go through (reserved budget)",
+      "event": "ratelimit.hit",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "07"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:274"
+    },
+    {
+      "id": "SCR-158/link-owner",
+      "screen": "SCR-158",
+      "state": "link-owner",
+      "trigger": "session holds `admin:read`",
+      "exit": "the link",
+      "carrier": "the link",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "07"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:275"
+    },
+    {
+      "id": "SCR-158/link-manager",
+      "screen": "SCR-158",
+      "state": "link-manager",
+      "trigger": "no `admin:read`",
+      "exit": "—",
+      "carrier": "the sentence",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "07"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:276"
+    },
+    {
+      "id": "SCR-158/held-queue",
+      "screen": "SCR-158",
+      "state": "held-queue",
+      "trigger": "≥1 held intent",
+      "exit": "Replay → `SCR-158/replay-previewing`; Discard",
+      "carrier": "the labels",
+      "announce": "none (the countdown announces)",
+      "look": "T2",
+      "gated": "every Replay before the retry time",
+      "t2": "T2-29",
+      "r5": "n/a",
+      "event": "order.blocked_ratelimited",
+      "class": "analytics",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "08"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:277"
+    },
+    {
+      "id": "SCR-158/replay-previewing",
+      "screen": "SCR-158",
+      "state": "replay-previewing",
+      "trigger": "Replay pressed on a held intent (after the retry time)",
+      "exit": "the fresh preview settled → `SCR-076/replay`; a refusal → the `refusal.*` word on the row",
+      "carrier": "the label",
+      "announce": "one polite announcement",
+      "look": "busy",
+      "gated": "the Replay",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "08"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:278"
+    },
+    {
+      "id": "SCR-158/send-now-previewing",
+      "screen": "SCR-158",
+      "state": "send-now-previewing",
+      "trigger": "\"Send 2 of 4 legs now — BUY BTCUSDT limit 64,010.0…\" pressed on the fan-out banner",
+      "exit": "the fresh preview settled → `SCR-076/fanout-send-now`; a refusal → the `refusal.*` word on the row",
+      "carrier": "the label",
+      "announce": "one polite announcement",
+      "look": "busy",
+      "gated": "the send-now button",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "08"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:279"
+    },
+    {
+      "id": "SCR-158/fanout-served-unserved",
+      "screen": "SCR-158",
+      "state": "fanout-served-unserved",
+      "trigger": "fan-out scope with per-leg `rate_budget_exhausted`",
+      "exit": "as above",
+      "carrier": "the account names",
+      "announce": "as above",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "08"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:280"
+    },
+    {
+      "id": "SCR-158/countdown-expired",
+      "screen": "SCR-158",
+      "state": "countdown-expired",
+      "trigger": "the retry time passed",
+      "exit": "Replay / Discard",
+      "carrier": "the words",
+      "announce": "one polite announcement",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "08"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:281"
+    },
+    {
+      "id": "SCR-158/discarded",
+      "screen": "SCR-158",
+      "state": "discarded",
+      "trigger": "Discard pressed",
+      "exit": "—",
+      "carrier": "the sentence",
+      "announce": "polite",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "08"
+      },
+      "twin": "A-14",
+      "story": "E30-T02 #1032",
+      "cite": "`D03`:282"
+    },
+    {
+      "id": "SCR-114/default-demo",
+      "screen": "SCR-114",
+      "state": "default-demo",
+      "trigger": "the section opens (DEMO set)",
+      "exit": "edit",
+      "carrier": "legends",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "09"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:333"
+    },
+    {
+      "id": "SCR-114/live-option-disabled",
+      "screen": "SCR-114",
+      "state": "live-option-disabled",
+      "trigger": "focus on the LIVE set's `never when armed`",
+      "exit": "—",
+      "carrier": "lock glyph + reason",
+      "announce": "reason via `aria-describedby`",
+      "look": "T2",
+      "gated": "the LIVE never-when-armed option",
+      "t2": "T2-23",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:334"
+    },
+    {
+      "id": "SCR-114/stop-clear-refused",
+      "screen": "SCR-114",
+      "state": "stop-clear-refused",
+      "trigger": "`Delete` / `Backspace` / clear on the default stop",
+      "exit": "edit",
+      "carrier": "the sentence",
+      "announce": "polite, once",
+      "look": "validity",
+      "gated": "the default stop field",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:335"
+    },
+    {
+      "id": "SCR-114/above-ceiling",
+      "screen": "SCR-114",
+      "state": "above-ceiling",
+      "trigger": "default leverage 12x typed against a 10x cap",
+      "exit": "correct the value",
+      "carrier": "the error line",
+      "announce": "polite",
+      "look": "validity",
+      "gated": "Save",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:336"
+    },
+    {
+      "id": "SCR-114/offset-zero",
+      "screen": "SCR-114",
+      "state": "offset-zero",
+      "trigger": "stop offset 0",
+      "exit": "correct",
+      "carrier": "the sentence",
+      "announce": "polite",
+      "look": "validity",
+      "gated": "Save",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:337"
+    },
+    {
+      "id": "SCR-114/preset-below-min",
+      "screen": "SCR-114",
+      "state": "preset-below-min",
+      "trigger": "a preset of 0.0004",
+      "exit": "correct the value",
+      "carrier": "the error line",
+      "announce": "polite",
+      "look": "validity",
+      "gated": "the preset",
+      "t2": "T2-14",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:338"
+    },
+    {
+      "id": "SCR-114/dirty",
+      "screen": "SCR-114",
+      "state": "dirty",
+      "trigger": "any edit",
+      "exit": "Save / Reset",
+      "carrier": "the words",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:339"
+    },
+    {
+      "id": "SCR-114/saving",
+      "screen": "SCR-114",
+      "state": "saving",
+      "trigger": "Save",
+      "exit": "saved / error",
+      "carrier": "the word",
+      "announce": "none",
+      "look": "busy",
+      "gated": "Save",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:340"
+    },
+    {
+      "id": "SCR-114/saved",
+      "screen": "SCR-114",
+      "state": "saved",
+      "trigger": "`200`",
+      "exit": "the next edit",
+      "carrier": "the words + glyph",
+      "announce": "polite",
+      "look": "none",
+      "r5": "n/a",
+      "event": "trading_defaults.changed",
+      "class": "audit",
+      "audit_action": "settings.change",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:341"
+    },
+    {
+      "id": "SCR-114/reset-confirm",
+      "screen": "SCR-114",
+      "state": "reset-confirm",
+      "trigger": "\"Reset DEMO defaults\"",
+      "exit": "Confirm / Cancel",
+      "carrier": "the sentence",
+      "announce": "dialog",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:342"
+    },
+    {
+      "id": "SCR-114/manager-no-live",
+      "screen": "SCR-114",
+      "state": "manager-no-live",
+      "trigger": "a manager without live",
+      "exit": "—",
+      "carrier": "lock glyph + reason",
+      "announce": "none",
+      "look": "T2",
+      "gated": "the LIVE set (one block notice)",
+      "t2": "T2-25",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:343"
+    },
+    {
+      "id": "SCR-114/viewer-read-only",
+      "screen": "SCR-114",
+      "state": "viewer-read-only",
+      "trigger": "a viewer (R-206 opens to V, A9; `settings:write` ∉ the viewer's `22` x-permissions, which `updateSettings` requires)",
+      "exit": "—",
+      "carrier": "the notice: lock + words",
+      "announce": "polite, once per press",
+      "look": "T2",
+      "gated": "every SCR-114 control (one panel notice)",
+      "t2": "T2-26",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:344"
+    },
+    {
+      "id": "SCR-114/sounds",
+      "screen": "SCR-114",
+      "state": "sounds",
+      "trigger": "fieldset 7",
+      "exit": "edit",
+      "carrier": "the words",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "10"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:345"
+    },
+    {
+      "id": "SCR-061/single",
+      "screen": "SCR-061",
+      "state": "single",
+      "trigger": "default",
+      "exit": "open",
+      "carrier": "the label",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "C-11",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:368"
+    },
+    {
+      "id": "SCR-061/list-open",
+      "screen": "SCR-061",
+      "state": "list-open",
+      "trigger": "`Alt+↓` / click",
+      "exit": "`Enter` / `Esc`",
+      "carrier": "`aria-activedescendant`",
+      "announce": "polite results count (debounced)",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "C-11",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:369"
+    },
+    {
+      "id": "SCR-061/group-chosen",
+      "screen": "SCR-061",
+      "state": "group-chosen",
+      "trigger": "a group picked",
+      "exit": "expand",
+      "carrier": "the words",
+      "announce": "polite (\"Target: Group Core3…\")",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "14:ready",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:370"
+    },
+    {
+      "id": "SCR-061/group-expanded",
+      "screen": "SCR-061",
+      "state": "group-expanded",
+      "trigger": "the disclosure opened (Desk4)",
+      "exit": "collapse",
+      "carrier": "row status words",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "14:previewing",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:371"
+    },
+    {
+      "id": "SCR-061/leg-excluded",
+      "screen": "SCR-061",
+      "state": "leg-excluded",
+      "trigger": "Exclude on a row",
+      "exit": "Include",
+      "carrier": "the word",
+      "announce": "polite",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "C-11",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:372"
+    },
+    {
+      "id": "SCR-061/leg-override",
+      "screen": "SCR-061",
+      "state": "leg-override",
+      "trigger": "a per-leg qty typed",
+      "exit": "clear",
+      "carrier": "the flag",
+      "announce": "polite",
+      "look": "none",
+      "r5": "n/a",
+      "event": "tradegroup.row_overridden",
+      "class": "audit",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "14:previewing",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:373"
+    },
+    {
+      "id": "SCR-061/would-be-rejected",
+      "screen": "SCR-061",
+      "state": "would-be-rejected",
+      "trigger": "the preview returns `would_submit: false`",
+      "exit": "fix / exclude",
+      "carrier": "the words + glyph",
+      "announce": "none (the preview answered)",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "14:blocked",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:374"
+    },
+    {
+      "id": "SCR-061/narrowed",
+      "screen": "SCR-061",
+      "state": "narrowed",
+      "trigger": "a read-only member",
+      "exit": "—",
+      "carrier": "lock glyph + reason",
+      "announce": "reason via `aria-describedby`",
+      "look": "T2",
+      "gated": "the read-only member's Include",
+      "t2": "T2-27",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "C-11",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:375"
+    },
+    {
+      "id": "SCR-061/member-disabled",
+      "screen": "SCR-061",
+      "state": "member-disabled",
+      "trigger": "`enabled: false` member",
+      "exit": "—",
+      "carrier": "the words",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "C-11",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:376"
+    },
+    {
+      "id": "SCR-061/stale-wallet-leg",
+      "screen": "SCR-061",
+      "state": "stale-wallet-leg",
+      "trigger": "a leg's wallet snapshot stale",
+      "exit": "the wallet refreshes",
+      "carrier": "the age",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "C-11",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:377"
+    },
+    {
+      "id": "SCR-061/no-groups-owner",
+      "screen": "SCR-061",
+      "state": "no-groups-owner",
+      "trigger": "no definitions",
+      "exit": "—",
+      "carrier": "the sentence",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "C-11",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:378"
+    },
+    {
+      "id": "SCR-061/no-groups-manager",
+      "screen": "SCR-061",
+      "state": "no-groups-manager",
+      "trigger": "none granted",
+      "exit": "—",
+      "carrier": "the sentence",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "C-11",
+      "story": "E30-S06 #1090",
+      "cite": "`D03`:379"
+    },
+    {
+      "id": "SCR-114/templates-list",
+      "screen": "SCR-114",
+      "state": "templates-list",
+      "trigger": "the list opens",
+      "exit": "Apply / menu",
+      "carrier": "the summaries",
+      "announce": "none",
+      "look": "T2",
+      "gated": "the disabled template's Apply",
+      "t2": "T2-28",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "11"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:389"
+    },
+    {
+      "id": "SCR-114/templates-empty",
+      "screen": "SCR-114",
+      "state": "templates-empty",
+      "trigger": "no template",
+      "exit": "Save",
+      "carrier": "the sentence",
+      "announce": "none",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "11"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:390"
+    },
+    {
+      "id": "SCR-114/template-save-as",
+      "screen": "SCR-114",
+      "state": "template-save-as",
+      "trigger": "Save current as…",
+      "exit": "Save / Cancel",
+      "carrier": "the summary",
+      "announce": "dialog",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "11"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:391"
+    },
+    {
+      "id": "SCR-114/template-apply",
+      "screen": "SCR-114",
+      "state": "template-apply",
+      "trigger": "Apply on \"swing short\" (0.100)",
+      "exit": "edit",
+      "carrier": "the status",
+      "announce": "polite",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "11"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:392"
+    },
+    {
+      "id": "SCR-114/template-menu",
+      "screen": "SCR-114",
+      "state": "template-menu",
+      "trigger": "the overflow menu",
+      "exit": "`Esc`",
+      "carrier": "the hint",
+      "announce": "menu",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "11"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:393"
+    },
+    {
+      "id": "SCR-114/template-disabled",
+      "screen": "SCR-114",
+      "state": "template-disabled",
+      "trigger": "a template invalid for context",
+      "exit": "—",
+      "carrier": "lock + reason",
+      "announce": "none",
+      "look": "T2",
+      "gated": "the template's Apply",
+      "t2": "T2-28",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": {
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "11"
+      },
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "cite": "`D03`:394"
+    },
+    {
+      "id": "SCR-060/view-as",
+      "screen": "SCR-060",
+      "state": "view-as",
+      "trigger": "an active view-as context (`GET /auth/session/view-as`)",
+      "exit": "the context ends",
+      "carrier": "the lock + the reason `ticket.order.rbac.view_as` on every gated control",
+      "announce": "LR-10 (a press on a T2 control: the reason, polite, once)",
+      "look": "T2",
+      "gated": "every write control except the C-2.6 carve-out",
+      "t2": "T2-01",
+      "r5": "carve-out — never arm-gated",
+      "carve_out": "cancels, Close position…, Flatten now and Set stop by hand (attaching a missing stop or tightening one) stay enabled; the write runs and is audited as the viewer; the owner's loosened stop is arm-gated, not carve-out",
+      "event": "positions.flatten / orders.cancel / sl.attached / sl.modified",
+      "class": "audit",
+      "frame": "owed (PR 3)",
+      "twin": "C-13",
+      "story": "E30-S01 #1030",
+      "lifted": true,
+      "cite": "F-01 (`D05`:486; `D04`:220, :226 as merged by #5100); `22`:299–331"
+    },
+    {
+      "id": "SCR-060/view-as-held",
+      "screen": "SCR-060",
+      "state": "view-as-held",
+      "trigger": "the view-as context expired or held",
+      "exit": "the context is released",
+      "carrier": "the T4 line at the point of action",
+      "announce": "the T4 refusal at the point of action (E09-D09 step 2)",
+      "look": "T4",
+      "gated": "every other control (server refusal `view_as_expired`)",
+      "r5": "carve-out — never arm-gated",
+      "carve_out": "cancels, Close position…, Flatten now and Set stop by hand stay enabled in the viewer's own scope",
+      "event": "positions.flatten / orders.cancel / sl.attached / sl.modified",
+      "class": "audit",
+      "frame": "owed (PR 3)",
+      "twin": "C-13",
+      "story": "E30-S01 #1030",
+      "lifted": true,
+      "cite": "F-01; `22`:325, :337–345"
+    },
+    {
+      "id": "SCR-060/defaults-unavailable",
+      "screen": "SCR-060",
+      "state": "defaults-unavailable",
+      "trigger": "`getSettings` fails at ticket open",
+      "exit": "the next open with defaults read",
+      "carrier": "the sentence",
+      "announce": "LR-30 `ticket.order.defaults.unavailable`, polite, once per open",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": "owed (PR 3)",
+      "twin": "C-13",
+      "story": "E30-S07 #1091",
+      "lifted": true,
+      "cite": "F-04, SD-02 (`D05`:350)"
+    },
+    {
+      "id": "SCR-060/profile-unavailable",
+      "screen": "SCR-060",
+      "state": "profile-unavailable",
+      "trigger": "the profile cannot be read either",
+      "exit": "the profile is read",
+      "carrier": "the lock + the reason node",
+      "announce": "LR-10 `ticket.order.profile.unavailable` (the submit's reason node)",
+      "look": "T2",
+      "gated": "the submit",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": "owed (PR 3)",
+      "twin": "C-13",
+      "story": "E30-S07 #1091",
+      "lifted": true,
+      "cite": "G-02, SD-02 (`D05`:350)"
+    },
+    {
+      "id": "SCR-060/default-above-cap",
+      "screen": "SCR-060",
+      "state": "default-above-cap",
+      "trigger": "a saved default above a since-narrowed cap, at ticket open",
+      "exit": "the field corrected",
+      "carrier": "`aria-invalid`, the 2 px danger boundary, the glyph, the words",
+      "announce": "LR-31, polite, once per open",
+      "look": "validity",
+      "gated": "the submit",
+      "t2": "T2-18",
+      "r5": "submit — arm-gated",
+      "event": null,
+      "class": "none",
+      "frame": "owed (PR 3)",
+      "twin": "C-13",
+      "story": "E30-S07 #1091",
+      "lifted": true,
+      "cite": "F-05, SD-03 (`D05`:351)"
+    },
+    {
+      "id": "SCR-114/loading",
+      "screen": "SCR-114",
+      "state": "loading",
+      "trigger": "`getSettings` in flight",
+      "exit": "the read answers",
+      "carrier": "`aria-busy`",
+      "announce": "none (`aria-busy`)",
+      "look": "busy",
+      "gated": "every field",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": "owed (PR 3)",
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "lifted": true,
+      "cite": "F-03, SD-01 (`D05`:349)"
+    },
+    {
+      "id": "SCR-114/load-error",
+      "screen": "SCR-114",
+      "state": "load-error",
+      "trigger": "`getSettings` answers 503 or fails",
+      "exit": "Retry succeeds",
+      "carrier": "the CMP-027 inline error with Retry; every field read-only",
+      "announce": "LR-28 `ticket.defaults.load_error`, polite, once per load",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": "owed (PR 3)",
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "lifted": true,
+      "cite": "F-03, SD-01 (`D05`:349)"
+    },
+    {
+      "id": "SCR-114/save-failed",
+      "screen": "SCR-114",
+      "state": "save-failed",
+      "trigger": "`updateSettings` fails",
+      "exit": "a save succeeds",
+      "carrier": "the sentence; inputs kept",
+      "announce": "LR-29 `ticket.defaults.save_failed`, assertive, once per press",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": "owed (PR 3)",
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "lifted": true,
+      "cite": "F-03, SD-01 (`D05`:349)"
+    },
+    {
+      "id": "SCR-114/ceiling-unconfirmed",
+      "screen": "SCR-114",
+      "state": "ceiling-unconfirmed",
+      "trigger": "a ceiling the client cannot confirm",
+      "exit": "the ceiling is read",
+      "carrier": "the age (\"as of {hh:mm} UTC\") or the words",
+      "announce": "none (read with the field: `ticket.defaults.limit.unavailable`)",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": "owed (PR 3)",
+      "twin": "A-11",
+      "story": "E30-S07 #1091",
+      "lifted": true,
+      "cite": "F-07, SD-04 (`D05`:352)"
+    },
+    {
+      "id": "SCR-077/placement",
+      "screen": "SCR-077",
+      "state": "placement",
+      "trigger": "the drawer opens beside a focused ticket control",
+      "exit": "the drawer closes",
+      "carrier": "placement (F-02 verbatim: the drawer never covers the ticket's focused control: at 1280 × 800, and at 200 %, it docks on the side away from the ticket column or pushes the workspace; while it is open, focus that enters the ticket is never under it)",
+      "announce": "none (LR-26 on open, unchanged)",
+      "look": "none",
+      "r5": "n/a",
+      "event": null,
+      "class": "none",
+      "frame": "owed (PR 3)",
+      "twin": "C-14",
+      "story": "E30-T02 #1032",
+      "lifted": true,
+      "cite": "F-02 (`D05`:487)"
+    },
+    {
+      "id": "CMP-100:default",
+      "component": "CMP-100",
+      "state": "default",
+      "look": "none",
+      "frame": {
+        "name": "CMP-100/default",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-100:default",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-100 States"
+    },
+    {
+      "id": "CMP-100:focus",
+      "component": "CMP-100",
+      "state": "focus",
+      "look": "none",
+      "frame": {
+        "name": "CMP-100/focus",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-100:focus",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-100 States"
+    },
+    {
+      "id": "CMP-100:invalid-tick",
+      "component": "CMP-100",
+      "state": "invalid-tick",
+      "look": "validity",
+      "frame": {
+        "name": "CMP-100/invalid-tick",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-100:invalid-tick",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-100 States"
+    },
+    {
+      "id": "CMP-100:invalid",
+      "component": "CMP-100",
+      "state": "invalid",
+      "look": "validity",
+      "frame": {
+        "name": "CMP-100/invalid",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-100:invalid",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-100 States"
+    },
+    {
+      "id": "CMP-100:stale-helpers",
+      "component": "CMP-100",
+      "state": "stale-helpers",
+      "look": "none",
+      "frame": {
+        "name": "CMP-100/stale-helpers",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-100:stale-helpers",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-100 States"
+    },
+    {
+      "id": "CMP-100:read-only",
+      "component": "CMP-100",
+      "state": "read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-100/read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-100:read-only",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-100 States"
+    },
+    {
+      "id": "CMP-101:default",
+      "component": "CMP-101",
+      "state": "default",
+      "look": "none",
+      "frame": {
+        "name": "CMP-101/default",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-101:default",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-101 States"
+    },
+    {
+      "id": "CMP-101:focus",
+      "component": "CMP-101",
+      "state": "focus",
+      "look": "none",
+      "frame": {
+        "name": "CMP-101/focus",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-101:focus",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-101 States"
+    },
+    {
+      "id": "CMP-101:below-min-qty",
+      "component": "CMP-101",
+      "state": "below-min-qty",
+      "look": "validity",
+      "frame": {
+        "name": "CMP-101/below-min-qty",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-101:below-min-qty",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-101 States"
+    },
+    {
+      "id": "CMP-101:below-min-notional",
+      "component": "CMP-101",
+      "state": "below-min-notional",
+      "look": "validity",
+      "frame": {
+        "name": "CMP-101/below-min-notional",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-101:below-min-notional",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-101 States"
+    },
+    {
+      "id": "CMP-101:stale-wallet",
+      "component": "CMP-101",
+      "state": "stale-wallet",
+      "look": "none",
+      "frame": {
+        "name": "CMP-101/stale-wallet-units",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-101:stale-wallet",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-101 States"
+    },
+    {
+      "id": "CMP-101:preview-in-flight",
+      "component": "CMP-101",
+      "state": "preview-in-flight",
+      "look": "busy",
+      "frame": {
+        "name": "CMP-101/preview-in-flight",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-101:preview-in-flight",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-101 States"
+    },
+    {
+      "id": "CMP-101:server-size-replaced",
+      "component": "CMP-101",
+      "state": "server-size-replaced",
+      "look": "none",
+      "frame": {
+        "name": "CMP-101/server-size-highlight",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-101:server-size-replaced",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-101 States"
+    },
+    {
+      "id": "CMP-101:read-only",
+      "component": "CMP-101",
+      "state": "read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-101/read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-101:read-only",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-101 States"
+    },
+    {
+      "id": "CMP-102:default",
+      "component": "CMP-102",
+      "state": "default",
+      "look": "none",
+      "frame": {
+        "name": "CMP-102/default",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-102:default",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-102 States"
+    },
+    {
+      "id": "CMP-102:hover",
+      "component": "CMP-102",
+      "state": "hover",
+      "look": "none",
+      "frame": {
+        "name": "CMP-102/hover",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-102:hover",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-102 States"
+    },
+    {
+      "id": "CMP-102:focus-visible",
+      "component": "CMP-102",
+      "state": "focus-visible",
+      "look": "none",
+      "frame": {
+        "name": "CMP-102/focus-double-ring",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-102:focus-visible",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-102 States"
+    },
+    {
+      "id": "CMP-102:pressed",
+      "component": "CMP-102",
+      "state": "pressed",
+      "look": "none",
+      "frame": {
+        "name": "CMP-102/pressed",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-102:pressed",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-102 States"
+    },
+    {
+      "id": "CMP-102:read-only",
+      "component": "CMP-102",
+      "state": "read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-102/read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-102:read-only",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-102 States"
+    },
+    {
+      "id": "CMP-103:default",
+      "component": "CMP-103",
+      "state": "default",
+      "look": "none",
+      "frame": {
+        "name": "CMP-103/default",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-103:default",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-103 States"
+    },
+    {
+      "id": "CMP-103:selected",
+      "component": "CMP-103",
+      "state": "selected",
+      "look": "none",
+      "frame": {
+        "name": "CMP-103/selected",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-103:selected",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-103 States"
+    },
+    {
+      "id": "CMP-103:hover",
+      "component": "CMP-103",
+      "state": "hover",
+      "look": "none",
+      "frame": {
+        "name": "CMP-103/hover",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-103:hover",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-103 States"
+    },
+    {
+      "id": "CMP-103:focus-visible",
+      "component": "CMP-103",
+      "state": "focus-visible",
+      "look": "none",
+      "frame": {
+        "name": "CMP-103/focus",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-103:focus-visible",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-103 States"
+    },
+    {
+      "id": "CMP-103:emulated-unavailable",
+      "component": "CMP-103",
+      "state": "emulated-unavailable",
+      "look": "validity",
+      "frame": {
+        "name": "CMP-103/emulated-validity",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-103:emulated-unavailable",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-103 States"
+    },
+    {
+      "id": "CMP-103:read-only",
+      "component": "CMP-103",
+      "state": "read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-103/read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-103:read-only",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-103 States"
+    },
+    {
+      "id": "CMP-105:default",
+      "component": "CMP-105",
+      "state": "default",
+      "look": "none",
+      "frame": {
+        "name": "SCR-061/single",
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "15:CMP-105:default",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-105 States"
+    },
+    {
+      "id": "CMP-105:selected row",
+      "component": "CMP-105",
+      "state": "selected row",
+      "look": "none",
+      "frame": {
+        "name": "SCR-061/list-open",
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "15:CMP-105:selected row",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-105 States"
+    },
+    {
+      "id": "CMP-105:hover",
+      "component": "CMP-105",
+      "state": "hover",
+      "look": "none",
+      "frame": {
+        "name": "SCR-061/list-open",
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "15:CMP-105:hover",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-105 States"
+    },
+    {
+      "id": "CMP-105:focus-visible",
+      "component": "CMP-105",
+      "state": "focus-visible",
+      "look": "none",
+      "frame": {
+        "name": "SCR-061/list-open",
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "15:CMP-105:focus-visible",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-105 States"
+    },
+    {
+      "id": "CMP-105:at-cap",
+      "component": "CMP-105",
+      "state": "at-cap",
+      "look": "none",
+      "frame": "C-15",
+      "twin": "15:CMP-105:at-cap",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-105 States"
+    },
+    {
+      "id": "CMP-105:narrowed",
+      "component": "CMP-105",
+      "state": "narrowed",
+      "look": "none",
+      "frame": {
+        "name": "SCR-061/narrowed",
+        "page": "E30-D03 Confirmation, rejection, defaults and selector",
+        "board": "12"
+      },
+      "twin": "15:CMP-105:narrowed",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-105 States"
+    },
+    {
+      "id": "CMP-105:read-only-member",
+      "component": "CMP-105",
+      "state": "read-only-member",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-105/read-only-member-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-105:read-only-member",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-105 States"
+    },
+    {
+      "id": "CMP-105:view-as read-only",
+      "component": "CMP-105",
+      "state": "view-as read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-105/view-as-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-105:view-as read-only",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-105 States"
+    },
+    {
+      "id": "CMP-105:disclosure open / closed",
+      "component": "CMP-105",
+      "state": "disclosure open / closed",
+      "look": "none",
+      "frame": {
+        "name": "CMP-105/disclosure-open",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-105:disclosure open / closed",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-105 States"
+    },
+    {
+      "id": "CMP-107:idle",
+      "component": "CMP-107",
+      "state": "idle",
+      "look": "none",
+      "frame": {
+        "name": "CMP-107/submit-idle",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:idle",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:validating",
+      "component": "CMP-107",
+      "state": "validating",
+      "look": "none",
+      "frame": {
+        "name": "CMP-107/validating",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:validating",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:submitting",
+      "component": "CMP-107",
+      "state": "submitting",
+      "look": "busy",
+      "frame": {
+        "name": "CMP-107/submitting",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:submitting",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:awaiting_confirmation",
+      "component": "CMP-107",
+      "state": "awaiting_confirmation",
+      "look": "none",
+      "frame": {
+        "name": "CMP-107/awaiting-confirmation",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:awaiting_confirmation",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:submitted-ack",
+      "component": "CMP-107",
+      "state": "submitted-ack",
+      "look": "none",
+      "frame": {
+        "name": "CMP-107/accepted",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:submitted-ack",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:partially_filled",
+      "component": "CMP-107",
+      "state": "partially_filled",
+      "look": "none",
+      "frame": {
+        "name": "CMP-107/partially-filled",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:partially_filled",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:rejected",
+      "component": "CMP-107",
+      "state": "rejected",
+      "look": "none",
+      "frame": {
+        "name": "CMP-107/rejected-correctable",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:rejected",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:rate-limited",
+      "component": "CMP-107",
+      "state": "rate-limited",
+      "look": "none",
+      "frame": {
+        "name": "CMP-107/rejected-transient",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:rate-limited",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:protective_stop_pending",
+      "component": "CMP-107",
+      "state": "protective_stop_pending",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/protective-stop-pending-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:protective_stop_pending",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:blocked_by_profile",
+      "component": "CMP-107",
+      "state": "blocked_by_profile",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/blocked-by-profile-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:blocked_by_profile",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:blocked_by_lockout",
+      "component": "CMP-107",
+      "state": "blocked_by_lockout",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/blocked-by-lockout-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:blocked_by_lockout",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:frozen",
+      "component": "CMP-107",
+      "state": "frozen",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/frozen-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:frozen",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:disconnected",
+      "component": "CMP-107",
+      "state": "disconnected",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/disconnected-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:disconnected",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:viewer_read_only",
+      "component": "CMP-107",
+      "state": "viewer_read_only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/viewer-read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:viewer_read_only",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:account_read_only",
+      "component": "CMP-107",
+      "state": "account_read_only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/account-read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:account_read_only",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:live_not_enabled",
+      "component": "CMP-107",
+      "state": "live_not_enabled",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/live-not-enabled-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:live_not_enabled",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:live_locked",
+      "component": "CMP-107",
+      "state": "live_locked",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/live-locked-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:live_locked",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:locked",
+      "component": "CMP-107",
+      "state": "locked",
+      "look": "none",
+      "frame": {
+        "name": "CMP-107/locked",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:locked",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:armed",
+      "component": "CMP-107",
+      "state": "armed",
+      "look": "none",
+      "frame": {
+        "name": "CMP-107/armed",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:armed",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-107:unknown",
+      "component": "CMP-107",
+      "state": "unknown",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-107/unknown-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-107:unknown",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-107 States"
+    },
+    {
+      "id": "CMP-119:default",
+      "component": "CMP-119",
+      "state": "default",
+      "look": "none",
+      "frame": {
+        "name": "CMP-119/typed-stop",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-119:default",
+      "story": "E30-S03 #1087",
+      "cite": "`15` CMP-119 States"
+    },
+    {
+      "id": "CMP-119:focus",
+      "component": "CMP-119",
+      "state": "focus",
+      "look": "none",
+      "frame": {
+        "name": "CMP-119/focus",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-119:focus",
+      "story": "E30-S03 #1087",
+      "cite": "`15` CMP-119 States"
+    },
+    {
+      "id": "CMP-119:rounded-away",
+      "component": "CMP-119",
+      "state": "rounded-away",
+      "look": "none",
+      "frame": {
+        "name": "CMP-119/rounded-away",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-119:rounded-away",
+      "story": "E30-S03 #1087",
+      "cite": "`15` CMP-119 States"
+    },
+    {
+      "id": "CMP-119:wrong-side or empty stop",
+      "component": "CMP-119",
+      "state": "wrong-side or empty stop",
+      "look": "validity",
+      "frame": {
+        "name": "CMP-119/empty-stop",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-119:wrong-side or empty stop",
+      "story": "E30-S03 #1087",
+      "cite": "`15` CMP-119 States"
+    },
+    {
+      "id": "CMP-119:TP on / off",
+      "component": "CMP-119",
+      "state": "TP on / off",
+      "look": "none",
+      "frame": {
+        "name": "CMP-119/tp-on",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-119:TP on / off",
+      "story": "E30-S03 #1087",
+      "cite": "`15` CMP-119 States"
+    },
+    {
+      "id": "CMP-119:reduce-only-collapsed",
+      "component": "CMP-119",
+      "state": "reduce-only-collapsed",
+      "look": "none",
+      "frame": {
+        "name": "CMP-119/reduce-only-collapsed",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-119:reduce-only-collapsed",
+      "story": "E30-S03 #1087",
+      "cite": "`15` CMP-119 States"
+    },
+    {
+      "id": "CMP-119:read-only",
+      "component": "CMP-119",
+      "state": "read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-119/read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-119:read-only",
+      "story": "E30-S03 #1087",
+      "cite": "`15` CMP-119 States"
+    },
+    {
+      "id": "CMP-121:default",
+      "component": "CMP-121",
+      "state": "default",
+      "look": "none",
+      "frame": {
+        "name": "CMP-121/default",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-121:default",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-121 States"
+    },
+    {
+      "id": "CMP-121:computing",
+      "component": "CMP-121",
+      "state": "computing",
+      "look": "busy",
+      "frame": {
+        "name": "CMP-121/default",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-121:computing",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-121 States"
+    },
+    {
+      "id": "CMP-121:value-changed",
+      "component": "CMP-121",
+      "state": "value-changed",
+      "look": "none",
+      "frame": {
+        "name": "CMP-121/highlight-0ms",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-121:value-changed",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-121 States"
+    },
+    {
+      "id": "CMP-121:provisional",
+      "component": "CMP-121",
+      "state": "provisional",
+      "look": "busy",
+      "frame": {
+        "name": "CMP-121/provisional",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-121:provisional",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-121 States"
+    },
+    {
+      "id": "CMP-121:stale-wallet",
+      "component": "CMP-121",
+      "state": "stale-wallet",
+      "look": "none",
+      "frame": {
+        "name": "CMP-121/stale-wallet",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-121:stale-wallet",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-121 States"
+    },
+    {
+      "id": "CMP-121:zero-stop-distance",
+      "component": "CMP-121",
+      "state": "zero-stop-distance",
+      "look": "validity",
+      "frame": {
+        "name": "CMP-121/zero-stop-distance",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-121:zero-stop-distance",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-121 States"
+    },
+    {
+      "id": "CMP-121:read-only",
+      "component": "CMP-121",
+      "state": "read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-121/apply-read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-121:read-only",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-121 States"
+    },
+    {
+      "id": "CMP-122:default",
+      "component": "CMP-122",
+      "state": "default",
+      "look": "none",
+      "frame": {
+        "name": "CMP-122/default",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-122:default",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-122 States"
+    },
+    {
+      "id": "CMP-122:active",
+      "component": "CMP-122",
+      "state": "active",
+      "look": "none",
+      "frame": {
+        "name": "CMP-122/active-derived",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-122:active",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-122 States"
+    },
+    {
+      "id": "CMP-122:hover",
+      "component": "CMP-122",
+      "state": "hover",
+      "look": "none",
+      "frame": {
+        "name": "CMP-122/hover",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-122:hover",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-122 States"
+    },
+    {
+      "id": "CMP-122:focus-visible",
+      "component": "CMP-122",
+      "state": "focus-visible",
+      "look": "none",
+      "frame": {
+        "name": "CMP-122/focus",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-122:focus-visible",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-122 States"
+    },
+    {
+      "id": "CMP-122:below-minimum",
+      "component": "CMP-122",
+      "state": "below-minimum",
+      "look": "validity",
+      "frame": {
+        "name": "CMP-122/below-minimum-validity",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-122:below-minimum",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-122 States"
+    },
+    {
+      "id": "CMP-122:read-only",
+      "component": "CMP-122",
+      "state": "read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-122/read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-122:read-only",
+      "story": "E30-S02 #1031",
+      "cite": "`15` CMP-122 States"
+    },
+    {
+      "id": "CMP-130:default",
+      "component": "CMP-130",
+      "state": "default",
+      "look": "none",
+      "frame": {
+        "name": "CMP-130/low",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-130:default",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-130 States"
+    },
+    {
+      "id": "CMP-130:badge hover / focus-visible / tooltip-open",
+      "component": "CMP-130",
+      "state": "badge hover / focus-visible / tooltip-open",
+      "look": "none",
+      "frame": {
+        "name": "CMP-130/tooltip-open",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-130:badge hover / focus-visible / tooltip-open",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-130 States"
+    },
+    {
+      "id": "CMP-130:stale-book",
+      "component": "CMP-130",
+      "state": "stale-book",
+      "look": "none",
+      "frame": {
+        "name": "CMP-130/stale-book",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-130:stale-book",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-130 States"
+    },
+    {
+      "id": "CMP-130:absent",
+      "component": "CMP-130",
+      "state": "absent",
+      "look": "none",
+      "frame": {
+        "name": "CMP-130/absent",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-130:absent",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-130 States"
+    },
+    {
+      "id": "CMP-139:matched",
+      "component": "CMP-139",
+      "state": "matched",
+      "look": "none",
+      "frame": {
+        "name": "CMP-139/matched",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-139:matched",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-139 States"
+    },
+    {
+      "id": "CMP-139:mismatched",
+      "component": "CMP-139",
+      "state": "mismatched",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-139/mismatched-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-139:mismatched",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-139 States"
+    },
+    {
+      "id": "CMP-139:unseen-account",
+      "component": "CMP-139",
+      "state": "unseen-account",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-139/unseen-account-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-139:unseen-account",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-139 States"
+    },
+    {
+      "id": "CMP-158:default only",
+      "component": "CMP-158",
+      "state": "default only",
+      "look": "none",
+      "frame": {
+        "name": "CMP-158/default",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-158:default only",
+      "story": "E30-S03 #1087",
+      "cite": "`15` CMP-158 States"
+    },
+    {
+      "id": "CMP-229:LOCKED",
+      "component": "CMP-229",
+      "state": "LOCKED",
+      "look": "none",
+      "frame": {
+        "name": "CMP-229/locked",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-229:LOCKED",
+      "story": "E30-S04 #1088",
+      "cite": "`15` CMP-229 States"
+    },
+    {
+      "id": "CMP-229:ARMED",
+      "component": "CMP-229",
+      "state": "ARMED",
+      "look": "none",
+      "frame": {
+        "name": "CMP-229/armed",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-229:ARMED",
+      "story": "E30-S04 #1088",
+      "cite": "`15` CMP-229 States"
+    },
+    {
+      "id": "CMP-229:PAUSED",
+      "component": "CMP-229",
+      "state": "PAUSED",
+      "look": "none",
+      "frame": {
+        "name": "CMP-229/paused-compact",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-229:PAUSED",
+      "story": "E30-S04 #1088",
+      "cite": "`15` CMP-229 States"
+    },
+    {
+      "id": "CMP-229:UNKNOWN",
+      "component": "CMP-229",
+      "state": "UNKNOWN",
+      "look": "none",
+      "frame": {
+        "name": "CMP-229/unknown",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-229:UNKNOWN",
+      "story": "E30-S04 #1088",
+      "cite": "`15` CMP-229 States"
+    },
+    {
+      "id": "CMP-229:EXPIRING",
+      "component": "CMP-229",
+      "state": "EXPIRING",
+      "look": "none",
+      "frame": {
+        "name": "CMP-229/expiring",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-229:EXPIRING",
+      "story": "E30-S04 #1088",
+      "cite": "`15` CMP-229 States"
+    },
+    {
+      "id": "CMP-229:RETURN",
+      "component": "CMP-229",
+      "state": "RETURN",
+      "look": "none",
+      "frame": {
+        "name": "CMP-229/returned",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-229:RETURN",
+      "story": "E30-S04 #1088",
+      "cite": "`15` CMP-229 States"
+    },
+    {
+      "id": "CMP-229:read-only",
+      "component": "CMP-229",
+      "state": "read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-229/read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-229:read-only",
+      "story": "E30-S04 #1088",
+      "cite": "`15` CMP-229 States"
+    },
+    {
+      "id": "CMP-231:closed",
+      "component": "CMP-231",
+      "state": "closed",
+      "look": "none",
+      "frame": {
+        "name": "CMP-231/closed",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-231:closed",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-231 States"
+    },
+    {
+      "id": "CMP-231:open",
+      "component": "CMP-231",
+      "state": "open",
+      "look": "none",
+      "frame": {
+        "name": "CMP-231/open",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-231:open",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-231 States"
+    },
+    {
+      "id": "CMP-231:option-focused",
+      "component": "CMP-231",
+      "state": "option-focused",
+      "look": "none",
+      "frame": {
+        "name": "CMP-231/option-focused",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-231:option-focused",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-231 States"
+    },
+    {
+      "id": "CMP-231:unavailable-option",
+      "component": "CMP-231",
+      "state": "unavailable-option",
+      "look": "validity",
+      "frame": {
+        "name": "CMP-231/unavailable-validity",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-231:unavailable-option",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-231 States"
+    },
+    {
+      "id": "CMP-231:read-only",
+      "component": "CMP-231",
+      "state": "read-only",
+      "look": "T2",
+      "frame": {
+        "name": "CMP-231/read-only-t2",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-231:read-only",
+      "story": "E30-S01 #1030",
+      "cite": "`15` CMP-231 States"
+    },
+    {
+      "id": "CMP-232:none-binding",
+      "component": "CMP-232",
+      "state": "none-binding",
+      "look": "none",
+      "frame": {
+        "name": "CMP-232/none-binding",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-232:none-binding",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-232 States"
+    },
+    {
+      "id": "CMP-232:binding",
+      "component": "CMP-232",
+      "state": "binding",
+      "look": "none",
+      "frame": {
+        "name": "CMP-232/binding",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-232:binding",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-232 States"
+    },
+    {
+      "id": "CMP-232:changed",
+      "component": "CMP-232",
+      "state": "changed",
+      "look": "none",
+      "frame": {
+        "name": "CMP-232/binding-changed",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-232:changed",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-232 States"
+    },
+    {
+      "id": "CMP-232:disclosure open / closed",
+      "component": "CMP-232",
+      "state": "disclosure open / closed",
+      "look": "none",
+      "frame": {
+        "name": "CMP-232/disclosure-open",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-232:disclosure open / closed",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-232 States"
+    },
+    {
+      "id": "CMP-232:stale",
+      "component": "CMP-232",
+      "state": "stale",
+      "look": "none",
+      "frame": {
+        "name": "CMP-232/stale-limit",
+        "page": "E30-D04 Trading ticket DS and motion"
+      },
+      "twin": "15:CMP-232:stale",
+      "story": "E30-S06 #1090",
+      "cite": "`15` CMP-232 States"
+    }
+  ]
+}
