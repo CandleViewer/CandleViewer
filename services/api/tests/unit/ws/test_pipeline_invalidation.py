@@ -362,7 +362,8 @@ async def test_a_snapshot_that_raises_after_a_narrowing_is_contained_to_its_topi
 
         monkeypatch.setattr(rig.source, "build", raises)
         rig.grants = _grants(ACC_A)
-        await rig.registry.grants_changed(USER)
+        with capture_logs() as logs:
+            await rig.registry.grants_changed(USER)
         monkeypatch.setattr(rig.source, "build", build)
         rig.clock.now += 1.0  # the drain's retry pass is due, if it had parked the snapshot
         ends = [await sock.next(3) for sock in socks]
@@ -379,6 +380,14 @@ async def test_a_snapshot_that_raises_after_a_narrowing_is_contained_to_its_topi
         assert [(f["meta"]["reason"], f["p"]["positions"]) for f in snaps] == [
             ("backpressure", [_row(ACC_A)])
         ] * 2
+    # contained as the hub contains it: one `ws snapshot failed` a connection, never the error's
+    # text (the deleted flag-off case pinned these; the code read on #5081)
+    failed = [e for e in logs if e["event"] == "ws snapshot failed"]
+    level = "error" if family == "orders" else "warning"
+    assert [(e["family"], e["error"], e["log_level"]) for e in failed] == [
+        (family, "RuntimeError", level)
+    ] * 2
+    assert _MARK not in str(logs)
 
 
 @pytest.mark.parametrize(("failing", "level"), [("orders", "error"), ("positions", "warning")])
