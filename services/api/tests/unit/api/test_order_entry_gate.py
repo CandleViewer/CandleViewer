@@ -25,6 +25,7 @@ from candleviewer.api.order_entry_gate import (
     order_entry_refusal,
     refusal_problem,
 )
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 
 _ACCOUNT = UUID("a1000000-0000-4000-8000-000000000001")
 _NO_KEY = OrderEntryRefusal("no_active_key", "No active API key for this account.")
@@ -72,6 +73,12 @@ def _refusal_counts() -> dict[str, float]:
 def test_the_reason_set_is_the_contract_enum() -> None:
     schemas = cast(dict[str, Any], load_openapi_spec())["components"]["schemas"]
     assert set(schemas["OrderEntryRefusalReason"]["enum"]) == REFUSAL_REASONS
+
+
+def test_the_refusal_counter_is_bounded_by_the_reason_set() -> None:
+    """One series per reason: a reason added to the set raises the catalogue's bound with it."""
+    spec = next(s for s in CATALOGUE if s.name == "cv_order_entry_refusals_total")
+    assert (spec.labels, spec.max_series) == (("reason",), len(REFUSAL_REASONS))
 
 
 @pytest.mark.parametrize("engaged", [True, False])

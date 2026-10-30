@@ -4195,7 +4195,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "dashboard only (a maintenance window shows here)",
         _L,
         "E42",
-        max_series=4,
+        max_series=5,
         exported=True,
     ),
     _s(
