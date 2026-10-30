@@ -1139,7 +1139,7 @@ Drag preview                Drop zones
 
 ### SCR-049 — Multi-chart grid panel
 
-- **Type:** Panel hosting 2–9 chart instances in one dock slot with a shared header for layout, sync group, and a "propagate symbol" toggle; used for multi-timeframe and multi-symbol context.
+- **Type:** Panel hosting 2–9 chart instances in one dock slot with a shared header for the arrangement and the sync group a new cell joins; each cell is a sync member exactly like a docked chart, with no "propagate symbol" toggle ("Each chart follows its own sync group."; E15-D02 A-13, #2701 ledger addendum A row A43); used for multi-timeframe and multi-symbol context.
 
 ```
 +-------------------+-------------------+
@@ -1149,12 +1149,13 @@ Drag preview                Drop zones
 +-------------------+-------------------+
 ```
 
-- **Performance:** one shared WebGL context with scissored viewports; total budget for 4 charts ≥50 fps.
-- **A11y:** each sub-chart is a labelled region; `Ctrl+Alt+1..9` focuses a sub-chart.
-- **Components:** CMP-080 DockPanel, CMP-081 DockGrid / Layout Manager, CMP-196 MultiChartLinker, CMP-217 LayoutPresetMenu, CMP-218 SyncMenu.
+- **Performance:** total budget for 4 charts ≥50 fps; cell chrome is static and never repaints on a chart frame; focusing a cell never resizes a viewport; an arrangement change re-lays out viewports and never recreates a rendering context. Whether the cells share one WebGL context with scissored viewports or render into their own canvases in sequence (`26-chart-engine-design.md` §3.2) is E11's to settle; the design depends on neither (E15-D11 C-16, #2701 ledger addendum A row A45).
+- **A11y:** the grid is a region named "Chart grid, 2 by 2, Live" and each cell a nested region named "Chart, BTCUSDT 4 hours, Live" (kind, symbol, the spelled interval, the environment), its sync group in the description, never the name; `Ctrl+Alt+1..9` focuses cell N (PROPOSED, E15-D15 KB-15), announced "{name}, focused"; `Ctrl+Alt+Enter` maximises and restores the active cell (PROPOSED); `Esc` never restores; the active cell is marked by a header underline and a bold cell number, never by hue.
+- **Components:** CMP-080 DockPanel, CMP-081 DockGrid / Layout Manager, CMP-253 MultiChartGrid, CMP-196 MultiChartLinker, CMP-217 LayoutPresetMenu (`cell` mode), CMP-218 SyncMenu, CMP-075 EnvBadgeLocal, CMP-011 Tag / Chip ("Reduced"), CMP-229 ArmToggle (the maximised cell), CMP-079 RbacGate (the maximised cell's arm control, T2) with the CMP-019 Icon `lock` badge.
 - **Stories:** US-LAY-001, US-LAY-003, US-CHART-011.
 - **Analytics/audit:** `multichart.grid_changed`, `multichart.cell_symbol_changed`, `multichart.sync_group_changed`, `multichart.cell_maximised` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.13 (Penpot page `E15-D02`, board 20; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
+- **Hi-fi (E15-D11):** the rules in [e15-multichart-grid.md](../design/specs/e15-multichart-grid.md); the pack [E15-D11.md](../design/E15/E15-D11.md) (the spike gate below recorded not met, #2701 ledger addendum A row A45; the boards at E15-D11's PR 3; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] 1x2, 2x2, 3x3, 1+3 and custom grids drawn [ ] per-cell header with symbol/interval and sync-group tag [ ] active-cell focus indication [ ] maximise-cell and restore [ ] degraded state when the grid exceeds the GPU budget (see Performance) with the explicit reduce-quality prompt
 
 ---
