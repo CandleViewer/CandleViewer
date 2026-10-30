@@ -19,6 +19,7 @@ BUCKETS_MAX = 256  # BQ-10: hard cap on price buckets; coarsen `bucket_ticks`, n
 MAX_LEVELS_MAX = 1000  # per side, per sample: bounds the work on a pathological book
 WINDOW_MS_MAX = 60_000
 SAMPLES_MAX = 6_000  # ring columns (ring_ms / cadence_ms): with BUCKETS_MAX, 12.3 MB (C-2.18)
+MAX_EVENTS_MAX = 256  # events one sample may emit; the rest are counted, never silently lost
 
 
 class LiquidityConfigInvalid(OrderflowError, ValueError):
@@ -40,6 +41,7 @@ class LiquidityConfig:
     ring_ms: int = 600_000
     cadence_ms: int = 100
     max_levels: int = 500
+    max_events: int = 16
 
     def validated(self) -> LiquidityConfig:
         unit = Decimal(1)
@@ -56,6 +58,7 @@ class LiquidityConfig:
             (0 < self.cadence_ms <= self.ring_ms, "cadence_ms"),
             (self.cadence_ms > 0 and self.ring_ms // self.cadence_ms <= SAMPLES_MAX, "ring_ms"),
             (0 < self.max_levels <= MAX_LEVELS_MAX, "max_levels"),
+            (0 < self.max_events <= MAX_EVENTS_MAX, "max_events"),
         )
         for ok, field in checks:
             if not ok:
@@ -103,9 +106,12 @@ class LiquidityPulled(MarketEvent):
 
 @dataclass(frozen=True, slots=True)
 class LiquiditySample:
-    """One sample's result: bands (empty when not live) and the events it produced."""
+    """One sample's result: bands (empty when not live), the events it emits (at most
+    `max_events`, nearest the mid first) and `overflow`, the events past that cap (counted by the
+    caller, never published)."""
 
     ts_us: int
     estimated: bool
     bands: tuple[BandDepth, ...]
     events: tuple[LiquidityReload | LiquidityPulled, ...]
+    overflow: int = 0
