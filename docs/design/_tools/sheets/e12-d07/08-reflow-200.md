@@ -50,7 +50,7 @@ Board 08 of ten (§0 L82: the tick set at 640 CSS px (200 %): the stacked block 
 
 ## Sources (1)
 
-- spec E12-D07.md md5 55948c5b (§0 L82); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 d8bbf958 (§0 L82); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (27)
 

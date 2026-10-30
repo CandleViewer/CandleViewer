@@ -53,7 +53,7 @@ Board 07 of ten (§0 L81: the crosshair before the loaded window: the first load
 
 ## Sources (1)
 
-- spec E12-D07.md md5 55948c5b (§0 L81); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 d8bbf958 (§0 L81); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (34)
 
