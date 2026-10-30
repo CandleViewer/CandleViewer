@@ -46,17 +46,22 @@
 15|1131|### CMP-104 LeverageSlider
 15|1169|### CMP-106 ProfileBadge (account identity chip)
 15|2839|the level per E30-D05 / E30-D02 O-L
+22|321|A protective write runs as the viewer, is audited with the
+22|323|`x-rbac` allow it; in the hold it runs in the viewer's own scope.
 22|10201|operationId: getSettings
 22|10269|"503": { $ref: "#/components/responses/ServiceUnavailable" }
 22|10272|operationId: updateSettings
 22|10279|parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
 22|10295|"503": { $ref: "#/components/responses/ServiceUnavailable" }
+22|11702|Cancels, `closePosition` and `closeAllPositions`
 22|15669|ArmToken:
 22|15688|token issued without the live step-up (see `POST /settings/arm`). Like t
 22|15695|Idempotency in `info.description`). Demo and paper
 22|15696|The C-2.6 carve-out binds this refusal as it binds every synchronous
 22|15699|tightening a stop or re-arming a protective trigger are never refused
 22|16185|the C-2.6 carve-out binds every synchronous refusal, not just the gate
+24|1674|the arm token (`403 session_not_armed`)
+24|1676|3. Risk checks the sized and rounded order, never the raw intent
 CD|107|* Activations that begin within this many ms of opening are ignored (def
 CD|108|* A smaller or non-finite value is raised to 400 with a dev warning: no
 CD|117|/** The confirm's leg was removed mid-dialog: Confirm takes CMP-001's T2
@@ -93,6 +98,7 @@ D02|287|| blocked-by-lockout `14` | `risk_cap_usage.locked_out_until_ms` on `wal
 D02|288|| frozen `14` | kill switch engaged for the account or globally (SCR-072
 D02|300|| order live, protective stop pending (F16) | entry accepted, `sl.attach
 D02|302|Every banner inserts in the slot under the header (§2) and pushes the fo
+D02|310|The accessible name adds the environment and account
 D02|343|## 13. Keyboard, focus and announcements (D23)
 D02|345|**Tab order** (the panel is a labelled landmark reached by `Ctrl+\` and
 D02|349|| Set side | `B` / `S` | ticket region focused, not in a text field | in
@@ -199,6 +205,7 @@ DS|68|it to the hi-fi spec in the hand-off section.
 DS|74|**R5 Live accounts**
 DS|77|never refused for want of it (C-2.6)
 DS|78|is still T2 on that leg
+E09-D09|40|(a) the session is viewing-as (every write; the C-2.6 carve-out excepted)
 E09-D09|228|| T2 for an RBAC, grant, environment or session reason (§3.1) | `aria-di
 E09-D09|231|| loading | `aria-busy="true"` | yes | CMP-001 |
 E09-D09|243|| `Enter` / `Space` / the bound hotkey (`Ctrl+Enter`, `Alt+…`) | nothing
@@ -210,6 +217,10 @@ E30.json|473|"risk": "R5 Scope",
 E30.json|481|"body": "## Context\n`05-accessibility-standard.md` and `02-definition-o
 E39-D03|222|never per tick (`aria-valuenow` only)
 E39-D03|417|800 ms
+KM|219|"label": "Place limit order at price (arm-gated)",
+KM|232|"validWhen": "chart trading armed",
+KM|289|"validWhen": "DOM armed",
+KM|299|"validWhen": "DOM armed",
 KM|303|"id": "dom.cancel_all",
 KM|310|destructive needs a modifier
 KM|355|"id": "dom.arm",

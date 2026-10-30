@@ -15,12 +15,16 @@ FAIL led by its code:
 - [G2-KEYS] section 3: every KS step names a key and no pointer, every step has an escape, the
   three sequences are all there; section 4: every binding equals the shipped default, the
   `requires_arm` cell is yes / no, a destructive key has a modifier, submit and cancel-all are no
-  single letter, the co-active collision and reserved-key sentence matches the engine, and `05`'s
-  three drifted Trading rows still drift.
+  single letter, no row says `requires_arm` yes while section 4 says none ships, the co-active
+  collision and reserved-key sentence matches the engine, and `05`'s three drifted Trading rows
+  still drift.
 - [G3-R5] section 5: AR-01..AR-17, the R5 cell from the two words, no never-gated row names
   `arm.locked` / `arm.unknown`, every backticked route is a `22` operationId at the base, every
-  arm-gated row names one, the FREEZE and view-as legs of AR-13 / AR-14 as ruled.
-- [G4-T2] section 6: a class per row; a T2 row's rendering (2a / 2b / sentence), its checks, no
+  arm-gated row names one, the FREEZE and view-as legs of AR-13 / AR-14 as ruled (A34: FREEZE and
+  view-as leave both enabled, no `rbac.view_as` and no FREEZE reason on them), AR-11's disarm never
+  a dialog.
+- [G4-T2] section 6: a class per row; no row greys "Flatten now" or "Set stop by hand" or shows
+  the FREEZE close reason (A34); a T2 row's rendering (2a / 2b / sentence), its checks, no
   disabled token; a `rbac.*` reason is one sentence of at most 60 characters with no digit; every
   `key` "string" pair stands verbatim in a parent unless PROPOSED.
 - [G5-LIVE] section 8: a politeness and a maximum rate on every row, assertive rows once per
@@ -31,14 +35,19 @@ FAIL led by its code:
   interim path, `non-compliant` a Blocking one.
 - [G8-FINDINGS] section 15: counts against the heading and the marker; severity, owner (a spec and
   an area, never an agent), target E30-D06 (#919), R5 and G-T2 cells (a row with neither filled
-  fails); the hold sentence while a Blocking row stands; no dangling F id; section 19's row counts.
-- [G9-RULED] the A30 / A31 / A32 stamps on their rows and the ruled words (RULING_PINS); with
-  `--source NAME=FILE` each pin also stands in that saved copy of the ruling.
+  fails); the hold sentence while a Blocking row stands; no dangling F id, nor an AR, LR, T2, CF,
+  SD, CR, CT, G or Q id defined in no table; F-01 greys every write except the carve-out and quotes
+  E09-D09 step 3a and says "never refused on the view-as leg" (R0315); KS-X03 cites AR-11;
+  section 19's row counts.
+- [G9-RULED] every A30 / A31 / A32 / A33 stamp, at every site (STAMP_LINES, STAMP_LEADS), in the
+  exact form with its own row and date, no stamp at an unchecked site, and the ruled words
+  (RULING_PINS); with `--source NAME=FILE` each pin also stands in that saved copy of the ruling.
 - [G10-CITE] every `KEY`:line cite resolves at the base to a non-blank line; the pins file and the
   cited endpoints match both ways, each pin's words on its line; every cited file identical at the
   BQ list's base.
 - [G11-HYGIENE] no word or substring on the lane's public-text list, host, uuid, local path, URL
-  or closing keyword; no fixture account or decimal amount in a quoted example string.
+  or closing keyword; no fixture account or decimal amount in a quoted example string (sections 3,
+  5, 6, 8.1, 15 and 17).
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL, 0 WARN is the
 bar); `--self-test` applies one mutation per gate (MUTATIONS) and the probes (PROBES) to an
@@ -47,7 +56,8 @@ reproduces the base result and no file on disk changed. `--repin` rewrites the p
 spec's cites (keeping every hand-written pin still cited).
 
 Usage: python3 -I -B docs/design/_tools/e30_d05_a11y_review_audit.py [--check] [--json]
-       [--self-test] [--repin] [--source R918=FILE] [--source LA=FILE]
+       [--self-test] [--repin] [--source R918=FILE] [--source LA=FILE] [--source LA33=FILE]
+       [--source R0315=FILE]
 """
 
 from __future__ import annotations
@@ -76,6 +86,7 @@ KEYS = {
     "14": "docs/plan/14-screens-catalogue.md",
     "15": "docs/plan/15-component-catalogue.md",
     "22": "docs/plan/22-api-openapi.yaml",
+    "24": "docs/plan/24-internal-schemas.md",
     "DS": ".claude/rules/32-design-specs.md",
     "D02": "docs/design/E30/E30-D02.md",
     "D03": "docs/design/E30/E30-D03.md",
@@ -122,8 +133,10 @@ STAMP = "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row {})"
 WALK = "owner walkthrough: post-Done (#2701)"
 R5_NAME = "R5 (arm carve-out, `DS`:74–78)"
 FROZEN = "Frozen — the owner closes or releases"
-# The ruled words, by ruling (R918 = #918 6513445642; LA = #2701 ledger addendum A, 6513450133);
-# each stands in the spec, and in the saved copy given with --source.
+# The ruled words, by ruling (R918 = #918 6513445642; LA = #2701 ledger addendum A, 6513450133;
+# LA33 / LA34 = its rows A33 (6514063706) and A34 (6514157772); R0315 = the 03:15Z and 03:23Z
+# rulings on the PR); each stands in the spec,
+# and in the saved copy given with --source.
 RULING_PINS: dict[str, tuple[str, ...]] = {
     "R918": (
         R5_NAME,
@@ -140,9 +153,61 @@ RULING_PINS: dict[str, tuple[str, ...]] = {
         "The keymap is the truth; the `05` rows are corrected to it",
         "Superseded by the review's routing table",
     ),
+    "LA33": (
+        "2.2.1's essential exception",
+        "stale-priced submit",
+        "Confirmation timed out — nothing was sent",
+        "re-opening the confirmation costs one press",
+    ),
+    "LA34": (
+        "Corrected to the contract.",
+        "stay enabled under FREEZE on every leg the carve-out binds",
+        "is not a reason any carve-out control shows",
+    ),
+    "R0315": ("greys every write except the carve-out",),
 }
-# The A rows each ledger row stamps (section 16.4).
-A_STAMPS = {"A-1": "A32", "A-2": "A32", "A-3": "A32", "A-4": "A30", "A-5": "A31", "A-6": "A30"}
+STAMP_ROWS = ("A30", "A31", "A32", "A33", "A34")
+STAMP_RE = re.compile(r"RULED \(orchestrator, (?!R918)[^)]*\)")
+# Every stamp site: a table row or bullet by its opening words (each stamp on it is that row's),
+# or the words that lead into the stamp where one line carries several.
+STAMP_LINES = {
+    "| AR-13 ": "A34",
+    "| C-i ": "A34",
+    "| C-b ": "A31",
+    "| C-c ": "A31",
+    "| C-d ": "A30",
+    "| C-f ": "A32",
+    "| A-1 ": "A32",
+    "| A-2 ": "A32",
+    "| A-3 ": "A32",
+    "| A-4 ": "A30",
+    "| A-5 ": "A31",
+    "| A-6 ": "A30",
+    "| CF-06 ": "A33",
+    "| F-06 ": "A33",
+    "| Q-03 ": "A33",
+    "| 2.2.1 Timing adjustable ": "A33",
+    "- **(d) WCAG 2.2.1": "A33",
+    "- **Over-announcing": "A31",
+    "- **O-L.**": "A30",
+}
+STAMP_LEADS = {
+    "O-L = **": "A30",
+    "the throttle text of `T` = **": "A31",
+    "the `05` hotkey rows = **": "A32",
+    "against WCAG 2.2.1 = **": "A33",
+    "A-1 to A-3, ": "A32",
+    "is corrected to the contract = **": "A34",
+}
+F01_WORDS = (
+    "greys every write except the carve-out",
+    "(every write; the C-2.6 carve-out excepted)",
+    "never refused on the view-as leg",
+)
+CARVE_CONTROLS = ('"Flatten now"', '"Set stop by hand"')
+ENABLED = "FREEZE and view-as leave it enabled"
+F01_NEVER = ("every other leg", "under every leg")
+ID_KINDS = ("AR", "LR", "T2", "CF", "SD", "CR", "CT", "G", "Q")
 CR_MEASURED = ("CR-01", "CR-02", "CR-03", "CR-04", "CR-05", "CR-06")
 SIMS = ("protanopia", "deuteranopia", "tritanopia")
 BARS = {"text": 4.5, "non-text": 3.0, "hc-text": 7.0}
@@ -157,7 +222,7 @@ HOST = re.compile(
 UUID = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
 )
-FIXTURE = re.compile(r"\b(?:Main|Desk4|Core3|sub_00\d)\b|\d[\d,]*\.\d")
+FIXTURE = re.compile(r"\b(?:Main|Desk4|Core3|sub_00\d)\b|(?<![\w.-])\d[\d,]*\.\d")
 QUOTED = re.compile(r'"([^"\n]*)"')
 CITE = re.compile(r"`([A-Za-z0-9.\-]+)`:(\d+)(?:–(\d+))?")
 PAIR = re.compile(r'`([a-z_][a-z0-9_.*]*)` "([^"]+)"')
@@ -371,6 +436,11 @@ def gate_keys(ctx: Ctx, r: Result) -> None:
         or "one key (`Ctrl+Shift+T`) is browser-reserved" not in four
     ):
         r.fail("G2-KEYS", f"reserved keys {held}, without an override {naked}")
+    armed = [ticks(x[1])[0] for x in table if ticks(x[1]) and x[3] == "yes"]
+    if armed or "No `requires_arm` binding of the ticket ships today" not in four:
+        r.fail(
+            "G2-KEYS", f"`requires_arm` rows {armed} against section 4's 'none ships' (`D02`:350)"
+        )
     drift = drift_05()
     if drift != 3:
         r.fail("G2-KEYS", f"`05`'s Trading rows drift from the key map in {drift} places, not 3")
@@ -428,8 +498,15 @@ def gate_r5(ctx: Ctx, r: Result) -> None:
     if wrong:
         r.fail("G3-R5", f"rows whose R5 cell is not as ruled (AR-01..08 gated): {wrong}")
     legs = {k: v[4] if len(v) > 4 else "" for k, v in table.items()}
-    if FROZEN not in legs.get("AR-13", "") or "none on any leg" not in legs.get("AR-14", ""):
-        r.fail("G3-R5", "AR-13's FREEZE leg or AR-14's carve-out is not as ruled (L1 rows 81, 82)")
+    if "none on any leg" not in legs.get("AR-14", "") or ENABLED not in legs.get("AR-14", ""):
+        r.fail("G3-R5", "AR-14's carve-out is not as ruled (L1 row 82, A34)")
+    ar13 = legs.get("AR-13", "")
+    if ENABLED not in ar13 or FROZEN in ar13 or "rbac.view_as" in ar13:
+        r.fail(
+            "G3-R5", "AR-13's close is T2 under FREEZE or view-as (A34, R0315: it stays enabled)"
+        )
+    if "never a dialog" not in legs.get("AR-11", ""):
+        r.fail("G3-R5", "AR-11's disarm is not one press, never a dialog")
     r.numbers["arm_rows"] = len(table)
     r.numbers["arm_gated"] = sum(v[3] == GATED for v in table.values())
 
@@ -470,8 +547,9 @@ def gate_t2(ctx: Ctx, r: Result) -> None:
             if key.startswith("rbac.") and bad:
                 r.fail("G4-T2", f"{tid}: `{key}` {s!r} is not a data-free sentence of <= 60")
         r.fails.extend(f"[G4-T2] {tid}: not in a parent deck: {p}" for p in deck_pairs(text, ctx))
-    if FROZEN not in " ".join(table.get("T2-30", [])):
-        r.fail("G4-T2", "T2-30 does not carry L1 row 81's reason")
+    for tid, row in table.items():
+        if any(w in row[1] for w in CARVE_CONTROLS) or FROZEN in row[2]:
+            r.fail("G4-T2", f"{tid}: a carve-out control greyed, or the FREEZE close reason (A34)")
     r.numbers["t2_rows"] = len(table)
     r.numbers["t2_classes"] = classes
 
@@ -679,6 +757,20 @@ def gate_findings(ctx: Ctx, r: Result) -> None:
     dangling = sorted(set(re.findall(r"\bF-\d\d\b", ctx.spec)) - set(table))
     if dangling:
         r.fail("G8-FINDINGS", f"F ids cited but not in section 15: {dangling}")
+    defined = {
+        k
+        for r_ in rows(ctx.spec)
+        if (k := r_[0]) and re.fullmatch(r"(?:" + "|".join(ID_KINDS) + r")-\d\d", k)
+    }
+    cited = set(re.findall(r"\b(?:" + "|".join(ID_KINDS) + r")-\d\d\b", ctx.spec))
+    if loose := sorted(cited - defined):
+        r.fail("G8-FINDINGS", f"row ids cited but defined in no table: {loose}")
+    f01 = " ".join(table.get("F-01", []))
+    if not all(w in f01 for w in F01_WORDS) or any(w in f01 for w in F01_NEVER):
+        r.fail("G8-FINDINGS", "F-01 does not grey every write except the carve-out (R0315)")
+    x03 = by_id(section(ctx.spec, "3. The keyboard-only sequences"), "KS").get("KS-X03", [])
+    if "AR-11" not in " ".join(x03):
+        r.fail("G8-FINDINGS", "KS-X03's disarm does not cite the disarm row AR-11")
     rowcount = {
         "C": len(by_id(section(ctx.spec, "16.1 Contradictions"), "C")),
         "G": len(by_id(section(ctx.spec, "16.2 Gaps"), "G")),
@@ -696,14 +788,36 @@ def gate_findings(ctx: Ctx, r: Result) -> None:
 
 
 # --- G9: ruled words and stamps -----------------------------------------------------------------
+def stamp_sites(spec: str) -> tuple[dict[str, int], list[str]]:
+    """Each stamp checked against the row its site names; the sites seen, and the misses."""
+    seen: dict[str, int] = {}
+    bad: list[str] = []
+    for ln in spec.splitlines():
+        hits = list(STAMP_RE.finditer(ln))
+        if not hits:
+            continue
+        site = next((k for k in STAMP_LINES if ln.startswith(k)), "")
+        for m in hits:
+            lead = site or next((k for k in STAMP_LEADS if ln[: m.start()].endswith(k)), "")
+            want = STAMP_LINES.get(lead) or STAMP_LEADS.get(lead)
+            if not want:
+                bad.append(f"a stamp at an unchecked site: {ln[:40]!r}")
+            elif m.group(0) != STAMP.format(want):
+                bad.append(f"{lead.strip()!r} carries {m.group(0)!r}, not row {want}'s stamp")
+            seen[lead] = seen.get(lead, 0) + 1
+    missing = sorted(k.strip() for k in (*STAMP_LINES, *STAMP_LEADS) if k not in seen)
+    bad += [f"no stamp at {k!r}" for k in missing]
+    return seen, bad
+
+
 def gate_ruled(ctx: Ctx, r: Result) -> None:
-    for row in ("A30", "A31", "A32"):
+    for row in STAMP_ROWS:
         if STAMP.format(row) not in ctx.spec:
             r.fail("G9-RULED", f"the stamp for {row} is missing")
-    amends = by_id(section(ctx.spec, "16.4 Copy-ready amendments"), "A")
-    for aid, row in A_STAMPS.items():
-        if STAMP.format(row) != (amends.get(aid) or [""])[-1]:
-            r.fail("G9-RULED", f"{aid} does not carry {row}'s stamp")
+    seen, bad = stamp_sites(ctx.spec)
+    for msg in bad:
+        r.fail("G9-RULED", msg)
+    r.numbers["stamps"] = sum(seen.values())
     checked = 0
     for name, pins in RULING_PINS.items():
         for pin in pins:
@@ -802,7 +916,15 @@ def gate_hygiene(ctx: Ctx, r: Result) -> None:
         if re.search(pat, ctx.spec, re.IGNORECASE):
             r.fail("G11-HYGIENE", f"the spec: {what}")
     examples = "".join(
-        section(ctx.spec, h) for h in ("3. The keyboard", "8.1 The routing", "17. The screen")
+        section(ctx.spec, h)
+        for h in (
+            "3. The keyboard",
+            "5. The arm table",
+            "6. Gated controls",
+            "8.1 The routing",
+            "15. Findings",
+            "17. The screen",
+        )
     )
     bad = [q for q in QUOTED.findall(examples) if FIXTURE.search(q)]
     if bad:
@@ -855,7 +977,10 @@ MUTATIONS: tuple[tuple[str, Mut], ...] = (
         regex(r"^(\| CMP-232 LimitsChip .*?\| component \| )reviewed ", r"\1skipped  "),
     ),
     ("G2-KEYS", regex(r"^(\| Submit .*?\| )`Ctrl\+Enter`", r"\1`Ctrl+Shift+Enter`")),
-    ("G3-R5", sub("valid when working orders exist, not when armed", "refused with `arm.locked`")),
+    (
+        "G3-R5",
+        sub("valid when working orders exist; no arm condition", "refused with `arm.locked`"),
+    ),
     ("G4-T2", regex(r"^(\| T2-05 .*?\| T2 +\| )2a ", r"\1tip")),
     ("G5-LIVE", regex(r"^(\| LR-15 .*?\| )never spoken ", r"\1polite       ")),
     ("G6-COLOUR", regex(r"^(\| CR-01 .*?\| )1\.5 ", r"\g<1>2.5 ")),
@@ -880,7 +1005,7 @@ PROBES: tuple[tuple[str, Mut], ...] = (
     ),
     ("G5-LIVE", regex(r"^(\| LR-17 .*?\| )once per event", r"\1≤ 1 per 2 s")),
     ("G6-COLOUR", sub("gated FAIL 0 · minima", "gated FAIL 1 · minima")),
-    ("G7-VERDICT", regex(r"^(\| 2\.2\.1 Timing adjustable .*\| )F-06( +\|)$", r"\1none\2")),
+    ("G7-VERDICT", regex(r"^(\| 1\.4\.4 Resize text .*\| )F-02( +\|)$", r"\1none\2")),
     (
         "G8-FINDINGS",
         regex(r"^(\| F-16 .*\| )carve-out — never arm-gated \| n/a( +\|)$", r"\1 | \2"),
@@ -888,11 +1013,40 @@ PROBES: tuple[tuple[str, Mut], ...] = (
     (
         "G8-FINDINGS",
         sub(
+            "(Blocking 1 · Major 4 · Minor 9 · Info 5) <!--",
             "(Blocking 1 · Major 5 · Minor 8 · Info 5) <!--",
-            "(Blocking 1 · Major 6 · Minor 7 · Info 5) <!--",
         ),
     ),
     ("G9-RULED", regex(r"^(\| A-1 .*)2026-10-30", r"\g<1>2026-10-29")),
+    ("G9-RULED", regex(r"^(\| C-b .*)row A31\)", r"\1row A32)")),
+    ("G9-RULED", regex(r"^(\| F-06 .*?)2026-10-30", r"\g<1>2026-10-31")),
+    ("G9-RULED", regex(r"^(\| Q-03 .*?)row A33\)", r"\1row A32)")),
+    ("G9-RULED", regex(r"^(- \*\*O-L\.\*\*.*?)2026-10-30", r"\g<1>2026-10-29")),
+    ("G9-RULED", sub("WCAG 2.2.1 = **RULED (orchestrator, 2026-10-30", "WCAG 2.2.1 = **RULED (x")),
+    ("G9-RULED", regex(r"^(\| 2\.2\.1 Timing adjustable .*?), RULED \([^)]*\)", r"\1")),
+    ("G3-R5", sub("one press, never a dialog (`D02`:66; F-11)", "opens a dialog (`D02`:66; F-11)")),
+    (
+        "G3-R5",
+        sub("never refused on the view-as leg (`E09-D09`:40", "T2 `rbac.view_as` (`E09-D09`:40"),
+    ),
+    (
+        "G3-R5",
+        sub(
+            "none on a carve-out leg: FREEZE and view-as leave it enabled",
+            "FREEZE: a Manager's press is T2 \"" + FROZEN + '"',
+        ),
+    ),
+    ("G4-T2", regex(r"^(\| T2-29 \| )SCR-158's submit and Replay", r'\1"Flatten now" and Replay')),
+    ("G9-RULED", regex(r"^(\| AR-13 .*?)2026-10-30", r"\g<1>2026-10-31")),
+    ("G9-RULED", regex(r"^(\| C-i .*?)row A34\)", r"\1row A33)")),
+    ("G2-KEYS", regex(r"^(\| Arm / disarm \(ticket\) .*?\| )no ", r"\1yes")),
+    (
+        "G8-FINDINGS",
+        regex(r"^(\| F-01 .*?)\(every write; the C-2\.6 carve-out excepted\)", r"\1(every write)"),
+    ),
+    ("G8-FINDINGS", sub('never refused on the view-as leg";', 'stay enabled under every leg";')),
+    ("G8-FINDINGS", sub("no dialog (AR-11, F-11)", "no dialog (AR-12, F-11)")),
+    ("G8-FINDINGS", sub("before it is pressed (AR-04)", "before it is pressed (AR-40)")),
     ("G10-CITE", pin_sub("|The C-2.6 carve-out binds this", "|The C-2.6 carve-out binds no")),
     ("G11-HYGIENE", sub('"Preset {n}, {qty} {coin}, active"', '"Preset 3, 0.250 BTC, active"')),
 )
