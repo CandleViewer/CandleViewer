@@ -10,7 +10,9 @@ series are module-level, bound at import to their closed label sets where they h
   `estimated` (built while the book was resyncing, 24 §6.3);
 - `heatmap_column_publish_latency_ms`: a bucket's end to its column's publish, ms (budget #6);
 - `heatmap_subscriptions_active`: live leases held on heatmap specs;
-- `heatmap_cell_faults_total`: sizes that are negative or not finite, never written (24 §6.5).
+- `heatmap_cell_faults_total`: sizes that are negative or not finite, never written (24 §6.5);
+- `heatmap_pinned_symbols`: symbols whose native column is kept without a lease (E21-T04, the
+  liquidity tracker's configured symbols; at most `liquidity_pin_max`).
 """
 
 from __future__ import annotations
@@ -50,6 +52,10 @@ heatmap_column_publish_latency_ms = Histogram(
 heatmap_subscriptions_active = Gauge(
     "heatmap_subscriptions_active", "Live heatmap WS subscriptions holding a spec lease."
 )
+heatmap_pinned_symbols = Gauge(
+    "heatmap_pinned_symbols",
+    "Symbols whose native heatmap column is kept without a lease (the liquidity tracker's).",
+)
 heatmap_cell_faults_total = Counter(
     "heatmap_cell_faults_total",
     "Heatmap sizes that were negative or not finite: a producer fault, never written.",
@@ -72,6 +78,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "heatmap_column_publish_latency_ms",
         "heatmap_subscriptions_active",
         "heatmap_cell_faults_total",
+        "heatmap_pinned_symbols",
     }
 )
 
