@@ -1,6 +1,4 @@
 import { test, expect, type Page } from "@playwright/test";
-import AxeBuilder from "@axe-core/playwright";
-import { AXE_GATE_TAGS } from "../a11y/tags";
 import { assertNoClientSecrets, json, stubSession, watchForLeaks } from "../support/api";
 import { seriousAxe } from "../support/axe";
 import { OTP_SEED, totp } from "../support/totp";
@@ -18,11 +16,19 @@ interface Wire {
   readonly stepUps: string[];
   readonly creates: string[];
 }
+/** One answer of `POST /auth/step-up`. */
+interface Answer {
+  readonly status: number;
+  readonly body: unknown;
+}
 
-/** An owner on SCR-123 whose first invite is refused with a step-up challenge. */
+/**
+ * An owner on SCR-123 whose first invite is refused with a step-up challenge. The nth step-up gets `answers[n]`
+ * (the last one answers every call past the list).
+ */
 async function inviteWithChallenge(
   page: Page,
-  stepUp: { status: number; body: unknown },
+  ...answers: readonly [Answer, ...Answer[]]
 ): Promise<Wire> {
   const wire: Wire = { stepUps: [], creates: [] };
   await page.clock.install({ time: T0 });
@@ -65,7 +71,8 @@ async function inviteWithChallenge(
   });
   await page.route("**/api/v1/auth/step-up", (r) => {
     wire.stepUps.push(r.request().postData() ?? "");
-    return r.fulfill(json(stepUp.body, stepUp.status));
+    const answer = answers[Math.min(wire.stepUps.length, answers.length) - 1] ?? answers[0];
+    return r.fulfill(json(answer.body, answer.status));
   });
   await page.goto("/admin/users/new");
   await page.getByLabel("Username").fill("annie");
@@ -105,12 +112,7 @@ test("E09-TC-C05 the step-up answers the server's challenge and the held invite 
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAccessibleDescription(SUMMARY);
   await expect(page.getByLabel("Password", { exact: true })).toBeFocused();
-  const axe = await new AxeBuilder({ page }).withTags([...AXE_GATE_TAGS]).analyze();
-  expect(
-    axe.violations
-      .filter((v) => v.impact === "serious" || v.impact === "critical")
-      .map((v) => `${v.id}: ${v.help}`),
-  ).toEqual([]);
+  expect(await seriousAxe(page)).toEqual([]);
   const code = totp(OTP_SEED, T0.getTime());
   await page.getByLabel("Password", { exact: true }).fill("e2e-step-up-pw");
   await page.getByLabel("Authenticator code").fill(code);
@@ -220,6 +222,39 @@ test("E09-TC-C05 the third refused code drops the held invite unsent: three step
     CHALLENGE_ID,
   ]);
   expect(wire.creates).toHaveLength(1);
+});
+
+// The server ends the challenge itself on the third wrong code: `403 session_read_only` (22 `authStepUp`), after two
+// `401 mfa_invalid` that count the strikes left. The test above is the client's own count of three `401`s.
+const strike = (failuresRemaining: number): Answer => ({
+  status: 401,
+  body: { status: 401, code: "mfa_invalid", failures_remaining: failuresRemaining },
+});
+const READ_ONLY: Answer = {
+  status: 403,
+  body: {
+    status: 403,
+    code: "session_read_only",
+    readonly_until: new Date(T0.getTime() + 5 * MIN).toISOString(),
+  },
+};
+
+test("E09-TC-C05 the server's 403 session_read_only on the third code drops the held invite unsent: Not sent, no re-send", async ({
+  page,
+}) => {
+  const wire = await inviteWithChallenge(page, strike(2), strike(1), READ_ONLY);
+  const password = page.getByLabel("Password", { exact: true });
+  for (const n of [1, 2, 3]) {
+    await password.fill(`pw-${n}`);
+    await page.getByLabel("Authenticator code").fill("000000");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => wire.stepUps.length).toBe(n);
+    if (n < 3) await expect(password).toHaveValue(""); // the dialog stays, and the form is reset
+  }
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(NOT_SENT(page)).toBeVisible();
+  expect(wire.stepUps).toHaveLength(3); // no fourth step-up
+  expect(wire.creates).toHaveLength(1); // the held invite is never re-sent
 });
 
 test("E09-TC-C05 keyboard-only: Tab and Shift+Tab cycle inside the dialog and never reach the form behind it", async ({
