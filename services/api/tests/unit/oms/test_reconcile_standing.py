@@ -213,6 +213,22 @@ async def test_a_report_that_cannot_be_recorded_still_ends_its_pass_and_pages() 
     assert ("page", "A reconciliation report could not be written.") in job.world.oms.pages
 
 
+async def test_a_report_that_cannot_be_recorded_holds_the_watermark_for_the_next_one() -> None:
+    """C-2.9: each correction keeps its own record, but the pass's report is lost, so its window
+    is not marked read: the next pass reads it again, and its report covers the slice."""
+    job = Job()
+    job.watermarks.stored = NOW_US - 30_000_000
+    job.records.refuse = True
+    await _pass(job)
+    assert job.watermarks.advanced == []
+    job.records.refuse = False
+    job.world.now_us += 30_000_000
+    await _pass(job)
+    [(_, _, state)] = job.records.rows
+    assert state["gap_window"] == [NOW_US - 35_000_000, NOW_US + 30_000_000]
+    assert job.watermarks.advanced == [NOW_US + 30_000_000]
+
+
 async def test_a_naked_position_with_no_record_reports_desync_critical_with_no_correction() -> None:
     job = Job()
     job.world.venue.seed_position(position(stop_loss=None))

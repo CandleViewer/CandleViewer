@@ -12,8 +12,9 @@ then its plan, then its report) in memory, one pass per account, as B19 runs one
 * **report** freezes the report, writes it as its `oms.reconcile` record (`stage: finished`, 24
   Sec.15.5) ahead of everything that follows from it (C-2.9), stores the watermark a clean enough
   pass earns (the upper bound step 1 read to, `watermark_us`), and computes the pass's notices
-  (`pass_notices`). A record or a watermark that cannot be written is logged and paged and ends
-  the pass all the same; the next pass reports again.
+  (`pass_notices`). A record that cannot be written is logged and paged and ends the pass all the
+  same, and it holds the watermark, so the next pass reads that window again and its report
+  covers the slice; a watermark that cannot be written is logged, and the window is read again.
 * The effects: `lock` sets the standing again (idempotent) as B19 records the lock, `unlock` clears
   it only as B19's `OPERATOR_RESOLVED` arm ends (BQ-5), `stale` pages the Owner and hands on
   `oms.account_stale`, the metrics are counted, and a retry is asked of the driver's host timer.
@@ -246,16 +247,18 @@ class ReconcilePhases:
         account = _account(account_id)
         report = self._freeze(account, pass_id, trigger, failure)
         self._reports[account] = report
+        written = True
         try:
             await _bounded(
                 self._records.finished(account, pass_id=pass_id, state=audit_state(report))
             )
-        except Exception as exc:  # the pass ends all the same; the next one reports again
+        except Exception as exc:  # the pass ends all the same; the next one reads its window
+            written = False
             _log().error(
                 "reconcile_report_unwritten", account_id=account_id, failure=type(exc).__name__
             )
             self._pager.raise_alert("page", _ALERTS["report_unwritten"], machine_kind=_KIND)
-        mark = watermark_us(report)
+        mark = watermark_us(report) if written else None  # an unwritten report holds it
         if mark is not None:
             try:
                 await _bounded(self._watermarks.advance(account, mark))
