@@ -868,7 +868,8 @@ NO_CHALLENGE = problem(403, "step_up_required", "Re-enter your password and code
          "too many invalid attempts", BOOTED + curl(GET_INVITE, REDEEM)),
         (REDEEM, [answer(200, {"method_id": METHOD_ID})], ANSWERS[:4], (),
          "without a TOTP enrolment", BOOTED + curl(GET_INVITE, REDEEM)),
-        (LOGIN, [problem(423, "locked", "Locked.")], SIGN_IN[:2], SKIP, "locked for now",
+        (LOGIN, [problem(401, "unauthenticated", "Invalid credentials")], SIGN_IN[:2], SKIP,
+         "or wait out a lock (15 minutes at most), then run again with --skip-invite",
          curl(LOGIN)),
         (LOGIN, [answer(200, {"status": "authenticated"})], SIGN_IN[:2], SKIP,
          "asked for no code", curl(LOGIN)),
@@ -883,7 +884,7 @@ NO_CHALLENGE = problem(403, "step_up_required", "Re-enter your password and code
         (IMPORT, [NO_CHALLENGE], TO_IMPORT, KEEP, "a step-up without a challenge id",
          curl(LOGIN, VERIFY, STEP_UP, IMPORT)),
     ],
-    ids=["invite-check-429", "password-429", "no-totp-enrolment", "sign-in-423",
+    ids=["invite-check-429", "password-429", "no-totp-enrolment", "sign-in-401",
          "sign-in-without-mfa", "step-up-malformed-token", "account-without-id",
          "import-unanswered", "import-502", "challenge-without-id"],
 )  # fmt: skip

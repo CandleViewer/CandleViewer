@@ -63,7 +63,7 @@ async def test_lockout_by_the_login_route_is_visible_on_the_scraped_registry() -
             assert _scraped(registry) == before
             assert (await client.post("/auth/login", json=_WRONG)).status_code == 401
             assert _scraped(registry) == before + 1
-            assert (await client.post("/auth/login", json=_WRONG)).status_code == 423
+            assert (await client.post("/auth/login", json=_WRONG)).status_code == 401  # SR-014
             assert _scraped(registry) == before + 1  # a refused attempt is not a new lockout
     finally:
         collector.close()

@@ -32,7 +32,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.auth import make_auth_router
 from candleviewer.auth.csrf import CsrfCodec
-from candleviewer.auth.errors import AccountDisabled, AccountLocked
+from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, MfaMethodKind
@@ -92,11 +92,19 @@ def test_e09_tc_a01_correct_credentials_return_mfa_required_no_session() -> None
     assert "set-cookie" not in {k.lower() for k in response.headers}
 
 
+def _wrong_password_answer() -> bytes:
+    """The body every failed sign-in gets (`22` `authLogin`, SR-014)."""
+    client = _client(InvalidCredentials("Username or password is incorrect"))
+    answer: bytes = client.post("/auth/login", json={"identifier": "ann", "password": "x"}).content
+    return answer
+
+
 def test_e09_tc_a03_disabled_account_rejected_after_password_check() -> None:
-    """E09-TC-A03: disabled-user response, no session issued."""
+    """E09-TC-A03: the disabled user gets the response `22` documents for every failed sign-in
+    (`401`, the same body as a wrong password), no session issued."""
     client = _client(AccountDisabled("Account disabled - contact the owner"))
     response = client.post("/auth/login", json={"identifier": "viewer-disabled", "password": "x"})
-    assert response.status_code == 403
+    assert (response.status_code, response.content) == (401, _wrong_password_answer())
     assert "set-cookie" not in {k.lower() for k in response.headers}
 
 
@@ -156,16 +164,14 @@ def test_e09_tc_a07_unknown_user_and_wrong_password_are_indistinguishable() -> N
     assert unknown_response.json() == wrong_password_response.json()
 
 
-def test_e09_tc_a08_lockout_returns_423_with_retry_after() -> None:
-    """E09-TC-A08 (smoke slice): the 11th attempt after 5 consecutive
-    failures is rejected with `423` and a `Retry-After` header even given the
-    correct password — the full 10-attempt sequence and the Owner-alert
-    assertion are `manual-only` per the plan (§1 Automation column) and
-    tracked under `E09-Q02-lockout-automation`; this dry-run row covers only
-    the router-level contract already provable against `E09-S01`."""
-    client = _client(AccountLocked(900))
+def test_e09_tc_a08_locked_account_refused_with_the_one_failure_answer() -> None:
+    """E09-TC-A08 (smoke slice): an attempt at a locked account is refused even given the
+    correct password, with the answer of every failed sign-in (`22` `authLogin`, SR-014) — the
+    full 10-attempt sequence and the Owner-alert assertion are `manual-only` per the plan (§1
+    Automation column) and tracked under `E09-Q02-lockout-automation`; this dry-run row covers
+    only the router-level contract already provable against `E09-S01`."""
+    client = _client(AccountLocked())
     response = client.post(
         "/auth/login", json={"identifier": "manager-with-grants", "password": "correct"}
     )
-    assert response.status_code == 423
-    assert response.headers["Retry-After"] == "900"
+    assert (response.status_code, response.content) == (401, _wrong_password_answer())

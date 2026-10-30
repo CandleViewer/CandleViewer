@@ -3,7 +3,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { LoginScreen } from "../../src/features/auth/LoginScreen";
 import { ChangePasswordScreen } from "../../src/features/auth/ChangePasswordScreen";
-import { formatRemaining } from "../../src/features/auth/authApi";
+import { formatRemaining, login } from "../../src/features/auth/authApi";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
   "axe-core",
@@ -61,17 +61,39 @@ describe("LoginScreen (SCR-001)", () => {
     expect(await serious()).toEqual([]);
   });
 
-  it("disabled account message", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(403, {})));
-    render(<LoginScreen />);
-    submit();
-    await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).toBe("Account disabled - contact the owner"),
-    );
+  it("every refusal but a 429 or a 5xx is the one failure, whatever its body and headers", async () => {
+    // SR-014 (#4961): the client keys on the status alone, never on a code, title or detail
+    const body = { code: "any_code", title: "Any title", detail: "Any detail" };
+    for (let status = 400; status < 500; status += 1) {
+      if (status === 429) continue;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(reply(status, body, { "Retry-After": "60" })),
+      );
+      expect(await login("ann", "pw"), String(status)).toEqual({ kind: "invalid" });
+    }
   });
 
-  it("locked shows remaining time and blocks submit", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(423, {}, { "Retry-After": "872" })));
+  it("a 5xx is unreachable, whatever its body", async () => {
+    for (let status = 500; status < 600; status += 1) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(status, { code: "any_code" })));
+      expect(await login("ann", "pw"), String(status)).toEqual({ kind: "unreachable" });
+    }
+  });
+
+  it("a 429 without a usable Retry-After counts down from 15 minutes", async () => {
+    for (const header of [undefined, "0", "-5", "soon"]) {
+      const headers: Record<string, string> = header === undefined ? {} : { "Retry-After": header };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(429, {}, headers)));
+      expect(await login("ann", "pw"), String(header)).toEqual({
+        kind: "rate_limited",
+        retryAfterS: 15 * 60,
+      });
+    }
+  });
+
+  it("a 429 shows the remaining time and blocks submit", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(429, {}, { "Retry-After": "872" })));
     render(<LoginScreen />);
     submit();
     await waitFor(() => expect(screen.getByText(/Try again in 14:32/)).toBeTruthy());

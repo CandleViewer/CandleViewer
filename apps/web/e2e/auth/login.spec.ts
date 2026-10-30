@@ -31,11 +31,14 @@ test("E09-TC-A01 password step returns mfa_required and shows the second-factor 
   await guard.flush();
 });
 
+// Every failed sign-in, whatever the account's state, is the contract's one 401 (SR-014, #4961).
+const REFUSED = json({ code: "unauthenticated" }, 401);
+
 test("E09-TC-A03 disabled account is refused with no session @electron", async ({ page }) => {
-  await page.route("**/api/v1/auth/login", (r) => r.fulfill(json({}, 403)));
+  await page.route("**/api/v1/auth/login", (r) => r.fulfill(REFUSED));
   await page.goto("/login");
   await signIn(page);
-  await expect(page.getByRole("alert")).toHaveText("Account disabled - contact the owner");
+  await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
   expect(await page.context().cookies()).toEqual([]);
 });
 
@@ -56,14 +59,12 @@ test("E09-TC-A07 unknown user and wrong password are indistinguishable in the UI
   expect(messages).toHaveLength(2);
 });
 
-test("E09-TC-A08 (UI half) lockout shows remaining time and disables submit", async ({ page }) => {
-  await page.route("**/api/v1/auth/login", (r) =>
-    r.fulfill(json({}, 423, { "Retry-After": "900" })),
-  );
+test("E09-TC-A08 (UI half) a locked account reads as the one failure string", async ({ page }) => {
+  await page.route("**/api/v1/auth/login", (r) => r.fulfill(REFUSED));
   await page.goto("/login");
   await signIn(page);
-  await expect(page.getByText(/Try again in 1[45]:\d\d/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeDisabled();
+  await expect(page.getByRole("alert")).toHaveText("Username or password is incorrect");
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeEnabled();
 });
 
 test("E09-TC-A01 keyboard-only: tab order SCR-001 and Enter submits @electron", async ({

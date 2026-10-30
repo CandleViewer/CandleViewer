@@ -23,19 +23,27 @@ class InvalidCredentials(AuthError):
 class AccountDisabled(AuthError):
     """Password verified but `users.status = 'disabled'`.
 
-    Only ever raised *after* a successful Argon2id verification (the
-    ticket's documented, deliberate trade-off: the caller already proved
-    knowledge of the secret, so revealing the disabled state here does not
-    aid enumeration)."""
+    Only ever raised *after* a successful Argon2id verification. The HTTP edge answers it
+    exactly as `InvalidCredentials` (SR-014, #4961); only the audit record keeps the cause."""
 
 
 class AccountLocked(AuthError):
-    """`users.locked_until` is in the future. Carries the remaining seconds
-    so the API/UI can render a countdown without a second query."""
+    """`users.locked_until` is in the future. The HTTP edge answers it exactly as
+    `InvalidCredentials` (SR-014, #4961); the audit record (`auth.account_locked`) keeps the
+    cause."""
 
-    def __init__(self, retry_after_s: int) -> None:
-        super().__init__(f"account locked for another {retry_after_s}s")
-        self.retry_after_s = retry_after_s
+    def __init__(self) -> None:
+        super().__init__("account locked")
+
+
+class MfaNotRequired(AuthError):
+    """The password verified, but the user has no `mfa_required`: C-12.2 forbids the state and
+    #965 refuses it, so sign-in fails closed and mints nothing (a password-only session is not
+    specified, #2295 Q6). The HTTP edge answers it exactly as `InvalidCredentials` (SR-014,
+    #4961); the audit record keeps the cause."""
+
+    def __init__(self) -> None:
+        super().__init__("sign-in is not available for a user without mfa_required")
 
 
 class SignInBusy(AuthError):

@@ -109,8 +109,7 @@ async def test_correct_password_refused_after_concurrent_lockout() -> None:
     await asyncio.gather(*(_fail(service) for _ in range(LOCKOUT_THRESHOLD * 2)))
     assert repo.users[uid].locked_until is not None
 
-    with pytest.raises(AccountLocked) as exc:
+    with pytest.raises(AccountLocked):
         await service.login(
             LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1"
         )
-    assert exc.value.retry_after_s > 0

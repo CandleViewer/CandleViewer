@@ -16,7 +16,7 @@ Quick facts the procedures rely on:
 
 | Fact             | Value                                                                               | Source                                                                           |
 | ---------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Lockout          | 5 failed logins lock the account for 15 min; login returns `423` with `Retry-After` | `auth/login_service.py` (`LOCKOUT_THRESHOLD`, `LOCKOUT_DURATION`), `api/auth.py` |
+| Lockout          | 5 failed logins lock the account for 15 min; a locked sign-in gets the one `401`    | `auth/login_service.py` (`LOCKOUT_THRESHOLD`, `LOCKOUT_DURATION`), `api/auth.py` |
 | Step-up grace    | 5 min per action class; `live_enablement` and `killswitch` always need a fresh code | `auth/step_up.py` (`GRACE_WINDOW`, `NO_GRACE_ACTION_CLASSES`)                    |
 | Step-up failures | 3 invalid codes abandon the action and make the session read-only for 5 min         | `auth/step_up.py` (`FAILURE_CAP`, `READONLY_WINDOW`)                             |
 | Session lifetime | 12 h absolute, 12 min access token, idle lock 15 min default (5–60 min)             | `auth/session_service.py`                                                        |
@@ -62,15 +62,9 @@ Preconditions: you know the user. Do not ask the user to retry during the lock w
 account refuses even a correct password, at login, at a step-up and at the idle-lock unlock, where
 each refusal also counts toward the five failed unlocks that revoke the session.
 
-1. Confirm the lock. A login attempt returns `423` with a `Retry-After` header (seconds left):
-
-   ```bash
-   curl -si -X POST "$API/auth/login" -H 'Content-Type: application/json' \
-     -d '{"identifier":"<user>","password":"<password>"}' | head -n 12
-   ```
-
-   Expected: `HTTP/1.1 423`, `retry-after: <seconds, at most 900>`, problem title `Account locked`.
-   Then query the audit log as an Owner (a non-owner sees only its own events):
+1. Confirm the lock in the audit log: every failed sign-in gets the same `401`, whatever the
+   account's state (SR-014), and the audit record keeps the cause. Query it as an Owner (a
+   non-owner sees only its own events):
 
    ```bash
    curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.account_locked"
@@ -78,13 +72,25 @@ each refusal also counts toward the five failed unlocks that revoke the session.
 
    Expected: `200` with one `auth.account_locked` entry (severity warning, identifier redacted such
    as `abc***(len=9)`) per refused login attempt, and one with reason `unlock_failed` and the user
-   id as actor when a wrong `POST /auth/unlock` password applied the lock.
+   id as actor when a wrong `POST /auth/unlock` password applied the lock. Before any refused
+   attempt, the lock shows only as `users.locked_until` and a rise of `auth_lockouts_total` (below).
+   To list the accounts locked now (`psql` runs inside the `postgres` container, in a read-only
+   session):
 
-2. Wait out `Retry-After`. Expected elapsed time: at most 15 minutes. Do not attempt a login
+   ```bash
+   docker compose -f infra/compose/docker-compose.yml --profile core exec -T \
+     -e PGOPTIONS='-c default_transaction_read_only=on' postgres \
+     sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+   SELECT id, username, failed_login_count, locked_until FROM users
+   WHERE locked_until > now() ORDER BY locked_until;
+   SQL
+   ```
+
+2. Wait out the lock: at most 15 minutes after it was set. Do not attempt a login
    meanwhile. **Warning:** `failed_login_count` is reset only by a _successful_ login, so a single wrong
    password after the lock expires re-locks the account for another 15 minutes. Use the correct
    password on the first attempt.
-3. Verify: repeat the login `curl` above with the correct password. Expected `200` with
+3. Verify: the user signs in (`POST $API/auth/login`) with the correct password. Expected `200` with
    `{"status":"mfa_required","mfa_token":"...","methods":["totp"],"expires_in":...}`; the user then
    completes `POST $API/auth/mfa/verify`. Confirm with
    `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.login"`: expect an
@@ -132,7 +138,8 @@ in one burst arrive as one message (grouped by alert, component and environment)
 Telemetry for failed logins: counter `auth_login_failures_total{method}` rises by 1 per failed
 authentication on the `/auth` routes, `method` being the factor that failed: `password` per
 `auth.login_failed` row written by `POST /auth/login` (wrong password, unknown identifier,
-per-address throttle, or a disabled account after a correct password); `totp`, `webauthn` or
+per-address throttle, or, after a correct password, a disabled account or one whose MFA flag is off,
+reason `mfa_not_required`, a state C-12.2 forbids); `totp`, `webauthn` or
 `recovery_code` (as named in the request) per `auth.mfa_failed` row of `POST /auth/mfa/verify`, and
 per `auth.login_failed` row (reason `user_disabled`) of the same route when the code was right but
 the user was disabled since the password step (#3054); `recovery_code` also per `auth.mfa_failed`,
@@ -295,8 +302,9 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    in again. Verify: audit `auth.session_created` with `enrolment_only: true`, then
    `auth.mfa_enrolled` and `auth.recovery_codes_regenerated` for the user; counter
    `auth_enrolments_total{result="completed"}` rises by 1 (`refused` counts wrong codes). A sign-in
-   whose user was disabled since the password check gets `403`: its `auth.login_failed` row carries
-   `session_id` and `after_state.voids_session_created`, so its `auth.session_created` row is void.
+   whose user was disabled since the password check gets the one `401` of every failed sign-in
+   (SR-014): its `auth.login_failed` row carries `session_id` and
+   `after_state.voids_session_created`, so its `auth.session_created` row is void.
    A confirm whose transaction did not commit changed nothing (the method is still pending, the
    codes and sessions are as they were): the error log `auth.enrolment.commit_failed` names the user
    and the new session, and the refusal row voids that session's `auth.session_created` the same
@@ -730,7 +738,8 @@ What the cascade builds on, and what to read afterwards:
   `failed` is the cascade's own cut-off or a raise out of `user_disabled`, and an `ok` step does not
   show that every socket closed (a close either loop counted leaves it `ok`).
 
-- `users.status = disabled` makes login refuse with `403 Account disabled` after a correct password.
+- `users.status = disabled` makes login refuse a correct password with the `401` every failed
+  sign-in gets; its `auth.login_failed` row (`denied`) keeps the cause.
 
 What a `disabled` status does to sessions (#2911). It holds however the status was set, and it is
 the backstop for a session that no disable revoked. A `locked` or `invited` status changes none of
@@ -1476,12 +1485,14 @@ containment (a replay the service refuses renews it). After a restart, an evicti
 next replay of a family writes one `critical` row again.
 
 The login routes (`api/auth.py`, #2914) write their outcome and refusal rows after the decision too,
-and through the lane (ADR-0037 Amendment 2): `auth.login_failed` for a refused sign-in (`401`,
-`403`) or a disabled user's refused mint (reason `user_disabled`), `auth.account_locked` (`423`),
-`auth.login` for a password step that passed (`200`; no session exists yet), `auth.mfa_failed`
-for a refused second factor, recovery or confirm (`401`, `422`) or for a second factor whose mint
-then failed in the store (`500`, reason `unminted`: it voids the `auth.session_created` written
-ahead, and the error log `auth.mfa_verify.unminted` names the `user_id` and the `new_session_id`),
+and through the lane (ADR-0037 Amendment 2): `auth.login_failed` for a refused sign-in (reason
+`mfa_not_required` for a user without `mfa_required`) or a disabled user's refused mint (reason
+`user_disabled`), `auth.account_locked` for an attempt at a locked account (each of them the one
+`401` of every failed sign-in), `auth.login` for a password step that passed (`200`; no session
+exists yet), `auth.mfa_failed` for a refused second factor, recovery or confirm (`401`, `422`) or
+for a second factor whose mint then failed in the store (`500`, reason `unminted`: it voids the
+`auth.session_created` written ahead, and the error log `auth.mfa_verify.unminted` names the
+`user_id` and the `new_session_id`),
 `auth.recovery_codes_exhausted`, and a recovery's `unplanned` `auth.session_revoked`. Each lost one
 is counted under its action and logs one error, `auth.login_audit.outcome_lost`, with `action` and
 `error` only (no identifier, address or session id, C-12.6); the answer stands, and the counter the

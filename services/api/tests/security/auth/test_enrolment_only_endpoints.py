@@ -267,12 +267,12 @@ def test_sign_in_mints_nothing_when_its_audit_record_cannot_be_written(
     assert stack.call(stack.auth.sessions.list_sessions, str(uid)) == ()
 
 
-def test_sign_in_of_a_user_disabled_since_the_password_check_mints_nothing_and_is_403(
+def test_sign_in_of_a_user_disabled_since_the_password_check_mints_nothing_and_is_the_401(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#2911: the mint refuses a user disabled after the password check. Login's answer for a
-    disabled account, never a 500; nothing is minted, and the refusal is audited and counted
-    (SR-125) like login's, its row voiding the session announced ahead (C-2.9)."""
+    """#2911: the mint refuses a user disabled after the password check. The one answer of every
+    failed sign-in (SR-014, #4961), never a 500; nothing is minted, and the refusal is audited and
+    counted (SR-125) like login's, its row voiding the session announced ahead (C-2.9)."""
     uid = _must_enrol(stack, "alice")
     fails = stack.scraped("auth_login_failures_total", method="password")
 
@@ -282,7 +282,7 @@ def test_sign_in_of_a_user_disabled_since_the_password_check_mints_nothing_and_i
     monkeypatch.setattr(stack.auth.sessions, "mint", disabled)
     resp = _sign_in(stack, "alice")
 
-    assert (resp.status_code, resp.json()["title"]) == (403, "Account disabled")
+    assert (resp.status_code, resp.json()["code"]) == (401, "unauthenticated")
     assert "set-cookie" not in resp.headers
     assert stack.call(stack.auth.sessions.list_sessions, str(uid)) == ()
     (refused,) = stack.audit.of("auth.login_failed")
@@ -297,8 +297,10 @@ def test_sign_in_without_mfa_required_and_without_a_method_still_fails_closed(st
     uid = _must_enrol(stack, "alice")
     stack.users.add(stack.users.users[str(uid)].model_copy(update={"mfa_required": False}))
 
-    assert _sign_in(stack, "alice").status_code == 501
+    assert _sign_in(stack, "alice").status_code == 401  # the one answer (SR-014, #4961)
     assert stack.call(stack.auth.sessions.list_sessions, str(uid)) == ()
+    (refused,) = stack.audit.of("auth.login_failed")
+    assert refused["reason"] == "mfa_not_required"  # the record keeps the cause
 
 
 def test_an_owners_enrolment_only_sign_in_moves_the_series_an_alert_pages_on(

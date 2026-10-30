@@ -12,12 +12,17 @@ export type LoginOutcome =
     }
   | { readonly kind: "authenticated" }
   | { readonly kind: "invalid" }
-  | { readonly kind: "disabled" }
-  | { readonly kind: "locked"; readonly retryAfterS: number }
+  | { readonly kind: "rate_limited"; readonly retryAfterS: number }
   | { readonly kind: "unreachable" };
 
-const DEFAULT_LOCK_S = 15 * 60;
+/** The countdown when a `429` carries no usable `Retry-After`. */
+const DEFAULT_RETRY_S = 15 * 60;
 
+/**
+ * `POST /auth/login`. Every failed sign-in is the contract's one `401` (SR-014, #4961), so a refusal
+ * keys on the status alone, never on a `code`, `title` or `detail`: a `429` counts down from its
+ * `Retry-After`, a `5xx` is unreachable, and any other refusal is the one failure string.
+ */
 export async function login(identifier: string, password: string): Promise<LoginOutcome> {
   let res: Response;
   try {
@@ -29,14 +34,13 @@ export async function login(identifier: string, password: string): Promise<Login
   } catch {
     return { kind: "unreachable" };
   }
-  if (res.status === 423 || res.status === 429) {
+  if (res.status === 429) {
     const header = Number(res.headers?.get("Retry-After"));
     return {
-      kind: "locked",
-      retryAfterS: Number.isFinite(header) && header > 0 ? header : DEFAULT_LOCK_S,
+      kind: "rate_limited",
+      retryAfterS: Number.isFinite(header) && header > 0 ? header : DEFAULT_RETRY_S,
     };
   }
-  if (res.status === 403) return { kind: "disabled" };
   if (res.status === 503 || res.status >= 500) return { kind: "unreachable" };
   if (!res.ok) return { kind: "invalid" };
   let body: { status?: string; mfa_token?: string; methods?: string[] } = {};

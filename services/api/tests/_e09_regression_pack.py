@@ -31,6 +31,7 @@ PACK_PATHS: Final[tuple[str, ...]] = (
     "tests/unit/ws/",
     "tests/unit/test_ws_permissions.py",
     "tests/contract/rbac/",
+    "tests/contract/test_login_failure_answer_contract.py",
     "tests/security/auth/",
     "tests/qa/test_e09_dryrun_group_a.py",
     "tests/chaos/auth/",

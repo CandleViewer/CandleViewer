@@ -1,9 +1,10 @@
 """SR-015/SR-016: audit records emitted by `/auth/login` under concurrent failures.
 
-Documented behaviour: `auth.account_locked` is emitted once per *refused* attempt (HTTP 423,
-account already locked at request start). The request whose failure trips the lock returns
-401 and is audited as `auth.login_failed`; so a burst of exactly LOCKOUT_THRESHOLD concurrent
-wrong passwords yields zero `account_locked` records, and every later attempt yields one.
+Documented behaviour: `auth.account_locked` is emitted once per *refused* attempt (the account
+already locked at request start), whose answer is the one 401 of every failed sign-in (SR-014).
+The request whose failure trips the lock returns that 401 too and is audited as
+`auth.login_failed`; so a burst of exactly LOCKOUT_THRESHOLD concurrent wrong passwords yields
+zero `account_locked` records, and every later attempt yields one.
 """
 
 from __future__ import annotations
@@ -85,6 +86,6 @@ async def test_concurrent_burst_to_threshold_audits_failures_then_locked_attempt
         assert audit.writer.actions.count("auth.account_locked") == 0
 
         after = await asyncio.gather(*(client.post("/auth/login", json=_BODY) for _ in range(3)))
-        assert {r.status_code for r in after} == {423}
+        assert {r.status_code for r in after} == {401}
         assert audit.writer.actions.count("auth.account_locked") == 3
         assert user.failed_login_count == LOCKOUT_THRESHOLD  # refused attempts don't count

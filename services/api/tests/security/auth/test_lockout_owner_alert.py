@@ -173,8 +173,7 @@ async def test_a_lock_is_signalled_when_applied_and_audited_on_each_refused_atte
         assert world.audit.actions() == ["auth.login_failed"] * LOCKOUT_THRESHOLD  # no lock row yet
 
         refused = await world.fail(3)
-        assert {r.status_code for r in refused} == {423}
-        assert all(int(r.headers["Retry-After"]) > 0 for r in refused)
+        assert {(r.status_code, r.content) for r in refused} == {(401, burst[0].content)}
         locked = [kwargs for action, kwargs in world.audit.calls if action == "auth.account_locked"]
         assert len(locked) == 3
         assert {(k["outcome"], k["severity"]) for k in locked} == {

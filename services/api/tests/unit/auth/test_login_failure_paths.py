@@ -20,7 +20,12 @@ import pytest
 from argon2 import PasswordHasher, extract_parameters
 from prometheus_client import REGISTRY
 
-from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
+from candleviewer.auth.errors import (
+    AccountDisabled,
+    AccountLocked,
+    InvalidCredentials,
+    MfaNotRequired,
+)
 from candleviewer.auth.failure_hold import FAILURE_MINIMUM_LOWEST
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, DUMMY_PASSWORD_HASH, Hasher
 from candleviewer.auth.login_service import (
@@ -469,3 +474,62 @@ async def test_login_cancellation_during_the_wait_propagates(real_hash: str) -> 
         await attempt
     assert attempt.cancelled()
     assert ("record_login_failure",) == events[-2][:1]  # the write was already done
+
+
+# --- #4961 (SR-014): every account state at sign-in has the wrong password's timing class ------
+
+#: Each account state the service tells apart: (`make_user` overrides, identifier, verify verdict).
+_ACCOUNT_STATES: dict[str, tuple[dict[str, Any], str, bool]] = {
+    "unknown_identifier": ({}, "ghost", False),
+    "wrong_password": ({}, "basiltt", False),
+    "disabled_right_password": ({"status": UserStatus.DISABLED}, "basiltt", True),
+    "disabled_wrong_password": ({"status": UserStatus.DISABLED}, "basiltt", False),
+    "locked_right_password": ({"locked_until": _NOW + timedelta(minutes=5)}, "basiltt", True),
+    "locked_wrong_password": ({"locked_until": _NOW + timedelta(minutes=5)}, "basiltt", False),
+    "without_mfa_required": ({"mfa_required": False}, "basiltt", True),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_ACCOUNT_STATES))
+async def test_login_every_account_state_verifies_once_then_waits_out_the_same_floor(
+    real_hash: str, name: str
+) -> None:
+    """One Argon2id verify at the stored hash's cost (the placeholder's for an unknown
+    identifier), one failure recorded from the address, then the hold as its last step, ending
+    at the floor: the same steps a wrong password takes, counted on the spies rather than timed
+    on a wall clock."""
+    update, identifier, verdict = _ACCOUNT_STATES[name]
+    user = make_user(password_hash=real_hash, **update)
+    service, _, events, time = _timed_world(real_hash, verdict=verdict, user=user, work_s=0.01)
+
+    with pytest.raises((InvalidCredentials, AccountDisabled, AccountLocked, MfaNotRequired)):
+        await service.login(
+            LoginRequest(identifier=identifier, password="a-guess"), source_ip="10.0.0.1"
+        )
+
+    assert [e for e in events if e[0] == "verify"] == [("verify", extract_parameters(real_hash))]
+    assert [e for e in events if e[0] == "record_failure"] == [("record_failure",)]
+    assert events[-1] == ("sleep", pytest.approx(_FLOOR_S - 0.01))
+    assert time.now == pytest.approx(_FLOOR_S)
+
+
+@pytest.mark.parametrize("name", sorted(n for n, (_, _, ok) in _ACCOUNT_STATES.items() if ok))
+async def test_login_every_refusal_after_the_password_comes_before_the_success_path_work(
+    name: str,
+) -> None:
+    """A refusal after a right password neither rehashes a stored hash of older parameters nor
+    records a success, whatever the account's state: before its hold it does only the verify a
+    wrong password does."""
+    update, identifier, verdict = _ACCOUNT_STATES[name]
+    older = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1).hash("stored-password")
+    user = make_user(password_hash=older, **update)
+    service, repo, events = _world(older, verdict=verdict, user=user)
+    assert service._hasher.needs_rehash(older, DEFAULT_ARGON2_PARAMS)  # the case is real
+
+    with pytest.raises((AccountDisabled, AccountLocked, MfaNotRequired)):
+        await service.login(
+            LoginRequest(identifier=identifier, password="a-guess"), source_ip="10.0.0.1"
+        )
+
+    assert repo.rehash_calls == []
+    assert ("record_login_success",) not in events

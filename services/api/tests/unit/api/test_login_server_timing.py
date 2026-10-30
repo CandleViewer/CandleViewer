@@ -1,9 +1,10 @@
 """#2097 Q2: `Server-Timing: argon2;dur=<ms>` rides only on the 200 `mfa_required` login
 challenge, and only while the perf switch is on.
 
-No refusal (401, 403, 423, 501, 503 and the throttled 401) ever carries it, so the header
-cannot separate an unknown user from a wrong password (SR-014). The real `create_app()`,
-`LoginService` and `Hasher` run; only the user store, the clocks and the perf counter are fakes.
+No refusal (the one 401 of every failed sign-in, whatever the account's state, and the 503) ever
+carries it, so the header cannot separate one failed sign-in from another (SR-014). The real
+`create_app()`, `LoginService` and `Hasher` run; only the user store, the clocks and the perf
+counter are fakes.
 """
 
 from __future__ import annotations
@@ -117,11 +118,11 @@ def test_login_challenge_carries_the_measured_argon2_time_only_with_the_switch_o
         pytest.param(None, _PHRASE, False, 401, id="unknown_user"),
         pytest.param({}, "wrong password", False, 401, id="wrong_password"),
         pytest.param({}, _PHRASE, True, 401, id="throttled"),
-        pytest.param({"status": UserStatus.DISABLED}, _PHRASE, False, 403, id="disabled"),
+        pytest.param({"status": UserStatus.DISABLED}, _PHRASE, False, 401, id="disabled"),
         pytest.param(
-            {"locked_until": _T0 + timedelta(minutes=10)}, _PHRASE, False, 423, id="locked"
+            {"locked_until": _T0 + timedelta(minutes=10)}, _PHRASE, False, 401, id="locked"
         ),
-        pytest.param({"mfa_required": False, "mfa_methods": ()}, _PHRASE, False, 501, id="no_mfa"),
+        pytest.param({"mfa_required": False, "mfa_methods": ()}, _PHRASE, False, 401, id="no_mfa"),
     ],
 )
 def test_login_refusals_never_carry_server_timing_even_with_the_switch_on(
