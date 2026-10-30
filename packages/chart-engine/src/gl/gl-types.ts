@@ -32,6 +32,37 @@ export interface GL2Like {
   deleteTexture(texture: GLObject | null): void;
   createVertexArray(): GLObject | null;
   deleteVertexArray(vao: GLObject | null): void;
+  // Programs (program-cache.ts); shaders live only while their program links.
+  createShader(type: number): GLObject | null;
+  shaderSource(shader: GLObject, source: string): void;
+  compileShader(shader: GLObject): void;
+  getShaderParameter(shader: GLObject, pname: number): unknown;
+  getShaderInfoLog(shader: GLObject): string | null;
+  deleteShader(shader: GLObject | null): void;
+  attachShader(program: GLObject, shader: GLObject): void;
+  linkProgram(program: GLObject): void;
+  getProgramParameter(program: GLObject, pname: number): unknown;
+  getProgramInfoLog(program: GLObject): string | null;
+  getUniformLocation(program: GLObject, name: string): unknown;
+  useProgram(program: GLObject | null): void;
+  // Buffers, textures and submission.
+  bindBuffer(target: number, buffer: GLObject | null): void;
+  bufferData(target: number, data: ArrayBufferView, usage: number): void;
+  bufferSubData(target: number, dst: number, src: ArrayBufferView, from: number, n: number): void;
+  bindVertexArray(vao: GLObject | null): void;
+  activeTexture(unit: number): void;
+  bindTexture(target: number, texture: GLObject | null): void;
+  texParameteri(target: number, pname: number, param: number): void;
+  texImage2D(
+    ...a: [number, number, number, number, number, number, number, number, ArrayBufferView | null]
+  ): void;
+  texSubImage2D(
+    ...a: [number, number, number, number, number, number, number, number, ArrayBufferView]
+  ): void;
+  viewport(x: number, y: number, width: number, height: number): void;
+  clearColor(r: number, g: number, b: number, a: number): void;
+  clear(mask: number): void;
+  drawArraysInstanced(mode: number, first: number, count: number, instances: number): void;
 }
 
 /** The numeric GL enums the backend reads (values from the WebGL 1/2 specifications). */
@@ -43,4 +74,20 @@ export const GL = {
   CONTEXT_LOST_WEBGL: 0x9242,
   /** `WEBGL_debug_renderer_info` only (ticket Security: shown in SCR-046 alone). */
   UNMASKED_RENDERER_WEBGL: 0x9246,
+  VERTEX_SHADER: 0x8b31,
+  FRAGMENT_SHADER: 0x8b30,
+  COMPILE_STATUS: 0x8b81,
+  LINK_STATUS: 0x8b82,
+  ARRAY_BUFFER: 0x8892,
+  DYNAMIC_DRAW: 0x88e8,
+  TEXTURE_2D: 0x0de1,
+  TEXTURE0: 0x84c0,
+  TEXTURE_MIN_FILTER: 0x2801,
+  TEXTURE_MAG_FILTER: 0x2800,
+  LINEAR: 0x2601,
+  RGBA: 0x1908,
+  RGBA8: 0x8058,
+  UNSIGNED_BYTE: 0x1401,
+  TRIANGLE_STRIP: 0x0005,
+  COLOR_BUFFER_BIT: 0x4000,
 } as const;

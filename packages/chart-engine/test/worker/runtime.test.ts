@@ -1,6 +1,8 @@
 // The render runtime on a synchronous bus (E11-T02): the one implementation both run modes use.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GLBackend } from "../../src/gl/backend.js";
 import { NO_WEBGL2_REASON } from "../../src/gl/capability.js";
+import { ENGINE_SHADER_COMPILE_FAILED } from "../../src/gl/program-cache.js";
 import { probeWorker, startWorker } from "../../src/worker/render-worker.js";
 import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtime.js";
 import {
@@ -84,17 +86,20 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("render loop", () => {
   it("reports ready once per chart on its first frame, probing once per runtime", () => {
+    // These canvases give no WebGL2 context although the probe says full: degraded-2d (BQ-50).
     const a = make(false, null, 1);
     make(false, null, 2);
     expect(out).toEqual([]);
     frame();
+    const degraded = { runMode: "inline", renderProfile: "degraded-2d", capabilities: FULL };
     expect(of("ready")).toEqual([
-      { t: "ready", id: 1, runMode: "inline", renderProfile: "full", capabilities: FULL },
-      { t: "ready", id: 2, runMode: "inline", renderProfile: "full", capabilities: FULL },
+      { t: "ready", id: 1, ...degraded },
+      { t: "ready", id: 2, ...degraded },
     ]);
     expect(probes).toBe(1);
     expect(a.ctx.fills).toEqual(["#000000"]);
@@ -137,6 +142,63 @@ describe("render loop", () => {
     rt.handle({ t: "resize", id: 1, width: 50, height: 40, dpr: 2 });
     frame();
     expect([c.width, c.height]).toEqual([100, 80]);
+  });
+});
+
+describe("the WebGL2 path (E11-S02 PR2)", () => {
+  it("submits through GLBackend on a WebGL2 canvas and reports its frame stats", () => {
+    const gl = new FakeGl({ params: ROOMY });
+    const ids: string[] = [];
+    const c = Object.assign(canvas(), {
+      getContext: (id: string): unknown => (ids.push(id), id === "webgl2" ? gl : null),
+    });
+    make(true, null, 1, c);
+    frame();
+    expect(ids).toEqual(["webgl2"]); // the 2D context is never asked for
+    expect(gl.log).toEqual(expect.arrayContaining(["viewport", "clear"]));
+    expect(of("frame")[0]).toMatchObject({ drawCalls: 0, triangles: 0, gpuMemoryMbEstimate: 0 });
+  });
+
+  it("redraws before an export encodes, and frees its GL objects on release", async () => {
+    const gl = new FakeGl({ params: ROOMY });
+    const at: number[] = [];
+    const c = Object.assign(canvas(), {
+      getContext: (id: string): unknown => (id === "webgl2" ? gl : null),
+      convertToBlob: (): Promise<null> => (
+        at.push(gl.log.lastIndexOf("clear")),
+        Promise.resolve(null)
+      ),
+    });
+    const dispose = vi.spyOn(GLBackend.prototype, "dispose");
+    make(true, null, 1, c);
+    frame();
+    const clears = gl.log.lastIndexOf("clear");
+    rt.handle({ t: "command", id: 1, cmd: { k: "export", reqId: 1 } });
+    expect(at[0]).toBeGreaterThan(clears); // drawn in the encoding task, not a stale buffer
+    rt.handle({ t: "command", id: 1, cmd: { k: "release" } });
+    expect(dispose).toHaveBeenCalledOnce();
+    await Promise.resolve();
+  });
+
+  it("Scenario: A shader that fails to compile is a handled error (the runtime falls back)", () => {
+    const gl = new FakeGl({ params: ROOMY });
+    const c = Object.assign(canvas(), { getContext: (): unknown => gl });
+    vi.spyOn(GLBackend.prototype, "submit").mockImplementation(function (this: GLBackend) {
+      this.trace.draws = 0;
+      this.failure = {
+        code: ENGINE_SHADER_COMPILE_FAILED,
+        message: "m",
+        recoverable: true,
+        fallback: "degraded-2d",
+      };
+      return this.failure;
+    });
+    make(true, null, 1, c);
+    frame();
+    expect(of("error")).toEqual([
+      { t: "error", id: 1, code: ENGINE_SHADER_COMPILE_FAILED, message: "m", recoverable: true },
+    ]);
+    expect(of("frame").at(-1)).toMatchObject({ renderProfile: "degraded-2d", drawCalls: 0 });
   });
 });
 

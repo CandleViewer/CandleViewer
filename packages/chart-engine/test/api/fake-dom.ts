@@ -106,7 +106,7 @@ export class FakeOffscreen {
     this.el.height = h;
   }
   getContext(kind: string): unknown {
-    return kind === "2d" ? this.el.context2d : null;
+    return this.el.getContext(kind);
   }
   convertToBlob(): Promise<Blob> {
     const blob = this.el.blob;

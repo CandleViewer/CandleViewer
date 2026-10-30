@@ -5,6 +5,8 @@
 // order (§3.2 rule 1), each through its own `FrameScheduler` (E11-S01), and parks when nothing
 // is dirty (§3.2 rule 5). No DOM types here (C-2.16): the canvas is reached structurally, as an
 // OffscreenCanvas and an HTMLCanvasElement both fit.
+import { GLBackend } from "../gl/backend.js";
+import { acquireContext } from "../gl/context.js";
 import * as scene from "../scene/index.js";
 import {
   BACKGROUND_TOKEN,
@@ -26,7 +28,7 @@ import {
   type ToWorker,
 } from "./protocol.js";
 
-/** The 2D context calls the stub renderer makes (GL replaces it in E11-S02). */
+/** The 2D context calls the `degraded-2d` stub makes (E11-T05 draws the real 2D path). */
 interface Context2DLike {
   fillStyle: unknown;
   clearRect(x: number, y: number, w: number, h: number): void;
@@ -37,7 +39,7 @@ interface Context2DLike {
 interface CanvasLike {
   width: number;
   height: number;
-  getContext(id: "2d"): unknown;
+  getContext(id: "2d" | "webgl2", attributes?: object): unknown;
   convertToBlob?: (opts: { type: string }) => Promise<unknown>;
   toBlob?: (cb: (blob: unknown) => void, type: string) => void;
 }
@@ -75,6 +77,9 @@ interface Instance {
   readonly graph: scene.SceneGraph;
   readonly layout: scene.LayoutEngine;
   readonly scheduler: scene.FrameScheduler;
+  readonly builder: scene.BatchBuilder;
+  /** The GL backend: undefined until the first frame decides, null on the 2D path. */
+  readonly gpu: { backend: GLBackend | null | undefined };
   timeStart: number;
   timeEnd: number;
   viewportDirty: boolean;
@@ -114,12 +119,19 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   };
 
   /** One chart's scene, laid out as one pane until the multi-pane wiring (E11-S09, BQ-45). */
-  function createScene(slot: Instance["slot"], render: () => void) {
+  function createScene(
+    slot: Instance["slot"],
+    gpu: Instance["gpu"],
+    canvas: () => CanvasLike,
+    render: () => void,
+  ) {
     const graph = new scene.SceneGraph();
     graph.addPane("main");
     const layout = new scene.LayoutEngine(graph);
     layout.addPane("main");
-    const builder = new scene.BatchBuilder(graph, { uploadSubRange: () => undefined }); // E11-S02
+    const builder = new scene.BatchBuilder(graph, {
+      uploadSubRange: (b, from, to) => gpu.backend?.uploadSubRange(b, from, to),
+    });
     const clock = { now: () => deps.now(), requestFrame, cancel: () => (slot.frame = null) };
     function requestFrame(cb: scene.FrameCallback): number {
       slot.frame = cb;
@@ -129,10 +141,19 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     const scheduler = new scene.FrameScheduler(graph, clock, {
       layout: () => layout.run(),
-      build: (sink) => builder.build(sink),
+      build: (sink) => {
+        open(); // before the first build, so its full uploads reach the GPU
+        builder.build(sink);
+      },
       submit: render,
     });
-    return { graph, layout, scheduler };
+    function open(): void {
+      if (gpu.backend !== undefined) return;
+      const caps = (report ??= deps.probe());
+      const acquired = caps.profile === "degraded-2d" ? null : acquireContext(canvas());
+      gpu.backend = acquired && new GLBackend(acquired.gl, caps.caps?.renderer ?? null, deps.now);
+    }
+    return { graph, layout, scheduler, builder };
   }
 
   function setRange(inst: Instance, start: number, end: number): void {
@@ -186,6 +207,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
 
   function exportPng(inst: Instance, reqId: number): void {
     const c = inst.canvas;
+    // WebGL2 clears its drawing buffer after presentation: draw now, in the encoding task.
+    if (inst.gpu.backend?.failure === null) render(inst);
     const done = (blob: unknown): void => deps.post({ t: "exported", id: inst.id, reqId, blob });
     if (typeof c.convertToBlob === "function") {
       c.convertToBlob({ type: "image/png" }).then(done, () => done(null));
@@ -229,6 +252,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         return;
       case "release":
         inst.scheduler.dispose();
+        inst.gpu.backend?.dispose();
         charts.delete(inst.id);
         return;
       default:
@@ -248,10 +272,17 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     if (msg.t === "init") {
       const slot: Instance["slot"] = { frame: null };
-      const scene = createScene(slot, () => render(inst));
+      const gpu: Instance["gpu"] = { backend: undefined };
+      const scene = createScene(
+        slot,
+        gpu,
+        () => inst.canvas,
+        () => render(inst),
+      );
       const inst: Instance = {
         ...scene,
         slot,
+        gpu,
         id: msg.id,
         canvas: msg.canvas as CanvasLike,
         theme: msg.theme,
@@ -308,12 +339,23 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   function render(inst: Instance): void {
     const start = deps.now();
     const capabilities = (report ??= deps.probe());
-    const renderProfile = capabilities.profile;
+    const backend = inst.gpu.backend ?? null;
+    // A failed WebGL2 acquire, or a failed compile, is degraded-2d whatever the probe said (BQ-50).
+    let renderProfile = backend === null || backend.failure ? "degraded-2d" : capabilities.profile;
     if (!inst.ready) {
       inst.ready = true;
       deps.post({ t: "ready", id: inst.id, runMode: deps.runMode, renderProfile, capabilities });
     }
-    const ctx = inst.canvas.getContext("2d") as Context2DLike | null;
+    const { width, height } = inst.canvas;
+    if (backend !== null && backend.failure === null) {
+      backend.setBackground(inst.theme[BACKGROUND_TOKEN]);
+      const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
+      if (f !== null) {
+        renderProfile = "degraded-2d";
+        deps.post({ t: "error", id: inst.id, code: f.code, message: f.message, recoverable: true });
+      }
+    }
+    const ctx = backend === null ? (inst.canvas.getContext("2d") as Context2DLike | null) : null;
     if (ctx !== null) {
       ctx.clearRect(0, 0, inst.canvas.width, inst.canvas.height);
       const color = inst.theme[BACKGROUND_TOKEN];
@@ -347,9 +389,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         runMode: deps.runMode,
         renderProfile,
         frameTimeMs: end - start,
-        drawCalls: 0,
-        triangles: 0,
-        uploadedBytes: 0,
+        drawCalls: backend?.trace.draws ?? 0,
+        triangles: backend?.trace.triangles ?? 0,
+        uploadedBytes: backend?.takeUploadedBytes() ?? 0,
+        gpuMemoryMbEstimate: backend?.gpuMemoryMbEstimate ?? 0,
         lod: inst.lod,
       });
     }

@@ -69,6 +69,11 @@ export class GlRegistry {
     }
   }
 
+  /** Releases every object (the backend's `dispose()`). */
+  releaseAll(): void {
+    for (const h of this.slots.keys()) this.release(h as Handle);
+  }
+
   /** On `webglcontextlost`: every object is dead; drop them without GL calls, keep the slots. */
   invalidateAll(): void {
     for (const slot of this.slots.values()) slot.object = null;

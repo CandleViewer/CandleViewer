@@ -15,7 +15,7 @@ export const ENGINE_WORKER_LOST = "ENGINE_WORKER_LOST";
 export const ENGINE_CONTEXT_LOST = "ENGINE_CONTEXT_LOST";
 export const ENGINE_CONTEXT_RESTORE_FAILED = "ENGINE_CONTEXT_RESTORE_FAILED";
 export const ENGINE_NO_WEBGL2 = "ENGINE_NO_WEBGL2";
-export const ENGINE_SHADER_COMPILE_FAILED = "ENGINE_SHADER_COMPILE_FAILED";
+export { ENGINE_SHADER_COMPILE_FAILED } from "../gl/program-cache.js";
 
 export type RunMode = "worker" | "inline";
 /** One chart instance on the shared worker, minted by the host. */
@@ -122,6 +122,8 @@ export type FromWorker =
       readonly drawCalls: number;
       readonly triangles: number;
       readonly uploadedBytes: number;
+      /** GL buffers and textures held (BQ-59); 0 under `degraded-2d`. */
+      readonly gpuMemoryMbEstimate: number;
       readonly lod: LodLevels;
     }
   | {
