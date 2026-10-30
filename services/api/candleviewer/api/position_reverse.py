@@ -15,7 +15,9 @@ before the next:
     never sends: with the entry's anchor present the answer is `reversed` with the entry as it
     stands; without it, the close's reconciled state decides (`close_unfilled`, with
     `close.reconciling` while unresolved; `close_partially_filled`; `entry_refused` with reason
-    `timeout` once the close filled). A recorded `429` or `502` on the close is replayed;
+    `timeout` once the close filled). A recorded `429` or `502` on the close is replayed. A
+    fresh one meets the group namespace next: the raw key already anchoring one of the caller's
+    trade groups is 409 `idempotency_key_reuse`, nothing sent (`group_key_free`);
 12. the refusals knowable before any send: `trading.oms_enabled` (the entry is no reduce-only
     order), then live trading, the kill switch and the order-entry gate (403 `trading_disabled`);
     an open position; the native-stop pre-check (`PositionWrites.entry_stop_ready`, C-2.6): an
@@ -423,6 +425,8 @@ def make_position_reverse_router(
                 raise found.refusal()
             if isinstance(found, Replay):
                 return await decide(adm, found, refs[1])
+            step = "group_key"  # the entry's group keeps the raw key: a used one is 409 now
+            await oms.positions.group_key_free(user, key, digest)
             step = "flag"
             if not oms_enabled():
                 raise TradingDisabled

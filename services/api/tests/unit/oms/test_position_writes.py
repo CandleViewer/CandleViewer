@@ -26,7 +26,12 @@ from candleviewer.exchange.base.models import (
     PlaceOrderRequest,
     Position,
 )
-from candleviewer.oms.errors import EnvironmentMismatch, OrderInvalid, StoreUnavailable
+from candleviewer.oms.errors import (
+    EnvironmentMismatch,
+    IdempotencyKeyReuse,
+    OrderInvalid,
+    StoreUnavailable,
+)
 from candleviewer.oms.ports import RequestRecord, SubmitActor
 from candleviewer.oms.position_writes import (
     CLOSE_ACTION,
@@ -40,6 +45,7 @@ from candleviewer.oms.position_writes import (
 )
 from candleviewer.storage.repositories.positions import PositionRow
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
+from candleviewer.storage.repositories.trade_groups import GroupAnchor
 from tests.unit.api.oms_reads_world import position
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.submit_rig import SubmitRig, context, rigged
@@ -199,6 +205,23 @@ class Stops:
         return self.rows if read == 0 or self.later is None else self.later
 
 
+@dataclass
+class GroupKeys:
+    """The groups' anchor read: `found` for every ref; `error` raised instead; each ask kept."""
+
+    found: GroupAnchor | None = None
+    error: BaseException | None = None
+    asked: list[tuple[uuid.UUID, str, str]] = field(default_factory=list)
+
+    async def find_anchor(
+        self, created_by: uuid.UUID, client_group_ref: str, client_body_sha256: str
+    ) -> GroupAnchor | None:
+        self.asked.append((created_by, client_group_ref, client_body_sha256))
+        if self.error is not None:
+            raise self.error
+        return self.found
+
+
 def stop(mode: str = "Partial", exchange_order_id: str | None = "ex-1", **over: Any) -> Any:
     values: dict[str, Any] = {
         "id": uuid.uuid4(), "exchange_account_id": ACCOUNT, "symbol": "BTCUSDT",
@@ -220,6 +243,7 @@ class Rig:
     profiles: Profiles = field(default_factory=Profiles)
     stops: Stops = field(default_factory=Stops)
     accounts: Accounts = field(default_factory=Accounts)
+    groups: GroupKeys = field(default_factory=GroupKeys)
     clock: list[float] = field(default_factory=lambda: [0.0])
     audit: Audit = field(init=False)
 
@@ -229,7 +253,8 @@ class Rig:
     def service(self, **kw: Any) -> PositionWrites:
         deps = PositionWritesDeps(
             accounts=self.accounts, profiles=self.profiles, machines=self.machines,
-            stops=self.stops, ports=lambda env: self.port, audit=self.audit, environment="demo",
+            stops=self.stops, groups=self.groups, ports=lambda env: self.port, audit=self.audit,
+            environment="demo",
         )  # fmt: skip
         return PositionWrites(deps, monotonic=lambda: self.clock[0], **kw)
 
@@ -253,6 +278,29 @@ async def test_entry_stop_ready_an_unread_profile_is_store_unavailable(error: An
     rig.profiles.refuse = error
     with pytest.raises(StoreUnavailable):
         await rig.service().entry_stop_ready(ACCOUNT)
+
+
+async def test_group_key_free_asks_the_creators_raw_key_and_passes_when_none_anchors() -> None:
+    rig, key = Rig(), uuid.uuid4()
+    await rig.service().group_key_free(ACTOR.user_id, key, "a" * 64)
+    assert rig.groups.asked == [(ACTOR.user_id, str(key), "a" * 64)]
+
+
+@pytest.mark.parametrize("matches", [True, False])
+async def test_group_key_free_a_key_anchoring_a_group_is_key_reuse(matches: bool) -> None:
+    """Fable m1: the raw key already names one of this creator's groups (a `placeOrder` entry's
+    or a `createTradeGroup`'s): 409 before the close, whatever its fingerprint."""
+    rig = Rig()
+    rig.groups.found = GroupAnchor(uuid.uuid4(), body_matches=matches)
+    with pytest.raises(IdempotencyKeyReuse):
+        await rig.service().group_key_free(ACTOR.user_id, uuid.uuid4(), "a" * 64)
+
+
+async def test_group_key_free_an_unread_store_is_store_unavailable() -> None:
+    rig = Rig()
+    rig.groups.error = TimeoutError()
+    with pytest.raises(StoreUnavailable):
+        await rig.service().group_key_free(ACTOR.user_id, uuid.uuid4(), "a" * 64)
 
 
 async def test_await_fill_follows_b1_until_filled() -> None:

@@ -213,6 +213,9 @@ class _Anchors(Protocol):
 
 class _Positions(Protocol):
     async def entry_stop_ready(self, account_id: AccountId) -> None: ...
+    async def group_key_free(
+        self, created_by: uuid.UUID, key: uuid.UUID, request_sha256: str
+    ) -> None: ...
     async def await_fill(
         self, account_id: uuid.UUID, order_id: uuid.UUID, *, deadline: float
     ) -> CloseFill: ...

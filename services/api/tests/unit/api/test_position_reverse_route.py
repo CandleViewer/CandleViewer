@@ -17,6 +17,7 @@ from jsonschema import Draft202012Validator
 from candleviewer.api.position_reverse import REVERSE_PATH, decided_outcome
 from candleviewer.oms.errors import (
     FieldError,
+    IdempotencyKeyReuse,
     OrderInvalid,
     RiskRefused,
     StoreUnavailable,
@@ -216,6 +217,27 @@ async def test_reverse_position_audit_one_reversed_record_after_both_orders() ->
 
 
 # --- refused before anything is sent ---------------------------------------------------------
+
+
+async def test_reverse_position_a_key_that_anchors_a_group_is_409_before_the_close() -> None:
+    """Fable m1: the entry's group keeps the raw key, so a key a `placeOrder` or a trade group
+    already used is `idempotency_key_reuse` at step 11, recorded, with nothing sent, never
+    `entry_refused` after a close."""
+    world, key = World(), uuid.uuid4()
+    world.positions.group_refusal = IdempotencyKeyReuse()
+    answer = await reverse(world, key=key)
+    assert (answer.status_code, answer.json()["code"]) == (409, "idempotency_key_reuse")
+    assert world.submitted() == [] and world.positions.group_keys == [(acc.USER, key)]
+    assert reversals(world) == [("denied", "idempotency_key_reuse")]
+
+
+async def test_reverse_position_a_repeat_decided_from_its_anchor_never_asks_the_group_key() -> None:
+    """The group pre-check runs only for a fresh reversal: a repeat whose close anchor exists is
+    decided from it (its own entry's group holds the key by then)."""
+    world, key = World(), uuid.uuid4()
+    world.anchors.answers[("reversePosition", reversal_refs(key)[0])] = InFlight(1)
+    await reverse(world, key=key)
+    assert world.positions.group_keys == []
 
 
 async def test_reverse_position_native_sl_no_stop_from_the_profile_refuses_with_nothing_sent() -> (

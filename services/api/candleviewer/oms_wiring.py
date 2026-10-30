@@ -2046,6 +2046,10 @@ class OnLanePositions:
     async def entry_stop_ready(self, account_id: AccountId) -> None:
         await _on_lane(self.parts, self.parts.positions.entry_stop_ready(account_id), None)
 
+    async def group_key_free(self, created_by: UUID, key: UUID, request_sha256: str) -> None:
+        free = self.parts.positions.group_key_free(created_by, key, request_sha256)
+        await _on_lane(self.parts, free, None)
+
     async def await_fill(self, account_id: UUID, order_id: UUID, *, deadline: float) -> CloseFill:
         fill = self.parts.positions.await_fill(account_id, order_id, deadline=deadline)
         return await _on_lane(self.parts, fill, None)
@@ -3178,7 +3182,7 @@ class OmsRuntime:
             ))  # fmt: skip
             writes = PositionWrites(PositionWritesDeps(
                 accounts=accounts, profiles=profiles, machines=machines, stops=stops,
-                ports=router.port_for, audit=audit, environment=env,
+                groups=stores.groups, ports=router.port_for, audit=audit, environment=env,
             ), monotonic=self._monotonic)  # fmt: skip
             self._phase = "audit_start"
             await writer.start()

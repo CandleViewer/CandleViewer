@@ -11,6 +11,8 @@ module holds what the pipeline does not:
   closed side's opposite, sized by the profile (C-12.5), its native stop the profile's (C-2.6).
   `reversal_refs(key)` names a reversal's two anchors, `uuid5(key, "close")` and
   `uuid5(key, "open")` (21 Sec.3.3.10).
+* **The group-key pre-check** (`PositionWrites.group_key_free`): a reversal whose raw key already
+  anchors one of its creator's trade groups is refused 409 `idempotency_key_reuse` before its close.
 * **The native-stop pre-check** (`PositionWrites.entry_stop_ready`): a reversal is refused before
   anything is sent when the account's effective profile cannot give its entry a stop. A profile
   always carries one (`ap_native_sl`), so the account must have a default profile; one that cannot
@@ -53,6 +55,7 @@ from candleviewer.oms.errors import (
     RULE_NATIVE_STOP_REQUIRED,
     EnvironmentMismatch,
     FieldError,
+    IdempotencyKeyReuse,
     OrderInvalid,
     StoreUnavailable,
 )
@@ -70,10 +73,11 @@ from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.orders import TimeInForce
 from candleviewer.storage.repositories.positions import PositionRow
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
+from candleviewer.storage.repositories.trade_groups import GroupAnchor
 
 __all__ = [
     "CLOSE_ACTION", "FLATTEN_ACTION", "MAX_SWEEPS", "REVERSE_ACTION", "REVERSE_WAIT_S",
-    "SWEEP_WAIT_S", "CloseFill", "CloseTerms", "PositionWrites", "PositionWritesDeps",
+    "SWEEP_WAIT_S", "CloseFill", "CloseTerms", "GroupKeys", "PositionWrites", "PositionWritesDeps",
     "VenuePosition", "close_request", "entry_request", "is_full_close", "reversal_refs",
 ]  # fmt: skip
 
@@ -175,6 +179,15 @@ class OrderStates(Protocol):
     ) -> str: ...
 
 
+class GroupKeys(Protocol):
+    """The trade groups' anchor read (21 Sec.3.3.2): the group a creator's `client_group_ref`
+    anchors, if any; the fingerprint is compared, never returned."""
+
+    async def find_anchor(
+        self, created_by: UUID, client_group_ref: str, client_body_sha256: str
+    ) -> GroupAnchor | None: ...
+
+
 class LiveStops(Protocol):
     async def live_for_key(
         self, account_id: UUID, symbol: str, position_idx: int
@@ -197,6 +210,7 @@ class PositionWritesDeps:
     profiles: Profiles
     machines: OrderStates
     stops: LiveStops
+    groups: GroupKeys
     ports: Callable[[Environment], SweepPort]
     audit: SubmitAudit
     environment: Environment
@@ -246,6 +260,21 @@ class PositionWrites:
         except (TimeoutError, ProfileUnavailableError, StorageError) as exc:
             _log().warning("oms_reverse_profile_unread", failure=type(exc).__name__)
             raise StoreUnavailable from None
+
+    async def group_key_free(self, created_by: UUID, key: UUID, request_sha256: str) -> None:
+        """A reversal's step 11 (Fable m1): its entry's group keeps the raw key as its
+        `client_group_ref` (21 Sec.3.3.10), so a key that already anchors a group of this creator,
+        a `placeOrder` entry's or a `createTradeGroup`'s, is 409 `idempotency_key_reuse` before
+        the close is sent, never `entry_refused` after it. A read that fails or does not answer
+        in time is 503 `store_unavailable`, nothing sent."""
+        try:
+            async with asyncio.timeout(self._store_timeout_s):
+                found = await self._deps.groups.find_anchor(created_by, str(key), request_sha256)
+        except Exception as exc:  # unread: the key is never taken for free
+            _log().warning("oms_reverse_group_key_unread", failure=type(exc).__name__)
+            raise StoreUnavailable from None
+        if found is not None:
+            raise IdempotencyKeyReuse
 
     async def await_fill(self, account_id: UUID, order_id: UUID, *, deadline: float) -> CloseFill:
         """The close's fill by `deadline` (module docstring): `filled` once B1 says so; else

@@ -259,6 +259,8 @@ class Positions:
     fill: CloseFill = "filled"
     fill_error: OmsError | None = None
     venue: VenuePosition = "flat"
+    group_refusal: OmsError | None = None
+    group_keys: list[tuple[uuid.UUID, uuid.UUID]] = field(default_factory=list)
     stop_refusal: OmsError | None = None
     log: list[str] | None = None
     records: list[RequestRecord] = field(default_factory=list)
@@ -270,6 +272,13 @@ class Positions:
     async def entry_stop_ready(self, account_id: AccountId) -> None:
         if self.stop_refusal is not None:
             raise self.stop_refusal
+
+    async def group_key_free(
+        self, created_by: uuid.UUID, key: uuid.UUID, request_sha256: str
+    ) -> None:
+        self.group_keys.append((created_by, key))
+        if self.group_refusal is not None:
+            raise self.group_refusal
 
     async def await_fill(
         self, account_id: uuid.UUID, order_id: uuid.UUID, *, deadline: float
