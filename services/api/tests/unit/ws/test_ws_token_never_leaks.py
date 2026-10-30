@@ -92,6 +92,7 @@ def test_ws_access_token_never_reaches_a_log_frame_audit_record_or_metric(
         with w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
             wire.send(ws, {"t": "hello", "id": "h"})
             assert (wire.send(ws, _auth(_GOOD, "a1")) or {})["t"] == "auth_ok"
+            assert (wire.recv(ws) or {})["t"] == "snap"  # the `system` snap (§12.1, #4992)
             assert (wire.send(ws, _auth(_GOOD2, "a2")) or {})["t"] == "auth_ok"  # in place
             _advance(ws, w, TOKEN_TTL_S - 10)
             w.clock.now = TOKEN_TTL_S + 1.0

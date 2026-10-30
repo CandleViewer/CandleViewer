@@ -105,7 +105,8 @@ def _open(ws: Any) -> dict[str, Any]:
     welcome: dict[str, Any] = ws.receive_json()
     ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
     assert ws.receive_json()["t"] == "auth_ok"
-    assert ws.receive_json()["p"]["kind"] == "feature_flags"  # §15.9 (#4517): the snapshot follows
+    snap = ws.receive_json()  # §12.1 (#4992): the `system` snap follows, the flags folded in
+    assert (snap["t"], snap["ch"], snap["s"], snap["p"]["kind"]) == ("snap", "system", 1, "health")
     return welcome
 
 

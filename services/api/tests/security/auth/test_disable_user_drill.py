@@ -141,8 +141,9 @@ def _auth_ws(ws: Any, token: str, attempts: int = 1) -> dict[str, Any]:
     for _ in range(attempts):
         ws.send_json({"t": "auth", "id": "a", "p": {"access_token": token}})
         frame = _recv(ws)
-        if frame["t"] == "auth_ok":  # §15.9 (#4517): the flag snapshot follows every `auth_ok`
-            assert _recv(ws)["p"]["kind"] == "feature_flags"
+        if frame["t"] == "auth_ok":  # §12.1 (#4992): the `system` snap; a re-auth's flag set
+            after = _recv(ws)
+            assert (after["t"], after["p"]["kind"]) in {("snap", "health"), ("d", "feature_flags")}
     return frame
 
 

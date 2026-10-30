@@ -172,11 +172,13 @@ def _authenticated(client: TestClient) -> Iterator[Any]:
 
 def _queued(ws: Any) -> list[dict[str, Any]]:
     """Every frame queued so far, up to the reply to a fresh `ping` (heartbeats skipped, and the
-    §15.9 flag snapshot, #4517, which these rows are not about)."""
+    `system` snap, §12.1 #4992, and a re-auth's flag set, #4517, which these rows are not about)."""
     ws.send_json({"t": "ping", "id": "p"})
     frames = []
     while (frame := ws.receive_json())["t"] != "pong":
-        if frame["t"] != "ping" and frame.get("p", {}).get("kind") != "feature_flags":
+        kind = frame.get("p", {}).get("kind")
+        system_snap = frame["t"] == "snap" and frame.get("ch") == "system"
+        if frame["t"] != "ping" and not system_snap and kind != "feature_flags":
             frames.append(frame)
     return frames
 

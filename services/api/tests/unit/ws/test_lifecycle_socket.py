@@ -35,6 +35,7 @@ from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.lifecycle import MAX_AUTHS_PER_USER_PER_MIN
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
+from tests.unit.ws._system_snap import is_system_snap
 
 USER = uuid.uuid4()
 OTHER = uuid.uuid4()
@@ -146,6 +147,14 @@ def _send(ws: Any, frame: dict[str, Any]) -> None:
 
 
 def _recv(ws: Any) -> dict[str, Any]:
+    """The next frame but the `system` snap after `auth_ok` (§12.1, #4992), which these tests are
+    not about (`test_system_snap.py` pins it)."""
+    if is_system_snap(frame := _recv_any(ws)):  # at most one: a second snap is a defect
+        frame = _recv_any(ws)
+    return frame
+
+
+def _recv_any(ws: Any) -> dict[str, Any]:
     pool = ThreadPoolExecutor(max_workers=1)
     try:
         frame: dict[str, Any] = pool.submit(_receive, ws).result(timeout=_TIMEOUT_S)
@@ -586,7 +595,7 @@ def test_planned_shutdown_notice_then_bye_1001(world: _World) -> None:
                 "message": "Backend restarting.",
                 "expected_downtime_ms": 20_000,
             }
-            assert (notice["ch"], notice["s"], notice["e"]) == ("system", 1, "j")
+            assert (notice["ch"], notice["s"], notice["e"]) == ("system", 2, "j")  # after the snap
             bye, code = _bye_then_close(ws)
             assert (bye["p"]["reason"], bye["p"]["retry_after_ms"], code) == (
                 "shutdown",

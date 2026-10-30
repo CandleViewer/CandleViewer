@@ -191,11 +191,17 @@ class Raw:
             pytest.fail(f"{what}: still waiting after {TIMEOUT_S}s; last frames {self.texts[-3:]}")
 
     def count(self, t: str) -> int:
-        return sum(text.startswith(f'{{"t":"{t}"') for text in self.texts)
+        """Frames of type `t` on the topics this test subscribed to: the `system` snap every
+        socket gets after `auth_ok` (23 §12.1, #4992) is not one of them."""
+        return sum(
+            text.startswith(f'{{"t":"{t}"') and '"ch":"system"' not in text for text in self.texts
+        )
 
     def frames(self, *, of: str | None = None, id: str | None = None) -> list[dict[str, Any]]:
+        """The frames this socket was sent, the `system` channel left out as in `count` (#4992)."""
         parsed = [json.loads(text) for text in self.texts]
-        return [f for f in parsed if of in (None, f["t"]) and id in (None, f.get("id"))]
+        mine = [f for f in parsed if f.get("ch") != "system"]
+        return [f for f in mine if of in (None, f["t"]) and id in (None, f.get("id"))]
 
     async def close(self) -> None:
         with contextlib.suppress(ConnectionClosed):

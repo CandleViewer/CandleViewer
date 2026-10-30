@@ -31,6 +31,7 @@ from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES
 from candleviewer.ws.pacing import CLASSIFY_INTERVAL_S
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
+from tests.unit.ws._system_snap import is_system_snap
 from tests.unit.ws.test_gateway_teardown import _Socket
 from tests.unit.ws.test_lifecycle_socket import BASE_MS, ORIGIN, SESSION, USER
 
@@ -73,6 +74,7 @@ class _Rig:
         welcome: dict[str, Any] = await sock.sent.get()
         sock.feed({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
         assert (await sock.sent.get())["t"] == "auth_ok"
+        assert is_system_snap(await sock.sent.get())  # §12.1 (#4992): then the `system` snap
         return handler, welcome
 
 

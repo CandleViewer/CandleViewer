@@ -496,7 +496,8 @@ async def test_s2b_sleeper_holding_orders_it_cannot_shed_closes_4429_then_resync
     await stack_on.clock.advance(delay)
     await slow.until(lambda: slow.sessions == 2 and slow.synced, "resubscribed")
     second = slow.frames[[f["t"] for f in slow.frames].index("welcome", 1) :]
-    resnaps = [(f["ch"], f["meta"]["reason"]) for f in second if f["t"] == "snap"]
+    topic_snaps = [f for f in second if f["t"] == "snap" and f["ch"] != "system"]  # #4992
+    resnaps = [(f["ch"], f["meta"]["reason"]) for f in topic_snaps]
     assert resnaps == [(ch, "initial") for ch in ("orders", *CHANNELS)]
     assert slow.gaps == [] and run.healthy[0].gaps == [] and run.healthy[0].closes == []
     print(f"#410 s2b: step 3 after {closed_at:.3f} s asleep, healed {healed[0] * 1e3:.2f} ms after")

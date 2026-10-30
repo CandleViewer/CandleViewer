@@ -21,10 +21,11 @@ from fastapi.routing import APIWebSocketRoute
 
 from candleviewer.admin.flags import default_registry
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
-from candleviewer.ws.gateway import FlagSnapshot, GatewayHub, make_ws_router
+from candleviewer.ws.gateway import FlagSnapshot, GatewayHub, SystemBaseline, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.system_filter import FlagVisible
+from tests.unit.ws._system_snap import SYSTEM_ROLES
 from tests.unit.ws.test_system_filter import _ACCOUNT, ACC_A, ACC_B, SAMPLES
 
 _DEADLINE_S = 5.0
@@ -60,6 +61,8 @@ class _Socket:
         self.inbound: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.sent: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.auth_ok: dict[str, Any] = {}  # the first `auth_ok`, as `_Rig.connect` read it
+        #: §12.1 (#4992): the `system` snap after it, when the principal holds a role
+        self.snap: dict[str, Any] | None = None
 
     async def accept(self, subprotocol: str | None = None) -> None: ...
 
@@ -83,6 +86,7 @@ class _Rig:
         notices: list[dict[str, Any]] | None = None,
         flag_visible: FlagVisible | None = None,
         flag_snapshot: FlagSnapshot | None = None,
+        system_baseline: SystemBaseline | None = None,
     ) -> None:
         self.hub = GatewayHub()
         self.principals: dict[uuid.UUID, PrincipalSnapshot] = {}
@@ -108,6 +112,7 @@ class _Rig:
             kill_switch=lambda: STATE,
             flag_visible=flag_visible,
             flag_snapshot=flag_snapshot,
+            system_baseline=system_baseline,
         )
         (route,) = router.routes
         assert isinstance(route, APIWebSocketRoute)
@@ -123,6 +128,9 @@ class _Rig:
         sock.feed({"t": "auth", "id": "a", "p": {"access_token": str(principal.user_id)}})
         sock.auth_ok = await sock.sent.get()
         assert sock.auth_ok["t"] == "auth_ok"
+        if not principal.roles.isdisjoint(SYSTEM_ROLES):  # §12.1 (#4992): the snap comes next
+            sock.snap = await sock.sent.get()
+            assert (sock.snap["t"], sock.snap["ch"], sock.snap["s"]) == ("snap", "system", 1)
         return sock
 
     async def close(self) -> None:
@@ -146,7 +154,7 @@ async def test_one_broadcast_reaches_each_role_as_its_own_view() -> None:
         socks = [await rig.connect(_as(uuid.uuid4(), r)) for r in ("owner", "manager", "viewer")]
         nobody = await rig.connect(_as(uuid.uuid4()))  # the deny-all principal
         rig.hub.broadcast_system(KILL)
-        assert [await _system(s) for s in socks] == [[(1, KILL)], *[[(1, KILL_NEUTRAL)]] * 2]
+        assert [await _system(s) for s in socks] == [[(2, KILL)], *[[(2, KILL_NEUTRAL)]] * 2]
         assert await _system(nobody) == []
         await rig.close()
 
@@ -166,8 +174,8 @@ async def test_a_manager_learns_an_all_roles_flag_and_never_an_owner_only_one() 
         nobody = await rig.connect(_as(uuid.uuid4()))
         for body in (flags, hidden, later):
             rig.hub.broadcast_system(body)
-        assert await _system(socks[0]) == [(1, flags), (2, hidden), (3, later)]
-        assert [await _system(s) for s in socks[1:]] == [[(1, cut), (2, later)]] * 2
+        assert await _system(socks[0]) == [(2, flags), (3, hidden), (4, later)]
+        assert [await _system(s) for s in socks[1:]] == [[(2, cut), (3, later)]] * 2
         assert await _system(nobody) == []
         await rig.close()
 
@@ -177,7 +185,7 @@ async def test_without_a_flag_predicate_a_flag_frame_reaches_only_the_owner() ->
     async with asyncio.timeout(_DEADLINE_S):
         owner, manager = [await rig.connect(_as(uuid.uuid4(), r)) for r in ("owner", "manager")]
         rig.hub.broadcast_system(flags)
-        assert [await _system(owner), await _system(manager)] == [[(1, flags)], []]
+        assert [await _system(owner), await _system(manager)] == [[(2, flags)], []]
         await rig.close()
 
 
@@ -196,11 +204,11 @@ async def test_a_role_change_applies_to_the_next_frame_and_a_left_out_frame_take
                 await rig.registry.grants_changed(user)
             rig.hub.broadcast_system(KILL)
             seen.append(await _system(sock))
-        assert seen == [[(1, KILL_NEUTRAL)], [], [(2, KILL)], [(3, KILL_NEUTRAL)]]
+        assert seen == [[(2, KILL_NEUTRAL)], [], [(3, KILL)], [(4, KILL_NEUTRAL)]]
         await rig.close()
 
 
-@pytest.mark.parametrize(("roles", "expected"), [(("viewer",), [(1, NOTICE)]), ((), [])])
+@pytest.mark.parametrize(("roles", "expected"), [(("viewer",), [(2, NOTICE)]), ((), [])])
 async def test_the_notices_after_the_first_auth_ok_follow_the_principal(
     roles: tuple[str, ...], expected: list[tuple[int, Any]]
 ) -> None:
@@ -213,7 +221,7 @@ async def test_the_notices_after_the_first_auth_ok_follow_the_principal(
 
 @pytest.mark.parametrize(
     ("accounts", "expected"),
-    [((ACC_A,), []), ((ACC_B,), [(1, STALE_B)]), ((ACC_A, ACC_B), [(1, STALE_B)])],
+    [((ACC_A,), []), ((ACC_B,), [(2, STALE_B)]), ((ACC_A, ACC_B), [(2, STALE_B)])],
     ids=["granted-a", "granted-b", "granted-both"],
 )
 async def test_an_account_notice_after_the_first_auth_ok_follows_the_grants(
@@ -221,7 +229,7 @@ async def test_an_account_notice_after_the_first_auth_ok_follows_the_grants(
 ) -> None:
     """The `system_notices` seam, which a producer may use to repeat a latched stale state to a
     late joiner, is cut as every `system` frame is (SR-E29-10): a Viewer granted A only is sent
-    nothing about B and its `s` does not move; one granted B is sent it as `s` 1."""
+    nothing about B and its `s` does not move; one granted B is sent it as `s` 2, after the snap."""
     rig = _Rig(notices=[STALE_B])
     async with asyncio.timeout(_DEADLINE_S):
         sock = await rig.connect(_as(uuid.uuid4(), "viewer", accounts=accounts))

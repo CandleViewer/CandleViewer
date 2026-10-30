@@ -34,6 +34,7 @@ valid `system` frame (`cv://ws/v1/system.schema.json`):
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import shutil
 from collections.abc import Callable, Mapping, Sequence
@@ -267,10 +268,18 @@ class HealthSystemPublisher:
     def __init__(self, *, clock_guard: Callable[[], _OffsetSource | None] = lambda: None) -> None:
         self.direct_sinks: list[Callable[[dict[str, object]], object]] = []
         self._clock_guard = clock_guard
+        self._latest: dict[str, object] | None = None
+
+    def latest(self) -> dict[str, object] | None:
+        """The last `health` frame handed to the sinks, `None` before the first: the WS gateway's
+        `system` snap baseline (`23-ws-protocol.md` §12.1, #4992). A deep copy: no reader changes
+        it."""
+        return None if self._latest is None else copy.deepcopy(self._latest)
 
     async def __call__(self, snap: HealthSnapshot) -> None:
         guard = self._clock_guard()
         frame = _health_frame(snap, None if guard is None else guard.offset_ms_or_none())
+        self._latest = frame
         for sink in self.direct_sinks:
             try:
                 sink(frame)

@@ -25,6 +25,7 @@ from candleviewer.ws.permissions import (
     cv_ws_permission_snapshots_refused_total,
 )
 from candleviewer.ws.revocation import RevocationHub
+from tests.unit.ws._system_snap import is_system_snap
 
 MGR = uuid.UUID(int=0x189)
 A = uuid.UUID(int=0xA)
@@ -148,7 +149,10 @@ def _open(ws: Any) -> dict[str, Any]:
     _send(ws, "hello")
     assert ws.receive_json()["t"] == "welcome"
     _send(ws, "auth", {"access_token": "first"})
-    return dict(ws.receive_json())
+    reply = dict(ws.receive_json())
+    if reply["t"] == "auth_ok":  # §12.1 (#4992): the `system` snap follows a first `auth_ok`
+        assert is_system_snap(ws.receive_json())
+    return reply
 
 
 def test_socket_reauth_parked_across_a_withdrawal_keeps_the_withdrawal() -> None:
@@ -184,6 +188,7 @@ def test_socket_handshake_recheck_failure_is_counted_and_undone_then_newer_scope
         _send(ws, "auth", {"access_token": "retry"})
         ok = ws.receive_json()  # nothing was pushed ahead of auth_ok
         assert (ok["t"], ok["p"]["account_scope"]) == ("auth_ok", [str(A)])
+        assert is_system_snap(ws.receive_json())  # its first `auth_ok`: the snap (§12.1, #4992)
         _send(ws, "sub", {"topics": [{"ch": "orders", "opts": _acc(B)}]})
         assert ws.receive_json()["p"]["results"][0]["error"]["code"] == "account_scope_denied"
     assert [b - a for a, b in zip(before, _counts(), strict=True)] == [0, 1, 0, 1]

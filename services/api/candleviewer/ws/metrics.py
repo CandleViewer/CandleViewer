@@ -121,7 +121,7 @@ cv_ws_clock_skew_ms = Histogram(
 #: Owner receives those), a socket with no principal, a principal with none of the three roles. An
 #: `account_notice` cut to nothing for a socket (SR-E29-10, #3864) is the contract, as is a flag
 #: frame left with no key: it is not counted. The closed `reason` set: no frame content.
-WithheldReason = Literal["unknown_kind", "invalid_body", "no_principal", "no_role"]
+WithheldReason = Literal["unknown_kind", "invalid_body", "no_principal", "no_role", "held_overflow"]
 WITHHELD_REASONS: Final[tuple[WithheldReason, ...]] = get_args(WithheldReason)
 cv_ws_system_frames_withheld_total = Counter(
     "cv_ws_system_frames_withheld_total",
@@ -130,7 +130,8 @@ cv_ws_system_frames_withheld_total = Counter(
     "kind, no principal or no role (SR-188, #3125, #3864). A deny-all socket counts every "
     "other frame as no_role. A Manager's or Viewer's feature_flags frame left with no key it "
     "may learn is the contract and is not counted, nor is an account_notice naming no "
-    "account it may view.",
+    "account it may view. held_overflow: a frame dropped from the bounded hold that precedes a "
+    "socket's system snap (#4992).",
     labelnames=("reason",),
 )
 # Bound now, as `cv_ws_closes_total` is, so each series exists at 0 from process start and the

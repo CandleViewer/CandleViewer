@@ -81,6 +81,7 @@ def _conn(who: PrincipalSnapshot | None, flag_visible: FlagVisible | None = None
         flag_visible=flag_visible,
     )
     conn.authz = None if who is None else ConnectionAuthz(who)
+    conn.system_snapped = True  # past its first `auth_ok` (§12.1, #4992): a frame is a delta
     return conn
 
 
@@ -279,7 +280,13 @@ def test_the_label_never_carries_frame_content() -> None:
     conn = _conn(OWNER)
     for kind in ("x" * 5000, "kill_switch'; DROP", "ünï"):
         conn.push_system({"kind": kind, "message": "free text"})
-    assert set(_counts()) == {"unknown_kind", "invalid_body", "no_principal", "no_role"}
+    assert set(_counts()) == {
+        "unknown_kind",
+        "invalid_body",
+        "no_principal",
+        "no_role",
+        "held_overflow",
+    }
 
 
 def test_the_counter_is_catalogued_as_a_bounded_exported_counter() -> None:

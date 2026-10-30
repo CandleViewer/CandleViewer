@@ -507,7 +507,8 @@ them (the audit lane key, below).
 7. The `break_glass_used` event stays unresolved, and every client's first WS authentication gets
    the notice, until the Owner resolve route exists (E09-S12, not built; filing it is #2710 item 2).
    Do not edit `system_events` by hand. Another user's full session gets the notice at once (its
-   `auth_ok` is followed by a `system` frame with reason `auth.break_glass_used`); the Owner's own
+   `auth_ok` is followed by the `system` snap, `s` 1, then a `system` delta, `s` 2, with reason
+   `auth.break_glass_used`; `23-ws-protocol.md` §12.1); the Owner's own
    comes after re-enrolment, since an enrolment-only session's socket closes `4403` (§2 step 4).
    Each reset raises its own event, so a second, mistaken reset leaves a second one, and the CLI's
    `system event N raised` names the event's id, not a count.

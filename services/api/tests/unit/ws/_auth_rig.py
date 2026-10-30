@@ -28,6 +28,7 @@ from candleviewer.ws.limits import AUTH_CALL_TIMEOUT_S
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub
+from tests.unit.ws._system_snap import SYSTEM_ROLES
 
 BASE_MS = 1_789_132_262_000
 ORIGIN = "http://testserver"  # §2.5: allow-listed and sent on every upgrade
@@ -60,6 +61,8 @@ class Sock:
         self.codes: list[int] = []
         self.stops_reading = self.vanished = False
         self.stalled = asyncio.Event()
+        #: §12.1 (#4992): the `system` snap that `Rig.auth` read after the first `auth_ok`
+        self.snap: dict[str, Any] | None = None
 
     async def accept(self, subprotocol: str | None = None) -> None: ...
 
@@ -178,9 +181,15 @@ class Rig:
 
     @staticmethod
     async def auth(sock: Sock, token: str, fid: str = "a") -> dict[str, Any]:
-        """Send one `auth` and return the next frame."""
+        """Send one `auth` and return the next frame. The `system` snap (§12.1, #4992) that
+        follows the first `auth_ok` of a principal with a role is read into `sock.snap`."""
         sock.feed({"t": "auth", "id": fid, "p": {"access_token": token}})
-        return await sock.sent.get()
+        frame = await sock.sent.get()
+        roles = frame["p"].get("roles", ()) if frame["t"] == "auth_ok" else ()
+        if sock.snap is None and SYSTEM_ROLES.intersection(roles):
+            sock.snap = await sock.sent.get()
+            assert (sock.snap["t"], sock.snap["ch"], sock.snap["s"]) == ("snap", "system", 1)
+        return frame
 
     def registered(self) -> dict[str, int]:
         """How many closers the `RevocationHub` holds per session id."""

@@ -116,6 +116,8 @@ def _auth(ws: Any, token: str, attempts: int = 1) -> dict[str, Any]:
     for _ in range(attempts):
         ws.send_json({"t": "auth", "id": "a", "p": {"access_token": token}})
         out = ws.receive_json()
+        if out["t"] == "auth_ok":  # §12.1 (#4992): the `system` snap follows a first `auth_ok`
+            assert ws.receive_json()["t"] == "snap"
     return out
 
 

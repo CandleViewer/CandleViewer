@@ -30,7 +30,9 @@ def test_notice_matches_system_schema() -> None:
     source = BreakGlassNotice(_Unresolved())
     asyncio.run(source.refresh())
     with connect(World(system_notices=source.notices)) as client:  # hello, then auth -> auth_ok
+        snap = client.system_snap  # §12.1 (#4992): the snap first, `s` 1
         frame = client.recv()  # validated: the envelope and `system.schema.json`
-    assert (frame["t"], frame["ch"], frame["p"]["kind"]) == ("d", "system", "notice")
+    assert snap is not None and (snap["t"], snap["s"], snap["p"]["kind"]) == ("snap", 1, "health")
+    assert (frame["t"], frame["ch"], frame["s"], frame["p"]["kind"]) == ("d", "system", 2, "notice")
     assert (frame["p"]["severity"], frame["p"]["reason"]) == ("critical", BREAK_GLASS_NOTICE_REASON)
     assert f"`{BREAK_GLASS_NOTICE_REASON}`" in _section_15_9()  # the contract names the code

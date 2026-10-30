@@ -87,7 +87,8 @@ async def test_s4_restart_notice_then_1001_close_then_clients_come_back(stack: S
         want = [e["ch"] for e in c.topics]
         kinds = [ch.split(".")[0] in PRIVATE for ch in want]
         assert kinds == sorted(kinds, reverse=True)  # private topics first (§9.3) ...
-        assert [f["ch"] for f in frames if f["t"] == "snap"] == want  # ... every one re-snapshot
+        snaps = [f["ch"] for f in frames if f["t"] == "snap"]
+        assert snaps == ["system", *want]  # the new `system` snap (§12.1, #4992), then each topic
         (sub_ok,) = (f for f in frames if f["t"] == "sub_ok")
         assert [r["ch"] for r in sub_ok["p"]["results"]] == want
     refused = sum(e[1] == "refused" for c in clients for e in c.log)

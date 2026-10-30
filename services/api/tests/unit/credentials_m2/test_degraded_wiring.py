@@ -63,7 +63,8 @@ def _open_and_auth(ws: Any) -> None:
     ws.receive_json()
     ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
     assert ws.receive_json()["t"] == "auth_ok"
-    assert ws.receive_json()["p"]["kind"] == "feature_flags"  # §15.9 (#4517): the snapshot
+    snap = ws.receive_json()  # §12.1 (#4992): the `system` snap, the flags folded in (§15.9)
+    assert (snap["t"], snap["ch"], snap["s"], snap["p"]["kind"]) == ("snap", "system", 1, "health")
 
 
 def test_client_notice_is_schema_valid_and_role_neutral() -> None:

@@ -110,7 +110,7 @@ async def test_one_health_snapshot_reaches_each_role_as_its_own_view() -> None:
         await registry.refresh()
         got = [await _frames(sock) for sock in (owner, manager, viewer, nobody)]
         await rig.close()
-    assert [[f["s"] for f in frames] for frames in got] == [[1], [1], [1], []]
+    assert [[f["s"] for f in frames] for frames in got] == [[2], [2], [2], []]  # `s` 1: the snap
     assert got[0][0]["p"] == _WHOLE  # the Owner's, with every `detail`
     assert got[1][0]["p"] == got[2][0]["p"] == _CUT  # a Manager's and a Viewer's
     for frame in (got[0][0], got[1][0], got[2][0]):
@@ -128,7 +128,7 @@ async def test_the_next_tick_is_the_next_frame_and_marks_the_socket_that_dropped
         await registry.refresh()
         owned, viewed = await _frames(owner), await _frames(viewer)
         await rig.close()
-    assert [f["s"] for f in owned] == [f["s"] for f in viewed] == [1, 2]
+    assert [f["s"] for f in owned] == [f["s"] for f in viewed] == [2, 3]
     for frames in (owned, viewed):
         assert frames[1]["p"]["exchange"] == {"public_ws": "disconnected", "rest": "degraded"}
         validate(frames[1])
@@ -152,7 +152,7 @@ async def test_a_raising_sink_does_not_stop_the_push_or_the_tick() -> None:
             await registry.refresh()  # the ticker goes on
         frames = await _frames(owner)
         await rig.close()
-    assert [f["s"] for f in frames] == [1, 2]
+    assert [f["s"] for f in frames] == [2, 3]
     failed = [e["event"] for e in logs if e["event"].startswith("health_wiring")]
     assert failed == ["health_wiring: direct sink failed"] * 2
 

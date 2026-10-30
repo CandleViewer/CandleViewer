@@ -285,12 +285,13 @@ async def test_the_server_never_reads_echoes_or_logs_a_client_sp(
                 {"t": "unsub", "id": "u", "p": {"topics": [_BOOK]}},
             ):
                 sock.feed(frame | sp)
-            replies = await sock.next(9)
+            replies = await sock.next(10)
             sock.inbound.put_nowait({"type": "websocket.disconnect", "code": 1000})
             await handler
     assert [(f["t"], f.get("id")) for f in replies] == [
         ("welcome", "h"),
         ("auth_ok", "a"),
+        ("snap", None),  # the `system` snap (§12.1, #4992)
         ("sub_ok", "s"),
         ("snap", None),
         ("ctl_ok", "c"),

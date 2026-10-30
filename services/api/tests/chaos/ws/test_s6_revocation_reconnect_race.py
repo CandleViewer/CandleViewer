@@ -45,6 +45,8 @@ async def test_s6_withdrawn_account_is_refused_on_resubscribe_and_never_emitted(
     stack.proxy.inject(Fault.HEAL)
     await stack.clock.advance(delay)
     await c.until(lambda: c.sessions == 2 and TOPICS - {"orders"} <= c.snapped, "resubscribed")
+    # §12.1 (#4992): the reconnect gets a new `system` snap, `s` 1, before any `system` delta
+    assert (c.system_snaps, c.system_d_before_snap) == ([(1, 1), (2, 1)], 0)
 
     assert c.denied == {"orders": "account_scope_denied"}  # the server refused the resubscription
     assert "orders" not in c.snapped  # (private topics resubscribe first, so it would be in)

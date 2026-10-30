@@ -25,6 +25,7 @@ from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.metrics import cv_ws_closes_total
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
+from tests.unit.ws._system_snap import is_system_snap
 from tests.unit.ws.test_gateway_teardown import _Socket
 from tests.unit.ws.test_lifecycle_socket import BASE_MS, ORIGIN, USER, _Audit
 
@@ -99,9 +100,11 @@ class _Rig:
 
     @staticmethod
     async def auth(sock: _Sock, token: str, fid: str = "a") -> dict[str, Any]:
-        """Send one `auth` and return the next frame."""
+        """Send one `auth` and return the next frame, past the `system` snap a first `auth_ok`
+        queued (§12.1, #4992), which these tests are not about."""
         sock.feed({"t": "auth", "id": fid, "p": {"access_token": token}})
-        frame: dict[str, Any] = await sock.sent.get()
+        if is_system_snap(frame := await sock.sent.get()):  # at most one snap
+            frame = await sock.sent.get()
         return frame
 
     def revoke_on(self, session_id: str, reason: str = "session_revoked") -> tuple[Hook, list[int]]:

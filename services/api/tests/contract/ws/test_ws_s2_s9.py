@@ -183,7 +183,12 @@ def test_s3_sequence_increments_by_exactly_one_per_topic_under_concurrent_writes
 
 def test_s3_sequence_survives_resync_and_reconfigure_without_reuse() -> None:
     frames = _s3_scenario(World())
-    snaps = [f for f in frames if f["t"] == "snap" and f["meta"]["reason"] != "initial"]
+    # the `system` snap (§12.1, #4992) has no `meta`: it opens the implicit topic, never resyncs
+    snaps = [
+        f
+        for f in frames
+        if f["t"] == "snap" and f["ch"] != "system" and f["meta"]["reason"] != "initial"
+    ]
     assert {f["meta"]["reason"] for f in snaps} == {"client_resync", "reconfigure"}
     assert all(f["meta"]["previous_seq"] == f["s"] - 1 for f in snaps)
 

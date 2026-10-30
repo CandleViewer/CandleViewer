@@ -55,6 +55,7 @@ from tests.contract.ws._support import SAMPLES, recv_json
 from tests.security.auth._stack import RegistryAudit
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.ws._seq_support import ACC_A, ACC_B, Source
+from tests.unit.ws._system_snap import SYSTEM_ROLES
 
 SOURCE = "testclient"  # the test client's address, as the gateway records it
 #: Every account-scoped family (23-ws-protocol.md §6.2), by the registry: a new one is covered too.
@@ -252,11 +253,16 @@ def delta(name: str, **labels: str) -> Callable[[], float]:
 
 
 def authenticated(c: Client, login: Login) -> dict[str, Any]:
-    """`hello`, then `auth` with `login`'s token: the `auth_ok` frame."""
+    """`hello`, then `auth` with `login`'s token: the `auth_ok` frame. The `system` snap that
+    follows it for a principal with a role (§12.1, #4992) is read into `c.system_snap`."""
     hello(c)
     c.send({"t": "auth", "id": "a", "p": {"access_token": login.token}})
     auth_ok = c.recv()
     assert auth_ok["t"] == "auth_ok"
+    if not SYSTEM_ROLES.isdisjoint(auth_ok["p"]["roles"]):
+        snap = c.recv()
+        assert (snap["t"], snap["ch"], snap["s"]) == ("snap", "system", 1), snap
+        c.system_snap = snap
     return auth_ok
 
 

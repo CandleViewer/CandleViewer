@@ -41,7 +41,13 @@ from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.binary import BOOK_DELTA, Frame, decode, decode_b64, encode_b64
 from candleviewer.ws.cvwb_vectors import structured, vector_frames
-from candleviewer.ws.gateway import FlagSnapshot, GatewayHub, include_ws_router, make_ws_router
+from candleviewer.ws.gateway import (
+    FlagSnapshot,
+    GatewayHub,
+    SystemBaseline,
+    include_ws_router,
+    make_ws_router,
+)
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
@@ -362,6 +368,7 @@ class World:
         system_notices: Callable[[], list[dict[str, Any]]] | None = None,
         backpressure: BackpressureConfig | None = None,
         flag_snapshot: FlagSnapshot | None = None,
+        system_baseline: SystemBaseline | None = None,
     ) -> None:
         self.clock = Clock()
         self.source = Source()
@@ -405,6 +412,7 @@ class World:
                 flag_snapshot=flag_snapshot,
                 # as `create_app` wires the pair; flag keys are cut for a Manager by this alone
                 flag_visible=None if flag_snapshot is None else default_registry().visible_to,
+                system_baseline=system_baseline,
                 backpressure=backpressure,
             ),
         )
@@ -441,6 +449,8 @@ class Client:
         self.ws = ws
         self.conform = conform  # default for `send`/`sub`; negative-path tests turn it off
         self.seen: list[dict[str, Any]] = []
+        #: §12.1 (#4992): the `system` snap that follows `auth_ok` (`open`), validated.
+        self.system_snap: dict[str, Any] | None = None
         #: §2.2: every frame, both ways, is MessagePack on `cv.v1.msgpack`, else JSON text.
         self.msgpack = ws.accepted_subprotocol == "cv.v1.msgpack"
 
@@ -592,6 +602,10 @@ class Client:
         if auth:
             self.send({"t": "auth", "id": "a", "p": {"access_token": token}})
             assert self.recv()["t"] == "auth_ok"
+            # §12.1 (#4992): the `system` snap, `s` 1, comes right after `auth_ok`
+            snap = self.recv()
+            assert (snap["t"], snap["ch"], snap["s"]) == ("snap", "system", 1), snap
+            self.system_snap = snap
 
     def sub(self, *topics: Any, conform: bool | None = None, **p: Any) -> dict[str, Any]:
         """`sub` with the §13.5 object form `{ch, opts}`; bare strings are normalised to it
