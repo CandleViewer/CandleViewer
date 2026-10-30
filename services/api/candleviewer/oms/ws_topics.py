@@ -28,8 +28,11 @@ serving loop (29 CV-C13), so the topics have a half on each:
     subscription holding the item's account, whose principal holds the family's permission, gets
     it (C-12.4), narrowed to its `symbols`.
   - Its snapshots are per (family, account) views read on the lane (`TopicReads`): `orders` the
-    open ones, `positions` the open ones, `executions` the newest `SNAPSHOT_FILLS`. They are
-    loaded beside the subscription, which stays `snapshot_pending` until its accounts' views land
+    open ones, `positions` the open ones, `executions` the newest `SNAPSHOT_FILLS`. Each read is
+    scoped to the process's environment (C-2.11): an account that is missing, deleted or of
+    another environment reads as one with no rows. The views are shared by every connection, and
+    a subscription is served its own accounts' views alone (`build`, C-12.4). They are loaded
+    beside the subscription, which stays `snapshot_pending` until its accounts' views land
     (Sec.7.7), as `alerts`' are. Private: never cached by the gateway (generation 0), no
     continuity (Sec.7.6).
 
@@ -63,12 +66,13 @@ from uuid import UUID
 
 import structlog
 
-from candleviewer.domain.primitives import AccountId
+from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.observability import spawn
 from candleviewer.storage.repositories.executions import MAX_RECENT, ExecutionRow
 from candleviewer.storage.repositories.orders import OPEN_STATES, OrderRow
 from candleviewer.storage.repositories.positions import PositionRow, PositionState
 
+from .errors import AccountScopeDenied
 from .order_steps import CommittedOrderStep
 from .ports import PositionKey
 from .positions import PositionWrites
@@ -589,21 +593,35 @@ class RecentFills(Protocol):
     ) -> tuple[ExecutionRow, ...]: ...
 
 
+class AccountEnvironments(Protocol):
+    """`oms_wiring.TradingAccountsBinding.environment_of`, on the lane: the account's environment,
+    `AccountScopeDenied` for one that is missing, soft-deleted or of another environment, all three
+    alike; a read that fails or passes its bound raises otherwise (`StoreUnavailable`)."""
+
+    async def environment_of(self, account_id: AccountId) -> Environment: ...
+
+
 class TopicReads:
     """The snapshot reads, on the order lane where the OMS's pool runs (the runtime hops each from
     the serving loop): one account's rows of one family, as Sec.15 items stamped with the read's
-    start (`LaneClock`). A row of another account is left out (C-12.4, beside the store's own
-    scope), and so is a flat position or a fill no frame carries."""
+    start (`LaneClock`). They are scoped to the process's environment, as every other read surface
+    is (C-2.11): the account is resolved first (`accounts`), and one that is missing, deleted or of
+    another environment reads as an account with no rows, none of its rows read, logged by its id.
+    A row of another account is left out (C-12.4, beside the store's own scope), and so is a flat
+    position or a fill no frame carries."""
 
     def __init__(
         self, orders: OpenOrders, positions: OpenPositions, fills: RecentFills, *,
-        environment: str, clock: LaneClock,
+        accounts: AccountEnvironments, environment: str, clock: LaneClock,
     ) -> None:  # fmt: skip
         self._orders, self._positions, self._fills = orders, positions, fills
-        self._env, self._clock = environment, clock
+        self._accounts, self._env, self._clock = accounts, environment, clock
 
     async def read(self, family: Family, account: UUID) -> View:
         stamp, env = self._clock(), self._env
+        if not await self._served(account):  # the same answer as an account with no rows
+            _log().warning("oms_ws_topic_account_unserved", account_id=str(account), family=family)
+            return View(stamp, ())
         if family == ORDERS:
             orders = await self._orders.list_open(account)
             mine = (r for r in orders if r.exchange_account_id == account)
@@ -616,6 +634,15 @@ class TopicReads:
         mine_fills = (r for r in fills if r.exchange_account_id == account)
         items = (execution_item(r, environment=env) for r in mine_fills)
         return View(stamp, tuple(item for item in items if item is not None))
+
+    async def _served(self, account: UUID) -> bool:
+        """Whether `account` is one of the process's environment. A read that fails raises, as a
+        row read's does, so the load tries again (`OmsTopics._read_view`)."""
+        try:
+            environment = await self._accounts.environment_of(AccountId(account))
+        except AccountScopeDenied:
+            return False
+        return environment == self._env
 
 
 # -- the serving loop's half --------------------------------------------------------------------

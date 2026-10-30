@@ -2825,9 +2825,11 @@ class OmsRuntime:
             # it watches the lock until the lock's own closer, the last, releases it
             at_lock = [name for name, _ in closers].index("environment_lock")
             closers.insert(at_lock, ("heartbeat", lambda: lane.call(_cancelled(beating))))
+            # E29-T13: scoped to the process's environment (C-2.11) through the OMS's own account
+            # read, so a missing or deleted account, or another environment's, reads as no rows
             reads = None if published is None else TopicReads(
-                orders, PositionRepository(positions, timer), fills, environment=env,
-                clock=lane_clock,
+                orders, PositionRepository(positions, timer), fills, accounts=accounts,
+                environment=env, clock=lane_clock,
             )  # fmt: skip
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,

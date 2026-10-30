@@ -1,10 +1,10 @@
 """E29-T13 (#4207): the OMS runtime's composition of its WS topics (`oms_wiring`, `app.py`): on the
 real backend `build_oms_runtime` hands the runtime the topics; its start hooks the step publisher
 into the step writer, so a step the startup sweep commits reaches the topics with its account; it
-attaches the lane's snapshot reads once `ready`, each read hopped to the lane; its stop detaches
-them; without topics none of it is composed. `create_app` serves the three families from one
-adapter over the gateway's hub, in `PRIVATE_CAUSAL_ORDER`. The OMS runtime's own rig
-(`test_oms_runtime`): no network, no sleeps."""
+attaches the lane's snapshot reads once `ready`, each read hopped to the lane and scoped to the
+process's environment (C-2.11); its stop detaches them; without topics none of it is composed.
+`create_app` serves the three families from one adapter over the gateway's hub, in
+`PRIVATE_CAUSAL_ORDER`. The OMS runtime's own rig (`test_oms_runtime`): no network, no sleeps."""
 
 from __future__ import annotations
 
@@ -19,9 +19,13 @@ from candleviewer.oms import ws_topics as wt
 from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms_wiring import OmsRuntime, OnLaneTopicReads, build_oms_runtime
 from candleviewer.settings import Environment, Settings
+from candleviewer.storage.repositories.orders import OPEN_STATES
+from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
 from candleviewer.ws.sequencing import PRIVATE_CAUSAL_ORDER
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.test_oms_runtime import (
+    KEY,
+    LIVE_UNSENT,
     SENDING,
     UNSENT,
     Hub,
@@ -96,6 +100,27 @@ async def test_a_step_the_sweep_commits_reaches_the_topics_and_the_reads_attach_
         view = await reads.read("orders", cr.ACCOUNT)
         assert [item["id"] for item in view.items] == [str(SENDING.id)]
     assert topics.detached == 1
+
+
+async def test_the_lanes_snapshot_reads_are_scoped_to_the_process_environment() -> None:
+    """C-2.11 as composed: on the demo process, the live account's entry, open in the shared store,
+    reads as an account with no rows in each family, as an account no row names does; the demo
+    account's open order still reads."""
+    world, topics = World(), Topics()
+    await crashed(world, live=True)
+    world.accounts.append(TradingAccountRow(cr.LIVE_ACCOUNT, "live", cr.UIDS["live"], False, KEY))
+    async with started(world.runtime(topics=topics)) as runtime:
+        for flag in world.flags:
+            flag.read()
+        await until(lambda: runtime.state == "ok")
+        [reads] = topics.attached
+        assert world.store._orders[LIVE_UNSENT.id].state in OPEN_STATES
+        for account in (cr.LIVE_ACCOUNT, UUID(int=0xFEED)):
+            views = [await reads.read(family, account) for family in wt.FAMILIES]
+            assert [view.items for view in views] == [(), (), ()]
+        await until(lambda: world.store._orders[SENDING.id].lifecycle_state == "submitted")
+        view = await reads.read("orders", cr.ACCOUNT)
+        assert [item["id"] for item in view.items] == [str(SENDING.id)]
 
 
 async def test_without_topics_nothing_is_published_or_read() -> None:

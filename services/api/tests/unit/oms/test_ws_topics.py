@@ -2,8 +2,9 @@
 (`oms/ws_topics.py`): the Sec.15 items each row builds, validated against 23-ws-protocol.md's
 schemas; the step publisher's causal order (an execution before its order, a position after the
 fills of its key, Sec.16.1 S5), its per-account hold and its bounds, each past-the-bound case
-counted; the position store's hand-off; and the lane's snapshot reads. Recording doubles, a fake
-clock and, for the hold's deadline, virtual time (`audit_waits.virtual`): no network, no sleeps."""
+counted; the position store's hand-off; and the lane's snapshot reads, scoped to the process's
+environment (C-2.11). Recording doubles, a fake clock and, for the hold's deadline, virtual time
+(`audit_waits.virtual`): no network, no sleeps."""
 
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.domain.primitives import AccountId
 from candleviewer.oms import ws_topics as wt
+from candleviewer.oms.errors import AccountScopeDenied, StoreUnavailable
 from candleviewer.oms.order_steps import CommittedOrderStep
 from candleviewer.oms.ports import PositionKey
 from candleviewer.storage.repositories.executions import ExecutionRow, NewExecution
@@ -587,18 +589,22 @@ async def test_a_hand_off_that_raises_leaves_the_write_as_it_was() -> None:
 
 
 class Reads:
-    """The three stores' reads: every row given, another account's among them."""
+    """The three stores' reads: every row given, another account's among them; each store read
+    recorded in `asked`, by family."""
 
     def __init__(self) -> None:
         self.orders = (order(), order(2, account=B))
         self.positions = (position(), position(size="0", id=UUID(int=0xD9)), position(account=B))
         self.fills = (stored(new_fill()), stored(new_fill("e2"), order_id=None))
+        self.asked: list[str] = []
 
     async def list_open(self, account_id: UUID, *, symbol: str | None = None) -> tuple[Any, ...]:
+        self.asked.append("orders")
         return self.orders
 
     async def list_recent(self, account_id: UUID, *, limit: int = 100) -> tuple[Any, ...]:
         assert limit == wt.SNAPSHOT_FILLS
+        self.asked.append("executions")
         return self.fills
 
 
@@ -607,7 +613,33 @@ class PositionReads:
         self.reads = reads
 
     async def list_open(self, account_id: UUID) -> tuple[PositionRow, ...]:
+        self.reads.asked.append("positions")
         return self.reads.positions
+
+
+class Environments:
+    """The account read (`AccountEnvironments`): each seeded account's environment, and
+    `AccountScopeDenied` for one never seeded, as for a missing or deleted one; `error`, once set,
+    is raised instead (a read that fails)."""
+
+    def __init__(self, seeded: dict[UUID, str]) -> None:
+        self.seeded = seeded
+        self.error: BaseException | None = None
+
+    async def environment_of(self, account_id: UUID) -> Any:
+        if self.error is not None:
+            raise self.error
+        if account_id not in self.seeded:
+            raise AccountScopeDenied
+        return self.seeded[account_id]
+
+
+def topic_reads(reads: Reads, accounts: Environments) -> wt.TopicReads:
+    """The lane's snapshot reads of a demo process over `reads`."""
+    return wt.TopicReads(
+        reads, PositionReads(reads), reads, accounts=accounts, environment="demo",
+        clock=wt.LaneClock(lambda: T0),
+    )  # fmt: skip
 
 
 @pytest.mark.parametrize(("family", "count"), [("orders", 1), ("positions", 1), ("executions", 1)])
@@ -617,12 +649,38 @@ async def test_a_snapshot_read_keeps_the_accounts_rows_each_frame_carries(
     """C-12.4 beside the store's own scope: another account's row is left out, and so are a flat
     position and a fill of no order; each item carries the read's stamp."""
     reads = Reads()
-    view = await wt.TopicReads(
-        reads, PositionReads(reads), reads, environment="demo", clock=wt.LaneClock(lambda: T0)
-    ).read(family, A)
+    view = await topic_reads(reads, Environments({A: "demo"})).read(family, A)
     assert view.stamp == T0_MS and len(view.items) == count
     assert all(item["exchange_account_id"] == str(A) for item in view.items)
+    assert reads.asked == [family]
     validate(frame(family, {family: list(view.items)}))
+
+
+@pytest.mark.parametrize("family", wt.FAMILIES)
+@pytest.mark.parametrize("seeded", [{B: "live"}, {}], ids=["another_environment", "refused"])
+async def test_a_snapshot_read_of_an_account_the_process_does_not_serve_reads_no_rows(
+    family: Any, seeded: dict[UUID, str]
+) -> None:
+    """C-2.11, as every other read surface: the account is resolved before any row is read. One
+    of another environment, or one the account read refuses (missing, deleted or another
+    environment's, all alike), reads as an account with no rows, stamped as any read is, and none
+    of its rows is read; one line names the account."""
+    reads = Reads()
+    with capture_logs() as logs:
+        view = await topic_reads(reads, Environments({A: "demo"} | seeded)).read(family, B)
+    assert view == wt.View(T0_MS, ()) and reads.asked == []
+    shown = [(e["event"], e["account_id"], e["family"]) for e in logs]
+    assert shown == [("oms_ws_topic_account_unserved", str(B), family)]
+
+
+async def test_a_snapshot_read_whose_account_read_fails_raises_and_reads_no_rows() -> None:
+    """A failed account read is a failed read, as a row read's is: it raises, so the load tries
+    again (`LOAD_TRIES`), and no row is read meanwhile."""
+    reads, accounts = Reads(), Environments({A: "demo"})
+    accounts.error = StoreUnavailable()
+    with pytest.raises(StoreUnavailable):
+        await topic_reads(reads, accounts).read("orders", A)
+    assert reads.asked == []
 
 
 @virtual

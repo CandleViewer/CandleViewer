@@ -906,7 +906,7 @@ Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, fa
   - `positions`: the open positions, those of size above 0.
   - `executions`: the newest 100 fills of an order across the subscription's accounts, oldest first. Each account's newest 100 are read, then narrowed to `symbols`, so a `symbols` subscription can get fewer.
 
-  It is read from Postgres beside the subscription, which stays `snapshot_pending` until the read lands, and until the OMS is ready (§7.7). A read that fails is tried three times, backed off; after the third the subscription stays pending until a change of its account or a resync. Private: never cached, and every `snapshot: false` attach is `snapshot_forced` (§7.6).
+  It is read from Postgres beside the subscription, which stays `snapshot_pending` until the read lands, and until the OMS is ready (§7.7). Each account's read is scoped to the process's environment, as every other read surface is (C-2.11): an account that is missing, deleted or of another environment reads as one with no rows, and none of its rows is read. A read that fails is tried three times, backed off; after the third the subscription stays pending until a change of its account or a resync. Private: never cached, and every `snapshot: false` attach is `snapshot_forced` (§7.6).
 
 - **Deltas.**
   - **`orders`:** one item per step, never coalesced or throttled (S4).

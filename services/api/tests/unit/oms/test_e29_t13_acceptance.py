@@ -24,8 +24,13 @@ from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.domain.primitives import AccountId
 from candleviewer.oms import ws_topics as wt
 from candleviewer.oms.fakes import InMemoryStreamedAccounts
+from candleviewer.oms_wiring import TradingAccountsBinding
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.positions import PositionRow
+from candleviewer.storage.repositories.trading_accounts import (
+    InMemoryTradingAccountReads,
+    TradingAccountRow,
+)
 from candleviewer.ws.permissions import ConnectionAuthz, SubscriptionServices
 from candleviewer.ws.sequencing import (
     PRIVATE_CAUSAL_ORDER,
@@ -113,9 +118,12 @@ async def published() -> AsyncIterator[Wired]:
     )  # fmt: skip
     publishers.append(publisher)
     publisher.bind(rig.facade.held_fills)
+    # A and B are the demo process's own accounts (C-2.11), so their snapshots read their rows
+    demo = [TradingAccountRow(a, "demo", ref(a).uid, False, KEY) for a in (A, B_ACCOUNT)]
+    accounts = TradingAccountsBinding(InMemoryTradingAccountReads(*demo), environment="demo")
     topics.attach(
-        wt.TopicReads(rig.orders, OpenPositions(world.book), rig.fills, environment="demo",
-                      clock=clock)
+        wt.TopicReads(rig.orders, OpenPositions(world.book), rig.fills, accounts=accounts,
+                      environment="demo", clock=clock)
     )  # fmt: skip
     world.wiring = world.compose(positions=wt.PublishedPositions(world.book, publisher))
     world.wiring.start()
@@ -243,3 +251,5 @@ async def test_a_subscriber_of_another_account_sees_none_of_it() -> None:
 
 
 B_ACCOUNT = AccountId(UUID("a1000000-0000-4000-8000-000000000002"))
+#: The accounts' active key id, as their account rows hold it (an id only).
+KEY = UUID(int=0xBEEF)
