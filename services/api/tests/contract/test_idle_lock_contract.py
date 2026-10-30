@@ -6,7 +6,8 @@ Also pins the rules from the PR #2389 reviews: only extend and unlock record act
 carries `last_seen_at` over), unlock checks a password only while the session is locked, a
 locked session's logout ends only that session, the operations allowed while locked also accept
 `cv_refresh`, and step-up elevation never survives the lock (#2290 ruling, rule 4d).
-`POST /auth/lock` (#4743, E09-S03-F1, CMP-098 "Lock now") is pinned at the end, contract first.
+`POST /auth/lock` (#4743, E09-S03-F1, CMP-098 "Lock now") is pinned at the end, contract first; it
+is allowed while locked but takes the access token only (the orchestrator's ruling of 2026-10-29).
 """
 
 from __future__ import annotations
@@ -37,6 +38,9 @@ _LOCKED_OK = (
     ("post", "/auth/lock"),
     ("get", "/auth/session"),
 )
+#: Those of them the `cv_refresh` cookie identifies a session for: all but lock, which takes the
+#: access token only (#4743).
+_COOKIE_OK = tuple(op for op in _LOCKED_OK if op != ("post", "/auth/lock"))
 _BEARER_OR_COOKIE: list[dict[str, list[str]]] = [{"bearerAuth": []}, {"refreshCookie": []}]
 
 
@@ -296,12 +300,14 @@ def test_logout_from_a_locked_session_ends_only_the_calling_session(spec: dict[s
     assert op["responses"]["401"] == {"$ref": "#/components/responses/Unauthorized"}
 
 
-@pytest.mark.parametrize(("method", "path"), _LOCKED_OK)
+@pytest.mark.parametrize(("method", "path"), _COOKIE_OK)
 def test_operations_allowed_while_locked_accept_the_refresh_cookie(
     spec: dict[str, Any], method: str, path: str
 ) -> None:
     # Review round 3: the bearer lives in memory for 12 min and refresh is refused while locked,
-    # so bearer-only, a long lock or a reload would leave no way to unlock or sign out.
+    # so bearer-only, a long lock or a reload would leave no way to unlock or sign out. Lock is
+    # the exception, as a locked session has nothing left to lock: see
+    # `test_lock_takes_the_access_token_only`.
     assert _op(spec, method, path)["security"] == _BEARER_OR_COOKIE
 
 
@@ -315,9 +321,10 @@ def test_only_refresh_and_the_locked_session_operations_accept_the_refresh_cooki
         if method in _METHODS
         and any("refreshCookie" in r for r in op.get("security", spec["security"]))
     }
-    assert accepting == {("post", "/auth/refresh"), *_LOCKED_OK}
+    assert accepting == {("post", "/auth/refresh"), *_COOKIE_OK}
     scheme = _flat(spec["components"]["securitySchemes"]["refreshCookie"]["description"])
-    assert all(f"`{method.upper()} {path}`" in scheme for method, path in _LOCKED_OK)
+    assert all(f"`{method.upper()} {path}`" in scheme for method, path in _COOKIE_OK)
+    assert "`POST /auth/lock`" not in scheme
     no_expired = "No other operation accepts the cookie, and none, unlock included, accepts an"
     assert f"{no_expired} expired access token." in _idle_lock_section(spec)
 
@@ -325,15 +332,12 @@ def test_only_refresh_and_the_locked_session_operations_accept_the_refresh_cooki
 def test_cookie_identified_writes_are_csrf_bound_to_the_cookie_session(
     spec: dict[str, Any],
 ) -> None:
-    for path in ("/auth/unlock", "/auth/logout", "/auth/lock"):  # SR-041 / SR-042, as on refresh
+    for path in ("/auth/unlock", "/auth/logout"):  # SR-041 / SR-042, as on `/auth/refresh`
         op = _op(spec, "post", path)
         assert {"$ref": "#/components/parameters/CsrfToken"} in op["parameters"]
         assert op["responses"]["403"] == {"$ref": "#/components/responses/CsrfTokenInvalid"}
     text = spec["info"]["description"]
-    bound = (
-        "for a `POST /auth/logout`, `POST /auth/unlock` or `POST /auth/lock` identified by the"
-        " `cv_refresh` cookie"
-    )
+    bound = "for a `POST /auth/logout` or `POST /auth/unlock` identified by the `cv_refresh` cookie"
     assert bound in _flat(text[text.index("### CSRF") : text.index("### Idle lock")])
 
 
@@ -422,6 +426,28 @@ def test_lock_contract_is_a_self_write_with_no_body(spec: dict[str, Any]) -> Non
     assert "requestBody" not in op
     assert set(op["responses"]) == {"200", "401", "403", "422", "503"}
     assert "any query parameter is refused with `422` (SR-026)" in _flat(op["description"])
+
+
+def test_lock_takes_the_access_token_only(spec: dict[str, Any]) -> None:
+    # The orchestrator's ruling of 2026-10-29 23:48Z: lock needs the access-token session, as every
+    # operation outside the enrolment allow-list but unlock does. A request with the cookie alone
+    # has no session to bind its SR-041 token to, so the CSRF check refuses it as any other write.
+    op = _op(spec, "post", _LOCK)
+    assert op["security"] == [{"bearerAuth": []}]
+    assert op["responses"]["403"] == {"$ref": "#/components/responses/CsrfTokenInvalid"}
+    description = _flat(op["description"])
+    assert "makes the call: the `cv_refresh` cookie identifies no lock" in description
+    assert "so it answers `403 csrf_token_invalid` and nothing is locked." in description
+    assert "An access token past its lifetime is `401 unauthenticated`" in description
+    assert "An access token or cookie" not in description
+    unauthenticated = _flat(op["responses"]["401"]["description"])
+    assert "`unauthenticated` (no access token inside its lifetime, or one of a" in unauthenticated
+    assert "cv_refresh" not in unauthenticated
+    section = _idle_lock_section(spec)
+    assert "`POST /auth/lock`, the fourth operation allowed while locked, takes the access" in (
+        section
+    )
+    assert "a locked one has nothing left to lock." in section
 
 
 def test_lock_contract_locks_as_if_the_idle_deadline_fell_due(spec: dict[str, Any]) -> None:

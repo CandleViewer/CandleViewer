@@ -130,10 +130,10 @@ info:
       refresh token.
     * **Validation.** The server requires the header to be present and equal to the cookie,
       **and** recomputes the MAC against the session id that it resolves itself (the access
-      token's `sid`; for `/auth/refresh`, and for a `POST /auth/logout`, `POST /auth/unlock` or
-      `POST /auth/lock` identified by the `cv_refresh` cookie (see "Idle lock"), the session
-      bound to the presented `cv_refresh`). Header/cookie equality alone is never sufficient.
-      Every comparison is constant time.
+      token's `sid`; for `/auth/refresh`, and for a `POST /auth/logout` or `POST /auth/unlock`
+      identified by the `cv_refresh` cookie (see "Idle lock"), the session bound to the
+      presented `cv_refresh`). Header/cookie equality alone is never sufficient. Every
+      comparison is constant time.
     * **Issue, rotate and re-issue.** `POST /auth/login` (when `status=authenticated`),
       `POST /auth/mfa/verify`, `POST /auth/mfa/recovery` and `POST /auth/mfa/enroll/confirm`
       (which rotates the session) issue a token for the new session.
@@ -238,18 +238,20 @@ info:
 
     A locked session can be unlocked or signed out. The access token is memory-only and
     lasts 12 minutes (ADR-0020 decisions 1 and 3), and refresh is refused while locked, so a long
-    lock or a reload leaves the client without one. The four operations allowed while locked
-    therefore accept either credential (`bearerAuth` or `refreshCookie`): an access token inside
-    its lifetime identifies the session, else the `cv_refresh` cookie does, but only while it is
-    that session's current refresh token. A rotated-away or never-issued cookie is
-    `401 unauthenticated` and changes no session (the family revocation of reuse detection stays
-    with `POST /auth/refresh`); it is counted and, within a budget, audited
+    lock or a reload leaves the client without one. `POST /auth/unlock`, `POST /auth/logout` and
+    `GET /auth/session` therefore accept either credential (`bearerAuth` or `refreshCookie`): an
+    access token inside its lifetime identifies the session, else the `cv_refresh` cookie does,
+    but only while it is that session's current refresh token. A rotated-away or never-issued
+    cookie is `401 unauthenticated` and changes no session (the family revocation of reuse
+    detection stays with `POST /auth/refresh`); it is counted and, within a budget, audited
     (`auth.refresh_reuse_detected` with outcome `denied` for a rotated-away cookie,
     `auth.session_fixation_attempt` for a never-issued one). A revoked or expired session
-    answers as it would to its access token. A cookie-identified `POST /auth/logout`,
-    `POST /auth/unlock` or `POST /auth/lock` gets the SR-042 `Origin` check and the SR-041
-    CSRF check of `POST /auth/refresh`; `GET /auth/session` stays a safe read. No other
-    operation accepts the cookie, and none, unlock included, accepts an expired access token.
+    answers as it would to its access token. A cookie-identified `POST /auth/logout` or
+    `POST /auth/unlock` gets the SR-042 `Origin` check and the SR-041 CSRF check of
+    `POST /auth/refresh`; `GET /auth/session` stays a safe read. `POST /auth/lock`, the fourth
+    operation allowed while locked, takes the access token only: a session that is not locked
+    can refresh for one, and a locked one has nothing left to lock. No other operation accepts
+    the cookie, and none, unlock included, accepts an expired access token.
     "Sign out instead" therefore works for the whole lock and after a reload: it revokes the
     session, clears both cookies and writes `auth.logout` and `auth.session_revoked`.
     An enrolment-only session that locks ends by sign-out; unlock is not among its allowed
@@ -1814,27 +1816,28 @@ paths:
         Lock records no activity and never moves `expires_at`; only `POST /auth/unlock` lifts the
         lock (SCR-005).
 
-        The session is identified as in "Idle lock": an access token inside its lifetime, else
-        the `cv_refresh` cookie, which gets the SR-042 `Origin` check and the SR-041 CSRF check
-        of `POST /auth/refresh`, as a cookie-identified `POST /auth/logout` does. Self only: any
-        query parameter is refused with `422` (SR-026). Lock acts on the caller's own session and
-        only reduces risk, so neither a read-only downgrade nor a view-as context refuses it: it
-        is one of the viewer's own operations ("View-as session").
+        The session is the one whose access token, inside its lifetime, makes the call: the
+        `cv_refresh` cookie identifies no lock (see "Idle lock"). A request with only the cookie is
+        refused as any other operation refuses it: with no access token there is no session to
+        bind its SR-041 token to, so it answers `403 csrf_token_invalid` and nothing is locked. An
+        access token past its lifetime is `401 unauthenticated`, whatever cookie comes with it.
+        Self only: any query parameter is refused with `422` (SR-026). Lock acts on the caller's
+        own session and only reduces risk, so neither a read-only downgrade nor a view-as context
+        refuses it: it is one of the viewer's own operations ("View-as session").
 
         * A session that is already idle-locked answers `200` with its `SessionInfo` and changes
           nothing. It writes no second `auth.session_locked`: one record per lock, and the access
           log has the call.
         * A revoked session, or one past its absolute lifetime, answers `401 session_revoked`,
           with `revoked_reason` as `POST /auth/unlock` gives it: the client signs in again
-          (SCR-001). An access token or cookie of a session that a refresh rotated away, or one
-          this server never issued, gets the uniform `401 unauthenticated`.
+          (SCR-001). An access token of a session that a refresh rotated away, or one this server
+          never issued, gets the uniform `401 unauthenticated`.
 
         The lock's record is `auth.session_locked`, written ahead (C-2.9): if the audit sink is
         down the answer is `503` and the session is not locked. B16's own `auth.idle_locked`,
         written at its next read of the row, carries the lock moment, not the time of that read.
       security:
         - bearerAuth: []
-        - refreshCookie: []
       x-rbac: { permissions: [], scope: self }
       x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -1870,9 +1873,8 @@ paths:
         "401":
           description: >
             `session_revoked` (the session was revoked, or is past its absolute lifetime: sign
-            in again) or `unauthenticated` (no access token inside its lifetime and no current
-            `cv_refresh` cookie, or a credential of a session that a refresh rotated away or
-            that this server never issued).
+            in again) or `unauthenticated` (no access token inside its lifetime, or one of a
+            session that a refresh rotated away or that this server never issued).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -1900,7 +1902,7 @@ paths:
                       revoked_reason: expired,
                     }
                 noCredential:
-                  summary: No live access token and no current `cv_refresh` cookie
+                  summary: No access token inside its lifetime
                   value:
                     {
                       type: "https://candleviewer.local/errors/unauthenticated",
@@ -15542,8 +15544,7 @@ components:
         Path=/api/v1/auth`; on a response to the desktop shell's origin `app://candleviewer`,
         `SameSite=None; Partitioned` instead (conditions: "Cookie" in the CSRF section of
         `info.description`). Also identifies the session for `POST /auth/unlock`,
-        `POST /auth/logout`, `POST /auth/lock` and `GET /auth/session` without a live access
-        token ("Idle lock").
+        `POST /auth/logout` and `GET /auth/session` without a live access token ("Idle lock").
     csrfCookie:
       type: apiKey
       in: cookie

@@ -1530,20 +1530,22 @@ export interface paths {
      *     Lock records no activity and never moves `expires_at`; only `POST /auth/unlock` lifts the
      *     lock (SCR-005).
      *
-     *     The session is identified as in "Idle lock": an access token inside its lifetime, else
-     *     the `cv_refresh` cookie, which gets the SR-042 `Origin` check and the SR-041 CSRF check
-     *     of `POST /auth/refresh`, as a cookie-identified `POST /auth/logout` does. Self only: any
-     *     query parameter is refused with `422` (SR-026). Lock acts on the caller's own session and
-     *     only reduces risk, so neither a read-only downgrade nor a view-as context refuses it: it
-     *     is one of the viewer's own operations ("View-as session").
+     *     The session is the one whose access token, inside its lifetime, makes the call: the
+     *     `cv_refresh` cookie identifies no lock (see "Idle lock"). A request with only the cookie is
+     *     refused as any other operation refuses it: with no access token there is no session to
+     *     bind its SR-041 token to, so it answers `403 csrf_token_invalid` and nothing is locked. An
+     *     access token past its lifetime is `401 unauthenticated`, whatever cookie comes with it.
+     *     Self only: any query parameter is refused with `422` (SR-026). Lock acts on the caller's
+     *     own session and only reduces risk, so neither a read-only downgrade nor a view-as context
+     *     refuses it: it is one of the viewer's own operations ("View-as session").
      *
      *     * A session that is already idle-locked answers `200` with its `SessionInfo` and changes
      *       nothing. It writes no second `auth.session_locked`: one record per lock, and the access
      *       log has the call.
      *     * A revoked session, or one past its absolute lifetime, answers `401 session_revoked`,
      *       with `revoked_reason` as `POST /auth/unlock` gives it: the client signs in again
-     *       (SCR-001). An access token or cookie of a session that a refresh rotated away, or one
-     *       this server never issued, gets the uniform `401 unauthenticated`.
+     *       (SCR-001). An access token of a session that a refresh rotated away, or one this server
+     *       never issued, gets the uniform `401 unauthenticated`.
      *
      *     The lock's record is `auth.session_locked`, written ahead (C-2.9): if the audit sink is
      *     down the answer is `503` and the session is not locked. B16's own `auth.idle_locked`,
@@ -14540,7 +14542,7 @@ export interface operations {
           "application/json": components["schemas"]["SessionInfo"];
         };
       };
-      /** @description `session_revoked` (the session was revoked, or is past its absolute lifetime: sign in again) or `unauthenticated` (no access token inside its lifetime and no current `cv_refresh` cookie, or a credential of a session that a refresh rotated away or that this server never issued). */
+      /** @description `session_revoked` (the session was revoked, or is past its absolute lifetime: sign in again) or `unauthenticated` (no access token inside its lifetime, or one of a session that a refresh rotated away or that this server never issued). */
       401: {
         headers: {
           [name: string]: unknown;
