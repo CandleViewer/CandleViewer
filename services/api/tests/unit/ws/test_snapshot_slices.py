@@ -410,6 +410,10 @@ async def test_a_source_that_opts_out_never_enters_the_snapshot_cache() -> None:
         source.bodies["heatmap"] = _big(columns=2, rows=4)
         cache = SnapshotCache()
         conn = Conn(source, cache=cache)
+        # #5084: no CPU budget, so the snapshot is emitted inline whatever the host's load: under
+        # `SNAPSHOT_TURN_S` (5 ms of wall clock) a slow render, or the first pass's charge to the
+        # loop turn the second pass shares (nothing yields between them), deferred it: `out` empty.
+        conn.emitter.turn_s = math.inf
         sub = _sub(conn)
         assert conn.emitter.snapshot(sub, "initial") and len(conn.out) == 1
         assert len(cache) == cached and cache.bytes == (0 if not cached else cache.bytes)
