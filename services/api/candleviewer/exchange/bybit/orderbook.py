@@ -91,14 +91,14 @@ def parse_book_frame(frame: str, tick_size: TickSize) -> BookSnapshot | BookDelt
         raise ValueError("no tick size for symbol")
     try:
         u, seq, ts_ms = int(data["u"]), int(data.get("seq", 0)), int(msg["ts"])
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:  # #5040: `int(inf)` overflows
         raise ValueError("book frame missing u/ts") from exc
     if u <= 0 or ts_ms <= 0:
         raise ValueError("bad book sequence or timestamp")
     check_event_ts(ts_ms, None, symbol=symbol)
     try:
         cts_ms = int(msg.get("cts", ts_ms))
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("book frame carries a bad cts") from exc
     ts_match = check_event_ts(cts_ms, ts_ms, symbol=symbol) * 1000
     common = {
