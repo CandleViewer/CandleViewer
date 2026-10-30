@@ -160,6 +160,7 @@ def test_a_batch_of_maximum_size_geometry_is_413_before_validation(env: Env) -> 
 
 
 def _post(env: Env, key: str) -> Any:
+    env.now += 1.0  # paced at the write rate (#2727: 60 a minute), so only the cache is pressed
     return env.c.post("/drawings", json=wire(TRENDLINE), headers={"Idempotency-Key": key})
 
 

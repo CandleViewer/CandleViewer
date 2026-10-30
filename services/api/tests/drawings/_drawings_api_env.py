@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -14,9 +15,12 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api._generated import openapi_models
 from candleviewer.api.drawings import make_drawings_router
+from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import SessionNotFound
 from candleviewer.storage.repositories.drawings import (
+    MAX_DRAWINGS_PER_SYMBOL,
+    MAX_DRAWINGS_PER_USER,
     BatchOp,
     BatchOpFailed,
     BatchResult,
@@ -26,9 +30,11 @@ from candleviewer.storage.repositories.drawings import (
     DrawingIdUnavailableError,
     DrawingLayoutNotFoundError,
     DrawingNotFoundError,
+    DrawingQuotaExceededError,
     DrawingRow,
     DrawingVersionConflictError,
     UpdateOp,
+    quota_breach,
 )
 from tests.unit.auth.auth_fakes import MFA_PROVED_AT
 
@@ -77,6 +83,12 @@ class FakeDrawingRepo:
         self.fail: Exception | None = None  # raised by every call (store outage)
         self.tick = 0
         self.layouts: dict[str, str] = {}  # live layout id -> owner (E15-T01 spec Sec.7)
+        self.per_symbol, self.per_user = MAX_DRAWINGS_PER_SYMBOL, MAX_DRAWINGS_PER_USER  # #2727
+
+    def _breach(self, owner: str, delta: Mapping[str, int]) -> DrawingQuotaExceededError | None:
+        """The SQL repo's quota rule (#2727) over `owner`'s live rows only."""
+        live = Counter(r.symbol for i, r in self.rows.items() if self._live(owner, i))
+        return quota_breach(live, delta, per_symbol=self.per_symbol, per_user=self.per_user)
 
     def _call(self, name: str, **kw: Any) -> None:
         self.calls.append((name, kw))
@@ -134,6 +146,8 @@ class FakeDrawingRepo:
 
     async def create(self, owner: str, drawing_id: str, fields: DrawingFields) -> DrawingRow:
         self._call("create", owner=owner, drawing_id=drawing_id)
+        if (breach := self._breach(owner, {fields.symbol: 1})) is not None:
+            raise breach  # before the layouts and the insert, as the SQL repo
         self._layouts_live(owner, [("layout_id", fields.layout_id)])
         if drawing_id in self.rows:
             raise DrawingIdUnavailableError(drawing_id)
@@ -164,6 +178,10 @@ class FakeDrawingRepo:
                 for i, op in enumerate(ops) if not isinstance(op, DeleteOp)]  # fmt: skip
         self._layouts_live(owner, refs)
         saved, created, updated, deleted = (dict(self.rows), dict(self.deleted)), [], [], []
+        delta = Counter(op.fields.symbol for op in ops if isinstance(op, CreateOp))
+        delta.subtract(r.symbol for op in ops if isinstance(op, DeleteOp)
+                       and (r := self._live(owner, op.id)) is not None)  # fmt: skip
+        breach = self._breach(owner, delta) if any(isinstance(o, CreateOp) for o in ops) else None
         try:
             for i, op in enumerate(ops):
                 row = self.rows.get(op.id)  # any owner, any state
@@ -184,7 +202,9 @@ class FakeDrawingRepo:
                 else:
                     self._delete(row)
                     deleted.append(op.id)
-        except BatchOpFailed:
+            if breach is not None:  # the SQL repo checks after the per-op rules, before inserting
+                raise breach
+        except (BatchOpFailed, DrawingQuotaExceededError):
             self.rows, self.deleted = saved  # rolled back: nothing of the batch survives
             raise
         return BatchResult(tuple(created), tuple(updated), tuple(deleted))
@@ -219,6 +239,7 @@ class Env:
         self.repo_up, self.now = True, T0.timestamp()  # store reachable; the router's clock
         self.grants: set[str] | None = None  # replaces PERMS[user] ("*", unknown codes, downgrade)
         self.owner = False  # the owner flag the session resolver derives
+        self.limiter = DrawingsWriteLimiter(clock=lambda: env.now)  # #2727, on the router's clock
         env = self
 
         class _Resolver:  # async, like the session-backed `SessionAuditPrincipalResolver`
@@ -234,6 +255,7 @@ class Env:
             lambda: self.repo if self.repo_up else None, _Resolver() if wired else None,
             self.audit, clock=lambda: self.now, metrics=metrics, idempotency=idempotency,
             layouts=lambda: self.repo if self.repo_up else None,
+            write_limiter=lambda: self.limiter,
         ))  # fmt: skip
         self.c = TestClient(app)
 

@@ -21,6 +21,9 @@ transaction (422 `layout_not_found`, the same for unknown, foreign and deleted l
 `If-Match` 412 and the `immutable_field` 422 come first, then `layout_not_found`: #2380's
 `updateDrawing` and the #357 record leave this order open, and existence first matches how
 #357 orders `immutable_field` (clarification 3).
+
+#2727: every write takes a token of the caller's `DrawingsWriteLimiter` after the permission
+check (429 `rate_limited`); the repository refuses a create past a quota (409).
 """
 
 import base64
@@ -39,6 +42,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.api.drawings_models import (
     MAX_BATCH_BODY_BYTES,
     MAX_BATCH_OPS,
@@ -85,6 +89,7 @@ from candleviewer.storage.repositories.drawings import (
     DrawingIdUnavailableError,
     DrawingLayoutNotFoundError,
     DrawingNotFoundError,
+    DrawingQuotaExceededError,
     DrawingRepository,
     DrawingRow,
     DrawingVersionConflictError,
@@ -100,10 +105,15 @@ _CODES: Final[dict[str, tuple[int, str]]] = {
     "forbidden": (403, "Authenticated but lacking the required permission"),
     "not_found": (404, "Resource does not exist or is out of the caller's scope"),
     "conflict": (409, "Concurrent modification or state conflict"),
+    "drawings_quota_exceeded": (
+        409,
+        "The caller's live drawings quota (per symbol or in all) is reached; nothing was written",
+    ),
     "idempotency_key_reuse": (409, "Idempotency-Key reused with a different request payload"),
     "version_conflict": (412, "If-Match / ETag precondition failed"),
     "payload_too_large": (413, "Request body or batch exceeds the operation's size ceiling"),
     "validation_failed": (422, "Request body or parameters failed schema validation"),
+    "rate_limited": (429, "Per-user API rate limit exceeded"),
     "store_unavailable": (503, "QuestDB / Postgres / Parquet tier unavailable"),
 }
 CURSOR_TTL_S: Final = 3600
@@ -166,7 +176,10 @@ class _Problem(Exception):
     def response(self) -> JSONResponse:
         body = {"type": f"https://candleviewer.local/errors/{self.code}", "title": self.title,
                 "status": self.status, "code": self.code, "detail": self.detail}  # fmt: skip
-        return JSONResponse(body | self.extra, self.status, media_type="application/problem+json")
+        retry = self.extra.get("retry_after_seconds")
+        headers = None if retry is None else {"Retry-After": str(retry)}
+        return JSONResponse(body | self.extra, self.status, headers,
+                            media_type="application/problem+json")  # fmt: skip
 
 
 class _ProblemRoute(APIRoute):
@@ -216,6 +229,13 @@ def _not_found(what: str = "drawing") -> _Problem:
 def _no_layout(exc: DrawingLayoutNotFoundError) -> _Problem:
     """422 `layout_not_found`, worded the same for unknown, foreign and deleted (spec Sec.7)."""
     return _invalid([_rule(f, "layout_not_found", "No such layout.") for f in exc.fields])
+
+
+def _over_quota(exc: DrawingQuotaExceededError, owner: str) -> _Problem:
+    """409 `drawings_quota_exceeded`; the log names the scope, never the symbol or a count."""
+    _log().info("drawings_quota_exceeded", user_id=owner, scope=exc.scope)
+    msg = f"The quota of {exc.limit} live drawings per {exc.scope} is reached; delete some first."
+    return _Problem("drawings_quota_exceeded", msg)
 
 
 def _stale() -> _Problem:
@@ -373,16 +393,20 @@ def make_drawings_router(
     metrics: DrawingsMetricsLike | None = None,
     idempotency: IdempotencyCache | None = None,
     layouts: Callable[[], LayoutProbe | None] | None = None,
+    write_limiter: Callable[[], DrawingsWriteLimiter] | None = None,
 ) -> APIRouter:
     """`audit` is mandatory (a denial must leave its `rbac.denied` record). No resolver (no
     identity store: nothing can verify a session) fails closed with 401; no store with 503.
     `metrics` (C4) records batch sizes and conflicts by rule; `None` records nothing.
     `layouts` answers `GET ?layout_id` (no layout store: 503); writes check their layouts in
-    the repository's own transaction (E15-T01 spec Sec.7)."""
+    the repository's own transaction (E15-T01 spec Sec.7). `write_limiter` gives the per-user
+    write bucket (#2727); `None` uses one bucket set owned by this router."""
     if audit is None:
         raise TypeError("make_drawings_router: an audit emitter is required")
     router = APIRouter(tags=["workspaces"], route_class=_ProblemRoute)
     cache = IdempotencyCache() if idempotency is None else idempotency
+    own_limiter = DrawingsWriteLimiter()
+    limiter = write_limiter or (lambda: own_limiter)
 
     def conflict(rule: str) -> None:
         if metrics is not None:
@@ -408,6 +432,14 @@ def make_drawings_router(
             raise _Problem("forbidden", f"Requires {permission.value}.",
                            required_permissions=[permission.value]) from None  # fmt: skip
         return got
+
+    async def writer(request: Request) -> AuditPrincipal:
+        """The caller of a write, holding `workspaces:write` and one write token (#2727)."""
+        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        if (retry := limiter().try_take(str(principal.user_id))) is not None:
+            msg = f"Drawing writes are limited per user; retry in {retry} s."
+            raise _Problem("rate_limited", msg, retry_after_seconds=retry)
+        return principal
 
     def store() -> DrawingRepository:
         repo = repo_provider()
@@ -477,7 +509,7 @@ def make_drawings_router(
 
     @router.post("/drawings")
     async def create_drawing(request: Request) -> Response:
-        owner = str((await caller(request, Permission.WORKSPACES_WRITE)).user_id)
+        owner = str((await writer(request)).user_id)
         key = idempotency_key(request, "createDrawing")
         raw = await _read_capped(request, MAX_SINGLE_BODY_BYTES)
         digest = body_digest(raw)
@@ -488,6 +520,8 @@ def make_drawings_router(
             row = await store().create(owner, str(new_id()), _fields(body))
         except DrawingLayoutNotFoundError as exc:
             raise _no_layout(exc) from None
+        except DrawingQuotaExceededError as exc:
+            raise _over_quota(exc, owner) from None
         except DrawingIdUnavailableError:
             conflict("id_unavailable")
             raise _Problem("conflict", "Id collision; retry the request.") from None
@@ -498,7 +532,7 @@ def make_drawings_router(
     async def update_drawing(
         request: Request, drawing_id: Annotated[str, Path(alias="drawingId")]
     ) -> Response:
-        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        principal = await writer(request)
         owner, did = str(principal.user_id), _drawing_id(drawing_id)
         body = _parse(DrawingIn, _text(await _read_capped(request, MAX_SINGLE_BODY_BYTES)))
         if_match = _if_match(request.headers.get("if-match"))
@@ -527,7 +561,7 @@ def make_drawings_router(
     async def delete_drawing(
         request: Request, drawing_id: Annotated[str, Path(alias="drawingId")]
     ) -> Response:
-        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        principal = await writer(request)
         owner, did = str(principal.user_id), _drawing_id(drawing_id)
         if not await store().soft_delete(owner, did):
             raise await not_found(principal, did)
@@ -536,7 +570,7 @@ def make_drawings_router(
 
     @router.post("/drawings/batch")
     async def batch_drawings(request: Request) -> Response:
-        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        principal = await writer(request)
         owner = str(principal.user_id)
         key = idempotency_key(request, "batchUpsertDrawings")
         raw = await _read_capped(request, MAX_BATCH_BODY_BYTES)
@@ -554,6 +588,8 @@ def make_drawings_router(
             res = await store().apply_batch(owner, ops)
         except DrawingLayoutNotFoundError as exc:
             raise _no_layout(exc) from None
+        except DrawingQuotaExceededError as exc:
+            raise _over_quota(exc, owner) from None
         except BatchOpFailed as exc:
             failed = (exc.index, exc.rule)  # answered below, outside the `except`: nothing chains
         if failed is not None:

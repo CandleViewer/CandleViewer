@@ -198,3 +198,29 @@ def test_create_app_wires_task_and_metrics() -> None:
     off = create_app(Settings(retention_enabled=False)).state.drawings_purge_task
     off.start()
     assert not off.running
+
+
+class _StatsRepo(_Repo):
+    stats: tuple[int, int] | Exception = (480, 37)
+
+    async def live_rows_per_user(self) -> tuple[int, int]:
+        if isinstance(self.stats, Exception):
+            raise self.stats
+        return self.stats
+
+
+async def test_the_per_user_gauge_exports_max_and_p95_only_and_survives_a_failure() -> None:
+    """#2727 (SR-E14-11): two series, never a per-user label; a failed sample sets nothing."""
+    m, c, g = _counter()
+    per_user = m.gauge("cv_drawings_rows_per_user", "x", ("stat",), max_series=2)
+    repo = _StatsRepo([0])
+    await DrawingsPurgeTask(repo, _ON, c, g, TOOLS3, rows_per_user=per_user).run_once()
+    out = [line for line in generate_latest(m.registry).decode().splitlines()
+           if line.startswith("cv_drawings_rows_per_user{")]  # fmt: skip
+    assert out == ['cv_drawings_rows_per_user{env="demo",stat="max"} 480.0',
+                   'cv_drawings_rows_per_user{env="demo",stat="p95"} 37.0']  # fmt: skip
+    repo.results, repo.stats = [0], OSError("down")
+    m, c, g = _counter()
+    with structlog.testing.capture_logs() as logs:
+        await DrawingsPurgeTask(repo, _ON, c, g, TOOLS3, rows_per_user=per_user).run_once()
+    assert "drawings_rows_per_user_sample_failed" in [e["event"] for e in logs]

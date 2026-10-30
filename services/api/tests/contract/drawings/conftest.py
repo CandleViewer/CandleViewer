@@ -9,6 +9,7 @@ from collections.abc import Iterator
 import pytest
 from _drawings_contract import Api
 
+from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from tests.contract.rbac.rbac_harness import World, build_world
 from tests.drawings._drawings_api_env import FakeDrawingRepo
 
@@ -26,6 +27,7 @@ def _drawings_world() -> Iterator[World]:
 def api(_drawings_world: World) -> Api:
     _drawings_world.audit.records.clear()
     _drawings_world.app.state.drawings_repository = repo = FakeDrawingRepo()
+    _drawings_world.app.state.drawings_write_limiter = DrawingsWriteLimiter()  # #2727: per test
     # E15-T01: `GET ?layout_id` asks `app.state.workspaces_repository` (None on the fake backend,
     # so that filter would answer 503); the fake repository is the layout store (`repo.layouts`).
     _drawings_world.app.state.workspaces_repository = repo

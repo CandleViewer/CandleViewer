@@ -111,6 +111,7 @@ def test_the_statement_set_is_pinned() -> None:
         "_INSERT", "_GET", "_EXISTS_OTHER", "_LIST", "_UPDATE", "_SOFT_DELETE", "_SNAPSHOT",
         "_PURGE", "_COUNT_LIVE", "_INSERT_MANY", "_UPDATE_MANY", "_SOFT_DELETE_MANY",
         "_LAYOUTS_SHARE",  # E15-T01 spec Sec.7: the in-transaction layout check
+        "_QUOTA_LOCK", "_LIVE_BY_SYMBOL", "_ROWS_PER_USER",  # #2727: the quota and its gauge
     }  # fmt: skip
 
 
@@ -120,15 +121,16 @@ def test_every_statement_is_owner_scoped_except_the_unscoped_ones(name: str) -> 
     if name in {
         "_INSERT",
         "_INSERT_MANY",
-    }:  # no WHERE clause: the owner is written as a bound value
+        "_QUOTA_LOCK",  # #2727: keyed by the owner, reads no row
+    }:  # no WHERE clause: the owner is a bound value
         assert "CAST(:owner AS uuid)" in text
     elif name not in mod.UNSCOPED:
         where = text.partition(" WHERE ")[2]  # a SET list that moves the owner scopes nothing
         assert "owner_user_id = CAST(:owner AS uuid)" in where
 
 
-def test_only_three_statements_are_unscoped() -> None:
-    assert mod.UNSCOPED == frozenset({"_EXISTS_OTHER", "_PURGE", "_COUNT_LIVE"})
+def test_only_four_statements_are_unscoped() -> None:
+    assert mod.UNSCOPED == frozenset({"_EXISTS_OTHER", "_PURGE", "_COUNT_LIVE", "_ROWS_PER_USER"})
     assert set(mod.UNSCOPED) <= set(_STATEMENTS)
 
 
@@ -289,6 +291,8 @@ class _Session:
         self.params: list[dict[str, Any]] = []
 
     async def execute(self, stmt: sa.TextClause, params: dict[str, Any]) -> _Result:
+        if stmt in (mod._QUOTA_LOCK, mod._LIVE_BY_SYMBOL):  # #2727: no rows yet, not scripted
+            return _Result([])
         self.statements.append(str(stmt)[:20])
         self.executed.append(stmt)
         self.params.append(params)

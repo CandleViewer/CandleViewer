@@ -1,10 +1,10 @@
 """Postgres drawings repository (migration `0021_drawings`, E14-T01).
 
 Static, parameterised `sa.text` only. Every statement is filtered by
-`owner_user_id = CAST(:owner AS uuid)` (C-12.4 data-layer re-check) except three:
-`exists_for_other_owner` (its whole purpose), `purge_deleted` (retention job, no caller identity)
-and `count_live_by_tool` (the rows gauge, all owners). Every UPDATE bumps `updated_at` strictly
-monotonically so the token never repeats, even inside one clock tick.
+`owner_user_id = CAST(:owner AS uuid)` (C-12.4 data-layer re-check) except four:
+`exists_for_other_owner` (its whole purpose), `purge_deleted` (retention job, no caller identity),
+`count_live_by_tool` and `live_rows_per_user` (the rows gauges, all owners). Every UPDATE bumps
+`updated_at` strictly monotonically so the token never repeats, even inside one clock tick.
 
 The batch snapshot is owner-scoped too, so it locks and sees only the caller's own rows (live or
 soft-deleted): a batch naming a foreign id never takes a lock on, or waits for, another user's row.
@@ -24,11 +24,15 @@ lock layouts before drawings. A concurrent soft delete then either waits and cas
 new rows, or this write waits and finds the layout gone (`DrawingLayoutNotFoundError`, 422).
 0022's composite FK is the backstop and maps to the same error. A deadlock (`40P01`) reruns the
 whole transaction once; a second one is `StorageTierUnavailable` (503), never a 500.
+
+Quota (#2727): a creating write takes the owner's advisory quota lock before any other lock, so
+one owner's creates are serialised, and counts its live rows before the insert (`quota_breach`).
 """
 
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, TypeVar, assert_never
@@ -39,6 +43,8 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.drawings import (
+    MAX_DRAWINGS_PER_SYMBOL,
+    MAX_DRAWINGS_PER_USER,
     BatchOp,
     BatchOpFailed,
     BatchResult,
@@ -51,6 +57,7 @@ from candleviewer.storage.repositories.drawings import (
     DrawingRow,
     DrawingVersionConflictError,
     UpdateOp,
+    quota_breach,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -185,9 +192,25 @@ _PURGE = sa.text(
 _COUNT_LIVE = sa.text(
     "SELECT tool, count(*) AS n FROM drawings WHERE deleted_at IS NULL GROUP BY tool"
 )
+# #2727: the owner's quota lock (two-key form, apart from single-key locks), then its count.
+_QUOTA_LOCK = sa.text(
+    "SELECT pg_advisory_xact_lock(hashtext('drawings_quota'), "
+    "hashtext(CAST(CAST(:owner AS uuid) AS text)))"
+)
+_LIVE_BY_SYMBOL = sa.text(
+    "SELECT symbol, count(*) AS n FROM drawings WHERE owner_user_id = CAST(:owner AS uuid) "
+    "AND deleted_at IS NULL GROUP BY symbol"
+)
+# Unscoped by design (`UNSCOPED`, #2727): the gauge's max and p95 of live rows per owner, no owner.
+# nosemgrep: cv-drawings-query-missing-owner-filter reason=gauge owner=@basiltt review=2027-03-25
+_ROWS_PER_USER = sa.text(
+    "SELECT coalesce(max(n), 0) AS top, coalesce(percentile_disc(0.95) WITHIN GROUP "
+    "(ORDER BY n), 0) AS p95 FROM (SELECT count(*) AS n FROM drawings WHERE deleted_at IS NULL "
+    "GROUP BY owner_user_id) AS per_owner"
+)
 
 #: Statements allowed to omit the owner filter (see module docstring); tested.
-UNSCOPED = frozenset({"_EXISTS_OTHER", "_PURGE", "_COUNT_LIVE"})
+UNSCOPED = frozenset({"_EXISTS_OTHER", "_PURGE", "_COUNT_LIVE", "_ROWS_PER_USER"})
 
 #: Upper bound for one purge call so a single transaction stays short.
 MAX_PURGE_BATCH = 10_000
@@ -413,8 +436,25 @@ async def _lock_live_layouts(
 
 
 class SqlAlchemyDrawingRepository:
-    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
+    def __init__(
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        per_symbol: int = MAX_DRAWINGS_PER_SYMBOL,
+        per_user: int = MAX_DRAWINGS_PER_USER,
+    ) -> None:
         self._relational = relational
+        self._per_symbol, self._per_user = per_symbol, per_user
+
+    async def _check_quota(
+        self, uow: SqlAlchemyUnitOfWork, owner: str, delta: Mapping[str, int]
+    ) -> None:
+        """Refuse `delta` past a quota, counted under the owner's quota lock (#2727)."""
+        got = await uow.session.execute(_LIVE_BY_SYMBOL, {"owner": owner})
+        live = {str(symbol): int(n) for symbol, n in got.all()}
+        breach = quota_breach(live, delta, per_symbol=self._per_symbol, per_user=self._per_user)
+        if breach is not None:
+            raise breach
 
     async def list_page(
         self,
@@ -454,7 +494,9 @@ class SqlAlchemyDrawingRepository:
 
         async def attempt() -> DrawingRow:
             async with self._relational.unit_of_work() as uow:
+                await uow.session.execute(_QUOTA_LOCK, {"owner": owner})  # before the layouts
                 await _lock_live_layouts(uow, owner, [("layout_id", fields.layout_id)])
+                await self._check_quota(uow, owner, {fields.symbol: 1})
                 row = (await uow.session.execute(_INSERT, params)).mappings().one()
                 await uow.commit()
             return _to_row(row)
@@ -521,11 +563,17 @@ class SqlAlchemyDrawingRepository:
             (i, op) for i, op in enumerate(ops) if isinstance(op, DeleteOp)
         ]
         async with self._relational.unit_of_work() as uow:
-            await _lock_live_layouts(uow, owner, refs)  # layouts before drawings (spec Sec.7)
+            if creates:  # the quota lock first, then layouts before drawings (spec Sec.7)
+                await uow.session.execute(_QUOTA_LOCK, {"owner": owner})
+            await _lock_live_layouts(uow, owner, refs)
             ids = [op.id for op in ops]
             locked = await uow.session.execute(_SNAPSHOT, {"ids": ids, "owner": owner})
             snap: dict[str, Mapping[str, Any]] = {r["id"]: dict(r) for r in locked.mappings()}
             failure = _first_failure(ops, snap)  # `snap` is the caller's own rows only
+            if failure is None and creates:  # every delete then hits one of the caller's live rows
+                delta = Counter(op.fields.symbol for _, op in creates)
+                delta.subtract(str(snap[op.id]["symbol"]) for _, op in deletes)
+                await self._check_quota(uow, owner, delta)
             # Creates before the first snapshot failure are inserted too, so a concurrent PK
             # collision at an earlier index still wins, exactly as in operation order.
             limit = failure[0] if failure is not None else len(ops)
@@ -592,6 +640,12 @@ class SqlAlchemyDrawingRepository:
         async with self._relational.unit_of_work() as uow:
             rows = (await uow.session.execute(_COUNT_LIVE)).all()
         return {str(tool): int(n) for tool, n in rows}
+
+    async def live_rows_per_user(self) -> tuple[int, int]:
+        """(max, p95) of live rows per owner, all owners (the bounded gauge, #2727)."""
+        async with self._relational.unit_of_work() as uow:
+            top, p95 = (await uow.session.execute(_ROWS_PER_USER)).one()
+        return int(top), int(p95)
 
 
 __all__ = [

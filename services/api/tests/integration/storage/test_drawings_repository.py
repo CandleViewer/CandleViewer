@@ -40,6 +40,7 @@ from candleviewer.storage.repositories.drawings import (
     DrawingFields,
     DrawingIdUnavailableError,
     DrawingNotFoundError,
+    DrawingQuotaExceededError,
     DrawingRow,
     DrawingVersionConflictError,
     UpdateOp,
@@ -981,3 +982,47 @@ async def test_mixed_batch_of_200_p99_under_50ms(pg_dsn: str) -> None:
         await rel.dispose()
     p99 = _timed("(100 creates, 50 updates, 50 deletes)", timings)
     assert p99 < 50.0, f"mixed batch p99 {p99:.3f} ms"
+
+
+@pytest_asyncio.fixture
+async def small_quota(pg_dsn: str) -> AsyncIterator[SqlAlchemyDrawingRepository]:
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-quota-it")
+    try:
+        yield SqlAlchemyDrawingRepository(rel, per_symbol=2, per_user=3)
+    finally:
+        await rel.dispose()
+
+
+async def test_quota_is_counted_in_sql_per_owner_and_never_raced(
+    small_quota: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    """#2727: n allowed, n + 1 refused before the insert; B's rows never count against A."""
+    repo, (a, b) = small_quota, (_user(pg_dsn), _user(pg_dsn))
+    for _ in range(2):
+        await repo.create(b, str(uuid.uuid4()), _f())
+    results = await asyncio.gather(
+        *(repo.create(a, str(uuid.uuid4()), _f()) for _ in range(6)), return_exceptions=True
+    )  # concurrent: the per-owner lock lets exactly the quota through
+    refused = [r for r in results if isinstance(r, DrawingQuotaExceededError)]
+    assert len(refused) == 4 and {e.scope for e in refused} == {"symbol"}
+    await repo.create(a, str(uuid.uuid4()), _f("ETHUSDT"))  # the third, under the user quota
+    lost = str(uuid.uuid4())
+    with pytest.raises(DrawingQuotaExceededError) as err:
+        await repo.create(a, lost, _f("SOLUSDT"))
+    assert err.value.scope == "user" and await repo.get(a, lost) is None
+    (old, *_) = await repo.list_page(a, symbol="BTCUSDT", layout_id=None, after_id=None, limit=5)
+    swap = [DeleteOp(old.id, old.updated_at), CreateOp(lost, _f("SOLUSDT"))]  # net zero
+    assert [r.id for r in (await repo.apply_batch(a, swap)).created] == [lost]
+    with pytest.raises(DrawingQuotaExceededError):
+        await repo.apply_batch(a, [CreateOp(str(uuid.uuid4()), _f("SOLUSDT"))])
+
+
+async def test_live_rows_per_user_reports_the_max_and_p95_of_live_rows(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    """Bounds, not absolutes: other tests share the module database (C-13.7)."""
+    a = _user(pg_dsn)
+    for _ in range(40):
+        await repo.create(a, str(uuid.uuid4()), _f("XRPUSDT"))
+    top, p95 = await repo.live_rows_per_user()
+    assert top >= 40 and 1 <= p95 <= top

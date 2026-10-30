@@ -43,12 +43,16 @@ class DrawingsMetrics:
     conflicts: BoundedMetric
     purged: BoundedMetric
     rows: BoundedMetric  # cv_drawings_rows{tool}: live drawings per tool (set by the purge task)
+    #: cv_drawings_rows_per_user{stat}: max and p95 of live drawings per owner (#2727)
+    rows_per_user: BoundedMetric | None = None
 
 
 class _Purger(Protocol):
     async def purge_deleted(self, older_than_days: int, limit: int) -> int: ...
 
     async def count_live_by_tool(self) -> dict[str, int]: ...
+
+    async def live_rows_per_user(self) -> tuple[int, int]: ...
 
 
 class DrawingsPurgeTask:
@@ -62,8 +66,10 @@ class DrawingsPurgeTask:
         *,
         interval_s: float = INTERVAL_SECONDS,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        rows_per_user: BoundedMetric | None = None,
     ) -> None:
         self._repo = repo
+        self._rows_per_user = rows_per_user
         self._enabled = bool(schedule.drawings_jobs())
         self._purged = purged
         self._rows = rows
@@ -88,6 +94,14 @@ class DrawingsPurgeTask:
                 self._rows.labels(tool).set(counts.get(tool, 0))
         except Exception:
             logger().exception("drawings_rows_sample_failed")
+        if self._rows_per_user is None:
+            return
+        try:  # #2727: two series, never an owner label
+            top, p95 = await self._repo.live_rows_per_user()
+            self._rows_per_user.labels("max").set(top)
+            self._rows_per_user.labels("p95").set(p95)
+        except Exception:
+            logger().exception("drawings_rows_per_user_sample_failed")
 
     async def _purge(self) -> None:
         # Count and log per batch so a later failure never loses rows already purged.
