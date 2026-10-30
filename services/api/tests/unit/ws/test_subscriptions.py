@@ -1314,6 +1314,8 @@ def test_the_floor_follows_the_bar_series_a_topic_names_not_its_family(
     got = (below["ok"], below.get("error", {}).get("code"), at["ok"])
     assert got == (False, "invalid_topic_format", True)
     assert len(bars.registered) == 1
+    conn.unsubscribe("probe.BTCUSDT.volume.10")  # #5084: its upstream lease and gauge series end
+    assert len(bars.released) == 1
 
 
 #: An `indicators.*` subscription's required option (§6.1): one server-computed instance.

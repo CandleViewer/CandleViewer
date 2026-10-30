@@ -14,6 +14,9 @@ def _fresh_upstream_consumers_gauge() -> Iterator[None]:
     """Drop every `cv_ws_upstream_consumers_in_use` series a test leaves behind. The gauge is
     process-global and a lease that is never released keeps its series: the `probe` family of
     `test_the_floor_follows_the_bar_series_a_topic_names_not_its_family` (test_subscriptions.py)
-    reached the label audit of test_ws_metrics_session_labels.py, which reads every series."""
+    reached the label audit of test_ws_metrics_session_labels.py, which reads every series. That
+    test now releases its lease; the clear, before and after each test, keeps any other leak
+    (here or in a suite run before this directory) out of a later test's audit."""
+    cv_ws_upstream_consumers_in_use.clear()
     yield
     cv_ws_upstream_consumers_in_use.clear()
