@@ -481,9 +481,11 @@ def found_sends(
     An `untracked` row is recorded, never managed: one finding by the order's state, the fills it
     does not carry sent before it as `EXEC`s, which B1 records and applies to nothing; a filled
     order's last fill rides its `RECON_FOUND_FILLED`, the one arm that closes the row, and the step
-    writer stores that fill. None when the totals the venue shows are not the fills read (they lie
-    outside every window read): nothing is adopted, the row is listed and the next pass reads
-    again."""
+    writer stores that fill. As the store takes `filled` only with the row's `qty` filled, a filled
+    order closes so only when that one fill completes the row: an order filled in more executions
+    than one is not sent a finding the store would refuse (B1 version 7 cannot close it). None when
+    the totals the venue shows are not the fills read (they lie outside every window read), or
+    for such an order: nothing is adopted, the row is listed and the next pass reads again."""
     base: dict[str, Any] = {"exchange_order_id": order.exchange_order_id, "pass_id": pass_id}
     if order.state not in _ENDED and order.state not in _OPEN:
         return None  # a status 24 Sec.8.12 does not map: decided by no finding
@@ -491,8 +493,8 @@ def found_sends(
     if row.state == "untracked":
         logged = list(fills)
         if order.state == "filled":
-            if not fills:
-                return None
+            if not fills or row.cum_exec_qty + fills[-1].qty != row.qty:
+                return None  # no fill read, or none that completes the row (`state_mismatch`)
             last = logged.pop()
             carried = exec_payload(last, order_id=row.id, order_link_id=row.order_link_id)
             finding = FoundCommand("RECON_FOUND_FILLED", base | {"execution": carried})

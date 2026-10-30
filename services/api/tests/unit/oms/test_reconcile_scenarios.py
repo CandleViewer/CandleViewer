@@ -365,13 +365,9 @@ async def test_a_resting_untracked_order_is_found_every_pass_but_never_a_correct
     _only_reads(s.world)
 
 
-async def test_an_adopted_untracked_order_that_later_fills_is_closed_by_its_finding(
-    rig: Rig,
-) -> None:
-    """B1's `untracked` closes on `RECON_FOUND_FILLED`, which carries the order's fill: the pass
-    holds the fill for that finding, so the row ends `filled` with the fill stored, nothing is
-    listed `fills_unread`, and the watermark advances."""
-    s = Scenario(World(), rig)
+async def _filled_after_adoption(s: Scenario, rig: Rig, *parts: str) -> Order:
+    """A manual order adopted `untracked`, then filled at the venue in `parts`, each a fill the
+    next pass's window holds."""
     manual = venue_order()
     s.world.venue.seed_order(manual, uid="1001")
     await s.run()
@@ -380,14 +376,25 @@ async def test_an_adopted_untracked_order_that_later_fills_is_closed_by_its_find
     filled = venue_order(orderStatus="Filled", cumExecQty="0.10", leavesQty="0", avgPrice="1600")
     s.world.venue.seed_order(filled, uid="1001")
     s.world.now_us += 30_000_000
-    done = fill(
-        "m1", exchange_order_id=manual.exchange_order_id, order_link_id=manual.order_link_id,
-        symbol="ETHUSDT", price=Decimal(1600), qty=Decimal("0.10"),
-        ts_exec=s.world.now_us - 10_000_000,
-    )  # fmt: skip
-    s.world.venue.seed_execution(done)
+    for n, qty in enumerate(parts, start=1):
+        s.world.venue.seed_execution(fill(
+            f"m{n}", exchange_order_id=manual.exchange_order_id,
+            order_link_id=manual.order_link_id, symbol="ETHUSDT", price=Decimal(1600),
+            qty=Decimal(qty), ts_exec=s.world.now_us - 10_000_000 + n, seq=n,
+        ))  # fmt: skip
     await s.run()
     await rig.quiet()
+    return manual
+
+
+async def test_an_adopted_untracked_order_that_later_fills_is_closed_by_its_finding(
+    rig: Rig,
+) -> None:
+    """B1's `untracked` closes on `RECON_FOUND_FILLED`, which carries the fill that completes it:
+    the pass holds that fill for the finding, so the row ends `filled` with the fill stored,
+    nothing is listed `fills_unread`, the watermark advances, and nothing is sent to the venue."""
+    s = Scenario(World(), rig)
+    manual = await _filled_after_adoption(s, rig, "0.10")
     stored = await rig.store.get_by_exchange_order_id(ACCOUNT, manual.exchange_order_id)
     assert stored is not None and stored.state == "filled"
     assert await rig.fills.get(ACCOUNT, "m1") is not None
@@ -395,6 +402,24 @@ async def test_an_adopted_untracked_order_that_later_fills_is_closed_by_its_find
         [stored.order_link_id], [],
     )  # fmt: skip
     assert s.watermarks.advanced[-1] == s.world.now_us
+    assert rig.commands.kinds() == []  # a discovered order's stop is not the OMS's (S9)
+    _only_reads(s.world)
+
+
+async def test_an_untracked_order_filled_in_several_fills_is_never_sent_a_refused_finding(
+    rig: Rig,
+) -> None:
+    """B1 version 7 records an `untracked` row's `EXEC` and applies nothing, and the store takes
+    `filled` only with the row's `qty` filled, so no one fill can close an order filled in two:
+    the pass sends it no finding the store would refuse and lists it, holding the watermark."""
+    s = Scenario(World(), rig)
+    manual = await _filled_after_adoption(s, rig, "0.04", "0.06")
+    stored = await rig.store.get_by_exchange_order_id(ACCOUNT, manual.exchange_order_id)
+    assert stored is not None and stored.state == "untracked"
+    assert s.record_of()["errors"] == [
+        {"step": "3b", "kind": "fills_unread", "subject": stored.order_link_id}
+    ]
+    assert (len(s.watermarks.advanced), rig.commands.kinds()) == (1, [])  # the adoption's only
     _only_reads(s.world)
 
 

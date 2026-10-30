@@ -513,13 +513,13 @@ async def test_3d_fill_of_an_order_adopted_this_pass_is_kept_for_its_finding() -
     adopted is kept, and the next pass's finding carries it to the row, which it closes."""
     w = World()
     w.venue.seed_order(remote(7, order_link_id=ext_key("x7")), uid="1001")
-    e7 = fill("e7", n=7, order_link_id=ext_key("x7"))
+    e7 = fill("e7", n=7, order_link_id=ext_key("x7"), qty=Decimal(1))  # all of the row's qty
     w.venue.seed_execution(e7)
     first = await w.run()
     assert [e[0] for e in w.oms.log] == ["freeze", "adopted", "discover", "hand_over_execution"]
     assert (w.oms.effects("push"), first.corrected) == ([], ())
     w.venue._open.pop("x7")  # the order filled since; the hand-over holds its fill
-    filled = remote(7, order_link_id=ext_key("x7"), state="filled", filled_qty=Decimal("0.4"))
+    filled = remote(7, order_link_id=ext_key("x7"), state="filled", filled_qty=Decimal(1))
     w.venue.seed_order(filled, uid="1001")
     w.oms.handed_fills = [waiting(e7, entry_id=51)]
     w.now_us += 60_000_000  # the fill is outside this pass's window: only the hand-over has it

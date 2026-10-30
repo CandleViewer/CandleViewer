@@ -405,9 +405,15 @@ def test_a_full_match_on_malformed_money_never_matches(monkeypatch: pytest.Monke
     [
         (
             "untracked",
-            remote(1, state="filled", filled_qty=Decimal("0.4")),
-            [fill("e1")],
+            remote(1, state="filled", filled_qty=Decimal(1)),
+            [fill("e1", qty=Decimal(1))],
             ["RECON_FOUND_FILLED"],
+        ),
+        (  # no one fill completes the row, which takes no EXEC: the store would refuse it
+            "untracked",
+            remote(1, state="filled", filled_qty=Decimal(1)),
+            [fill("e1", qty=Decimal("0.4")), fill("e2", qty=Decimal("0.6"), seq=2)],
+            None,
         ),
         ("untracked", remote(1, state="filled"), [], None),
         (
