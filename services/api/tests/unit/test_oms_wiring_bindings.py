@@ -200,8 +200,9 @@ def test_the_gates_refusal_is_order_entry_refused_carrying_its_reason() -> None:
     assert problem_for(refused).code == "trading_disabled"
 
 
-async def test_the_live_flag_view_refuses_a_live_order_while_it_is_unread() -> None:
-    """21 10.7: off until its first read, so a live order is refused with the setting on."""
+async def test_the_live_flag_view_refuses_a_live_order_while_unread_or_latched() -> None:
+    """21 10.7: off until its first read, so a live order is refused with the setting on; and off
+    again for good once its poll has died and latched it."""
     flags = FeatureFlagsRuntime(
         None,
         environment="live",
@@ -220,6 +221,12 @@ async def test_the_live_flag_view_refuses_a_live_order_while_it_is_unread() -> N
     assert type(binding.refusal(ACCOUNT, "live")) is TradingDisabled
     await flags.live_enabled.on_change(LIVE_ENABLED, None, StoredFlag(True))
     assert binding.refusal(ACCOUNT, "live") is None
+    # Latched directly: test_flag_wiring_poll_supervision proves each poll death latches and
+    # asserts runtime.live_enabled() is False after it; this binding reads that same callable.
+    flags.live_enabled.latch()  # its poll died (#5053): off until a restart, whatever is written
+    assert type(binding.refusal(ACCOUNT, "live")) is TradingDisabled
+    await flags.live_enabled.on_change(LIVE_ENABLED, None, StoredFlag(True))
+    assert type(binding.refusal(ACCOUNT, "live")) is TradingDisabled
 
 
 @pytest.mark.parametrize(("switch", "gauge"), [(InterimKillSwitch(), 1.0), (_Check(), 0.0)])

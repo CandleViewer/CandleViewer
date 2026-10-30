@@ -59,6 +59,14 @@ order_entry_gate_poll_dead_total = Counter(
     "Maintenance poll tasks that ended other than by their stop; each latches order entry off.",
 )
 
+#: The flag views' poll deaths (`flags_wiring`), per view's flag (three keys): each latches that
+#: view to its fail-closed value (off) until a restart.
+flag_view_stopped_total = Counter(
+    "cv_flag_view_stopped_total",
+    "Flag-view poll tasks that ended other than by their stop; each latches its view off.",
+    ["flag"],
+)
+
 EXPORTED_NAMES: Final = frozenset(
     {
         "cv_feature_flag_evaluations_total",
@@ -68,6 +76,7 @@ EXPORTED_NAMES: Final = frozenset(
         "cv_maintenance_mode",
         "cv_order_entry_refusals_total",
         "cv_order_entry_gate_poll_dead_total",
+        "cv_flag_view_stopped_total",
     }
 )
 

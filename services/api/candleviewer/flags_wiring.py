@@ -19,7 +19,8 @@ or its seed for the process environment (`ENVIRONMENT_SEEDS`, #913 slice 3). `st
 to 2000 refuses boot), ensures every flag's row, reads `desktop.backend_connection`
 (`BackendConnectionFlag`) once and starts the maintenance poll and the polls of the OMS's two
 flag views and the `trade_groups` one (`FlagView`); `stop()` cancels the polls and the flag's
-refresh. A maintenance poll that ends before `stop()` latches the gate engaged until a restart.
+refresh. A maintenance poll that ends before `stop()` latches the gate engaged until a restart,
+and a view's poll latches its view to its fail-closed value until a restart.
 """
 
 from __future__ import annotations
@@ -44,7 +45,10 @@ from candleviewer.admin.flags.catalogue import (
     default_registry,
 )
 from candleviewer.admin.flags.maintenance import MaintenanceController, MaintenanceGate, chain_hooks
-from candleviewer.admin.flags.metrics import order_entry_gate_poll_dead_total
+from candleviewer.admin.flags.metrics import (
+    flag_view_stopped_total,
+    order_entry_gate_poll_dead_total,
+)
 from candleviewer.admin.flags.push import FlagPush, Session, SessionDirectory
 from candleviewer.admin.flags.registry import FlagKind, FlagSpec, FlagValue, value_matches
 from candleviewer.admin.flags.resolver import StoredFlag
@@ -276,7 +280,7 @@ class FeatureFlagsRuntime:
         self._settings = settings
         self._audit, self._step_up, self._users, self._sessions = audit, step_up, users, sessions
         self._poll: asyncio.Task[None] | None = None
-        self._stopped_poll: asyncio.Task[None] | None = None  # the running poll `stop()` cancels
+        self._stopped_polls: set[asyncio.Task[None]] = set()  # the running polls `stop()` cancels
         self._view_polls: list[asyncio.Task[None]] = []
         # Process-wide reads (#913 slice 3, E28-T05), built before the writer that takes their hook.
         self.oms_enabled = FlagView(self, TRADING_OMS_ENABLED)
@@ -339,6 +343,8 @@ class FeatureFlagsRuntime:
             self._view_polls = [
                 spawn(view.run(), name=f"feature-flag-view-{view.key}") for view in self._views
             ]
+            for view, poll in zip(self._views, self._view_polls, strict=True):
+                poll.add_done_callback(self._view_ended(view))
 
     def _poll_ended(self, task: asyncio.Task[None]) -> None:
         """Done-callback of the maintenance poll, which only `stop()` ends: `stop()` marks the poll
@@ -348,22 +354,49 @@ class FeatureFlagsRuntime:
         no longer follow the store, so it is latched engaged until a restart (fail closed, C-2.21),
         counted and logged CRITICAL by the error's class alone (C-12.6); not restarted, as the key
         self-check's latch is not. The error is retrieved either way."""
-        error = None if task.cancelled() else task.exception()
-        if task is self._stopped_poll:  # `stop()`'s cancel is the shutdown
+        ended = self._death(task)
+        if ended is None:  # `stop()`'s cancel is the shutdown
             return
         self.gate.latch()  # first: nothing below may leave the gate open
         order_entry_gate_poll_dead_total.inc()
-        cancelled, returned = task.cancelled(), error is None
-        ended = "CancelledError" if cancelled else "returned" if returned else type(error).__name__
         # cv_page: the log route the alert rules key on, as the OMS ticker and watcher deaths page
         _log().critical(
             "order_entry_gate_poll_dead", cv_page=True, task=task.get_name(), error=ended
         )
 
+    def _view_ended(self, view: FlagView) -> Callable[[asyncio.Task[None]], None]:
+        """The done-callback of `view`'s poll, as `_poll_ended` is the maintenance poll's: a death
+        latches the view to its fail-closed value until a restart, since a stale `True` would keep
+        the live gate or the OMS admitting (C-2.21, C-4.14), then counts it and logs CRITICAL."""
+
+        def ended(task: asyncio.Task[None]) -> None:
+            death = self._death(task)
+            if death is None:  # `stop()`'s cancel is the shutdown
+                return
+            view.latch()  # first: nothing below may leave the view open
+            flag_view_stopped_total.labels(flag=view.key).inc()
+            _log().critical(
+                "flag_view_poll_dead", cv_page=True, key=view.key, task=task.get_name(), error=death
+            )
+
+        return ended
+
+    def _death(self, task: asyncio.Task[None]) -> str | None:
+        """None for a poll `stop()` cancelled while it ran, else how it died: `CancelledError`,
+        `returned` or the error's class alone (C-12.6). The error is retrieved either way.
+        Not a pure query: it consumes the task's `stop()` mark (each callback runs once)."""
+        error = None if task.cancelled() else task.exception()
+        if task in self._stopped_polls:
+            self._stopped_polls.discard(task)
+            return None
+        if task.cancelled():
+            return "CancelledError"
+        return "returned" if error is None else type(error).__name__
+
     async def stop(self) -> None:
         polls = [task for task in (self._poll, *self._view_polls) if task is not None]
-        if self._poll is not None and not self._poll.done():
-            self._stopped_poll = self._poll  # one already ended died first: its callback counts it
+        # one already ended died first: its callback counts it
+        self._stopped_polls.update(poll for poll in polls if not poll.done())
         self._poll, self._view_polls = None, []
         for poll in polls:
             poll.cancel()
@@ -431,7 +464,8 @@ class FlagView:
     `MaintenanceController` does. A poll that fails any way reads off and the loop polls on; the
     view warns when it turns unread and logs at debug while it stays so, the error's class alone.
     `first_read()` returns once the store has answered for the flag (the OMS startup sweep waits
-    for it, 20 6.2)."""
+    for it, 20 6.2). A view whose poll task ends other than by `stop()` is latched to its
+    fail-closed value until a restart (`latch`)."""
 
     def __init__(
         self,
@@ -446,6 +480,13 @@ class FlagView:
         self.value = self._spec.fail_closed_value is True
         self._sleep, self._generation, self._read = sleep, 0, asyncio.Event()
         self._failing = False  # the last poll left the flag unread, and warned
+        self._latched = False  # its poll died: closed until a restart
+
+    def latch(self) -> None:
+        """The runtime's, when the view's poll dies: the fail-closed value until a restart, which
+        no later poll, write or refresh reopens (C-2.21)."""
+        self._latched = True
+        self.value = self._spec.fail_closed_value is True
 
     def __call__(self) -> bool:
         return self.value
@@ -495,9 +536,8 @@ class FlagView:
         self._failing = True
 
     def _apply(self, row: StoredFlag | None) -> None:
-        self.value = (
-            self._runtime.service.resolved(self._spec, row, None, frozenset()).value is True
-        )
+        resolved = self._runtime.service.resolved(self._spec, row, None, frozenset()).value
+        self.value = (self._spec.fail_closed_value if self._latched else resolved) is True
         if row is not None:
             self._read.set()
 
