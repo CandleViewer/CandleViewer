@@ -94,5 +94,8 @@
   "color.cvd.heatmap.bid.4": { "$type": "color", "$value": "{palette.cvd.light.blue.2}" },
   "color.cvd.heatmap.ask.4": { "$type": "color", "$value": "{palette.cvd.light.orange.2}" },
   "color.cvd.heatmap.bid.5": { "$type": "color", "$value": "{palette.cvd.light.blue.1}" },
-  "color.cvd.heatmap.ask.5": { "$type": "color", "$value": "{palette.cvd.light.orange.1}" }
+  "color.cvd.heatmap.ask.5": { "$type": "color", "$value": "{palette.cvd.light.orange.1}" },
+  "color.sync.a": { "$type": "color", "$value": "{palette.light.cyan.300}" },
+  "color.sync.b": { "$type": "color", "$value": "{palette.light.amber.300}" },
+  "color.sync.c": { "$type": "color", "$value": "{palette.purple.600}" }
 }

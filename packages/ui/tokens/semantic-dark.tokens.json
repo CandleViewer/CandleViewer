@@ -195,6 +195,18 @@
     "$type": "color",
     "$value": "{palette.blue.300}"
   },
+  "color.sync.a": {
+    "$type": "color",
+    "$value": "{palette.cyan.300}"
+  },
+  "color.sync.b": {
+    "$type": "color",
+    "$value": "{palette.amber.300}"
+  },
+  "color.sync.c": {
+    "$type": "color",
+    "$value": "{palette.purple.500}"
+  },
   "color.candle.up": {
     "$type": "color",
     "$value": "{palette.green.500}"
@@ -387,6 +399,26 @@
     "$type": "spacing",
     "$value": "{space.6}"
   },
+  "space.dockgrid.gutter": {
+    "$type": "spacing",
+    "$value": "{space.1}"
+  },
+  "space.panelheader.height.compact": {
+    "$type": "sizing",
+    "$value": "{size.control.compact}"
+  },
+  "space.panelheader.height.comfortable": {
+    "$type": "sizing",
+    "$value": "{size.control.comfortable}"
+  },
+  "space.dock.tray.height.compact": {
+    "$type": "sizing",
+    "$value": "{size.control.compact}"
+  },
+  "space.dock.tray.height.comfortable": {
+    "$type": "sizing",
+    "$value": "{size.control.comfortable}"
+  },
   "size.control.height": {
     "$type": "sizing",
     "$value": "{size.control.compact}"
@@ -398,6 +430,15 @@
   "size.icon": {
     "$type": "sizing",
     "$value": "{size.icon.md}"
+  },
+  "size.dock.splitter.hit": {
+    "$type": "sizing",
+    "$value": "{size.target.min}"
+  },
+  "border.panel.focus": {
+    "$type": "borderWidth",
+    "$value": "{border.focus}",
+    "$description": "E15-D13: width of the dock panel focus frame (CMP-081 panel focus); a Tier-2 alias of the primitive border.focus, so the two never drift."
   },
   "radius.control": {
     "$type": "borderRadius",
