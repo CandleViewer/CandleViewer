@@ -44,7 +44,7 @@ async function shellAt(path: string, env: BadgeEnvironment, role: Role) {
   await screen.findByRole("heading", { level: 1 });
   return { router, view, bar: screen.getByRole("banner") };
 }
-// every region of that politeness: the degraded banner (#4763) mounts its own pair before the shell's
+// every region of that politeness: the degraded banner (#4763) mounts a polite one before the shell's
 const live = (p: "polite" | "assertive") => ({
   textContent: [...document.querySelectorAll(`[aria-live="${p}"]`)]
     .map((n) => n.textContent)

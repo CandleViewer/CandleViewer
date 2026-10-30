@@ -1,5 +1,8 @@
 // E10-S04 (#306) SCR-153: the degraded-issue derivation from `SystemUpdate` payloads (ticket Test
-// plan, first unit item). The copy is E17-D02 §8's, verbatim; the routing is its §6 table.
+// plan, first unit item). The copy is E17-D02 §8's, verbatim; the routing is its §6 table. The
+// break-glass row (SR-023) is the notice `23` §15.9 sends after a first `auth_ok`.
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SystemUpdate } from "../../../src/lib/ws/protocol/frames";
 import { DEGRADED_COPY } from "../../../src/features/system-states/copy";
@@ -19,6 +22,13 @@ const run = (...updates: unknown[]): DegradedFacts =>
     INITIAL_DEGRADED_FACTS,
   );
 const MAINTENANCE_ON = { kind: "notice", reason: "maintenance.enabled" };
+/** As services/api/candleviewer/auth/break_glass_notice.py `notices()` builds it. */
+const BREAK_GLASS = {
+  kind: "notice",
+  severity: "critical",
+  message: "Break-glass recovery was used on this server; the Owner must review it.",
+  reason: "auth.break_glass_used",
+};
 const ids = (facts: DegradedFacts): string[] => degradedIssues(facts).map((i) => i.id);
 
 const health = (components: unknown[], extra: object = {}): SystemUpdate =>
@@ -34,6 +44,7 @@ describe("degraded issues", () => {
       severity: "warning",
       message: "Exchange feed down — the server is restoring the connection.",
       stillWorks: "Charts and book pause; positions, cancel and close still work.",
+      announce: "polite",
       dismissible: true,
       assertedSeq: 1,
     });
@@ -91,9 +102,80 @@ describe("degraded issues", () => {
 
   it("test_degraded_maintenance_disabled_clears_and_other_notices_change_nothing", () => {
     const on = { kind: "notice", reason: "maintenance.enabled" };
-    const facts = run(on, { kind: "notice", reason: "auth.break_glass_used" });
+    const facts = run(on, { kind: "notice", severity: "critical", reason: "x.not_a_code" });
     expect(ids(facts)).toEqual(["maintenance"]);
     expect(ids(run(on, { kind: "notice", reason: "maintenance.disabled" }))).toEqual([]);
+  });
+
+  it("test_degraded_break_glass_notice_is_one_warning_row_that_gates_nothing", () => {
+    const [issue, ...rest] = degradedIssues(run(BREAK_GLASS));
+    expect(rest).toEqual([]);
+    expect(issue).toEqual({
+      id: "breakGlass",
+      severity: "warning",
+      message: "Break-glass recovery was used on this server; the Owner must review it.",
+      stillWorks: "Order entry unaffected.",
+      announce: "assertive",
+      dismissible: true,
+      assertedSeq: 1,
+    });
+    // `23` §15.9: order entry keys on the reason, never on `critical` — never a blocking row
+    expect(`${issue?.message} ${issue?.stillWorks}`).not.toMatch(/orders off|trading is off/i);
+    expect(ids(run({ ...BREAK_GLASS, reason: "x.not_a_code" }))).toEqual([]);
+  });
+
+  it("test_degraded_break_glass_text_is_the_clients_role_neutral_copy_not_the_wire_message", () => {
+    // The row takes no role and reads no `message`: a frame naming a user, or none, reads the same.
+    for (const frame of [
+      { ...BREAK_GLASS, message: "ann reset bob's TOTP" },
+      { kind: "notice", reason: BREAK_GLASS.reason },
+    ]) {
+      expect(degradedIssues(run(frame))[0]?.message).toBe(BREAK_GLASS.message);
+    }
+  });
+
+  it("test_degraded_break_glass_holds_until_a_dismissal_and_the_next_notice_reasserts_it", () => {
+    // One-shot per first auth: nothing on the wire clears it (a resolution only stops new notices).
+    const facts = run(
+      BREAK_GLASS,
+      MAINTENANCE_ON,
+      { kind: "notice", reason: "maintenance.disabled" },
+      health([{ name: "postgres", state: "healthy" }]),
+      exchangeState({ public_ws: "connected", private_ws: "connected" }),
+    );
+    expect(ids(facts)).toEqual(["breakGlass"]);
+    // a reconnect's first auth sends it again: a re-assertion, so a dismissed row returns
+    expect(degradedIssues(reduceDegraded(facts, BREAK_GLASS as SystemUpdate))[0]?.assertedSeq).toBe(
+      2,
+    );
+  });
+
+  it("test_degraded_break_glass_leads_the_rows_that_gate_nothing", () => {
+    const facts = run(
+      health([{ name: "recorder", state: "down" }]),
+      exchangeState({ public_ws: "disconnected" }),
+      BREAK_GLASS,
+      MAINTENANCE_ON,
+    );
+    expect(ids(facts)).toEqual(["maintenance", "breakGlass", "exchangeFeedDown", "recorderDown"]);
+  });
+
+  it("test_degraded_break_glass_copy_is_the_servers_notice_verbatim", () => {
+    // E42-D03 OV-10 renders the notice's own `message`; its source is the server's notice module.
+    const server = readFileSync(
+      resolve(
+        import.meta.dirname,
+        "../../../../../services/api/candleviewer/auth/break_glass_notice.py",
+      ),
+      "utf8",
+    ).split("\n");
+    const line = (name: string): string | undefined => server.find((l) => l.startsWith(name));
+    expect(line("BREAK_GLASS_NOTICE_REASON:")).toBe(
+      `BREAK_GLASS_NOTICE_REASON: Final = "${BREAK_GLASS.reason}"`,
+    );
+    expect(line("_MESSAGE:")).toBe(
+      `_MESSAGE: Final = "${degradedIssues(run(BREAK_GLASS))[0]?.message}"`,
+    );
   });
 
   it("test_degraded_maintenance_flag_in_snapshot_and_flag_push_asserts_and_clears", () => {
@@ -207,6 +289,16 @@ describe("degraded issues", () => {
     }
   });
 
+  it("test_degraded_copy_politeness_is_a_property_of_the_rows_class", () => {
+    // E17-D02 §11 row 16: blocking rows assertive; E42-D03 OV-10: the break-glass row "assertive
+    // once"; row 5: the rest polite. The banner reads the row's field, never its id.
+    const said = Object.entries(DEGRADED_COPY).map(([id, row]) => [
+      id,
+      { announce: row.severity === "blocking" || id === "breakGlass" ? "assertive" : "polite" },
+    ]);
+    expect(DEGRADED_COPY).toMatchObject(Object.fromEntries(said));
+  });
+
   it("test_degraded_gpu_fallback_is_the_clients_info_row_last_and_never_read_from_a_frame", () => {
     const kept = setGpuFallback(INITIAL_DEGRADED_FACTS, true); // #306 9c: Keep software rendering
     expect(degradedIssues(kept)).toEqual([
@@ -215,6 +307,7 @@ describe("degraded issues", () => {
         severity: "info",
         message: "Chart engine in fallback — reduced visuals.",
         stillWorks: "Order entry unaffected.",
+        announce: "polite",
         dismissible: true,
         assertedSeq: 1,
       },

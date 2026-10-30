@@ -73,7 +73,7 @@ const go = (next: WsState): void =>
     listeners.forEach((listener) => listener());
   });
 const region = (): HTMLElement => screen.getByRole("region", { name: "Connection" });
-/** The shell announcer's region: rendered last, after CMP-092's own pair in the banner slot. */
+/** The shell announcer's region: rendered last, after CMP-092's polite one in the banner slot. */
 const announcerRegion = (live: "polite" | "assertive"): HTMLElement => {
   const el = [...document.querySelectorAll<HTMLElement>(`[aria-live="${live}"]`)].at(-1);
   if (el === undefined) throw new Error(`no ${live} region`);
@@ -114,15 +114,12 @@ afterEach(() => {
 });
 
 describe("CMP-077 region: one view per state", () => {
-  it("renders nothing while live: the banner slot holds only CMP-092's empty live regions", () => {
+  it("renders nothing while live: the banner slot holds only CMP-092's empty polite region", () => {
     const { container } = render(<ShellBannerSlot />);
-    expect(screen.queryByRole("region")).toBeNull();
+    expect(screen.queryByRole("region")).toBeNull(); // its assertive words: the shell announcer's
     expect(
       [...container.children].map((c) => [c.getAttribute("aria-live"), c.textContent]),
-    ).toEqual([
-      ["polite", ""],
-      ["assertive", ""],
-    ]);
+    ).toEqual([["polite", ""]]);
   });
 
   const CASES: readonly [string, () => void, string, readonly string[]][] = [

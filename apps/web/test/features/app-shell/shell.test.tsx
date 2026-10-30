@@ -149,7 +149,7 @@ describe("E10-S01 S1: shell slots", () => {
       expect(el?.childNodes.length, slot).toBe(0);
     }
     // #306: the banner slot holds the CMP-077 region, which renders nothing until a socket was up,
-    // then CMP-092's two empty live regions (E17-D02 §8, §11).
+    // then CMP-092's empty polite region (E17-D02 §8, §11; its assertive words: the announcer's).
     const banner = document.querySelector('[data-shell-slot="banner"]');
     expect(
       [...(banner?.children ?? [])].map((c) => [
@@ -157,10 +157,7 @@ describe("E10-S01 S1: shell slots", () => {
         c.getAttribute("role"),
         c.textContent,
       ]),
-    ).toEqual([
-      ["polite", null, ""],
-      ["assertive", null, ""],
-    ]);
+    ).toEqual([["polite", null, ""]]);
   });
 
   it("place filled content in its region and never remount the outlet", () => {

@@ -19,6 +19,14 @@ export type TickerRow = generated.ws.TickerSymbolTicker["tickers"][number];
 /** 13.3 `welcome.heartbeat` (interval >= 1 000, timeout >= 5 000). Defaults are 9.1's 15 s / 45 s. */
 export type Heartbeat = { readonly interval_ms: number; readonly timeout_ms: number };
 
+/** What the gateway says past the handshake (15.9, 4.1). */
+export interface GatewayOptions {
+  /** `system` payloads pushed as `d`s right after a socket's FIRST `auth_ok`, never after a re-auth (15.9 notices). */
+  readonly firstAuthSystem?: readonly Readonly<Record<string, unknown>>[];
+  /** `auth_ok.token_expires_at_ms` past the server's now (default 600 000); 61 000 makes the client re-auth in place 5 s on (4.1). */
+  readonly tokenTtlMs?: number;
+}
+
 export interface WsHarness {
   /** Client -> server frames in arrival order, `conn` 1-based; `auth.access_token` is masked to `x`s of its length. */
   readonly frames: readonly { readonly conn: number; readonly frame: Frame }[];
@@ -27,6 +35,7 @@ export interface WsHarness {
   readonly clientCloses: readonly { readonly code: number; readonly reason: string }[];
   connections(): number; // sockets opened
   authenticated(): number; // sockets that reached `auth_ok`
+  reauthenticated(): number; // in-place re-auths answered (4.1): an `auth` on an authenticated socket
   /** Drops the socket as a lost transport does (1006, RFC 6455 7.1.5) and refuses new ones until `restore()`. */
   kill(): void;
   restore(): void;
@@ -128,18 +137,23 @@ function workerShim(name: string): void {
   (self as unknown as { WebSocket: unknown }).WebSocket = RelaySocket;
 }
 
-/** `seq`: the last `s` sent per stream (3.3). */
+/** `seq`: the last `s` sent per stream (3.3). `authed`: an `auth` was answered, so the next is a re-auth (4.1). */
 type Conn = {
   readonly n: number;
   readonly route: WebSocketRoute;
   readonly seq: Map<string, number>;
+  authed: boolean;
 };
 
 /**
  * Installs the fake gateway on `page`. Call it after `stubSession` and before `goto`: it also answers the refresh with a
  * token the WS client accepts (4.3 / 13.4: 20 characters or more), opaque like the server's.
  */
-export async function installWsHarness(page: Page, heartbeat?: Heartbeat): Promise<WsHarness> {
+export async function installWsHarness(
+  page: Page,
+  heartbeat?: Heartbeat,
+  gateway: GatewayOptions = {},
+): Promise<WsHarness> {
   const frames: { conn: number; frame: Frame }[] = [];
   const sent: Frame[] = [];
   const clientCloses: { code: number; reason: string }[] = [];
@@ -147,6 +161,7 @@ export async function installWsHarness(page: Page, heartbeat?: Heartbeat): Promi
   let tick = 0;
   let opened = 0;
   let authed = 0;
+  let reauthed = 0;
   let down = false;
   let stalled: Conn | undefined;
   let current: Conn | undefined;
@@ -191,7 +206,10 @@ export async function installWsHarness(page: Page, heartbeat?: Heartbeat): Promi
           },
         });
       case "auth": {
-        authed += 1;
+        const first = !c.authed;
+        c.authed = true;
+        if (first) authed += 1;
+        else reauthed += 1;
         const killSwitch = { engaged: false, scope: "global" };
         send(c, {
           t: "auth_ok",
@@ -204,12 +222,17 @@ export async function installWsHarness(page: Page, heartbeat?: Heartbeat): Promi
             account_scope: [],
             allowed_environments: ["demo"],
             session_id: ID(2),
-            token_expires_at_ms: now() + 600_000,
+            token_expires_at_ms: now() + (gateway.tokenTtlMs ?? 600_000),
             kill_switch: killSwitch,
           },
         });
+        if (!first) return; // 4.1: a re-auth in place is answered by `auth_ok` alone
         // 6.2: `system` is subscribed implicitly at `auth_ok`, and its snapshot follows (12.1).
-        return data(c, "snap", "system", { ...HEALTH, kill_switch: killSwitch }, 1);
+        data(c, "snap", "system", { ...HEALTH, kill_switch: killSwitch }, 1);
+        // 15.9: a first authentication's notices, each a `d` on `system` (the gateway's `push_system`)
+        for (const body of gateway.firstAuthSystem ?? [])
+          data(c, "d", "system", body, (c.seq.get("system") ?? 0) + 1);
+        return;
       }
       case "sub": {
         const topics = ((p["topics"] ?? []) as ({ ch: string } | string)[]).map((t) =>
@@ -246,7 +269,7 @@ export async function installWsHarness(page: Page, heartbeat?: Heartbeat): Promi
   await page.routeWebSocket("**/api/v1/ws", (route) => {
     opened += 1;
     if (down) return route.close({ code: 1006, reason: "harness_kill" });
-    const c: Conn = { n: opened, route, seq: new Map() };
+    const c: Conn = { n: opened, route, seq: new Map(), authed: false };
     current = c;
     route.onMessage((message) => {
       const frame = JSON.parse(String(message)) as Frame;
@@ -271,6 +294,7 @@ export async function installWsHarness(page: Page, heartbeat?: Heartbeat): Promi
     clientCloses,
     connections: () => opened,
     authenticated: () => authed,
+    reauthenticated: () => reauthed,
     kill() {
       down = true;
       void current?.route.close({ code: 1006, reason: "harness_kill" });

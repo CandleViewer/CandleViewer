@@ -1,5 +1,6 @@
 import { useRef, type CSSProperties, type JSX } from "react";
 import { Icon, IconButton, type IconName } from "@candleviewer/ui";
+import { SEARCH_TRIGGER_ID } from "../app-shell/TopBar";
 import type { DegradedSeverity } from "./copy";
 import type { DegradedIssue } from "./degradedIssues";
 
@@ -25,7 +26,7 @@ const row = (tone: string): CSSProperties => ({
 const TABBABLE =
   "a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]";
 
-/** The slot's next stop after `el` in document order (§13: the dismiss lands there after the last row). */
+/** The next stop after `el` in document order (§13's "the slot's next stop"). */
 export function nextStopAfter(el: HTMLElement): HTMLElement | undefined {
   return [...document.querySelectorAll<HTMLElement>(TABBABLE)].find(
     (c) =>
@@ -33,6 +34,21 @@ export function nextStopAfter(el: HTMLElement): HTMLElement | undefined {
       !el.contains(c) &&
       (el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
   );
+}
+
+/**
+ * E10-D04 T-19 (PROPOSED), as SCR-157's Later (#4979): after a dismissal focus goes to the next
+ * row's control, else to the next banner's first control, else to the TopBar's search trigger,
+ * never into the canvas, where a held key could act.
+ */
+function afterDismissTarget(list: HTMLElement, index: number): HTMLElement | null {
+  const nextRow = list.querySelectorAll<HTMLElement>("[data-dismiss]")[index + 1];
+  if (nextRow !== undefined) return nextRow;
+  const next = nextStopAfter(list);
+  const slot = list.closest('[data-shell-slot="banner"]');
+  return next !== undefined && slot?.contains(next) === true
+    ? next
+    : document.getElementById(SEARCH_TRIGGER_ID);
 }
 
 export interface DegradedModeBannerProps {
@@ -45,15 +61,12 @@ export interface DegradedModeBannerProps {
  * CMP-092 DegradedModeBanner (E10-S04 slice 3, #306), an E10 shell organism (#306): apps/web is its
  * home. Still to come: the CMP-210 chip, `scope`, `href` and the PROPOSED "Show details".
  * Per row (E17-D02 §8): glyph + word in `.strong` on `.subtle`, message, stillWorks, then the
- * dismiss control (never gated); focus then moves to the next row's control or the slot's next stop.
+ * dismiss control (never gated); focus then moves as E10-D04 T-19 says (`afterDismissTarget`).
  */
 export function DegradedModeBanner({ issues, onDismiss }: DegradedModeBannerProps): JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
   const dismiss = (id: DegradedIssue["id"], index: number): void => {
-    const list = listRef.current;
-    const target =
-      list?.querySelectorAll<HTMLElement>("[data-dismiss]")[index + 1] ??
-      (list ? nextStopAfter(list) : undefined);
+    const target = listRef.current === null ? null : afterDismissTarget(listRef.current, index);
     onDismiss(id);
     target?.focus();
   };
