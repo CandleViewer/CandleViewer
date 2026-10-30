@@ -2,8 +2,9 @@
 (`oms/ws_topics.py`): the Sec.15 items each row builds, validated against 23-ws-protocol.md's
 schemas; the step publisher's causal order (an execution before its order, a position after the
 fills of its key, Sec.16.1 S5), its per-account hold and its bounds, each past-the-bound case
-counted; the position store's hand-off; and the lane's snapshot reads, scoped to the process's
-environment (C-2.11). Recording doubles, a fake clock and, for the hold's deadline, virtual time
+counted, and a frame that cannot be built (its account re-snapshotted, the drain going on); the
+position store's hand-off; and the lane's snapshot reads, scoped to the process's environment
+(C-2.11). Recording doubles, a fake clock and, for the hold's deadline, virtual time
 (`audit_waits.virtual`): no network, no sleeps."""
 
 from __future__ import annotations
@@ -395,6 +396,78 @@ async def test_a_closed_publisher_takes_nothing_and_cancels_its_drains() -> None
     assert rig.topics.calls == []
 
 
+def raising_once(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """`wt.<name>`, a Sec.15 item builder, raises on its first call (a defect), then builds as it
+    did."""
+    real, raised = getattr(wt, name), [False]
+
+    def builder(*args: Any, **kwargs: Any) -> Any:
+        if not raised[0]:
+            raised[0] = True
+            raise ValueError("echoed: key abc123")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(wt, name, builder)
+
+
+async def test_a_step_whose_frame_cannot_be_built_resyncs_its_account_and_the_next_goes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """23 Sec.6.2.3 "Integrity": a step whose item raises is dropped, logged by the error's class
+    and ids only (C-12.6), and its account's three topics re-snapshot; its next step goes."""
+    raising_once(monkeypatch, "order_item")
+    rig = Rig()
+    with capture_logs() as logs:
+        rig.publisher.committed(step(order()))
+    rig.publisher.committed(step(order(2)))
+    assert rig.topics.resyncs() == [(A, wt.FAMILIES)]
+    assert rig.topics.sent() == [("orders", str(UUID(int=2)))]
+    [line] = logs
+    assert (line["event"], line["error"]) == ("oms_ws_step_unbuilt", "ValueError")
+    assert (line["order_id"], line["exec_id"]) == (str(UUID(int=1)), None)
+    assert "abc123" not in str(line)
+
+
+@pytest.mark.parametrize("builder", ["order_item", "execution_item"])
+async def test_a_queued_step_whose_frames_cannot_be_built_leaves_and_the_drain_goes_on(
+    builder: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The drain's guard: a fill whose frames raise leaves the queue unsent, its account
+    re-snapshots, and the position held for it follows at once (no overtake); the step behind it
+    still goes, and the account's next fill publishes in full."""
+    fill, later = new_fill(), new_fill("e22")
+    rig = Rig(stored(fill), stored(later))
+    rig.fills.gate = asyncio.Event()
+    raising_once(monkeypatch, builder)
+    rig.publisher.committed(step(order(state="partially_filled"), "partial_fill", fill=fill))
+    rig.publisher.position(position())  # held behind the fill
+    rig.publisher.committed(step(order(state="pending_cancel"), "cancel_request", "accepted"))
+    with capture_logs() as logs:
+        rig.fills.gate.set()
+        await settled()
+    assert rig.topics.resyncs() == [(A, wt.FAMILIES)]
+    assert rig.topics.sent() == [("positions", str(UUID(int=0xD0))), ("orders", str(UUID(int=1)))]
+    assert rig.overtakes == 0
+    [line] = [e for e in logs if e["event"] == "oms_ws_step_unbuilt"]
+    assert (line["error"], line["exec_id"]) == ("ValueError", "e1") and "abc123" not in str(line)
+    rig.publisher.committed(step(order(state="partially_filled"), "partial_fill", fill=later))
+    await settled()
+    assert [family for family, _ in rig.topics.sent()[2:]] == ["executions", "orders"]
+
+
+async def test_the_drains_guard_lets_a_cancellation_through() -> None:
+    """The guard takes a defect, never a cancellation: `aclose` cancels a drain awaiting its fill's
+    read, and the drain ends cancelled, nothing re-snapshotted."""
+    fill = new_fill()
+    rig = Rig(stored(fill))
+    rig.fills.gate = asyncio.Event()
+    rig.publisher.committed(step(order(state="partially_filled"), "partial_fill", fill=fill))
+    await settled()
+    [drain] = rig.publisher._drains.values()
+    await rig.publisher.aclose()
+    assert drain.cancelled() and rig.topics.calls == []
+
+
 # -- the positions and their hold ---------------------------------------------------------------
 
 
@@ -586,6 +659,26 @@ async def test_a_hand_off_that_raises_leaves_the_write_as_it_was() -> None:
     assert row.id == UUID(int=0xD0)
     [line] = logs
     assert line["event"] == "oms_ws_position_failed" and "abc123" not in str(line)
+    assert rig.topics.resyncs() == [(A, wt.FAMILIES)]
+
+
+async def test_a_position_whose_frame_cannot_be_built_resyncs_its_account_and_the_next_goes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """23 Sec.6.2.3 "Integrity": an applied row whose item raises is the projection's all the same;
+    it is logged by the error's class, its account's three topics re-snapshot, and the next row
+    goes."""
+    raising_once(monkeypatch, "position_item")
+    rig = Rig()
+    positions = wt.PublishedPositions(Store(), rig.publisher)
+    with capture_logs() as logs:
+        row = await positions.upsert(state())
+    assert row.id == UUID(int=0xD0) and rig.topics.sent() == []
+    assert rig.topics.resyncs() == [(A, wt.FAMILIES)]
+    [line] = logs
+    assert (line["event"], line["error"]) == ("oms_ws_position_failed", "ValueError")
+    await positions.upsert(state())
+    assert rig.topics.sent() == [("positions", str(UUID(int=0xD0)))]
 
 
 class Reads:

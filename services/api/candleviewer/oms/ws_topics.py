@@ -48,7 +48,9 @@ raises into one. What fails is logged by its class with ids only (C-12.6), and a
 be published re-snapshots its account's subscriptions with `upstream_desync` (Sec.7.4), so a client
 never silently misses one:
 - a fill whose read fails sends its order's frame alone and re-snapshots `executions`;
-- a full queue drops the account's queue and re-snapshots all three topics.
+- a full queue drops the account's queue and re-snapshots all three topics;
+- a step or position row whose frames cannot be built is dropped and re-snapshots all three
+  topics, and the account's later steps still go (the drain's guard).
 Hot-path rule (C-2.20): plain code; nothing queries an interpreter.
 """
 
@@ -345,13 +347,19 @@ class StepPublisher:
 
     def committed(self, step: CommittedOrderStep) -> None:
         """A step whose write committed: its frames now, or behind its account's queue while a
-        fill's read is pending there; a fill always waits for its read. A full queue drops it."""
+        fill's read is pending there; a fill always waits for its read. A full queue drops it, and
+        so does a failure to build its frames (`_unbuilt`)."""
         if self._closed:
             return
         account, queued = step.order.exchange_account_id, _Queued(self._clock(), step)
         queue = self._queues.get(account)
         if queue is None and step.fill is None:
-            self._send(account, self._order_changes(queued))
+            try:
+                changes = self._order_changes(queued)
+            except Exception as exc:  # a defect, never a cancellation: the account re-snapshots
+                self._unbuilt(account, step, exc)
+                return
+            self._send(account, changes)
             return
         if queue is not None and len(queue) >= self._queue_max:
             self._overflow(account)
@@ -368,14 +376,21 @@ class StepPublisher:
 
     async def _drain(self, account: UUID, queue: deque[_Queued]) -> None:
         """The account's queue in commit order: a fill's frames once its row is read, every step
-        behind it in turn. It ends once the queue is empty; an overflow or `aclose` cancels it."""
+        behind it in turn. Its guard keeps it going: a step whose frames cannot be built leaves the
+        queue unsent (`_unbuilt`), and the steps behind it still go. It ends once the queue is
+        empty; an overflow or `aclose` cancels it."""
         try:
             while queue:
                 queued = queue[0]
-                changes = await self._changes(account, queued)
+                try:
+                    changes = await self._changes(account, queued)
+                except Exception as exc:  # a defect, never a cancellation: the account re-snapshots
+                    changes = ()
+                    self._unbuilt(account, queued.step, exc)
                 queue.popleft()
-                self._send(account, changes)
-                if queued.step.fill is not None:
+                if changes:
+                    self._send(account, changes)
+                if queued.step.fill is not None:  # its frames are out, or never will be
                     self._fill_out(account, queued.step.fill.exec_id)
         finally:
             if self._drains.get(account) is asyncio.current_task():
@@ -526,7 +541,20 @@ class StepPublisher:
         and its three topics re-snapshotted, so nothing it held is silently missed."""
         _log().error("oms_ws_queue_full", account_id=str(account), queue_max=self._queue_max)
         self._forget(account)
+        self.resnapshot(account)
+
+    def resnapshot(self, account: UUID) -> None:
+        """A change of `account` that cannot be published: its three topics re-snapshot (Sec.7.4),
+        so a client reads what it changed instead of missing it."""
         self._call(self._topics.resync, account, FAMILIES)
+
+    def _unbuilt(self, account: UUID, step: CommittedOrderStep, exc: Exception) -> None:
+        """A step whose frames could not be built (a defect): dropped, logged by the error's class
+        and ids only (C-12.6), and its account re-snapshotted."""
+        fill = None if step.fill is None else step.fill.exec_id
+        ids = {"account_id": str(account), "order_id": str(step.order.id), "exec_id": fill}
+        _log().error("oms_ws_step_unbuilt", error=type(exc).__name__, kind=step.kind, **ids)
+        self.resnapshot(account)
 
     def _forget(self, account: UUID) -> None:
         self._queues.pop(account, None)
@@ -561,7 +589,8 @@ class StepPublisher:
 class PublishedPositions:
     """The projection's position store (`positions.PositionWrites`) for the WS topics: a row the
     store applied, never a stale write's stored row, also goes to the step publisher once the write
-    returns. That hand-off is contained: the row is the projection's either way."""
+    returns. That hand-off is contained: the row is the projection's either way, and a row the
+    publisher cannot take re-snapshots its account's three topics."""
 
     def __init__(self, inner: PositionWrites, publisher: StepPublisher) -> None:
         self._inner, self._publisher = inner, publisher
@@ -571,9 +600,10 @@ class PublishedPositions:
         if row.exchange_updated_ts == state.exchange_updated_ts:
             try:
                 self._publisher.position(row)
-            except Exception as exc:
+            except Exception as exc:  # a defect, never a cancellation: the account re-snapshots
                 ids = {"account_id": str(row.exchange_account_id), "symbol": row.symbol}
                 _log().error("oms_ws_position_failed", error=type(exc).__name__, **ids)
+                self._publisher.resnapshot(row.exchange_account_id)
         return row
 
 
