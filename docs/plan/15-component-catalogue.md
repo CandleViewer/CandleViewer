@@ -1044,21 +1044,27 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-097 OnboardingChecklist
 
-- **Tier**: Organism · **Purpose**: first-run setup checklist (connect Bybit account, set recorder policy, create first workspace).
-- **Props**: `steps: {id,label,done,onGo,disabledReason?}[]`.
+- **Tier**: Organism · **Purpose**: first-run setup checklist: the server's task set (the `OnboardingChecklist` items of `22-api-openapi.yaml`), each step in its server state.
+- **Props**: `steps: {id, label, state: "done" | "pending" | "blocked" | "error" | "n/a", onGo?, unblockAt?: string, disabledReason?}[]` (the server's `ok` read as `done` and `not_applicable` as `n/a`; `unblockAt` is `unblock_at`; the server's free-text `reason` is never a prop, E09-D12 G-6).
 - **A11y**: list semantics with `aria-checked` per step (treated as read-only checkbox list reflecting completion state); a step the session's role cannot complete is `aria-disabled` with its `disabledReason` as visible text (`14-screens-catalogue.md` SCR-019, §0.5.5), never removed.
 - **Tokens**: inherits CMP-066.
-- **Storybook**: Default, PartiallyComplete.
+- **Storybook**: Default, PartiallyComplete, RoleDisabledWithReason, BlockedUntil, Error (every story in dark / light / high contrast × compact / comfortable).
 - **Tests**: unit, visual, axe.
+- **Forbidden**: a step removed or hidden for a role (it stays, `aria-disabled` with its reason: E09-D09 §2.2 T2); the server's `reason` rendered raw (E09-D12 §8.3); the native `disabled` attribute on a step.
+- **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-098 SessionTimeoutWarning
 
-- **Tier**: Organism · **Purpose**: warns before auth session/admin re-auth expiry, offers one-click extend.
-- **Props**: `expiresInSec` · `onExtend`.
-- **A11y**: `role="alertdialog"` appearing at a fixed threshold (e.g. 60s remaining), keyboard-operable extend action, never a silent auto-logout without this warning (WCAG 2.2.1). Esc = dismiss, does NOT extend; Extend is an explicit server call (POST /auth/session/extend).
+- **Tier**: Organism · **Purpose**: warns before auth session expiry and before the admin token's end, each with its frame, offers one-click extend ("Stay signed in") and, where the host wires it, "Lock now".
+- **Props**: `expiresInSec: number` (from `idle_deadline − server_time`) · `onExtend` (`authExtendSession`) · `onDismiss: () => void` · `onLockNow?: () => void` (`authLock`; "Lock now" is rendered only when the host wires it) · `extending?: boolean` (the extend in progress).
+- **A11y**: a modal on the auth chassis (inherits CMP-043; RULED (orchestrator, 2026-10-29, #2701 ledger addendum A row A22)): the scrim fades over `motion.duration.normal` (`standard`), the card is a cut at frame 0; exits over `fast` (`accelerate`); instant under reduce; `role="alertdialog"` appearing at a fixed threshold (60 s remaining), announced once, focus to "Stay signed in"; the countdown is `aria-live="off"`; "Lock now" calls `authLock` (`POST /auth/lock`); Esc dismisses and extends nothing; Extend is an explicit server call (`POST /auth/session/extend`), never typing or traffic; never a silent auto-logout without this warning (WCAG 2.2.1); while `extending`, "Stay signed in" is busy from its press, `aria-disabled` and focusable.
 - **Tokens**: inherits CMP-043.
-- **Storybook**: Default.
+- **Storybook**: Default, ExtendInProgress, WithLockNow, AdminToken (every story in dark / light / high contrast × compact / comfortable; AdminToken held until E09-D06's admin-token frame, E09-D10 F-5).
 - **Tests**: unit, visual, axe, timing-warning interaction test.
+- **Forbidden**: an extend on typing, reads or WS traffic; a silent lock with no warning (WCAG 2.2.1); per-tick announcements; Esc extending; "Lock now" rendered without `authLock` wired.
+- **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-099 PrintExportBar
 
@@ -2562,75 +2568,106 @@ This band was added during the cross-document traceability reconciliation (see `
 
 ### CMP-200 AuthCard
 
-- **Tier**: Organism (auth) · **Purpose**: the centred, fixed-width card chassis shared by every pre-auth screen (SCR-001, 002, 004) — product mark, title, slot for the form, error region, footer slot.
-- **Props**: `title: string` · `subtitle?: string` · `error?: {message, code?}` · `footer?: ReactNode` · `busy?: boolean`.
-- **A11y**: renders `<main>` with `<h1>` = title; the error region is `role="alert"` and receives focus on appearance; the card is a single tab sequence with no focus traps.
-- **Tokens**: `color.surface.raised`, `space.6`, `radius.lg`, `elevation.2`.
+- **Tier**: Organism (auth) · **Purpose**: the centred, fixed-width card chassis shared by every pre-auth screen (SCR-001, SCR-002, standalone SCR-003, SCR-004) — product mark, title, slot for the form, error region, footer slot; not the SCR-017 wizard step (its surround is the step, E09-D05 §2.1) nor SCR-112 (CMP-065).
+- **Props**: `title: string` · `subtitle?: string` · `error?: {message, code?}` (form-level failures only; `code` is never rendered, E09-D12 §8.3) · `footer?: ReactNode` · `busy?: boolean`.
+- **A11y**: renders `<main>` with `<h1>` = title; the error region is `role="alert"` with a severity glyph and words, for form-level failures only (a `429` or `503`, E09-D05 §9.1), and receives focus on appearance; a field failure is the field's own error and focus goes to the field (E09-D05 C-19); while `busy` the form is `aria-busy="true"` and the submit `aria-disabled` and focusable, never the native `disabled` attribute (E09-D10 §5.3); the card is a single tab sequence with no focus traps.
+- **Tokens**: `color.surface.raised`, `radius.card`, `elevation.card`, `space.panel.padding`; the error region `color.status.danger.strong` on `color.status.danger.subtle` (its light value at risk: E09-D12 Q-9, routed to E05). (Replaces `space.6`, `radius.lg` and `elevation.2`, which are primitives.)
 - **Storybook**: Default, WithError, Busy, WithFooter.
-- **Tests**: unit, visual (dark/light), axe, interaction (error announcement).
+- **Tests**: unit, visual (dark / light / high contrast), axe, interaction (error announcement; focus to the field on a field failure; the busy submit stays focusable).
+- **Forbidden**: focus sent to the region for a field failure (E09-D05 C-19); the native `disabled` attribute on the busy or focused submit (E09-D10 R-5); `error.code` or a server `detail` rendered (E09-D12 §8.3).
+- **Security**: renders no server `detail` or `code`; the region states only the form-level sentence the host passes.
+- **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-201 PasswordField
 
 - **Tier**: Atom · **Purpose**: password input with a reveal toggle, caps-lock warning and `autocomplete` wiring.
 - **Props**: `value` · `onChange` · `autoComplete: "current-password"|"new-password"` · `showReveal?: boolean = true` · `error?: string`.
-- **A11y**: reveal is a real `<button aria-pressed>` labelled "Show password"/"Hide password"; caps-lock warning is a polite live region; never suppresses paste.
+- **States**: default · revealed (its own reveal `aria-pressed="true"`, the name unchanged) · caps lock on (the polite warning "Caps Lock is on." on the focused field only, RULED (orchestrator, 2026-10-29, #2701 ledger addendum A row A20)) · invalid (`error`); `autoComplete` per host: `current-password` everywhere but SCR-004's new fields, `new-password` (E09-D10 §5.4).
+- **A11y**: one reveal per field, a real `<button aria-pressed>` with the constant name "Show password"; caps-lock warning is a polite live region; never suppresses paste.
 - **Tokens**: inherits CMP-007 TextInput.
-- **Storybook**: Default, Revealed, CapsLockOn, WithError.
+- **Storybook**: Default, Revealed, CapsLockOn, WithError, CurrentPassword, NewPassword, PerFieldReveal (every story in dark / light / high contrast × compact / comfortable).
 - **Tests**: unit, visual, axe, interaction (reveal toggle, paste allowed).
+- **Forbidden**: paste, drop or autofill suppressed; a reveal name that changes with its state (E09-D10 F-16); any reveal or caret animation (E09-D08 S3); a `maxlength` below the contract's limit (E09-D05 §5.1).
+- **Security**: paste and password managers are never suppressed: they are security controls; the value is never logged, echoed in an error or sent to telemetry.
+- **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-202 PasswordStrengthMeter
 
 - **Tier**: Atom · **Purpose**: live strength feedback for new passwords (SCR-004).
-- **Props**: `score: 0|1|2|3|4` · `feedback?: string[]`.
-- **A11y**: strength is text ("Weak"/"Fair"/"Strong") plus a bar — never colour or bar-length alone; announced politely, debounced to 500 ms so it does not spam a screen reader per keystroke.
-- **Tokens**: `color.status.*`, `radius.sm`.
-- **Storybook**: Weak, Fair, Strong, WithFeedback.
+- **Props**: `score: 0|1|2|3|4` · `feedback?: string[]` (the host's words; no merged text names them).
+- **A11y**: strength is text ("Weak"/"Fair"/"Strong") plus a bar — never colour or bar-length alone; announced politely, debounced to 500 ms so it does not spam a screen reader per keystroke. "Weak" while the length requirement is not met; advisory, never gates the submit.
+- **Tokens**: `color.text.primary` (the word), `color.text.secondary` and `color.border.strong` (the segments), `radius.sm`; never `color.status.*` by score.
+- **Storybook**: Weak, Fair, Strong, WithFeedback, CappedWeak (every story in dark / light / high contrast × compact / comfortable).
 - **Tests**: unit, visual, axe.
+- **Forbidden**: a status colour by score; gating the submit; sitting inside CMP-203 (the checklist is normative, the meter advisory).
+- **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-203 RequirementChecklist
 
-- **Tier**: Atom · **Purpose**: live-validating list of policy requirements (length, character classes, not-reused) for SCR-004.
-- **Props**: `items: {label: string; met: boolean}[]`.
-- **A11y**: `<ul>` where each item pairs an icon with the words "met"/"not met" in its accessible name; the list as a whole is `aria-live="polite"`.
-- **Tokens**: `color.status.success`, `color.text.muted`.
-- **Storybook**: NoneMet, PartiallyMet, AllMet.
+- **Tier**: Atom · **Purpose**: live-validating list of policy requirements (length, breach, not-reused, match, identity) for SCR-004.
+- **Props**: `items: {label: string; state: "met" | "not-met" | "server"}[]` (`server` reads "checked when you submit": a rule only the server evaluates, E09-D05 §4.2).
+- **A11y**: `<ul>` where each item pairs an icon with the words "met"/"not met"/"checked when you submit" in its accessible name; one polite status node speaks only the changed item, debounced 500 ms.
+- **Tokens**: `color.status.success.strong` (the met glyph), `color.text.primary`, `color.text.secondary`.
+- **Storybook**: NoneMet, PartiallyMet, AllMet, CheckedWhenYouSubmit, ServerNotMet (every story in dark / light / high contrast × compact / comfortable).
 - **Tests**: unit, visual, axe.
+- **Forbidden**: a server rule shown met before the server answers; the list as a live region (E09-D05 §4.2); merging it with CMP-202.
+- **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-204 OtpInput
 
-- **Tier**: Molecule · **Purpose**: six-digit TOTP entry for SCR-002 and SCR-003.
-- **Props**: `length: number = 6` · `value` · `onChange` · `onComplete` · `error?: string` · `disabled?: boolean`.
-- **A11y**: exposed as **one** labelled input to assistive tech ("Six-digit authentication code"), not six unlabelled boxes; supports paste of the whole code, arrow/backspace navigation between cells, and `inputmode="numeric"` + `autocomplete="one-time-code"`.
-- **Tokens**: `font.mono`, `space.2`, `radius.md`.
-- **Storybook**: Empty, PartiallyFilled, Complete, Error, Disabled.
-- **Tests**: unit, visual, axe, interaction (paste, backspace, arrow keys).
+- **Tier**: Molecule · **Purpose**: six-digit TOTP entry for SCR-002, SCR-003, SCR-006 and SCR-149: one variant set everywhere.
+- **Props**: `length: number = 6` · `value` · `onChange` · `onComplete` (fired once per complete code, a whole-code paste included) · `labelledBy: string` (required: the id of the consumer's visible heading) · `describedBy?: string` (the visible instruction) · `error?: string` · `disabled?: boolean` (while verifying: `readOnly` + `aria-disabled`, focus kept).
+- **A11y**: exposed as **one** input whose name contains its visible heading (`aria-labelledby` = `labelledBy`: the consumer supplies the name), not six unlabelled boxes: one `<input inputmode="numeric" autocomplete="one-time-code">` drawn as `length` cells; paste of the whole code fills it and fires one submit; arrow keys and backspace act within the one input; no per-digit focus moves and no per-digit announcements; while verifying it is `readOnly` + `aria-disabled` and keeps focus (E09-D10 §5.2, §5.3); digits are never masked.
+- **Tokens**: digits `type.num.base`, `space.inset.sm` (the cell gap), `radius.control`; the cell boundary and the focus ring as CMP-007 TextInput's well. (Replaces `font.mono`, which is not a shipped token, and `space.2` and `radius.md`, which are primitives.)
+- **Storybook**: Empty, PartiallyFilled, Complete, Error, Disabled, Pasted (every story in dark / light / high contrast × compact / comfortable; Disabled is the read-only verifying state).
+- **Tests**: unit, visual, axe, interaction (paste of the whole code fires one submit, backspace, arrow keys; focus kept while verifying).
+- **Forbidden**: six focusable inputs or a `role="group"` of cells; per-digit focus moves or announcements; masked digits; a per-cell pop or any digit animation (E09-D08 S3); a fixed accessible name inside the component; the native `disabled` attribute while verifying.
+- **Security**: paste of the whole code and `autocomplete="one-time-code"` are never removed: OTP autofill is a security control; the value is never logged or sent to telemetry.
+- **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-205 QrCode
 
 - **Tier**: Atom · **Purpose**: renders the TOTP enrolment `otpauth://` URI as a scannable QR (SCR-003).
-- **Props**: `value: string` · `size?: number = 200` · `errorCorrection?: "M"|"Q"`.
-- **A11y**: the QR image is `role="img"` with an accessible name naming what it is; the **secret is always also offered as selectable text** via CMP-033 CopyButton so QR scanning is never the only path.
-- **Tokens**: `color.surface.base` (quiet zone must stay pure for scanner contrast — the QR never inherits a themed tint).
+- **Props**: `value: string` (the `otpauth_uri`) · `size?: number = 200` · `errorCorrection?: "M"|"Q"`; the manual secret is not a prop: the host renders it beside the QR as CMP-020 MonoText + CMP-033 CopyButton (derived from `otpauth_uri`, or `secret_base32` on the invite path).
+- **A11y**: the QR image is `role="img"` named "QR code for your authenticator app. The setup key is shown below." (RULED (orchestrator, 2026-10-29, #2701 ledger addendum A row A21)); no secret, issuer, account or URI in any accessible name, title or `alt`; the **secret is always also offered as selectable text** via CMP-033 CopyButton, whose announcement never contains the value, so QR scanning is never the only path.
+- **Tokens**: the card `color.surface.raised`; the bitmap and its quiet zone are drawn untinted, pure white/black in every theme: the one sanctioned non-token fill of the band (E09-D04 §4; a theme-invariant quiet-zone token is a G-row to E05, E09-D07 G-1). (Replaces `color.surface.base`, which is not a shipped token.)
 - **Storybook**: Default, LargeSize.
-- **Tests**: unit, visual, axe (alt-text presence).
+- **Tests**: unit (the accessible name holds no part of `value`), visual (untinted in every theme), axe (alt-text presence).
+- **Forbidden**: a themed or tinted quiet zone or bitmap in any theme; the secret, issuer, account or URI in an accessible name, title, `alt` or log line; QR scanning as the only path.
+- **Security**: handles secret material: no prop is logged or sent to telemetry; the URI is rendered on the client and never sent anywhere for rendering; `value` never enters a route, query string or browser storage (TM U22).
+- **Performance**: QR generation ≤ 100 ms on the client, which bounds the frontend's library choice; no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-206 RecoveryCodeList
 
 - **Tier**: Molecule · **Purpose**: one-time display of the 10 single-use recovery codes with copy/download/print and a mandatory acknowledgement (SCR-003).
 - **Props**: `codes: string[]` · `onAcknowledge` · `acknowledged: boolean`.
 - **A11y**: codes are an ordered list in monospace; "Copy all", "Download .txt" and "Print" are real buttons; the acknowledgement checkbox blocks the continue button and states _why_ it is required.
-- **Tokens**: `font.mono`, `color.surface.sunken`.
-- **Storybook**: Default, Acknowledged.
+- **Tokens**: codes `type.num.base`, `color.surface.sunken`. (Replaces `font.mono`, which is not a shipped token.)
+- **Storybook**: Default, Acknowledged (every story in dark / light / high contrast × compact / comfortable; a consumed / remaining story is held until the contract gives a count, E09-D12 G-3).
 - **Tests**: unit, visual, axe, interaction (continue gated on acknowledgement).
+- **Forbidden**: codes re-rendered from storage or after the step; a remaining or consumed count (held, E09-D12 G-3); any prop logged or sent to telemetry; Continue enabled before the acknowledgement.
+- **Security**: handles secret material: rendered once per `codes` value and never from storage; `codes` never enter a route param or browser storage (TM U23, SR-054); no prop is logged or sent to telemetry; any future analytics or session-replay integration excludes the subtree (none exists, E09-D12 G-7); no on-screen masking is added.
+- **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-207 BuildFooter
 
-- **Tier**: Atom · **Purpose**: version/commit/environment line on pre-auth screens and SCR-119.
-- **Props**: `version: string` · `commit: string` · `environment: "demo"|"live"` · `buildTime: string`.
+- **Tier**: Atom · **Purpose**: the build line: the version label alone before sign-in, and version, commit, environment and build time on signed-in screens (SCR-119).
+- **Props**: `version: string` (before sign-in the version label only, E09-D12 G-1) · `commit?: string` · `builtAt?: string` (`BuildInfo.built_at`) · `environment?: "demo"|"live"` (from the session, `Me.session.environment`; `BuildInfo` has none); `commit`, `builtAt` and `environment` only after sign-in.
 - **A11y**: plain text in a `<footer>`; the commit hash is selectable and copyable for support bundles.
-- **Tokens**: `font.size.xs`, `color.text.muted`.
-- **Storybook**: Demo, Live.
+- **Tokens**: `type.ui.caption`, `color.text.secondary`. (Replaces `font.size.xs`, a primitive, and `color.text.muted`, which is not a shipped token.)
+- **Storybook**: PreAuthVersionOnly, SignedInDemo, SignedInLive, LongVersionLabel (every story in dark / light / high contrast × compact / comfortable).
 - **Tests**: unit, visual.
+- **Forbidden**: commit, build time, environment or a node name before sign-in; a node name anywhere (no contract carries one).
+- **Security**: before sign-in the version label only (the E09 threat model, U26).
+- **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
+- **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
 ### CMP-208 StatusBar
 
