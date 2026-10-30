@@ -34,9 +34,15 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import IllegalTransition
 from candleviewer.oms.fakes import InMemoryTradingAccounts
 from candleviewer.oms.reconcile_phases import ReconcilePhases
-from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice, ReconcileMetrics
+from candleviewer.oms.reconcile_report import (
+    STALE_NOTICE,
+    Notice,
+    ReconcileMetrics,
+    ReconcileReport,
+)
 from candleviewer.oms.reconcile_standing import STALE_AFTER_S, FailureTracker, ReconcileStanding
 from candleviewer.oms.reconciler import (
+    Plan,
     PositionDriftSeen,
     ReconcilePorts,
     Reconciler,
@@ -61,6 +67,7 @@ from tests.unit.oms.reconcile_rig import (
     Retries,
     Watermarks,
     World,
+    fill,
     record,
     ref,
     row,
@@ -116,9 +123,8 @@ class StoreReads:
         return await self._rig.store.link_id_taken(link)
 
     async def stored(self, account_id: UUID, exec_ids: Collection[str]) -> frozenset[str]:
-        return frozenset(
-            i for i in exec_ids if await self._rig.fills.get(account_id, i) is not None
-        )
+        held = [i for i in exec_ids if await self._rig.fills.get(account_id, i) is not None]
+        return frozenset(held)
 
     async def insert(self, execution: NewExecution) -> bool:
         return await self._rig.fills.insert(execution)
@@ -167,12 +173,13 @@ class Scenario:
         )  # fmt: skip
         self.metrics = Metrics("dev")
         self.standing = ReconcileStanding()
-        self.notices, self.records = Notices(), Records()
+        self.notices, self.records, self.watermarks = Notices(), Records(), Watermarks()
+        self.episode = False  # a desync or stale episode open, as B19's context carries it
         counted = ReconcileMetrics(self.metrics)
         self.reconciler = Reconciler(ports, now_us=lambda: w.now_us, on_naked=counted.naked)
         self.phases = ReconcilePhases(
             self.reconciler, standing=self.standing, tracker=FailureTracker(), marks=Marks(),
-            watermarks=Watermarks(), records=self.records, notices=self.notices,
+            watermarks=self.watermarks, records=self.records, notices=self.notices,
             retries=Retries(), metrics=counted, pager=oms, now_us=lambda: w.now_us,
         )  # fmt: skip
 
@@ -183,8 +190,9 @@ class Scenario:
         await self.phases.diff(account, pass_id=SWEEP_ID)
         await self.phases.remediate(account, pass_id=SWEEP_ID)
         summary = dict(await self.phases.report(
-            account, pass_id=SWEEP_ID, trigger=trigger, episode_open=False, failure=None
+            account, pass_id=SWEEP_ID, trigger=trigger, episode_open=self.episode, failure=None
         ))  # fmt: skip
+        self.episode = summary["episode_open"]
         self.phases.publish(account, summary["notices"])
         self.phases.observe(account, pass_id=SWEEP_ID)
         return summary
@@ -307,6 +315,86 @@ async def test_scenario_manual_exchange_orders_are_adopted_not_managed(rig: Rig)
         with pytest.raises(IllegalTransition):
             await rig.facade.command(ACCOUNT, stored.id, "CANCEL", actor=actor)  # S9
     assert rig.commands.kinds() == []
+    _only_reads(s.world)
+
+
+async def test_a_resting_untracked_order_is_found_every_pass_but_never_a_correction(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BQ-6, 23 Sec.15.9: B1's `untracked` takes `RECON_FOUND_LIVE` and stays there, so the pass
+    after an adoption sends the finding, lists no correction, is clean and sends the synced row.
+    The untracked count reads 1 after each pass; a pass that cannot read the rows leaves it."""
+    s = Scenario(World(), rig)
+    counted: list[int | None] = []
+    sent: list[str] = []
+    finish, command = s.reconciler.finish, rig.facade.command
+
+    def counting(plan: Plan) -> ReconcileReport:
+        counted.append(plan.untracked)
+        return finish(plan)
+
+    async def spying(*args: Any, **kwargs: Any) -> str:
+        sent.append(args[2])
+        return await command(*args, **kwargs)
+
+    monkeypatch.setattr(s.reconciler, "finish", counting)
+    monkeypatch.setattr(rig.facade, "command", spying)
+    manual = venue_order()
+    s.world.venue.seed_order(manual, uid="1001")
+    first = await s.run()
+    await rig.quiet()
+    second = await s.run()
+    await rig.quiet()
+    stored = await rig.store.get_by_exchange_order_id(ACCOUNT, manual.exchange_order_id)
+    assert stored is not None and stored.state == "untracked"
+    assert (s.record_of(0)["untracked"], first["notices"]) == (
+        [stored.order_link_id], [["oms.account_desync", "warning"]],
+    )  # fmt: skip
+    assert (sent, s.record_of(1)["corrected"], s.record_of(1)["result"]) == (
+        ["RECON_FOUND_LIVE"], [], "clean",
+    )  # fmt: skip
+    assert second["notices"] == [["oms.account_synced", "info"]]
+    assert (counted, _count(s.metrics, "oms_untracked_orders")) == ([1, 1], 1)
+
+    async def unreadable(*_a: Any, **_k: Any) -> Any:
+        raise ConnectionError("the order store is down")
+
+    monkeypatch.setattr(rig.store, "list_unfinished", unreadable)
+    await s.run()
+    assert (counted[-1], _count(s.metrics, "oms_untracked_orders")) == (None, 1)
+    _only_reads(s.world)
+
+
+async def test_an_adopted_untracked_order_that_later_fills_is_closed_by_its_finding(
+    rig: Rig,
+) -> None:
+    """B1's `untracked` closes on `RECON_FOUND_FILLED`, which carries the order's fill: the pass
+    holds the fill for that finding, so the row ends `filled` with the fill stored, nothing is
+    listed `fills_unread`, and the watermark advances."""
+    s = Scenario(World(), rig)
+    manual = venue_order()
+    s.world.venue.seed_order(manual, uid="1001")
+    await s.run()
+    await rig.quiet()
+    s.world.venue._open.pop(manual.exchange_order_id)  # it filled after its adoption
+    filled = venue_order(orderStatus="Filled", cumExecQty="0.10", leavesQty="0", avgPrice="1600")
+    s.world.venue.seed_order(filled, uid="1001")
+    s.world.now_us += 30_000_000
+    done = fill(
+        "m1", exchange_order_id=manual.exchange_order_id, order_link_id=manual.order_link_id,
+        symbol="ETHUSDT", price=Decimal(1600), qty=Decimal("0.10"),
+        ts_exec=s.world.now_us - 10_000_000,
+    )  # fmt: skip
+    s.world.venue.seed_execution(done)
+    await s.run()
+    await rig.quiet()
+    stored = await rig.store.get_by_exchange_order_id(ACCOUNT, manual.exchange_order_id)
+    assert stored is not None and stored.state == "filled"
+    assert await rig.fills.get(ACCOUNT, "m1") is not None
+    assert (s.record_of()["resolved_from_history"], s.record_of()["errors"]) == (
+        [stored.order_link_id], [],
+    )  # fmt: skip
+    assert s.watermarks.advanced[-1] == s.world.now_us
     _only_reads(s.world)
 
 

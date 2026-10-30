@@ -294,7 +294,8 @@ class ReconcilePhases:
         if lost is not None:
             step, kind = lost
             plan.draft.error("2" if step == "2" else "5", kind)
-        self._metrics.untracked(account, plan.untracked)
+        if plan.untracked is not None:  # a diff that never read the rows leaves the gauge alone
+            self._metrics.untracked(account, plan.untracked)
         return self._r.finish(plan)
 
     @staticmethod

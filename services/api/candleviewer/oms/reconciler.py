@@ -25,7 +25,10 @@ root binds any of it yet (PR 2b), so nothing here runs in production.
 with `source: reconcile` (BQ-8); an `unknown`, `quarantined` or `untracked` row takes a
 `RECON_FOUND_*`, carrying the first of the order's fills this pass read that the row has not
 applied, the rest then sent as `EXEC`s and an end after them (`found_sends`): an `unknown` row
-takes no `EXEC` (INV-B1-e), and B1 adopts no totals without their execution (OM-R02). A row the
+takes no `EXEC` (INV-B1-e), and B1 adopts no totals without their execution (OM-R02). An
+`untracked` row's fills ride its finding too, as B1 records its `EXEC` and applies nothing: the
+last fill of a filled order is carried by the `RECON_FOUND_FILLED` that closes it, and a finding
+that leaves the row `untracked` is sent but never listed as a correction. A row the
 pass finds nowhere takes `RECON_MISS`, with the closed `reject_code` `HistoryRetentionPolicy`
 decides (BQ-15): past the history span on demo, `DEMO_RETENTION_EXPIRED`; a live `unknown` row
 older than the venue's 24 h span is paged P1 and held, never abandoned. Fills pair through the
@@ -152,12 +155,15 @@ _ONE_US: Final = timedelta(microseconds=1)
 _LEFT_TO_THEIR_REQUEST: Final = frozenset(
     {"held", "new", "pending_submit", "submitted", "pending_cancel", "pending_amend"}
 )
-#: The persisted states a `RECON_FOUND_*` reaches (24 Sec.8.5's table).
+#: The persisted states a `RECON_FOUND_*` reaches (24 Sec.8.5's table). Their fills ride their
+#: finding, never step 2's `EXEC`: an `unknown` or `quarantined` row takes no `EXEC` (INV-B1-e),
+#: and an `untracked` row's `EXEC` is recorded and applied to nothing, so only the fill its
+#: `RECON_FOUND_FILLED` carries closes it (`found_sends`).
 _FINDABLE: Final = frozenset({"unknown", "quarantined", "untracked"})
 #: A row's final states (B1's finals).
 _TERMINAL: Final = frozenset({"filled", "cancelled", "rejected", "expired", "killed"})
-#: The persisted states whose fills ride their finding, never an `EXEC` (INV-B1-e).
-_FILLS_WITH_FINDING: Final = frozenset({"unknown", "quarantined"})
+#: The unbound states 3a binds to an open order only after the full match (Sec.8.3 rule 3).
+_BOUND_BY_MATCH: Final = frozenset({"unknown", "quarantined"})
 _SIDES: Final[Mapping[str, OrderSide]] = {"buy": "Buy", "sell": "Sell"}
 _TYPES: Final[Mapping[str, Literal["Market", "Limit"]]] = {"market": "Market", "limit": "Limit"}
 _TIFS: Final[Mapping[str, Literal["GTC", "IOC", "FOK", "PostOnly"]]] = {
@@ -468,23 +474,32 @@ def found_sends(
     `unknown` or `quarantined` row takes no `EXEC` (INV-B1-e) and B1 adopts no totals without
     their execution (OM-R02): its finding carries the first fill this pass read that it has not
     applied, the rest follow as `EXEC`s, and an end other than `filled` comes after them (INV-B1-k).
-    An `untracked` row is recorded, never managed: one finding by the order's state. None when the
-    totals the venue shows are not the fills read (they lie outside every window read): nothing
-    is adopted, the row is listed and the next pass reads again."""
+    An `untracked` row is recorded, never managed: one finding by the order's state, the fills it
+    does not carry sent before it as `EXEC`s, which B1 records and applies to nothing; a filled
+    order's last fill rides its `RECON_FOUND_FILLED`, the one arm that closes the row, and the step
+    writer stores that fill. None when the totals the venue shows are not the fills read (they lie
+    outside every window read): nothing is adopted, the row is listed and the next pass reads
+    again."""
     base: dict[str, Any] = {"exchange_order_id": order.exchange_order_id, "pass_id": pass_id}
     if order.state not in _ENDED and order.state not in _OPEN:
         return None  # a status 24 Sec.8.12 does not map: decided by no finding
     ended = order.state in _ENDED
     if row.state == "untracked":
+        logged = list(fills)
         if order.state == "filled":
             if not fills:
                 return None
-            carried = exec_payload(fills[-1], order_id=row.id, order_link_id=row.order_link_id)
-            return (FoundCommand("RECON_FOUND_FILLED", base | {"execution": carried}),)
-        if ended:
-            return (FoundCommand("RECON_FOUND_CANCELLED", base),)
-        live: CommandEvent = "RECON_FOUND_PARTIAL" if order.filled_qty > 0 else "RECON_FOUND_LIVE"
-        return (FoundCommand(live, base),)
+            last = logged.pop()
+            carried = exec_payload(last, order_id=row.id, order_link_id=row.order_link_id)
+            finding = FoundCommand("RECON_FOUND_FILLED", base | {"execution": carried})
+        elif ended:
+            finding = FoundCommand("RECON_FOUND_CANCELLED", base)
+        else:
+            live: CommandEvent = (
+                "RECON_FOUND_PARTIAL" if order.filled_qty > 0 else "RECON_FOUND_LIVE"
+            )
+            finding = FoundCommand(live, base)
+        return (*(FoundPush("EXEC", fill_push(f, row)) for f in logged), finding)
     fresh = sum((f.qty for f in fills), Decimal(0))
     if order.filled_qty != row.cum_exec_qty + fresh:
         return None
@@ -561,7 +576,8 @@ class PushFill:
 @dataclass(frozen=True, slots=True)
 class LateFill:
     """3d: a fill of an order this pass binds or records first (3a to 3c): its row is read again
-    when it is applied, and with none the fill is kept for the next pass."""
+    when it is applied, and with none, or an `untracked` one, the fill is kept for the next pass,
+    whose finding carries it to that row (`found_sends`)."""
 
     execution: Execution
     entry_id: int | None = None
@@ -719,8 +735,10 @@ class Plan:
     actions: list[Action] = field(default_factory=list)
     #: Hand-over entries already settled (a fill stored already, an order recorded already).
     settled: list[int] = field(default_factory=list)
-    #: The account's `untracked` rows: as read, then as the remediation leaves them.
-    untracked: int = 0
+    #: The account's `untracked` rows: as the diff read them, then as the remediation leaves
+    #: them; None when the diff could not read the rows, so `oms_untracked_orders` keeps its
+    #: last count.
+    untracked: int | None = None
     #: The exchange order ids bound to the account's own rows the diff read (`untracked` ones
     #: excepted, as their orders are foreign): an open stop order among them is the OMS's (step
     #: 5). Empty when the order store could not be read, so the records alone decide.
@@ -732,6 +750,11 @@ class Plan:
 
     def kinds(self) -> list[str]:
         return sorted({type(action).__name__ for action in self.actions})
+
+    def count_untracked(self, change: int) -> None:
+        """An `untracked` row recorded (+1) or closed (-1) by the remediation, once counted."""
+        if self.untracked is not None:
+            self.untracked += change
 
 
 async def _bounded[T](call: Awaitable[T], seconds: float) -> T:
@@ -1169,8 +1192,9 @@ class _OrderDiff:
         return None if entry is None else entry.entry_id
 
     async def _step_2(self, fills: Sequence[Execution]) -> None:
-        """Each fill to the row bound to its order, never by its link id alone; an `unknown` or
-        `quarantined` row's ride its finding (INV-B1-e); the rest wait for 3d."""
+        """Each fill to the row bound to its order, never by its link id alone; a found row's
+        (`unknown`, `quarantined`, `untracked`) ride its finding (`_FINDABLE`); the rest wait for
+        3d."""
         for e in fills:
             try:
                 if e.exec_type != "trade":
@@ -1179,7 +1203,7 @@ class _OrderDiff:
                 row = await self._row_by_xid(e.exchange_order_id)
                 if row is None:
                     self._waiting.append(e)
-                elif row.state in _FILLS_WITH_FINDING:
+                elif row.state in _FINDABLE:
                     self._for_finding.setdefault(e.exchange_order_id, []).append(e)
                 else:
                     self._add(PushFill("2", row, e, self._entry_id(e)))
@@ -1199,7 +1223,7 @@ class _OrderDiff:
                     self._present(row, r, "3a", "corrected")
                     continue
                 named = self._unbound.get(r.order_link_id)
-                if named is None or named.state not in _FILLS_WITH_FINDING:
+                if named is None or named.state not in _BOUND_BY_MATCH:
                     rest.append(r)
                     continue
                 paired.add(named.id)
@@ -1537,21 +1561,26 @@ class _Remediation:
                 recorded = await _bounded(call, PORT_TIMEOUT_S)
                 if recorded is None or recorded.exchange_account_id != self._account:
                     await self._keep(e, empty_read=False)  # its order was not recorded: kept
+                elif recorded.state == "untracked":  # its finding carries it, next pass
+                    await self._keep(e, empty_read=False)
                 else:
                     await self._fill(recorded, e, entry_id)
             case PushFact(_, row, order, event, listed):
                 await self._b1_push(row, event, fact_push(order, row, self._f.window[1]))
                 self._list(listed, row.order_link_id)
             case Find(_, row, sends, listed, entry_ids):
-                for send in sends:  # the finding first; a send that fails ends the sequence
+                answered: str = row.state
+                for send in sends:  # in `found_sends`' order; a send that fails ends them
                     if isinstance(send, FoundCommand):
-                        await self._b1_command(row, send.event, send.payload)
+                        answered = await self._b1_command(row, send.event, send.payload)
                     else:
                         await self._b1_push(row, send.event, send.payload)
-                self._list(listed, row.order_link_id)
                 self._settled.extend(entry_ids)
-                if row.state == "untracked":
-                    self._plan.untracked -= 1
+                if row.state != "untracked":
+                    self._list(listed, row.order_link_id)
+                elif answered != "untracked":  # closed (`filled`, `cancelled`): a correction
+                    self._list(listed, row.order_link_id)
+                    self._plan.count_untracked(-1)
             case Mismatch(_, row, order):
                 await self._no_intent("order", order.exchange_order_id, order.exchange_placed)
                 await _bounded(p.handovers.hand_over_order(self._account, order), PORT_TIMEOUT_S)
@@ -1570,7 +1599,8 @@ class _Remediation:
                     self._list("newly_unknown", row.order_link_id)
                 elif state in ("rejected", "cancelled"):  # the second miss in a row
                     self._list("abandoned", row.order_link_id)
-                    self._plan.untracked -= row.state == "untracked"
+                    if row.state == "untracked":
+                        self._plan.count_untracked(-1)
             case HoldPastSpan(row):
                 self._r.page_once("oms_unknown_past_history", self._account, row.order_link_id)
             case Adopt(order, key, stop, no_intent, entry_id):
@@ -1669,7 +1699,7 @@ class _Remediation:
             self._anomaly(order)
             return
         self._list("foreign_stops" if stop else "untracked", key)
-        self._plan.untracked += 1
+        self._plan.count_untracked(1)
         if entry_id is not None:
             self._settled.append(entry_id)
 

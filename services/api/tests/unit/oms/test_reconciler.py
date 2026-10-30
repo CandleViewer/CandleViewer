@@ -468,13 +468,26 @@ async def test_3c_order_of_a_row_still_sending_is_left_to_its_send() -> None:
 # --- Step 3d --------------------------------------------------------------------------------------
 
 
-async def test_3d_fill_of_an_order_adopted_this_pass_applies_after_its_record() -> None:
+async def test_3d_fill_of_an_order_adopted_this_pass_is_kept_for_its_finding() -> None:
+    """An `untracked` row records an `EXEC` and applies nothing, so the fill of an order this pass
+    adopted is kept, and the next pass's finding carries it to the row, which it closes."""
     w = World()
     w.venue.seed_order(remote(7, order_link_id=ext_key("x7")), uid="1001")
-    w.venue.seed_execution(fill("e7", n=7, order_link_id=ext_key("x7")))
-    await w.run()
-    assert [e[0] for e in w.oms.log] == ["freeze", "adopted", "discover", "push"]
-    assert w.oms.effects("push")[0][2] == "EXEC"
+    e7 = fill("e7", n=7, order_link_id=ext_key("x7"))
+    w.venue.seed_execution(e7)
+    first = await w.run()
+    assert [e[0] for e in w.oms.log] == ["freeze", "adopted", "discover", "hand_over_execution"]
+    assert (w.oms.effects("push"), first.corrected) == ([], ())
+    w.venue._open.pop("x7")  # the order filled since; the hand-over holds its fill
+    filled = remote(7, order_link_id=ext_key("x7"), state="filled", filled_qty=Decimal("0.4"))
+    w.venue.seed_order(filled, uid="1001")
+    w.oms.handed_fills = [waiting(e7, entry_id=51)]
+    w.now_us += 60_000_000  # the fill is outside this pass's window: only the hand-over has it
+    second = await w.run()
+    [(_, _, event, payload, _)] = w.oms.effects("command")
+    assert (event, payload["execution"]["exec_id"]) == ("RECON_FOUND_FILLED", "e7")
+    assert (second.resolved_from_history, second.errors) == ((ext_key("x7"),), ())
+    assert w.oms.effects("prune") == [("prune", (51,))]
 
 
 async def test_3d_fill_named_by_an_unbound_live_row_waits_in_its_buffer() -> None:
