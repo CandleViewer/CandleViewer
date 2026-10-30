@@ -116,7 +116,7 @@ export { FormSection } from "./FormSection.js";
 export type { FormSectionProps } from "./FormSection.js";
 
 export { FuzzyList, fuzzyOptionId } from "./FuzzyList.js";
-export type { FuzzyListItem, FuzzyListProps, FuzzyListTag } from "./FuzzyList.js";
+export type { FuzzyListColumns, FuzzyListItem, FuzzyListProps, FuzzyListTag } from "./FuzzyList.js";
 
 export {
   GlobalErrorAnnouncement,

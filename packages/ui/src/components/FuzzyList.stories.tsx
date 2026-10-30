@@ -144,6 +144,31 @@ export const Ranked: Story = {
   },
 };
 
+/** WithColumns (E08-D05 §6.1): the column header in the options' own cells, hidden from AT (the names hold the words). */
+export const WithColumns: Story = {
+  args: list({
+    items: [BTC, ETH, ETHFI],
+    columns: {
+      label: "Symbol",
+      hint: "Base / quote",
+      values: ["24 h", "24 h turnover"],
+      chip: "Recording",
+    },
+  }),
+  play: async ({ canvasElement }) => {
+    const head = canvasElement.querySelector(".cv-fuzzylist__columns");
+    await expect(head).toHaveAttribute("aria-hidden", "true");
+    await expect(head?.closest("[role=listbox]")).toBeNull();
+    // Every cell in the header's caption type, never its column's data font (the cascade is Chromium's to show).
+    const type = (node: Element): string[] => {
+      const style = getComputedStyle(node);
+      return [style.fontFamily, style.fontSize, style.fontWeight];
+    };
+    for (const cell of [...(head?.children ?? [])])
+      await expect(type(cell)).toEqual(head === null ? [] : type(head));
+  },
+};
+
 /** Grouped (an empty query, E08-D05 V11): Recent, then Favourites, each a named `role="group"`. */
 export const Grouped: Story = {
   args: list({

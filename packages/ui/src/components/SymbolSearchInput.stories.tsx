@@ -135,9 +135,12 @@ export const NoResults: Story = {
   },
 };
 
-/** WithTarget (E08-D05 D-10): the chip names the pane a commit changes. */
+/** WithTarget (E08-D05 D-10): the chip names the pane a commit changes; SCR-102's column header (§6.1). */
 export const WithTarget: Story = {
-  args: { target: { label: "Changes Chart 1 · BTCUSDT 1m", id: "target" } },
+  args: {
+    target: { label: "Changes Chart 1 · BTCUSDT 1m", id: "target" },
+    columns: { label: "Symbol", hint: "Base / quote", values: ["24 h", "24 h turnover"] },
+  },
   play: async ({ canvasElement }) => {
     await expect(canvasElement.querySelector("#target")).toHaveTextContent(
       "Changes Chart 1 · BTCUSDT 1m",

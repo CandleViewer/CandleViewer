@@ -8,6 +8,7 @@
 .cv-fuzzylist__list {
   max-block-size: calc(var(--cv-fuzzylist-rows, 8) * var(--size-row-height));
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .cv-fuzzylist__header,
@@ -26,6 +27,20 @@
   color: var(--color-text-tertiary);
   font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
     var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/*
+ * The column header: the rows' own cells, in the header's caption type (two classes, so it beats the cells' own fonts
+ * whatever their order). Outside the list's scroller, it keeps the same scrollbar gutter, so a classic scrollbar
+ * (Electron on Windows or Linux) never shifts the rows' columns against it.
+ */
+.cv-fuzzylist__columns {
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+
+.cv-fuzzylist__header.cv-fuzzylist__columns > * {
+  font: inherit;
 }
 
 .cv-fuzzylist__row {

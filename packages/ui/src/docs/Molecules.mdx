@@ -184,7 +184,8 @@ with a space between the cells in the DOM, so it holds the row's visible text (W
 host's words or, `aria-disabled`, its reason.
 Windowed above twice the visible rows, options carry `aria-posinset` and `aria-setsize`, and the active option is
 always drawn, so `aria-activedescendant` never dangles; while loading the listbox is `aria-busy` over static skeleton
-rows.
+rows. `columns` draws a header above it, whatever stands in the list's place: one `aria-hidden` row of the options'
+own cells, so a column the rows drop drops there too (CMP-160 passes it through).
 
 ### Tabs (CMP-042, APG Tabs)
 

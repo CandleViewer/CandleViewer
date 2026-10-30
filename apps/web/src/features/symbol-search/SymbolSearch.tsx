@@ -2,7 +2,8 @@
  * SCR-102 Symbol search (E08-S09; E08-D05 §6, §8, §9.2, D-10, D-11): CMP-043 over CMP-160 and CMP-213, opened from
  * the TopBar's symbol trigger once a workspace has registered its opener. The shell keeps the TopBar, the banner slot,
  * the StatusBar and its live regions out of the inert page and the scrim (AppShell); a press there, or on the open
- * trigger, closes it without commit.
+ * trigger, closes it without commit. Under the list, §6.4's detail bar with the active option's `⋯` (§6.3's CMP-041
+ * menu, also on `Shift+F10`, the Menu key and a right-click), then the footer: its key hints or the catalogue's notice.
  */
 import {
   useEffect,
@@ -18,44 +19,66 @@ import {
   type RefObject,
 } from "react";
 import {
+  Button,
   Dialog,
   EmptyState,
+  Icon,
+  IconButton,
   Kbd,
+  Menu,
+  RbacGate,
   Spinner,
   SymbolPicker,
   SymbolSearchInput,
+  formatRbacReason,
+  type EmptyStateAction,
+  type FuzzyListItem,
+  type MenuAnchor,
+  type MenuItem,
 } from "@candleviewer/ui";
-import { useShellSelector } from "../../shell/useShellSelector.js";
-import { announce, forget } from "../app-shell/announcer";
-import { COPY, SEARCH_TITLE, commitSentence, keyHints, targetWords } from "./copy";
-import type { InstrumentIndex } from "./instrumentIndex";
+import { getMeClaims } from "../../lib/auth/meCache";
+import { COLUMNS, COPY, SEARCH_TITLE, keyHints, refreshAnswered, targetWords } from "./copy";
+import { requestRefresh, type InstrumentIndex, type RefreshAnswer } from "./instrumentIndex";
 import { stopKeys } from "./keys";
 import { RESULT_CAP } from "./ranking";
+import { LINE, searchDeck, useFocusHome, useSymbolCheck } from "./searchDeck";
+import {
+  reportOpened,
+  sayCommit,
+  useDisconnected,
+  useSearchReports,
+  type Opened,
+} from "./searchEvents";
 import {
   closeSymbolSearch,
+  forgetSymbol,
   openSymbolSearch,
-  rememberSymbol,
+  useHeldSnapshot,
+  useSessionLookups,
   useSymbolSearch,
   type SymbolOpener,
   type SymbolTarget,
 } from "./searchSession";
-import { searchView, type SearchEmpty } from "./searchView";
+import { placeOf, searchView, type SearchEmpty } from "./searchView";
 
 /** The trigger's id: its own press toggles, so the TopBar-press close leaves it alone. */
 export const SYMBOL_TRIGGER_ID = "cv-symbol-trigger";
-/** The commit's one key in the shell announcer: forgotten before each commit, so each is said and none is kept. */
-const COMMIT_KEY = "symbol-search:commit";
 /** §5's footer line ("Showing 50 of 213 results — keep typing to narrow"). */
 const showing = (total: number): string =>
   `Showing ${String(RESULT_CAP)} of ${String(total)} results — keep typing to narrow`;
-
-const LINE: CSSProperties = {
+const HOUR_MS = 3_600_000;
+/**
+ * §6.2 Refresh answered: the job poll would end after 2 + 4 + 8 + 16 + 30 s; with no poll yet (E08-S01's route), the
+ * answer's notice ends there too, if the list has not arrived first.
+ */
+const NOTICE_MS = 60_000;
+/** The stale notice's line: its two actions and a T2 reason wrap at 200 % rather than overflow. */
+const WRAPPED: CSSProperties = { ...LINE, flexWrap: "wrap" };
+const BAR: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: "var(--space-inset-sm)",
-  margin: 0,
-  color: "var(--color-text-secondary)",
-  font: "var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) / var(--type-ui-caption-line-height) var(--type-ui-caption-font-family)",
+  minBlockSize: "var(--size-row-height)",
 };
 
 /** §5: min(cap, ⌊(0.7 × h − chrome) / row⌋): 16 / 11 rows at 1280 × 800, compact / comfortable. */
@@ -81,58 +104,65 @@ export function SymbolSearchTrigger({ target }: { readonly target: SymbolTarget 
 }
 
 /**
- * Mounted once in the shell: SCR-102, while the index runs and a workspace can take a commit. `main` is the shell's
+ * Mounted once in the shell: SCR-102, while the index runs and a workspace can take a commit. `mainRef` is the shell's
  * `main`, where focus goes when neither the trigger nor the target panel is left to take it (§9.2).
  */
 export function SymbolSearchHost({
-  main,
+  mainRef,
 }: {
-  readonly main: RefObject<HTMLElement | null>;
+  readonly mainRef: RefObject<HTMLElement | null>;
 }): JSX.Element | null {
   const index = useSymbolSearch((s) => s.index);
   const opener = useSymbolSearch((s) => s.opener);
   const open = useSymbolSearch((s) => s.open);
   const opened = useSymbolSearch((s) => s.opened);
   if (index === null || opener === null) return null;
-  return <SymbolSearchDialog key={opened} index={index} opener={opener} open={open} main={main} />;
+  return (
+    <SymbolSearchDialog key={opened} index={index} opener={opener} open={open} mainRef={mainRef} />
+  );
 }
 
 interface DialogProps {
   readonly index: InstrumentIndex;
   readonly opener: SymbolOpener;
   readonly open: boolean;
-  readonly main: RefObject<HTMLElement | null>;
+  readonly mainRef: RefObject<HTMLElement | null>;
 }
 
-function SymbolSearchDialog({ index, opener, open, main }: DialogProps): JSX.Element {
-  const snapshot = useSyncExternalStore(index.subscribe, index.getSnapshot);
+function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.Element {
+  const live = useSyncExternalStore(index.subscribe, index.getSnapshot);
   const recent = useSymbolSearch((s) => s.recent);
-  const link = useShellSelector((s) => s.connection.kind);
+  const unchecked = useSymbolSearch((s) => s.unchecked);
+  const info = useSymbolSearch((s) => s.info);
+  const lost = useDisconnected();
   const [query, setQuery] = useState("");
-  // The waits a snapshot names count from its arrival, so no sentence ticks while typing.
-  const [arrival, setArrival] = useState(() => ({ snapshot, at: Date.now() }));
-  if (arrival.snapshot !== snapshot) setArrival({ snapshot, at: Date.now() });
+  // The waits and ages a snapshot names count from its arrival, so no sentence ticks while typing.
+  const [arrival, setArrival] = useState(() => ({ snapshot: live, at: Date.now() }));
+  if (arrival.snapshot !== live) setArrival({ snapshot: live, at: Date.now() });
+  const snapshot = useHeldSnapshot(live, query);
   const rows = useMemo(() => {
     const density = document.documentElement.getAttribute("data-density");
     return visibleRows(window.innerHeight, density === "comfortable");
   }, []);
-  const targetId = useId();
-  const hintsId = useId();
-  const view = searchView(query, snapshot, recent, arrival.at);
+  const [targetId, hintsId, staleId, armedId] = [useId(), useId(), useId(), useId()];
   const { target } = opener;
   const words = targetWords(target);
-  const failed = view.empty?.kind === "failed";
-  const wasFailed = useRef(failed);
+  const remembered = target === null ? recent : [...recent, target.symbol];
+  useSessionLookups(index, live, open ? remembered : []);
+  const view = searchView(query, snapshot, recent, arrival.at, { remembered, unchecked });
+
+  // A settled query that ranks nothing is checked, but not a remembered one the session found gone.
+  const { check, checked } = useSymbolCheck(index, view.unmatched?.kind === "gone" ? "" : query);
   // §9.2: closing returns focus to the trigger, else the target panel, else the shell's `main`, never to the page.
   // Read when the dialog closes or unmounts, so a pane unbound or a workspace gone while it is open is seen.
   const fallback = useMemo<RefObject<HTMLElement | null>>(
     () => ({
       get current() {
         const panel = opener.panel?.current ?? null;
-        return panel?.isConnected === true ? panel : main.current;
+        return panel?.isConnected === true ? panel : mainRef.current;
       },
     }),
-    [opener, main],
+    [opener, mainRef],
   );
 
   // D-11, §9.2: a press outside the dialog (the TopBar, the banner slot, the StatusBar, which the shell keeps live
@@ -147,27 +177,155 @@ function SymbolSearchDialog({ index, opener, open, main }: DialogProps): JSX.Ele
     return () => document.removeEventListener("pointerdown", onDown, true);
   }, [open]);
 
-  // §9.2: Retry now goes with the failure when the list comes, and focus never falls to the page: it goes back to
-  // the input, where the dialog starts.
+  const card = (): Element | null | undefined =>
+    document.getElementById(targetId)?.closest('[role="dialog"]');
+  useFocusHome(() => card()?.querySelector<HTMLElement>('[role="combobox"]'), open);
+  const viewInfo = (symbol: string): void => {
+    closeSymbolSearch();
+    info?.open(symbol, { source: "scr-102" });
+  };
+  const deck =
+    view.unmatched === null
+      ? null
+      : searchDeck(query, view.unmatched, checked, {
+          clear: () => setQuery(""),
+          checkAgain: () => check?.checkAgain(),
+          info: info === null ? undefined : viewInfo,
+        });
+  const failed = view.empty?.kind === "failed";
+  // §6.2: `Enter` with no openable option is inert and says the state's heading again.
+  const heading = view.loading
+    ? (view.message ?? null)
+    : failed
+      ? COPY.failed
+      : view.empty?.kind === "first-run"
+        ? COPY.firstRun[0]
+        : (deck?.heading ?? null);
+  // §9.2's one polite region (CMP-160's): the state's own sentence, or what the user's last act has it say again
+  // (`Enter`'s heading, a T2 press's reason, a refresh's answer), for as long as the query and the state hold. Once
+  // either moves on, that is forgotten: never said again unprompted (A11Y-C2-04).
+  const base = deck?.said ?? view.message;
+  const moment = JSON.stringify([query, base ?? null, heading]);
+  const [said, setSaid] = useState<{
+    readonly moment: string;
+    readonly text: string;
+    readonly n: number;
+  } | null>(null);
+  const again = said?.moment === moment ? said : null;
+  if (said !== null && again === null) setSaid(null);
+  const now = useRef(moment); // the moment a sentence joins, for a late answer too
   useLayoutEffect(() => {
-    const was = wasFailed.current;
-    wasFailed.current = failed;
-    if (!was || failed) return;
-    const card = document.getElementById(targetId)?.closest('[role="dialog"]');
-    if (card?.contains(document.activeElement) === false)
-      card.querySelector<HTMLElement>('[role="combobox"]')?.focus();
-  }, [failed, targetId]);
+    now.current = moment;
+  });
+  const say = (text: string): void =>
+    setSaid((prev) => ({ moment: now.current, text, n: (prev?.n ?? 0) + 1 }));
+  const message = again?.text ?? base;
+
+  // §6.2's Refresh from Bybit, the Owner's (`instruments:write` in the session's permissions, never a role name; the
+  // server enforces it): T2 `rbac.owner_only` for others, through CMP-079's vocabulary. One request at a time; its
+  // answer takes the footer until the list next arrives or §6.2's poll would have ended, and the region says it once.
+  const owner = getMeClaims().permissions.includes("instruments:write");
+  const ownerOnly = formatRbacReason("rbac.owner_only", { verb: COPY.refreshVerb });
+  const [refreshed, setRefreshed] = useState<{
+    readonly answer: RefreshAnswer;
+    readonly loadedAt: number | null;
+  } | null>(null);
+  if (refreshed !== null && refreshed.loadedAt !== live.loadedAt) setRefreshed(null);
+  useEffect(() => {
+    if (refreshed === null) return undefined;
+    const timer = setTimeout(() => setRefreshed(null), NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [refreshed]);
+  const sending = useRef(false);
+  const requestOnce = (): void => {
+    if (refreshed?.answer.kind === "requested") {
+      say(COPY.refreshRequested); // asked already: the list is on its way
+      return;
+    }
+    if (sending.current) return;
+    sending.current = true;
+    void requestRefresh().then((answer) => {
+      sending.current = false;
+      setRefreshed({ answer, loadedAt: index.getSnapshot().loadedAt });
+      say(refreshAnswered(answer));
+    });
+  };
+  const refresh: EmptyStateAction = {
+    label: COPY.refresh,
+    onClick: requestOnce,
+    variant: "secondary",
+    ...(owner ? {} : { disabledReason: ownerOnly }),
+  };
+
+  // §12.1: what was searched, each state entered (while open), each option opened, and how the last act came in.
+  useSearchReports(
+    "scr-102",
+    index,
+    query,
+    !open
+      ? null
+      : view.loading
+        ? "catalogue_loading"
+        : failed
+          ? "catalogue_load_failed"
+          : (deck?.reason ?? null),
+  );
+  const via = useRef<Opened["input"]>("key");
+  const opened = (symbol: string, action: Opened["action"]): void =>
+    reportOpened("scr-102", { ...placeOf(view, symbol), input: via.current, action });
 
   const commit = (symbol: string, where: "target" | "new-chart"): void => {
     const into = where === "target" ? target : null;
+    opened(symbol, into === null ? "new-chart" : "open");
     closeSymbolSearch();
-    rememberSymbol(symbol);
     opener.open(symbol, into === null ? "new-chart" : "target");
-    const off = link === "reconnecting" || link === "offline";
-    // The user's own act: said at once, not after E17-D02 §11's 5 s region budget (`lastWrittenAt`).
-    forget(COMMIT_KEY);
-    announce("polite", commitSentence(symbol, into, off), COMMIT_KEY);
+    sayCommit(symbol, into, lost);
   };
+
+  // §6.3: the active option's menu, anchored to it (or at a right-click's point).
+  const [active, setActive] = useState<FuzzyListItem | undefined>(undefined);
+  const [menu, setMenu] = useState<{ item: FuzzyListItem; anchor: MenuAnchor } | null>(null);
+  const actions = (item: FuzzyListItem): MenuItem[] => {
+    const { id } = item;
+    const run = (action: Opened["action"], then: () => void) => (): void => {
+      opened(id, action);
+      then();
+    };
+    const opens: MenuItem[] = [
+      {
+        id: "open",
+        label: target === null ? COPY.openNew : COPY.openIn(target.pane),
+        shortcut: ["Enter"],
+        onSelect: () => commit(id, "target"),
+      },
+      ...(target === null
+        ? []
+        : [
+            {
+              id: "new",
+              label: COPY.openNew,
+              shortcut: ["Shift", "Enter"],
+              onSelect: () => commit(id, "new-chart"),
+            },
+          ]),
+    ];
+    return [
+      ...(item.disabled === true ? [] : opens),
+      ...(info === null
+        ? []
+        : [{ id: "info", label: COPY.viewInfo, onSelect: run("info", () => viewInfo(id)) }]),
+      ...(view.recent.some((row) => row.id === id)
+        ? [{ id: "forget", label: COPY.forget, onSelect: run("forget", () => forgetSymbol(id)) }]
+        : []),
+    ];
+  };
+  const openMenu = (item: FuzzyListItem | undefined, at?: { x: number; y: number }): void => {
+    const option = card()?.querySelector('[role="option"][aria-selected="true"]');
+    const anchor = at === undefined ? option : { ...at, width: 0, height: 0 };
+    if (item === undefined || anchor === null || anchor === undefined) return;
+    if (actions(item).length > 0) setMenu({ item, anchor });
+  };
+
   const onRootKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === "Escape" && !event.nativeEvent.isComposing) {
       event.preventDefault();
@@ -176,17 +334,88 @@ function SymbolSearchDialog({ index, opener, open, main }: DialogProps): JSX.Ele
     stopKeys(event, closeSymbolSearch); // §8: only a Global chord goes on to the window keymap
   };
 
+  // §6.2's footer notices: they take the key hints' row, which stays the input's description.
+  const age = Math.floor(
+    ((live.cacheAgeS ?? 0) * 1000 + arrival.at - (live.loadedAt ?? arrival.at)) / HOUR_MS,
+  );
+  const notices = [
+    lost && live.loadedAt !== null ? (
+      <p key="link" style={LINE}>
+        {COPY.disconnected(live.loadedAt)}
+      </p>
+    ) : null,
+    live.staleSince === null ? null : (
+      <p key="stale" style={WRAPPED}>
+        <span style={{ display: "inline-flex", color: "var(--color-status-warning-strong)" }}>
+          <Icon name="warning" />
+        </span>
+        <span id={staleId}>{COPY.stale(Math.max(1, age))}</span>
+        <Button variant="secondary" onClick={index.reread}>
+          {COPY.retry}
+        </Button>
+        {owner ? (
+          <Button variant="secondary" onClick={requestOnce}>
+            {COPY.refresh}
+          </Button>
+        ) : (
+          // T2 in rendering 2a, as Load failed's (E08-D05 §6.2): CMP-001 keeps it focusable, `aria-disabled` and
+          // described by its reason at mount; Enter, Space or a press changes nothing and says the reason once in the
+          // surface's region (G-T2.3); the reason is drawn beside it for the eye, its description is the button's.
+          <>
+            <RbacGate allowed={false} reason="rbac.owner_only" fills={{ verb: COPY.refreshVerb }}>
+              <Button
+                variant="secondary"
+                onClickCapture={() => say(ownerOnly)}
+                onClick={requestOnce}
+              >
+                {COPY.refresh}
+              </Button>
+            </RbacGate>
+            <span aria-hidden="true">{ownerOnly}</span>
+          </>
+        )}
+      </p>
+    ),
+    refreshed === null ? null : (
+      <p key="refresh" style={LINE}>
+        {refreshAnswered(refreshed.answer)}
+      </p>
+    ),
+    live.refreshing ? (
+      <p key="refreshing" style={LINE}>
+        {COPY.refreshing}
+      </p>
+    ) : null,
+  ].filter((notice) => notice !== null);
+  const line =
+    (active === undefined ? deck?.checking : active.disabled === true ? active.reason : null) ??
+    null;
+  const armed = target?.armed === true ? COPY.armed(target.pane) : null;
+
   return (
     // A React ancestor of the portalled dialog, so its keydown is §8's root for every key in it.
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- not a widget: no focus, no role
-    <div onKeyDown={onRootKeyDown} style={{ display: "contents" }}>
+    <div
+      onKeyDown={onRootKeyDown}
+      onKeyDownCapture={() => {
+        via.current = "key";
+      }}
+      onPointerDownCapture={() => {
+        via.current = "pointer";
+      }}
+      // The context-menu event a `Shift+F10` or Menu key fires after it opened the menu.
+      onContextMenu={(event) => {
+        if (menu !== null) event.preventDefault();
+      }}
+      style={{ display: "contents" }}
+    >
       <Dialog
         open={open}
         onOpenChange={(next) => {
           if (!next) closeSymbolSearch();
         }}
         title={SEARCH_TITLE}
-        aria-describedby={targetId}
+        aria-describedby={live.staleSince === null ? targetId : `${targetId} ${staleId}`}
         fallbackFocusRef={fallback}
       >
         <span id={targetId} className="cv-visually-hidden">
@@ -200,18 +429,31 @@ function SymbolSearchDialog({ index, opener, open, main }: DialogProps): JSX.Ele
           total={view.total}
           recentSymbols={view.recent}
           target={{ label: words.chip, armed: target?.armed === true }}
-          {...(view.message === undefined ? {} : { message: view.message })}
+          {...(message === undefined ? {} : { message })}
+          {...(again === null ? {} : { messageKey: again.n })}
           loading={view.loading}
-          emptyMessage={empty(view.empty, index.reread)}
+          emptyMessage={deck?.node ?? empty(view.empty, index.reread, refresh)}
           visibleRows={rows}
+          columns={COLUMNS}
+          onActiveChange={setActive}
+          onContextMenu={(item, at) => openMenu(item, at)}
           onKeyDown={(event, item) => {
-            const chord = event.ctrlKey || event.altKey || event.metaKey;
-            if (event.key !== "Enter" || !event.shiftKey || chord) return;
-            event.preventDefault();
-            if (item !== undefined && item.disabled !== true && !event.repeat)
-              commit(item.id, "new-chart");
+            if (event.ctrlKey || event.altKey || event.metaKey) return;
+            if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+              event.preventDefault();
+              openMenu(item);
+            } else if (event.key !== "Enter" || event.repeat) {
+              return;
+            } else if (item === undefined) {
+              if (heading !== null) say(heading);
+            } else if (event.shiftKey) {
+              event.preventDefault(); // CMP-160's Enter commits to the target, or says why not
+              const why = item.reason?.trim() ?? "";
+              if (item.disabled !== true) commit(item.id, "new-chart");
+              else if (why !== "") say(why); // §6.4: reached, never chosen, and it says why, as Enter does
+            }
           }}
-          aria-describedby={hintsId}
+          aria-describedby={armed === null ? hintsId : `${hintsId} ${armedId}`}
         />
         {view.loading ? (
           // Not CMP-038, whose own `role="status"` would be a second polite region (§9.2: one per surface): the
@@ -221,8 +463,33 @@ function SymbolSearchDialog({ index, opener, open, main }: DialogProps): JSX.Ele
             {view.message}
           </p>
         ) : null}
+        <div style={BAR}>
+          <div style={{ flex: "1 1 auto", minInlineSize: 0 }}>
+            {line === null ? null : <p style={LINE}>{line}</p>}
+            {armed === null ? null : (
+              <p id={armedId} style={LINE}>
+                {armed}
+              </p>
+            )}
+          </div>
+          {active === undefined || actions(active).length === 0 ? null : (
+            <IconButton
+              icon="more-horizontal"
+              label={COPY.actions(active.label)}
+              variant="ghost"
+              aria-haspopup="menu"
+              aria-expanded={menu !== null}
+              onClick={() => openMenu(active)}
+            />
+          )}
+        </div>
         {view.total > view.items.length ? <p style={LINE}>{showing(view.total)}</p> : null}
-        <p id={hintsId} style={LINE}>
+        {notices}
+        <p
+          id={hintsId}
+          style={LINE}
+          className={notices.length > 0 ? "cv-visually-hidden" : undefined}
+        >
           {keyHints(target?.pane ?? null).map(([keys, said], i) => (
             <span key={said}>
               {i === 0 ? null : "· "}
@@ -230,13 +497,28 @@ function SymbolSearchDialog({ index, opener, open, main }: DialogProps): JSX.Ele
             </span>
           ))}
         </p>
+        {menu === null ? null : (
+          <Menu
+            anchor={menu.anchor}
+            open
+            aria-label={COPY.actions(menu.item.label)}
+            items={actions(menu.item)}
+            onOpenChange={(next) => {
+              if (!next) setMenu(null);
+            }}
+          />
+        )}
       </Dialog>
     </div>
   );
 }
 
 /** §6.2's states in the list's place: the first run's lines, or CMP-026 `error` for a list that failed to load. */
-function empty(state: SearchEmpty | null, retry: () => void): JSX.Element | null {
+function empty(
+  state: SearchEmpty | null,
+  retry: () => void,
+  refresh: EmptyStateAction,
+): JSX.Element | null {
   if (state === null) return null;
   if (state.kind === "first-run")
     return (
@@ -262,7 +544,7 @@ function empty(state: SearchEmpty | null, retry: () => void): JSX.Element | null
       live="assertive"
       title={COPY.failed}
       description={`${cause} ${COPY.nextTry(state.waitS)}`}
-      actions={[{ label: COPY.retryNow, onClick: retry }]}
+      actions={[{ label: COPY.retryNow, onClick: retry }, refresh]}
       {...(instance === null ? {} : { reference: instance })}
     />
   );
