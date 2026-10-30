@@ -2,8 +2,8 @@
 
 As built after PR 1 of 3 (stub level, no product code). Case ids and plan rows are `qa/plans/e09-auth-rbac-test-plan.md` (E09-Q01).
 
-- **Specs:** `apps/web/e2e/auth/` (repo convention; the ticket text says `tests/e2e/auth/`). 45 tests: 29 before this PR, one self-planted cookie test removed, 17 added.
-- **Support:** `apps/web/e2e/support/`: `api.ts` (stubs), `wsHarness.ts` (a fake 23 gateway), `contexts.ts` (one user's sessions on a stubbed server, shared by several browser contexts, each with its own harness), `serverClock.ts` (the server test clock for the real lane, 37 unit tests in `apps/web/test/e2e-server-clock.test.ts`), `axe.ts`, `totp.ts`.
+- **Specs:** `apps/web/e2e/auth/` (repo convention; the ticket text says `tests/e2e/auth/`). 46 tests: 29 before this PR, one self-planted cookie test removed, 18 added.
+- **Support:** `apps/web/e2e/support/`: `api.ts` (stubs), `wsHarness.ts` (a fake 23 gateway), `contexts.ts` (one user's sessions on a stubbed server, shared by several browser contexts, each with its own harness), `serverClock.ts` (the server test clock for the real lane, 40 unit tests in `apps/web/test/e2e-server-clock.test.ts`), `axe.ts`, `totp.ts`.
 - **Stub level:** the API is stubbed at the network layer; the browser clock is `page.clock`, the stubbed server's is `SessionStore.advance` (no sleeps). C-13.4 puts login with 2FA end to end against a seeded stack, so the stub level is not the end state: the real lane below is.
 - **Contract figures (`22-api-openapi.yaml` "Idle lock", `session_service.py`):** the idle lock is 15 min by default (5 to 60 min per user); the absolute lifetime is 12 h; the only activity is `POST /auth/session/extend` and a successful `POST /auth/unlock`. SCR-112 (not "SCR-111", the profile screen, which is not built) is the sessions list. Plan rows C02, C03 and C04 follow these figures (they said 8 h, 7 days and "13 h ago").
 
@@ -30,4 +30,4 @@ As built after PR 1 of 3 (stub level, no product code). Case ids and plan rows a
 
 Recorded deviations (orchestrator ruling on #293, 2026-10-30): the real lane is a nightly, non-required `e2e-auth-real.yml` (#2490); the `e2e-auth` required check stays with #2107 (owner-gated); the Electron lane stays with #2106; the SCR-002 and SCR-003 cases are deferred as above.
 
-Not done: the real-backend lane and its server-clock specs (PR 2 closes #2490, PR 3 closes #2086), the Electron lane (`@electron` tags only), the `e2e-auth` required check (#2107), the mutation check, 10-run flake data.
+Not done: the real-backend lane and its server-clock specs (PR 2 closes #2490, PR 3 closes #2086), the Electron lane (`@electron` tags only), the `e2e-auth` required check (#2107), the mutation check, 10-run flake data, and the unlock focus return (E09-D06 §6 and E09-D12 §9.2, "unlock → the element that had focus"): its stub-level assertion failed 1 run in 3 under `fastForward`, cause not established, so PR 3's real lane asserts it.

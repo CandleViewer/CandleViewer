@@ -210,10 +210,13 @@ B05, B06, D02, D04, E01). A missing or malformed audit row is filed as a defect 
 
 ## 8b. Accessibility note
 
-Each manual-only case above (A08, C02, C03, C08, E08) records whether it is executable keyboard-only.
-A08 (lockout), C02/C03 (frozen-clock idle/absolute timeout) and C08 (timing sanity) are pure API/timing
-checks with no UI interaction and are keyboard-only by construction. E08 is a network-topology check, not
-a UI interaction. Any case in Groups A–E that turns out to require a mouse to complete is itself filed as
+Each manual-only case above (A08, C08, E08) records whether it is executable keyboard-only.
+A08 (lockout) and C08 (timing sanity) are pure API/timing checks with no UI interaction and are
+keyboard-only by construction. E08 is a network-topology check, not a UI interaction. C02 and C03 are neither
+manual-only nor API-only any more: their rows end on `SCR-005`, so their SPA half is automated at stub level
+(`apps/web/e2e/auth/session.spec.ts`), which asserts SCR-005's keyboard path (focus on the password field, Esc does
+not dismiss it, type and Enter unlock); their server half is an API/timing check on the server clock (#2086),
+keyboard-only by construction. Any case in Groups A–E that turns out to require a mouse to complete is itself filed as
 a defect against `docs/plan/05-accessibility-standard.md` §3, separate from the deep audit in `E09-Q04`.
 
 ---
