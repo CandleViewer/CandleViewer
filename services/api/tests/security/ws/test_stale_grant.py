@@ -2,7 +2,7 @@
 queued frames are dropped before `permission_change` (23-ws-protocol.md §9.5). M1 holds A and B and
 the owner withdraws B (the grant store, then the registry's notice) while B's snapshot and deltas
 are queued behind a parked writer, while a `sub` awaits its upstream, during the first `auth` and
-during an in-place re-`auth`: with the backpressure flag off and on (the default), under both
+during an in-place re-`auth`: on the budgeted pipeline (#2409: the flag-off rows went), under both
 subprotocols. Each test asserts what the AC-13 and AC-14 rows of the threat model's §7 list: the
 announcing frames in order, each `revoked` stamped at the withdrawal on the fake clock
 (`0 <= ts - at_ms <= 1000`), and no `snap` or `d` naming B from the withdrawal on.
@@ -19,7 +19,6 @@ from typing import Any
 import pytest
 
 from candleviewer.ws import gateway
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.upstream import UpstreamRefs
 from tests.contract.ws._harness import Client
 from tests.security.ws._raw import (
@@ -38,8 +37,6 @@ from tests.unit.ws._seq_support import ACC_A, ACC_B
 ACC_C = uuid.UUID(int=0xC)
 BARRIER = "ticker.BTCUSDT"  # the topic `flushed` reads its barrier through
 _DATA = {"snap", "d"}
-_FLAGS = {"flag-off": None, "flag-on": BackpressureConfig()}
-_FLAG = pytest.mark.parametrize("flag", _FLAGS.values(), ids=_FLAGS)
 
 
 class Held:
@@ -76,7 +73,7 @@ class Held:
 def flushed(c: Client) -> None:
     """Returns once every frame queued for `c` so far has been received, read through the snapshot
     of a topic it subscribes to now: the normal lane is FIFO and the new snapshot is its last frame
-    (the priority lane's `pong` would overtake a normal-lane frame, with the flag on)."""
+    (the priority lane's `pong` would overtake a normal-lane frame)."""
     c.send({"t": "sub", "id": "barrier", "p": {"topics": [{"ch": BARRIER}]}})
     while (frame := c.recv())["t"] != "snap" or frame["ch"] != BARRIER:
         pass
@@ -107,12 +104,10 @@ def _announced(got: list[dict[str, Any]], at_ms: int) -> None:
     assert naming([f for f in got if f["t"] in _DATA], ACC_B) == []
 
 
-@_FLAG
 @pytest.mark.parametrize("family", ["positions", "orders"])
 @pytest.mark.parametrize("named", [(ACC_B,), (ACC_A, ACC_B)], ids=["ended", "narrowed"])
 def test_x02_ac_13_a_withdrawn_grants_queued_frames_are_dropped_before_permission_change(
     world: RawWorld,
-    flag: BackpressureConfig | None,
     family: str,
     named: tuple[uuid.UUID, ...],
     monkeypatch: pytest.MonkeyPatch,
@@ -120,9 +115,9 @@ def test_x02_ac_13_a_withdrawn_grants_queued_frames_are_dropped_before_permissio
     m1, held, kept = world.login("m1", ACC_A, ACC_B), Held(world, monkeypatch), ACC_A in named
     revoked = delta("cv_ws_revoked_total", reason="account_scope_changed")
     withdrawn = delta("cv_ws_overflow_total", reason="withdrawn")  # §9.5: per queued frame purged
-    # B's snapshot and two deltas are in the queue at the withdrawal; with the flag on, a throttled
-    # family's second delta waits in its pacing window instead, which the change discards uncounted
-    queued = 2 if flag and family == "positions" else 3
+    # B's snapshot and two deltas are in the queue at the withdrawal, but a throttled family's
+    # second delta waits in its pacing window instead, which the change discards uncounted
+    queued = 2 if family == "positions" else 3
     with raw_connect(world) as c:
         authenticated(c, m1)
         held.hold(c, {"t": "sub", "id": "s", "p": {"topics": [topic(family, *named)]}})
@@ -180,10 +175,9 @@ class _Gated:
     async def drop(self, key: Any) -> None: ...
 
 
-@_FLAG
 @pytest.mark.parametrize("named", [(ACC_A, ACC_B), (ACC_B,)], ids=["narrowed", "ended"])
 def test_x02_ac_13_a_sub_awaiting_its_upstream_when_b_is_withdrawn_is_served_without_b(
-    world: RawWorld, flag: BackpressureConfig | None, named: tuple[uuid.UUID, ...]
+    world: RawWorld, named: tuple[uuid.UUID, ...]
 ) -> None:
     m1, sink = world.login("m1", ACC_A, ACC_B), _Gated()
     world.registry.services.upstream = UpstreamRefs(sink)
@@ -218,9 +212,8 @@ def test_x02_ac_13_a_sub_awaiting_its_upstream_when_b_is_withdrawn_is_served_wit
     assert world.audit.of("ws.subscribe.denied") == []  # the change's row records it (23 §5.2)
 
 
-@_FLAG
 def test_x02_ac_14_a_grant_withdrawn_during_the_first_auth_is_not_in_its_auth_ok(
-    world: RawWorld, flag: BackpressureConfig | None
+    world: RawWorld,
 ) -> None:
     m1 = world.login("m1", ACC_A, ACC_B)
     world.races[1] = partial(world.amended, m1, drop=(ACC_B,))  # B is read, then withdrawn
@@ -235,9 +228,8 @@ def test_x02_ac_14_a_grant_withdrawn_during_the_first_auth_is_not_in_its_auth_ok
     assert world.audit.of("ws.subscription.revoked") == [] and naming(c.seen, ACC_B) == []
 
 
-@_FLAG
 def test_x02_ac_14_a_second_withdrawal_during_the_handshake_recheck_is_in_its_auth_ok(
-    world: RawWorld, flag: BackpressureConfig | None
+    world: RawWorld,
 ) -> None:
     m1 = world.login("m1", ACC_A, ACC_B, ACC_C)
     handshake = delta("cv_ws_permission_snapshots_refused_total", event="handshake")
@@ -254,10 +246,7 @@ def test_x02_ac_14_a_second_withdrawal_during_the_handshake_recheck_is_in_its_au
     assert row["request_id"] == CONNECTION_REQUEST_ID  # its socket's (#3990)
 
 
-@_FLAG
-def test_x02_ac_14_a_grant_withdrawn_during_a_reauth_keeps_the_withdrawal(
-    world: RawWorld, flag: BackpressureConfig | None
-) -> None:
+def test_x02_ac_14_a_grant_withdrawn_during_a_reauth_keeps_the_withdrawal(world: RawWorld) -> None:
     m1 = world.login("m1", ACC_A, ACC_B)
     stale = delta("cv_ws_permission_snapshots_refused_total", event="reauth")
     revoked = delta("cv_ws_revoked_total", reason="account_scope_changed")
@@ -279,8 +268,8 @@ def test_x02_ac_14_a_grant_withdrawn_during_a_reauth_keeps_the_withdrawal(
     kinds = [f["t"] for f in got]
     assert kinds[:4] == ["permission_change", "revoked", "revoked", "auth_ok"]  # the change first
     assert next(f for f in got if f["t"] == "auth_ok")["p"]["account_scope"] == [str(ACC_A)]
-    snaps = [f for f in got if f["t"] == "snap"]  # with the flag on, the narrowed one's reset
-    assert [f["meta"]["reason"] for f in snaps] == (["reconfigure"] if flag else [])
+    snaps = [f for f in got if f["t"] == "snap"]  # the narrowed one's reset
+    assert [f["meta"]["reason"] for f in snaps] == ["reconfigure"]
     assert denied["error"]["code"] == "account_scope_denied" and stale() == 1  # the old read lost
     assert revoked() == 2 and len(world.audit.of("ws.subscription.revoked")) == 2
     (row,) = world.audit.of("ws.permission_snapshot.refused")

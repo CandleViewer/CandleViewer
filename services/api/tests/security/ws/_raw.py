@@ -3,7 +3,7 @@ a gateway audit sink, driven by a raw client that keeps none of the web client's
 keeps its production wiring and fake clock. Added: a real `SessionService` behind production's
 `app._session_authenticator` (enrolment gate off; E09-X02 covers it), the grants `login` gives each
 user, and E09-X02's `RegistryAudit` (the gateway's `emit` kwargs, checked for the action name only).
-Slice b2 adds the backpressure flag, `races` (a change landing while a principal read is parked)
+Slice b2 adds the outbound budget, `races` (a change landing while a principal read is parked)
 and `positions` and `orders` snapshots that name their accounts.
 No code is shared with `apps/web`: frames are hand-built and sent unvalidated.
 """
@@ -115,7 +115,7 @@ class RawWorld(World):
         self,
         log: pytest.LogCaptureFixture,
         std: pytest.CaptureFixture[str],
-        backpressure: BackpressureConfig | None = None,
+        backpressure: BackpressureConfig = _harness.ON,
     ) -> None:
         self.audit = RegistryAudit()
         self.reads = 0  # principal reads so far; `races[n]` runs while read n is parked
@@ -349,8 +349,8 @@ def publish(world: RawWorld, family: str, account: uuid.UUID, *also: uuid.UUID) 
 
 
 def drained(c: Client) -> list[dict[str, Any]]:
-    """Every frame queued for `c` so far, read through the `pong` of a `ping` sent now: with the
-    backpressure flag off one FIFO queue puts that reply after them."""
+    """The frames sent to `c` before the `pong` of a `ping` sent now. That `pong` rides the
+    priority lane (23 §8.4), so a normal-lane frame still held in its pacing window follows it."""
     c.send({"t": "ping", "id": "drain"})
     frames: list[dict[str, Any]] = []
     while (frame := c.recv())["t"] != "pong":

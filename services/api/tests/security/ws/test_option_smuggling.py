@@ -19,7 +19,6 @@ from typing import Any
 import pytest
 
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
 from tests.contract.ws._harness import OFFERS, current_wire
 from tests.security.ws import test_topic_injection as inj
@@ -257,7 +256,7 @@ def test_x02_ac_09_one_level_past_the_depth_cap_is_a_malformed_frame_not_an_opti
 
 @pytest.mark.parametrize("row", INSIDE.values(), ids=INSIDE.keys())
 def test_x02_ac_08_09_the_limits_are_exact_the_value_just_inside_is_served(
-    world: RawWorld, row: tuple[Any, dict[str, Any]], flag: BackpressureConfig | None
+    world: RawWorld, row: tuple[Any, dict[str, Any]]
 ) -> None:
     entry, effective = row
     ch = entry if isinstance(entry, str) else entry["ch"]
@@ -267,8 +266,6 @@ def test_x02_ac_08_09_the_limits_are_exact_the_value_just_inside_is_served(
         assert inj.send_batch(c, entry) == inj.sub_ok(world, *results)
         snapped = inj.snapped(c)
     served = [inj.T, ch, inj.TICKER]
-    if flag is None:  # one FIFO queue: the batch's order
-        assert snapped == served
-    else:  # 23 §8.4 "Lanes": `orders` rides the priority lane, sent first; order holds per lane
-        priority = [t for t in served if t == "orders"]
-        assert snapped == priority + [t for t in served if t not in priority]
+    # 23 §8.4 "Lanes": `orders` rides the priority lane, sent first; order holds per lane
+    priority = [t for t in served if t == "orders"]
+    assert snapped == priority + [t for t in served if t not in priority]
