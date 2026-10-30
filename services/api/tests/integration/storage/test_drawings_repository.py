@@ -881,6 +881,19 @@ def _timed(label: str, timings: list[float]) -> float:
     return p99
 
 
+#: Runs per owner in the perf tests: the #2727 quota bounds a real owner's rows (500 a symbol,
+#: 5 000 a user), so the runs rotate over owners, each run on its own symbol, under the real quota.
+_RUNS_PER_OWNER = 20
+
+
+def _perf_owners(dsn: str, runs: int) -> list[str]:
+    return [_user(dsn) for _ in range(-(-runs // _RUNS_PER_OWNER))]
+
+
+def _perf_symbol(run: int) -> str:  # one symbol per run of an owner: at most 200 creates on it
+    return f"S{run % _RUNS_PER_OWNER:02d}USDT"
+
+
 @pytest.mark.perf
 # Client wall clock on shared CI runners (C-9.3). ticket: GH-2986 quarantined: 2026-10-16
 @pytest.mark.flaky
@@ -904,23 +917,26 @@ async def test_batch_of_200_creates_p99_under_50ms(pg_dsn: str) -> None:
     tests ALSO run there in the full-file context; they are judged in both jobs. Local runs on
     a shared laptop are informational only. The time includes the commit, which is what a
     caller experiences.
+
+    Owners rotate every `_RUNS_PER_OWNER` runs, each run on its own symbol (4 000 live rows per
+    owner at most), so every batch passes the real #2727 quota and pays its count.
     """
-    owner = _user(pg_dsn)
+    owners = _perf_owners(pg_dsn, _WARMUP + _BATCH_RUNS)
     _vacuum(pg_dsn)
     rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-batch-perf")
     repo = SqlAlchemyDrawingRepository(rel)
-    fields = _f()
 
-    def ops() -> list[BatchOp]:
+    def ops(run: int) -> list[BatchOp]:
+        fields = _f(_perf_symbol(run))
         return [CreateOp(str(uuid.uuid4()), fields) for _ in range(200)]
 
     try:
-        for _ in range(_WARMUP):  # warm-up: connection, statement cache
-            await repo.apply_batch(owner, ops())
+        for run in range(_WARMUP):  # warm-up: connection, statement cache
+            await repo.apply_batch(owners[run // _RUNS_PER_OWNER], ops(run))
         _checkpoint(pg_dsn)
         timings: list[float] = []
-        for _ in range(_BATCH_RUNS):
-            batch = ops()
+        for run in range(_WARMUP, _WARMUP + _BATCH_RUNS):
+            owner, batch = owners[run // _RUNS_PER_OWNER], ops(run)
             t0 = time.perf_counter()
             result = await repo.apply_batch(owner, batch)
             timings.append((time.perf_counter() - t0) * 1000)
@@ -950,27 +966,31 @@ async def test_mixed_batch_of_200_p99_under_50ms(pg_dsn: str) -> None:
     tests ALSO run there in the full-file context; they are judged in both jobs. Local runs on
     a shared laptop are informational only. The time includes the commit, which is what a
     caller experiences.
+
+    Owners rotate every `_RUNS_PER_OWNER` runs, each run on its own symbol; a run's update and
+    delete targets are its owner's own seeded rows on that symbol. An owner peaks at 3 000 live
+    rows and a symbol at 150, so every batch passes the real #2727 quota and pays its count.
     """
-    owner = _user(pg_dsn)
+    runs = _WARMUP + _BATCH_RUNS
+    owners = _perf_owners(pg_dsn, runs)
     _vacuum(pg_dsn)
     rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-batch-perf-mixed")
     repo = SqlAlchemyDrawingRepository(rel)
-    fields = _f()
-    runs = _WARMUP + _BATCH_RUNS
-    pool: list[DrawingRow] = []  # 50 update targets + 50 delete targets per run
-    for _ in range(100 * runs // MAX_BATCH_OPS_STORAGE):
-        seeded = await repo.apply_batch(
-            owner, [CreateOp(str(uuid.uuid4()), fields) for _ in range(MAX_BATCH_OPS_STORAGE)]
-        )
-        pool.extend(seeded.created)
+    pool: list[DrawingRow] = []  # 50 update targets + 50 delete targets per run, run order
+    per_seed = MAX_BATCH_OPS_STORAGE // 100  # runs seeded by one batch (same owner: 20 % 2 == 0)
+    for first in range(0, runs, per_seed):
+        seed = [CreateOp(str(uuid.uuid4()), _f(_perf_symbol(r)))
+                for r in range(first, min(first + per_seed, runs)) for _ in range(100)]  # fmt: skip
+        pool.extend((await repo.apply_batch(owners[first // _RUNS_PER_OWNER], seed)).created)
     try:
         timings: list[float] = []
         for run in range(runs):
             if run == _WARMUP:  # seed + warm-up are flushed before the first measured run
                 _checkpoint(pg_dsn)
+            owner, fields = owners[run // _RUNS_PER_OWNER], _f(_perf_symbol(run))
             chunk = pool[run * 100 : (run + 1) * 100]
             batch: list[BatchOp] = [CreateOp(str(uuid.uuid4()), fields) for _ in range(100)]
-            batch += [UpdateOp(r.id, r.updated_at, _f(label="m")) for r in chunk[:50]]
+            batch += [UpdateOp(r.id, r.updated_at, _f(r.symbol, label="m")) for r in chunk[:50]]
             batch += [DeleteOp(r.id, r.updated_at) for r in chunk[50:]]
             t0 = time.perf_counter()
             result = await repo.apply_batch(owner, batch)

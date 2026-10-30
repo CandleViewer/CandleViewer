@@ -2567,8 +2567,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "cv_drawings_rows_per_user",
         "gauge",
         "rows",
-        ("stat",),
-        "Live drawings per owner across all owners, stat=max|p95 only, no per-user label "
+        ("kind",),
+        "Live drawings per owner across all owners, kind=max|p95 only, no per-user label "
         "(#2727, SR-E14-11).",
         "dashboard only",
         _P,

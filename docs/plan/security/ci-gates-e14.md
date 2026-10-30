@@ -33,10 +33,10 @@
 in the same job: no new required-check name (C-9.1; the one step added is below); `ERROR` blocks
 (`security_gate.py`), so the whole-tree scan keeps `services/api` at zero unsuppressed findings.
 
-**The four exceptions below are pinned by statement, not by count.**
+**The five exceptions below are pinned by statement, not by count.**
 `tools/ci/check_drawings_exception_sites.py` scans `services/api/candleviewer` with the five rules and
 `--disable-nosem`, names each finding by its file and the statement it opens (`_PURGE`), and compares
-them with `tools/ci/drawings-exception-sites.json`. The `semgrep-bandit` job runs it, so a fifth
+them with `tools/ci/drawings-exception-sites.json`. The `semgrep-bandit` job runs it, so a sixth
 unscoped statement, or an annotation moved to another statement of the same file, fails the job (the
 pin, with the whole-tree scan's zero-finding gate beside it) until an entry in the list lands,
 reviewed under C-10.1: the list is not a C-10.2 path, so it needs no security-team approval (a count
@@ -53,11 +53,12 @@ follow the persistence rules; the nightly ZAP profile is under DAST below.
 
 ## Reviewed exceptions
 
-Four statements are unscoped by design. Each has a comment-only
+Five statements are unscoped by design. Each has a comment-only
 `nosemgrep: cv-drawings-query-missing-owner-filter reason=<token> owner=@basiltt review=2027-03-25`
 on the line above it, with its rationale (CI-SEC-006: review within 180 days, policed by
 governance): `_EXISTS_OTHER` (asks whether an id is another owner's; a bool; DR20), `_PURGE`
-(retention, no caller; DR35) and `_COUNT_LIVE` (the all-owner rows gauge; DR25) in
+(retention, no caller; DR35), `_COUNT_LIVE` (the all-owner rows gauge; DR25) and `_ROWS_PER_USER`
+(the per-owner max and p95 gauge, two numbers and no owner; #2727, DR32) in
 `drawings_sqlalchemy.py`, and `_PURGE_LAYOUTS` in `workspaces_sqlalchemy.py` (its correlated
 `SELECT ... FROM drawings` looks for live drawings of any owner under a layout it would purge;
 E15-T01's spec decision on #402, SR-E14-09).

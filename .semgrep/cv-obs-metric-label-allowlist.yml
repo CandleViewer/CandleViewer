@@ -149,6 +149,8 @@ rules:
       #   SkipReason (`api/trade_group_preview.SKIP_REASONS`), each child bound once; max_series=5.
       # kind, also (E28-T05 #909, cv_tradegroup_ws_frames_total): {snapshot, delta}, bound once in
       #   `ws_wiring.TradeGroupFrameCounts`; never an account or a user; max_series=2.
+      # kind, also (#2727, cv_drawings_rows_per_user): {max, p95} of live drawings per owner,
+      #   set by the drawings purge task; never a user; max_series=2.
       # trigger (E29-T06 #914, oms_reconcile_seconds, oms_reconcile_passes_total): what started a
       #   reconciliation pass, the five of 20 Sec.12.1 {startup, reconnect, periodic, manual,
       #   unknown}; never an account (BQ-11); max_series=5, or 30 with `result`.

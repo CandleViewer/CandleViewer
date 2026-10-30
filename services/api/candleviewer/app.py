@@ -2350,7 +2350,7 @@ def create_app(
         rows_per_user=metrics_facade.gauge(
             "cv_drawings_rows_per_user",
             "Live drawings per owner: max, p95.",
-            ("stat",),
+            ("kind",),
             max_series=2,
         ),
     )

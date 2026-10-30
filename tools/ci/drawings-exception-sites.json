@@ -1,5 +1,5 @@
 {
-  "description": "The statements the drawings persistence rules (.semgrep/cv-drawings-*) report with nosemgrep disabled: the four unscoped by design, each with a reviewed annotation in the source (CI-SEC-006). tools/ci/check_drawings_exception_sites.py compares a scan with this list, so a fifth unscoped statement needs an entry here, reviewed under C-10.1 (this list is not a C-10.2 path; docs/plan/security/ci-gates-e14.md); an annotation moved to another statement of its file fails the semgrep-bandit job, in that check or the whole-tree scan.",
+  "description": "The statements the drawings persistence rules (.semgrep/cv-drawings-*) report with nosemgrep disabled: the five unscoped by design, each with a reviewed annotation in the source (CI-SEC-006). tools/ci/check_drawings_exception_sites.py compares a scan with this list, so a sixth unscoped statement needs an entry here, reviewed under C-10.1 (this list is not a C-10.2 path; docs/plan/security/ci-gates-e14.md); an annotation moved to another statement of its file fails the semgrep-bandit job, in that check or the whole-tree scan.",
   "rule": "cv-drawings-query-missing-owner-filter",
   "sites": [
     {
@@ -13,6 +13,10 @@
     {
       "path": "services/api/candleviewer/storage/repositories/drawings_sqlalchemy.py",
       "statement": "_COUNT_LIVE"
+    },
+    {
+      "path": "services/api/candleviewer/storage/repositories/drawings_sqlalchemy.py",
+      "statement": "_ROWS_PER_USER"
     },
     {
       "path": "services/api/candleviewer/storage/repositories/workspaces_sqlalchemy.py",

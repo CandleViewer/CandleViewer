@@ -193,6 +193,9 @@ _COUNT_LIVE = sa.text(
     "SELECT tool, count(*) AS n FROM drawings WHERE deleted_at IS NULL GROUP BY tool"
 )
 # #2727: the owner's quota lock (two-key form, apart from single-key locks), then its count.
+# Race-free under READ COMMITTED, the server default this engine keeps (no `isolation_level`):
+# each statement after the lock sees the previous holder's commit. Under REPEATABLE READ the
+# snapshot would be fixed before the lock is granted, and the count could miss that commit.
 _QUOTA_LOCK = sa.text(
     "SELECT pg_advisory_xact_lock(hashtext('drawings_quota'), "
     "hashtext(CAST(CAST(:owner AS uuid) AS text)))"
@@ -495,8 +498,10 @@ class SqlAlchemyDrawingRepository:
         async def attempt() -> DrawingRow:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_QUOTA_LOCK, {"owner": owner})  # before the layouts
-                await _lock_live_layouts(uow, owner, [("layout_id", fields.layout_id)])
+                # the count takes no row lock: a create past the quota is the 409, whatever its
+                # layout, as the router's fake answers it
                 await self._check_quota(uow, owner, {fields.symbol: 1})
+                await _lock_live_layouts(uow, owner, [("layout_id", fields.layout_id)])
                 row = (await uow.session.execute(_INSERT, params)).mappings().one()
                 await uow.commit()
             return _to_row(row)

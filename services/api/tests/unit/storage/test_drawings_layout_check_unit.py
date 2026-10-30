@@ -287,7 +287,7 @@ def test_a_deadlock_is_read_from_the_wrapper_or_the_driver_cause() -> None:
 
 
 _ORDER = {
-    "create": ["_QUOTA_LOCK", "_LAYOUTS_SHARE", "_LIVE_BY_SYMBOL", "_INSERT"],
+    "create": ["_QUOTA_LOCK", "_LIVE_BY_SYMBOL", "_LAYOUTS_SHARE", "_INSERT"],
     "update": ["_LAYOUTS_SHARE", "_UPDATE"],
     "batch": ["_QUOTA_LOCK", "_LAYOUTS_SHARE", "_SNAPSHOT", "_LIVE_BY_SYMBOL", "_INSERT_MANY"],
     "batch_update": ["_LAYOUTS_SHARE", "_SNAPSHOT", "_UPDATE_MANY"],
