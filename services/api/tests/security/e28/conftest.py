@@ -19,9 +19,11 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 from typing import Final
 
 import pytest
+from dotenv import dotenv_values
 
 from candleviewer.statechart.bindings import b16_session
 from tests.security.e28._world import E28World, e28_world
@@ -46,8 +48,15 @@ def live_target_refusal(env: Mapping[str, str]) -> str | None:
     return None
 
 
+def target_env() -> dict[str, str]:
+    """What the app's `Settings` reads: a `.env` at the working directory (`env_file`), with the
+    process environment over it. The guard judges both; it names a variable, never a value."""
+    dotenv = {k: v for k, v in dotenv_values(Path.cwd() / ".env").items() if v is not None}
+    return {**dotenv, **os.environ}
+
+
 def _abort_if_live() -> None:
-    if (why := live_target_refusal(os.environ)) is not None:
+    if (why := live_target_refusal(target_env())) is not None:
         pytest.exit(f"E28-X03 security suite refused to run: {why}", returncode=4)
 
 

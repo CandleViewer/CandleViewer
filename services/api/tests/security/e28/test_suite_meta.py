@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi import APIRouter
@@ -24,7 +25,7 @@ from candleviewer.api.deny_by_default import served_operations
 from tests.contract.rbac.rbac_harness import ACTORS
 from tests.security.e28 import _cells as cells
 from tests.security.e28._world import E28World
-from tests.security.e28.conftest import live_target_refusal
+from tests.security.e28.conftest import live_target_refusal, target_env
 
 _HERE = os.path.dirname(__file__)
 #: Declared, not served: each owes its cells the day its ticket mounts it.
@@ -138,7 +139,7 @@ def test_the_guard_admits_a_demo_target_and_this_run() -> None:
     demo = {"CV_ENVIRONMENT": "demo", "CV_CI_ALLOWED_HOSTS": "postgres,questdb",
             "CV_PG_DSN": "postgresql://cv@localhost/test"}  # fmt: skip
     assert live_target_refusal(demo) is None
-    assert live_target_refusal(dict(os.environ)) is None
+    assert live_target_refusal(target_env()) is None  # this run, its `.env` included
 
 
 def test_every_test_of_the_suite_runs_behind_the_guard(request: pytest.FixtureRequest) -> None:
@@ -146,3 +147,13 @@ def test_every_test_of_the_suite_runs_behind_the_guard(request: pytest.FixtureRe
     assert mine, "no item of the suite collected"
     unguarded = [i.nodeid for i in mine if "_live_guard" not in getattr(i, "fixturenames", ())]
     assert not unguarded, unguarded
+
+
+def test_the_guard_reads_a_dotenv_the_app_would_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fable at 089f4cf4: `Settings` reads `.env` at the working directory, so the guard does."""
+    (tmp_path / ".env").write_text("CV_ENVIRONMENT=live\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CV_ENVIRONMENT", raising=False)
+    assert live_target_refusal(target_env()) == "CV_ENVIRONMENT targets live"

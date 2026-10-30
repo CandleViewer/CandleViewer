@@ -48,7 +48,8 @@ csrf_token_invalid` for an unsafe call with no session, which the CSRF guard ref
 
 An allowed cell is not refused and answers below 500. No answer names an account the caller does
 not hold. One test per read route asserts the ungranted and the absent 404 are byte-identical in
-status, body and headers. Every mounted write has a forbidden-role cell and a cross-account cell.
+status and body, and identical in `content-type`, `content-length`, `etag` and `cache-control`;
+their timing is not asserted (the residual 24 records under SR-E29-13). Every mounted write has a forbidden-role cell and a cross-account cell.
 
 The WS topic: for each actor, a `sub` naming a granted, a foreign and an absent account. The Owner's
 is every group; the granted Manager's is narrowed silently (an `ok` result, the narrowing audited,

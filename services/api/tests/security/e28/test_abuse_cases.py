@@ -321,7 +321,10 @@ def test_ac11_another_accounts_profile_id_answers_as_a_missing_one(unchanged: E2
 def test_ac15_one_account_repeated_in_the_legs_is_422_before_any_read(
     unchanged: E28World,
 ) -> None:
-    """AC-15's preview half, PF-T17: a repeated account is refused whole, recorded."""
+    """AC-15's preview half, PF-T17: a repeated account is refused whole, recorded, before the
+    preview reads any account."""
+    reads = len(unchanged.preview.read)
     resp, records = call(unchanged, "ac15", "POST", PREVIEW, M, json=body(*[GRANTED] * 25))
     assert resp.status_code == 422
+    assert len(unchanged.preview.read) == reads
     assert len(records) == 1 and records[0][0] == PREVIEWED

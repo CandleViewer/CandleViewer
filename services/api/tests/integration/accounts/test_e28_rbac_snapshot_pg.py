@@ -18,7 +18,6 @@ check and writes none at all (`test_trade_group_preview_read_only_pg.py`). Needs
 
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -40,12 +39,12 @@ from tests.contract.rbac import rbac_harness as rbac
 from tests.contract.test_account_profile_writes_provider import _ALT, _RISK
 from tests.integration import _refused
 from tests.security.e28 import _cells as cells
-from tests.security.e28.conftest import live_target_refusal
+from tests.security.e28.conftest import live_target_refusal, target_env
 from tests.unit.api.test_trade_group_definition_create import payload
 from tests.unit.api.test_trade_group_preview_route import body
 
 pytestmark = pytest.mark.integration
-if (_LIVE := live_target_refusal(os.environ)) is not None:  # the suite's guard, here too
+if (_LIVE := live_target_refusal(target_env())) is not None:  # the suite's guard, here too
     pytest.exit(f"E28-X03 security suite refused to run: {_LIVE}", returncode=4)
 
 pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16, migrated; its database is named `test`
