@@ -18,7 +18,7 @@ const NETWORK_GLOBALS = [
   },
 ];
 
-// C-2.16 DOM ban for src/core|layers|scene: every browser global (`globals.browser`) that is
+// C-2.16 DOM ban for src/core|layers|scene|model: every browser global (`globals.browser`) that is
 // neither an ES built-in nor a Node global, plus `navigator`, which Node also defines. The
 // package tsconfig.core.json carries no DOM lib either (only tsconfig.dom.json, for src/api and
 // src/host, does), so a DOM type there fails `tsc` as well (E11-T01).
@@ -29,7 +29,8 @@ const DOM_GLOBALS = [
   "Navigator",
 ].map((name) => ({
   name,
-  message: "C-2.16: no DOM globals in src/core|layers|scene (DOM glue is the host adapter's).",
+  message:
+    "C-2.16: no DOM globals in src/core|layers|scene|model (DOM glue is the host adapter's).",
 }));
 
 // C-2.16 exchange-knowledge ban on symbol names and string literals (E11-T01), and the network
@@ -179,8 +180,8 @@ export default tseslint.config(
   },
   {
     // C-2.16: core, layers and the scene graph touch no DOM at all, not just `document` /
-    // `window` (E11-T01, E11-S01: requestAnimationFrame is bound in the worker or host only).
-    files: ["src/core/**/*.ts", "src/layers/**/*.ts", "src/scene/**/*.ts"],
+    // `window` (E11-T01, E11-S01, E11-T03: requestAnimationFrame is bound in the worker or host only).
+    files: ["src/core/**/*.ts", "src/layers/**/*.ts", "src/scene/**/*.ts", "src/model/**/*.ts"],
     rules: {
       "no-restricted-globals": ["error", ...NETWORK_GLOBALS, ...DOM_GLOBALS],
     },
