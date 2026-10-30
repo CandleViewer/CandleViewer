@@ -1,0 +1,135 @@
+/*
+ * CMP-219 SymbolPicker (E08-D05 A-D05-4, board B02): the trigger and, beside it, its chip. The trigger is a hairline
+ * `border.default` control (decoration: its value and chevron identify it), hover `surface.hover`, and pressed or
+ * expanded `surface.selected`. The value is `type.num.base` and never truncates (the host's toolbar overflows it).
+ * The chip is caption text in `text.secondary` after an 8 px dot, filled while recording; delisted, CMP-239's ⊘ in
+ * the delisted indicator, and the value struck in the delisted text (CMP-239 is not built: a token-based strike).
+ * Tokens only; nothing animates (E08-D05 hand-off Table 4).
+ */
+.cv-symbolpicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-lg);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.cv-symbolpicker__trigger {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  padding-inline: var(--space-inset-sm);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+/* Comfortable (here or on an ancestor) widens the padding (hand-off density table); the root's compact wins. */
+[data-density="comfortable"] .cv-symbolpicker__trigger {
+  padding-inline: var(--space-inset-md);
+}
+
+.cv-symbolpicker[data-density="compact"] .cv-symbolpicker__trigger {
+  padding-inline: var(--space-inset-sm);
+}
+
+.cv-symbolpicker__trigger:hover {
+  background: var(--color-surface-hover);
+}
+
+.cv-symbolpicker__trigger:active,
+.cv-symbolpicker__trigger[aria-expanded="true"] {
+  background: var(--color-surface-selected);
+}
+
+.cv-symbolpicker__value {
+  flex: none;
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+  white-space: nowrap;
+}
+
+.cv-symbolpicker__trigger[data-delisted] .cv-symbolpicker__value {
+  color: var(--color-data-confidence-delisted-text);
+  text-decoration: line-through;
+}
+
+.cv-symbolpicker__chevron,
+.cv-symbolpicker__glyph {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+.cv-symbolpicker__chevron {
+  color: var(--color-text-secondary);
+}
+
+.cv-symbolpicker__chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* B02's dot: an 8 px circle in the chip's text colour, hollow for "Not recorded", filled for "Recording". */
+.cv-symbolpicker__dot {
+  box-sizing: border-box;
+  flex: none;
+  inline-size: var(--space-inset-sm);
+  block-size: var(--space-inset-sm);
+  border: calc(var(--border-hairline) * 1px) solid currentcolor;
+  border-radius: var(--radius-circle);
+}
+
+.cv-symbolpicker__chip[data-marker="recording"] .cv-symbolpicker__dot {
+  background: currentcolor;
+}
+
+.cv-symbolpicker__chip[data-marker="delisted"] .cv-symbolpicker__glyph {
+  color: var(--color-data-confidence-delisted-indicator);
+}
+
+@media (forced-colors: active) {
+  .cv-symbolpicker__trigger,
+  .cv-symbolpicker__trigger:hover,
+  .cv-symbolpicker__trigger:active {
+    border-color: ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+    forced-color-adjust: none;
+  }
+
+  .cv-symbolpicker__trigger:hover {
+    border-color: Highlight;
+  }
+
+  /* Expanded: the fill is lost in forced colours, so Highlight and HighlightText are set explicitly. */
+  .cv-symbolpicker__trigger[aria-expanded="true"] {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  /* The strike keeps the value's colour; the chevron follows it. */
+  .cv-symbolpicker__trigger[data-delisted] .cv-symbolpicker__value,
+  .cv-symbolpicker__chevron {
+    color: inherit;
+  }
+
+  /* A background-only mark would be repainted as Canvas, so the dot keeps a CanvasText edge and fill. */
+  .cv-symbolpicker__dot {
+    border-color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .cv-symbolpicker__chip[data-marker="recording"] .cv-symbolpicker__dot {
+    background: CanvasText;
+  }
+}

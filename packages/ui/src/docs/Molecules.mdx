@@ -5,8 +5,9 @@ import { Meta } from "@storybook/addon-docs/blocks";
 # Molecules
 
 `CMP-040..069` in `docs/plan/15-component-catalogue.md`: form fields, menus, tabs, dialogs, toasts,
-tables and cards. A component's stories live under `Molecules/<Component>` and ship with the
-component (E05-S01..S04).
+tables and cards; and three molecules catalogued in later bands: CMP-213 FuzzyList, and the trading
+molecules CMP-160 SymbolSearchInput and CMP-219 SymbolPicker. A component's stories live under
+`Molecules/<Component>` and ship with the component (E05-S01..S04).
 
 ## RbacGate (CMP-079)
 
@@ -593,3 +594,24 @@ The band (`color.surface.selected` behind the days between the ends) is decorati
 fields and the two sentences carry the range. While the end is pending it previews to the day under
 the pointer, else the focused day, and selects nothing. The fields wrap, so End stacks under Start
 when the host is narrower than both.
+
+### SymbolPicker (CMP-219, APG Button: a button that opens a dialog)
+
+| Keys            | Action                                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Enter / Space   | Calls `onOpen`: the host opens SCR-041 (chart toolbar) or SCR-102 (TopBar), and its input takes focus. Stopped here, so the shell's window keymap never sees them. |
+| Tab / Shift+Tab | One stop; in CMP-221's toolbar a roving one, its `tabIndex` and `ref` the host's.                                                                                  |
+| `/`             | The shell's, not the trigger's: SCR-041 with the chart focused, else SCR-102 (E08-D05 D-1).                                                                        |
+
+| Element | Role                    | Name                                                        | ARIA                                                                                                                         |
+| ------- | ----------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| trigger | button                  | "Symbol: BTCUSDT, 1 minute": the value, then the `interval` | `aria-haspopup="dialog"`, `aria-expanded` (a CMP-017 Popover's own, else the host's `expanded`), `aria-describedby` the chip |
+| chip    | text, beside the button | —                                                           | "Recording", "Not recorded" or "Delisted by the exchange"; none while the state is unknown                                   |
+
+The type-ahead, the list, `Esc` and the commit are the host dialog's (E08-D05 A-D05-4). The name holds the visible
+value (WCAG 2.5.3); the chevron is decorative. A delisted value is struck, and still opens: choosing another symbol
+is the way out.
+
+As a CMP-017 Popover's anchor the trigger keeps what the Popover composes onto it: its `aria-expanded`,
+`aria-controls` and toggle (after `onOpen`). So that host passes no `expanded` and holds no state, and a press on
+the open trigger closes the popover. Any other host passes `expanded`, its dialog's state.

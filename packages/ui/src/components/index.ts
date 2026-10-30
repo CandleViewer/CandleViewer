@@ -264,6 +264,9 @@ export type { SparklineProps, SparklineTrend } from "./Sparkline.js";
 export { Spinner } from "./Spinner.js";
 export type { SpinnerProps } from "./Spinner.js";
 
+export { SymbolPicker } from "./SymbolPicker.js";
+export type { SymbolPickerProps, SymbolRecordingState } from "./SymbolPicker.js";
+
 export { SymbolSearchInput } from "./SymbolSearchInput.js";
 export type { SymbolSearchInputProps, SymbolSearchTarget } from "./SymbolSearchInput.js";
 
