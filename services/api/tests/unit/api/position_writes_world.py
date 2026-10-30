@@ -264,15 +264,17 @@ class Positions:
     records: list[RequestRecord] = field(default_factory=list)
     sweeps: list[tuple[uuid.UUID, uuid.UUID]] = field(default_factory=list)
     waits: list[float] = field(default_factory=list)
+    #: The runtime's clock, the world's (`World.clock`).
+    clock: list[float] = field(default_factory=lambda: [0.0])
 
     async def entry_stop_ready(self, account_id: AccountId) -> None:
         if self.stop_refusal is not None:
             raise self.stop_refusal
 
     async def await_fill(
-        self, account_id: uuid.UUID, order_id: uuid.UUID, *, wait_s: float
+        self, account_id: uuid.UUID, order_id: uuid.UUID, *, deadline: float
     ) -> CloseFill:
-        self.waits.append(wait_s)
+        self.waits.append(deadline - self.clock[0])  # what is left on the runtime's clock
         if self.fill_error is not None:
             raise self.fill_error
         if self.log is not None:
@@ -332,6 +334,9 @@ class Runtime:
     refuse_run: bool = False
     tasks: set[asyncio.Task[Response]] = field(default_factory=set)
 
+    def monotonic(self) -> float:
+        return self.positions.clock[0]
+
     def run(self, coro: Coroutine[Any, Any, Response]) -> asyncio.Task[Response]:
         if self.refuse_run:
             coro.close()
@@ -368,6 +373,7 @@ class World:
     def __post_init__(self) -> None:
         self.records = Records(self.pipeline)
         self.route.environment = self.cancel_all.environment = self.environment
+        self.positions.clock = self.clock  # one clock: the route's deadline and the fill wait
 
     def runtime(self) -> Runtime:
         return Runtime(
@@ -389,8 +395,7 @@ class World:
             source, lambda: runtime, reads, **common
         ))  # fmt: skip
         app.include_router(make_position_reverse_router(
-            source, lambda: runtime, reads, oms_enabled=lambda: self.oms_enabled,
-            monotonic=lambda: self.clock[0], **common,
+            source, lambda: runtime, reads, oms_enabled=lambda: self.oms_enabled, **common,
         ))  # fmt: skip
         return app
 

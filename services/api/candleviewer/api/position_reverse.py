@@ -41,7 +41,6 @@ the row (C-12.6).
 from __future__ import annotations
 
 import asyncio
-import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -195,11 +194,11 @@ def make_position_reverse_router(
     reads: OmsReads | None, *, audit: AuditEmitter, records: SubmitAudit,
     oms_enabled: Callable[[], bool], metrics: Metrics, auth: SessionsLike | None = None,
     replays: IdempotencyCache | None = None, limiter: WriteLimiter | None = None,
-    pager: Pager | None = None, monotonic: Callable[[], float] = time.monotonic,
-    wait_s: float = REVERSE_WAIT_S,
+    pager: Pager | None = None, wait_s: float = REVERSE_WAIT_S,
 ) -> APIRouter:  # fmt: skip
-    """`reversePosition` (module docstring). `monotonic` is the clock the wait is measured on,
-    from the request's arrival, at most `wait_s`."""
+    """`reversePosition` (module docstring). The wait is at most `wait_s` from the request's
+    arrival, measured on the runtime's own clock (`PositionRuntime.monotonic`), the one the fill
+    wait's deadline is read on, so the deadline uses one clock."""
     router = APIRouter(tags=["positions"])
     kept = replays if replays is not None else IdempotencyCache()
     rate = limiter if limiter is not None else WriteLimiter(rate_per_minute=RATE_PER_MINUTE)
@@ -313,8 +312,8 @@ def make_position_reverse_router(
                 return order_problem(IdempotencyInFlight(retry_after_s=1))
             return await decide(adm, replay, open_ref)
         close_id = closed.written.order.id
-        remaining = wait_s - (monotonic() - adm.started)
-        fill = await oms.positions.await_fill(account, close_id, wait_s=remaining)
+        deadline = adm.started + wait_s  # on the runtime's clock, from the request's arrival
+        fill = await oms.positions.await_fill(account, close_id, deadline=deadline)
         try:  # the close as it stands after the wait, else as its first answer wrote it
             close_body, _ = await replayed_body(oms, closed, scope, account)
         except (OmsError, ValueError):
@@ -373,7 +372,8 @@ def make_position_reverse_router(
     async def reverse_position(
         request: Request, position_ref: Annotated[str, Path(alias="positionId")]
     ) -> Response:
-        started = monotonic()
+        arrived = runtime()  # its clock read at arrival; step 6 judges whether it is composed
+        started = None if arrived is None else arrived.monotonic()
         admitted = await admit_position_write(
             request, position_ref, operation=_OPERATION, principals=principals, auth=auth,
             audit=audit, reads=reads, limiter=rate, max_body=MAX_REVERSE_BODY_BYTES,
@@ -387,6 +387,8 @@ def make_position_reverse_router(
             return problem(501, "not_implemented", "No OMS is composed on this backend.")
         if oms.readiness != "ok":
             return not_ready()
+        if started is None:  # composed since the request arrived: measured from now
+            started = oms.monotonic()
         account, step = AccountId(row.exchange_account_id), "arm"
         try:
             armed = oms.route.arm_records.check(

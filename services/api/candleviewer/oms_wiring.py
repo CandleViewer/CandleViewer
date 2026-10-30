@@ -2046,10 +2046,8 @@ class OnLanePositions:
     async def entry_stop_ready(self, account_id: AccountId) -> None:
         await _on_lane(self.parts, self.parts.positions.entry_stop_ready(account_id), None)
 
-    async def await_fill(self, account_id: UUID, order_id: UUID, *, wait_s: float) -> CloseFill:
-        positions = self.parts.positions
-        deadline = positions.monotonic() + max(wait_s, 0.0)
-        fill = positions.await_fill(account_id, order_id, deadline=deadline)
+    async def await_fill(self, account_id: UUID, order_id: UUID, *, deadline: float) -> CloseFill:
+        fill = self.parts.positions.await_fill(account_id, order_id, deadline=deadline)
         return await _on_lane(self.parts, fill, None)
 
     async def venue_position(self, row: PositionRow) -> VenuePosition:
@@ -2364,6 +2362,11 @@ class OmsRuntime:
         startup = self._startup
         failed = self._failed or (startup is not None and startup.done())
         return "degraded" if failed else "starting"
+
+    def monotonic(self) -> float:
+        """The runtime's injected monotonic clock, the one the position writes' deadlines are
+        measured on (E29-T07 #915: a reversal's fill wait starts at the request's arrival)."""
+        return float(self._monotonic())
 
     @property
     def readiness(self) -> OmsState:
