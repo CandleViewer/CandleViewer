@@ -4611,8 +4611,13 @@ export interface paths {
      * Close a position (fully or partially)
      * @description Issues a reduce-only order of the opposite side. `order_type: "market` is the flatten"
      *     button; `limit` with `price` is a controlled exit. `pct` closes a fraction, `qty` an
-     *     absolute amount; exactly one of the two is required. Attached TP/SL of the closed
-     *     portion is cancelled automatically to avoid orphan conditional orders.
+     *     absolute amount; exactly one of the two is required. At 100 % the exchange's flatten
+     *     ends the position's own TP/SL, and the closed size's per-size conditional orders are
+     *     cancelled; below 100 % the position's protective orders are left as they are (adjusting
+     *     them is E32's), so the remaining position keeps its native stop (C-2.6). Answers
+     *     `OrderAcceptance` as `placeOrder` does for a reduce-only order: `order` set,
+     *     `trade_group` null (a reduce-only order joins no trade group). Amended 2026-10-29 by
+     *     an orchestrator contract decision (#915), before the route was implemented.
      */
     post: operations["closePosition"];
     delete?: never;
@@ -4658,10 +4663,20 @@ export interface paths {
     put?: never;
     /**
      * Reverse a position (flatten and open the opposite side)
-     * @description Executed as a single order of `2 × size` in one-way mode, or as an explicit close +
-     *     open pair in hedge mode (`positionIdx` 1/2 cannot cross). The new side receives a
-     *     native stop derived from the account profile, satisfying arch P4; if the profile cannot
-     *     produce one, the reversal is rejected before any order is sent.
+     * @description Executed, in one-way and hedge mode alike, as a reduce-only close of the position
+     *     followed by an entry on the opposite side. The entry is sized server-side by the
+     *     account profile (C-12.5) and carries a native stop derived from the profile (arch P4,
+     *     C-2.6); if the profile cannot produce one, the reversal is refused before any order is
+     *     sent. The close is never counted as new exposure; the entry is checked like any entry
+     *     (risk caps, rate reserve, kill switch). The entry is submitted only after the close is
+     *     confirmed filled (the position's closed size is gone), within a bounded wait; a close
+     *     still unfilled or partly filled at the deadline ends the reversal with no entry sent,
+     *     never an entry against a still-open position. The answer always names the close, and
+     *     `outcome` says how the reversal ended. One `Idempotency-Key` covers both orders: a
+     *     replay after the close filled resumes by sending the entry, never closing again, and a
+     *     replay after the entry was accepted returns the stored answer. Amended 2026-10-29 by
+     *     an orchestrator contract decision (#915), before the route was implemented: the
+     *     earlier text sent one order of `2 × size` in one-way mode.
      */
     post: operations["reversePosition"];
     delete?: never;
@@ -10132,6 +10147,19 @@ export interface components {
       stream: components["schemas"]["StreamKind"];
       /** @description Null = global default. */
       symbol?: components["schemas"]["Symbol"] | null;
+    };
+    /** @description `reversePosition`'s `202` (#915): the close it sent, the entry it sent if any, and how the reversal ended. Both orders are covered by one `position.reversed` audit record. */
+    ReverseAcceptance: {
+      close: components["schemas"]["OrderAcceptance"];
+      /** @description The entry, or null when none was sent (`outcome` other than `reversed`). */
+      open: components["schemas"]["OrderAcceptance"] | null;
+      /**
+       * @description `reversed`: the close filled and the entry was accepted. `close_incomplete`: the close was still unfilled or partly filled at the deadline, so no entry was sent and the position may be partly closed. `entry_refused`: the close filled but the entry was refused (risk cap, rate reserve or kill switch), so the account is flat on this symbol. The last two are outcomes, not failures to hide: a client shows them as they are.
+       * @enum {string}
+       */
+      outcome: "reversed" | "close_incomplete" | "entry_refused";
+      /** @description For `entry_refused`, the refusing check's code from the `x-error-codes` catalogue (for example `risk_limit_breached`, `trading_disabled`, `rate_limited`); null for `reversed` and `close_incomplete`, whose `outcome` already says what happened. */
+      reason?: string | null;
     };
     ReversePositionRequest: {
       /** @default market */
@@ -19001,7 +19029,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["TradeGroup"];
+          "application/json": components["schemas"]["OrderAcceptance"];
         };
       };
       403: components["responses"]["Forbidden"];
@@ -19144,13 +19172,13 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Reversal accepted. */
+      /** @description Reversal accepted; `outcome` says whether the entry was sent. */
       202: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["TradeGroup"];
+          "application/json": components["schemas"]["ReverseAcceptance"];
         };
       };
       403: components["responses"]["Forbidden"];

@@ -7347,6 +7347,31 @@ class OrderAcceptance(BaseModel):
     ]
 
 
+class ReverseAcceptance(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    close: OrderAcceptance
+    open: Annotated[
+        OrderAcceptance | None,
+        Field(
+            description="The entry, or null when none was sent (`outcome` other than `reversed`)."
+        ),
+    ]
+    outcome: Annotated[
+        Literal["reversed", "close_incomplete", "entry_refused"],
+        Field(
+            description="`reversed`: the close filled and the entry was accepted. `close_incomplete`: the close was still unfilled or partly filled at the deadline, so no entry was sent and the position may be partly closed. `entry_refused`: the close filled but the entry was refused (risk cap, rate reserve or kill switch), so the account is flat on this symbol. The last two are outcomes, not failures to hide: a client shows them as they are.\n"
+        ),
+    ]
+    reason: Annotated[
+        str | None,
+        Field(
+            description="For `entry_refused`, the refusing check's code from the `x-error-codes` catalogue (for example `risk_limit_breached`, `trading_disabled`, `rate_limited`); null for `reversed` and `close_incomplete`, whose `outcome` already says what happened.\n"
+        ),
+    ] = None
+
+
 class JournalTradeDetail(JournalTrade):
     mistakes: list[str] | None = None
     checklist: list[dict[str, Any]] | None = None
