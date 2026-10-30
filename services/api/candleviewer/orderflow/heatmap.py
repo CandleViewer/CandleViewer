@@ -1145,11 +1145,19 @@ class HeatmapTopic:
         if depth != st.native.spec.depth:
             # Close what is due at the old depth, then read the book at the new one, so the
             # next deadline never finds no levels at that depth (a spurious gap).
+            # Contained to its symbol, as `tick()` is: a lease release or a pin never faults
+            # its caller (a viewer's unsubscribe still releases its upstream refs).
             now = self._clock()
-            self._advance(st, now)
-            self._integrate(st, now, ok=True)
-            st.native.spec = HeatmapSpec(st.symbol, depth, 1, COLUMN_MS)
-            self._observe(st, now)
+            try:
+                try:
+                    self._advance(st, now)
+                    self._integrate(st, now, ok=True)
+                finally:
+                    st.native.spec = HeatmapSpec(st.symbol, depth, 1, COLUMN_MS)
+                self._observe(st, now)
+            except Exception as exc:
+                _log().error("heatmap_topic_symbol_failed", symbol=st.symbol,
+                             error=type(exc).__name__)  # fmt: skip
 
     # -- the engine ------------------------------------------------------------------------------
 

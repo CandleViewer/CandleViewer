@@ -277,3 +277,24 @@ async def test_a_native_depth_change_never_leaves_the_next_sample_without_levels
     assert st.native.spec.depth == 100 and 100 in st.levels
     w.at(100)
     assert seen[-1][2] is not None
+
+
+async def test_a_failing_depth_change_is_contained_and_the_release_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Delta Minor 1: the depth change a lease release makes is contained to its symbol, as
+    `tick()` is, so the release (and the viewer's unsubscribe after it) completes."""
+    w = World()
+    await live(w)
+    w.topic.pin_native(SYM, 100)
+    sub = w.hold(HeatmapSpec(SYM, depth=200, time_bucket_ms=100))
+    st = w.topic._symbols[SYM]
+
+    def boom(*_: object) -> None:
+        raise RuntimeError("advance")
+
+    monkeypatch.setattr(w.topic, "_advance", boom)
+    assert sub.heatmap_lease is not None
+    w.topic.release(sub.heatmap_lease)  # never raises
+    assert st.native.spec.depth == 100
+    assert all(s.depth != 200 for s in st.specs)

@@ -387,6 +387,26 @@ async def test_a_start_that_fails_part_way_releases_the_pins_and_the_tape() -> N
     assert bus._subscriptions == []
 
 
+class _UnpinFails(Pins):
+    def unpin_native(self, symbol: str) -> None:
+        raise RuntimeError("unpin")
+
+
+async def test_a_stop_whose_unpin_fails_still_cancels_the_task_and_drops_the_tape() -> None:
+    """Delta Minor 2: a release that raises never leaves the task running or the tape held."""
+    bus = Bus()
+    engine = LiquidityEngine(bus, "live", pins=_UnpinFails(), steps=lambda s: (TICK, STEP),
+                             symbols=(SYM,))  # fmt: skip
+    engine.start()
+    task = engine._task
+    assert task is not None
+    with pytest.raises(RuntimeError, match="unpin"):
+        await engine.stop()
+    assert task.cancelled()
+    assert engine._sub is None and engine._task is None
+    assert bus._subscriptions == []
+
+
 async def test_a_task_group_failure_logs_its_cause_types_never_their_messages() -> None:
     """Fold 8: the `TaskGroup`'s group is logged with the types inside it, names only."""
     import structlog

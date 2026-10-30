@@ -194,7 +194,12 @@ class LiquidityEngine:
         """Release the sampler and the pins, cancel the task, unsubscribe; queued events go.
         The task is waited, never awaited: the caller's own cancellation is not swallowed."""
         task, self._task = self._task, None
-        self._unpin()
+        try:
+            self._unpin()
+        finally:  # a failed release still cancels the task and lets the tape go
+            await self._halt(task)
+
+    async def _halt(self, task: asyncio.Task[None] | None) -> None:
         try:
             if task is not None:
                 task.cancel()
