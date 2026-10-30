@@ -24,6 +24,7 @@ class AdminSlice(StrEnum):
     SUBACCOUNTS = "subaccounts"
     STATECHART_SNAPSHOTS = "statechart_snapshots"
     STATECHART_METRICS = "statechart_metrics"
+    STATECHART_EVENTS = "statechart_events"
 
 
 #: `GET /admin/overview` slices and `GET /admin/capacity` sections: disjoint cache keys.
@@ -46,7 +47,7 @@ CAPACITY_SLICES: Final = frozenset(
         AdminSlice.SUBACCOUNTS,
     }
 )
-#: The statechart inspector's sources (E42-T07).
+#: The statechart inspector's sources (E42-T07); `getStatechart` alone reads the events.
 INSPECTOR_SLICES: Final = frozenset(
-    {AdminSlice.STATECHART_SNAPSHOTS, AdminSlice.STATECHART_METRICS}
+    {AdminSlice.STATECHART_SNAPSHOTS, AdminSlice.STATECHART_METRICS, AdminSlice.STATECHART_EVENTS}
 )

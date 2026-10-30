@@ -8,6 +8,8 @@
 (^|/)services/api/tests/unit/api/test_health_report_router\.py$
 # Postgres detector: placeholder DSNs (u/h/d dummies) for DSN-conversion unit tests
 (^|/)services/api/tests/unit/migrations/test_boot_advisory_lock_unit\.py$
+# Postgres detector: placeholder DSN (cv/pw/db dummies) asserting a failed seal-event write never logs it
+(^|/)services/api/tests/unit/admin/test_statechart_seal_events\.py$
 # PhraseAccessToken detector: a generated ruled-pin table (the design audit tool's --repin-ruled output: one row per
 # ruled unit with its heading path, location and normalised text). One row's heading path contains "phrases" and
 # its text holds a 64-letter shape signature; together they match the detector's keyword + token pattern. Spec text,

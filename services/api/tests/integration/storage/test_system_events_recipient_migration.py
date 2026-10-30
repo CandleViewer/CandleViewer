@@ -20,7 +20,8 @@ from testcontainers.postgres import PostgresContainer
 pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
-_PREV, _TEMPLATE = "0043_order_submission", "system_events_recipient_head_template"
+_REV, _PREV = "0047_system_events_recipient", "0043_order_submission"  # pinned: later revisions
+_TEMPLATE = "system_events_recipient_head_template"
 _FK, _INDEX = "system_events_recipient_user_id_fkey", "ix_se_recipient"
 _COLUMNS_SQL = (
     "SELECT attname, format_type(atttypid, atttypmod), attnotnull FROM pg_attribute "
@@ -73,10 +74,11 @@ def _create(dsn: str, name: str, template: str) -> str:
 
 @pytest.fixture(scope="module")
 def pg_dsn() -> Iterator[str]:
-    """A server whose `_TEMPLATE` database is at head and untouched, for each test to clone."""
+    """A server whose `_TEMPLATE` database is at `_REV` (not head: 0057 also changes the
+    `se_component` CHECK) and untouched, for each test to clone."""
     with PostgresContainer("postgres:16-alpine") as container:
         dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+psycopg")
-        assert _alembic(dsn, "upgrade", "head").returncode == 0
+        assert _alembic(dsn, "upgrade", _REV).returncode == 0
         _create(dsn, _TEMPLATE, dsn.rsplit("/", 1)[1])
         yield dsn
 
@@ -126,7 +128,7 @@ def test_round_trip_removes_only_what_the_revision_added(pg_dsn: str, seed: bool
     assert constraints == [k for k in head[1] if k[0] != _FK]
     assert indexes == [i for i in head[2] if i[0] != _INDEX]
     assert kept == rows and len(kept) == (1 if seed else 0)
-    assert _alembic(dsn, "upgrade", "head").returncode == 0
+    assert _alembic(dsn, "upgrade", _REV).returncode == 0
     with _conn(dsn) as c:
         assert _catalog(c) == head and c.execute(_ROWS).fetchall() == rows
 

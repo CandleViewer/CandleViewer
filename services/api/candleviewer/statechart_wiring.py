@@ -7,7 +7,7 @@ and `MachineEventRow` to and from the store records; the dependency graph gains 
 builds `Persister`, `Restorer` and the sink over these adapters (the persistence bundle, below).
 
 - `SnapshotAdapter` is the one snapshot adapter: `persistence.SnapshotRepo.write_snapshot`,
-  `replay.sessions_service.SnapshotSource.load` and `admin.inspector.SnapshotStore.snapshots`,
+  `replay.sessions_service.SnapshotSource.load` and `admin.inspector.SnapshotStore`,
   through one row-to-envelope function, `envelope_of`, whose key comes from the three key columns
   (the seal binds all three byte for byte), never from the blob. Before any statement,
   `write_snapshot` refuses an empty `entity_id` (`''` and the kind are different keys), then an
@@ -17,7 +17,8 @@ builds `Persister`, `Restorer` and the sink over these adapters (the persistence
   append hands back the store's conflict report, and `present` names the `send_id`s with a row.
 - `EventsAdapter` maps `MachineEventRow`. `occurred_at` must be the audit plugin's ISO-8601 UTC
   string, so that `row_digest` over a row read back equals the `row_hash` it was stored with; one
-  that would come back different is refused before the store sees the batch.
+  that would come back different is refused before the store sees the batch. It also serves the
+  inspector's `EventStore` (`recent`: the latest rows, read without their payloads).
 - `FaultRows` (E50-T63) is `PersistAudit` and `RestoreAudit` over the `machine_events` sink: one
   `phase="fault"` row in the machine's own chain per refusal, drain error or quarantine (24 §17.6
   "Faults"). It never raises: a raising `drain_error` would lose the drained events and a raising
@@ -48,7 +49,7 @@ from typing import Any, Final, Literal, Protocol
 
 import structlog
 
-from candleviewer.admin.inspector import SnapshotRow, SnapshotStore
+from candleviewer.admin.inspector import EventStore, RecentEvent, SnapshotRow, SnapshotStore
 from candleviewer.admin.wiring import (
     MachineEventSinkHandle,
     MachineEventSinkMetrics,
@@ -106,6 +107,7 @@ from candleviewer.storage.repositories.statechart_sqlalchemy import (
     EventRecord,
     JournalConflictRecord,
     JournalRecord,
+    RecentEventRecord,
     SnapshotRecord,
     SqlAlchemyEventStore,
     SqlAlchemyJournalStore,
@@ -216,6 +218,10 @@ class EventRows(Protocol):
         self, machine_kind: str, entity_id: str, env: str
     ) -> Sequence[EventRecord]: ...
 
+    async def read_recent(
+        self, machine_kind: str, entity_id: str, env: str, *, limit: int
+    ) -> Sequence[RecentEventRecord]: ...
+
 
 class SnapshotAdapter:
     """`SnapshotRepo`, `SnapshotSource` and `SnapshotStore` over the snapshot store."""
@@ -232,17 +238,26 @@ class SnapshotAdapter:
 
     async def snapshots(self) -> Sequence[SnapshotRow]:
         """Every row; a singleton (`entity_id` equal to its kind) has no `entity_id`, the shape
-        `admin.inspector` reads (its scope stays the default until E42-T07 binds it)."""
-        return [
-            SnapshotRow(
-                machine_kind=r.machine_kind,
-                entity_id=None if r.entity_id == r.machine_kind else r.entity_id,
-                environment=r.env,
-                envelope=envelope_of(r),
-                updated_at=r.updated_at,
-            )
-            for r in await self._store.list_all()
-        ]
+        `admin.inspector` reads. The scope is left empty: the composition root binds it from the
+        owning module's record (`admin_wiring.RegistryScopedStore`), never from a row."""
+        return [_inspected(r) for r in await self._store.list_all()]
+
+    async def snapshot(
+        self, machine_kind: str, entity_id: str | None, environment: str
+    ) -> SnapshotRow | None:
+        """One machine's row (a singleton: `entity_id` `None`), as `snapshots` maps it."""
+        record = await self._store.get(machine_kind, entity_id or machine_kind, environment)
+        return None if record is None else _inspected(record)
+
+
+def _inspected(r: SnapshotRecord) -> SnapshotRow:
+    return SnapshotRow(
+        machine_kind=r.machine_kind,
+        entity_id=None if r.entity_id == r.machine_kind else r.entity_id,
+        environment=r.env,
+        envelope=envelope_of(r),
+        updated_at=r.updated_at,
+    )
 
 
 def _lane(lane: str) -> JournalLane:
@@ -342,6 +357,16 @@ class EventsAdapter:
             key.machine_kind, key.entity_id, key.env, after_seq=after_seq
         )
         return [(r.seq, _event_row(r)) for r in page]
+
+    async def recent(self, key: MachineKey, limit: int) -> list[RecentEvent]:
+        """The inspector's timeline: the latest `limit` rows, newest first, no payload read."""
+        records = await self._store.read_recent(
+            key.machine_kind, key.entity_id, key.env, limit=limit
+        )
+        return [
+            RecentEvent(r.event_type, r.phase, r.from_states, r.to_states, r.faulted, r.occurred_at)
+            for r in records
+        ]
 
     async def chain(self, key: MachineKey) -> list[MachineEventRow]:
         """The machine's whole chain, in `seq` order (`ChainTooLongError` past the cap)."""
@@ -694,6 +719,7 @@ def build_statechart_persistence(
 _SNAPSHOT_REPO: Callable[[SnapshotRows], SnapshotRepo] = SnapshotAdapter
 _SNAPSHOT_SOURCE: Callable[[SnapshotRows], SnapshotSource] = SnapshotAdapter
 _SNAPSHOT_STORE: Callable[[SnapshotRows], SnapshotStore] = SnapshotAdapter
+_EVENT_STORE: Callable[[EventRows], EventStore] = EventsAdapter
 _JOURNAL_ROWS: Callable[[JournalRows], JournalRowStore] = JournalRowsAdapter
 _DRAIN_JOURNAL: Callable[[JournalRowStore], DrainJournal] = RowStoreDrainJournal
 _PERSIST_AUDIT: Callable[[ChainSink, Pager], PersistAudit] = FaultRows

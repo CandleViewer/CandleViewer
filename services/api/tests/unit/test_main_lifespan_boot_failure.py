@@ -81,6 +81,7 @@ _ALWAYS = frozenset(
     {
         "user_disable",
         "support_bundle",
+        "statechart_seal_events",
         "health_pg",
         "kline_boundary_pg",
         "admin_jobs",

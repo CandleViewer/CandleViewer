@@ -3817,7 +3817,7 @@ CREATE TABLE system_events (
   resolved_at   timestamptz,
   resolved_by   uuid REFERENCES users(id) ON DELETE SET NULL,
   event_ts      timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT se_component CHECK (component IN ('ingestion','book_engine','bars','orderflow','oms','rules','recorder','replay','api','ws','db','exchange','auth','backup'))
+  CONSTRAINT se_component CHECK (component IN ('ingestion','book_engine','bars','orderflow','oms','rules','recorder','replay','api','ws','db','exchange','auth','backup','statechart'))  -- 'statechart': 0057
 );
 CREATE INDEX ix_se_time      ON system_events (event_ts DESC);
 CREATE INDEX ix_se_sev_open  ON system_events (severity, event_ts DESC) WHERE resolved_at IS NULL;
@@ -3831,6 +3831,26 @@ ALTER TABLE system_events
   ADD COLUMN recipient_user_id uuid REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX ix_se_recipient ON system_events (recipient_user_id, event_ts DESC)
   WHERE recipient_user_id IS NOT NULL;
+```
+
+**`statechart` (E42-T07 #1025).** `0057_se_component_statechart` adds `statechart` to
+`se_component`: the statechart inspector writes one `statechart`/`snapshot_seal_failed`/`critical`
+row per machine, environment and snapshot `updated_at` whose HMAC seal does not verify
+(`22` `listStatecharts`), a fixed message, `details` only `machine_kind`, `machine` (the public
+machine key, when the kind has one), `environment`, `updated_at` and `reason` (`seal`: the envelope
+did not verify; `off_contract`: its metadata, kind or verified payload is off the contract; never
+exception text). The writer remembers the versions it reported per process (bounded), so after a
+restart a still-bad version writes one more row, which folds into the same incident. `machine` of a
+user- or account-scoped kind names that entity: a future reader of `system_events.details` applies
+the inspector's per-entity visibility or drops it. Replaced `NOT VALID`, then validated; the
+downgrade refuses while a `statechart` row exists.
+
+```sql
+-- 0057_se_component_statechart (E42-T07 #1025): `statechart` in se_component
+ALTER TABLE system_events
+  DROP CONSTRAINT se_component,
+  ADD CONSTRAINT se_component CHECK (component IN ('ingestion','book_engine','bars','orderflow','oms','rules','recorder','replay','api','ws','db','exchange','auth','backup','statechart')) NOT VALID;
+ALTER TABLE system_events VALIDATE CONSTRAINT se_component;
 ```
 
 **Addressed rows (#3085, the Q1 ruling).** `recipient_user_id` names the one user a row is
@@ -4959,6 +4979,7 @@ NAMING_CONVENTION = {
 | `0054_scanner_presets`          | `scanner_presets` (§3.8.7) with `ux_sp_name` and `ux_sp_default`, and `scanner` added to `lp_kind` (§3.8.1) — **E08-T09 #4708**; the downgrade refuses while any preset or a `scanner` pane exists                                                                                                                                      |
 | `0055_watchlists`               | `watchlists` (§3.8.6): a user's lists, `symbols` in order and at most 200, `version` the guard of a replace, unique index `ux_wl_name` on `(user_id, lower(name))` — **E08-T07 #4706**; the downgrade refuses while any list exists                                                                                                     |
 | `0056_sessions_lock_state`      | `sessions.locked_at` and `sessions.unlocked_at`, two nullable columns with no default (§3.1.4): a session's lock by request and its last unlock — **E09-S03-F1 #4743**; the downgrade refuses while a live session is locked by request                                                                                                 |
+| `0057_se_component_statechart`  | `statechart` added to `se_component` (§3.10.2): the inspector's failed-seal row — **E42-T07 #1025**; on `0056_sessions_lock_state` (#4743); the downgrade refuses while a `statechart` row exists                                                                                                                                       |
 
 ---
 

@@ -332,7 +332,8 @@ async def test_each_service_reads_exactly_its_own_slice_names() -> None:
     await StatechartInspector(inspector_fan, lambda *_: None, {}).listing(lambda *_: True)
     assert overview_fan.names == set(OVERVIEW_SLICES)
     assert capacity_fan.names == set(CAPACITY_SLICES)
-    assert inspector_fan.names == set(slices.INSPECTOR_SLICES)
+    # The list reads all but the detail's own `machine_events` slice.
+    assert inspector_fan.names == set(slices.INSPECTOR_SLICES) - {AdminSlice.STATECHART_EVENTS}
 
 
 async def test_ingestion_is_reported_and_storage_waits_for_the_first_disk_sample() -> None:

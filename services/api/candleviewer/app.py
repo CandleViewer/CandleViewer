@@ -67,6 +67,8 @@ from candleviewer.admin.wiring import (
     system_event_redactor,
 )
 from candleviewer.admin_wiring import (
+    RegistryScopedStore,
+    build_admin_grants,
     build_admin_incidents,
     build_admin_read_models,
     build_open_incidents_gauge,
@@ -2676,15 +2678,31 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
         )
     )
-    # E42-T07: the statechart inspector read API behind the same audited admin-area guard.
+    # E42-T07: the statechart inspector read API behind the same audited admin-area guard. Each
+    # row's scope is the one its owning module bound in the `machines.{entity}.state` registry.
     inspector = build_statechart_inspector(
-        store=None if persistence is None else persistence.snapshots,
+        store=None
+        if persistence is None
+        else RegistryScopedStore(
+            persistence.snapshots, machine_states.scope, env=resolved.environment.value
+        ),
         keys=None if persistence is None else hmac_keys,
         metrics=metrics_facade,
+        events=None if persistence is None else persistence.events,
+        # A left-out snapshot's critical `statechart` row, which `listIncidents` then shows.
+        system_events=(
+            PgSystemEventWriter(health_pg, redact_details=system_event_redactor())
+            if health_pg is not None
+            else None
+        ),
     )
+    app.state.statechart_seal_events = inspector.seal_failures  # drained by the lifespan
     app.include_router(
         make_statechart_router(
-            inspector, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+            inspector,
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
+            grants=build_admin_grants(resolved, system_settings=admin_settings),
         )
     )
     # E42-T05: the health report over the E04 registry's snapshot and the incident list, behind the

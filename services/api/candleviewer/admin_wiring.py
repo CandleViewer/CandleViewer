@@ -1,5 +1,6 @@
 """Composition-root wiring of the admin read models (E42-T01): `GET /admin/overview` and
-`GET /admin/capacity`; `build_statechart_inspector` adds E42-T07's `GET /admin/statecharts`; and
+`GET /admin/capacity`; `build_statechart_inspector` adds E42-T07's `GET /admin/statecharts` (its
+rows' scope bound by `RegistryScopedStore`, a non-Owner's grants read by `build_admin_grants`); and
 (E42-T05) `GET /admin/incidents` (`build_admin_incidents`) and the `cv_incidents_open` gauge over
 the overview's incident count (`build_open_incidents_gauge`, at the end).
 
@@ -35,12 +36,21 @@ On the fake backend there is no budget and the tier is unwired too.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
 from typing import Final
+from uuid import UUID
 
-from candleviewer.admin.inspector import DroppedReceipts, SnapshotStore, StatechartInspector
+from candleviewer.admin.inspector import (
+    BoundScope,
+    DroppedReceipts,
+    EventStore,
+    SnapshotRow,
+    SnapshotStore,
+    StatechartInspector,
+)
 from candleviewer.admin.ops.incident_metrics import OpenIncidentsGauge
 from candleviewer.admin.ops.incidents import AdminIncidentsService
 from candleviewer.admin.overview.capacity import AdminCapacityService, project
@@ -55,7 +65,9 @@ from candleviewer.admin.overview.ports import (
     UserCounts,
 )
 from candleviewer.admin.overview.service import AdminOverviewService
-from candleviewer.api.admin_statecharts import machine_key
+from candleviewer.api.admin_statecharts import GrantsOf, machine_key
+from candleviewer.auth.scopes import AccountGrant
+from candleviewer.observability.health_probes import SystemEventWriter
 from candleviewer.observability.metrics import ENV_LABEL, Metrics
 from candleviewer.recorder.budget import RECORDED_TIERS, DiskBudget
 from candleviewer.settings import Settings
@@ -66,8 +78,10 @@ from candleviewer.storage.repositories.incidents_sqlalchemy import SqlAlchemyInc
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.storage.repositories.system_settings import SystemSettings
 from candleviewer.storage.repositories.system_settings_sqlalchemy import SqlAlchemySystemSettings
+from candleviewer.ws.topics import EntityScope
 
 
 class AdminCountsAdapter:
@@ -251,22 +265,93 @@ def dropped_receipts_reader(metrics: Metrics) -> DroppedReceipts:
     return DroppedReceipts(metrics.env, read)
 
 
+class RegistryScopedStore:
+    """A `SnapshotStore` whose rows carry the scope the owning module bound to the machine in the
+    `machines.{entity}.state` registry (`MachineStateRegistry.scope`, the entry E17-T08's topic
+    check reads; 23 §6.4), never one from the row or the snapshot's context. The registry holds
+    the serving process's own environment only, so a row of another environment, a machine with
+    no live entry and a kind without a public id get the empty scope: a scoped kind's row is then
+    shown to no role (fail closed). `scope_of` is synchronous and runs on the loop, as the WS
+    check runs it (SR-189)."""
+
+    def __init__(
+        self, store: SnapshotStore, scope_of: Callable[[str], EntityScope | None], *, env: str
+    ) -> None:
+        self._store, self._scope_of, self._env = store, scope_of, env
+
+    async def snapshots(self) -> Sequence[SnapshotRow]:
+        return [self._bound(row) for row in await self._store.snapshots()]
+
+    async def snapshot(
+        self, machine_kind: str, entity_id: str | None, environment: str
+    ) -> SnapshotRow | None:
+        row = await self._store.snapshot(machine_kind, entity_id, environment)
+        return None if row is None else self._bound(row)
+
+    def _bound(self, row: SnapshotRow) -> SnapshotRow:
+        key = machine_key(row.machine_kind, row.entity_id)
+        same_env = key is not None and row.environment == self._env
+        found = self._scope_of(f"machines.{key}.state") if same_env else None
+        scope = BoundScope() if found is None else BoundScope(found.accounts, found.user)
+        return replace(row, scope=scope)
+
+
+#: The bound on reading a non-Owner's account grants for the inspector.
+GRANTS_TIMEOUT_S: Final = 2.0
+
+
+def build_admin_grants(
+    settings: Settings, *, system_settings: SystemSettings | None = None
+) -> GrantsOf | None:
+    """A non-Owner's view grants from `user_account_access` (`can_trade` not loaded), on the
+    admin area's one engine, for the inspector's per-entity check; `None` on the fake backend,
+    where a non-Owner then sees no account-scoped machine."""
+    if settings.storage_backend != "real":
+        return None
+    relational = (
+        system_settings.relational
+        if isinstance(system_settings, SqlAlchemySystemSettings)
+        else SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
+    )
+    source = SqlAlchemyScopeSource(relational)
+
+    async def grants(user_id: UUID) -> Sequence[AccountGrant]:
+        async with asyncio.timeout(GRANTS_TIMEOUT_S):
+            rows = await source.load_grants(user_id)
+        return tuple(AccountGrant(acc, view, False, frozen) for acc, view, frozen in rows)
+
+    return grants
+
+
 def build_statechart_inspector(
     *,
     now: Callable[[], datetime] = utc_now,
     store: SnapshotStore | None = None,
     keys: HmacKeys | None = None,
     metrics: Metrics | None = None,
+    events: EventStore | None = None,
+    system_events: SystemEventWriter | None = None,
 ) -> StatechartInspector:
     """The E42-T07 inspector over the chart registry, the committed lock and, when the statechart
-    persistence bundle is wired (E50-T63: the real backend with HMAC keys), its snapshot store and
-    the keys that verify it. Without both, as until a KMS-backed key provider exists (a plan gap,
-    #2701), `snapshots` stays `unavailable` and the list empty. `metrics` is the facade the
-    `CvMetricsPlugin`s count on; without it `metrics` stays `unavailable`."""
+    persistence bundle is wired (E50-T63: the real backend with HMAC keys), its snapshot store
+    (scope-bound: `RegistryScopedStore`), the keys that verify it and its `machine_events` reader.
+    Without both, as until a KMS-backed key provider exists (a plan gap, #2701), `snapshots` stays
+    `unavailable` and the list empty. `metrics` is the facade the `CvMetricsPlugin`s count on;
+    without it `metrics` stays `unavailable`. `system_events` gets one critical `statechart` row
+    per snapshot version the inspector leaves out (22 `listStatecharts`, migration 0057)."""
     lock = {kind: str(entry.get("hash")) for kind, entry in load_lock(DEFAULT_LOCK_PATH).items()}
     dropped = None if metrics is None else dropped_receipts_reader(metrics)
     fan = SliceFanOut(now=now)
-    return StatechartInspector(fan, machine_key, lock, store=store, keys=keys, dropped=dropped)
+    return StatechartInspector(
+        fan,
+        machine_key,
+        lock,
+        store=store,
+        keys=keys,
+        dropped=dropped,
+        events=events,
+        system_events=system_events,
+    )
 
 
 def build_admin_incidents(

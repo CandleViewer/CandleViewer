@@ -15,6 +15,7 @@ from typing import Any, cast
 
 import pytest
 
+from candleviewer.admin.inspector import RecentEvent
 from candleviewer.statechart import persistence
 from candleviewer.statechart.persistence import (
     SEAL_LAYOUT_V,
@@ -41,6 +42,7 @@ from candleviewer.storage.repositories.statechart_sqlalchemy import (
     EventRecord,
     JournalConflictRecord,
     JournalRecord,
+    RecentEventRecord,
     SnapshotRecord,
     SqlAlchemySnapshotStore,
 )
@@ -397,6 +399,13 @@ def _chain(n: int) -> list[MachineEventRow]:
     return rows
 
 
+def _recent(r: EventRecord) -> RecentEventRecord:
+    faulted = r.fault is not None
+    return RecentEventRecord(
+        r.event_type, r.phase, r.from_states, r.to_states, faulted, r.occurred_at
+    )
+
+
 class FakeEvents:
     def __init__(self) -> None:
         self.records: list[EventRecord] = []
@@ -417,6 +426,12 @@ class FakeEvents:
         self, machine_kind: str, entity_id: str, env: str
     ) -> Sequence[EventRecord]:
         return tuple(self.records)
+
+    async def read_recent(
+        self, machine_kind: str, entity_id: str, env: str, *, limit: int
+    ) -> Sequence[RecentEventRecord]:
+        latest = sorted(self.records, key=lambda r: r.seq, reverse=True)[:limit]
+        return tuple(_recent(r) for r in latest)
 
 
 async def test_machine_event_rows_come_back_byte_for_byte() -> None:
@@ -477,3 +492,35 @@ async def test_an_empty_event_batch_asks_nothing_of_the_store() -> None:
     await EventsAdapter(store).insert_batch([])
     await EventsAdapter(store).insert_batch(_chain(1))
     assert store.batches == [1]  # the empty batch never reached the store
+
+
+async def test_the_inspectors_timeline_is_the_latest_rows_newest_first() -> None:
+    store = FakeEvents()
+    adapter = EventsAdapter(store)
+    await adapter.insert_batch(_chain(3))
+    found = await adapter.recent(KEY, 2)
+    assert [e.occurred_at for e in found] == [r.occurred_at for r in store.records[::-1][:2]]
+    assert all(isinstance(e, RecentEvent) and not e.faulted for e in found)
+
+
+class AskedSnapshots(FakeSnapshots):
+    def __init__(self) -> None:
+        super().__init__()
+        self.asked: list[tuple[str, str, str]] = []
+
+    async def get(self, machine_kind: str, entity_id: str, env: str) -> SnapshotRecord | None:
+        self.asked.append((machine_kind, entity_id, env))
+        return await super().get(machine_kind, entity_id, env)
+
+
+async def test_one_snapshot_is_read_by_its_key_a_singleton_by_its_kind() -> None:
+    store = AskedSnapshots()
+    adapter = SnapshotAdapter(store, clock=lambda: NOW)
+    await adapter.write_snapshot(KEY, ENVELOPE)
+    one = await adapter.snapshot("order", KEY.entity_id, "demo")
+    assert one is not None and (one.entity_id, one.envelope, one.updated_at) == (
+        KEY.entity_id, ENVELOPE, NOW
+    )  # fmt: skip
+    assert await adapter.snapshot("order", KEY.entity_id, "live") is None
+    assert await adapter.snapshot("kill_switch", None, "demo") is None
+    assert store.asked[-1] == ("kill_switch", "kill_switch", "demo")  # a singleton's own key

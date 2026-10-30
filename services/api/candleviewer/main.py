@@ -298,6 +298,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("disk_budget", disk_budget.stop)
             if rolloff_task is not None:  # its run lock holds a connection on the PG engine
                 await teardown.run("rolloff_task", rolloff_task.stop)
+            seal_events = getattr(app.state, "statechart_seal_events", None)
+            if seal_events is not None:  # E42-T07: its writes use `health_pg`; each ends by 1 s
+                await teardown.run("statechart_seal_events", seal_events.drain)
             health_pg = getattr(app.state, "health_pg", None)
             if health_pg is not None:
                 await teardown.run("health_pg", health_pg.dispose)

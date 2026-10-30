@@ -66,6 +66,9 @@ CALLS: dict[str, tuple[str, _Call, bool]] = {
     "events.insert_batch": ("events", lambda s: s.insert_batch([EVENT]), True),
     "events.head": ("events", lambda s: s.head("order", ENTITY, "demo"), False),
     "events.read_chain": ("events", lambda s: s.read_chain("order", ENTITY, "demo"), False),
+    "events.read_recent": (
+        "events", lambda s: s.read_recent("order", ENTITY, "demo", limit=50), False
+    ),
 }  # fmt: skip
 
 
@@ -393,6 +396,7 @@ def test_the_reads_and_the_stamp_filter_on_the_machine_key_and_bind_it() -> None
         repo.mark_replayed_statement("order", ENTITY, "demo", ["b" * 32]),
         repo.head_statement("order", ENTITY, "demo"),
         repo.read_chain_statement("order", ENTITY, "demo", 0),
+        repo.read_recent_statement("order", ENTITY, "demo", 50),
     ):
         sql, params = _sql(stmt), _params(stmt)
         bound = {value for value in params.values() if isinstance(value, str)}
@@ -500,3 +504,29 @@ async def test_a_negative_page_position_is_refused_before_any_statement() -> Non
     with pytest.raises(ValueError, match="after_seq"):
         await _store("events", rel).read_chain("order", ENTITY, "demo", after_seq=-1)
     assert rel.events == []
+
+
+def test_the_timeline_reads_the_latest_rows_without_payload_or_fault_content() -> None:
+    """E42-T07: newest first, bounded, and neither `payload` nor `fault` leaves the database."""
+    sql = _sql(repo.read_recent_statement("order", ENTITY, "demo", 50))
+    selected = sql.split(" FROM ", 1)[0]
+    assert "payload" not in selected and "machine_events.fault IS NOT NULL AS faulted" in selected
+    assert sql.endswith("ORDER BY machine_events.seq DESC LIMIT $4::INTEGER")
+
+
+@pytest.mark.parametrize("limit", [0, repo.CHAIN_PAGE_ROWS + 1])
+async def test_a_timeline_limit_off_its_bounds_is_refused_before_any_statement(limit: int) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError, match="limit"):
+        await _store("events", rel).read_recent("order", ENTITY, "demo", limit=limit)
+    assert rel.events == []
+
+
+async def test_the_timeline_maps_each_row_with_its_arrays_as_tuples() -> None:
+    at = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    row = {"event_type": "FILL", "phase": "commit", "from_states": ["a"], "to_states": ["b"],
+           "occurred_at": at, "faulted": False}  # fmt: skip
+    found = await _store("events", _Rel(lambda stmt, params: [row])).read_recent(
+        "order", ENTITY, "demo", limit=1
+    )
+    assert found == (repo.RecentEventRecord("FILL", "commit", ("a",), ("b",), False, at),)

@@ -91,14 +91,20 @@ def test_operations_are_owner_reads_and_served_ones_executed(path: str, codes: s
     operation = _PATHS[path]["get"]
     assert operation["x-rbac"] == {"permissions": ["admin:read"], "scope": "none"}
     assert codes <= set(operation["responses"])
-    row, served = _MATRIX["operations"][f"GET {path}"], path != _DETAIL  # the detail: next slice
-    assert (row["state"], row["outcomes"]) == ("executed" if served else "not_mounted", OWNER_ONLY)
-    assert (f"GET {path}" in _PENDING) is not served
+    row = _MATRIX["operations"][f"GET {path}"]
+    assert (row["state"], row["outcomes"]) == ("executed", OWNER_ONLY)
+    assert f"GET {path}" not in _PENDING
 
 
 def test_served_responses_validate_against_the_contract() -> None:
     client = TestClient(make_app(inspector(*fleet())))
-    for path, url in [(_LIST, _LIST), (_EXPORT, "/admin/statecharts/kill_switch/export")]:
+    detail = f"/admin/statecharts/order:{_UUID}?environment=demo"
+    for path, url in [
+        (_LIST, _LIST),
+        (_EXPORT, "/admin/statecharts/kill_switch/export"),
+        (_DETAIL, detail),
+        (_DETAIL, "/admin/statecharts/kill_switch?environment=demo"),
+    ]:
         body = client.get(url, headers={"x-role": "owner"}).json()
         schema = f"/paths/{path.replace('/', '~1')}/get/responses/200/content/application~1json"
         validate_example(f"{schema}/schema", body)
@@ -201,8 +207,8 @@ def test_read_path_rules() -> None:
     assert "(`degraded` does not)" in listing
     assert "once per machine, environment and snapshot `updated_at`, not once per read" in listing
     assert "seal also writes the `system_events` row described on `listStatecharts`" in detail
-    check = "`statechart` is not yet in the `se_component` CHECK (migration 0008"
-    assert check in listing and "widens it in a new migration before it writes that row" in listing
+    check = "Migration `0057_se_component_statechart` adds `statechart` to the `se_component` CHECK"
+    assert check in listing
     visible = "The visibility check precedes the seal check, so a seal failure on a machine "
     assert visible + "the caller may not see is still `404`" in detail
     assert (
