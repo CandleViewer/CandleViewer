@@ -20,12 +20,14 @@ working tree.
    `origin/main`; it also reads the version line (every sha a commit under the base, each pinned
    input's last touch, the named-only list). G-QUOTE: every quoted string of QUOTE_MIN characters
    or more is verbatim in a source its line cites, the deck, a core source or R578's own words.
-3. **Gates.** D04 §2's 18 rows, §5 and §7 byte-equal at the base (G-COPY); the hash-lifts' row-id
-   indexes and line ranges (G-INDEX); the redline cells against the D02 lines they cite
-   (G-REDLINE) and their tokens against D03 §2 and D03 §8.2 (G-THEMES); the deck against D02 §13,
+3. **Gates.** D04 §2's 18 rows, §5 and §7 byte-equal at the base, and §9.4.1's re-found cites
+   (G-COPY); the hash-lifts' row-id indexes and line ranges (G-INDEX); the redline cells, per
+   density column, against the figures D02 states for that slot (G-REDLINE) and their tokens
+   and boards against the slot's own D03 §2 row(s) and D03 §8.2 (G-THEMES); §0's status cells
+   against the tool's probes (G-STATUS); the deck against D02 §13,
    D04 §7 and D03 (G-DECK); the Storybook lists against `15` and D02 §4 (G-STORYBOOK); the five
    settings keys against T and S02 and the regex rows (G-KEYS); the budgets' CITE anchors against
-   the line each row cites, and the two-layer sentence (G-BUDGET); the design-ahead rows against
+   the line each row cites, and each layer bound to its own anchor (G-BUDGET); the design-ahead rows against
    the ticket JSON and the calendar (G-AHEAD); the open-rows log against the parents' tables
    (G-OPENROWS); `14` = the pointer line + the six ticks and every other input byte-equal to the
    merge-base (G-UNTOUCHED); the dry-run table (G-WALK: a pending row passes before READY and
@@ -130,6 +132,8 @@ NAMED_ONLY = (
     "#718",
     "#713",
     "#751",
+    "#752",
+    "#753",
     "#754",
     "#608",
     "#654",
@@ -157,6 +161,7 @@ TICKS = 6
 # the copied D04 blocks (G-COPY) and the lifted blocks (G-HASH, G-INDEX), line ranges at the base
 COPIES = {"d04s2": ("D04", 96, 115), "d04s5": ("D04", 191, 237), "d04s7": ("D04", 265, 316)}
 LIFTS = {
+    "d02s3": ("D02", 97, 112),
     "d02s5": ("D02", 144, 184),
     "d02s6": ("D02", 186, 214),
     "d02s7": ("D02", 216, 245),
@@ -195,6 +200,8 @@ WALK_ROLES = (
     "E22-S04",
     "E22-S05",
     "E22-Q01",
+    "E22-Q02",
+    "E22-Q03",
     "E22-Q04",
     "E22-D06",
     "FE-lead",
@@ -252,6 +259,8 @@ DECK_HEAD = "8.4 The deck"
 D04_HEAD = "9. The motion"
 ENTRY_HEAD = "9.2 The entry table"
 COPY_HEADS = (ENTRY_HEAD, "9.3 Reduced motion", "9.4 Announcements")
+COPYCITE_HEAD = "9.4.1 Cites inside the copied blocks"
+STATUS_HEAD = "0. Status and evidence"
 LIFT_HEAD = "9.5 Lifted by hash"
 AHEAD_HEAD = "10. The design-ahead record"
 OPEN_HEAD = "11.1 The parents' rows"
@@ -589,6 +598,7 @@ CITES: dict[str, tuple[str, str, str]] = {
     "lim.ticks": ("LIM", "CLUSTER_TOLERANCE_TICKS_MAX:", r"= ([\d_]+)"),
     "lim.symbols": ("LIM", "THRESHOLD_SYMBOLS_PER_USER_MAX:", r"= ([\d_]+)"),
     "lim.ring": ("LIM", "RING_BUFFER_MAX_PRINTS:", r"= ([\d_]+)"),
+    "s02.debounce": ("E22J", "debounce writes (", r"debounce writes \((\d+) ms\)"),
 }
 
 
@@ -859,8 +869,18 @@ def head_joined(rel: str) -> str:
 
 
 def spec_cite_lines(spec: str) -> list[tuple[int, str]]:
+    """Every spec line outside the copied blocks; in §9.4.1's table the first cell (the D04
+    cite as the copy states it) is dropped, since only its re-found cite holds at the base."""
     skip = copied_lines(spec)
-    return [(i, ln) for i, ln in enumerate(spec.split("\n"), 1) if i - 1 not in skip]
+    table = set(section(spec, COPYCITE_HEAD).split("\n"))
+    out = []
+    for i, ln in enumerate(spec.split("\n"), 1):
+        if i - 1 in skip:
+            continue
+        if ln in table and ln.startswith("|") and not is_rule(ln):
+            ln = "| " + " | ".join(split_row(ln)[1:]) + " |"
+        out.append((i, ln))
+    return out
 
 
 def cite_findings(t: Texts) -> tuple[list[Finding], int]:
@@ -994,6 +1014,22 @@ def g_copy(t: Texts) -> list[Finding]:
         if n != 1:
             msg = f"{cid}:{a}-{b} ({key}) is present {n} times byte for byte, not once"
             bad.append(F("G-COPY", msg, "spec", sec))
+    copies = "\n".join(lift_text(k) for k in COPIES)
+    rows = rows_of(t.spec, COPYCITE_HEAD)
+    if len(rows) != 4:
+        bad.append(F("G-COPY", f"§9.4.1 has {len(rows)} rows, not 4", "spec", sec))
+    for r in rows:
+        if len(r) < 3:
+            continue
+        old = cite_refs(" " + r[0])
+        new = cite_refs(" " + r[1])
+        needle = r[2].strip("`")
+        if not old or r[0] not in copies:
+            bad.append(F("G-COPY", f"{r[0]}: not a cite inside the copies", "spec", sec))
+        elif needle in base_line(old[0][0], old[0][1]):
+            bad.append(F("G-COPY", f"{r[0]}: its old line still holds {needle!r}", "spec", sec))
+        if not new or needle not in base_line(new[0][0], new[0][1]):
+            bad.append(F("G-COPY", f"{r[1]}: the line does not hold {needle!r}", "spec", sec))
     return bad
 
 
@@ -1038,6 +1074,61 @@ def g_index(t: Texts) -> list[Finding]:
     return bad
 
 
+# §8.1 row -> (compact, comfortable): (D02 line, pattern) pairs whose groups are the figures
+REDLINE_SRC: dict[str, tuple[tuple[tuple[int, str], ...], tuple[tuple[int, str], ...]]] = {
+    "Header row": (((83, r"\| (\d+) px = `size\.control\.compact`"),), ((93, r"header (\d+) ="),)),
+    "Panel notice": (
+        ((84, r"\| (\d+) px \(comfortable \d+\)"),),
+        ((84, r"\| \d+ px \(comfortable (\d+)\)"),),
+    ),
+    "Status row": (
+        ((85, r"\| (\d+) px = 20 px pills"),),
+        ((85, r"pills \+ `space\.2` \(comfortable (\d+)"),),
+    ),
+    "Chips row": (((86, r"\| (\d+) px per row"),), ((86, r"`space\.2` \(comfortable (\d+)\)"),)),
+    "Column header row": (((87, r"\| (\d+) px \(a 16 px"),), ((87, r"; comfortable (\d+)\)"),)),
+    "The log at 1280": (
+        ((88, r"\*\*(\d+) px at 1280×800 → (\d+) rows"),),
+        ((88, r"comfortable: (\d+) → (\d+);"),),
+    ),
+    "The log at 2560": (
+        ((88, r"; (\d{1,3}(?: \d{3})*) px at 2560×1440 → (\d+)\*\*"),),
+        ((88, r"; (\d{1,3}(?: \d{3})*) → (\d+)\)"),),
+    ),
+    "Row, tiers": (
+        ((88, r"`size\.row\.compact` (\d+) px"),),
+        ((93, r"`size\.row\.comfortable` (\d+) px"),),
+    ),
+    "Control strip, collapsed": (
+        ((89, r"collapsed by default: (\d+) px"),),
+        ((89, r"one summary line; comfortable (\d+)\)"),),
+    ),
+    "Control strip, expanded": (
+        ((89, r"expanded (\d+) px = three"),),
+        ((89, r"`space\.2` \(comfortable (\d+)\)"),),
+    ),
+    "Cells and gaps": (
+        ((91, r"at `type\.num\.sm` (\d+) px"), (91, r"`space\.2` (\d+) px gaps")),
+        ((91, r"`space\.3` (\d+) px gaps and (\d+) px cells"),),
+    ),
+    "Panel width": (
+        ((91, r"\*\*(\d+) px minimum width compact\*\*"), (91, r"drawn at \*\*(\d+) px\*\*")),
+        ((91, r"\*\*(\d+) px\*\* \((\d+) px if the"),),
+    ),
+}
+# §8.1 row -> the D03 §2 rows (by lead) whose tokens and boards bind it
+REDLINE_D03: dict[str, tuple[str, ...]] = {
+    "Header row": ("Panel surface and header row",),
+    "Panel notice": ("Panel notice",),
+    "Status row": ("Status row",),
+    "Chips row": ("Chips row (CMP-055)", "capped · compressed", '"(estimated)"'),
+    "Column header row": ("Column header row",),
+    "The log at": ("Row, tier 0", "Divider rows"),
+    "Row, tiers": ("Row, tier 0", "Row, tier 1", "Row, tier 2", "Located row"),
+    "Control strip": ("Control strip",),
+    "Cells and gaps": ("Row, tier 0",),
+    "Panel width": ("Panel surface and header row",),
+}
 D02_SLOTS = (
     "Header row",
     "Panel notice",
@@ -1047,6 +1138,25 @@ D02_SLOTS = (
     "The log",
     "Control strip",
 )
+
+
+def redline_expected(slot: str) -> tuple[list[str], list[str]] | None:
+    """(compact, comfortable): the figures D02 states for a §8.1 row, parsed by position from
+    the slot's own D02 line(s) (REDLINE_SRC); None when the row is unknown."""
+    spec = next((v for k, v in REDLINE_SRC.items() if slot.startswith(k)), None)
+    if spec is None:
+        return None
+    out: tuple[list[str], list[str]] = ([], [])
+    for col, parts in enumerate(spec):
+        for n, pattern in parts:
+            m = re.search(pattern, base_line("D02", n))
+            out[col].extend(m.groups() if m else ["?"])
+    return out
+
+
+def cell_numbers(cell: str) -> list[str]:
+    cell = re.sub(r"D02-C\d+|\d+×\d+", "", strip_comments(cell))
+    return sorted(NUMBER.findall(cell))
 
 
 def g_redline(t: Texts) -> list[Finding]:
@@ -1060,16 +1170,15 @@ def g_redline(t: Texts) -> list[Finding]:
         if not any(r[0].startswith(name) for r in rows):
             bad.append(F("G-REDLINE", f"D02 §2's slot {name!r} has no redline row", "spec", sec))
     for r in rows:
-        if len(r) < 7:
-            bad.append(F("G-REDLINE", f"{r[0][:24]}: the row has {len(r)} cells", "spec", sec))
+        want = redline_expected(r[0])
+        if len(r) < 7 or want is None:
+            bad.append(F("G-REDLINE", f"{r[0][:24]}: not a known slot row", "spec", sec))
             continue
-        src = " ".join(base_line("D02", a) for _c, a, _b in cite_refs(" " + r[6]))
-        have = set(NUMBER.findall(strip_comments(src)))
-        for col in (1, 2):
-            for num in NUMBER.findall(strip_comments(r[col]).replace("D02-C11", "")):
-                if num not in have:
-                    msg = f"{r[0][:24]}: {num} is not on the D02 line(s) {r[6]}"
-                    bad.append(F("G-REDLINE", msg, "spec", sec))
+        for col, label in ((1, "compact"), (2, "comfortable")):
+            got, exp = cell_numbers(r[col]), sorted(want[col - 1])
+            if got != exp:
+                msg = f"{r[0][:24]}: {label} reads {got}, D02 states {exp}"
+                bad.append(F("G-REDLINE", msg, "spec", sec))
     return bad
 
 
@@ -1093,27 +1202,41 @@ def resolved_tokens() -> dict[str, int]:
     return out
 
 
+def d03_rows(leads: tuple[str, ...]) -> list[list[str]]:
+    rows = table_rows(lift_text("d03s2"))
+    return [r for r in rows if any(r[0].startswith(x) for x in leads)]
+
+
 def g_themes(t: Texts) -> list[Finding]:
     bad: list[Finding] = []
     sec = spec_sec(t, REDLINE_HEAD)
-    d03s2 = lift_text("d03s2")
     res = resolved_tokens()
     for r in rows_of(t.spec, REDLINE_HEAD):
-        if len(r) < 5:
+        if len(r) < 6:
             continue
+        leads = next((v for k, v in REDLINE_D03.items() if r[0].startswith(k)), ())
+        own = d03_rows(leads)
+        if not own:
+            bad.append(F("G-THEMES", f"{r[0][:24]}: no D03 §2 row binds it", "spec", sec))
+            continue
+        text = " ".join(" ".join(x[1:4]) for x in own)
+        boards = {b for x in own for b in re.findall(r"\d\d", x[-1])}
+        if "01" in boards:
+            boards.add("02")  # board 02 is board 01's light twin (D03 §0)
         toks = TOKEN.findall(r[3])
         for tok in toks:
-            if f"`{tok}`" not in d03s2:
-                bad.append(F("G-THEMES", f"{r[0][:24]}: `{tok}` is not in D03 §2", "spec", sec))
-        want = (
-            "—"
-            if not toks
-            else ("dark · light · hc" if all(res.get(x) == 3 for x in toks) else "partial")
-        )
+            if f"`{tok}`" not in text:
+                msg = f"{r[0][:24]}: `{tok}` is not in its D03 §2 row(s)"
+                bad.append(F("G-THEMES", msg, "spec", sec))
+        for b in re.findall(r"\d\d", r[5]):
+            if b not in boards:
+                msg = f"{r[0][:24]}: board {b} does not draw its D03 §2 row(s)"
+                bad.append(F("G-THEMES", msg, "spec", sec))
+        ok3 = all(res.get(x) == 3 for x in toks)
+        want = "—" if not toks else ("dark · light · hc" if ok3 else "partial")
         if r[4] != want:
-            bad.append(
-                F("G-THEMES", f"{r[0][:24]}: Themes reads {r[4]!r}, computed {want!r}", "spec", sec)
-            )
+            msg = f"{r[0][:24]}: Themes reads {r[4]!r}, computed {want!r}"
+            bad.append(F("G-THEMES", msg, "spec", sec))
     body = norm_text(section(t.spec, REDLINE_HEAD))
     need = "The comfortable-light and comfortable-dark full-panel cells are text-only"
     if need not in body:
@@ -1196,10 +1319,12 @@ def g_storybook(t: Texts) -> list[Finding]:
         bad.append(F("G-STORYBOOK", "T's five are not marked as the minimum", "spec", sec))
     tsec = spec_sec(t, TAPE_HEAD)
     states: list[str] = []
+    state_lines: list[str] = []
     for n in range(114, 143):
         mm = re.match(r"^\| (S\d+) +\| \*\*([^*]+)\*\*", base_line("D02", n))
         if mm:
             states.append(mm[2])
+            state_lines.append(base_line("D02", n))
     rows = rows_of(t.spec, TAPE_HEAD)
     keys = deck_entries(t.deck)
     if len(rows) != len(states) or not states:
@@ -1208,12 +1333,19 @@ def g_storybook(t: Texts) -> list[Finding]:
         )
     for k, (r, name) in enumerate(zip(rows, states, strict=False), 1):
         words = [w for w in re.split(r"[^A-Za-z0-9]+", name) if w and w.lower() != "the"]
-        want = f"S{k:02d} " + "".join(w[0].upper() + w[1:] for w in words)
+        want = f"St{k:02d} " + "".join(w[0].upper() + w[1:] for w in words)
         if r[0] != want or r[1] != f"S{k}":
             bad.append(F("G-STORYBOOK", f"§4.3 row {k} reads {r[0]!r}, not {want!r}", "spec", tsec))
         for dk in re.findall(r"`(d0\d\.[a-z0-9.]+)`", r[2]):
-            if dk not in keys and not dk.endswith("cp"):
+            if dk not in keys:
                 bad.append(F("G-STORYBOOK", f"§4.3 row {k}: {dk} is not a deck key", "spec", tsec))
+        own = [q for q in QUOTED.findall(state_lines[k - 1]) if len(q) > 3]
+        cited = [keys[dk] for dk in re.findall(r"`(d0\d\.[a-z0-9.]+)`", r[2]) if dk in keys]
+        covered = any(s in state_lines[k - 1] for e in cited for s in str_list(e.get("strings")))
+        covered = covered or any(q in r[2] for q in own)
+        if own and not covered:
+            msg = f"§4.3 row {k}: no cited deck row holds the state's own D02 string"
+            bad.append(F("G-STORYBOOK", msg, "spec", tsec))
     for r in rows_of(t.spec, COMP_HEAD):
         if len(r) >= 4 and re.search(r"\b(?:built|shipped|implemented)\b", r[3], re.IGNORECASE):
             bad.append(
@@ -1273,14 +1405,20 @@ def g_budget(t: Texts) -> list[Finding]:
             if (cid, n, n) not in cite_refs(" " + r[2]):
                 msg = f"{r[0][:24]}: {key} is on {cid}:{n}, the row cites {r[2]}"
                 bad.append(F("G-BUDGET", msg, "spec", sec))
-    body = norm_text(section(t.spec, BUDGET_HEAD))
-    for need in (
-        "is the engine's hard instance cap",
-        "is the LOD trigger",
-        "E22-K01 (#608) measures",
+    raw = section(t.spec, BUDGET_HEAD)
+    for pattern in (
+        r"<!--=CITE:lim\.visible--> is the engine's hard instance cap",
+        r"<!--=CITE:perf\.lod--> is the LOD trigger",
+        r"E22-K01 \(#608\) measures",
     ):
-        if need not in body:
-            bad.append(F("G-BUDGET", f"§6 lacks {need!r}", "spec", sec))
+        if not re.search(pattern, raw):
+            bad.append(F("G-BUDGET", f"§6 lacks {pattern[:40]!r}", "spec", sec))
+    for r in raw_rows(t.spec, BUDGET_HEAD):
+        label = r[0]
+        if "hard instance cap" in label and "CITE:lim.visible" not in r[1]:
+            bad.append(F("G-BUDGET", f"{label[:30]}: not the LIM cap", "spec", sec))
+        if "LOD trigger" in label and "CITE:perf.lod" not in r[1]:
+            bad.append(F("G-BUDGET", f"{label[:30]}: not `26`'s trigger", "spec", sec))
     return bad
 
 
@@ -1322,12 +1460,27 @@ def g_ahead(t: Texts) -> list[Finding]:
                 bad.append(
                     F("G-AHEAD", f"{k}: Sprint {r[1]}, E22J says {sprints.get(k)}", "spec", sec)
                 )
+        if "the parent" in r[0]:
+            if not r[-1].startswith("open, text merged"):
+                bad.append(F("G-AHEAD", f"{r[0][:24]}: not 'open, text merged'", "spec", sec))
+            continue
         if r[-1] != "met, no waiver":
             bad.append(F("G-AHEAD", f"{r[0][:24]}: not 'met, no waiver'", "spec", sec))
         want = margins.get(int(r[1]) if r[1].isdigit() else 0)
         if want and r[4] not in (want, "as above"):
             bad.append(F("G-AHEAD", f"{r[0][:24]}: the margin is not {want!r}", "spec", sec))
-    need = {"E22-S01", "E22-S02", "E22-S03", "E22-S04", "E22-S05", "E22-Q01", "E22-Q04", "E22-D06"}
+    need = {f"E22-S0{n}" for n in range(1, 6)} | {f"E22-Q0{n}" for n in range(1, 5)} | {"E22-D06"}
+    readers = norm_text(
+        next((ln for ln in t.spec.split("\n") if ln.startswith("**Readers:**")), "")
+    )
+    story_keys = {
+        k for r in rows_of(t.spec, STORY_HEAD) for k in re.findall(r"E22-[A-Z]\d\d", r[0])
+    }
+    for k in sorted(need - {f"E22-S0{n}" for n in range(1, 6)}):
+        if k not in readers:
+            bad.append(F("G-AHEAD", f"{k} is not on the Readers line", "spec", "(top)"))
+    for k in sorted({f"E22-Q0{n}" for n in range(1, 4)} - story_keys):
+        bad.append(F("G-AHEAD", f"{k} is not in §3.1", "spec", spec_sec(t, STORY_HEAD)))
     if not need <= keys_seen:
         bad.append(F("G-AHEAD", f"§10 lacks {', '.join(sorted(need - keys_seen))}", "spec", sec))
     if sprints.get(TICKET_KEY) != 9:
@@ -1370,6 +1523,17 @@ def g_openrows(t: Texts) -> list[Finding]:
             listed.add(f"{cid}:{rid}")
         if not r[2] or not r[3]:
             bad.append(F("G-OPENROWS", f"{r[0][:24]}: no owner lane or status", "spec", sec))
+    stories = {
+        k: r[3]
+        for r in rows_of(t.spec, STORY_HEAD)
+        if len(r) > 3
+        for k in re.findall(r"E22-S0\d", r[0])[:1]
+    }
+    for r in rows_of(t.spec, "11.2 This pack's rows"):
+        for k in re.findall(r"E22-S0\d", r[3] if len(r) > 3 else ""):
+            if r[0] not in stories.get(k, ""):
+                msg = f"{r[0]}: owner {k}, but §3.1's {k} row does not bind it"
+                bad.append(F("G-OPENROWS", msg, "spec", spec_sec(t, STORY_HEAD)))
     have = parent_ids()
     for x in sorted(have - listed):
         bad.append(F("G-OPENROWS", f"{x} is not in the log", "spec", sec))
@@ -1499,6 +1663,28 @@ def g_ruled(t: Texts) -> list[Finding]:
         bad.append(
             F("G-RULED", "the ruled section's heading does not carry the stamp", "spec", sec)
         )
+    return bad
+
+
+def g_status(t: Texts) -> list[Finding]:
+    """§0's Status cell agrees with the tool's tree probes and contract reads."""
+    bad: list[Finding] = []
+    sec = spec_sec(t, STATUS_HEAD)
+    rows = raw_rows(t.spec, STATUS_HEAD)
+    if not rows:
+        bad.append(F("G-STATUS", "§0 has no status table", "spec", sec))
+    for r in rows:
+        if len(r) < 4:
+            continue
+        built, status = r[2], strip_comments(r[3])
+        if "absent<!--=STATUS:" in built and status not in ("unbuilt", "pending"):
+            bad.append(
+                F("G-STATUS", f"{r[0][:24]}: absent at the base but {status!r}", "spec", sec)
+            )
+        if "served" in built and status != "built (backend)":
+            bad.append(F("G-STATUS", f"{r[0][:24]}: served but {status!r}", "spec", sec))
+        if "STATUS:" not in built and "served" not in built and status.startswith("built"):
+            bad.append(F("G-STATUS", f"{r[0][:24]}: 'built' with no evidence", "spec", sec))
     return bad
 
 
@@ -1726,6 +1912,7 @@ MEASURED_GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_untouched,
     g_walk,
     g_png,
+    g_status,
     g_ruled,
     g_hex,
     g_penpot,
@@ -1754,6 +1941,7 @@ GATE_NAMES = (
     "G-UNTOUCHED",
     "G-WALK",
     "G-PNG",
+    "G-STATUS",
     "G-RULED",
     "G-HEX",
     "G-PENPOT",
@@ -2021,6 +2209,85 @@ MUTATIONS: tuple[Mutation, ...] = (
             "Each consumer's acknowledgement is",
             "A session was held with the FE lead. Each consumer's acknowledgement is",
         ),
+    ),
+    Mutation(
+        "M-28",
+        "G-REDLINE",
+        "lens m1: header 32 / 44 swapped",
+        spec=cell_set("Header row", 1, "44 px"),
+    ),
+    Mutation(
+        "M-29",
+        "G-THEMES",
+        "lens m2: header tokens from another row",
+        spec=cell_set(
+            "Header row",
+            3,
+            "`color.surface.raised`, `color.text.tertiary`, `color.border.strong`",
+        ),
+    ),
+    Mutation(
+        "M-30",
+        "G-STORYBOOK",
+        "lens m3: a state's deck row off its D02 string",
+        spec=cell_set("St08 StaleT1", 2, "`d02.13.cp01`"),
+    ),
+    Mutation(
+        "M-31",
+        "G-THEMES",
+        "lens m4: a board that does not draw the row",
+        spec=cell_set("Row, tiers", 5, "09"),
+    ),
+    Mutation(
+        "M-32",
+        "G-STATUS",
+        "lens m5: an unbuilt surface called built",
+        spec=cell_set("SCR-053 tape panel", 3, "built"),
+    ),
+    Mutation(
+        "M-33",
+        "G-REDLINE",
+        "lens m6: the log's comfortable rows",
+        spec=cell_set("The log at 1280", 2, "572 px, 37 rows"),
+    ),
+    Mutation(
+        "M-34",
+        "G-OPENROWS",
+        "lens m7: a story's own C-row dropped from its binding",
+        spec=sub("| D05-C-3 (2 000 on the subscription path); ", "| "),
+    ),
+    Mutation(
+        "M-35",
+        "G-BUDGET",
+        "lens m8: the two layers swapped",
+        spec=sub(
+            "is the engine's hard instance cap (LIM:30, `11`:2228); 500<!--=CITE:perf.lod--> is the LOD trigger",
+            "is the LOD trigger (LIM:30, `11`:2228); 500<!--=CITE:perf.lod--> is the engine's hard instance cap",
+        ),
+    ),
+    Mutation(
+        "M-36",
+        "G-ANCHOR",
+        "lens m9: the debounce",
+        spec=sub("500<!--=CITE:s02.debounce-->", "250<!--=CITE:s02.debounce-->"),
+    ),
+    Mutation(
+        "M-37",
+        "G-REDLINE",
+        "lens m10: cell size and gap swapped between densities",
+        spec=cell_set("Cells and gaps", 1, "13 px cells, 12 px gaps"),
+    ),
+    Mutation(
+        "M-38",
+        "G-COPY",
+        "a copy-cite re-found on the wrong line",
+        spec=sub("| `21`:3724 ", "| `21`:3711 "),
+    ),
+    Mutation(
+        "M-39",
+        "G-AHEAD",
+        "E22-Q02 dropped from the Readers line",
+        spec=sub("E22-Q02 (#752) takes", "the E2E suite takes"),
     ),
     Mutation(
         "M-27",
