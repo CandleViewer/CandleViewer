@@ -7,7 +7,8 @@ its code, at most one G1 FAIL per table row:
 - [G1-TABLE] section 2 holds D9-01 to D9-13 in order, every cell filled, no Carrier or reduce cell
   a dash; the moving rows are exactly MOVING; each row's layer is RULED_LAYER's; a cut reads the
   instant pair, Property `none`, "identical (a cut)", "static is not worse:" and no drag; a moving
-  row's AC 1 cell starts "carries:"; only D9-03 runs during a drag.
+  row's AC 1 cell starts "carries:"; only D9-03 runs during a drag; every other moving row cuts
+  to rest at the drag threshold (DNA-4).
 - [G2-TOKEN] every backticked name in a token group exists in the token JSON at the base or is
   one of R352's two ruled names; no motion token but the seven; each row's timing cell names its
   ruled motion tokens in order (RULED_TIMING; a cut names `motion.duration.instant` only).
@@ -17,15 +18,18 @@ its code, at most one G1 FAIL per table row:
 - [G4-DNA] DNA-1 to DNA-4 stand byte for byte in `E14.json`:675 at the base; DNA-5 to DNA-8 stand
   with their pinned sentences; each DNA id in DNA_ON is applied on its rows.
 - [G5-ARITH] section 6's frames, instances, bytes and draw calls per moving row, and the HS-1,
-  HS-1b and MR-1 figures (starts per window, the ring's area, the region bound, the halo band,
-  the bulk-restore split), recomputed from the token JSON and the rules.
-- [G6-RULED] A28's stamp, the walkthrough line, CR-1's cite, the section 7.5 title, the BQ-11
-  sentence, the Partial line and the R352 / R353 / A28 words (RULING_PINS) stand exactly; with
-  `--source NAME=FILE` each pin is also found in that saved copy of the ruling.
+  HS-1b and MR-1 figures (starts per window, the re-start gap, the ring's area, the region
+  bound, the line, rectangle and ellipse halos, the bulk-restore split), recomputed from the
+  token JSON and the rules.
+- [G6-RULED] A28's stamp (in sections 1 and 8), the walkthrough line, CR-1's cite, the section
+  7.5 title, the BQ-11 sentence, the Partial line and the R352 / R353 / A28 words (RULING_PINS)
+  stand exactly; with `--source NAME=FILE` each pin is also found in that saved copy of the
+  ruling.
 - [G7-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base;
-  each pinned cite still carries its words; each cited file is identical at the BQ list's base
-  and E05-D03 at its merge commit, whenever those commits are readable; no cite lands in `16`
-  section 7's recipe lines (FORBIDDEN).
+  each pinned cite still carries its words, and pins and cited spans match both ways (every pin
+  cited, every in-range cited span pinned), so a cite moved to other lines fails; each cited
+  file is identical at the BQ list's base and E05-D03 at its merge commit, whenever those
+  commits are readable; no cite lands in `16` section 7's recipe lines (FORBIDDEN).
 - [G8-HYGIENE] no local path, host, closing keyword, id or open-approval wording in the spec, and
   no word or substring on the lane's public-text list or a host name in the spec or this tool.
 - [G9-BOARDS] section 10: six boards, 01 to 05 dark and 06 the light twin, names and exports in
@@ -119,7 +123,20 @@ keymap.json|251|chart.delete_drawing;keymap.json|266|chart.undo;keymap.json|275|
 popover.css|6|it appears at once (no enter fade);popover.css|67|Out over `fast` / `accelerate`
 popover.css|82|the exit is a cut;run-proto.mjs|2|Usage: node;run-proto.mjs|52|Page.navigate
 suppression-paths.json|7|layers/drawings;README.md|78|docs/design/<epic>/<ticket>.md
-E08-D11|11|E08-D11-proto/motion-proto.html"""
+E08-D11|11|E08-D11-proto/motion-proto.html;E08-D11|39|No participants, no sessions
+E05-D03|22|The seven motion primitives only;E05-D03|69|`motion.easing.accelerate`
+E05-D03|106|the focused symbol and open positions first;E05-D03|109|In the light theme
+E05-D03|121|One-shot rows start only on a state change, a user action
+D02|521|armed, first time in session;D02|522|"Horizontal line tool on."
+D02|523|"Horizontal line tool off.";D02|524|"Anchor 1 of 2 at 13:40, 64,012.5."
+D02|526|"Horizontal line at 64,210.5 created on all BTCUSDT panes. Selected."
+D02|530|"Selection cleared.";D02|534|"Trendline removed. Undo available."
+D02|536|"200 drawings hidden." / "All drawings locked.";D02|723|motion: creation, selection
+D04|299|`save-failed`;D04H|15|the popover's open / close is `16` §7's dialog recipe
+D05H|15|E14-D09 owns motion;D06H|107|(E14-D09 owns motion
+D07|21|| mark + ;D07|227|the restore flash is omitted;D07|313|**never moves the viewport**
+D07|313|the row menu's **;D07|317|with the **"restored"** tag for 10 s
+D07H|15|the restore flash `motion.duration.normal`"""
 STAMP = "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A28)"
 WALK = "owner walkthrough: post-Done (#2701)"
 PARTIAL = "Partial: PR 1 of 3"
@@ -158,7 +175,7 @@ DNA_TEXT = {
 DNA_IDS = ("DNA-1", "DNA-2", "DNA-3", "DNA-4")
 DNA_ON = {
     "DNA-1": ("D9-02", "D9-09"),
-    "DNA-4": ("D9-02", "D9-03", "D9-04", "D9-05"),
+    "DNA-4": ("D9-02", "D9-03", "D9-04", "D9-05", "D9-09"),
     "DNA-5": ("D9-10", "D9-11"),
     "DNA-6": ("D9-13",),
 }
@@ -173,7 +190,7 @@ D, E = "motion.duration.", "motion.easing."
 RULED_TIMING: dict[str, tuple[str, ...]] = {
     "D9-03": (D + "fast", E + "decelerate"),
     "D9-05": (D + "normal", E + "standard"),
-    "D9-09": (D + "slow", E + "standard", D + "normal", E + "standard"),
+    "D9-09": (D + "slow", E + "standard", D + "normal", E + "accelerate"),  # tree: E05-D03 row 3
 }
 MOTION7 = frozenset(
     [D + x for x in ("instant", "fast", "normal", "slow")]
@@ -184,6 +201,7 @@ CUT_TIMING = "`motion.duration.instant` · `—`"
 GL_FORMS = ("instance alpha", "scale uniform")
 HZ, HS1_GAP_MS, MR1_MAX, HS1_CAP = 60, 500, 3, 20  # HS-1: 500 ms, 20 per frame; MR-1: 3 per 1 s
 REGION, AREA_SHARE, BAND_PX, RING_START_PX, BYTES = (341, 256), 0.25, 4, 14, 4
+DRAG_STOP = ("drag threshold", "to rest")  # DNA-4's stop rule on D9-05 and D9-09
 BULK = 497  # D02's delete-all example ("497 drawings deleted")
 BOARDS = tuple((f"{i:02d}", "dark") for i in range(1, 6)) + (("06", "light"),)  # 06 twins 03
 BANNED_ROT13 = (
@@ -336,6 +354,8 @@ def row_problem(row: dict[str, str]) -> str:
             return "a cut is not the instant pair, Property none, identical, 'static is not worse:'"
     if (row["drag"] == "yes") != (rid == "D9-03") or not row["drag"].startswith(("yes", "no")):
         return f"'during a drag' is {row['drag']!r}; only D9-03 runs during a drag"
+    if rid in MOVING - {"D9-03"} and not all(w in row["drag"] for w in DRAG_STOP):
+        return "a moving row does not cut to rest at the drag threshold (DNA-4)"
     if not CITE.search(row["source"]):
         return "the Source cell holds no cite"
     return ""
@@ -436,24 +456,44 @@ def expected_figures(ctx: Ctx) -> tuple[dict[str, tuple[str, ...]], list[str]]:
     diag = math.hypot(w, h)
     band = BAND_PX * diag
     fit = int(bound // band)
+    a, b = w / 2, h / 2
+    ellipse = math.pi * (3 * (a + b) - math.sqrt((3 * a + b) * (a + 3 * b)))  # Ramanujan
+    outlines = {"rect": 2.0 * (w + h), "ellipse": ellipse}
+    fits = {k: int(bound // (BAND_PX * v)) for k, v in outlines.items()}
     ring = math.pi * (RING_START_PX / 2) ** 2
     starts = math.ceil(1000 / HS1_GAP_MS)  # starts at 0, gap, 2*gap ... inside [0, 1000)
     shown, share = min(BULK, HS1_CAP), round(AREA_SHARE * 100)
+    sel, rst = ms[RULED_TIMING["D9-05"][0]], ms[RULED_TIMING["D9-09"][0]]
     sentences = [
         f"At {HZ} Hz one frame is {trunc(1000 / HZ, 1)} ms.",
         f"any half-open 1 000 ms window holds at most {starts} starts, under MR-1's {MR1_MAX}.",
         f"A settle lasts {ms[D + 'fast']} ms, so it always ends before the next start is allowed",
         f"covers {trunc(ring, 1)} px², {trunc(ring / area * 100, 2)} % of a {w} × {h} px region.",
-        f"A bulk undo of {BULK} drawings emphasises {shown} and leaves {BULK - shown} to",
+        (
+            f"D9-05 lasts {sel} ms and D9-09 {rst} ms, both under the {HS1_GAP_MS} ms gap, so a "
+            "start that lands on a running entry is always drawn at rest."
+        ),
+        f"window holds at most {starts} starts per element, under MR-1's {MR1_MAX}.",
+        (
+            f"A bulk undo of {BULK} drawings emphasises at most {shown} and leaves at least "
+            f"{BULK - shown} to"
+        ),
         f"({trunc(area, 0)} px²) to {trunc(bound, 0)} px² of emphasised area ({share} %).",
         (
-            f"diagonal ({trunc(diag, 1)} px) covers {trunc(band, 1)} px², so {fit} such halos fit "
-            f"({trunc(fit * band, 1)} px²) and a {fit + 1}th does not "
+            f"diagonal ({trunc(diag, 1)} px): a line halo covers at most {trunc(band, 1)} px², so "
+            f"{fit} fit ({trunc(fit * band, 1)} px²) and a {fit + 1}th does not "
             f"({trunc((fit + 1) * band, 1)} px²); {HS1_CAP} would cover "
             f"{trunc(HS1_CAP * band, 1)} px²."
         ),
     ]
-    if starts > MR1_MAX or ms[D + "fast"] >= HS1_GAP_MS or fit >= HS1_CAP:
+    for kind, length in outlines.items():
+        n, hb = fits[kind], BAND_PX * length
+        sentences.append(
+            f"{trunc(length, 1)} px outline: its halo covers {trunc(hb, 1)} px², so {n} fit "
+            f"({trunc(n * hb, 1)} px²) and a {n + 1}th does not ({trunc((n + 1) * hb, 1)} px²)."
+        )
+    held = max(sel, rst) < HS1_GAP_MS and all(n < fit for n in fits.values())
+    if starts > MR1_MAX or ms[D + "fast"] >= HS1_GAP_MS or fit >= HS1_CAP or not held:
         sentences.append("(the rules no longer hold: a start cap, a settle or the area cap)")
     return cells, sentences
 
@@ -484,6 +524,8 @@ def gate_ruled(ctx: Ctx, r: Result) -> None:
                 r.fail("G6-RULED", f"{name}'s words {pin[:48]!r}… are not in the spec")
             if name in ctx.sources and flat(pin) not in flat(ctx.sources[name]):
                 r.fail("G6-RULED", f"{name}'s words {pin[:48]!r}… are not in its saved copy")
+    if missing := [n for n in (1, 8) if STAMP not in flat(section(ctx.spec, n))]:
+        r.fail("G6-RULED", f"A28's stamp is not in section(s) {missing}")
     open_walk = r"walkthrough[^.]{0,60}pending|pending[^.]{0,60}walkthrough"
     if re.search(open_walk, text, re.IGNORECASE):
         r.fail("G6-RULED", "the owner walkthrough is written as pending")
@@ -507,20 +549,37 @@ def gate_cite(ctx: Ctx, r: Result) -> None:
                 r.fail("G7-CITE", f"`{key}`:{a}{'-' + b if b else ''} is outside the file")
             if key == FORBIDDEN[0] and lo <= FORBIDDEN[2] and hi >= FORBIDDEN[1]:
                 r.fail("G7-CITE", f"`{key}`:{a}: a cite into `16` section 7's recipe lines")
-    for pin in CITE_PINS.replace("\n", ";").split(";"):
-        key, line, words = pin.split("|", 2)
+    pins = [p.split("|", 2) for p in CITE_PINS.replace("\n", ";").split(";")]
+    for key, line, words in pins:
         lines = ctx.base[key].splitlines()
         if int(line) > len(lines) or words not in lines[int(line) - 1]:
             r.fail("G7-CITE", f"`{key}`:{line} no longer carries {words!r}")
-        if not any(k == key and a <= int(line) <= b for k, a, b in cited):
-            r.fail("G7-CITE", f"the pinned cite `{key}`:{line} is not in the spec")
+    at = {(k, int(n)) for k, n, _ in pins}
+    uncited = sorted(
+        {f"{k}:{n}" for k, n in at if not any(c == k and a <= n <= b for c, a, b in cited)}
+    )
+    spans = {
+        (k, a, b)
+        for k, a, b in cited
+        if 0 < a <= b <= len(ctx.base[k].splitlines())
+        and not (k == FORBIDDEN[0] and a <= FORBIDDEN[2] and b >= FORBIDDEN[1])
+    }
+    unpinned = sorted(
+        f"{k}:{a}-{b}" for k, a, b in spans if not any(p == k and a <= n <= b for p, n in at)
+    )
+    if uncited or unpinned:
+        r.fail(
+            "G7-CITE",
+            f"pins and cites disagree: pinned, not cited {uncited}; cited, not pinned {unpinned}",
+        )
     moved = [k for k, v in ctx.bq_base.items() if v and v != ctx.base[k]]
     if moved:
         r.fail("G7-CITE", f"cited files changed between {BQ_BASE} and {BASE}: {moved}")
     if ctx.e05_pin and ctx.e05_pin != ctx.base["E05-D03"]:
         r.fail("G7-CITE", f"E05-D03 at {BASE} differs from its merge commit {E05_PIN}")
     r.numbers["cites"] = len(cited)
-    r.numbers["pins"] = len(CITE_PINS.replace("\n", ";").split(";"))
+    r.numbers["pins"] = len(pins)
+    r.numbers["spans"] = len(spans)
     r.numbers["bq_base"] = (
         f"{BQ_BASE} -> {BASE}: identical" if any(ctx.bq_base.values()) else "not readable"
     )
@@ -604,7 +663,7 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G4-DNA", sub('"drag never has inertia"', '"drag never has momentum"')),
     ("G5-ARITH", regex(r"^(\| D9-05 +\| `motion\.duration\.normal` +\| )12 ", r"\g<1>13 ")),
     ("G6-RULED", lambda ctx: ctx._replace(spec=ctx.spec.replace(PARTIAL, "Partial: PR 1 of 2"))),
-    ("G7-CITE", sub("`D07`:216, :317", "`D07`:216, :9317")),
+    ("G7-CITE", sub("`m0-report.mjs`:733;", "`m0-report.mjs`:9733;")),
     ("G8-HYGIENE", sub("(a spec cannot split from its tool;", "(a spec cannot split, /tmp/x;")),
     ("G9-BOARDS", regex(r"^(\| 06 .*?\| )light( +\|)", r"\1dark \2")),
 )
@@ -616,9 +675,20 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G2-TOKEN", sub("`color.surface.selected` overlay", "`color.surface.chosen` overlay")),
     ("G3-PROPERTY", regex(r"^(\| D9-05 .*?)instance alpha", r"\1instance alpha, scale uniform")),
     ("G4-DNA", regex(r"^(\| D9-13 .*?\| )DNA-6( +\|)", r"\1MR-3 \2")),
+    ("G4-DNA", sub("HS-1; HS-1b; DNA-1; DNA-4; CR-1", "HS-1; HS-1b; DNA-1; CR-1")),
+    (
+        "G1-TABLE",
+        sub(
+            "no: a press that crosses D02's drag threshold cuts the halo and the overlay to rest",
+            "no",
+        ),
+    ),
     ("G5-ARITH", sub("at most 2 starts", "at most 3 starts")),
     ("G6-RULED", sub("- **Hand-offs.**", "- **Hand-offs.** The owner walkthrough stays pending.")),
     ("G7-CITE", sub("(`14`:954)", "(`14`:954; `16`:182)")),
+    ("G7-CITE", sub("`D02`:521-523", "`D02`:100-101")),
+    ("G6-RULED", sub(STAMP, "RULED (orchestrator, 2026-10-30)")),
+    ("G5-ARITH", sub("so 4 fit", "so 5 fit")),
     (
         "G8-HYGIENE",
         sub("- **Hand-offs.**", "- **Hand-offs.** " + codecs.decode("Nggnpx", "rot13") + "."),
@@ -688,7 +758,8 @@ def main(argv: list[str]) -> int:
         n = res.numbers
         out.append(
             f"rows {n.get('rows')} (moving {n.get('moving')}); DNA {n.get('dna')}; cites "
-            f"{n.get('cites')} ({n.get('pins')} pinned); ruling pins {n.get('ruling_pins')} "
+            f"{n.get('cites')} ({n.get('spans')} distinct spans, {n.get('pins')} pins); ruling "
+            f"pins {n.get('ruling_pins')} "
             f"(saved copies {n.get('sources_checked')}); boards {n.get('boards')}; "
             f"{n.get('bq_base')}"
         )
