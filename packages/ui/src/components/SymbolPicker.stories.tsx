@@ -94,6 +94,21 @@ export const Delisted: Story = {
   },
 };
 
+/**
+ * Hover (CR-ORCH-5028-1): the `color.surface.hover` fill (symbolpicker.css). In light it sits at 1.09:1 on the
+ * TopBar's `color.surface.raised`: the pointer is the cue, and E08-D05 §13 asks for a light `surface.hover` value.
+ */
+export const Hover: Story = {
+  play: async ({ canvasElement }) => userEvent.hover(trigger(canvasElement)),
+};
+
+/** Pressed (CR-ORCH-5028-1): a held press takes the `color.surface.selected` fill, as expanded does (B02). */
+export const Pressed: Story = {
+  play: async ({ canvasElement }) => {
+    await userEvent.pointer({ keys: "[MouseLeft>]", target: trigger(canvasElement) });
+  },
+};
+
 /** Keyboard focus: one Tab stop with CMP-039's ring (in CMP-221's toolbar, its roving stop). */
 export const Focus: Story = {
   play: async ({ canvasElement }) => {

@@ -5,8 +5,8 @@ import { Meta } from "@storybook/addon-docs/blocks";
 # Molecules
 
 `CMP-040..069` in `docs/plan/15-component-catalogue.md`: form fields, menus, tabs, dialogs, toasts,
-tables and cards; and three molecules catalogued in later bands: CMP-213 FuzzyList, and the trading
-molecules CMP-160 SymbolSearchInput and CMP-219 SymbolPicker. A component's stories live under
+tables and cards; and four components catalogued in other bands: CMP-079 RbacGate, CMP-160
+SymbolSearchInput, CMP-213 FuzzyList and CMP-219 SymbolPicker. A component's stories live under
 `Molecules/<Component>` and ship with the component (E05-S01..S04).
 
 ## RbacGate (CMP-079)
@@ -615,3 +615,7 @@ is the way out.
 As a CMP-017 Popover's anchor the trigger keeps what the Popover composes onto it: its `aria-expanded`,
 `aria-controls` and toggle (after `onOpen`). So that host passes no `expanded` and holds no state, and a press on
 the open trigger closes the popover. Any other host passes `expanded`, its dialog's state.
+
+A host composes `id`, `tabIndex`, a `ref`, `aria-controls` and `onKeyDown`. `role`, `aria-labelledby`,
+`aria-disabled`, `aria-pressed`, `disabled` and `style` are no props and are dropped if passed, so the trigger's
+semantics and its name stay its own.
