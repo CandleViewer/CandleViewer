@@ -1,0 +1,70 @@
+# E15-D10 — Per-component hand-off (`16` §11.4; CMP-215 FloatingWindowFrame, the floating window's title bar)
+
+One catalogue entry changes its contract — **CMP-215 FloatingWindowFrame** (the two chrome surfaces, the Props the bar carries, the collapse order, the view-as banner slot, the Storybook list and the Tests) — and the rest of the window composes published components as they are: CMP-075 (the badge, E10-D03 §1.2), CMP-076 (the feed chip), CMP-229 (the arm state), CMP-001 secondary (Return to workspace, Pin on top), CMP-002 (⋮, ×), CMP-044 (the fifth-window confirm), the SCR-124 banner. The pack is [E15-D10.md](E15-D10.md); every "§", "SL-n", "F-n", "KB-n", "FM-n", "P-n" and "A-n" below is that file's. Nothing here edits `15`: the §C rows of the pack are PR 2's. Status: Draft — the BQs pending the orchestrator's ruling (the pack's §R); owner approval pending.
+
+## Hand-off checklist (E15-D10, #364)
+
+Rule: every line is `[x]` with its evidence, or `[ ]` with the reason (`16` §11.4, §13.3).
+
+| Item                     | CMP-215 FloatingWindowFrame                                                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Final Penpot link        | [ ] PR 3, page `E15-D10 Floating window hi-fi` (name + page id only; boards PENDING, the pack's §B)                                                                                   |
+| Variants × states        | [x] the pack §5.9 (the register: LIVE / DEMO × focused / unfocused, the four narrow steps, pinned, pin-in-overflow, unconfirmed, view-as, display-gone, the skeleton on open); A-6    |
+| Keyboard table           | [x] Table K                                                                                                                                                                           |
+| Accessible name and role | [x] Table N                                                                                                                                                                           |
+| Live data                | [x] the feed chip's age and an arm countdown never announced per tick (the pack §7); the display-gone row a `status` row read once on open; SR-09 in the main window's region         |
+| Motion pair              | [x] none in-app: the window's open, close, minimise and restore are the OS's; Pin on top, Return and the focus restyle cuts; the badge never transitions (the pack §10; A-9)          |
+| Density notes            | [x] Table R                                                                                                                                                                           |
+| Essential exceptions     | [x] none: no slot of the never-leave set ever leaves; the compact view is unreachable in a window (the pack §4 E-6)                                                                   |
+| Tokens used              | [x] Table R; no new token (the pack §2.2; A-5)                                                                                                                                        |
+| Data contract            | [x] none new: `WindowBounds` / `WindowState` as shipped (`apps/web/src/shell/ShellPort.ts`); the minimum-size and always-on-top fields are gaps handed to E15-S02 (the pack G-7, G-8) |
+| Contrast and CVD         | [x] the pack §9: E15-D13's six pairs reproduced, eight pairs added, three themes; the crop strip and the CVD renders on boards 01 and 08                                              |
+| Storybook                | [x] Table S                                                                                                                                                                           |
+| Sign-off                 | [ ] the orchestrator's design approval (the pack §14); the owner's walkthrough post-Done                                                                                              |
+
+## Table K — keyboard (the pack §7)
+
+| Where                                     | Keys                                  | Result                                                                                                                       |
+| ----------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| the main window, a panel's header focused | `Shift+F10` › Pop out; `Ctrl+Shift+O` | the panel pops out; focus lands on the new window's Return to workspace (FM-1); the chord PROPOSED (KB-12), desktop only     |
+| the main window, the placeholder focused  | `Ctrl+Shift+O`                        | focuses the panel's window (KB-2, PROPOSED)                                                                                  |
+| the window                                | `Tab`                                 | the banner's Exit while viewing as, Return to workspace, Pin on top (or ⋮ from step 2), ⋮, ×, then the panel's region (KB-3) |
+| the window                                | `Ctrl+\`                              | cycles the window's own regions — the banner, the title bar, the panel (KB-4, PROPOSED)                                      |
+| the title bar                             | `Shift+F10`                           | the window's ⋮ menu, first item focused (KB-5)                                                                               |
+| the window                                | `Esc`                                 | closes the topmost layer only; never returns the panel (KB-6)                                                                |
+| Return to workspace; ×                    | `Enter` / `Space`                     | the panel returns to its remembered place, else right of the focused panel; focus on its header (FM-5)                       |
+| Pin on top                                | `Enter` / `Space`                     | toggles `aria-pressed`, a cut (KB-8)                                                                                         |
+| between windows                           | Alt+Tab, the OS window list           | not intercepted; the OS title tells DEMO from LIVE (KB-9)                                                                    |
+
+## Table N — names and roles (the pack §3, §7)
+
+| Element                   | Role                             | Accessible name (or text)                                                                                         |
+| ------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| the window (the document) | the OS window                    | the title `{Kind} · {symbol} · {ENV}` — "DOM · BTCUSDT · LIVE" (TS-1, order-capable kinds; non-order kinds: TS-3) |
+| the title bar             | `toolbar`                        | "Window" (PROPOSED, KB-4)                                                                                         |
+| the hosted panel          | `region`                         | E15-D03 D-5's name, unchanged by the host — "DOM, BTCUSDT, Live"                                                  |
+| the environment badge     | `img` (CMP-075)                  | "Trading environment: Live"; unconfirmed: "Trading environment: Live — unconfirmed, reconnecting"                 |
+| Return to workspace       | `button`                         | "Return to workspace" (`window.titlebar.return`); the short form "Return" keeps the whole name                    |
+| Pin on top                | toggle `button` (`aria-pressed`) | "Pin on top" (`window.titlebar.pin`)                                                                              |
+| ⋮                         | `button`, `aria-haspopup="menu"` | "More window actions" (`window.titlebar.more`)                                                                    |
+| ×                         | `button`                         | "Close window — {kind} {symbol} {environment}" (`window.titlebar.close`)                                          |
+| the display-gone row      | `status`                         | "This window was on a display that's no longer connected, so it opened here."                                     |
+| the view-as banner        | SCR-124's (E42-D02 D10)          | the one notice; its Exit the first Tab stop                                                                       |
+
+## Table S — stories (names only; builder)
+
+| Entry   | Stories                                                                                                                                                                                                                                           | Builder        |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| CMP-215 | `Organisms/Dock/FloatingWindowFrame` — Demo, Live, Unfocused, AlwaysOnTop, PinInOverflow, Unconfirmed, ViewAs, NarrowStep1, NarrowStep2, NarrowStep3, NarrowStep4, DisplayGone (each in dark / light × compact / comfortable; no BrowserFallback) | E15-S02 (#435) |
+
+## Table R — redlines (compact / comfortable; every value names a token or E10-D03's figure — the pack §2.2)
+
+| Element                                                          | Height                                                                           | Tokens                                                                                                                                                                            |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the title bar                                                    | 32 px (E10-D03's figure) / `size.control.comfortable` + 2 × `space.1` (PROPOSED) | focused `color.surface.raised`, unfocused `color.surface.app`; `elevation.chrome`; `border.hairline` in `color.border.default`; `space.inset.sm` inset; `space.2` gaps (PROPOSED) |
+| the kind and symbol, the chip, the sync badge, the buttons' text | the line's                                                                       | `type.ui.label`, `color.text.primary`                                                                                                                                             |
+| the environment badge                                            | `size.icon.lg` / `size.control.compact`                                          | CMP-075's: `type.ui.label`, `font.weight.bold` LIVE / `.medium` DEMO, `size.icon.md` glyph, `border.thick` `color.env.*`, `radius.pill`, `space.2`                                |
+| Return to workspace, Pin on top                                  | `size.control.compact` / `.comfortable`                                          | CMP-001 secondary; pressed `color.surface.selected` + a 2 px inner `color.border.selected` outline (E05-D02)                                                                      |
+| ⋮, ×                                                             | `size.target.min` square                                                         | CMP-002, `color.text.secondary`                                                                                                                                                   |
+| the display-gone row                                             | one `type.ui.caption` line (two at 200 %)                                        | `color.status.info.subtle`, `color.text.primary`                                                                                                                                  |
+| the focus ring                                                   | `border.focus`                                                                   | `color.focus.ring`; `Highlight` under forced colours                                                                                                                              |
