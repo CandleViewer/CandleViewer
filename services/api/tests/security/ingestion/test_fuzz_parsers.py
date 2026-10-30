@@ -10,6 +10,7 @@ Crashers are minimised and checked in under `regressions/` (see INDEX.json).
 from __future__ import annotations
 
 import json
+import math
 import os
 from collections.abc import Callable
 from decimal import Decimal
@@ -125,6 +126,24 @@ def _contract(fn: Parser, frame: str) -> None:
         fn(frame)
     except ValueError:
         pass  # mapped rejection (InvalidOperation / ValidationError subclass ValueError)
+
+
+@pytest.mark.parametrize("field", ["ts", "u", "seq", "cts"])
+@pytest.mark.parametrize("value", [math.inf, -math.inf, math.nan])
+def test_parse_book_frame_non_finite_ts_rejects_as_value_error(field: str, value: float) -> None:
+    """#5040: `json.loads` reads `Infinity`, `-Infinity` and `NaN`, and `int()` of the first two
+    raises `OverflowError`; the parser maps every non-finite number to its `ValueError` contract,
+    so the fuzz above cannot draw a frame that escapes it."""
+    data: dict[str, object] = {"s": "BTCUSDT", "b": [], "a": [], "u": 1, "seq": 1}
+    msg: dict[str, object] = {"topic": "orderbook.50.BTCUSDT", "type": "snapshot", "ts": 1}
+    if field in ("u", "seq"):
+        data[field] = value
+    else:
+        msg[field] = value
+    frame = json.dumps(msg | {"data": data})
+    assert "Infinity" in frame or "NaN" in frame  # the constants `json.loads` accepts
+    with pytest.raises(ValueError):
+        _book(frame)
 
 
 @pytest.mark.parametrize("name", sorted(PARSERS))
