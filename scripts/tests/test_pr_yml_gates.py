@@ -261,11 +261,28 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
         inputs |= job.get("with") or {}
         for inner_id, inner in callee["jobs"].items() if _runs(job.get("if", True), on, {}) else ():
             if _runs(inner.get("if", True), on, inputs):
-                legs = math.prod(
-                    map(len, ((inner.get("strategy") or {}).get("matrix") or {}).values())
-                )
+                matrix = (inner.get("strategy") or {}).get("matrix") or {}
+                legs = math.prod(_legs(axis, inputs) for axis in matrix.values())
                 ran += [f"{job_id} / {inner_id}".removesuffix(" / ")] * legs
     return ran
+
+
+# A matrix axis written as `${{ fromJSON(inputs.x && '[..]' || '[..]') }}` (the vr job's shards:
+# one leg for the vr_update dispatch, ten otherwise) is read with the caller's inputs; anything else
+# that is not a list fails here rather than counting the characters of an expression.
+_PICK = re.compile(
+    r"\$\{\{\s*fromJSON\(\s*inputs\.(\w+)\s*&&\s*'(\[[^']*\])'\s*\|\|\s*'(\[[^']*\])'\s*\)\s*\}\}"
+)
+
+
+def _legs(axis: object, inputs: dict[str, object]) -> int:
+    if isinstance(axis, list):
+        return len(axis)
+    match = _PICK.fullmatch(str(axis).strip())
+    if match is None:
+        raise ValueError(f"a matrix axis this test cannot read: {axis!r}")
+    name, chosen, otherwise = match.groups()
+    return len(json.loads(chosen if inputs.get(name) else otherwise))
 
 
 @pytest.mark.parametrize(
@@ -279,8 +296,9 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
     # 19-minute lane split in two (5 / 19 / 19 / 38). #269 adds the Storybook gate beside `a11y`
     # on the e2e filter (5 / 19 / 19 / 39). #3881 shards the four py-tests lanes into sixteen (+12)
     # and leaves `integration / integration` to the merge group, which a PR no longer runs (-1):
-    # 5 / 30 / 30 / 50.
-    [("docs", 5), ("py", 30), ("py,infra", 30), ("all", 50)],
+    # 5 / 30 / 30 / 50. #270 adds the vr job's ten compare shards beside `storybook` on the e2e
+    # filter (the vr_update dispatch's single shard never runs on a PR): 5 / 30 / 30 / 60.
+    [("docs", 5), ("py", 30), ("py,infra", 30), ("all", 60)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))
