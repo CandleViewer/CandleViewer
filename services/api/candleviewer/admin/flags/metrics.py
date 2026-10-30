@@ -46,7 +46,8 @@ maintenance_mode_gauge = Gauge(
 )
 
 #: Refusals by the composed order-entry gate (#837 Q5), counted at the API edge
-#: (`api.order_entry_gate`). `reason` is the closed `RefusalReason` set (4 values).
+#: (`api.order_entry_gate`). `reason` is the closed `RefusalReason` set (5 values; E29-T06's
+#: `account_stale` is emitted only once its wiring lands).
 order_entry_refusals_total = Counter(
     "cv_order_entry_refusals_total",
     "Orders refused by the order-entry gate before any OMS work, per refusal reason.",

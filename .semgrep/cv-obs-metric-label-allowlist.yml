@@ -72,7 +72,8 @@ rules:
       #   {orders, order_events, executions, positions, position_snapshots, idempotency_anchors,
       #   recorded_stops}, a `Literal` in code; max_series=7.
       # reason (E42-T03, #837 Q5, cv_order_entry_refusals_total): the closed order-entry
-      #   `RefusalReason` set (4 values, checked when a refusal is built); max_series=4.
+      #   `RefusalReason` set (5 values with E29-T06's `account_stale`, checked when a refusal is
+      #   built); max_series=5.
       # port (E29-T04, #913 ruling R4 and slice 3, oms_interim_ports): the eleven order-path ports
       #   an interim may fill {stop_resolver, risk_gate, arm_records, kill_switch,
       #   machine_event_sink, risk_figures, atr, and E29-T05's reconciliation, execution_handovers,
