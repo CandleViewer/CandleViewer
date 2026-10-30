@@ -136,14 +136,14 @@ describe("Scenario: The framework-free boundary is enforced, not just documented
     ["ResizeObserver", "export const f = () => new ResizeObserver(() => undefined);"],
   ];
 
-  it.each(["src/core/x.ts", "src/layers/x.ts", "src/scene/x.ts"])(
+  it.each(["src/core/x.ts", "src/layers/x.ts", "src/scene/x.ts", "src/model/x.ts"])(
     "%s: every browser global fails naming C-2.16, not only document/window",
     async (path) => {
       for (const [name, code] of domProbes) {
         const out = await lint(path, code);
         expect(out, name).toEqual([
           `no-restricted-globals: Unexpected use of '${name}'. C-2.16: no DOM globals in ` +
-            "src/core|layers|scene (DOM glue is the host adapter's).",
+            "src/core|layers|scene|model (DOM glue is the host adapter's).",
         ]);
       }
     },
@@ -193,7 +193,7 @@ describe("Scenario: The framework-free boundary is enforced (tsc, no DOM lib in 
       .map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"));
   }
 
-  it.each(["src/core/probe.ts", "src/layers/probe.ts", "src/scene/probe.ts"])(
+  it.each(["src/core/probe.ts", "src/layers/probe.ts", "src/scene/probe.ts", "src/model/probe.ts"])(
     "a DOM type or global in %s fails tsc under tsconfig.core.json",
     (rel) => {
       expect(compile("tsconfig.core.json", rel)).toEqual([
@@ -289,6 +289,7 @@ describe("Scenario: The framework-free boundary is enforced (dependency-cruiser)
     write("packages/chart-engine/src/api/PlainCodec.ts", "export const c = 1;\n");
     write("packages/chart-engine/src/host/mount.ts", "export const m = 1;\n");
     write("packages/chart-engine/src/scene/uses-host.ts", 'import "../host/mount";\n');
+    write("packages/chart-engine/src/model/uses-host.ts", 'import "../host/mount";\n');
     const require = createRequire(import.meta.url);
     const config = require(join(REPO, ".dependency-cruiser.js")) as IConfiguration;
     const out = await cruise(
@@ -334,11 +335,14 @@ describe("Scenario: The framework-free boundary is enforced (dependency-cruiser)
     expect(violations("packages/chart-engine/src/api/clean.ts")).toEqual([]);
   });
 
-  it("the scene graph importing the DOM host adapter fails chart-engine-core-no-dom-host", () => {
-    expect(violations("packages/chart-engine/src/scene/uses-host.ts")).toEqual([
-      "chart-engine-core-no-dom-host -> packages/chart-engine/src/host/mount.ts",
-    ]);
-  });
+  it.each(["scene", "model"])(
+    "src/%s importing the DOM host adapter fails chart-engine-core-no-dom-host",
+    (dir) => {
+      expect(violations(`packages/chart-engine/src/${dir}/uses-host.ts`)).toEqual([
+        "chart-engine-core-no-dom-host -> packages/chart-engine/src/host/mount.ts",
+      ]);
+    },
+  );
 
   it("each rule cites C-2.16 in its comment", () => {
     const require = createRequire(import.meta.url);

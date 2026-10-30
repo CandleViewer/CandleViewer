@@ -159,10 +159,10 @@ Columnar, typed-array based, append-optimised, with stable indices.
 ```text
 BarStore (per series)
   time:     Float64Array   (µs since epoch)
-  open/high/low/close: Float32Array (scaled; see precision note)
+  open/high/low/close: Int32Array (ticks from priceOrigin; tickSize per series; precision note)
   volume:   Float32Array
   delta:    Float32Array
-  head/tail ring indices, capacity grown by doubling
+  head/tail ring indices (power of two, masked), doubling up to maxBars, then front eviction
 FootprintStore (per bar-spec)
   barIndex: Uint32Array        // parallel arrays, sorted by (barIndex, priceLevel)
   priceLevel: Int32Array       // integer ticks from a per-symbol origin
@@ -182,7 +182,7 @@ DrawingStore
 
 **Precision.** Prices arrive as integer ticks (`int32`, relative to a per-symbol origin) — never as float dollars — so no precision is lost at any zoom. Conversion to float happens only in the vertex shader after a double-precision offset is applied on the CPU (`priceOrigin` uniform), avoiding the classic large-float jitter. Time is `Float64Array` on the CPU; the shader receives `time - viewportTimeOrigin` as a float32, which keeps sub-millisecond precision over any realistic viewport.
 
-**Mutation API.** `appendBars(from)`, `patchLastBar(bar)`, `prependHistory(bars)` (for infinite scroll-back), `upsertFootprintCells(barIndex, cells)`, `pushHeatmapColumn(time, Float32Array)`, `replaceProfile(period, data)`. Every mutation returns the affected index range so `BatchBuilder` can do a partial `bufferSubData` instead of a full re-upload.
+**Mutation API.** `append(bars)`, `patch(index, bars)`, `prepend(bars)` (for infinite scroll-back), `replace(bars)` (a snapshot), `upsertFootprintCells(barIndex, cells)`, `pushHeatmapColumn(time, Float32Array)`, `replaceProfile(period, data)`. Every mutation returns the affected index range (`{op, from, to, indexShift}`, `op` naming the mutation; `indexShift` > 0 after a prepend or an eviction: stored indices rebase by `i += indexShift` after a prepend, `i -= indexShift` after an append that evicted) so `BatchBuilder` can do a partial `bufferSubData` instead of a full re-upload.
 
 ### 3.4 GL backend
 
