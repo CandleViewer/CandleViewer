@@ -334,7 +334,7 @@ def test_after_a_reload_the_cookie_alone_signs_out_through_the_csrf_guard(stack:
     assert {REFRESH_COOKIE, CSRF_COOKIE} <= cleared
 
 
-@pytest.mark.parametrize("path", ["/auth/logout", "/auth/unlock", "/auth/lock"])
+@pytest.mark.parametrize("path", ["/auth/logout", "/auth/unlock"])
 def test_a_cookie_logout_or_unlock_bound_to_another_session_is_refused(
     stack: Stack, path: str
 ) -> None:
@@ -446,17 +446,24 @@ def test_a_session_locked_by_request_reads_itself_relocks_and_unlocks_with_the_p
     assert stack.client.get("/auth/sessions", headers=headers).status_code == 200
 
 
-def test_after_a_reload_the_cookie_alone_locks_through_the_csrf_guard(stack: Stack) -> None:
-    """With no live access token the guard leaves the SR-041 binding to the route, against the
-    cookie's session, as for logout and unlock."""
+def test_the_cookie_alone_never_locks_a_session_through_the_csrf_guard(stack: Stack) -> None:
+    """22 `authLock` (#4743): lock takes the access token only. With the `cv_refresh` cookie
+    alone, while the access token lives or after it ended, the guard has no session to bind the
+    SR-041 token to, so it refuses `POST /auth/lock` before the route, without a CSRF header and
+    with a pair bound to the cookie's session alike. The session stays unlocked."""
     uid, _ = stack.add_user("reloading")
     minted = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=3600)
-    stack.clock.now += ACCESS_TOKEN_TTL  # the access token is gone, the session is not locked
-    r = stack.client.post("/auth/lock", headers=_cookie_only(stack, minted, minted))
-    assert r.status_code == 200 and r.json()["session"]["locked"] is True, r.text
-    assert [rec["action"] for rec in stack.audit.records] == ["auth.session_locked"]  # B16: none
+    paired = _cookie_only(stack, minted, minted)
+    for later in (timedelta(0), ACCESS_TOKEN_TTL):  # then the access token is gone
+        stack.clock.now += later
+        for headers in ({"Cookie": paired["Cookie"], "Origin": ORIGIN}, paired):
+            stack.client.cookies.clear()
+            r = stack.client.post("/auth/lock", headers=headers)
+            assert (r.status_code, _code(r)) == (403, "csrf_token_invalid")
     row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
-    assert row is not None and row.locked_at == stack.clock.now
+    assert row is not None and row.locked_at is None
+    assert not row.is_idle_locked(now=stack.clock.now)
+    assert "auth.session_locked" not in [rec["action"] for rec in stack.audit.records]
 
 
 def test_a_live_access_token_locks_its_own_session_whatever_the_cookie(stack: Stack) -> None:

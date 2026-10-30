@@ -232,9 +232,9 @@ def test_refresh_is_delegated_whole_to_the_route() -> None:
     assert _code(r) == "csrf_token_invalid"  # SR-042 still applies first
 
 
-# -- logout, unlock and lock: the route binds only a cookie-identified one (contract "Idle lock") -
+# -- logout and unlock: the route binds only a cookie-identified one (contract "Idle lock") -----
 
-_DEFERRED = ["/auth/logout", "/auth/unlock", "/auth/lock"]  # lock: #4743
+_DEFERRED = ["/auth/logout", "/auth/unlock"]
 
 
 def _with_logout(client: TestClient) -> TestClient:
@@ -245,7 +245,7 @@ def _with_logout(client: TestClient) -> TestClient:
         return {"route": "unlock"}
 
     async def lock() -> dict[str, str]:
-        return {"route": "lock"}
+        return {"route": "lock"}  # #4743: never deferred, so a deferral would reach it
 
     app = client.app
     assert isinstance(app, FastAPI)  # TestClient.app is typed as bare ASGI
@@ -312,23 +312,39 @@ def test_a_bearer_call_bound_to_its_own_session_passes_with_the_cookie_present(p
         ("POST", "/auth/unlock/"),
         ("POST", "/auth/unlockx"),
         ("PUT", "/auth/unlock"),
-        ("POST", "/auth/lock/"),
-        ("POST", "/auth/lockx"),
-        ("PUT", "/auth/lock"),
+        ("POST", "/auth/lock"),  # #4743: lock takes the access token only
         ("POST", "/auth/session/extend"),
     ],
 )
 def test_only_a_post_to_the_exact_logout_or_unlock_path_is_deferred_to_the_route(
     method: str, path: str
 ) -> None:
-    """The cookie deferral is `POST /auth/logout`, `POST /auth/unlock` or `POST /auth/lock`
-    exactly: a cookie-only request to a neighbouring path, or with another method, is bound here
-    like any write."""
+    """The cookie deferral is `POST /auth/logout` or `POST /auth/unlock` exactly: a cookie-only
+    request to a neighbouring path, or with another method, is bound here like any write, and so
+    is `POST /auth/lock`."""
     client, audit = _app(_Sessions())
     _with_logout(client)
     r = client.request(method, path, headers=_refresh_cookie(_pair(uuid.uuid4())))
     assert r.status_code == 403 and _code(r) == "csrf_token_invalid"
     assert audit.calls[-1]["reason"] == "wrong_session"
+
+
+@pytest.mark.parametrize("with_cookie", [False, True], ids=["bearer", "bearer_and_cookie"])
+def test_a_bearer_lock_is_bound_here_to_the_bearers_own_session(with_cookie: bool) -> None:
+    """#4743: the guard binds a lock's SR-041 token to its bearer's session, as for any write: a
+    pair bound to another session is refused, whatever `cv_refresh` cookie comes with it, and the
+    bearer's own pair passes to the route."""
+    client, audit = _app(_Sessions())
+    _with_logout(client)
+
+    def headers(sid: uuid.UUID) -> dict[str, str]:
+        pair = _refresh_cookie(_pair(sid)) if with_cookie else _pair(sid)
+        return {**pair, "Authorization": "Bearer good"}
+
+    r = client.post("/auth/lock", headers=headers(uuid.uuid4()))
+    assert r.status_code == 403 and _code(r) == "csrf_token_invalid"
+    assert audit.calls[-1]["reason"] == "wrong_session"
+    assert client.post("/auth/lock", headers=headers(_SID)).json() == {"route": "lock"}
 
 
 def test_verify_refresh_csrf_reasons() -> None:

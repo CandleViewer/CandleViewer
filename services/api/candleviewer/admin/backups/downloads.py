@@ -214,8 +214,7 @@ def grant_ended(link: DownloadLink, family: Sequence[SessionRecord], now: dateti
     set: the step-up that minted the grant cleared it, a successor starts without, and a
     downgrade keeps it set after its window until a write lifts it; or one unlocked at or after
     the link's issue (`unlocked_at`, #4743): download links end at any unlock of the session
-    chain. A read-only turn leaves the rows clean only if it began within the issue's touch to
-    its mint (seconds) and a write lifted it after its `READONLY_WINDOW`, at least `LINK_TTL`."""
+    chain."""
     issuing = next((row for row in family if row.id == link.session_id), None)
     if issuing is None:
         return "session_ended"

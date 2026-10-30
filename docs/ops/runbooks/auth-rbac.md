@@ -68,9 +68,11 @@ refresh carries the lock to the new session, and extend is refused. Each lock wr
 with `action=auth.session_locked`); a call on a session that is already locked writes nothing. A
 `503` from the lock means its record could not be written, and the session is not locked. The lock
 sends the session's B16 chart nothing: B16 writes its own `auth.idle_locked` when it next reads the
-row (an unlock or a step-up does), with the lock moment (`idle_locked_at_us`, from `locked_at`) in its
-state, so that row's own time can be later than the lock. Backup download links end at any unlock of
-the session chain. Nobody can lock another user's session with this route: to end one, revoke it.
+row (an unlock does), with the lock moment (`idle_locked_at_us`, from `locked_at`) in its state, so
+that row's own time can be later than the lock. Backup download links end at any unlock of the
+session chain. Only the session's own access token locks it: a request with only the `cv_refresh`
+cookie answers `403 csrf_token_invalid` and locks nothing. Nobody can lock another user's session
+with this route: to end one, revoke it.
 
 Preconditions: you know the user. Do not ask the user to retry during the lock window: a locked
 account refuses even a correct password, at login, at a step-up and at the idle-lock unlock, where

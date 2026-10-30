@@ -418,9 +418,14 @@ async def test_a_rotation_or_an_event_before_the_issue_does_not_end_the_link(bef
     assert [r["outcome"] for r in fx.served()] == [SUCCESS]
 
 
+def test_a_link_lives_no_longer_than_a_read_only_window() -> None:
+    """SR-BK10A-02 (a): a link lives `LINK_TTL`, no longer than a read-only window."""
+    assert LINK_TTL <= READONLY_WINDOW
+
+
 async def _unlocked(fx: Fx, sid: UUID, lock: str) -> None:
     """*sid* locked (by request, or by its deadline), then unlocked by the session store's one
-    unlock write, so the row looks as it did before the lock, but for `unlocked_at` (#4743)."""
+    unlock write (#4743)."""
     if lock == "lock_now":
         fx.rewrite(sid, locked_at=NOW)
     else:

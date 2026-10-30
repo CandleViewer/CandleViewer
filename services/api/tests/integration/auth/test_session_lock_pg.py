@@ -285,7 +285,8 @@ async def test_a_lock_racing_a_refresh_claim_is_carried_to_the_successor(
             lock = asyncio.create_task(
                 svc.lock(str(minted.session_id), write_ahead=holds, audit_timeout_s=30.0)
             )
-            await held.wait()
+            async with asyncio.timeout(10):  # a lock task that died first fails, never hangs
+                await held.wait()
             refresh = asyncio.create_task(svc.refresh(minted.refresh_token))
             await _until_blocked(probe, 1)  # the claim waits on the row
             release.set()

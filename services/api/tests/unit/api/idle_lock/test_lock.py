@@ -1,12 +1,15 @@
-"""`POST /auth/lock` (#4743, E09-S03-F1; contract `authLock`, CMP-098 "Lock now"): the session
-locks at once, as if its idle deadline fell due, without moving it; its refusals; one write-ahead
-`auth.session_locked` per lock (C-2.9), and B16's own `auth.idle_locked` once it is committed
-(28 B16.7). A real `SessionService` and B16 chart over the in-memory fakes; no DB, no network."""
+"""`POST /auth/lock` (#4743, E09-S03-F1; contract `authLock`, CMP-098 "Lock now"): the session its
+access token names locks at once, as if its idle deadline fell due, without moving it; its
+refusals; one write-ahead `auth.session_locked` per lock (C-2.9), and B16's own
+`auth.idle_locked` at its next read of the row (28 B16.7). A real `SessionService` and B16 chart
+over the in-memory fakes; no DB, no network. The router runs bare here: the guards that answer
+before it in the app are pinned through the app, the CSRF guard in
+`tests/security/auth/test_idle_lock_http.py` and the enrolment guard in
+`tests/contract/rbac/test_enrolment_only_matrix.py`."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
@@ -14,11 +17,10 @@ import httpx
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.api.enrolment_guard import REFUSAL_ACTION
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
 from candleviewer.auth.session_chart import to_us
-from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, SessionClass
+from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.statechart.bindings.b16_session import elevation_view
 from tests.conftest import RecordingAuditSink
 from tests.unit.auth.session_fakes import LoopClock
@@ -34,8 +36,6 @@ from ._world import (
     _open,
     _unlock,
 )
-
-_Credential = Callable[[MintedSession], dict[str, str]]
 
 
 async def _lock(w: World, headers: dict[str, str], **kw: Any) -> httpx.Response:
@@ -191,9 +191,11 @@ async def test_lock_of_a_revoked_session_is_session_revoked_without_its_cause(w:
 
 
 async def test_lock_after_the_absolute_lifetime_is_session_revoked_expired(w: World) -> None:
-    minted = await w.mint(await w.add_user(), idle_timeout_s=900)
-    w.clock.now += timedelta(hours=12, seconds=1)
-    r = await _lock(w, _cookie(minted))
+    """The lifetime ended while the access token still lives (as after a refresh near its end)."""
+    uid = await w.add_user()
+    minted = await w.sessions.mint(str(uid), expires_at=w.clock.now + timedelta(minutes=5))
+    w.clock.now += timedelta(minutes=5, seconds=1)  # the token's 12 minutes are not over
+    r = await _lock(w, _bearer(minted))
     assert (r.status_code, r.json()["code"], r.json()["revoked_reason"]) == (
         401, "session_revoked", "expired",
     )  # fmt: skip
@@ -201,16 +203,13 @@ async def test_lock_after_the_absolute_lifetime_is_session_revoked_expired(w: Wo
     assert w.audit.writer.records == [] and w.b16.calls == []
 
 
-@pytest.mark.parametrize("credential", [_bearer, _cookie], ids=["token", "cookie"])
-async def test_a_session_of_a_disabled_user_is_revoked_never_locked(
-    w: World, credential: _Credential
-) -> None:
+async def test_a_session_of_a_disabled_user_is_revoked_never_locked(w: World) -> None:
     """#2911's on-use backstop, before anything is recorded: the session is revoked as
     `user_disabled` and published, its cause undisclosed."""
     uid = await w.add_user()
     minted = await w.mint(uid)
     w.repo.user_statuses[str(uid)] = UserStatus.DISABLED
-    r = await _lock(w, credential(minted))
+    r = await _lock(w, _bearer(minted))
     assert (r.status_code, r.json()["revoked_reason"]) == (401, "revoked")
     row = await w.row(minted)
     assert (row.revoked_reason, row.locked_at) == ("user_disabled", None)
@@ -218,14 +217,13 @@ async def test_a_session_of_a_disabled_user_is_revoked_never_locked(
     assert w.audit.writer.records == [] and w.b16.calls == []
 
 
-async def test_rotated_away_credentials_are_unauthenticated_never_session_revoked(
+async def test_a_rotated_away_access_token_is_unauthenticated_never_session_revoked(
     w: World,
 ) -> None:
     minted = await _live(w)
     rotated = await w.sessions.refresh(minted.refresh_token)
-    for headers in (_bearer(minted), _cookie(minted)):
-        r = await _lock(w, headers)
-        assert (r.status_code, r.json().get("code")) == (401, "unauthenticated")
+    r = await _lock(w, _bearer(minted))
+    assert (r.status_code, r.json().get("code")) == (401, "unauthenticated")
     assert (await w.row(rotated.minted)).locked_at is None
 
 
@@ -300,42 +298,24 @@ async def test_lock_needs_a_credential_and_a_never_issued_one_is_unauthenticated
     assert w.audit.writer.actions() == ["auth.session_fixation_attempt"]
 
 
-async def test_lock_with_only_the_refresh_cookie_after_the_access_token_expired(
-    w: World,
+@pytest.mark.parametrize("bearer", ["none", "expired"])
+async def test_lock_with_only_the_refresh_cookie_is_refused_and_locks_nothing(
+    w: World, bearer: str
 ) -> None:
-    """After a reload, the current `cv_refresh` cookie identifies the session (Origin and
-    SR-041 checked here); an expired access token alone does not."""
+    """22 `authLock`: only an access token inside its lifetime identifies the session, and the
+    `cv_refresh` cookie identifies no lock. The cookie alone, or beside an expired access token,
+    is the uniform 401 here (in the app the CSRF guard refuses the cookie alone first); the cookie
+    is never read, so nothing is locked or recorded."""
     minted = await w.mint(await w.add_user(), idle_timeout_s=3600)
-    w.clock.now += ACCESS_TOKEN_TTL
-    assert (await _lock(w, _bearer(minted))).status_code == 401
-    r = await _lock(w, _cookie(minted))
-    assert r.status_code == 200, r.text
-    assert r.json()["session"]["locked"] is True
-    assert w.audit.writer.actions() == ["auth.session_locked"]
-
-
-async def test_cookie_lock_without_an_allowed_origin_is_refused_before_any_record(
-    w: World,
-) -> None:
-    """SR-042: `403 csrf_token_invalid` (the declared response), before anything is recorded."""
-    minted = await _live(w)
-    for origin in (None, "https://evil.example"):
-        r = await _lock(w, _cookie(minted, origin=origin))
-        assert (r.status_code, r.json()["code"]) == (403, "csrf_token_invalid")
-    assert w.audit.writer.records == [] and (await w.row(minted)).locked_at is None
-
-
-async def test_cookie_lock_with_a_csrf_token_of_another_session_is_refused_and_audited(
-    w: World,
-) -> None:
-    """SR-041 against the session the cookie names: another session's token is refused, and the
-    refusal recorded; nothing is locked."""
-    uid = await w.add_user()
-    minted, other = await w.mint(uid), await w.mint(uid)
-    r = await _lock(w, _cookie(minted, csrf_for=other.session_id))
-    assert (r.status_code, r.json()["code"]) == (403, "csrf_token_invalid")
-    assert w.audit.writer.actions() == ["auth.csrf_refused"]
-    assert (await w.row(minted)).locked_at is None and (await w.row(other)).locked_at is None
+    headers = _cookie(minted)
+    if bearer == "expired":
+        w.clock.now += ACCESS_TOKEN_TTL  # the access token is over, the session is not
+        headers["Authorization"] = f"Bearer {minted.access_token}"
+    r = await _lock(w, headers)
+    assert (r.status_code, r.json().get("code")) == (401, "unauthenticated")
+    row = await w.row(minted)
+    assert row.locked_at is None and not row.is_idle_locked(now=w.clock.now)
+    assert w.audit.writer.records == [] and w.b16.calls == []
 
 
 async def test_lock_with_an_undeclared_query_parameter_is_422_and_locks_nothing(
@@ -356,20 +336,6 @@ async def test_lock_ignores_a_body_naming_another_session_and_locks_only_the_cal
     r = await _lock(w, _bearer(mine), json={"session_id": str(other.session_id)})
     assert r.status_code == 200 and r.json()["session"]["id"] == str(mine.session_id)
     assert (await w.row(mine)).locked_at is not None and (await w.row(other)).locked_at is None
-
-
-async def test_lock_refuses_an_enrolment_only_session_its_cookie_names(w: World) -> None:
-    """Lock is not among the session's five operations, and the cookie reaches no bearer guard:
-    the route refuses as the guard does, before anything is locked or recorded but the guard's
-    own refusal row."""
-    minted = await _live(w)
-    w.auth.enrolment_gate_is_active, w.auth.verdict = True, SessionClass.ENROLMENT_ONLY
-    r = await _lock(w, _cookie(minted))
-    assert (r.status_code, r.json()["code"]) == (403, "mfa_enrollment_required")
-    [row] = w.audit.writer.records
-    assert (row["action"], row["session_id"]) == (REFUSAL_ACTION, minted.session_id)
-    assert row["after_state"] == {"channel": "http", "method": "POST", "path": "/auth/lock"}
-    assert (await w.row(minted)).locked_at is None and w.b16.calls == []
 
 
 async def test_lock_needs_no_session_chart_authority(b16_audit: RecordingAuditSink) -> None:
@@ -399,7 +365,7 @@ async def test_lock_without_an_identity_provider_is_501_and_locks_nothing(
         await w.step_up.stop()
 
 
-# -- the records: write-ahead, then B16 once committed (C-2.9, 28 B16.7) ------------------------
+# -- the records: write-ahead, then B16 at its next read of the row (C-2.9, 28 B16.7) -------------
 
 
 async def test_lock_with_the_audit_record_refused_is_503_and_the_session_stays_unlocked(

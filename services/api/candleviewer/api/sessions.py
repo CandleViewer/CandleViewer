@@ -74,16 +74,16 @@ stays on the writer. A row joins with `lane=True` on its `_audit` call; a call s
 router that writes through `AuditService.lane` needs the same `LaneNotWired` guard.
 
 Idle lock (#2300, contract info "Idle lock"): `GET /auth/session` never re-stamps
-`last_seen_at`. `GET /auth/session`, `POST /auth/unlock`, `POST /auth/logout` and
-`POST /auth/lock` serve a locked session, identified by an access token inside its lifetime or
-else the current `cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin
+`last_seen_at`. `GET /auth/session`, `POST /auth/unlock` and `POST /auth/logout`
+serve a locked session, identified by an access token inside its lifetime or else
+the current `cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin
 and SR-041 checks here); every other operation of a locked session is refused by
 `api.idle_lock`, and a locked or cookie-identified logout ends only its own session.
 `POST /auth/refresh` answers a locked session `401 session_idle_locked` itself, before its
 write-ahead record (#3331). `POST /auth/session/extend` re-stamps it only after its write-ahead
-record, and never lifts a lock. `POST /auth/lock` (#4743) locks the session at once, its lock a
-fact on the row that every check reads, without moving `last_seen_at`; like extend, it sends B16
-nothing.
+record, and never lifts a lock. `POST /auth/lock` (#4743) serves a locked session too, identified
+by its access token only; it locks the session at once, its lock a fact on the row that every
+check reads, without moving `last_seen_at`; like extend, it sends B16 nothing.
 """
 
 from __future__ import annotations
@@ -107,7 +107,6 @@ from candleviewer.api.csrf import (
     ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
     SESSION_REFUSALS_PER_WINDOW,
-    CsrfRefusal,
     RefusalAuditTracker,
     clear_csrf_cookie,
     csrf_problem,
@@ -977,7 +976,9 @@ def make_session_router(
         except SessionRevoked:
             return _unauthorized()
 
-    async def _identify(request: Request) -> tuple[SessionRecord, bool] | None:
+    async def _identify(
+        request: Request, *, bearer_only: bool = False
+    ) -> tuple[SessionRecord, bool] | None:
         """The session of an operation allowed while idle-locked (contract "Idle lock"):
         an access token inside its lifetime identifies it, else the `cv_refresh` cookie
         does, while it is that session's current refresh token. Revoked, expired and
@@ -986,7 +987,8 @@ def make_session_router(
         `/auth/refresh`) or one never issued (a fixation attempt). A rotated-away cookie
         is counted and audited as a reuse probe; a rotated-away access token is not (a tab
         still holding it after another tab refreshed is normal). The flag is True when
-        the cookie identified the session."""
+        the cookie identified the session. With *bearer_only* (`POST /auth/lock`, #4743)
+        the access token alone identifies it, and no cookie is read."""
         sessions = auth_service.sessions
         token = _bearer(request)
         if token is not None:
@@ -996,6 +998,8 @@ def make_session_router(
                 return None
             if now() < found.issued_at + ACCESS_TOKEN_TTL:
                 return None if found.revoked_reason == "rotated" else (found, False)
+        if bearer_only:
+            return None
         cookie = request.cookies.get(REFRESH_COOKIE)
         if cookie is None:
             return None
@@ -1528,9 +1532,11 @@ def make_session_router(
     @router.post("/auth/lock")
     async def lock(request: Request) -> Response:
         """CMP-098 "Lock now" (contract `authLock`, #4743): the calling session locks at once, as
-        if its idle deadline fell due, without moving it. Identified as in "Idle lock"; a
-        cookie-identified call gets the SR-042 Origin and SR-041 checks before anything about
-        the session is told, as unlock orders them. One `auth.session_locked` per lock, written
+        if its idle deadline fell due, without moving it. Only its access token, inside its
+        lifetime, identifies it, as for every write but refresh, unlock and logout: the cookie is
+        never read, so `CsrfMiddleware` binds the SR-041 token to the bearer's session (a request
+        with the cookie alone has none, and is refused there) and the enrolment guard refuses an
+        enrolment-only session before this route runs. One `auth.session_locked` per lock, written
         ahead under the row's lock (C-2.9), is the record of the lock: a session that is already
         locked answers `200` and writes nothing, even with the audit sink down. As extend, it
         sends B16 nothing: the row is the truth, and the chart records the lock
@@ -1542,16 +1548,10 @@ def make_session_router(
             return _problem(
                 501, "Not implemented", "identity provider not wired (E09-T03); lock disabled"
             )
-        caller = await _identify(request)
+        caller = await _identify(request, bearer_only=True)
         if caller is None:
             return _unauthorized()
-        record, by_cookie = caller
-        ip = _source_ip(request)
-        if by_cookie:
-            if not _origin_ok(request, allowed_origins):
-                return csrf_problem(CsrfRefusal.CROSS_ORIGIN)  # SR-042, before any record
-            if (refusal := await _csrf_refusal(request, record, ip)) is not None:
-                return refusal
+        record = caller[0]
         at = now()
         if record.is_revoked:
             return idle_lock.session_revoked_problem(record.revoked_reason or "revoked")
@@ -1563,15 +1563,9 @@ def make_session_router(
             return idle_lock.session_revoked_problem(exc.reason)
         except SessionNotFound:
             return _unauthorized()
-        op = ("POST", "/auth/lock")  # #2295: not an enrolment-only session's operation
-        if auth_service.enrolment_gate_is_active and (
-            refused := await route_refusal(
-                auth_service, enrolment_refusals, record, operation=op, ip=ip, logged_as=op
-            )
-        ):
-            return refused  # before the lock state is told or anything is recorded
         if (refusal := undeclared_query_refusal(request, LOCK_QUERY)) is not None:
             return refusal  # SR-026: before anything is locked or recorded
+        ip = _source_ip(request)
 
         async def write_ahead(row: SessionRecord) -> None:
             """C-2.9, under the row's lock, before `locked_at` is set: the actor, the session and
