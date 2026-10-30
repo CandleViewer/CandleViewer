@@ -56,9 +56,12 @@ its code:
 - [G-PUBLIC] no word on the public-text list (matched by pattern), no local path, host, uuid, URL,
   agent or session name, or closing keyword.
 - [G-CROWS] §10's C-rows C-1 ... C-19 in order, each with a reading and an owner.
-- [G-DRYRUN] the dry run is not the author's: the spec §14 says who runs it and when and holds no
-  result, the pack's DoD line for it is open, the AC trace names the deputy, and the appendix
-  keeps the brief in a text fence.
+- [G-DRYRUN] the dry run is the outside reader's, on record: the spec §14 names the run of record
+  (DRY_RECORD, the orchestrator's deputy, a reader outside E15), keeps it `(heuristic)` and the
+  owner's walkthrough after Done (A28), and holds its table, N1 ... N12 in order, each FOUND or
+  NOT FOUND, every NOT FOUND with where it is now answered; the pack's DoD line for it is one
+  `[x]` line reading MET with the record id; the AC trace reads MET with the record id and the
+  deputy; the appendix keeps the brief in a text fence.
 - [G-MUTLIST] the pack's §12 lists the tool's mutations, one per gate, by name.
 - [G-PROTECT] the protective actions (C-2.6, the R5 arm carve-out): the spec §4 has a `same` row
   for cancel, close and the stop; §5 says they are never behind a hidden tab without a route;
@@ -1154,6 +1157,8 @@ CITED: dict[tuple[str, int], str] = {
     ("D03", 325): '"Reduced" chip (CMP-011 neutral)',
     ("D03", 460): "`error-delisted`",
     ("D15", 285): "the reduced panel",
+    ("D15", 218): "## 4. The focus model",
+    ("D15", 274): "| RG-13 | The SCR-153 banner",
     ("D15", 561): "| G-01 |",
     ("D15", 339): "| SR-45 |",
     ("D15", 340): "| SR-46 |",
@@ -1553,29 +1558,49 @@ def g_crows(t: Texts) -> list[Finding]:
 
 # ---------------------------------------------------------------------------- the dry run
 
-DRY_WORDS = "To be run by the orchestrator's deputy (a reader outside E15), requested at READY"
-DRY_DOD = "- [ ] The hand-off dry run"
-DRY_TRACE = ("| T:83 item 9", "to be run by the orchestrator's deputy")
+DRY_RECORD = "6524815198"  # #366: the outside reader's run (the orchestrator's deputy)
+DRY_WORDS = (
+    f"Run of record: #366 comment {DRY_RECORD} — a reader outside E15, the orchestrator's deputy"
+)
+DRY_HOLDS = ("`(heuristic)`", "The owner's walkthrough stays after Done (A28).")
+DRY_NEEDS = 12
+DRY_DOD = "- [x] The hand-off dry run"
+DRY_MET = f"MET — run of record {DRY_RECORD}"
+DRY_TRACE = ("| T:83 item 9", f"MET — {DRY_RECORD} (the orchestrator's deputy)")
 DRY_BRIEF = "Read ONLY this one file, in full: docs/design/specs/e15-responsive-and-degraded.md"
+
+
+def dryrun_table_problems(body: str) -> list[str]:
+    bad: list[str] = []
+    rows = [r for r in table_rows(body) if re.fullmatch(r"N\d+", r[0])]
+    if [r[0] for r in rows] != [f"N{n}" for n in range(1, DRY_NEEDS + 1)]:
+        bad.append(f"the spec §14's table is not N1 ... N{DRY_NEEDS} in order")
+    for r in rows:
+        if len(r) != 5 or not r[2].startswith(("FOUND", "NOT FOUND")):
+            bad.append(f"the spec §14's {r[0]}: not five cells with FOUND or NOT FOUND")
+        elif r[2] == "NOT FOUND" and r[4] in ("", "—"):
+            bad.append(f"the spec §14's {r[0]}: not found, with no answer named")
+    return bad
 
 
 def dryrun_problems(t: Texts) -> list[str]:
     bad: list[str] = []
     body = section(t.spec, "14.")
     if DRY_WORDS not in body:
-        bad.append("the spec §14 does not say the deputy runs it, at READY")
-    if any(ln.startswith("| N") for ln in lines(body)):
-        bad.append("the spec §14 holds a result although no outside run is recorded")
+        bad.append("the spec §14 does not name the run of record and its outside reader")
+    if any(w not in body for w in DRY_HOLDS):
+        bad.append("the spec §14 drops `(heuristic)` or the owner's walkthrough after Done")
+    bad += dryrun_table_problems(body)
     dod = [
         ln
         for ln in lines(t.pack)
         if ln.startswith(("- [ ] The hand-off dry run", "- [x] The hand-off dry run"))
     ]
-    if dod != [ln for ln in dod if ln.startswith(DRY_DOD)] or len(dod) != 1:
-        bad.append("the DoD's dry-run line is not one open `[ ]` line")
+    if len(dod) != 1 or not dod[0].startswith(DRY_DOD) or DRY_MET not in dod[0]:
+        bad.append("the DoD's dry-run line is not one `[x]` line, MET, with the run of record")
     trace = [ln for ln in lines(t.pack) if ln.startswith(DRY_TRACE[0])]
     if len(trace) != 1 or DRY_TRACE[1] not in trace[0]:
-        bad.append("the AC trace does not name the deputy for the dry run")
+        bad.append("the AC trace's dry-run row does not read MET with the run of record")
     app = section(t.pack, "Appendix — the dry-run brief")
     if "```text" not in app or DRY_BRIEF not in app:
         bad.append("the appendix does not keep the brief in a text fence")
@@ -1809,8 +1834,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CROWS", "renumber C-15", _sub("pack", "| C-15 |", "| C-16 |")),
     (
         "G-DRYRUN",
-        "claim the dry run for the author in the spec",
-        _sub("spec", f"**{DRY_WORDS}.**", "**Run by the author.**"),
+        "drop the run of record from the spec",
+        _sub("spec", DRY_WORDS, "Run of record: the author's own reading"),
     ),
     (
         "G-MUTLIST",
@@ -1856,7 +1881,21 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "a byte of a CMP-251 row's Old (A-15, DEPENDS)",
         _sub("pack", "LongLabel (every story in dark", "LongLabel  (every story in dark"),
     ),
-    ("G-DRYRUN", "the DoD claims the dry run", _sub("pack", DRY_DOD, "- [x] The hand-off dry run")),
+    (
+        "G-DRYRUN",
+        "the DoD's dry-run line reopened",
+        _sub("pack", DRY_DOD, "- [ ] The hand-off dry run"),
+    ),
+    (
+        "G-DRYRUN",
+        "the AC trace's dry-run row without MET",
+        _sub("pack", f"| {DRY_TRACE[1]}", f"| {DRY_RECORD} (the orchestrator's deputy)"),
+    ),
+    (
+        "G-DRYRUN",
+        "a not-found need with no answer named",
+        _resub("spec", r"(^\| N4 .*\| )[^|]+\|$", r"\1— |"),
+    ),
     ("G-ANCHOR", "an unfilled placeholder in §7", _sub("pack", "## 7.", "## 7. {{COUNT:arows}}")),
     (
         "G-COPY",
