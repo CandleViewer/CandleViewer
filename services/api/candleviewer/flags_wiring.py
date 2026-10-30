@@ -19,7 +19,7 @@ or its seed for the process environment (`ENVIRONMENT_SEEDS`, #913 slice 3). `st
 to 2000 refuses boot), ensures every flag's row, reads `desktop.backend_connection`
 (`BackendConnectionFlag`) once and starts the maintenance poll and the polls of the OMS's two
 flag views and the `trade_groups` one (`FlagView`); `stop()` cancels the polls and the flag's
-refresh.
+refresh. A maintenance poll that ends before `stop()` latches the gate engaged until a restart.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from candleviewer.admin.flags.catalogue import (
     default_registry,
 )
 from candleviewer.admin.flags.maintenance import MaintenanceController, MaintenanceGate, chain_hooks
+from candleviewer.admin.flags.metrics import order_entry_gate_poll_dead_total
 from candleviewer.admin.flags.push import FlagPush, Session, SessionDirectory
 from candleviewer.admin.flags.registry import FlagKind, FlagSpec, FlagValue, value_matches
 from candleviewer.admin.flags.resolver import StoredFlag
@@ -275,6 +276,7 @@ class FeatureFlagsRuntime:
         self._settings = settings
         self._audit, self._step_up, self._users, self._sessions = audit, step_up, users, sessions
         self._poll: asyncio.Task[None] | None = None
+        self._stopped_poll: asyncio.Task[None] | None = None  # the running poll `stop()` cancels
         self._view_polls: list[asyncio.Task[None]] = []
         # Process-wide reads (#913 slice 3, E28-T05), built before the writer that takes their hook.
         self.oms_enabled = FlagView(self, TRADING_OMS_ENABLED)
@@ -331,14 +333,37 @@ class FeatureFlagsRuntime:
         await self.service.start()
         self.backend_connection.reopen()  # closed until here, so a never-started runtime is off
         await self.backend_connection.refresh()  # the priming read; an outage keeps the default
-        if self._poll is None:
+        if self._poll is None:  # never respawned after a death: the gate stays latched in-process
             self._poll = spawn(self.controller.run(), name="feature-flag-maintenance-poll")
+            self._poll.add_done_callback(self._poll_ended)
             self._view_polls = [
                 spawn(view.run(), name=f"feature-flag-view-{view.key}") for view in self._views
             ]
 
+    def _poll_ended(self, task: asyncio.Task[None]) -> None:
+        """Done-callback of the maintenance poll, which only `stop()` ends: `stop()` marks the poll
+        it cancels while it still runs, so any other end is a death (an error, a return, or a cancel
+        that is not `stop()`'s, the loop's own at a teardown that skipped `stop()` included), and so
+        is a poll that had already ended when `stop()` ran, its callback still queued. Its gate can
+        no longer follow the store, so it is latched engaged until a restart (fail closed, C-2.21),
+        counted and logged CRITICAL by the error's class alone (C-12.6); not restarted, as the key
+        self-check's latch is not. The error is retrieved either way."""
+        error = None if task.cancelled() else task.exception()
+        if task is self._stopped_poll:  # `stop()`'s cancel is the shutdown
+            return
+        self.gate.latch()  # first: nothing below may leave the gate open
+        order_entry_gate_poll_dead_total.inc()
+        cancelled, returned = task.cancelled(), error is None
+        ended = "CancelledError" if cancelled else "returned" if returned else type(error).__name__
+        # cv_page: the log route the alert rules key on, as the OMS ticker and watcher deaths page
+        _log().critical(
+            "order_entry_gate_poll_dead", cv_page=True, task=task.get_name(), error=ended
+        )
+
     async def stop(self) -> None:
         polls = [task for task in (self._poll, *self._view_polls) if task is not None]
+        if self._poll is not None and not self._poll.done():
+            self._stopped_poll = self._poll  # one already ended died first: its callback counts it
         self._poll, self._view_polls = None, []
         for poll in polls:
             poll.cancel()

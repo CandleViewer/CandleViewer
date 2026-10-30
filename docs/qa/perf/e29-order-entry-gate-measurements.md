@@ -164,6 +164,5 @@ sits near the worst phase of the 5 s period, not spread uniformly across it.
 - **Fix, for a follow-up ticket:** count `order_entry_refusals_total.labels(reason)` and emit
   `order_entry_refused` once at the OMS choke point, where `OrderEntryRefused` is built, or in
   `audit_refusal` when the error is an `OrderEntryRefused`; then remove the strict `xfail` mark.
-- **Status:** reported, not fixed here, as the brief requires. The fix is #4973, which also covers the
-  unsupervised maintenance poll task above. Until it lands, #964's counter clause is unmet, and the
-  strict `xfail` test keeps the gap visible.
+- **Status:** fixed by #4973: `POST /orders` counts and logs each gate refusal once at the route,
+  the maintenance poll's death latches the gate closed, and the strict `xfail` is a plain test.

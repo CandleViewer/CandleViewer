@@ -71,6 +71,7 @@ from candleviewer.api.order_admission import (
     stop_offset,
     submit_actor,
 )
+from candleviewer.api.order_entry_gate import count_refusal
 from candleviewer.api.order_etag import order_etag
 from candleviewer.api.order_problems import order_problem, outcome_problem
 from candleviewer.api.refusal_session import SessionsLike
@@ -329,10 +330,18 @@ def make_orders_router(
         except Exception as exc:  # the page is lost, never the answer
             _log().critical("oms_pager_failed", summary=summary, error=type(exc).__name__)
 
+    def gate_refused(error: OmsError, caller: _Caller) -> None:
+        """The order-entry gate's refusal in `cv_order_entry_refusals_total{reason}` and one
+        `order_entry_refused` line (`api.order_entry_gate`), counted here at the route: step 10's,
+        or else the OMS intake's re-check, never both, as step 10's refusal runs no pipeline."""
+        if isinstance(error, OrderEntryRefused):
+            count_refusal(error.reason, caller.account_id)
+
     async def audit_refusal(
         error: OmsError, caller: _Caller, step: str, env: str | None
     ) -> Response:
         """A refusal from step 4 on: counted and recorded before it is answered (C-2.9)."""
+        gate_refused(error, caller)  # the gate refused, whether or not its record lands
         refusal = problem_for(error)
         gate = error.reason if isinstance(error, OrderEntryRefused) else None
         record = RequestRecord(
@@ -409,6 +418,7 @@ def make_orders_router(
         try:
             outcome = await pipeline.submit(order, context)
         except OmsError as exc:  # recorded by the pipeline before it was raised
+            gate_refused(exc, caller)  # the intake's re-check (24 Sec.8.4.1), step 10 admitted
             return order_problem(exc, pager=paging)
         if outcome.status != 202:
             return outcome_problem(outcome)

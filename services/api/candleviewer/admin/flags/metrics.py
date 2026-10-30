@@ -53,6 +53,12 @@ order_entry_refusals_total = Counter(
     ["reason"],
 )
 
+#: The maintenance poll's deaths (`flags_wiring`): each latches the gate closed until a restart.
+order_entry_gate_poll_dead_total = Counter(
+    "cv_order_entry_gate_poll_dead_total",
+    "Maintenance poll tasks that ended other than by their stop; each latches order entry off.",
+)
+
 EXPORTED_NAMES: Final = frozenset(
     {
         "cv_feature_flag_evaluations_total",
@@ -61,6 +67,7 @@ EXPORTED_NAMES: Final = frozenset(
         "cv_flag_push_latency_seconds",
         "cv_maintenance_mode",
         "cv_order_entry_refusals_total",
+        "cv_order_entry_gate_poll_dead_total",
     }
 )
 

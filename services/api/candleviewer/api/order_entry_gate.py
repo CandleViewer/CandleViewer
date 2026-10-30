@@ -3,7 +3,9 @@
 The composition root builds one `OrderEntryGate(maintenance_gate, *account_checks)` (the
 `MaintenanceGate`, a `GlobalOrderEntryCheck`, first, then the E27-T04 account checks) and every
 submit route calls `order_entry_refusal(gate, account_id)`. `None` lets the order through;
-otherwise the route returns the problem it gives back. Obligations for every submit route (E29):
+otherwise the route returns the problem it gives back. A route that meets the gate through the
+OMS's `TradingSwitches` instead (`POST /orders`) counts each `OrderEntryRefused` with
+`count_refusal`, once per refused request, at the route. Obligations for every submit route (E29):
 
 1. **Order of operations.** Authenticate, check RBAC, then resolve the target account within the
    caller's scope (`403 account_scope_denied` for a body's account, `404 not_found` for an id
@@ -68,6 +70,7 @@ __all__ = [
     "OrderEntryGate",
     "OrderEntryRefusal",
     "RefusalReason",
+    "count_refusal",
     "order_entry_refusal",
     "refusal_problem",
 ]
@@ -97,11 +100,17 @@ def refusal_problem(refusal: OrderEntryRefusal) -> JSONResponse:
     )
 
 
+def count_refusal(reason: RefusalReason, account_id: UUID) -> None:
+    """One refusal: counted by `reason` and logged with `reason` and `account_id`, never `detail`
+    nor any member of the order. The caller calls it once per refused request."""
+    order_entry_refusals_total.labels(reason=reason).inc()
+    logger().info("order_entry_refused", reason=reason, account_id=str(account_id))
+
+
 def order_entry_refusal(gate: OrderEntryGate, account_id: UUID) -> JSONResponse | None:
     """`None` when every check lets the order through, else the first refusal's problem."""
     refusal = gate.refusal(account_id)
     if refusal is None:
         return None
-    order_entry_refusals_total.labels(reason=refusal.reason).inc()
-    logger().info("order_entry_refused", reason=refusal.reason, account_id=str(account_id))
+    count_refusal(refusal.reason, account_id)
     return refusal_problem(refusal)

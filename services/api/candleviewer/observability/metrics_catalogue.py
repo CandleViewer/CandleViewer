@@ -4069,6 +4069,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=4,
         exported=True,
     ),
+    _s(
+        "cv_order_entry_gate_poll_dead_total",
+        "counter",
+        "tasks",
+        (),
+        "Maintenance poll tasks that ended other than by their stop; each latches order entry off.",
+        "pages via the cv_page CRITICAL log line: order entry is off until a restart",
+        _L,
+        "E42",
+        max_series=1,
+        exported=True,
+    ),
     # --- Admin jobs (E42-T05, #966 Q10) -------------------------------------
     _s(
         "cv_admin_jobs_lost_on_restart_total",
