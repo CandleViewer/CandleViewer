@@ -13,6 +13,10 @@ def ok_trigger_mode(reg: object) -> None:
     reg.counter("cv_z_total", "help", ("trigger_mode",))  # ok: cv-obs-metric-label-allowlist
 
 
+def ok_reconcile_trigger_914(reg: object) -> None:
+    reg.counter("cv_r_total", "help", ("trigger", "result"))  # ok: cv-obs-metric-label-allowlist
+
+
 def ok_bounded_2453(reg: object) -> None:
     reg.counter("cv_i_total", "help", ("action",))  # ok: cv-obs-metric-label-allowlist
     reg.counter("cv_a_total", "help", ("bucket", "resource"))  # ok: cv-obs-metric-label-allowlist
