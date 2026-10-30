@@ -30,10 +30,12 @@ working tree.
    under `--strict-walk`); the icon table against the registry (G-ICONS). Then the rows (G-CROWS,
    G-GROWS, G-QROWS, G-AROWS), the ruling (G-RULED), the Storybook column (G-STORYBOOK), hygiene
    (G-HEX, G-PENPOT, G-NAMES, G-CLOSE, G-SESSION, G-STORYIDS), and the security lens's folded
-   sentences (G-SEC: row (3)'s enforcer split and TM cites, row (6)'s code map and the deck's
-   `codes`, the compute-failed `map` closed and verbatim at its source, every `indicator.*`
-   reason in E09-D09 §3.1's form from D04 §10.2, row (1)'s text-node test, CG-2's `env` field,
-   §3.1's `x-rbac` column against `22` / `23`).
+   sentences (G-SEC: row (3)'s enforcer split and TM cites, row (6)'s statuses and its code map
+   (§8.4) against the codes `22`'s `responses:` blocks and `23`'s topic bullets declare for
+   §3.1's routes and topic — each a deck key carrying the code or an explicit "no deck
+   sentence" route to an open question — the compute-failed `map` closed and verbatim at its
+   source, every `indicator.*` reason in E09-D09 §3.1's form from D04 §10.2, row (1)'s
+   text-node test, CG-2's `env` field, §3.1's `x-rbac` column against `22` / `23`).
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over EVERY unit of the pack
    (each heading, table row by its lead cell, rule line, prose sentence and fenced block, by
    region and location, NFKC and whitespace-normalised, with a line-shape tag per region) and
@@ -70,7 +72,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "8f182fa0c8"  # every cite was read here (the pack's Inputs line)
+BASE = "7e23e4667c"  # every cite was read here (the pack's Inputs line)
 HEAD = "origin/main"  # G-VERSION: a cited range edited at origin/main FAILs
 MULTI = re.MULTILINE
 
@@ -147,10 +149,12 @@ VERSION_SHAS = (
     "d117dc7328",
     "5955bca1bf",
     "aea32f6f6c",
+    "ead0a41a7d",
     "afaa498076",
-    "299e02ad5a",
-    "58db7d7002",
-    "f954f38680",
+    "e87be9b978",
+    "2d0bd4fd33",
+    "7629519069",
+    "67d7c7dbd1",
     "e906565e67",
     "6359111929",
 )
@@ -161,11 +165,11 @@ PINNED_DOCS = {
     "D04": "5955bca1bf",
     "D04H": "aea32f6f6c",
     "D05": "afaa498076",
-    "22": "299e02ad5a",
-    "ACT": "299e02ad5a",
-    "23": "58db7d7002",
-    "14": "f954f38680",
-    "15": "aea32f6f6c",
+    "22": "e87be9b978",
+    "ACT": "2d0bd4fd33",
+    "23": "7629519069",
+    "14": "67d7c7dbd1",
+    "15": "ead0a41a7d",
     "ICONS": "e906565e67",
     "TM": "6359111929",
 }
@@ -185,7 +189,6 @@ NAMED_ONLY = (
     "#466",
     "#539",
     "#947",
-    "#5008",
     "E05-T01",
     "E05-T05",
     "E05-T06",
@@ -416,6 +419,16 @@ def base_lines(cid: str) -> list[str]:
 def base_line(cid: str, n: int) -> str:
     lines = base_lines(cid)
     return lines[n - 1] if 1 <= n <= len(lines) else ""
+
+
+@functools.cache
+def line_of(cid: str, needle: str, start: int = 0) -> int:
+    """The 1-based number of the first line at the base, from `start`, holding `needle`
+    (0 when none): the contract anchors are found by content, never by a fixed line."""
+    for i, ln in enumerate(base_lines(cid)[start:], start + 1):
+        if needle in ln:
+            return i
+    return 0
 
 
 @functools.cache
@@ -804,9 +817,22 @@ def unique_block(base: list[str], a: int, b: int) -> list[str]:
     return base[lo:hi]
 
 
-def block_in(hay: list[str], block: list[str]) -> bool:
-    n = len(block)
-    return any(hay[i : i + n] == block for i in range(len(hay) - n + 1)) if block else True
+@functools.cache
+def head_joined_git(rel: str) -> str:
+    return "\n" + (git_show(HEAD, rel) or "") + "\n"
+
+
+def head_joined(rel: str) -> str:
+    """The file at origin/main as one newline-framed string, so a line-aligned block search is
+    one `str.find` instead of a slice comparison per line; the self-test lever is honoured."""
+    for r, text in reversed(HEAD_OVERRIDE):
+        if r == rel:
+            return "\n" + text + "\n"
+    return head_joined_git(rel)
+
+
+def block_in(hay: str, block: list[str]) -> bool:
+    return ("\n" + "\n".join(block) + "\n") in hay if block else True
 
 
 def cite_findings(t: Texts) -> tuple[list[Finding], int]:
@@ -847,7 +873,7 @@ def cite_findings(t: Texts) -> tuple[list[Finding], int]:
                         F("G-CITE", f"{cid}:{a}–{b} starts or ends on a blank line", doc, sec)
                     )
                 if head_ok():
-                    head = (at_head(CITE_FILES[cid]) or "").split("\n")
+                    head = head_joined(CITE_FILES[cid])
                     if not block_in(head, unique_block(lines, a, b)):
                         fails.append(
                             F("G-VERSION", f"{cid}:{a}–{b} was edited at {HEAD}", doc, sec)
@@ -855,8 +881,15 @@ def cite_findings(t: Texts) -> tuple[list[Finding], int]:
     return fails, len(done)
 
 
+@functools.cache
 def source_text(cid: str) -> str:
     return "\n".join(base_lines(cid))
+
+
+@functools.cache
+def loose_source(cid: str) -> str:
+    """One normalised copy of a cited source (G-QUOTE reads it per quote, never per line)."""
+    return loose(source_text(cid))
 
 
 def loose(s: str) -> str:
@@ -891,13 +924,18 @@ def g_quote(t: Texts) -> list[Finding]:
     for i, ln in enumerate(t.spec.split("\n"), 1):
         if h2_at(t.spec, i) == arow and ln.startswith("| A-"):
             continue  # copy-ready text is authored here
-        cited = loose("\n".join(source_text(c) for c, _a, _b in cite_refs(ln)))
+        cited = tuple(dict.fromkeys(c for c, _a, _b in cite_refs(ln)))
         for q in QUOTED.findall(strip_comments(ln)):
             q = q.strip()
             if len(q) < QUOTE_MIN or "…" in q or "<" in q or q.endswith("-form"):
                 continue
             lq = loose(q)
-            if lq in cited or lq in deck_text or lq in ruled or lq in core_sources():
+            if (
+                lq in deck_text
+                or lq in ruled
+                or any(lq in loose_source(c) for c in cited)
+                or lq in core_sources()
+            ):
                 continue
             bad.append(
                 F(
@@ -1222,15 +1260,27 @@ def g_frozen(t: Texts) -> list[Finding]:
 # ---------------------------------------------------------------------------- (l) the security lens (G-SEC)
 
 # row (6)'s map: the problem / WS code -> the deck entry that renders it (never the body's text)
-SEC_CODES = {
-    "422 validation_failed": "d02.12.r19",
-    "409 name_taken": "d02.12.r25",
-    "409 limit_reached": "d02.12.r12",
-    "sub_ok subscription_limit": "d02.12.r10",
-    "err internal_error": "d02.07.errored",
-}
-SEC_ROW6_WORDS = ("`422`", "`409`", "`403`", "`413`", "`503`", "`sub_ok`", "`err`", "never echoed")
+SEC_ROW6_WORDS = (
+    "`401`",
+    "`403`",
+    "`404`",
+    "`409`",
+    "`413`",
+    "`422`",
+    "`503`",
+    "`sub_ok`",
+    "`err`",
+    "never echoed",
+)
 SEC_ROW6_FIELDS = ("`title`", "`detail`", "`errors[].message`")
+# the code map (§8.4): one row per code `22` / `23` declare for §3.1's routes and topic, its lead
+# `<status or channel>` <rule>, its last cell a deck key whose entry carries the code or the
+# explicit route below; the declared set is read from the contracts, never from a list here
+CODEMAP_HEAD = "8.4 The code map"
+NO_SENTENCE = re.compile(r"no deck sentence → (Q-\d+) \(owner, #2701\)")
+WS_CHANNELS = ("sub_ok", "err")
+WS_BLOCK_LEAD = "- **`indicators` ("
+WS_BULLETS = ("- **Refusals, per topic in `sub_ok`", "- **Live only.**")
 SEC_ROW3_WORDS = ("client state gate", "T2-09", "T2-10", "hidden instances counted")
 SEC_ROW3_CITES = ("TM:110 (20 / 6)", ":111 (8)", ":115 (500)", "remain TM proposals")
 SEC_ROW1_WORDS = ("text nodes", "`dangerouslySetInnerHTML`", "`$ref`", "`pattern`", "`description`")
@@ -1260,6 +1310,128 @@ def x_rbac_of(api: list[str], start: int) -> tuple[str, bool] | None:
     return (f"`{m[1]}` · `{m[2]}`", csrf) if m else None
 
 
+def declared_rest(t: Texts) -> dict[str, set[str]]:
+    """status -> operations: the 4xx / 5xx keys of each §3.1 route's `responses:` block in `22`,
+    read from the `operationId:` line the row cites up to the next one."""
+    api = base_lines("22")
+    out: dict[str, set[str]] = {}
+    for r in rows_of(t.spec, OPS_HEAD):
+        op = r[0].strip("`")
+        m = re.search(r"`22`:(\d+)", r[2] if len(r) > 2 else "")
+        if op.startswith("WS ") or not m:
+            continue
+        for ln in api[int(m[1]) :]:
+            if "operationId:" in ln:
+                break
+            s = re.match(r'\s+"([45]\d\d)":', ln)
+            if s:
+                out.setdefault(s[1], set()).add(op)
+    return out
+
+
+@functools.cache
+def ws_code_table() -> frozenset[str]:
+    return frozenset(
+        re.findall(r"^\| `([a-z_]+)` +\| (?:topic|any|connection) ", source_text("23"), MULTI)
+    )
+
+
+@functools.cache
+def declared_ws() -> frozenset[str]:
+    """The `sub_ok` / `err` codes the indicators topic's refusal bullets name in `23`."""
+    lines = base_lines("23")
+    start = line_of("23", WS_BLOCK_LEAD)
+    codes: set[str] = set()
+    for ln in lines[start:] if start else []:
+        if ln.startswith("- **`"):
+            break
+        if any(ln.strip().startswith(b) for b in WS_BULLETS):
+            codes |= {c for c in re.findall(r"`([a-z_]+)`", ln) if c in ws_code_table()}
+    return frozenset(codes)
+
+
+def g_codemap(t: Texts, entries: dict[str, dict[str, object]], hook: str) -> list[Finding]:
+    """Row (6)'s code map against `22` / `23`: every declared code has a row; every row maps to
+    a deck key that carries the code, or routes it to an open question by its explicit form."""
+    bad: list[Finding] = []
+    sec = spec_sec(t, CODEMAP_HEAD)
+    rows = [r for r in rows_of(t.spec, CODEMAP_HEAD) if len(r) >= 3]
+    rest, ws = declared_rest(t), declared_ws()
+    if not rest or not ws:
+        bad.append(F("G-SEC", "no declared code read from `22` / `23` for §3.1", "spec", sec))
+    qids = {r[0] for r in rows_of(t.spec, QROW_HEAD)}
+    carried = {str(c): k for k, e in entries.items() for c in e.get("codes", [])}
+    seen_rest: set[str] = set()
+    seen_ws: set[str] = set()
+    for r in rows:
+        lead, disp = r[0], r[2]
+        prefixes = re.findall(r"`([a-z0-9_]+)`", lead)
+        bare = re.sub(r"`[^`]*`|\([^)]*\)", " ", lead)
+        rules = re.findall(r"(?<![\w-])([a-z][a-z_]+)(?![\w-])", bare)
+        if not prefixes or not rules:
+            bad.append(
+                F("G-SEC", f"code map row {lead[:30]!r} is not `<code>` <rule>", "spec", sec)
+            )
+            continue
+        for p in prefixes:
+            if p.isdigit():
+                if p not in rest:
+                    bad.append(F("G-SEC", f"{p} is declared by no §3.1 route in `22`", "spec", sec))
+                seen_rest.add(p)
+            elif p not in WS_CHANNELS:
+                bad.append(
+                    F("G-SEC", f"code map row {lead[:30]!r}: {p} is no channel", "spec", sec)
+                )
+            else:
+                for ru in rules:
+                    if ru not in ws:
+                        bad.append(F("G-SEC", f"`23`'s topic bullets name no {ru}", "spec", sec))
+                    seen_ws.add(ru)
+        codes = {f"{p} {ru}" for p in prefixes for ru in rules}
+        keys = [k for k in re.findall(r"`([a-z0-9.]+)`", disp) if k in entries]
+        q = NO_SENTENCE.search(disp)
+        if keys:
+            for code in sorted(codes):
+                if carried.get(code) != keys[0]:
+                    bad.append(
+                        F(
+                            "G-SEC",
+                            f"{code} is not carried by deck entry {keys[0]}",
+                            "deck",
+                            "(deck)",
+                        )
+                    )
+                if keys[0] not in hook or code.split(" ", 1)[1] not in hook:
+                    bad.append(
+                        F("G-SEC", f"row (6)'s hook does not map {code} to {keys[0]}", "spec", sec)
+                    )
+        elif q:
+            if q[1] not in qids:
+                bad.append(F("G-SEC", f"{lead[:30]}: routed to {q[1]}, no such Q-row", "spec", sec))
+        else:
+            bad.append(
+                F(
+                    "G-SEC",
+                    f"{lead[:30]}: neither a deck key nor the no-deck-sentence route",
+                    "spec",
+                    sec,
+                )
+            )
+    for status, ops in sorted(rest.items()):
+        if status not in seen_rest:
+            bad.append(
+                F(
+                    "G-SEC",
+                    f"`22` declares {status} on {', '.join(sorted(ops))}; no code map row",
+                    "spec",
+                    sec,
+                )
+            )
+    for code in sorted(ws - seen_ws):
+        bad.append(F("G-SEC", f"`23` names {code} for the topic; no code map row", "spec", sec))
+    return bad
+
+
 def g_sec(t: Texts) -> list[Finding]:
     bad: list[Finding] = []
     sec = spec_sec(t, FROZEN_HEAD)
@@ -1287,17 +1459,15 @@ def g_sec(t: Texts) -> list[Finding]:
     for n, words in SEC_TM_ROWS:
         if len(tm) < n or words not in tm[n - 1]:
             bad.append(F("G-SEC", f"TM:{n} no longer reads {words!r}", "spec", sec))
-    # M-1: row (6) names every code and field; every mapped code is carried by its deck entry
+    # M-1 (and the round-1 lens's M-3): row (6) names every status and its hook points at the
+    # code map, which is checked against the codes `22` / `23` declare (g_codemap)
     for need in (*SEC_ROW6_WORDS, *SEC_ROW6_FIELDS):
         if need not in cell("(6)", 1):
             bad.append(F("G-SEC", f"row (6) does not name {need}", "spec", sec))
     hook = cell("(6)", 4)
-    carried = {str(c): k for k, e in entries.items() for c in e.get("codes", [])}
-    for code, key in SEC_CODES.items():
-        if carried.get(code) != key:
-            bad.append(F("G-SEC", f"{code} is not carried by deck entry {key}", "deck", "(deck)"))
-        if key not in hook or code.split(" ", 1)[1] not in hook:
-            bad.append(F("G-SEC", f"row (6)'s hook does not map {code} to {key}", "spec", sec))
+    if "code map" not in hook:
+        bad.append(F("G-SEC", "row (6)'s hook does not point at the code map", "spec", sec))
+    bad += g_codemap(t, entries, hook)
     # M-2: the compute-failed row is PROPOSED, its map closed and verbatim at its source
     cf = entries.get(COMPUTE_FAILED)
     if cf is None:
@@ -1407,7 +1577,11 @@ def g_sec(t: Texts) -> list[Finding]:
         op = r[0].strip("`")
         got = r[3] if len(r) > 3 else ""
         if op.startswith("WS "):
-            if "`marketdata:read`" not in got or "`marketdata:read`" not in base_line("23", 901):
+            m23 = re.search(r"`23`:(\d+)", got)
+            row23 = base_line("23", int(m23[1])) if m23 else ""
+            if "`marketdata:read`" not in got or not (
+                row23.startswith("| `indicators`") and "`marketdata:read`" in row23
+            ):
                 bad.append(
                     F("G-SEC", "the topic's x-rbac cell is not `23` §6.3's row", "spec", osec)
                 )
@@ -1501,12 +1675,22 @@ def g_fields(t: Texts) -> list[Finding]:
         op = r[0].strip("`")
         m = re.search(r"`22`:(\d+)", r[2])
         if op.startswith("WS "):
-            if "indicators.{symbol}" not in base_line("23", 748):
-                bad.append(F("G-FIELDS", "`23`:748 is not the indicators topic row", "spec", sec))
+            m23 = re.search(r"`23`:(\d+)", r[2])
+            if not m23 or "indicators.{symbol}" not in base_line("23", int(m23[1])):
+                bad.append(
+                    F(
+                        "G-FIELDS",
+                        "the cited `23` line is not the indicators topic row",
+                        "spec",
+                        sec,
+                    )
+                )
             continue
         if not m or f"operationId: {op}" not in api[int(m[1]) - 1]:
             bad.append(F("G-FIELDS", f"{op} is not declared at the cited `22` line", "spec", sec))
-    desc = "\n".join(api[23104:23155])
+    # the schema blocks are found by their names, never by a fixed line (`22` moves often)
+    d_at = line_of("22", "    IndicatorDescriptor:")
+    desc = "\n".join(api[d_at : d_at + 50])
     for fld in DESCRIPTOR_FIELDS:
         if not re.search(rf"^\s+{fld}:", desc, MULTI):
             bad.append(
@@ -1518,14 +1702,9 @@ def g_fields(t: Texts) -> list[Finding]:
                 )
             )
     vsec = spec_sec(t, VOCAB_HEAD)
-    pane_enum = (
-        re.search(r"pane: \{ type: string, enum: \[([^\]]+)\]", api[23111])
-        if len(api) > 23111
-        else None
-    )
-    target_enum = (
-        re.search(r"enum: \[([^\]]+)\]", "\n".join(api[21997:22001])) if len(api) > 22001 else None
-    )
+    pane_enum = re.search(r"pane: \{ type: string, enum: \[([^\]]+)\]", desc)
+    pt = line_of("22", "        pane_target:", line_of("22", "    IndicatorPresetInput:"))
+    target_enum = re.search(r"enum: \[([^\]]+)\]", "\n".join(api[pt - 1 : pt + 3])) if pt else None
     panes = {x.strip() for x in (pane_enum[1].split(",") if pane_enum else [])}
     targets = {x.strip() for x in (target_enum[1].split(",") if target_enum else [])}
     rows = rows_of(t.spec, VOCAB_HEAD)
@@ -1549,7 +1728,8 @@ def g_fields(t: Texts) -> list[Finding]:
                 vsec,
             )
         )
-    style = "\n".join(api[22006:22016])
+    s_at = line_of("22", "    IndicatorPresetStyle:")
+    style = "\n".join(api[s_at - 1 : s_at + 9]) if s_at else ""
     if "The set is empty until E13-D04 publishes it" not in style:
         bad.append(
             F(
@@ -2346,6 +2526,20 @@ def cell_set(prefix: str, col: int, new: str) -> Edit:
     return edit
 
 
+def drop_row(prefix: str) -> Edit:
+    """Delete the first table row whose lead cell starts with `prefix`."""
+
+    def edit(text: str) -> str:
+        lines = text.split("\n")
+        for i, ln in enumerate(lines):
+            if ln.startswith("|") and split_row(ln) and split_row(ln)[0].startswith(prefix):
+                del lines[i]
+                return "\n".join(lines)
+        return text
+
+    return edit
+
+
 def deck_edit(fn: Callable[[dict[str, object]], None]) -> Edit:
     def edit(deck: str) -> str:
         data = json.loads(deck)
@@ -2584,7 +2778,10 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-34",
         "G-SEC",
         "a problem code dropped from row (6) (M-1)",
-        spec=sub("(`422`, `409`, `403`, `413`, `503` — ", "(`422`, `409`, `403`, `503` — "),
+        spec=sub(
+            "`401`, `403`, `404`, `409`, `413`, `422`, `503` (each",
+            "`401`, `403`, `404`, `409`, `422`, `503` (each",
+        ),
     ),
     Mutation(
         "M-35",
@@ -2619,7 +2816,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-39",
         "G-SEC",
         "an x-rbac cell off `22`'s line (I-1)",
-        spec=cell_set("`listIndicatorPresets`", 3, "`workspaces:read` · `none` (`22`:10064)"),
+        spec=cell_set("`listIndicatorPresets`", 3, "`workspaces:read` · `none` (`22`:10183)"),
     ),
     Mutation(
         "M-40",
@@ -2628,6 +2825,13 @@ MUTATIONS: tuple[Mutation, ...] = (
         spec=sub(
             ":115 (500): 8 / 500 are the contract's", ":112 (500): 8 / 500 are the contract's"
         ),
+    ),
+    # the round-1 text lens (M-3): the code map is read against `22` / `23`, not a list here
+    Mutation(
+        "M-41",
+        "G-SEC",
+        "a declared problem code dropped from the code map",
+        spec=drop_row("`413`"),
     ),
 )
 

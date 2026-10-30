@@ -1,7 +1,7 @@
 {
   "pack": "E13-D06",
   "version": "v1",
-  "base": "8f182fa0c8",
+  "base": "7e23e4667c",
   "header": "Every string the indicator surfaces may show, once: one entry per E13-D04 §10.1 row (44 E13-D02 §12 rows, 10 E13-D03 §13 rows, D04's one PROPOSED row) plus this pack's two PROPOSED rows (A29's warm-up line; the compute-failed map folded from the #347 security lens, M-2). Keys are D04 §10.2's PROPOSED `indicator.*` keys where a row carries one, else a stable row id derived from the source cite. `text` is the D04 Text cell verbatim; `strings` the quoted strings in it. A frozen entry names its §8.3 row and what breaks if it is reworded. `reasons` is the D04 §10.2 candidate sentence per `indicator.*` key; `codes` the problem / WS codes an entry renders; `map` a closed code → sentence map (the only source of a `<reason>`).",
   "by_cite": {
     "E13-D02 §12 (44 rows)": "D02:453–496",
