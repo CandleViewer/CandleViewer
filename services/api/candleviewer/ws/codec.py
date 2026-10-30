@@ -57,7 +57,7 @@ from typing import Any, Final, NoReturn, TypeAlias
 
 import msgpack
 
-from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_JSON_DEPTH
+from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_JSON_CONTAINERS, MAX_JSON_DEPTH
 
 
 def _require_c_unpacker(unpackb: Any) -> None:
@@ -115,25 +115,33 @@ class _Budget:
     """Charges each container as the unpacker completes it: 1 for the container, 1 per array
     element, 2 per map entry as read (so duplicate keys still cost). Ends the decode once spent.
 
-    It also checks each container as it completes, so the decoded value needs no second walk
-    (#4924): every element and map value is of a type JSON carries, every float is finite, every
-    map key a string, and no container nests deeper than `MAX_MSGPACK_DEPTH`. Each check runs over
-    a container's items with C iterators (`map`, `set`, `compress`), not a Python loop per value.
-    A container's height (1, plus its deepest child's) is kept by `id`: the children are alive in
-    their parent, so no id is reused while the decode runs."""
+    It also counts the containers, at most `MAX_JSON_CONTAINERS` (the JSON container cap, one
+    number for either encoding, #4924), and checks each container as it completes, so the decoded
+    value needs no second walk: every element and map value is of a type JSON carries, every float
+    is finite, every map key a string, and no container nests deeper than `MAX_MSGPACK_DEPTH`. Each
+    check runs over a container's items with C iterators (`map`, `set`, `compress`), not a Python
+    loop per value, and an empty container skips them. The height (1, plus its deepest child's) of
+    a container that holds a container is kept by `id`; one that holds none is height 1 and is not
+    kept. A container's children are alive in it, so no kept id is reused while the decode runs;
+    a map drops the ids of the values a repeated key replaced."""
 
     def __init__(self, limit: int) -> None:
         self.limit = limit
         self.left = limit
+        self.containers = 0
         self._heights: dict[int, int] = {}
 
     def _charge(self, cost: int) -> None:
         self.left -= cost
         if self.left < 0:
             raise MsgpackFrameError(f"more than {self.limit} values")
+        self.containers += 1  # each call is one container
+        if self.containers > MAX_JSON_CONTAINERS:
+            raise MsgpackFrameError(f"more than {MAX_JSON_CONTAINERS} containers")
 
     def _checked(self, container: list[Any] | dict[Any, Any], items: Any) -> None:
-        """Check `items`, the elements or map values of `container`, and record its height."""
+        """Check `items`, the elements or map values of `container`, and keep its height if it
+        holds a container."""
         items = items if isinstance(items, list) else list(items)
         kinds = set(map(type, items))
         if not kinds <= _ALLOWED_TYPES:
@@ -142,21 +150,32 @@ class _Budget:
         floats = compress(items, map(_IS_FLOAT, map(type, items))) if float in kinds else ()
         if not all(map(math.isfinite, floats)):
             raise MsgpackFrameError("non-finite number")
-        height = 1
-        if kinds & _CONTAINER_TYPES:
-            height += max(map(self._heights.get, map(id, items), repeat(0, len(items))))
-            if height > MAX_MSGPACK_DEPTH:
+        if kinds & _CONTAINER_TYPES:  # a child not kept holds no container: height 1
+            below = max(1, max(map(self._heights.get, map(id, items), repeat(0, len(items)))))
+            if below + 1 > MAX_MSGPACK_DEPTH:
                 raise MsgpackFrameError(f"nesting deeper than {MAX_MSGPACK_DEPTH}")
-        self._heights[id(container)] = height
+            self._heights[id(container)] = below + 1
 
     def array(self, items: list[Any]) -> list[Any]:
         self._charge(1 + len(items))
-        self._checked(items, items)
+        if len(items) == 1 and type(items[0]) in _CONTAINER_TYPES:  # a link of a chain
+            below = self._heights.get(id(items[0]), 1)
+            if below + 1 > MAX_MSGPACK_DEPTH:
+                raise MsgpackFrameError(f"nesting deeper than {MAX_MSGPACK_DEPTH}")
+            self._heights[id(items)] = below + 1
+        elif items:
+            self._checked(items, items)
         return items
 
     def map(self, pairs: list[tuple[Any, Any]]) -> dict[Any, Any]:
         self._charge(1 + 2 * len(pairs))
-        value = dict(pairs)  # a repeated key keeps its last value, which alone is checked
+        value = dict(pairs)  # a repeated key keeps its last value, which alone is checked here
+        if not pairs:
+            return value
+        if len(value) != len(pairs):  # the replaced values are freed: their kept ids go too
+            for key, item in pairs:
+                if value[key] is not item:
+                    self._heights.pop(id(item), None)
         if not set(map(type, value)) <= {str}:  # e.g. a binary-string key
             raise MsgpackFrameError("map keys must be strings")
         self._checked(value, value.values())
@@ -168,8 +187,8 @@ def decode_client_frame(
 ) -> JsonValue:
     """One client frame's decoded value, or `MsgpackFrameError` (SR-185). `max_values` can only
     lower the value budget: the gateway passes `MAX_PREAUTH_MSGPACK_VALUES` until `auth_ok`. A
-    decode that succeeds appends to `charged`, if given, the values it charged (the gateway's
-    post-decode refund of the inbound rate, §8.5; #4924)."""
+    decode that succeeds appends to `charged`, if given, the values it charged and then the
+    containers it counted (the gateway's post-decode refund of the inbound rate, §8.5; #4924)."""
     if not isinstance(raw, bytes | bytearray):  # a memoryview's len() is not its byte count
         raise MsgpackFrameError("a msgpack frame is binary")
     if len(raw) > MAX_INBOUND_FRAME_BYTES:
@@ -199,7 +218,7 @@ def decode_client_frame(
         raise MsgpackFrameError(f"undecodable frame: {type(exc).__name__}") from exc
     _check_top(value)
     if charged is not None:
-        charged.append(budget.limit - budget.left)
+        charged.extend((budget.limit - budget.left, budget.containers))
     return value
 
 

@@ -118,6 +118,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any, Final, Protocol
@@ -175,6 +176,7 @@ from candleviewer.ws.limits import (
     AUTH_CALL_TIMEOUT_S,
     AUTH_TIMEOUT_S,
     ENVELOPE_ID_MAX_LEN,
+    INBOUND_WEIGHT_CONTAINERS,
     INBOUND_WEIGHT_VALUES,
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_CONTAINERS,
@@ -415,6 +417,22 @@ _OVERSIZE = object()
 #: `_Connection.decode`'s answer for a frame the inbound rate refused before it was decoded: its
 #: strike is already counted (`err`, or the close), and there is nothing to dispatch.
 _REFUSED = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _Weighed:
+    """A frame `_Connection.weigh` sized and weighed, not yet charged or decoded (#4924)."""
+
+    raw: str | bytes
+    values: int  # the MessagePack value budget in force
+    counted: int  # a JSON frame's value over-count
+    bound: int  # its values, bounded above, up to one past the value bound
+    boxes: int  # a MessagePack frame's containers, bounded above, up to one past the cap
+    weight: int
+    pong: bool
+    pong_bound: bool
+
+
 _WRITER_DONE: Final = "cv-ws-writer-done"  # cancel msg: writer finished, stop reading
 
 
@@ -446,6 +464,8 @@ class GatewayHub:
         #: touches the map): bounded by the live users plus those whose last socket closed within
         #: the refill time (16 s), which the per-user connect rate bounds in turn.
         self._budgets: dict[uuid.UUID, DecodeBudget] = {}
+        #: #4924 (§8.5): each user's decode turn (`_Connection.decode_turn`), kept with its budget.
+        self._turns: dict[uuid.UUID, asyncio.Lock] = {}
         self._idle: set[uuid.UUID] = set()
         self._empty = asyncio.Event()
         self._empty.set()
@@ -492,14 +512,20 @@ class GatewayHub:
         budget = self._budgets.get(user_id)
         if budget is None:
             budget = self._budgets[user_id] = DecodeBudget()
+            self._turns[user_id] = asyncio.Lock()
         return budget
+
+    def decode_turn(self, user_id: uuid.UUID) -> asyncio.Lock:
+        """The decode turn every socket of `user_id` shares (§8.5, #4924), kept with its budget
+        (`decode_budget` first)."""
+        return self._turns[user_id]
 
     def _prune(self, now: float) -> None:
         """Drop the budgets of users with no live socket once they have refilled to the burst:
         one made afresh would be the same."""
         for user in [u for u in self._idle if self._budgets[u].full(now)]:
             self._idle.discard(user)
-            del self._budgets[user]
+            del self._budgets[user], self._turns[user]
 
     async def wait_empty(self) -> None:
         """Return once every connection handler has finished (callers bound it)."""
@@ -681,6 +707,10 @@ class _Connection:
         #: `auth_ok` (`GatewayHub.decode_budget`); None before it, so a socket that has not
         #: authenticated draws on its own rate only.
         self.decode_budget: DecodeBudget | None = None
+        #: #4924 (§8.5): the user's decode turn, shared by its sockets: a frame of weight above 1
+        #: is decoded only while its socket holds it, one such frame at a time across the user's
+        #: sockets, each held to the loop turn after it (the reader's `sleep(0)`).
+        self.decode_turn: asyncio.Lock | None = None
         #: Data frames stop at `OUTBOUND_QUEUE_MAX` (`push`); the `CLOSE_ITEMS` still fit (C-2.18).
         self.outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=OUTBOUND_QUEUE_MAX + CLOSE_ITEMS)
         self.user_id: uuid.UUID | None = None
@@ -1145,6 +1175,13 @@ class _Connection:
         Every other frame is charged once, before any decode work (`charge`): from the first
         `auth_ok` one that opens with `t: "pong"` against the `pong` budget first, any other kind,
         `ping` included, against the inbound rate."""
+        weighed = self.weigh(msg, max_frame_bytes)
+        return weighed if weighed is _OVERSIZE else self.decode_weighed(weighed)
+
+    def weigh(self, msg: Mapping[str, Any], max_frame_bytes: int) -> Any:
+        """`decode`'s first half, before any decode work: the frame sized, checked against its
+        caps and weighed (`_Weighed`), or `_OVERSIZE` after an oversize close. The reader holds
+        the user's decode turn between the two halves when the weight is above 1 (#4924)."""
         binary = msg.get("bytes")
         raw: str | bytes = binary if binary is not None else (msg.get("text") or "")
         cap, values = max_frame_bytes, MAX_MSGPACK_VALUES
@@ -1166,16 +1203,24 @@ class _Connection:
             return _OVERSIZE
         # #4924: a frame's values, bounded above before decode, and only up to one past the value
         # bound (`_parse` refuses the rest): a JSON frame's over-counted on its text, once, here;
-        # a MessagePack frame's by its size, as every value takes at least one byte.
+        # a MessagePack frame's by twice its size (a container is charged twice, a value takes a
+        # byte), and its containers by its size, up to one past the container cap.
         counted = json_values_over_count(raw) if isinstance(raw, str) and not self.msgpack else 0
-        bound = min(size if self.msgpack else counted, MAX_MSGPACK_VALUES + 1)
-        weight = inbound_frame_weight(size, bound)
+        bound = min(2 * size if self.msgpack else counted, MAX_MSGPACK_VALUES + 1)
+        boxes = min(size, MAX_JSON_CONTAINERS + 1) if self.msgpack else 0
+        weight = inbound_frame_weight(size, bound, boxes)
+        return _Weighed(raw, values, counted, bound, boxes, weight, pong, pong_bound)
+
+    def decode_weighed(self, w: _Weighed) -> Any:
+        """`decode`'s second half: charge the frame (`charge`), then decode it."""
+        raw, values, counted, bound, weight = w.raw, w.values, w.counted, w.bound, w.weight
         shared = weight > 1  # the tokens past the first also draw on the user's decode budget
-        charged_as = self.charge(pong=pong, weight=weight, shared=shared)
+        charged_as = self.charge(pong=w.pong, weight=weight, shared=shared)
         if charged_as is None:
             return _REFUSED
         decoded: list[int] = []
         frame = self._parse(raw, values, counted, decoded)
+        pong_bound = w.pong_bound
         if pong_bound and isinstance(frame, dict) and frame.get("t") == "pong":
             self.close_with("protocol_violation")  # its `t` comes later, or is written otherwise
             return _OVERSIZE
@@ -1183,8 +1228,10 @@ class _Connection:
             # It opened with `t: "pong"` and is another kind: the rate counts it as any frame.
             if self.charge(pong=False, weight=weight, shared=shared) is None:
                 return _REFUSED
-        if decoded:  # MessagePack: its values now known, what its size took past them comes back
-            refund = bound // INBOUND_WEIGHT_VALUES - decoded[0] // INBOUND_WEIGHT_VALUES
+        if decoded:  # MessagePack: its counts now known, what its size took past them comes back
+            held, boxes = decoded
+            refund = bound // INBOUND_WEIGHT_VALUES - held // INBOUND_WEIGHT_VALUES
+            refund += w.boxes // INBOUND_WEIGHT_CONTAINERS - boxes // INBOUND_WEIGHT_CONTAINERS
             if refund > 0:
                 self.rate.refund(refund)
                 if self.decode_budget is not None:
@@ -1829,6 +1876,7 @@ def make_ws_router(
             conn.pending_session_id = None  # registered above, and now the socket's own
         conn.session_id, conn.user_id = session_id, user_id
         conn.decode_budget = gateway_hub.decode_budget(user_id, conn.clock())  # #4924: shared
+        conn.decode_turn = gateway_hub.decode_turn(user_id)
         conn.authz.session_id = session_id  # E17-R-16: its audit rows name the session
         # §9.6: a context's end closes the sockets bound to it, and only those (`close_context`).
         revocation_hub.bind(session_id, conn.closer, conn.view_as_context_id)
@@ -2024,13 +2072,20 @@ def make_ws_router(
                 conn.disconnect_code = msg.get("code")
                 return
             conn.watchdog.last_inbound = conn.clock()
-            frame = conn.decode(msg, max_frame_bytes)
-            if frame is _OVERSIZE:
+            weighed = conn.weigh(msg, max_frame_bytes)
+            if weighed is _OVERSIZE:
                 return
-            if frame is not _REFUSED:  # a refused frame's strike is already counted
-                await dispatch(conn, frame)
-            if not conn.closing:  # fair scheduling between connections: one frame per turn, as
-                await asyncio.sleep(0)  # `receive` returns at once while frames are queued
+            # #4924 (§8.5): a frame of weight above 1 waits for its user's decode turn, which each
+            # socket of the user holds for one such frame and the loop turn after it (FIFO).
+            turn = conn.decode_turn if weighed.weight > 1 else None
+            async with turn if turn is not None else contextlib.nullcontext():
+                frame = conn.decode_weighed(weighed)
+                if frame is _OVERSIZE:
+                    return
+                if frame is not _REFUSED:  # a refused frame's strike is already counted
+                    await dispatch(conn, frame)
+                if not conn.closing:  # fair scheduling between connections: one frame per turn,
+                    await asyncio.sleep(0)  # as `receive` returns at once while frames are queued
 
     async def writer(conn: _Connection) -> None:
         if conn.pipeline is not None:

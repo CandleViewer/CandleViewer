@@ -265,20 +265,33 @@ def json_depth_exceeds(text: str, limit: int) -> bool:
 #: §8.5 (#4924, an orchestrator contract decision of 2026-10-29): an inbound frame takes one token
 #: of the inbound rate, plus one per full 32 KiB of its encoded bytes, plus one per full 4 096
 #: values (`INBOUND_WEIGHT_VALUES`). A JSON frame's values are its pre-decode over-count
-#: (`json_values_over_count`); a MessagePack frame's are bounded by its size, as every value
-#: takes at least one byte. Either is charged with the rest before the frame is decoded, counted
-#: up to one past the value bound; a MessagePack frame gets back, after its decode, what the size
-#: took past the values its decoder charged. A frame at `MAX_INBOUND_FRAME_BYTES` takes 9 for its
+#: (`json_values_over_count`); a MessagePack frame's are bounded by twice its size, as its decoder
+#: charges a container twice (itself, and as an element) and every value takes at least one byte.
+#: Either is charged with the rest before the frame is decoded, counted up to one past the value
+#: bound; a MessagePack frame gets back, after its decode, what that bound took past the values its
+#: decoder charged. A frame at `MAX_INBOUND_FRAME_BYTES` takes 9 for its
 #: bytes; one at the value bound 4 more; a `pong` takes 1.
 INBOUND_WEIGHT_BYTES = 32 * 1024
 INBOUND_WEIGHT_VALUES = 4096
+#: §8.5 (#4924): a MessagePack frame also takes one token per full 512 containers. Its decoder
+#: calls a hook per container, so a frame of many small containers costs more than its bytes and
+#: values show; JSON's decoder builds them in C. Bounded before decode by its size (a container
+#: takes a byte), up to one past `MAX_JSON_CONTAINERS`; what that took past the containers its
+#: decoder counted is given back after it.
+INBOUND_WEIGHT_CONTAINERS = 512
 
 
-def inbound_frame_weight(size: int, values: int = 0) -> int:
-    """The inbound-rate tokens of a frame of `size` encoded bytes holding `values` values (§8.5).
-    The caller counts `values` only up to one past the value bound (`codec.MAX_MSGPACK_VALUES`), so
-    a frame past it is refused as `frame_malformed`, never priced out of the rate's reach."""
-    return 1 + size // INBOUND_WEIGHT_BYTES + values // INBOUND_WEIGHT_VALUES
+def inbound_frame_weight(size: int, values: int = 0, containers: int = 0) -> int:
+    """The inbound-rate tokens of a frame of `size` encoded bytes holding `values` values and,
+    for MessagePack, `containers` containers (§8.5). The caller counts each only up to one past
+    its bound (`codec.MAX_MSGPACK_VALUES`, `MAX_JSON_CONTAINERS`), so a frame past one is refused
+    as `frame_malformed`, never priced out of the rate's reach."""
+    return (
+        1
+        + size // INBOUND_WEIGHT_BYTES
+        + values // INBOUND_WEIGHT_VALUES
+        + containers // INBOUND_WEIGHT_CONTAINERS
+    )
 
 
 def json_values_over_count(text: str) -> int:

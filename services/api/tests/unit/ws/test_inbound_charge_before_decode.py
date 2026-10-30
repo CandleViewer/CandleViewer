@@ -413,20 +413,21 @@ def _msgpack_at_bound(id: str) -> bytes:
     packed: bytes = msgpack.packb({"t": "ping", "id": id, "p": {"pad": pad}})
     charged: list[int] = []
     decode_client_frame(packed, charged=charged)
-    assert charged == [MAX_MSGPACK_VALUES]
+    assert charged[0] == MAX_MSGPACK_VALUES
     return packed
 
 
 @pytest.mark.parametrize("encoding", [JSON[0], MSGPACK[0]], ids=["json-counted", "msgpack-sized"])
 def test_charge_a_frame_at_the_value_bound_takes_five_tokens_however_small(encoding: str) -> None:
-    """JSON: 1 + 0 + 4 before decode, by its over-count. MessagePack: the same, by its size (every
-    value takes a byte), and no refund, as it holds the bound. So six fit the second's 30 and the
-    seventh is refused before it is decoded."""
+    """JSON: 1 + 0 + 4 before decode, by its over-count, so six fit the second's 30 and the seventh
+    is refused before it is decoded. MessagePack: 1 + 4 for its values (twice its size, up to the
+    bound) + 2 for its containers (its size, up to the cap) before decode, the 2 given back after
+    it (131 containers): each keeps 5, but the sixth needs 7 of the 5 left, so five fit."""
     conn = _connection(encoding, authed=True)
-    build = _compact_at_bound if encoding == JSON[0] else _msgpack_at_bound
-    answers = [_decode(conn, build(f"v{n}")) for n in range(7)]
-    assert [a is _REFUSED for a in answers] == [False] * 6 + [True]
-    assert all(a["t"] == "ping" for a in answers[:6])
+    build, fit = (_compact_at_bound, 6) if encoding == JSON[0] else (_msgpack_at_bound, 5)
+    answers = [_decode(conn, build(f"v{n}")) for n in range(fit + 1)]
+    assert [a is _REFUSED for a in answers] == [False] * fit + [True]
+    assert all(a["t"] == "ping" for a in answers[:fit])
 
 
 def test_inbound_rate_limiter_refund_gives_back_to_the_last_frame_admitted() -> None:
@@ -567,17 +568,17 @@ def test_charge_a_frame_past_one_token_is_refused_when_the_users_budget_is_spent
 def test_charge_a_msgpack_frame_takes_its_size_bound_before_decode_and_the_rest_back_after() -> (
     None
 ):
-    """A MessagePack frame is charged before decode as if every byte were a value, up to one past
-    the bound (here 20 KiB: 4 value tokens), then given back what its values did not need (a few
-    values: all 4)."""
-    roomy = DecodeBudget(burst=4, per_second=0)
+    """A MessagePack frame is charged before decode as if every byte held two values and a
+    container, up to one past each bound (here 20 KiB: 4 value tokens and 2 container tokens),
+    then given back what its values and containers did not need (a few of each: all 6)."""
+    roomy = DecodeBudget(burst=6, per_second=0)
     conn = _connection(MSGPACK[0], authed=True)
     conn.decode_budget = roomy
     text = msgpack.packb({"t": "ping", "id": "a", "p": {"pad": "x" * 20_480}})
     assert _decode(conn, text)["t"] == "ping"
-    assert roomy.can(0.0, 4)  # all four given back
+    assert roomy.can(0.0, 6)  # all six given back
     assert conn.rate.allow(0.0, 29)  # and the frame kept one token of the second's 30
-    short = DecodeBudget(burst=3, per_second=0)
+    short = DecodeBudget(burst=5, per_second=0)
     other = _connection(MSGPACK[0], authed=True)
     other.decode_budget = short
     assert _decode(other, text) is _REFUSED  # the bound is charged before its values are known
@@ -606,3 +607,67 @@ def test_gateway_two_reconnects_of_every_socket_with_the_widest_subs_are_never_r
                     assert _recv_type(ws, "sub_ok")["id"] == f"s{wave}{n}"
         _send(sockets[0], {**sub, "id": "more"})
         assert _recv_type(sockets[0], "err")["p"]["code"] == "client_rate_limited"
+
+
+# -- MessagePack bounds before decode, and the decode turn (#4924) --------------------------------
+
+
+_PACKABLE: Final = st.recursive(
+    st.none() | st.booleans() | st.integers(-(2**63), 2**64 - 1) | st.text(max_size=4),
+    lambda inner: (
+        st.lists(inner, max_size=4) | st.dictionaries(st.text(max_size=2), inner, max_size=4)
+    ),
+    max_leaves=80,
+)
+
+
+@settings(max_examples=300, deadline=None, derandomize=True)
+@given(value=_PACKABLE)
+def test_msgpack_charged_values_within_twice_the_size_containers_within_the_size(
+    value: Any,
+) -> None:
+    """Why the bounds hold: a container is charged twice (itself, and as an element) and every
+    value and container takes at least one byte."""
+    packed = msgpack.packb({"t": "ping", "id": "x", "p": {"v": value}})
+    charged: list[int] = []
+    decode_client_frame(packed, charged=charged)
+    held, boxes = charged
+    assert held <= 2 * len(packed) and boxes <= len(packed)
+
+
+def test_weigh_bounds_msgpack_values_by_twice_the_size_and_containers_by_the_size() -> None:
+    conn = _connection(MSGPACK[0], authed=True)
+    for size_of in (100, 3_000, 9_000, 20_000):
+        packed = msgpack.packb({"t": "ping", "id": "x", "p": {"pad": "x" * size_of}})
+        weighed = conn.weigh(
+            {"type": "websocket.receive", "bytes": packed}, MAX_INBOUND_FRAME_BYTES
+        )
+        size = len(packed)
+        assert weighed.bound == min(2 * size, MAX_MSGPACK_VALUES + 1)
+        assert weighed.boxes == min(size, MAX_JSON_CONTAINERS + 1)
+        assert weighed.weight == inbound_frame_weight(size, weighed.bound, weighed.boxes)
+
+
+def test_charge_a_container_dense_msgpack_frame_keeps_a_token_per_512_containers() -> None:
+    """About 1 KiB at the container cap: 1 + 2 tokens before decode (its size bounds 1 025
+    containers), none given back (it holds 1 024), so three such frames are 9 of the second's 30."""
+    conn = _connection(MSGPACK[0], authed=True)
+    dense = msgpack.packb({"t": "ping", "id": "x", "p": {"pad": [[[]] * 127] * 7 + [[[]] * 124]}})
+    for _ in range(3):
+        assert _decode(conn, dense)["t"] == "ping"
+    assert conn.rate.allow(0.0, 21) and not conn.rate.allow(0.0, 1)
+
+
+def test_hub_shares_one_decode_turn_per_user_and_drops_it_with_the_budget() -> None:
+    hub, clock, user = GatewayHub(), _Now(), uuid.uuid4()
+    a, b = _socket(hub, user, clock), _socket(hub, user, clock)
+    a.decode_turn, b.decode_turn = hub.decode_turn(user), hub.decode_turn(user)
+    assert a.decode_turn is b.decode_turn
+    other = uuid.uuid4()
+    hub.decode_budget(other, 0.0)
+    assert hub.decode_turn(other) is not a.decode_turn
+    hub.discard(a)
+    hub.discard(b)
+    hub.decode_budget(uuid.uuid4(), 0.0)  # a touch prunes the full, idle budget and its turn
+    with pytest.raises(KeyError):
+        hub.decode_turn(user)

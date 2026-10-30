@@ -15,6 +15,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from candleviewer.ws import codec
 from candleviewer.ws.codec import (
     MAX_MSGPACK_ARRAY_LEN,
     MAX_MSGPACK_DEPTH,
@@ -161,7 +162,35 @@ def test_msgpack_validation_nesting_at_the_bound_matches_the_old_walk(
         pytest.param(b"\xcb\x7f\xf0\x00\x00\x00\x00\x00\x00", id="top-level-infinity"),
         pytest.param(b"\xc4\x02ab", id="top-level-binary"),
         pytest.param(b"\xd4\x01\x00", id="top-level-ext"),
+        # A replaced value 33 deep counted from the map: its own 32 levels pass, and the map's
+        # depth reads only the value its key kept, as the old walk did.
+        pytest.param(b"\x82\xa1k" + b"\x91" * 31 + b"\x90" + b"\xa1k\x01", id="replaced-33-deep"),
     ],
 )
 def test_msgpack_validation_hand_made_frames_match_the_old_walk(raw: bytes) -> None:
     assert _outcome(decode_client_frame, raw) == _outcome(_old_decode, raw)
+
+
+#: The one declared divergence (#4924, 23 §3.6): a map's repeated key replaces its earlier value,
+#: which the old walk never reached; the decoder checks each container as it completes, the
+#: replaced one included, so a container that would be refused anywhere is refused here too.
+_REPLACED_REFUSED = {
+    "nan-in-a-replaced-list": b"\x82\xa1k\x91\xcb\x7f\xf8\x00\x00\x00\x00\x00\x00\xa1k\x01",
+    "binary-in-a-replaced-list": b"\x82\xa1k\x91\xc4\x01x\xa1k\x01",
+}
+
+
+@pytest.mark.parametrize("raw", list(_REPLACED_REFUSED.values()), ids=list(_REPLACED_REFUSED))
+def test_msgpack_validation_refuses_a_bad_value_a_repeated_key_replaced(raw: bytes) -> None:
+    assert _outcome(_old_decode, raw) == ("accepted", repr({"k": 1}))
+    assert _outcome(decode_client_frame, raw) == ("refused", "")
+
+
+def test_msgpack_a_replaced_value_leaves_no_kept_height() -> None:
+    """A repeated key frees the value it replaced: its kept height goes with it, so no later
+    container that reuses its id reads a height that is not its own."""
+    budget = codec._Budget(MAX_MSGPACK_VALUES)
+    replaced = budget.array([budget.array([])])  # holds a container: its height is kept
+    assert id(replaced) in budget._heights
+    budget.map([("k", replaced), ("k", 1)])
+    assert id(replaced) not in budget._heights

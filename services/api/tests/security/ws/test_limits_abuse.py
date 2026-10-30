@@ -367,10 +367,11 @@ def test_x02_frames_near_the_cap_past_the_rate_are_refused_unread_counted_and_au
     world: RawWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#4924: the inbound rate is charged before a frame is decoded, one token plus one per full
-    32 KiB (§3.6, §8.5). Frames near the 256 KiB cap take 8 each, so after `hello` and `auth` three
-    fit the second's 30 and are decoded and answered; the next two are refused unread (no decode,
-    an `err` with no `id`, then `4429`), counted by both metrics and recorded by the close's audit
-    row."""
+    32 KiB (§3.6, §8.5). Frames near the 256 KiB cap keep 8 each. On JSON, after `hello` and
+    `auth`, three fit the second's 30; on MessagePack each is charged 6 more before decode (its
+    size bounds its values and containers) and given them back after it, so two fit. Those are
+    decoded and answered; the next two are refused unread (no decode, an `err` with no `id`, then
+    `4429`), counted by both metrics and recorded by the close's audit row."""
     errors = delta("cv_ws_errors_total", code="client_rate_limited")
     closes = delta("cv_ws_closes_total", reason="client_rate_limited")
     parsed: list[int] = []
@@ -387,7 +388,8 @@ def test_x02_frames_near_the_cap_past_the_rate_are_refused_unread_counted_and_au
     login = world.login("alice")
     with raw_connect(world) as c:
         authenticated(c, login)  # `hello` and `auth`: two of the second's 30
-        for n in range((RATE - 2) // WEIGHT_NEAR_CAP):
+        admitted = 2 if c.msgpack else (RATE - 2) // WEIGHT_NEAR_CAP
+        for n in range(admitted):
             c.send(big(f"p{n}"))
             assert c.recv()["t"] == "pong"
         title = ERROR_META[ErrorCode.CLIENT_RATE_LIMITED].title
@@ -400,8 +402,8 @@ def test_x02_frames_near_the_cap_past_the_rate_are_refused_unread_counted_and_au
             _bye(ms, "client_rate_limited", text, retry_after_ms=1000),
             4429,
         )
-    # `hello`, `auth` and the three pings admitted were decoded; the two refused never were.
-    assert len(parsed) == 2 + 3 and all(n > 250_000 for n in parsed[2:])
+    # `hello`, `auth` and the pings admitted were decoded; the two refused never were.
+    assert len(parsed) == 2 + admitted and all(n > 250_000 for n in parsed[2:])
     assert (errors(), closes()) == (1, 1)
     connection = c.seen[0]["p"]["connection_id"]
     row = _closed(login.user_id, login.minted.session_id, connection, SOURCE, "client_rate_limited")

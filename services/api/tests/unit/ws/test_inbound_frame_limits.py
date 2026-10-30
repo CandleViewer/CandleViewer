@@ -409,8 +409,9 @@ def test_decode_msgpack_before_auth_ok_charges_no_more_values_than_the_budget(
 def test_decode_msgpack_after_auth_ok_value_budget_is_the_sr_185_budget() -> None:
     conn = _connection(MSGPACK[0], authed=True)
     assert _decode(conn, _ping_of(MAX_PREAUTH_MSGPACK_VALUES + 1))["t"] == "ping"
-    for frame in _VALUE_SHAPES.values():
-        assert _decode(conn, frame) == msgpack.unpackb(frame)
+    for name, frame in _VALUE_SHAPES.items():  # past the container cap (#4924) but for the nils
+        expected = msgpack.unpackb(frame) if name == "nils" else []
+        assert _decode(conn, frame) == expected
     assert _decode(conn, _budget_frame(0)) != []  # exactly MAX_MSGPACK_VALUES
     assert _decode(conn, _budget_frame(1)) == []
 
