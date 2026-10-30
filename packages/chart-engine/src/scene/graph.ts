@@ -132,6 +132,7 @@ export class SceneGraph {
   }
 
   private linearise(node: SceneNode): void {
+    node.start = this.order.length;
     this.order.push(node);
     for (const child of node.children) this.linearise(child);
     node.end = this.order.length;

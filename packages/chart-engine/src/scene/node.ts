@@ -21,9 +21,10 @@ export abstract class SceneNode {
   dirty: DirtyFlags = DIRTY_ALL;
   readonly critical: boolean;
   readonly deferClass: DeferClass;
-  /** Graph bookkeeping: parent, children in draw order, end of the subtree in the flat walk. */
+  /** Graph bookkeeping: parent, children in draw order, its index and subtree end in the walk. */
   parent: SceneNode | null = null;
   readonly children: SceneNode[] = [];
+  start = 0;
   end = 0;
 
   constructor(
