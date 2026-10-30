@@ -57,6 +57,18 @@ const delta = (seq: number, ts = 1_000): TopicFrame => ({
   ...base,
   body: { e: "j", p: {} },
 });
+/** A snapshot with its `meta.reason`: why it came (23 7.4). */
+const snapBecause = (
+  seq: number,
+  reason: "instrument_revision" | "reconfigure" | "generation_swap",
+): TopicFrame => ({
+  kind: "snap",
+  seq,
+  ts: 1_000,
+  ...base,
+  meta: { reason },
+  bodies: [{ e: "j", p: {} }],
+});
 const reset = (reason: "gap" | "overflow" = "gap"): TopicFrame => ({ kind: "reset", reason });
 const labels = (frames: readonly TopicFrame[]) =>
   frames.map((f) => (f.kind === "reset" ? `reset:${f.reason}` : `${f.kind}:${f.seq}`));
@@ -227,6 +239,104 @@ describe("system updates", () => {
     port.say({ t: "system", update: { kind: "notice", message: "two" } });
     expect(systems).toEqual([{ kind: "notice", message: "two" }]);
     expect(() => raised[0]?.()).toThrow(thrown);
+  });
+});
+
+describe("instrument revisions (23 7.4)", () => {
+  const revised = (seq: number) => snapBecause(seq, "instrument_revision");
+  const deltaWithReason: TopicFrame = {
+    kind: "d",
+    seq: 5,
+    ts: 1_000,
+    ...base,
+    meta: { reason: "instrument_revision" }, // only a snapshot says why it came
+    body: { e: "j", p: {} },
+  };
+
+  it("tells the app a revised snapshot's channel as its message arrives, before any animation frame", () => {
+    const heard: string[] = [];
+    const { client, port, display } = rig({ onInstrumentRevision: (ch) => heard.push(ch) });
+    client.consume(SPEC);
+    port.say(data("c1", [revised(1)]));
+    expect(heard).toEqual([SPEC.ch]);
+    expect(display.pending()).toBe(1); // the render still waits for its frame
+  });
+
+  it("tells the app once for a message, however many revised snapshots it holds", () => {
+    const onInstrumentRevision = vi.fn();
+    const { client, port } = rig({ onInstrumentRevision });
+    client.consume(SPEC);
+    port.say(data("c1", [revised(1), revised(2)]));
+    expect(onInstrumentRevision).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the app each consumer's own channel", () => {
+    const heard: string[] = [];
+    const { client, port } = rig({ onInstrumentRevision: (ch) => heard.push(ch) });
+    client.consume(SPEC);
+    client.consume({ ...SPEC, ch: "bars.BTCUSDT.time.1" });
+    port.say(data("c1", [revised(1)]));
+    port.say(data("c2", [revised(1)]));
+    expect(heard).toEqual([SPEC.ch, "bars.BTCUSDT.time.1"]);
+  });
+
+  it.each<[string, TopicFrame[]]>([
+    ["a snapshot of another reason", [snapBecause(1, "reconfigure")]],
+    ["a generation swap's snapshot", [snapBecause(1, "generation_swap")]],
+    ["a snapshot that gives no reason", [snap(1)]],
+    ["a delta, whatever its meta says", [deltaWithReason]],
+    ["a reset", [reset()]],
+  ])("says nothing of %s", (_what, frames) => {
+    const onInstrumentRevision = vi.fn();
+    const { client, port } = rig({ onInstrumentRevision });
+    client.consume(SPEC);
+    port.say(data("c1", frames));
+    expect(onInstrumentRevision).not.toHaveBeenCalled();
+  });
+
+  it("says nothing of a consumer that was let go: its frames are for nobody", () => {
+    const onInstrumentRevision = vi.fn();
+    const { client, port } = rig({ onInstrumentRevision });
+    client.consume(SPEC).release();
+    port.say(data("c1", [revised(1)]));
+    expect(onInstrumentRevision).not.toHaveBeenCalled();
+  });
+
+  it("tells the app only once the message is applied: its frames are queued and its render is posted", () => {
+    let look = (): [string[], number] => [[], -1];
+    let inside: [string[], number] | undefined;
+    const { client, port, display } = rig({
+      onInstrumentRevision: () => {
+        inside = look();
+      },
+    });
+    const handle = client.consume(SPEC);
+    look = () => [labels(handle.read()), display.pending()];
+    port.say(data("c1", [revised(1)]));
+    expect(inside).toEqual([["snap:1"], 1]);
+  });
+
+  it("keeps the frames of a message whose callback throws", () => {
+    const { client, port } = rig({
+      onInstrumentRevision: () => {
+        throw new Error("app bug");
+      },
+    });
+    const handle = client.consume(SPEC);
+    port.say(data("c1", [revised(1), delta(2)]));
+    expect(labels(handle.read())).toEqual(["snap:1", "d:2"]);
+  });
+
+  it("raises the error of a callback that throws on its own, as onSystem's is", () => {
+    const { client, port, raised } = rig({
+      onInstrumentRevision: () => {
+        throw new Error("app bug");
+      },
+    });
+    client.consume(SPEC);
+    port.say(data("c1", [revised(1)]));
+    expect(raised).toHaveLength(1);
+    expect(() => raised[0]?.()).toThrow("app bug");
   });
 });
 
