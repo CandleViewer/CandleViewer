@@ -126,17 +126,18 @@ module.exports = {
       name: "chart-engine-core-no-dom-host",
       severity: "error",
       comment:
-        "C-2.16: src/core|layers|scene|model stay DOM-free; DOM glue lives only in the host adapter.",
-      from: { path: "^packages/chart-engine/src/(core|layers|scene|model)" },
+        "C-2.16: src/core|layers|scene|model|viewport stay DOM-free; DOM glue lives only in the " +
+        "host adapter (E11-S03 adds the shared transform).",
+      from: { path: "^packages/chart-engine/src/(core|layers|scene|model|viewport)" },
       to: { path: "^packages/chart-engine/src/host" },
     },
     {
       name: "chart-engine-core-no-gl",
       severity: "error",
       comment:
-        "C-2.16 / 26 §3.1: src/core|layers|scene|model never reach GL; nodes append to batches " +
-        "and only the WebGL2 backend (src/gl) issues GL calls (E11-S02).",
-      from: { path: "^packages/chart-engine/src/(core|layers|scene|model)" },
+        "C-2.16 / 26 §3.1: src/core|layers|scene|model|viewport never reach GL; nodes append to " +
+        "batches and only the WebGL2 backend (src/gl) issues GL calls (E11-S02).",
+      from: { path: "^packages/chart-engine/src/(core|layers|scene|model|viewport)" },
       to: { path: "^packages/chart-engine/src/gl" },
     },
     {

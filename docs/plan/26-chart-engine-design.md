@@ -209,7 +209,7 @@ The profile rule (E11-S02, package README BQ-50); each `reduced` limit adds one 
 
 ### 3.5 Viewport and transform math
 
-State: `{ timeStart, timeEnd }` (µs, float64) and per-pane `{ priceLow, priceHigh }` plus a scale mode.
+State: `{ timeStart, timeEnd }` (µs, float64) and per-pane `{ priceLow, priceHigh }` plus a scale mode. _Shipped (E11-S03, `src/viewport/`): bar space is authoritative, so the state is `{ leftIndex, barSpacing }` and `timeStart/timeEnd` are derived through the index→time map; prices are float64 ticks from `priceOrigin`; the GPU gets int `u_indexBase`/`u_tickBase` and relative float coefficients only (package README BQ-65–BQ-83)._
 
 Screen mapping (per pane, per frame, computed on the CPU into uniforms):
 
@@ -221,7 +221,7 @@ percent:    sy computed against an anchor bar's close
 ```
 
 - **Bar-space vs time-space.** Panning and bar spacing operate in _bar index space_ (like every trading chart: `barSpacing` px/bar, `rightOffset` in bars) while overlays needing true time (heatmap columns, session shading) map through `time`. `BarStore` keeps a monotone index→time map, and the engine exposes both `indexToScreen` and `timeToScreen`.
-- **Zoom** is anchored at the cursor (or the pinch centroid): the world coordinate under the anchor is invariant. `barSpacing` is clamped to `[0.05, 200]` px.
+- **Zoom** is anchored at the cursor (or the pinch centroid): the world coordinate under the anchor is invariant. `barSpacing` is clamped to `[0.05, 200]` px. _Shipped: `zoomAt(anchorPx, factor)` with factor > 1 zooming in; `rightOffset ∈ [-(n-1), visibleBars-1]`, and when that clamp wins the anchor yields (BQ-69, BQ-70)._
 - **Momentum**: velocity-based with exponential decay (`v *= exp(-dt/τ)`, τ = 120 ms), terminated below 0.02 px/ms, cancelled on any new pointer-down.
 - **Auto-scale** (price): computed from the visible range's min/max with a configurable margin, optionally including overlays; recomputed only when the visible bar range changes, and throttled to once per frame.
 - **Pane synchronisation**: panes in one chart share `timeStart/timeEnd` by construction; charts in a layout may share a `SyncGroup` for time range, crosshair position and/or price level, propagated once per frame after input integration (never re-entrantly).
@@ -401,6 +401,8 @@ Eviction policy: footprint cells and heatmap columns outside a 3× viewport wind
 ---
 
 ## 8. TypeScript API sketch
+
+_E11-S03 widened nothing here: `TimeScale.getVisibleRange` answers the runtime's derived (clamped) range and `PriceScale.getVisibleRange` the first pane's window in ticks; plugins get no projection on `RenderContext` yet (README G-2)._
 
 ```ts
 // packages/chart-engine/src/index.ts

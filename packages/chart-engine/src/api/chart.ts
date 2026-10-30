@@ -131,6 +131,11 @@ export function createChart(opts: ChartOptions): Chart {
         return;
       case "viewport":
         lastRange = { from: msg.timeStart, to: msg.timeEnd };
+        timeScale.observe(lastRange);
+        // The runtime lays out one pane (BQ-45): its window is the first pane's, in ticks.
+        panes[0]?.priceScale.observe(
+          msg.priceHigh > msg.priceLow ? { low: msg.priceLow, high: msg.priceHigh } : null,
+        );
         emit("viewportChanged", {
           timeStart: msg.timeStart,
           timeEnd: msg.timeEnd,

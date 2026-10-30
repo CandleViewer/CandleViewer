@@ -57,6 +57,27 @@ const C216_SYNTAX = [
   },
 ];
 
+// US-CHART-007 NFR (E11-S03, BQ-77): "projection is a single shared function used by every
+// renderer". Arithmetic on `priceLow` / `priceHigh` (binary, compound assignment, ++/--) is a second
+// projection anywhere but src/viewport/transform.ts; passing the values through is not.
+const PRICE = "/^price(Low|High)$/";
+const ON_PRICE = (...keys) =>
+  `:matches(${keys.flatMap((k) => [`[${k}.name=${PRICE}]`, `[${k}.property.name=${PRICE}]`])})`;
+const PROJECTION_MESSAGE =
+  "US-CHART-007: arithmetic on priceLow/priceHigh outside src/viewport/transform.ts is a second " +
+  "projection; map prices through the shared transform.";
+const PROJECTION_SYNTAX = [
+  {
+    selector: `BinaryExpression[operator=/^([-+*%]|\\x2F|\\*\\*)$/]${ON_PRICE("left", "right")}`,
+    message: PROJECTION_MESSAGE,
+  },
+  {
+    selector: `AssignmentExpression[operator!="="]${ON_PRICE("left", "right")}`,
+    message: PROJECTION_MESSAGE,
+  },
+  { selector: `UpdateExpression${ON_PRICE("argument")}`, message: PROJECTION_MESSAGE },
+];
+
 /** @type {import("eslint").Linter.Config[]} */
 export default tseslint.config(
   ...baseConfig,
@@ -140,8 +161,13 @@ export default tseslint.config(
         { name: "document", message: "C-2.16: no DOM globals in src/core or src/layers." },
         { name: "window", message: "C-2.16: no DOM globals in src/core or src/layers." },
       ],
-      "no-restricted-syntax": ["error", ...C216_SYNTAX],
+      "no-restricted-syntax": ["error", ...C216_SYNTAX, ...PROJECTION_SYNTAX],
     },
+  },
+  {
+    // E11-S03: the one module allowed to project prices (US-CHART-007).
+    files: ["src/viewport/transform.ts"],
+    rules: { "no-restricted-syntax": ["error", ...C216_SYNTAX] },
   },
   {
     // The bench harness/runner/driver `.mjs` files are not covered by the
@@ -182,7 +208,8 @@ export default tseslint.config(
     // C-2.16: core, layers and the scene graph touch no DOM at all, not just `document` /
     // `window` (E11-T01, E11-S01, E11-T03: requestAnimationFrame is bound in the worker or host only).
     // E11-S02: the WebGL2 backend (src/gl) too; its GL type is the hand-written GL2Like.
-    files: ["src/{core,layers,scene,model,gl}/**/*.ts"],
+    // E11-S03: and the shared transform (src/viewport).
+    files: ["src/{core,layers,scene,model,gl,viewport}/**/*.ts"],
     rules: {
       "no-restricted-globals": ["error", ...NETWORK_GLOBALS, ...DOM_GLOBALS],
     },
@@ -195,6 +222,7 @@ export default tseslint.config(
       "no-restricted-syntax": [
         "error",
         ...C216_SYNTAX,
+        ...PROJECTION_SYNTAX,
         {
           selector: "TemplateLiteral[expressions.length>0]",
           message:

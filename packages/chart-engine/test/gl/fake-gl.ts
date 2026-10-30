@@ -29,6 +29,8 @@ export class FakeGl implements GL2Like {
   readonly alive = new Set<GLObject>();
   /** Buffer writes: `full <bytes>` or `sub <dstByte> <srcOffset> <length>`. */
   readonly writes: string[] = [];
+  /** Uniform writes: the uniform's name, then its values (E11-S03). */
+  readonly uniforms: (string | number)[][] = [];
   /** The colour of each `clear`, as `#rrggbb`: the fake's pixels. */
   readonly clears: string[] = [];
   private color = "#000000";
@@ -126,6 +128,12 @@ export class FakeGl implements GL2Like {
   bufferSubData(_t: number, dst: number, _src: ArrayBufferView, from: number, n: number): void {
     if (this.call("bufferSubData")) this.writes.push(`sub ${dst} ${from} ${n}`);
   }
+  private uniform(fn: string, at: unknown, values: number[]): void {
+    if (this.call(fn)) this.uniforms.push([(at as { name: string }).name, ...values]);
+  }
+  uniform1i = (at: unknown, ...v: number[]): void => this.uniform("uniform1i", at, v);
+  uniform2f = (at: unknown, ...v: number[]): void => this.uniform("uniform2f", at, v);
+  uniform4f = (at: unknown, ...v: number[]): void => this.uniform("uniform4f", at, v);
   compileShader = (): void => void this.call("compileShader");
   attachShader = (): void => void this.call("attachShader");
   linkProgram = (): void => void this.call("linkProgram");

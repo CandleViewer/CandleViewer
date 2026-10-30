@@ -4,6 +4,7 @@
 import { DeferClass } from "./dirty.js";
 import type { FrameClock } from "./frame-clock.js";
 import { FrameContext, type FrameCtx } from "./frame-context.js";
+import type { ViewportState } from "../viewport/types.js";
 import type { SceneGraph } from "./graph.js";
 import { type Mutation, MutationQueue } from "./mutation-queue.js";
 import { PooledBatchSink } from "./pool.js";
@@ -89,10 +90,12 @@ export interface SchedulerHooks {
   layout?(ctx: FrameContext): void;
   build?(sink: PooledBatchSink, ctx: FrameContext): void;
   submit?(sink: PooledBatchSink, ctx: FrameContext): void;
+  /** The chart's shared transform, read by every node as `ctx.viewport` (E11-S03). */
+  readonly viewport?: ViewportState;
 }
 
 export class FrameScheduler {
-  readonly ctx = new FrameContext();
+  readonly ctx: FrameContext;
   readonly sink = new PooledBatchSink();
   readonly queue = new MutationQueue();
   readonly timings = new FrameTimings();
@@ -123,7 +126,9 @@ export class FrameScheduler {
     readonly budgetMs = 16.7,
     readonly drainMs = 4,
     readonly maxLod = 2,
-  ) {}
+  ) {
+    this.ctx = new FrameContext(hooks.viewport);
+  }
 
   /** No frame is requested: nothing is dirty, queued or animating. */
   get parked(): boolean {

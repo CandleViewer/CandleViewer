@@ -45,6 +45,10 @@ export interface GL2Like {
   getProgramInfoLog(program: GLObject): string | null;
   getUniformLocation(program: GLObject, name: string): unknown;
   useProgram(program: GLObject | null): void;
+  // The pane uniform block (E11-S03, BQ-76): typed setters on the current program.
+  uniform1i(location: unknown, x: number): void;
+  uniform2f(location: unknown, x: number, y: number): void;
+  uniform4f(location: unknown, x: number, y: number, z: number, w: number): void;
   // Buffers, textures and submission.
   bindBuffer(target: number, buffer: GLObject | null): void;
   bufferData(target: number, data: ArrayBufferView, usage: number): void;

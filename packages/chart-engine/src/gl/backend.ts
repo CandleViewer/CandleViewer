@@ -14,7 +14,7 @@ import {
   ProgramCompileError,
 } from "./program-cache.js";
 import { GlRegistry } from "./registry.js";
-import { submitDrawList } from "./submit.js";
+import { type PaneUniformSource, submitDrawList } from "./submit.js";
 import { GlTextures } from "./textures.js";
 import { DrawTrace } from "./trace.js";
 
@@ -35,6 +35,8 @@ export interface RenderBackend extends UploadSink {
   readonly gpuMemoryMbEstimate: number;
   /** Bytes uploaded since the last call. */
   takeUploadedBytes(): number;
+  /** Where each batch's pane uniform block comes from (E11-S03, closes BQ-59's setters). */
+  setPaneUniforms(source: PaneUniformSource | null): void;
 }
 
 export class GLBackend implements RenderBackend {
@@ -44,6 +46,7 @@ export class GLBackend implements RenderBackend {
   readonly textures: GlTextures;
   readonly trace = new DrawTrace();
   failure: GlFailure | null = null;
+  paneUniforms: PaneUniformSource | null = null;
   private readonly rgb = [0, 0, 0];
   private background: string | undefined = "#000";
 
@@ -84,6 +87,10 @@ export class GLBackend implements RenderBackend {
       };
       return this.failure;
     }
+  }
+
+  setPaneUniforms(source: PaneUniformSource | null): void {
+    this.paneUniforms = source;
   }
 
   /** The clear colour, from the theme's `#rgb` / `#rrggbb` background; anything else is black. */

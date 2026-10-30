@@ -189,6 +189,17 @@ describe("createChart facade", () => {
     expect(() => chart.timeScale.setVisibleRange({ from: Number.NaN, to: 2 })).toThrow(RangeError);
     chart.dispose();
   });
+
+  it("the scales answer the runtime's clamped range and the first pane's tick window (E11-S03)", () => {
+    const chart = mount();
+    const pane = chart.addPane({});
+    chart.timeScale.setVisibleRange({ from: 0, to: 1 }); // far below one 200 px-wide bar
+    nextFrame();
+    const range = chart.timeScale.getVisibleRange();
+    expect((range?.to ?? 0) - (range?.from ?? 0)).toBeGreaterThan(1); // barSpacing <= 200 px
+    expect(pane.priceScale.getVisibleRange()).toEqual({ low: 0, high: 1 });
+    chart.dispose();
+  });
 });
 
 describe("dispose", () => {

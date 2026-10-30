@@ -1,6 +1,7 @@
 // The program cache (E11-S02, 26 §3.4): each program compiles and links lazily, on the first batch
 // that draws with it (B9: cold init is dominated by compilation), and its uniform locations are
 // resolved once then. A compile or link failure is a typed error the backend reports (BQ-52).
+import type { PaneUniforms } from "../viewport/transform.js";
 import { GL, type GL2Like, type GLObject } from "./gl-types.js";
 import type { GlRegistry, Handle } from "./registry.js";
 import { BAR_CELL } from "./shaders/bar-cell-stub.js";
@@ -78,6 +79,22 @@ export class ProgramCache {
   /** Makes `id` the current program. */
   bind(id: number): void {
     this.gl.useProgram(this.registry.get(this.use(id).handle));
+  }
+
+  /** Writes a pane's block into the current program `id`: only the uniforms it declares. */
+  setUniforms(id: number, block: PaneUniforms): void {
+    const u = this.use(id).uniforms;
+    const { ints: i, floats: f } = block;
+    // No per-frame closure (31-chart-engine): the four locations are read and tested inline.
+    const ib = u["u_indexBase"];
+    const tb = u["u_tickBase"];
+    const k = u["u_k"];
+    const vp = u["u_viewport"];
+    if (ib !== undefined && ib !== null) this.gl.uniform1i(ib, i[0] ?? 0);
+    if (tb !== undefined && tb !== null) this.gl.uniform1i(tb, i[1] ?? 0);
+    if (k !== undefined && k !== null)
+      this.gl.uniform4f(k, f[0] ?? 0, f[1] ?? 0, f[2] ?? 0, f[3] ?? 0);
+    if (vp !== undefined && vp !== null) this.gl.uniform2f(vp, f[4] ?? 0, f[5] ?? 0);
   }
 
   private compile(id: number): LinkedProgram {
