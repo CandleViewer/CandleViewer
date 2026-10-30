@@ -2860,7 +2860,7 @@ export interface paths {
     };
     /**
      * List fills
-     * @description Fill-level history from the private WS `execution` stream, reconciled against `GET /v5/execution/list`. One Bybit message may bundle several fills; each is stored individually keyed by `exec_id`.
+     * @description Fill-level history from the private WS `execution` stream, reconciled against `GET /v5/execution/list`. One Bybit message may bundle several fills; each is stored individually keyed by `exec_id`. Newest first, by fill time. A fill's `exec_pnl` is its stored closed PnL, absent when it has none; an `exec_type` 22 does not name is absent. An `exchange_account_ids` entry outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied`, audited (SR-E29-13); with none named, the list is every account the caller may view, of this server's environment. A malformed, foreign or expired `cursor` is `400 invalid_cursor`, a malformed parameter `400 validation_failed`.
      */
     get: operations["listExecutions"];
     put?: never;
@@ -2880,7 +2880,7 @@ export interface paths {
     };
     /**
      * Realised PnL per closed position (journal source)
-     * @description Mirrors `GET /v5/position/closed-pnl`, backfilled nightly and used to seed journal entries.
+     * @description Mirrors `GET /v5/position/closed-pnl`, backfilled nightly and used to seed journal entries. Until that backfill lands it is served from the stored fills that carry a closed PnL (#915), one item per fill, newest first by fill time: `id` is the fill's, `side` the closed position's (the fill's opposite), `avg_exit_price` the fill's price, `closed_at` its time. A fill holds no entry price, closed size, entry or exit value, leverage or opening time, so `avg_entry_price`, `qty`, `cum_entry_value`, `cum_exit_value`, `leverage` and `opened_at` are absent, never estimated. An `exchange_account_ids` entry outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied`, audited (SR-E29-13); with none named, the list is every account the caller may view, of this server's environment. A malformed, foreign or expired `cursor` is `400 invalid_cursor`, a malformed parameter `400 validation_failed`.
      */
     get: operations["listClosedPnl"];
     put?: never;
@@ -4021,7 +4021,11 @@ export interface paths {
      * @description Reads the local OMS mirror, which is reconciled against Bybit
      *     (`GET /v5/order/realtime` + `order/history`) and updated live from the private WS
      *     `order` stream — the WS stream, never the REST ack, is the source of truth for state
-     *     (digest 06 §19).
+     *     (digest 06 §19). Newest first, by creation time. An `exchange_account_ids` entry outside the caller's grants, or one that
+     *     does not exist, refuses the whole request alike with `403 account_scope_denied`, audited
+     *     (SR-E29-13); with none named, the list is every account the caller may view, of this
+     *     server's environment. A malformed, foreign or expired `cursor` is `400 invalid_cursor`,
+     *     a malformed parameter `400 validation_failed`.
      */
     get: operations["listOrders"];
     put?: never;
@@ -4420,7 +4424,7 @@ export interface paths {
     };
     /**
      * Full lifecycle trace for one order
-     * @description Returns the ordered `order_events` chain plus the stored exchange records (the adapter's allow-listed request, response and push records, with credentials and signatures never stored: SR-E29-08) and the reconciliation verdict. This is the "why did my order do that" surface; on the order path it is the only place the exchange's text (`ret_msg`) and the stored records are served (SR-E29-09; an order route's error body carries the return code only, `OrderExchangeProblem`), and every read is audited (`order.diagnostics_viewed`). Which roles receive `exchange_calls` and `ret_msg` is the Owner's decision D7 (E29 threat model section 4.3, queued on #2701); the route is not mounted before it is decided, and its `x-rbac` is provisional until then.
+     * @description Returns the ordered `order_events` chain plus the stored exchange records (the adapter's allow-listed request, response and push records, with credentials and signatures never stored: SR-E29-08) and the reconciliation verdict. This is the "why did my order do that" surface; on the order path it is the only place the exchange's text (`ret_msg`) and the stored records are served (SR-E29-09; an order route's error body carries the return code only, `OrderExchangeProblem`), and every read is audited (`order.diagnostics_viewed`). It is the Owner's alone (decision D7, ruled on #915 for the E29 threat model's option (a), section 4.3): its records carry internal identifiers, rate-budget and exchange-error detail that `orders:read` on a granted account does not grant, so it also takes `admin:read`, which no Manager or Viewer holds, and either is refused `403 forbidden` before any order is read, whatever the id, as on every Owner-only route. The read is recorded before its body is sent: one that cannot be recorded is `503 audit_unavailable`, with no body. Each record is served only as `ExchangeCallRecord` names it, its stored form checked again on the way out: one the check would change is never served, and the read is `503 store_unavailable`. `reconciliation` is absent until E29-T06 persists its verdict.
      */
     get: operations["getOrderDiagnostics"];
     put?: never;
@@ -4549,7 +4553,16 @@ export interface paths {
      * List positions across the caller's accounts
      * @description Mirrors Bybit `GET /v5/position/list`, kept live by the private WS `position` stream.
      *     `aggregate=true` collapses legs of the same symbol across accounts into one synthetic
-     *     row (with a per-account breakdown) for the portfolio view.
+     *     row (with a per-account breakdown) for the portfolio view: over the open positions
+     *     listed, `net_size` is the sum of the signed sizes (long positive), `gross_size` the sum
+     *     of the sizes, `unrealised_pnl` their sum (absent when a position has none), and
+     *     `weighted_avg_price` the size-weighted entry price when every leg is on one side, absent
+     *     across a long and a short. A server serves one environment, so an aggregate never sums
+     *     across environments. A member a position's row holds no value for is absent; a
+     *     `trailing_stop` of `0` is none. An `exchange_account_ids` entry outside the caller's
+     *     grants, or one that does not exist, refuses the whole request alike with
+     *     `403 account_scope_denied`, audited (SR-E29-13); a malformed parameter is
+     *     `400 validation_failed`.
      */
     get: operations["listPositions"];
     put?: never;
@@ -6967,6 +6980,7 @@ export interface components {
       net_size?: components["schemas"]["Decimal"];
       symbol?: components["schemas"]["Symbol"];
       unrealised_pnl?: components["schemas"]["Decimal"];
+      /** @description The quantity-weighted average entry price of the legs when every leg is on one side. Absent when the legs mix sides (decision D3, ruled on #915): an average across a long and a short is no price anyone can trade against. */
       weighted_avg_price?: components["schemas"]["Decimal"];
     };
     Alert: components["schemas"]["AlertInput"] & {
@@ -16700,6 +16714,7 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
@@ -16738,6 +16753,7 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
@@ -18494,7 +18510,7 @@ export interface operations {
         intent?: components["schemas"]["OrderIntent"][];
         /** @description Page size. */
         limit?: components["parameters"]["Limit"];
-        /** @description Shorthand for the non-terminal state set. */
+        /** @description Shorthand for the non-terminal state set: every state but `filled`, `cancelled`, `rejected`, `expired` and `killed`, so `held` and `untracked` too. */
         open_only?: boolean;
         state?: components["schemas"]["OrderState"][];
         symbol?: components["parameters"]["SymbolQueryOptional"];
@@ -18519,6 +18535,7 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -18647,7 +18664,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Order. */
+      /** @description Order, with its fills, oldest first, and with `include_events` its events in `seq` order; its `ETag` (`OrderETag`) while the OMS holds the order's version. */
       200: {
         headers: {
           [name: string]: unknown;
@@ -18656,6 +18673,7 @@ export interface operations {
           "application/json": components["schemas"]["OrderWithEvents"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
@@ -18810,6 +18828,7 @@ export interface operations {
           "application/json": components["schemas"]["OrderDiagnostics"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
@@ -18915,6 +18934,7 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -18940,6 +18960,7 @@ export interface operations {
           "application/json": components["schemas"]["Position"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];

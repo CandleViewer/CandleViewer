@@ -6042,7 +6042,8 @@
       "get": {
         "x-rbac": {
           "permissions": [
-            "orders:read"
+            "orders:read",
+            "admin:read"
           ],
           "scope": "granted_accounts"
         }

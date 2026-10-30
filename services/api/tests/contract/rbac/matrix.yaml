@@ -655,15 +655,13 @@ operations:
     permissions: ['executions:read']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /executions/closed-pnl:
     permissions: ['executions:read']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /health/live:
     permissions: []
@@ -1017,8 +1015,7 @@ operations:
     permissions: ['orders:read']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /orders:
     permissions: ['orders:write']
@@ -1043,8 +1040,7 @@ operations:
     permissions: ['orders:read']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   DELETE /orders/{orderId}:
     permissions: ['orders:write']
@@ -1059,12 +1055,14 @@ operations:
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /orders/{orderId}/diagnostics:
-    permissions: ['orders:read']
+    permissions: ['orders:read', 'admin:read']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
+    state: executed
+    # D7, ruled on #915: the Owner's alone (`admin:read`), as every Owner-only route, so a Manager
+    # or Viewer is a capability 403 before any order is read, whatever the id. The CI app composes
+    # no read store: an admitted call is 503 `store_unavailable`, so the Owner's cell reads `allow`.
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /permissions:
     permissions: ['users:read']
     scope: none
@@ -1076,8 +1074,7 @@ operations:
     permissions: ['positions:read']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /positions/close-all:
     permissions: ['positions:write']
@@ -1090,8 +1087,7 @@ operations:
     permissions: ['positions:read']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /positions/{positionId}/close:
     permissions: ['positions:write']

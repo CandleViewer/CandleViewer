@@ -301,6 +301,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             health_pg = getattr(app.state, "health_pg", None)
             if health_pg is not None:
                 await teardown.run("health_pg", health_pg.dispose)
+            reads = getattr(app.state, "oms_reads", None)
+            if reads is not None:  # #915: the OMS reads' own pool
+                await teardown.run("oms_reads", reads.aclose)
             kline_pg = getattr(app.state, "kline_boundary_pg", None)
             if kline_pg is not None:
                 await teardown.run("kline_boundary_pg", kline_pg.dispose)

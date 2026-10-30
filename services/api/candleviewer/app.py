@@ -150,6 +150,7 @@ from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_rou
 from candleviewer.api.market_coverage import make_data_coverage_router
 from candleviewer.api.me import make_me_router
 from candleviewer.api.notifications import make_notifications_router
+from candleviewer.api.oms_reads import make_oms_reads_router
 from candleviewer.api.onboarding import make_onboarding_router
 from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restriction
 from candleviewer.api.openapi_publish import install_contract_openapi
@@ -330,6 +331,7 @@ from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oms.service import OmsService
+from candleviewer.oms_reads_wiring import oms_reads, order_versions
 from candleviewer.oms_wiring import InterimKillSwitch, OmsAudit, OmsRuntime, build_oms_runtime
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.heatmap_metrics import export_heatmap_metrics
@@ -2602,6 +2604,19 @@ def create_app(
             auth=ctx.auth,
             protective=protective_writes,
             view_as_refusals=lambda: app.state.view_as_refusals,
+        )
+    )
+    # E29-T07 #915 PR 1: the OMS reads (`listOrders`, `getOrder`, `listPositions`, `getPosition`,
+    # `listExecutions`) over a scoped read store of their own, after the order routers; no flag
+    # gates a read, and none waits for the OMS (`oms_reads_wiring`). The lifespan disposes its pool.
+    app.state.oms_reads = oms_reads(resolved)
+    app.include_router(
+        make_oms_reads_router(
+            order_principals,
+            app.state.oms_reads,
+            audit=_LazyAuditEmitter(ctx.audit),
+            auth=ctx.auth,
+            versions=order_versions(lambda: oms_runtime_of(app.state)),
         )
     )
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). #2966: the real

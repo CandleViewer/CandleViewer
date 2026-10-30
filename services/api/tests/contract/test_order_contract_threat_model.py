@@ -278,13 +278,19 @@ def test_the_exchange_text_reaches_no_order_route_but_diagnostics() -> None:
     }
 
 
-def test_the_diagnostics_read_is_audited_and_its_roles_wait_for_d7() -> None:
-    text = _words(_OPS["getOrderDiagnostics"]["description"])
+def test_the_diagnostics_read_is_audited_and_the_owners_alone() -> None:
+    """D7, ruled on #915 for the threat model's option (a): the Owner's alone (`admin:read`
+    beside `orders:read`), recorded before its body is sent (SR-E29-09, AC-16)."""
+    op = _OPS["getOrderDiagnostics"]
+    text = _words(op["description"])
     assert "every read is audited (`order.diagnostics_viewed`)" in text
     assert "on the order path it is the only place the exchange's text (`ret_msg`)" in text
-    # D7 is the Owner's open decision (#2701): the contract names it and invents no roles.
-    assert "the Owner's decision D7 (E29 threat model section 4.3, queued on #2701)" in text
-    assert "its `x-rbac` is provisional until then" in text
+    assert "It is the Owner's alone (decision D7, ruled on #915" in text
+    assert "The read is recorded before its body is sent" in text
+    assert op["x-rbac"] == {
+        "permissions": ["orders:read", "admin:read"],
+        "scope": "granted_accounts",
+    }
 
 
 @pytest.mark.parametrize(("route", "op"), _ID_ROUTES, ids=[route for route, _ in _ID_ROUTES])

@@ -633,7 +633,10 @@ def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
     assert "An amend's own `entry_attach` rows (24 §8.8 rule 6, audit reason `amend`) are " in (
         _words(_SCHEMA_DOC)
     )
-    assert "`order.adopted_untracked`, `orders.amend`, `orders.cancel`," in _RECORDS
+    assert (
+        "`order.adopted_untracked`, `order.diagnostics_viewed`, `orders.amend`, `orders.cancel`,"
+        in (_RECORDS)
+    )  # #915 PR 1 registers the diagnostics read between them
     assert "A client treats it as opaque" in _words(
         _COMPONENTS["headers"]["OrderETag"]["description"]
     )

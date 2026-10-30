@@ -326,13 +326,18 @@ def in_scope_statement(
 
 
 def accounts_in_scope_statement(
-    scope: AccountScope, environment: Environment, requested: Collection[UUID]
+    scope: AccountScope,
+    environment: Environment,
+    requested: Collection[UUID],
+    *,
+    trade: bool = True,
 ) -> sa.Select[Any]:
     """`accounts_in_scope`'s one statement: the accounts of `environment`, not deleted, the scope
-    may trade (`_reaches`), among `requested` when it names any, by id."""
+    may trade (`_reaches`), or only view with `trade=False` (the OMS reads, E29-T07), among
+    `requested` when it names any, by id."""
     ea = exchange_accounts.c
     stmt = sa.select(ea.id).select_from(exchange_accounts)
-    stmt = stmt.where(*_live(environment), _reaches(scope, trade=True))
+    stmt = stmt.where(*_live(environment), _reaches(scope, trade=trade))
     if requested:
         stmt = stmt.where(ea.id.in_(sorted(set(requested))))
     return stmt.order_by(ea.id)

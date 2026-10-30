@@ -3549,7 +3549,7 @@ class AggregatePosition(BaseModel):
     weighted_avg_price: Annotated[
         str | None,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="The quantity-weighted average entry price of the legs when every leg is on one side. Absent when the legs mix sides (decision D3, ruled on #915): an average across a long and a short is no price anyone can trade against.\n",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
