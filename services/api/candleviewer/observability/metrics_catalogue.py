@@ -3556,6 +3556,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=1,
     ),
     _s(
+        "oms_ws_position_overtakes_total",
+        "counter",
+        "frames",
+        (),
+        "Positions frames published past their hold's bound (E29-T13, 23 Sec.6.2.3): a position "
+        "that waited HOLD_S for an unpublished fill of its key, or found its account's hold full, "
+        "and went out before that fill's executions and orders frames (Sec.16.1 S5); no account "
+        "label (oms_ws_position_overtake logs the account and symbol).",
+        "dashboard",
+        _P,
+        "E29",
+        max_series=1,
+    ),
+    _s(
         "bybit_clock_drift_ms",
         "gauge",
         "milliseconds",

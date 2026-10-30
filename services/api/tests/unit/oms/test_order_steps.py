@@ -18,6 +18,7 @@ import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from jsonschema import Draft202012Validator
+from structlog.testing import capture_logs
 
 from candleviewer.oms import ExecutionRepository, OrderRepository
 from candleviewer.oms import order_steps as steps
@@ -1063,3 +1064,87 @@ def test_no_entry_stop_is_voided_blind_and_none_outlives_its_order_unsettled(
     if state in _LIFECYCLE.finals:
         in_flight = [r for r in rows if r["status"] == "pending" and not r["answered"]]
         assert not in_flight or effect == "waiting", "a stop in flight outlived its order"
+
+
+# -- E29-T13: each committed step reported (`on_commit`) ------------------------------------------
+
+
+def _reporting(
+    db: InMemoryOrderStore, reported: list[steps.CommittedOrderStep], **kw: Any
+) -> OrderStepWriter:
+    executions = ExecutionRepository(InMemoryExecutionStore(db))
+    out = OrderStepWriter(
+        OrderRepository(db), executions, clock=lambda: T0, on_commit=reported.append, **kw
+    )
+    out.expect(_order())
+    return out
+
+
+async def test_each_committed_step_is_reported_with_its_row_a_second_partial_fill_included(
+    db: InMemoryOrderStore,
+) -> None:
+    """E29-T13 (23 Sec.6.2.3): every step whose write committed is reported once, in commit order,
+    with the row as it then stands, its kind, the state it left and a fill's execution: a second
+    partial fill, which leaves B1's view as it was, is a report of its own (S4)."""
+    reported: list[steps.CommittedOrderStep] = []
+    writer = _reporting(db, reported)
+    await _submitted(writer)
+    second = EXECUTION | {"exec_id": "e2", "qty": "0.3"}
+    more = {"filled_qty": "0.7", "cum_exec_value": "44100", "avg_price": "63000"}
+    await writer(_step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED))
+    await writer(_step("partially_filled", "partially_filled", "EXEC", second, **FILLED | more))
+    kinds = [(r.kind, r.from_state, r.order.state) for r in reported]
+    assert kinds == [
+        ("local_create", None, "pending_submit"), ("submit_attempt", "pending_submit", "submitted"),
+        ("ack", "submitted", "accepted"), ("partial_fill", "accepted", "partially_filled"),
+        ("partial_fill", "partially_filled", "partially_filled"),
+    ]  # fmt: skip
+    assert [r.order.cum_exec_qty for r in reported[-2:]] == [Decimal("0.4"), Decimal("0.7")]
+    assert [None if r.fill is None else r.fill.exec_id for r in reported] == [None] * 3 + [
+        "e1",
+        "e2",
+    ]
+
+
+async def test_a_step_refused_or_a_duplicate_fill_is_not_reported(db: InMemoryOrderStore) -> None:
+    reported: list[steps.CommittedOrderStep] = []
+    writer = _reporting(db, reported)
+    await _submitted(writer)
+    await writer(_step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED))
+    count = len(reported)
+    with pytest.raises(port.StaleOrderState):  # the row moved on: nothing committed
+        await writer(_step("submitted", "cancel_pending", "CANCEL"))
+    with pytest.raises(port.StaleOrderState):  # e1 is stored: S4, nothing committed
+        await writer(_step("partially_filled", "partially_filled", "EXEC", EXECUTION, **FILLED))
+    assert len(reported) == count
+
+
+async def test_a_first_persist_is_reported_with_its_row(db: InMemoryOrderStore) -> None:
+    reported: list[steps.CommittedOrderStep] = []
+    store = _Submissions(db)
+    writer = _reporting(db, reported, submissions=SubmissionRepository(store))
+    writer.expect(_order(), first=_FIRST)
+    await writer(_step(None, "validated", "VALIDATE"))
+    [first] = reported
+    assert (first.order.id, first.kind, first.from_state) == (ORDER_ID, "local_create", None)
+
+
+async def test_a_report_that_raises_leaves_the_step_committed(db: InMemoryOrderStore) -> None:
+    """The report is the WS topics' view: what it raises is logged by its class and ids, never
+    raised into B1's write-ahead step, which has committed (24 Sec.8.2 S7)."""
+
+    def broken(step: steps.CommittedOrderStep) -> None:
+        raise RuntimeError("echoed: key abc123")
+
+    writer = OrderStepWriter(
+        OrderRepository(db), ExecutionRepository(InMemoryExecutionStore(db)),
+        clock=lambda: T0, on_commit=broken,
+    )  # fmt: skip
+    writer.expect(_order())
+    with capture_logs() as logs:
+        assert await writer(_step(None, "validated", "VALIDATE")) == 0
+    row = await db.get(ACCOUNT, ORDER_ID)
+    assert row is not None and row.state == "pending_submit"
+    [line] = [entry for entry in logs if entry["event"] == "oms_step_report_failed"]
+    assert (line["error"], line["order_id"]) == ("RuntimeError", str(ORDER_ID))
+    assert "abc123" not in str(logs)

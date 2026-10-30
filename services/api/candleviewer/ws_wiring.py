@@ -11,7 +11,9 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   module's adapter: the book module's `book` topic (`book_topic`, #604, over the #2196 snapshot
   source; its deltas run on `WsRuntime`), `BarsSnapshotSource` (#2195), the accounts
   module's `wallet` topic (`wallet_topic`, #837), which the account health runtime attaches to
-  and publishes its deltas on, and the ingestion module's `ticker` topic (`ticker_topic`, #4707),
+  and publishes its deltas on, the OMS's `orders`, `executions` and `positions` topics
+  (`oms_topics`, #4207), which the OMS runtime attaches to once ready and publishes its committed
+  steps and position rows on, and the ingestion module's `ticker` topic (`ticker_topic`, #4707),
   whose deltas `WsRuntime` runs with the `InstrumentRevisions` bridge (23 §7.4). Until order-flow
   (#2197) lands, its families map to `PendingSnapshotSource`, which raises
   `NotImplementedError`; the router turns that into `None`, so the subscription reports
@@ -62,6 +64,7 @@ from candleviewer.ingestion.metrics import (
 )
 from candleviewer.ingestion.ticker_topic import TickerTopic
 from candleviewer.observability.context import spawn
+from candleviewer.oms.ws_topics import OmsTopics
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.heatmap import HeatmapStore, HeatmapTopic
 from candleviewer.recorder.ws_topic import RecorderTopic
@@ -83,6 +86,7 @@ from candleviewer.ws.metrics import PRINCIPAL_LOAD_FAILURES, count_audit_failure
 from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, Subscription
 from candleviewer.ws.revocation import AccountRevokedReason
 from candleviewer.ws.sequencing import (
+    PRIVATE_CAUSAL_ORDER,
     SequencingHub,
     SnapshotBody,
     SnapshotSource,
@@ -442,6 +446,17 @@ def wallet_topic(hub: SequencingHub) -> WalletTopic[SnapshotBody]:
     attaches its health `view` and wallet cache (`wire_account_health`); before, `build` gives
     `None`."""
     return WalletTopic(hub.publish, SnapshotBody)
+
+
+def oms_topics(hub: SequencingHub) -> OmsTopics[SnapshotBody]:
+    """E29-T13 (#4207): the `orders`, `executions` and `positions` families' adapter, which the OMS
+    module owns: it renders through the gateway's `SnapshotBody`, publishes each change through
+    `hub` in `PRIVATE_CAUSAL_ORDER` (23 Sec.16.1 S5) naming the change's account, and wakes or
+    resyncs subscriptions through it. The OMS runtime attaches its lane's reads once it is ready
+    and detaches them at its stop; meanwhile `build` gives `None`."""
+    return OmsTopics(
+        hub.publish, hub.flush_pending, hub.resnapshot, SnapshotBody, order=PRIVATE_CAUSAL_ORDER
+    )
 
 
 def alerts_topic(hub: SequencingHub) -> AlertsTopic[SnapshotBody]:

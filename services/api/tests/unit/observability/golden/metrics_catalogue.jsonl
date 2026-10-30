@@ -320,6 +320,7 @@
 ["oms_submit_rejected_total", "counter", ["code"], "planned", "E29"]
 ["oms_tier_requests_dropped_total", "counter", ["reason"], "planned", "E29"]
 ["oms_unknown_orders", "gauge", [], "planned", "E29"]
+["oms_ws_position_overtakes_total", "counter", [], "planned", "E29"]
 ["order_submit_seconds", "histogram", ["transport"], "planned", "E29"]
 ["orders_total", "counter", ["state"], "planned", "E29"]
 ["parquet_hot_cold_parity_mismatch_total", "counter", ["stream"], "live", "E07"]

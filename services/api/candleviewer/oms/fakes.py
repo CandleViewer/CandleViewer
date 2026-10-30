@@ -26,7 +26,13 @@ from candleviewer.storage.errors import (
 from candleviewer.storage.repositories import exchange_payload as xp
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories.accounts import AccountScope, OwnerScope
-from candleviewer.storage.repositories.executions import ExecutionRow, NewExecution, OrderFill
+from candleviewer.storage.repositories.executions import (
+    MAX_RECENT,
+    ExecutionRow,
+    NewExecution,
+    OrderFill,
+    require_recent_limit,
+)
 from candleviewer.storage.repositories.idempotency_anchors import (
     UX_IA_PRINCIPAL_REF,
     AnchorOperation,
@@ -922,6 +928,17 @@ class InMemoryExecutionStore:
         await asyncio.sleep(0)
         _bindable((exec_id,))  # the SELECT's `exec_id` is bound before it runs
         return self._db._fills.get((account_id, exec_id))
+
+    async def list_recent(
+        self, account_id: UUID, *, limit: int = MAX_RECENT
+    ) -> tuple[ExecutionRow, ...]:
+        require_recent_limit(limit)
+        await asyncio.sleep(0)
+        rows = [
+            row for (account, _), row in self._db._fills.items()
+            if account == account_id and row.order_id is not None
+        ]  # fmt: skip
+        return tuple(sorted(rows, key=lambda r: (r.exec_ts, r.id.int), reverse=True)[:limit])
 
     async def commit_fill(self, fill: OrderFill) -> Step | None:
         await self._db._turn()

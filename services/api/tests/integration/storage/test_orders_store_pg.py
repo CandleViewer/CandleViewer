@@ -50,7 +50,10 @@ from candleviewer.oms import (
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.executions import NewExecution
-from candleviewer.storage.repositories.executions_sqlalchemy import SqlAlchemyExecutionStore
+from candleviewer.storage.repositories.executions_sqlalchemy import (
+    SqlAlchemyExecutionStore,
+    list_recent_statement,
+)
 from candleviewer.storage.repositories.orders import (
     NewOrder,
     NewOrderEvent,
@@ -547,6 +550,30 @@ async def test_fills_deduplicate_across_sources(stores: Repos, ledger: Ledger, p
     for got, want in ((stored.exec_qty, tiny), (stored.exec_price, Decimal("63099.80"))):
         assert type(got) is Decimal and got.as_tuple() == want.quantize(tiny).as_tuple()
     assert await executions.get(b, "E2") is None
+
+
+async def test_the_recent_fills_are_an_accounts_order_fills_newest_first_over_their_index(
+    stores: Repos, ledger: Ledger, pg_dsn: str
+) -> None:
+    """E29-T13 (23 Sec.6.2.3): the `executions` snapshot's read answers the account's fills of an
+    order, newest first, at most the limit, never another account's or a fill of no order; it is
+    planned over `ix_exec_acct_time`."""
+    executions = ledger[0]
+    a, b = _account(pg_dsn), _account(pg_dsn)
+    order = await stores[0].create(_order(a), _event())
+    link = {"order_id": order.id, "order_link_id": order.order_link_id}
+    for n in range(3):
+        when = _T0 + timedelta(seconds=n)
+        await executions.insert(_fill(a, exec_id=f"E{n}", exec_ts=when, **link))
+    await executions.insert(_fill(a, exec_id="F", exec_ts=_T0 + timedelta(seconds=9)))
+    await executions.insert(_fill(b, exec_id="B", exec_ts=_T0 + timedelta(seconds=9)))
+    recent = await executions.list_recent(a, limit=2)
+    assert [(r.exec_id, r.order_id) for r in recent] == [("E2", order.id), ("E1", order.id)]
+    assert [r.exec_id for r in await executions.list_recent(a)] == ["E2", "E1", "E0"]
+    assert await executions.list_recent(_account(pg_dsn)) == ()
+    _sql(pg_dsn, "ANALYZE executions")
+    plan = _plan(pg_dsn, list_recent_statement(a, 100))
+    assert "ix_exec_acct_time" in plan, plan
 
 
 async def test_a_fill_naming_another_accounts_order_is_refused_and_not_stored(

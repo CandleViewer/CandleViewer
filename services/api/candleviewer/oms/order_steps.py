@@ -54,12 +54,14 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, InvalidOperation
 from types import MappingProxyType
 from typing import Any, Final, Literal, cast, get_args
 from uuid import UUID
+
+import structlog
 
 from candleviewer.statechart.bindings.b01_order import FIRST_ROWS, FOLLOWED, Step
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
@@ -81,6 +83,8 @@ from candleviewer.storage.repositories.orders import (
     OrderEventKind,
     OrderEventSource,
     OrderProvenance,
+    OrderRow,
+    OrderState,
     OrderTransition,
     RecordedStopBind,
     StaleOrderState,
@@ -91,8 +95,8 @@ from .errors import HolderNotRead
 from .repository import ExecutionRepository, OrderRepository, SubmissionRepository
 
 __all__ = [
-    "HOLDER_READ_TIMEOUT", "MAX_EXPECTED", "EntryStopEffect", "OrderStepWriter",
-    "entry_stop_settle", "event_kind", "idempotency_of",
+    "HOLDER_READ_TIMEOUT", "MAX_EXPECTED", "CommittedOrderStep", "EntryStopEffect",
+    "OrderStepWriter", "entry_stop_settle", "event_kind", "idempotency_of",
 ]  # fmt: skip
 
 #: What a step does to its entry's recorded stops (21 Sec.3.3.11's table, R10): `answered` and
@@ -184,6 +188,23 @@ _STATEMENTS: Final[Mapping[EntryStopEffect | None, EntryStopSettle]] = MappingPr
 )
 
 
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedOrderStep:
+    """A step whose write has committed (E29-T13's WS topics read it, 23-ws-protocol.md
+    Sec.6.2.3): the order row as it now stands, its event's kind, the state the step left (None
+    for a first row) and, for a fill, the execution the step stored."""
+
+    order: OrderRow
+    kind: OrderEventKind
+    from_state: OrderState | None
+    fill: NewExecution | None = None
+
+
 def idempotency_of(from_state: LifecycleState, to_state: LifecycleState) -> IdempotencyState | None:
     """What the step says of the order's create: sent (`in_flight`), answered (`acked`,
     `failed`), or nothing new (`None`)."""
@@ -255,7 +276,10 @@ def _confirms_unfilled(
 
 
 class OrderStepWriter:
-    """Writes B1's steps through the OMS's repositories; set as `OrderPorts.persist`."""
+    """Writes B1's steps through the OMS's repositories; set as `OrderPorts.persist`. With
+    `on_commit` (E29-T13), each step whose write committed is reported there before the step
+    answers: synchronous, non-blocking, and contained (`_report`), so the step stands whatever
+    the report does."""
 
     def __init__(
         self,
@@ -264,11 +288,13 @@ class OrderStepWriter:
         *,
         clock: Callable[[], datetime],
         submissions: SubmissionRepository | None = None,
+        on_commit: Callable[[CommittedOrderStep], None] | None = None,
     ) -> None:
         self._orders = orders
         self._executions = executions
         self._clock = clock
         self._submissions = submissions
+        self._on_commit = on_commit
         self._expected: OrderedDict[UUID, _Expected] = OrderedDict()
 
     def expect(
@@ -336,9 +362,13 @@ class OrderStepWriter:
             entry_stops=settle,
         )
         if kind not in FILL_KINDS:
-            return (await self._orders.transition(move)).event.seq
-        done = await self._executions.commit_fill(_fill(step, move))
+            moved = await self._orders.transition(move)
+            self._report(moved.order, kind, moved.event.from_state)
+            return moved.event.seq
+        fill = _fill(step, move)
+        done = await self._executions.commit_fill(fill)
         if done is not None:
+            self._report(done.order, kind, done.event.from_state, fill.execution)
             return done.event.seq
         if step.event != "EXEC":
             raise ValueError(
@@ -385,14 +415,33 @@ class OrderStepWriter:
         if binds is not None:
             if to_state != "submitted":  # before the store, which would refuse the row too
                 raise ValueError("a recorded stop binds with MATERIALISED's row only")
-            await self._orders.create(stored, event, binds=binds)
+            row = await self._orders.create(stored, event, binds=binds)
         elif first is None:
-            await self._orders.create(stored, event)
+            row = await self._orders.create(stored, event)
         elif to_state != "validated" or self._submissions is None:
             raise ValueError("a first persist writes a validated row, through its store")
         else:
-            await self._submissions.create_first(first, stored, event)
+            row = (await self._submissions.create_first(first, stored, event)).order
+        self._report(row, kind, None)
         return 0  # an order's first event (`OrderStore.create`)
+
+    def _report(
+        self,
+        row: OrderRow,
+        kind: OrderEventKind,
+        left: OrderState | None,
+        fill: NewExecution | None = None,
+    ) -> None:
+        """The committed step to `on_commit`, built only when one is set. What it raises is logged
+        by its class and the order's ids, never raised: the write has committed, so the step
+        stands (24 Sec.8.2 S7)."""
+        if self._on_commit is None:
+            return
+        try:
+            self._on_commit(CommittedOrderStep(row, kind, left, fill))
+        except Exception as exc:  # the report is a view's; the step is the order's
+            ids = {"order_id": str(row.id), "order_link_id": row.order_link_id}
+            _log().error("oms_step_report_failed", error=type(exc).__name__, **ids)
 
 
 def _uuid(raw: object) -> UUID:
