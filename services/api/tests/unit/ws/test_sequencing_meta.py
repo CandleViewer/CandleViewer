@@ -407,6 +407,8 @@ def test_flag_on_a_refused_d_meta_is_contained_and_re_snapshotted(
     _hold_back(sub, state)
     hub.publish(_BARS, {**_SERIES, "bars": [{**_BAR, "confirm": False}]}, meta=meta)
     assert (sub.seq, _queued(pipe), asked) == (1, [], [])
+    # An ended subscription's mark is deliberately not pinned: nothing is ever sent for it, so
+    # whether the refusal marks it is unobservable (raised on LANE-119 with #2409).
     if state != "ended":
         reason = "backpressure" if state == "live" else "initial"
         assert (sub.snapshot_pending, sub.pending_reason) == (state != "paused", reason)

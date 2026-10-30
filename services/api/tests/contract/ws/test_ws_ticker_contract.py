@@ -124,9 +124,12 @@ def test_ac1_a_ticker_subscription_is_snapped_then_streamed_no_faster_than_250_m
         # the topic's own `d`s up to the one holding the final state, read as a fence (a `pong`
         # rides the priority lane, so it can pass a window); a `system` notice may ride along
         deltas: list[dict[str, Any]] = []
-        while not deltas or _items(deltas[-1])[0]["last_price"] != last:
+        for _ in range(64):  # bounded: a missing final delta fails here, not on a recv timeout
+            if deltas and _items(deltas[-1])[0]["last_price"] == last:
+                break
             if (f := c.recv())["t"] == "d" and f["ch"] == "ticker.BTCUSDT":
                 deltas.append(f)
+        assert deltas and _items(deltas[-1])[0]["last_price"] == last
         assert [f for f in _until_pong(c) if f.get("ch") == "ticker.BTCUSDT"] == []
     assert len(deltas) >= 5
     assert min(b["ts"] - a["ts"] for a, b in pairwise(deltas)) >= WINDOW_S * 1000
