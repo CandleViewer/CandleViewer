@@ -32,6 +32,8 @@ export interface GpuCrash {
 export interface GpuLastCrash extends GpuCrash {
   /** A `cv:gpu:retry` was accepted after it: the app is relaunching. */
   readonly retried: boolean;
+  /** A `cv:gpu:keepSoftware` came after it: the user kept software rendering for it (#306). */
+  readonly kept: boolean;
 }
 
 function isGpuCrashReason(value: unknown): value is GpuCrashReason {
@@ -61,7 +63,7 @@ export function parseGpuCrash(value: unknown): GpuCrash | undefined {
 
 /**
  * `cv:gpu:info`'s `lastCrash`, checked as a `cv:gpu:crashed` payload is: null for none, a fresh,
- * frozen copy of its four fields, or undefined.
+ * frozen copy of its five fields, or undefined.
  */
 export function parseGpuLastCrash(value: unknown): GpuLastCrash | null | undefined {
   if (value === null) {
@@ -71,7 +73,9 @@ export function parseGpuLastCrash(value: unknown): GpuLastCrash | null | undefin
   if (crash === undefined) {
     return undefined;
   }
-  // parseGpuCrash took `value` for an object; `retried` is checked before it is used.
-  const { retried } = value as { retried?: unknown };
-  return typeof retried === "boolean" ? Object.freeze({ ...crash, retried }) : undefined;
+  // parseGpuCrash took `value` for an object; `retried` and `kept` are checked before use.
+  const { retried, kept } = value as { retried?: unknown; kept?: unknown };
+  return typeof retried === "boolean" && typeof kept === "boolean"
+    ? Object.freeze({ ...crash, retried, kept })
+    : undefined;
 }

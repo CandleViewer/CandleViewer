@@ -75,13 +75,14 @@ describe("createBrowserShellAdapter", () => {
     );
   });
 
-  it("gpu.onCrashed is a no-op subscription and gpu.retry is refused (the crash state is Electron's)", async () => {
+  it("gpu.onCrashed and gpu.keepSoftware are no-ops and gpu.retry is refused (the crash state is Electron's)", async () => {
     const adapter = createBrowserShellAdapter();
     const handler = vi.fn();
     const unsubscribe = adapter.gpu.onCrashed(handler);
     expect(() => unsubscribe()).not.toThrow();
     expect(handler).not.toHaveBeenCalled();
     await expect(adapter.gpu.retry()).rejects.toThrow(/not available/i);
+    await expect(adapter.gpu.keepSoftware()).resolves.toBeUndefined();
   });
 
   it("gpu.info returns a GpuInfo shape even without a real WebGL2 context", async () => {

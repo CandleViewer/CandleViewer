@@ -376,6 +376,8 @@ function installIpcHandlers(devServerUrl: DevServerUrl | undefined, crashLog: Cr
   ipcMain.handle("cv:gpu:info", fromShellPage(devServerUrl, gpuInfo));
   // No arguments: fromShellPage never hands the renderer's to the reply (F15, E10-S04).
   ipcMain.handle("cv:gpu:retry", fromShellPage(devServerUrl, gpuRecovery.retry));
+  // No arguments either: it keeps this launch's last GPU crash in software rendering (#306).
+  ipcMain.handle("cv:gpu:keepSoftware", fromShellPage(devServerUrl, gpuRecovery.keepSoftware));
   ipcMain.handle("cv:keychain:getKekHandle", fromShellPage(devServerUrl, getKekHandle));
   ipcMain.handle("cv:updates:check", fromShellPage(devServerUrl, checkForUpdate));
   ipcMain.handle(

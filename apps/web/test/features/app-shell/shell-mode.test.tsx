@@ -12,7 +12,7 @@ import {
   type ShellModeInputs,
 } from "../../../src/features/app-shell/shellMode";
 import { useShellMode } from "../../../src/features/app-shell/useShellMode";
-import { GPU_COPY } from "../../../src/features/system-states/copy";
+import { DEGRADED_COPY, GPU_COPY } from "../../../src/features/system-states/copy";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
 import { toLatencyIndicator } from "../../../src/lib/telemetry/latencyIndicator.js";
 import { buildRoutes } from "../../../src/routes/tree";
@@ -426,8 +426,13 @@ describe("the shell matrix: every reachable state × role (S9)", () => {
 describe("the shell matrix: a GPU crash before the shell subscribed (desktop)", () => {
   const CRASH: GpuCrash = { crashedAtMs: Date.UTC(2026, 9, 29, 9), restartCount: 1, reason: "oom" };
   let push: (crash: GpuCrash) => void = () => undefined;
+  let kept = false; // the user kept software rendering for it, in main (#306)
   const bridge = {
-    gpuInfo: async () => ({ vendor: "v", renderer: "r", lastCrash: { ...CRASH, retried: false } }),
+    gpuInfo: async () => ({
+      vendor: "v",
+      renderer: "r",
+      lastCrash: { ...CRASH, retried: false, kept },
+    }),
     gpuRetry: async () => undefined,
     onGpuCrashed: (handler: (crash: GpuCrash) => void) => {
       push = handler;
@@ -436,6 +441,7 @@ describe("the shell matrix: a GPU crash before the shell subscribed (desktop)", 
   };
   beforeEach(() => {
     resetMeClaims();
+    kept = false;
     Object.defineProperty(window, "cv", {
       configurable: true,
       value: bridge as unknown as CvBridge,
@@ -453,6 +459,24 @@ describe("the shell matrix: a GPU crash before the shell subscribed (desktop)", 
         act(() => push(CRASH)); // main's push of the same crash, late
         const gpu = { level: 1, name: GPU_COPY.heading } as const;
         expect(within(overlay()).getAllByRole("heading", gpu)).toHaveLength(1);
+      } finally {
+        unwatch();
+      }
+    },
+  );
+
+  it.each(MATRIX_ROLES)(
+    "a kept crash before subscribe × %s: SCR-153's GPU row, never the page, axe-clean (#306)",
+    async (role) => {
+      kept = true; // a reload, or a new window, after Keep software rendering
+      const unwatch = watchGpu();
+      try {
+        await vi.waitFor(() => expect(getShellState().degraded.asserted.gpuFallback).toBe(1));
+        await shellMatrixCase("degraded", role, {}); // the row's mode, the chrome and axe
+        act(() => push(CRASH)); // main's push of the same crash, late
+        expect(overlay()).toBeEmptyDOMElement();
+        const row = `Dismiss ${DEGRADED_COPY.gpuFallback.message}`;
+        expect(screen.getByRole("button", { name: row })).toBeVisible();
       } finally {
         unwatch();
       }

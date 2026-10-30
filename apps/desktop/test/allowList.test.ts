@@ -14,6 +14,7 @@ describe("preload allow-list builder", () => {
       "cv:updates:check",
       "cv:crashLog:append",
       "cv:gpu:retry",
+      "cv:gpu:keepSoftware",
     ]);
     expect(ALLOWED_IPC_EVENTS).toEqual(["cv:gpu:crashed"]);
     expect(isChannelAllowed("cv:gpu:crashed")).toBe(false);

@@ -31,7 +31,14 @@ document produces the model and the required-control list only.
   (`ALLOWED_IPC_CHANNELS`, SR-111). Main → renderer events have a second closed table,
   `ALLOWED_IPC_EVENTS` (E10-S04): the preload subscribes through one guarded helper, main sends only
   to windows on the shell page, and the payload is three checked fields (a crash time, a restart
-  count and a closed reason enum) with no platform text.
+  count and a closed reason enum) with no platform text. `cv:gpu:keepSoftware` (#306) takes no
+  argument and passes the same shell-page sender check as `cv:gpu:retry` and `cv:gpu:info`. Its
+  bound is one boolean in main's memory: this launch's last GPU crash, marked kept (`cv:gpu:info`'s
+  `lastCrash.kept`, checked as a boolean in the preload). It is refused before a crash and
+  idempotent, a newer crash resets it, a relaunch starts without it, nothing is written to disk,
+  and its refusals are audited by reason only, rate-limited per window. Having no argument, it keeps
+  whichever crash is last when main handles it, so one landing inside the click's round trip is
+  kept with it; `kept` only chooses SCR-153's row over the page, so that's a presentation effect.
 - **Renderer ↔ backend** — bootstrap REST calls and the WS `system` topic, both authenticated by the
   existing session cookie (E09's boundary; this model only adds the shell-specific consumers of it).
 - **OS ↔ main process** — filesystem (window-state file, crash log, diagnostics bundle directory),

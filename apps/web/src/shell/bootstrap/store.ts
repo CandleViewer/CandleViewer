@@ -172,12 +172,13 @@ export function clearDegraded(): void {
 }
 
 /**
- * A GPU-process crash: SCR-159's page shows, and an earlier answer's GPU row yields to it. True for
- * a crash new to the store. One it took already (#4951: main pushes it and answers it on subscribe)
- * changes nothing, unless its page is gone: the user kept software rendering, and the row holds
- * again (a stopped shell drops it with its other facts).
+ * A GPU-process crash: SCR-159's page shows, and an earlier answer's GPU row yields to it. True
+ * when the page shows for a crash new to the store. One it took already (#4951: main pushes it
+ * and answers it on subscribe) changes nothing, unless its page is gone: the user kept software
+ * rendering, and the row holds again (a stopped shell drops it with its other facts). One `kept`
+ * this launch (main's answer on subscribe after a reload, #306) is the row, never the page.
  */
-export function applyGpuCrash(crash: GpuCrash): boolean {
+export function applyGpuCrash(crash: GpuCrash, kept = false): boolean {
   if (newestGpuCrash !== undefined && crash.restartCount <= newestGpuCrash) {
     if (state.gpuCrash === null && state.degraded.asserted.gpuFallback === undefined) {
       keepSoftwareRendering();
@@ -185,6 +186,10 @@ export function applyGpuCrash(crash: GpuCrash): boolean {
     return false;
   }
   newestGpuCrash = crash.restartCount;
+  if (kept) {
+    keepSoftwareRendering(); // reported when its page first showed, before the keep
+    return false;
+  }
   setShellState({ gpuCrash: crash, degraded: setGpuFallback(state.degraded, false) });
   return true;
 }

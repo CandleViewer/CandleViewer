@@ -110,6 +110,7 @@ export function createBrowserShellAdapter(): ShellPort {
       // The crash state is the desktop shell's (F15); a tab keeps SCR-153's banner.
       onCrashed: () => () => {},
       retry: async () => unavailable("gpu.retry"),
+      keepSoftware: async () => undefined, // no page shows in a tab: nothing to keep
     },
   };
 }

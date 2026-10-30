@@ -452,6 +452,7 @@ describe("SCR-159 in the canvas: GPU-unavailable, the desktop app's (slice 9c)",
   const SENTENCE =
     "The graphics process stopped at 13:59:58 UTC and CandleViewer restarted the charts in software rendering.";
   const retry = vi.fn<GpuPort["retry"]>();
+  const keepSoftware = vi.fn<GpuPort["keepSoftware"]>();
   let crashed: (crash: GpuCrash) => void = () => {};
   let unwatch: () => void = () => {};
   const crash = (restartCount = 1): void =>
@@ -460,13 +461,14 @@ describe("SCR-159 in the canvas: GPU-unavailable, the desktop app's (slice 9c)",
 
   beforeEach(() => {
     retry.mockReset().mockResolvedValue(undefined);
+    keepSoftware.mockReset().mockResolvedValue(undefined);
     const onCrashed: GpuPort["onCrashed"] = (handler) => {
       crashed = handler;
       return () => {
         crashed = () => {};
       };
     };
-    unwatch = watchGpu({ onCrashed, retry });
+    unwatch = watchGpu({ onCrashed, retry, keepSoftware });
   });
   afterEach(() => {
     unwatch();
@@ -572,6 +574,7 @@ describe("SCR-159 in the canvas: GPU-unavailable, the desktop app's (slice 9c)",
     await settle();
     fireEvent.click(button(GPU_COPY.keep));
     await settle();
+    expect(keepSoftware).toHaveBeenCalledTimes(1); // and main keeps it past a reload (#306)
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
     expect(document.activeElement).toBe(control);
     expect(control.parentElement).not.toHaveAttribute("inert");

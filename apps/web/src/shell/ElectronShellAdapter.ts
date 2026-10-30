@@ -32,6 +32,7 @@ export interface CvBridge {
   readonly crashLogAppend: (entry: CrashEntry) => Promise<void>;
   readonly gpuInfo: () => Promise<GpuInfo>;
   readonly gpuRetry: () => Promise<void>;
+  readonly gpuKeepSoftware: () => Promise<void>;
   readonly onGpuCrashed: (handler: (crash: GpuCrash) => void) => () => void;
   readonly onDeepLink: (handler: (payload: DeepLinkPayload) => void) => () => void;
 }
@@ -73,9 +74,9 @@ function requireBridge(): CvBridge {
 
 /**
  * `gpu.onCrashed`: each `cv:gpu:crashed`, and the last crash before the subscription (main pushed
- * it to no listener: at boot, or during a reload), read once from `cv:gpu:info` (#4951). One a
- * retry answered is the relaunch's, and an answer after the unsubscribe is dropped. A crash that
- * both bring reaches `handler` twice; the GPU watcher takes it once.
+ * it to no listener: at boot, or during a reload), read once from `cv:gpu:info` (#4951), its
+ * `kept` with it (#306). One a retry answered is the relaunch's, and an answer after the
+ * unsubscribe is dropped. A crash both bring reaches `handler` twice; the watcher takes it once.
  */
 function onGpuCrashed(bridge: CvBridge, handler: (crash: GpuCrash) => void): () => void {
   const unsubscribe = bridge.onGpuCrashed(handler);
@@ -130,6 +131,7 @@ export function createElectronShellAdapter(): ShellPort {
       info: () => requireBridge().gpuInfo(),
       onCrashed: (handler) => onGpuCrashed(requireBridge(), handler),
       retry: () => requireBridge().gpuRetry(),
+      keepSoftware: () => requireBridge().gpuKeepSoftware(),
     },
   };
 }

@@ -7,9 +7,9 @@ import {
   type CSSProperties,
   type JSX,
 } from "react";
-import { retryGpuNow } from "../../shell/bootstrap/gpuCrash";
+import { keepSoftwareNow, retryGpuNow } from "../../shell/bootstrap/gpuCrash";
 import { probeLivenessNow } from "../../shell/bootstrap/liveness";
-import { getShellState, keepSoftwareRendering } from "../../shell/bootstrap/store";
+import { getShellState } from "../../shell/bootstrap/store";
 import type { GpuCrash } from "../../shell/ShellPort";
 import { useShellSelector } from "../../shell/useShellSelector";
 import {
@@ -219,7 +219,7 @@ export function OfflineOverlay(): JSX.Element | null {
           busy={retrying}
           onRetry={retryGpu}
           primary
-          secondary={{ label: GPU_COPY.keep, onClick: keepSoftwareRendering }}
+          secondary={{ label: GPU_COPY.keep, onClick: keepSoftwareNow }}
         >
           <ul style={LIST}>
             {GPU_COPY.limits.map((limit) => (

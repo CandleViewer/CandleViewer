@@ -16,6 +16,8 @@ export const ALLOWED_IPC_CHANNELS: readonly string[] = [
   "cv:crashLog:append",
   // E10-S04 (F15): relaunch with the GPU allowed again, after a GPU-process crash; no arguments.
   "cv:gpu:retry",
+  // E10-S04 (#306): keep software rendering for this launch's last GPU crash; no arguments.
+  "cv:gpu:keepSoftware",
 ];
 
 /**

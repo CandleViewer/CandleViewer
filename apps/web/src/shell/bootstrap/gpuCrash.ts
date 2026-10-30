@@ -10,13 +10,15 @@
 import { crashLogSettled } from "../crash/reportCrash.js";
 import { createShellPort } from "../createShellPort.js";
 import type { GpuCrash, GpuCrashReason, ShellPort } from "../ShellPort.js";
-import { applyGpuCrash } from "./store.js";
+import { applyGpuCrash, keepSoftwareRendering } from "./store.js";
 import { THEME_ANALYTICS_EVENT } from "./themeStore.js";
 
-export type GpuPort = Pick<ShellPort["gpu"], "onCrashed" | "retry">;
+export type GpuPort = Pick<ShellPort["gpu"], "onCrashed" | "retry" | "keepSoftware">;
 
 /** Retry waits this long at most for the crash log's appends: one lost line beats a dead Retry. */
 export const CRASH_LOG_WAIT_MS = 2_000;
+/** A keep main did not take: one fixed line, never its error (C-12.6). */
+const KEEP_FAILED = "keepSoftwareNow: main did not keep the GPU crash";
 
 let active: GpuPort | null = null;
 let retrying: Promise<void> | null = null;
@@ -47,13 +49,18 @@ function checked(payload: unknown): GpuCrash | undefined {
     : undefined;
 }
 
+/** The read on subscribe says the user kept software rendering for it this launch (#306). */
+const isKept = (payload: unknown): boolean =>
+  typeof payload === "object" && payload !== null && "kept" in payload && payload.kept === true;
+
 /** Feeds the host's GPU crashes to the store; returns the unsubscribe. It never stops a start. */
 export function watchGpu(gpu: GpuPort = createShellPort().gpu): () => void {
   let unsubscribe = (): void => undefined;
   try {
     unsubscribe = gpu.onCrashed((payload: unknown) => {
       const crash = checked(payload);
-      if (crash === undefined || !applyGpuCrash(crash)) return; // a bad payload, or one taken
+      // a bad payload, one taken, or one kept: no page and no report
+      if (crash === undefined || !applyGpuCrash(crash, isKept(payload))) return;
       const detail = { name: "shell.gpu_unavailable", reason: crash.reason };
       window.dispatchEvent(new CustomEvent(THEME_ANALYTICS_EVENT, { detail }));
     });
@@ -97,4 +104,16 @@ export function retryGpuNow(): Promise<void> {
     retrying = attempt;
   }
   return retrying;
+}
+
+/**
+ * SCR-159's Keep software rendering: the page goes and SCR-153's row holds at once, then main
+ * keeps the crash for this launch, so a reload or a new window shows the row too (#306). A keep
+ * that fails, refused or thrown, is one fixed line, and the screen stays as it is.
+ */
+export function keepSoftwareNow(): void {
+  keepSoftwareRendering();
+  const gpu = active;
+  const keep = async (): Promise<void> => gpu?.keepSoftware();
+  void keep().catch(() => console.error(KEEP_FAILED));
 }
