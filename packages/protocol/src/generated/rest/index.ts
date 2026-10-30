@@ -2239,6 +2239,14 @@ export interface paths {
      *     The replay cache is in memory and bounded: a retry after the entry was evicted, or after a
      *     server restart, creates a **duplicate** drawing. Clients that need retry-safe creation
      *     should use `batchUpsertDrawings` with a client-chosen `id` (a repeat is `409 id_unavailable`).
+     *
+     *     Quota (#2727): a caller holds at most 500 live drawings on one symbol and 5 000 in all. A
+     *     create past either is refused with `409 drawings_quota_exceeded` before anything is written.
+     *
+     *     Write rate limit (#2727): every `createDrawing`, `updateDrawing`, `deleteDrawing` and
+     *     `batchUpsertDrawings` call takes one token from the caller's bucket of 20, refilled at 60 a
+     *     minute, after the permission check. A call that finds no token is `429 rate_limited` with
+     *     `Retry-After`, and nothing is written.
      */
     post: operations["createDrawing"];
     delete?: never;
@@ -2265,14 +2273,15 @@ export interface paths {
      *     `If-Match` is optional: the quoted `updated_at` token (a `W/` prefix or the bare token is
      *     also accepted). A stale or unparseable value returns `412 version_conflict`; when absent the
      *     last write wins. A drawing that is missing, soft-deleted or owned by another user returns
-     *     the same `404`.
+     *     the same `404`. Each call takes one write token (see `createDrawing`).
      */
     put: operations["updateDrawing"];
     post?: never;
     /**
      * Delete a drawing
      * @description Soft delete (the row is purged by retention later). No precondition. A drawing that is
-     *     missing, already deleted or owned by another user returns the same `404`.
+     *     missing, already deleted or owned by another user returns the same `404`. Each call takes
+     *     one write token (see `createDrawing`).
      */
     delete: operations["deleteDrawing"];
     options?: never;
@@ -2313,6 +2322,10 @@ export interface paths {
      *     created, updated and deleted ids in operation order.
      *
      *     `Idempotency-Key` behaves as on `createDrawing`.
+     *
+     *     A batch whose creates, net of its deletes, would take the caller past a `createDrawing`
+     *     quota is rolled back with `409 drawings_quota_exceeded`. Each call takes one write token
+     *     (see `createDrawing`).
      */
     post: operations["batchUpsertDrawings"];
     delete?: never;
@@ -15929,6 +15942,7 @@ export interface operations {
       409: components["responses"]["Conflict"];
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -15974,6 +15988,7 @@ export interface operations {
       412: components["responses"]["PreconditionFailed"];
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -16008,6 +16023,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -16047,7 +16063,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
-      /** @description The batch was rolled back. `errors[0].field` names the failing operation and `rule` is `target_unavailable`, `version_conflict` or `id_unavailable`; a reused `Idempotency-Key` with a different body is `idempotency_key_reuse`. */
+      /** @description The batch was rolled back. `errors[0].field` names the failing operation and `rule` is `target_unavailable`, `version_conflict` or `id_unavailable`; a reused `Idempotency-Key` with a different body is `idempotency_key_reuse`; a batch past the drawings quota is `drawings_quota_exceeded`. */
       409: {
         headers: {
           [name: string]: unknown;
@@ -16058,6 +16074,7 @@ export interface operations {
       };
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

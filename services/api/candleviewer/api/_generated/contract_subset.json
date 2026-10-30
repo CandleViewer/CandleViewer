@@ -31,6 +31,24 @@
           "type": "string"
         }
       },
+      "RateLimitLimit": {
+        "description": "Requests permitted in the current window.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "RateLimitRemaining": {
+        "description": "Requests remaining in the current window.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "RateLimitReset": {
+        "description": "Seconds until the window resets.",
+        "schema": {
+          "type": "integer"
+        }
+      },
       "RetryAfter": {
         "description": "Seconds the client should wait before retrying.",
         "schema": {
@@ -564,6 +582,54 @@
         },
         "description": "A profile write that could not be checked or recorded, so nothing changed: `instrument_cache_unavailable` when the second pass needed the instrument cache (`ProfileRejected`) and it was more than 15 minutes old and its refresh, shared by concurrent saves, did not finish in time (`createAccountProfile` and `updateAccountProfile` only); `audit_unavailable` when the write-ahead audit record, or the record of a refused save or of an RBAC refusal, could not be written (C-2.9); `store_unavailable` as on every route. Each is retryable after `Retry-After`, and the same request with the same `Idempotency-Key` is then a first submission.\n",
         "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        }
+      },
+      "RateLimited": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "exchange": {
+                "value": {
+                  "code": "exchange_rate_limited",
+                  "detail": "UID 10234567 budget exhausted (Bybit 10006); shed locally to protect the connection.",
+                  "instance": "urn:cv:req:0193f2bb-bbbb",
+                  "retry_after_seconds": 2,
+                  "status": 429,
+                  "title": "The exchange's per-UID rate budget is exhausted",
+                  "type": "https://candleviewer.local/errors/exchange_rate_limited"
+                }
+              },
+              "local": {
+                "value": {
+                  "code": "rate_limited",
+                  "detail": "600 requests/min exceeded; retry in 12 s.",
+                  "instance": "urn:cv:req:0193f2bb-aaaa",
+                  "retry_after_seconds": 12,
+                  "status": 429,
+                  "title": "Per-user API rate limit exceeded",
+                  "type": "https://candleviewer.local/errors/rate_limited"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Rate limited.",
+        "headers": {
+          "RateLimit-Limit": {
+            "$ref": "#/components/headers/RateLimitLimit"
+          },
+          "RateLimit-Remaining": {
+            "$ref": "#/components/headers/RateLimitRemaining"
+          },
+          "RateLimit-Reset": {
+            "$ref": "#/components/headers/RateLimitReset"
+          },
           "Retry-After": {
             "$ref": "#/components/headers/RetryAfter"
           }
@@ -4297,7 +4363,7 @@
         }
       },
       "post": {
-        "description": "The server mints a UUIDv7 `id`. The body is limited to 64 KiB (`413 payload_too_large`).\nA non-null `layout_id` must name one of the caller's live layouts, otherwise\n`422` rule `layout_not_found` (every non-null value until layouts ship, E15-T01).\nThe `ETag` response header carries the `updated_at` token for later `If-Match` use.\n\n`Idempotency-Key`: the same key with the same body replays the stored 2xx response with\n`Idempotency-Replayed: true`; the same key with a different body is `409 idempotency_key_reuse`.\nReplay storage is best-effort and bounded; correctness never depends on it.\nThe replay cache is in memory and bounded: a retry after the entry was evicted, or after a\nserver restart, creates a **duplicate** drawing. Clients that need retry-safe creation\nshould use `batchUpsertDrawings` with a client-chosen `id` (a repeat is `409 id_unavailable`).\n",
+        "description": "The server mints a UUIDv7 `id`. The body is limited to 64 KiB (`413 payload_too_large`).\nA non-null `layout_id` must name one of the caller's live layouts, otherwise\n`422` rule `layout_not_found` (every non-null value until layouts ship, E15-T01).\nThe `ETag` response header carries the `updated_at` token for later `If-Match` use.\n\n`Idempotency-Key`: the same key with the same body replays the stored 2xx response with\n`Idempotency-Replayed: true`; the same key with a different body is `409 idempotency_key_reuse`.\nReplay storage is best-effort and bounded; correctness never depends on it.\nThe replay cache is in memory and bounded: a retry after the entry was evicted, or after a\nserver restart, creates a **duplicate** drawing. Clients that need retry-safe creation\nshould use `batchUpsertDrawings` with a client-chosen `id` (a repeat is `409 id_unavailable`).\n\nQuota (#2727): a caller holds at most 500 live drawings on one symbol and 5 000 in all. A\ncreate past either is refused with `409 drawings_quota_exceeded` before anything is written.\n\nWrite rate limit (#2727): every `createDrawing`, `updateDrawing`, `deleteDrawing` and\n`batchUpsertDrawings` call takes one token from the caller's bucket of 20, refilled at 60 a\nminute, after the permission check. A call that finds no token is `429 rate_limited` with\n`Retry-After`, and nothing is written.\n",
         "operationId": "createDrawing",
         "parameters": [
           {
@@ -4351,6 +4417,9 @@
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
           }
@@ -4370,7 +4439,7 @@
     },
     "/drawings/batch": {
       "post": {
-        "description": "The chart engine batches drawing mutations during a drag with a 500 ms debounce, so a single\ncall carries all affected shapes.\n\nProcessing order: (1) the body is limited to 1 MiB and `operations` to 200 items, otherwise\n`413 payload_too_large`, checked before per-operation validation; (2) the whole body is\nvalidated (`422`, up to 20 field errors such as `operations.3.drawing.tool`; each `id` may\nappear at most once per batch, else rule `duplicate_id`); (3) the operations are applied in\norder inside **one transaction**. The first operation that cannot be applied rolls the\nwhole batch back and returns `409 conflict` with `errors[0] = {field: \"operations.<i>\", rule, message}`,\nwhere `rule` is one of:\n\n- `target_unavailable` — an `update`/`delete` target is missing, soft-deleted or owned by\n  another user (indistinguishable by design);\n- `version_conflict` — the operation's `if_match` is stale;\n- `id_unavailable` — a `create` id is already used by any row of any owner in any state\n  (an id stays unavailable until its row is purged, 90 days after deletion; re-create under a new id).\n\n`create.id` is optional (client UUIDv7 recommended); `update` and `delete` require `if_match`,\nthe `updated_at` token of the version being replaced or removed. The result lists the\ncreated, updated and deleted ids in operation order.\n\n`Idempotency-Key` behaves as on `createDrawing`.\n",
+        "description": "The chart engine batches drawing mutations during a drag with a 500 ms debounce, so a single\ncall carries all affected shapes.\n\nProcessing order: (1) the body is limited to 1 MiB and `operations` to 200 items, otherwise\n`413 payload_too_large`, checked before per-operation validation; (2) the whole body is\nvalidated (`422`, up to 20 field errors such as `operations.3.drawing.tool`; each `id` may\nappear at most once per batch, else rule `duplicate_id`); (3) the operations are applied in\norder inside **one transaction**. The first operation that cannot be applied rolls the\nwhole batch back and returns `409 conflict` with `errors[0] = {field: \"operations.<i>\", rule, message}`,\nwhere `rule` is one of:\n\n- `target_unavailable` — an `update`/`delete` target is missing, soft-deleted or owned by\n  another user (indistinguishable by design);\n- `version_conflict` — the operation's `if_match` is stale;\n- `id_unavailable` — a `create` id is already used by any row of any owner in any state\n  (an id stays unavailable until its row is purged, 90 days after deletion; re-create under a new id).\n\n`create.id` is optional (client UUIDv7 recommended); `update` and `delete` require `if_match`,\nthe `updated_at` token of the version being replaced or removed. The result lists the\ncreated, updated and deleted ids in operation order.\n\n`Idempotency-Key` behaves as on `createDrawing`.\n\nA batch whose creates, net of its deletes, would take the caller past a `createDrawing`\nquota is rolled back with `409 drawings_quota_exceeded`. Each call takes one write token\n(see `createDrawing`).\n",
         "operationId": "batchUpsertDrawings",
         "parameters": [
           {
@@ -4438,13 +4507,16 @@
                 }
               }
             },
-            "description": "The batch was rolled back. `errors[0].field` names the failing operation and `rule` is `target_unavailable`, `version_conflict` or `id_unavailable`; a reused `Idempotency-Key` with a different body is `idempotency_key_reuse`."
+            "description": "The batch was rolled back. `errors[0].field` names the failing operation and `rule` is `target_unavailable`, `version_conflict` or `id_unavailable`; a reused `Idempotency-Key` with a different body is `idempotency_key_reuse`; a batch past the drawings quota is `drawings_quota_exceeded`."
           },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -4465,7 +4537,7 @@
     },
     "/drawings/{drawingId}": {
       "delete": {
-        "description": "Soft delete (the row is purged by retention later). No precondition. A drawing that is\nmissing, already deleted or owned by another user returns the same `404`.\n",
+        "description": "Soft delete (the row is purged by retention later). No precondition. A drawing that is\nmissing, already deleted or owned by another user returns the same `404`. Each call takes\none write token (see `createDrawing`).\n",
         "operationId": "deleteDrawing",
         "parameters": [
           {
@@ -4488,6 +4560,9 @@
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
           }
@@ -4509,7 +4584,7 @@
         }
       ],
       "put": {
-        "description": "Full replacement. `symbol` and `tool` are immutable (`422` rule `immutable_field`). The body\nis limited to 64 KiB (`413 payload_too_large`).\n\n`If-Match` is optional: the quoted `updated_at` token (a `W/` prefix or the bare token is\nalso accepted). A stale or unparseable value returns `412 version_conflict`; when absent the\nlast write wins. A drawing that is missing, soft-deleted or owned by another user returns\nthe same `404`.\n",
+        "description": "Full replacement. `symbol` and `tool` are immutable (`422` rule `immutable_field`). The body\nis limited to 64 KiB (`413 payload_too_large`).\n\n`If-Match` is optional: the quoted `updated_at` token (a `W/` prefix or the bare token is\nalso accepted). A stale or unparseable value returns `412 version_conflict`; when absent the\nlast write wins. A drawing that is missing, soft-deleted or owned by another user returns\nthe same `404`. Each call takes one write token (see `createDrawing`).\n",
         "operationId": "updateDrawing",
         "parameters": [
           {
@@ -4562,6 +4637,9 @@
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"

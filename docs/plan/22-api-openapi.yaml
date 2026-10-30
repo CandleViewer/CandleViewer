@@ -666,6 +666,10 @@ x-error-codes:
     status: 409
     title: Idempotency-Key reused with a different request payload
     retryable: false
+  - code: drawings_quota_exceeded
+    status: 409
+    title: The caller's live drawings quota (per symbol or in all) is reached; nothing was written
+    retryable: false
   - code: idempotency_in_flight
     status: 409
     title: A request with this Idempotency-Key is still being processed
@@ -10070,6 +10074,14 @@ paths:
         The replay cache is in memory and bounded: a retry after the entry was evicted, or after a
         server restart, creates a **duplicate** drawing. Clients that need retry-safe creation
         should use `batchUpsertDrawings` with a client-chosen `id` (a repeat is `409 id_unavailable`).
+
+        Quota (#2727): a caller holds at most 500 live drawings on one symbol and 5 000 in all. A
+        create past either is refused with `409 drawings_quota_exceeded` before anything is written.
+
+        Write rate limit (#2727): every `createDrawing`, `updateDrawing`, `deleteDrawing` and
+        `batchUpsertDrawings` call takes one token from the caller's bucket of 20, refilled at 60 a
+        minute, after the permission check. A call that finds no token is `429 rate_limited` with
+        `Retry-After`, and nothing is written.
       x-rbac: { permissions: [workspaces:write], scope: self }
       x-idempotency: recommended
       parameters:
@@ -10094,6 +10106,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /drawings/batch:
@@ -10124,6 +10137,10 @@ paths:
         created, updated and deleted ids in operation order.
 
         `Idempotency-Key` behaves as on `createDrawing`.
+
+        A batch whose creates, net of its deletes, would take the caller past a `createDrawing`
+        quota is rolled back with `409 drawings_quota_exceeded`. Each call takes one write token
+        (see `createDrawing`).
       x-rbac: { permissions: [workspaces:write], scope: self }
       x-idempotency: recommended
       parameters:
@@ -10147,7 +10164,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: "The batch was rolled back. `errors[0].field` names the failing operation and `rule` is `target_unavailable`, `version_conflict` or `id_unavailable`; a reused `Idempotency-Key` with a different body is `idempotency_key_reuse`."
+          description: "The batch was rolled back. `errors[0].field` names the failing operation and `rule` is `target_unavailable`, `version_conflict` or `id_unavailable`; a reused `Idempotency-Key` with a different body is `idempotency_key_reuse`; a batch past the drawings quota is `drawings_quota_exceeded`."
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -10171,6 +10188,7 @@ paths:
                     }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /drawings/{drawingId}:
@@ -10186,7 +10204,7 @@ paths:
         `If-Match` is optional: the quoted `updated_at` token (a `W/` prefix or the bare token is
         also accepted). A stale or unparseable value returns `412 version_conflict`; when absent the
         last write wins. A drawing that is missing, soft-deleted or owned by another user returns
-        the same `404`.
+        the same `404`. Each call takes one write token (see `createDrawing`).
       x-rbac: { permissions: [workspaces:write], scope: self }
       parameters:
         - $ref: "#/components/parameters/IfMatch"
@@ -10210,6 +10228,7 @@ paths:
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [workspaces]
@@ -10217,7 +10236,8 @@ paths:
       summary: Delete a drawing
       description: |
         Soft delete (the row is purged by retention later). No precondition. A drawing that is
-        missing, already deleted or owned by another user returns the same `404`.
+        missing, already deleted or owned by another user returns the same `404`. Each call takes
+        one write token (see `createDrawing`).
       x-rbac: { permissions: [workspaces:write], scope: self }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
@@ -10226,6 +10246,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /indicator-presets:
