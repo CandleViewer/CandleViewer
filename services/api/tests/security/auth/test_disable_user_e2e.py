@@ -232,12 +232,20 @@ def _latency_count(ctx: appmod.AppContext) -> float | None:
     return ctx.metrics.get_sample_value("auth_revocation_latency_seconds_count", env)
 
 
+_HEARTBEATS = 3  # #5041: the RTT pings `_ended` skips before the bye, at most
+
+
 def _ended(ws: Any) -> tuple[dict[str, Any], int]:
     """The socket's last frame, which must be its `bye`, and its close code. A first frame that is
     not the `bye` fails here, named, before any wait for the close: a socket left open (an
-    `auth_ok`, say) would otherwise fail only at the close's deadline, without the frame it got."""
-    bye = _recv(ws)
-    assert bye.get("t") == "bye", f"the first frame is {bye.get('t')!r}, not the bye: {bye}"
+    `auth_ok`, say) would otherwise fail only at the close's deadline, without the frame it got.
+    An RTT `ping` is transport, not an application frame: up to `_HEARTBEATS` of them may precede
+    the bye when the cascade crosses the heartbeat interval (#5041); one more fails, named."""
+    pings, bye = 0, _recv(ws)
+    while bye.get("t") == "ping" and pings < _HEARTBEATS:
+        pings, bye = pings + 1, _recv(ws)
+    seen = f"after {pings} ping(s)"
+    assert bye.get("t") == "bye", f"the first frame {seen} is {bye.get('t')!r}, not the bye: {bye}"
     with pytest.raises(WebSocketDisconnect) as close:
         _recv(ws)
     return bye, close.value.code
@@ -629,3 +637,35 @@ def test_late_registration_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (status, named, closes) == (204, False, [0])
     p = bye["p"]
     assert (bye["t"], p["reason"], p["reconnect"], p["code"], code) == _BYE
+
+
+class _FakeSocket:
+    """A socket that serves `frames` in order, then the close `code` (the #5041 regression)."""
+
+    def __init__(self, frames: list[dict[str, Any]], code: int = CLOSE_USER_DISABLED) -> None:
+        self.frames, self.code = list(frames), code
+
+    def receive_json(self) -> dict[str, Any]:
+        if not self.frames:
+            raise WebSocketDisconnect(code=self.code)
+        return self.frames.pop(0)
+
+
+_PING = {"t": "ping", "id": "s-rtt-1", "p": {"server_ms": 1}}
+_BYE_FRAME = {"t": "bye", "p": {"reason": "user_disabled"}}
+
+
+def test_ended_skips_rtt_pings_before_the_bye() -> None:
+    """#5041: an RTT ping read before the bye is skipped, so the bye and the close code still come
+    back; without the skip this fails with "the first frame is 'ping'"."""
+    assert _ended(_FakeSocket([_PING, _BYE_FRAME])) == (_BYE_FRAME, CLOSE_USER_DISABLED)
+    assert _ended(_FakeSocket([_PING] * _HEARTBEATS + [_BYE_FRAME]))[0] == _BYE_FRAME
+
+
+def test_ended_still_fails_named_on_too_many_pings_or_another_frame() -> None:
+    """The skip is bounded and only for pings: one ping past `_HEARTBEATS`, or an `auth_ok`, fails
+    with the frame it got."""
+    with pytest.raises(AssertionError, match=r"after 3 ping\(s\) is 'ping'"):
+        _ended(_FakeSocket([_PING] * (_HEARTBEATS + 1) + [_BYE_FRAME]))
+    with pytest.raises(AssertionError, match=r"after 0 ping\(s\) is 'auth_ok'"):
+        _ended(_FakeSocket([{"t": "auth_ok"}, _BYE_FRAME]))
