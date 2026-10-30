@@ -173,17 +173,20 @@ These rules bind every chart-engine primitive (CMP-180..199) and every non-canva
 
 ## 7. Motion
 
+Per-property table, rules and override: `docs/design/E05/E05-D03.md`.
+
 - **Purposeful motion only**: transitions communicate state change (panel focus, value update, dialog open/close) — motion is never purely decorative in a dense trading UI where distracting animation actively costs attention during fast markets.
-- **Every animated property ships a `motion-safe`/`motion-reduce` pair** (per `05-accessibility-standard.md` §7.4 and `15-component-catalogue.md` §0.3 rule 5): `motion-reduce` either removes the transition (instant state change) or substitutes a non-motion cue (opacity-only pulse instead of scale+rotate for spinners, static tone-shift instead of shimmer for skeletons).
-- **No flashing content exceeding 3 times per second**, and no motion lasting more than 5 seconds without a pause control — binding for any looping animation (connection-reconnecting spinner, live-price pulse).
+- **Every animated property ships a `motion-safe`/`motion-reduce` pair** (per `05-accessibility-standard.md` §7.4 and `15-component-catalogue.md` §0.3 rule 5): `motion-reduce` either removes the transition (instant state change) or substitutes a non-motion cue (a static glyph with its in-flight label for spinners, static tone-shift instead of shimmer for skeletons).
+- **No flashing content exceeding 3 times per second**, and no motion lasting more than 5 seconds without a pause control — binding for any looping animation (live-price pulse), as three checkable statements (`docs/design/E05/E05-D03.md` §4): MR-1, no element starts more than 3 flashes in any 1 000 ms window, and a hot-surface cell waits at least 500 ms between starts (≤ 20 emphasised cells per frame, latest wins; in light, HS-1b (A23a): any 341 × 256 px rectangle, anywhere on screen, holds at most 21 824 px² of emphasised area and sees at most 3 flash starts); MR-2, nothing loops past 5 s without a pause control or its own stop, except a request- or job-bound busy indicator with its in-flight label; MR-3, motion is never the sole carrier of meaning: every recipe names a carrier present in its reduce end state.
 - **Standard motion recipes** (each with explicit safe/reduce pair):
-  - Panel focus/mount: `fast` fade+8px slide, reduce → instant opacity swap.
-  - Dialog/drawer open: `normal` scale+fade (dialog) / slide (drawer), reduce → instant.
-  - Value flash (price tick up/down): `instant`→`fast` background flash decaying to neutral, reduce → no flash, colour-only momentary text tint instead.
-  - Toast enter/exit: `fast` slide+fade, reduce → fade only (opacity, no transform; SCR-015, E40-D02 §8).
-  - Node-graph edge draw: `fast` line-draw animation, reduce → instant full-line render.
+  - Panel focus/mount: `opacity` 0 → 1 and `translateY(8px)` → 0 over `fast` / `decelerate`; focus and its ring at frame 0, never inside the fade; reduce → instant.
+  - Dialog/drawer open: the dialog card a cut and its scrim a `normal` fade (E09-D08 D2) / the drawer a `normal` slide; both close over `fast` / `accelerate`; reduce → instant (E10-D04 T-03, T-10).
+  - Value flash (price tick up/down): an opacity-only overlay pre-tinted with the direction colour, peak 0.25 decaying over `fast`; at least 500 ms between starts per cell, at most 20 cells per frame, latest-wins; in light, HS-1b (A23a) also caps the emphasised area and the starts in any 341 × 256 px rectangle; never on a non-live value; the digits and the sign stay `color.text.primary` and the arrow glyph carries the direction colour (non-text, 3:1) in every theme (the peak lightens the cell in dark and darkens it in light, so lightness never reads as direction); reduce → no emphasis and no text tint, the tinted arrow glyph and the sign carry the direction (`05` §7 item 2).
+  - Value flash, restored-row use (one-shot): when an undo restores a drawing, its object-tree row (CMP-240) takes an opacity-only overlay pre-tinted `color.drawing.selected`, peak 0.25 → 0 over `normal` with the value flash's `accelerate` easing, never a fill tween; at most 20 rows per frame; reduce → no overlay, and the row's selection, its "restored" tag and the polite announcement carry which one returned (E05-D03 row 3; E14-D09 D9-09, RULED #353 BQ-08).
+  - Toast enter/exit: `fast` slide+fade, reduce → instant (E10-D04 T-06 to T-08; SCR-015).
+  - Node-graph connection made: `fast` `opacity` fade, never a line-draw (a stroke-dash draw reads as direction); stagger 0; no pulse on the connecting port; reduce → instant (E37-D03 BQ-08, RULED on #876).
   - Loading shimmer (Skeleton): `slow` looping shimmer, reduce → static two-tone fill, no loop.
-- **Respects `prefers-reduced-motion`** at the OS/browser level automatically, plus an explicit in-app override (Settings → Appearance → Reduce Motion) for users on shared/unconfigured machines (Electron shell) where the OS-level signal may not be set.
+- **Respects `prefers-reduced-motion`** at the OS/browser level automatically, plus an explicit in-app override (Settings → Accessibility (SCR-117) → Reduced motion: system / on / off; `Ctrl+Shift+M` toggles it) for users on shared/unconfigured machines (Electron shell) where the OS-level signal may not be set; the latest explicit choice wins over the OS in both directions and `system` defers to the OS.
 
 ### 7.1 Connection, resync and freshness motion (E08-D11; PROPOSED until the owner's prototype run)
 
@@ -229,7 +232,7 @@ only `opacity` and `transform` animate; a focused control is never inside a fadi
 an announcement; nothing flashes, and nothing loops past 5 s but a request- or job-bound busy spinner (E09-D08 D13);
 a running transition completes on its clock when the mode flips (no re-mount on the `data-motion` flip, no
 `transition: none` reduce utility); every row has a `motion-reduce` twin (instant style change plus text). Toasts keep
-§7's recipe. Until E05-D03 lands the recipes (#3174, blocked by #162), `theme.css` cuts every transition under reduce.
+§7's recipe. The recipes are E05-D03's (§7); #3174 builds them.
 
 ---
 
