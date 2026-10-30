@@ -151,7 +151,13 @@ export interface ChartEvents {
   viewportChanged: { timeStart: number; timeEnd: number; barSpacing: number };
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
-  error: { code: string; message: string; recoverable: boolean };
+  error: {
+    code: string;
+    message: string;
+    recoverable: boolean;
+    /** Only on `ENGINE_CONTEXT_LOST`; the UI never parses `message`. */
+    details?: { attempt: number; maxAttempts: number; nextTryMs: number };
+  };
 }
 
 export interface FrameStats {

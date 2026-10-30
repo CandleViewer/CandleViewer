@@ -235,6 +235,16 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expectTypeOf<Chart["subscribe"]>().parameter(0).toEqualTypeOf<keyof ChartEvents>();
     expectTypeOf<ReturnType<Chart["subscribe"]>>().toEqualTypeOf<Unsubscribe>();
     expectTypeOf<ChartEvents["frameStats"]>().toEqualTypeOf<FrameStats>();
+    // BQ-64: one optional field, set only on ENGINE_CONTEXT_LOST; it widens nothing that exists.
+    expectTypeOf<ChartEvents["error"]>().toEqualTypeOf<{
+      code: string;
+      message: string;
+      recoverable: boolean;
+      details?: { attempt: number; maxAttempts: number; nextTryMs: number };
+    }>();
+    expectTypeOf<{ code: string; message: string; recoverable: boolean }>().toMatchTypeOf<
+      ChartEvents["error"]
+    >();
     expectTypeOf<FrameStats["renderProfile"]>().toEqualTypeOf<"full" | "reduced" | "degraded-2d">();
     expectTypeOf<SeriesHandle<"candles">["setData"]>().parameter(0).toEqualTypeOf<CandleData>();
     expectTypeOf<SeriesHandle<"footprint">["append"]>().parameter(0).toEqualTypeOf<FootprintData>();

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DrawSubmitBench } from "../../bench/scenes/draw-submit.js";
 import { GLBackend } from "../../src/gl/backend.js";
 import {
+  ContextLostError,
   INFO_LOG_MAX,
   PROGRAM,
   ProgramCache,
@@ -64,10 +65,12 @@ describe("ProgramCache", () => {
     const gl = new FakeGl();
     gl.getProgramParameter = (): unknown => false;
     const cache = new ProgramCache(gl, new GlRegistry(gl));
-    expect(() => cache.use(PROGRAM.line)).toThrow(/"line"/);
+    expect(() => cache.use(PROGRAM.line)).toThrow(ProgramCompileError);
+    // m2: on a lost context a null object or a false status is the loss path, not a compile error
     gl.loseContext();
+    expect(() => cache.use(PROGRAM.line)).toThrow(ContextLostError);
     expect(() => new ProgramCache(gl, new GlRegistry(gl)).use(PROGRAM.line)).toThrow(
-      ProgramCompileError,
+      ContextLostError,
     );
     expect(gl.alive.size).toBe(0);
   });

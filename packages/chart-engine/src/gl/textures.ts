@@ -7,6 +7,10 @@ import type { GlRegistry, Handle } from "./registry.js";
 interface Texture {
   readonly handle: Handle<"texture">;
   readonly bytes: number;
+  readonly width: number;
+  readonly height: number;
+  /** The CPU copy a restore re-uploads (BQ-49); a `patch` owner re-streams on RESTORED. */
+  readonly pixels: Uint8Array | null;
 }
 
 export class GlTextures {
@@ -22,9 +26,21 @@ export class GlTextures {
   define(id: number, width: number, height: number, pixels: Uint8Array | null): void {
     const old = this.slots[id];
     if (old !== undefined) this.bytes -= old.bytes;
-    const t = { handle: old?.handle ?? this.registry.create("texture"), bytes: width * height * 4 };
+    const handle = old?.handle ?? this.registry.create("texture");
+    const t = { handle, bytes: width * height * 4, width, height, pixels };
     this.slots[id] = t;
     this.bytes += t.bytes;
+    this.upload(id, t);
+  }
+
+  /** After a context restore: every texture again, in id order (LUTs, then the atlas). */
+  restore(): void {
+    this.slots.forEach((t, id) => {
+      if (t !== undefined) this.upload(id, t);
+    });
+  }
+
+  private upload(id: number, { width, height, pixels }: Texture): void {
     this.bind(id);
     const T = GL.TEXTURE_2D;
     this.gl.texParameteri(T, GL.TEXTURE_MIN_FILTER, GL.LINEAR);

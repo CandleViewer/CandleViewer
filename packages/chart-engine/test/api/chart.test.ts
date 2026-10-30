@@ -3,6 +3,7 @@ import { CHART_DEFAULTS, createChart, type ChartInternal } from "../../src/api/c
 import type { PaneInternal, SeriesInternal } from "../../src/api/pane.js";
 import type { PriceScaleState } from "../../src/api/scales.js";
 import type {
+  ChartEvents,
   ChartOptions,
   FootprintOptions,
   FrameStats,
@@ -321,6 +322,31 @@ describe("panes and series", () => {
     expect(scale.autoScale).toBe(true);
     scale.setAutoScale(false);
     expect(scale.autoScale).toBe(false);
+    chart.dispose();
+  });
+});
+
+describe("Scenario: Context loss recovers within the R1 exit budget (the facade)", () => {
+  it("forwards details on ENGINE_CONTEXT_LOST only (BQ-64)", () => {
+    const chart = mount();
+    const seen: ChartEvents["error"][] = [];
+    chart.subscribe("error", (e) => seen.push(e));
+    nextFrame();
+    const canvas = canvasOf(container);
+    canvas.webgl2?.loseContext();
+    canvas.dispatch("webglcontextlost", { preventDefault: () => undefined });
+    canvas.webgl2?.restoreContext();
+    canvas.dispatch("webglcontextrestored", {});
+    nextFrame();
+    expect(seen).toEqual([
+      {
+        code: "ENGINE_CONTEXT_LOST",
+        message: "Graphics context lost: restoring, attempt 1 of 3, next try in 1 s",
+        recoverable: true,
+        details: { attempt: 1, maxAttempts: 3, nextTryMs: 1000 },
+      },
+      { code: "ENGINE_CONTEXT_RESTORED", message: expect.any(String), recoverable: true },
+    ]);
     chart.dispose();
   });
 });

@@ -8,6 +8,7 @@ import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtim
 import {
   BACKGROUND_TOKEN,
   ENGINE_DECODE_ERROR,
+  ENGINE_NO_WEBGL2,
   INPUT,
   KEY,
   type FromWorker,
@@ -43,8 +44,12 @@ let rt: RenderRuntime;
 const frame = (): void => {
   vi.advanceTimersByTime(16);
 };
+// Every 2D test canvas reports ENGINE_NO_WEBGL2 once (its own test below); `of` leaves it out.
 const of = <T extends FromWorker["t"]>(t: T): Extract<FromWorker, { t: T }>[] =>
-  out.filter((m): m is Extract<FromWorker, { t: T }> => m.t === t);
+  out.filter(
+    (m): m is Extract<FromWorker, { t: T }> =>
+      m.t === t && !(m.t === "error" && m.code === ENGINE_NO_WEBGL2),
+  );
 
 function make(
   bench = false,
@@ -77,6 +82,9 @@ beforeEach(() => {
       setTimeout(cb, 16);
     },
     now: () => Date.now(),
+    setTimer: (cb, ms) => {
+      setTimeout(cb, ms);
+    },
     probe: () => {
       probes += 1;
       return FULL;
@@ -96,6 +104,9 @@ describe("render loop", () => {
     make(false, null, 2);
     expect(out).toEqual([]);
     frame();
+    // Each says why once, never per frame (E11-S02 PR3, BQ-53).
+    const no = out.filter((m) => m.t === "error").map((m) => [m.id, m.code, m.message]);
+    expect(no).toEqual([1, 2].map((id) => [id, ENGINE_NO_WEBGL2, NO_WEBGL2_REASON]));
     const degraded = { runMode: "inline", renderProfile: "degraded-2d", capabilities: FULL };
     expect(of("ready")).toEqual([
       { t: "ready", id: 1, ...degraded },

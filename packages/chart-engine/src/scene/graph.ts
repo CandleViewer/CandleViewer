@@ -60,6 +60,11 @@ export class SceneGraph {
     return node instanceof ContentNode;
   }
 
+  /** Every content node DATA: after a context restore every GPU mirror is rebuilt (E11-S02). */
+  markAllData(): void {
+    for (const node of this.walk()) if (node instanceof ContentNode) node.dirty |= Dirty.DATA;
+  }
+
   /** Every drawable node (content and axes) TRANSFORM, never DATA: buffers are reused. */
   markViewport(): void {
     this.markDrawable(Dirty.TRANSFORM);

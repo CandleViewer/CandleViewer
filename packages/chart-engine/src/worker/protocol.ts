@@ -3,6 +3,7 @@
 // no I/O, no exchange knowledge (C-2.16): this file compiles under tsconfig.core.json, so the
 // canvas is typed structurally (an OffscreenCanvas in worker mode, the HTMLCanvasElement inline).
 import type { CapabilityReport, RenderProfile } from "../gl/capability.js";
+import type { LossDetails } from "../gl/context-loss.js";
 
 export type { CapabilityReport, RenderProfile };
 
@@ -12,10 +13,16 @@ export const BACKGROUND_TOKEN = "color.chart.background";
 export const ENGINE_DECODE_ERROR = "ENGINE_DECODE_ERROR";
 export const ENGINE_WORKER_LOST = "ENGINE_WORKER_LOST";
 // E11-S02's codes (ticket Observability), each posted with `recoverable` (README BQ-48).
-export const ENGINE_CONTEXT_LOST = "ENGINE_CONTEXT_LOST";
-export const ENGINE_CONTEXT_RESTORE_FAILED = "ENGINE_CONTEXT_RESTORE_FAILED";
+// ENGINE_CONTEXT_RESTORED is informational (BQ-55): SCR-048's strip clears on it.
 export const ENGINE_NO_WEBGL2 = "ENGINE_NO_WEBGL2";
+export {
+  ENGINE_CONTEXT_LOST,
+  ENGINE_CONTEXT_RESTORE_FAILED,
+  ENGINE_CONTEXT_RESTORED,
+} from "../gl/context-loss.js";
 export { ENGINE_SHADER_COMPILE_FAILED } from "../gl/program-cache.js";
+/** Backoff before each worker restart and each context-restore attempt: 1 / 2 / 4 s (BQ-49). */
+export const RESTART_BACKOFF_MS = [1000, 2000, 4000] as const;
 
 export type RunMode = "worker" | "inline";
 /** One chart instance on the shared worker, minted by the host. */
@@ -69,6 +76,8 @@ export type ToWorker =
       readonly dpr: number;
       readonly theme: ThemeLut;
       readonly config: ChartConfig;
+      /** The host's handoff after a compile failure or a failed restore (BQ-53): no WebGL2. */
+      readonly profile?: "degraded-2d";
     }
   | {
       readonly t: "resize";
@@ -150,6 +159,8 @@ export type FromWorker =
       readonly code: string;
       readonly message: string;
       readonly recoverable: boolean;
+      /** Only on `ENGINE_CONTEXT_LOST` (BQ-64). */
+      readonly details?: LossDetails;
     }
   // README BQ-10: §6 has no acknowledgement, which the host's backpressure needs, and no reply to
   // the `export` command; both are added in their narrowest form.
@@ -273,7 +284,8 @@ export function rejectReason(msg: unknown): string | null {
         (msg["dpr"] as number) > 0 &&
         canvasLike(msg["canvas"]) &&
         isObj(msg["theme"]) &&
-        isObj(msg["config"])
+        isObj(msg["config"]) &&
+        (msg["profile"] === undefined || msg["profile"] === "degraded-2d")
         ? null
         : "malformed init";
     case "resize":

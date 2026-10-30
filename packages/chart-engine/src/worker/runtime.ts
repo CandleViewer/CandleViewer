@@ -6,15 +6,19 @@
 // is dirty (§3.2 rule 5). No DOM types here (C-2.16): the canvas is reached structurally, as an
 // OffscreenCanvas and an HTMLCanvasElement both fit.
 import { GLBackend } from "../gl/backend.js";
+import { NO_WEBGL2_REASON } from "../gl/capability.js";
 import { acquireContext } from "../gl/context.js";
+import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import * as scene from "../scene/index.js";
 import {
   BACKGROUND_TOKEN,
   ENGINE_DECODE_ERROR,
+  ENGINE_NO_WEBGL2,
   INPUT,
   INPUT_STRIDE,
   KEY,
   rejectReason,
+  RESTART_BACKOFF_MS,
   STORE_IDS,
   type ChartConfig,
   type CapabilityReport,
@@ -42,6 +46,8 @@ interface CanvasLike {
   getContext(id: "2d" | "webgl2", attributes?: object): unknown;
   convertToBlob?: (opts: { type: string }) => Promise<unknown>;
   toBlob?: (cb: (blob: unknown) => void, type: string) => void;
+  addEventListener?(type: string, cb: (ev: { preventDefault(): void }) => void): void;
+  removeEventListener?(type: string, cb: (ev: { preventDefault(): void }) => void): void;
 }
 
 export interface RuntimeDeps {
@@ -50,6 +56,8 @@ export interface RuntimeDeps {
   /** Schedules one frame callback (the worker's or the page's rAF). */
   requestFrame(cb: () => void): void;
   now(): number;
+  /** One-shot timer: the context-restore attempts wait on it (BQ-49). */
+  setTimer(cb: () => void, ms: number): void;
   /** The capability probe behind the `ready` report; run once, on the first frame. */
   probe(): CapabilityReport;
 }
@@ -79,7 +87,12 @@ interface Instance {
   readonly scheduler: scene.FrameScheduler;
   readonly builder: scene.BatchBuilder;
   /** The GL backend: undefined until the first frame decides, null on the 2D path. */
-  readonly gpu: { backend: GLBackend | null | undefined };
+  readonly gpu: { backend: GLBackend | null | undefined; readonly forced: boolean };
+  /** True while the context is lost: frames stay requested but do not run (BQ-49). */
+  parked: boolean;
+  loss: ContextLoss | null;
+  /** Removes the context-loss listeners. */
+  detach: (() => void) | null;
   timeStart: number;
   timeEnd: number;
   viewportDirty: boolean;
@@ -124,6 +137,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     gpu: Instance["gpu"],
     canvas: () => CanvasLike,
     render: () => void,
+    opened: (backend: GLBackend | null) => void,
   ) {
     const graph = new scene.SceneGraph();
     graph.addPane("main");
@@ -150,10 +164,68 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     function open(): void {
       if (gpu.backend !== undefined) return;
       const caps = (report ??= deps.probe());
-      const acquired = caps.profile === "degraded-2d" ? null : acquireContext(canvas());
+      const acquired =
+        gpu.forced || caps.profile === "degraded-2d" ? null : acquireContext(canvas());
       gpu.backend = acquired && new GLBackend(acquired.gl, caps.caps?.renderer ?? null, deps.now);
+      opened(gpu.backend);
     }
     return { graph, layout, scheduler, builder };
+  }
+
+  /** Re-requests a frame a park held back, or wakes the scheduler. */
+  function kick(inst: Instance): void {
+    if (inst.slot.frame === null) touch(inst);
+    else if (!scheduled) {
+      scheduled = true;
+      deps.requestFrame(tick);
+    }
+  }
+
+  /** The first frame chose the backend: watch it for loss, or say why there is no WebGL2. */
+  function opened(inst: Instance, backend: GLBackend | null): void {
+    const post = (code: string, message: string, recoverable: boolean, d?: LossDetails): void =>
+      deps.post({ t: "error", id: inst.id, code, message, recoverable, ...(d && { details: d }) });
+    if (backend === null) {
+      const why = report?.profile === "degraded-2d" ? report.reasons.join(" ") : NO_WEBGL2_REASON;
+      if (!inst.gpu.forced) post(ENGINE_NO_WEBGL2, why, true);
+      return;
+    }
+    const c = inst.canvas;
+    if (typeof c.addEventListener !== "function") return;
+    const loss = new ContextLoss({
+      backoffMs: RESTART_BACKOFF_MS,
+      now: () => deps.now(),
+      setTimer: (cb, ms) => deps.setTimer(cb, ms),
+      park: () => {
+        inst.parked = true;
+        backend.invalidate();
+      },
+      rebuild: () => backend.restore(),
+      resume: () => {
+        inst.parked = false;
+        inst.graph.markAllData(); // the GPU mirrors are rebuilt; the scene graph is untouched
+        kick(inst);
+      },
+      giveUp: () => inst.scheduler.dispose(), // slot.frame === null for good; the host swaps
+      emit: post,
+    });
+    const onLost = (ev: { preventDefault(): void }): void => loss.lost(ev);
+    const onRestored = (): void => loss.restored();
+    c.addEventListener("webglcontextlost", onLost);
+    c.addEventListener("webglcontextrestored", onRestored);
+    inst.loss = loss;
+    inst.detach = () => {
+      c.removeEventListener?.("webglcontextlost", onLost);
+      c.removeEventListener?.("webglcontextrestored", onRestored);
+    };
+  }
+
+  /** Stops a chart's loop and frees its GL objects and listeners. */
+  function retire(inst: Instance): void {
+    inst.scheduler.dispose();
+    inst.loss?.cancel(); // a pending attempt's timer must not post for a retired chart
+    inst.detach?.();
+    inst.gpu.backend?.dispose();
   }
 
   function setRange(inst: Instance, start: number, end: number): void {
@@ -208,7 +280,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   function exportPng(inst: Instance, reqId: number): void {
     const c = inst.canvas;
     // WebGL2 clears its drawing buffer after presentation: draw now, in the encoding task.
-    if (inst.gpu.backend?.failure === null) render(inst);
+    if (inst.gpu.backend?.failure === null && !inst.parked) render(inst);
     const done = (blob: unknown): void => deps.post({ t: "exported", id: inst.id, reqId, blob });
     if (typeof c.convertToBlob === "function") {
       c.convertToBlob({ type: "image/png" }).then(done, () => done(null));
@@ -251,8 +323,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         exportPng(inst, cmd.reqId);
         return;
       case "release":
-        inst.scheduler.dispose();
-        inst.gpu.backend?.dispose();
+        retire(inst);
         charts.delete(inst.id);
         return;
       default:
@@ -271,13 +342,18 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       return;
     }
     if (msg.t === "init") {
+      // A second init for a known chart is the degraded-2d handoff (BQ-53): a fresh canvas and
+      // scene, the DataModel kept.
+      const old = charts.get(msg.id);
+      if (old !== undefined) retire(old);
       const slot: Instance["slot"] = { frame: null };
-      const gpu: Instance["gpu"] = { backend: undefined };
+      const gpu: Instance["gpu"] = { backend: undefined, forced: msg.profile === "degraded-2d" };
       const scene = createScene(
         slot,
         gpu,
         () => inst.canvas,
         () => render(inst),
+        (backend) => opened(inst, backend),
       );
       const inst: Instance = {
         ...scene,
@@ -299,7 +375,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         lastFrameAt: Number.NEGATIVE_INFINITY,
         dragX: null,
         lastPick: null,
-        elements: { bars: 0, footprint: 0, heatmap: 0, profile: 0 },
+        parked: false,
+        loss: null,
+        detach: null,
+        elements: old ? { ...old.elements } : { bars: 0, footprint: 0, heatmap: 0, profile: 0 },
       };
       charts.set(msg.id, inst);
       touch(inst);
@@ -350,6 +429,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if (backend !== null && backend.failure === null) {
       backend.setBackground(inst.theme[BACKGROUND_TOKEN]);
       const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
+      // The R1 budget closes on the first complete frame after a restore (BQ-49).
+      if (f === null && inst.loss?.phase === "restoring" && !backend.gl.isContextLost()) {
+        inst.loss.framed();
+      }
       if (f !== null) {
         renderProfile = "degraded-2d";
         deps.post({ t: "error", id: inst.id, code: f.code, message: f.message, recoverable: true });
@@ -402,7 +485,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     scheduled = false;
     for (const inst of charts.values()) {
       const frame = inst.slot.frame;
-      if (frame === null) continue;
+      if (frame === null || inst.parked) continue; // a parked chart keeps its request
       inst.slot.frame = null;
       // A throwing canvas or context fails its own chart's frame, recoverably; it never escapes
       // the frame callback, where a worker would turn it into an uncaught error (E11-T02).
