@@ -565,14 +565,38 @@ async def test_an_import_refuses_a_bundle_whose_ir_or_scope_is_no_object_unaudit
     assert audits == [] and await m._s.all() == []
 
 
+@pytest.mark.parametrize("versioned", [True, False], ids=["ir_version", "no ir_version"])
+async def test_an_import_whose_ir_has_no_scope_is_no_shape_failure(versioned: bool) -> None:
+    """An IR with no `scope` is not a shape failure: with an `ir_version`, the model refuses the
+    scope it lacks, `422` at `/scope/level`, unaudited; with neither, the presence refusal comes
+    first, audited as the ungranted-account refusal is. Nothing is stored either way."""
+    m, audits = _mgr()
+    importer = _manager(USER_A, A)
+    ir = _ir(name="imp")
+    del ir["scope"]
+    if not versioned:
+        del ir["ir_version"]
+    with pytest.raises(RuleError) as refused:
+        await m.import_rule({"format": "cv-rule-bundle/1", "ir": ir}, importer)
+    assert (refused.value.status, refused.value.code) == (422, "rule_ir_invalid")
+    if versioned:
+        assert refused.value.extra == {"path": "/scope/level"} and audits == []
+    else:
+        refusal = {"actor": importer.user_id, "reason": "ir_version_missing", "count": 1}
+        assert refused.value.extra == {"path": "/ir_version"}
+        assert audits == [("rule.import_refused", refusal)]
+    assert await m._s.all() == []
+
+
 @pytest.mark.parametrize("reason", ["ungranted_account", "ir_version_missing"])
 @pytest.mark.parametrize("hook", ["stalls", "raises"])
 async def test_an_import_refusal_whose_record_is_not_written_in_time_is_unrecorded(
     reason: str, hook: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """C-2.9: each import refusal waits at most `REFUSAL_AUDIT_TIMEOUT_S` for its record, as a scope
-    refusal does: a hook that stalls past the bound, or raises, is `RuleRefusalUnrecorded` (the
-    routes' `503`), and nothing is stored."""
+    refusal does: a hook that stalls past the bound, or raises, is `RuleRefusalUnrecorded`, and
+    nothing is stored. The routes answer `503` when the cause is the bound or an unwritable
+    audit record."""
     m, _ = _mgr()
     seen: list[tuple[str, str]] = []
     down = ConnectionError("audit down")
