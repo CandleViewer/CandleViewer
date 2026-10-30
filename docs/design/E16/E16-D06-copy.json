@@ -1,0 +1,4007 @@
+{
+  "pack": "E16-D06",
+  "version": "v1",
+  "header": "Every string the recorder design set shows, once, keyed by the parents' own keys (`recorder.*`, `retention.*`, `storage.*`, `empty.*`, `chip.*`, `gap.*`, `rbac.*`, `notice.*`) else a stable row id derived from the cite (`d02.8.rNN`); `sources` holds each parent's String cell verbatim and `string` the quoted strings alone; `status` PROPOSED mirrors the parent's `new` / PROPOSED provenance; `frozen` names the §20.3 row a string belongs to. `script` is the §6.1 announcement script (the a11y script E16-Q05 and E16-Q01 reuse), derived from the bound attributes, not observed. Generated from the parents at origin/main; the tool fails on any parent row missing (G16-DECK).",
+  "by_cite": {
+    "E16-D02 §8 (the page, tags, disk card, dialogs and the five PROPOSED `recorder.*` keys)": "`D02`:457–:518",
+    "E16-D03 §14 (89 rows)": "`D03`:427–:523",
+    "E16-D04 §14 (103 rows)": "`D04`:493–:601",
+    "E16-D05 §14 (67 rows)": "`D05`:411–:483"
+  },
+  "strings": {
+    "d02.8.r01": {
+      "parent": "D02",
+      "row_id": "d02.8.r01",
+      "surface": "SCR-140",
+      "state": "d02.8.r01",
+      "string": "60 s · 30 min · 1 h 30 min",
+      "sources": {
+        "D02": "Variables, all from the **amendment** `policy` object: `{dwell}` = `autostart_delay_s` (60 s), `{grace}` = `autostop_grace_s` (30 min), `{limit}` = `max_symbols` (20), `{warn}` / `{autostop}` / `{halt}` = the three thresholds (80 / 90 / 95 %); `{cap}` = `StorageUsage.cap_bytes`. Release points are 5 points below each threshold (24 §13.4.1). Durations render as \"60 s\", \"30 min\", \"1 h 30 min\". The boards show the defaults; code never hard-codes them (decision 1)."
+      },
+      "cite": "`D02`:459",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r02": {
+      "parent": "D02",
+      "row_id": "d02.8.r02",
+      "surface": "SCR-140",
+      "state": "d02.8.r02",
+      "string": "Recorder",
+      "sources": {
+        "D02": "H1: \"Recorder\""
+      },
+      "cite": "`D02`:467",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r03": {
+      "parent": "D02",
+      "row_id": "d02.8.r03",
+      "surface": "SCR-140",
+      "state": "d02.8.r03",
+      "string": "Nothing is recorded by default. A symbol is recorded only while you have added it here, its chart has been open for {dwell}, it has an open position, or a rule or alert depends on it. Auto-recorded symbols stop {grace} after the last reason ends. Live price and order-book views work without recording; history, sub-minute bars and replay need it.",
+      "sources": {
+        "D02": "Default statement: \"Nothing is recorded by default. A symbol is recorded only while you have added it here, its chart has been open for {dwell}, it has an open position, or a rule or alert depends on it. Auto-recorded symbols stop {grace} after the last reason ends. Live price and order-book views work without recording; history, sub-minute bars and replay need it.\""
+      },
+      "cite": "`D02`:468",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r04": {
+      "parent": "D02",
+      "row_id": "d02.8.r04",
+      "surface": "SCR-140",
+      "state": "d02.8.r04",
+      "string": "Auto-record on chart open is on. · Auto-record on chart open is off on this server; positions, rules, alerts and symbols you add still record.",
+      "sources": {
+        "D02": "Auto-record sentence (`policy.autorecord_enabled`): \"Auto-record on chart open is on.\" / \"Auto-record on chart open is off on this server; positions, rules, alerts and symbols you add still record.\""
+      },
+      "cite": "`D02`:472",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r05": {
+      "parent": "D02",
+      "row_id": "d02.8.r05",
+      "surface": "SCR-140",
+      "state": "d02.8.r05",
+      "string": "Nothing is recorded yet",
+      "sources": {
+        "D02": "Empty title: \"Nothing is recorded yet\""
+      },
+      "cite": "`D02`:474",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r06": {
+      "parent": "D02",
+      "row_id": "d02.8.r06",
+      "surface": "SCR-140",
+      "state": "d02.8.r06",
+      "string": "Add a symbol to keep its trades, order book, tickers and liquidations for replay, footprint history and the journal.",
+      "sources": {
+        "D02": "Empty body: \"Add a symbol to keep its trades, order book, tickers and liquidations for replay, footprint history and the journal.\""
+      },
+      "cite": "`D02`:475",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r07": {
+      "parent": "D02",
+      "row_id": "d02.8.r07",
+      "surface": "SCR-140",
+      "state": "d02.8.r07",
+      "string": "Record a symbol",
+      "sources": {
+        "D02": "Empty action: \"Record a symbol\""
+      },
+      "cite": "`D02`:477",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r08": {
+      "parent": "D02",
+      "row_id": "d02.8.r08",
+      "surface": "SCR-140",
+      "state": "d02.8.r08",
+      "string": "Manual · Auto: chart · Auto: position · Auto: rule · Auto: alert",
+      "sources": {
+        "D02": "Reason tags: \"Manual\", \"Auto: chart\", \"Auto: position\", \"Auto: rule\", \"Auto: alert\""
+      },
+      "cite": "`D02`:481",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r09": {
+      "parent": "D02",
+      "row_id": "d02.8.r09",
+      "surface": "SCR-140",
+      "state": "d02.8.r09",
+      "string": "Recording · stops in {n} min · stops in under a minute",
+      "sources": {
+        "D02": "States: as §4.1. Lingering: \"Recording · stops in {n} min\" (rounded up; \"stops in under a minute\" below 60 s)"
+      },
+      "cite": "`D02`:482",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r10": {
+      "parent": "D02",
+      "row_id": "d02.8.r10",
+      "surface": "SCR-140",
+      "state": "d02.8.r10",
+      "string": "Recording {n} symbols · {m} auto-recorded · Recorder {healthy|degraded|warning|down} · · 1 starting · updated {hh:mm:ss} UTC",
+      "sources": {
+        "D02": "Summary: \"Recording {n} symbols · {m} auto-recorded · Recorder {healthy|degraded|warning|down}\"; with a starting row \"· 1 starting\"; \"updated {hh:mm:ss} UTC\" sits outside the live region"
+      },
+      "cite": "`D02`:483",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r11": {
+      "parent": "D02",
+      "row_id": "d02.8.r11",
+      "surface": "SCR-140",
+      "state": "d02.8.r11",
+      "string": "Growing · auto-record pauses in about {d} days · {used} of {cap} ({pct} %) · Projection: ({autostop} % × {cap} − {used}) ÷ {growth}/day ≈ {d} days. Growth: 7-day trend. In 30 days: about {used30}.",
+      "sources": {
+        "D02": "0, growing · \"Growing · auto-record pauses in about {d} days\" · \"{used} of {cap} ({pct} %)\". \"Projection: ({autostop} % × {cap} − {used}) ÷ {growth}/day ≈ {d} days. Growth: 7-day trend. In 30 days: about {used30}.\""
+      },
+      "cite": "`D02`:490",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r12": {
+      "parent": "D02",
+      "row_id": "d02.8.r12",
+      "surface": "SCR-140",
+      "state": "d02.8.r12",
+      "string": "Steady · usage is not growing · Usage is not growing, so there is no projection.",
+      "sources": {
+        "D02": "0, steady · \"Steady · usage is not growing\" · \"Usage is not growing, so there is no projection.\""
+      },
+      "cite": "`D02`:491",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r13": {
+      "parent": "D02",
+      "row_id": "d02.8.r13",
+      "surface": "SCR-140",
+      "state": "d02.8.r13",
+      "string": "Too early to project · Less than 1 h of history.",
+      "sources": {
+        "D02": "0, too early · \"Too early to project\" · \"Less than 1 h of history.\""
+      },
+      "cite": "`D02`:492",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r14": {
+      "parent": "D02",
+      "row_id": "d02.8.r14",
+      "surface": "SCR-140",
+      "state": "d02.8.r14",
+      "string": "Growing · the budget is full in about {d} days · the disk volume is full in about {d} days",
+      "sources": {
+        "D02": "only `projected_full_at` usable · \"Growing · the budget is full in about {d} days\" (or \"the disk volume is full in about {d} days\") · names the wall the date refers to"
+      },
+      "cite": "`D02`:493",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r15": {
+      "parent": "D02",
+      "row_id": "d02.8.r15",
+      "surface": "SCR-140",
+      "state": "d02.8.r15",
+      "string": "Near limit · auto-record pauses in about {d} days · clears below {warn − 5} % · Recording budget {pct} % used ({used} of {cap}). It clears once usage is below {warn − 5} % and the runway is more than 8 days.",
+      "sources": {
+        "D02": "1 · \"Near limit · auto-record pauses in about {d} days · clears below {warn − 5} %\" · \"Recording budget {pct} % used ({used} of {cap}). It clears once usage is below {warn − 5} % and the runway is more than 8 days.\"; suggested actions"
+      },
+      "cite": "`D02`:494",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r16": {
+      "parent": "D02",
+      "row_id": "d02.8.r16",
+      "surface": "SCR-140",
+      "state": "d02.8.r16",
+      "string": "Auto-record paused · resumes below {autostop − 5} % of the budget with 20 % of the volume free · Recording budget {pct} % used ({used} of {cap}). New chart-open symbols are not recorded; symbols you added, open positions, rules and alerts keep recording. Recording stops at {halt} % in about {d} days. · Auto-record paused · the disk volume has less than 15 % free",
+      "sources": {
+        "D02": "2 · \"Auto-record paused · resumes below {autostop − 5} % of the budget with 20 % of the volume free\" · \"Recording budget {pct} % used ({used} of {cap}). New chart-open symbols are not recorded; symbols you added, open positions, rules and alerts keep recording. Recording stops at {halt} % in about {d} days.\" Volume cause: \"Auto-record paused · the disk volume has less than 15 % free\""
+      },
+      "cite": "`D02`:495",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r17": {
+      "parent": "D02",
+      "row_id": "d02.8.r17",
+      "surface": "SCR-140",
+      "state": "d02.8.r17",
+      "string": "Recording stopped · resumes below {halt − 5} % with 10 % of the volume free · Open positions keep recording; other symbols' data is dropped and recorded as gaps.",
+      "sources": {
+        "D02": "3 · \"Recording stopped · resumes below {halt − 5} % with 10 % of the volume free\" · \"Open positions keep recording; other symbols' data is dropped and recorded as gaps.\""
+      },
+      "cite": "`D02`:496",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r18": {
+      "parent": "D02",
+      "row_id": "d02.8.r18",
+      "surface": "SCR-140",
+      "state": "d02.8.r18",
+      "string": "Nothing recorded · 0 GB of {cap}.",
+      "sources": {
+        "D02": "nothing recorded · \"Nothing recorded\" · \"0 GB of {cap}.\""
+      },
+      "cite": "`D02`:497",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "d02.8.r19": {
+      "parent": "D02",
+      "row_id": "d02.8.r19",
+      "surface": "SCR-140",
+      "state": "d02.8.r19",
+      "string": "{warn} % warning · {autostop} % auto-record pauses · {halt} % recording stops (open positions keep writing) · Shorten retention · Reduce depth · Unpin",
+      "sources": {
+        "D02": "Threshold scale under the bar: \"{warn} % warning · {autostop} % auto-record pauses · {halt} % recording stops (open positions keep writing)\". Suggested actions (US-REC-005, the level-1 event's action codes): \"Shorten retention\" (sorts the list by size and opens the largest row's detail), \"Reduce depth\" (filters rows at depth 500 or 200), \"Unpin\" (filters pinned rows)."
+      },
+      "cite": "`D02`:499",
+      "provenance": "`D02` §8 (merged)",
+      "status": "merged"
+    },
+    "recorder.stop_blocked.chart_auto": {
+      "parent": "D02",
+      "row_id": "recorder.stop_blocked.chart_auto",
+      "surface": "SCR-140",
+      "state": "recorder.stop_blocked.chart_auto",
+      "string": "Recording stops {grace} after the last chart closes.",
+      "sources": {
+        "D02": "\"Recording stops {grace} after the last chart closes.\""
+      },
+      "cite": "`D02`:514",
+      "provenance": "PROPOSED (`D02` §8.5; the A-row to E09-D09 §3.1)",
+      "status": "PROPOSED",
+      "frozen": "(vi)"
+    },
+    "recorder.stop_blocked.chart_manual": {
+      "parent": "D02",
+      "row_id": "recorder.stop_blocked.chart_manual",
+      "surface": "SCR-140",
+      "state": "recorder.stop_blocked.chart_manual",
+      "string": "Stop is available once the last chart closes.",
+      "sources": {
+        "D02": "\"Stop is available once the last chart closes.\""
+      },
+      "cite": "`D02`:515",
+      "provenance": "PROPOSED (`D02` §8.5; the A-row to E09-D09 §3.1)",
+      "status": "PROPOSED",
+      "frozen": "(vi)"
+    },
+    "recorder.stop_blocked.position_auto": {
+      "parent": "D02",
+      "row_id": "recorder.stop_blocked.position_auto",
+      "surface": "SCR-140",
+      "state": "recorder.stop_blocked.position_auto",
+      "string": "Recording continues while a position is open.",
+      "sources": {
+        "D02": "\"Recording continues while a position is open.\""
+      },
+      "cite": "`D02`:516",
+      "provenance": "PROPOSED (`D02` §8.5; the A-row to E09-D09 §3.1)",
+      "status": "PROPOSED",
+      "frozen": "(vi)"
+    },
+    "recorder.stop_blocked.position_manual": {
+      "parent": "D02",
+      "row_id": "recorder.stop_blocked.position_manual",
+      "surface": "SCR-140",
+      "state": "recorder.stop_blocked.position_manual",
+      "string": "Stop is unavailable while a position is open.",
+      "sources": {
+        "D02": "\"Stop is unavailable while a position is open.\""
+      },
+      "cite": "`D02`:517",
+      "provenance": "PROPOSED (`D02` §8.5; the A-row to E09-D09 §3.1)",
+      "status": "PROPOSED",
+      "frozen": "(vi)"
+    },
+    "recorder.symbol_cap": {
+      "parent": "D02",
+      "row_id": "recorder.symbol_cap",
+      "surface": "SCR-140",
+      "state": "recorder.symbol_cap",
+      "string": "The symbol limit is reached.",
+      "sources": {
+        "D02": "\"The symbol limit is reached.\""
+      },
+      "cite": "`D02`:518",
+      "provenance": "PROPOSED (`D02` §8.5; the A-row to E09-D09 §3.1)",
+      "status": "PROPOSED",
+      "frozen": "(vi)"
+    },
+    "rbac.view_as": {
+      "parent": "D03",
+      "row_id": "rbac.view_as",
+      "surface": "SCR-141 · SCR-142 · SCR-047 / SCR-151",
+      "state": "rbac.view_as",
+      "string": "Read-only while viewing as {user}. · Read-only while viewing as alex.",
+      "sources": {
+        "D03": "\"Read-only while viewing as {user}.\" · board fixture \"Read-only while viewing as alex.\"",
+        "D04": "\"Read-only while viewing as {user}.\"",
+        "D05": "\"Read-only while viewing as {user}.\" · \"Read-only while viewing as alex.\""
+      },
+      "cite": "`D03`:433; `D04`:541; `D05`:437",
+      "provenance": "E09-D09 §3.1 :95 (the notice stands alone, E16-D02 D-16 :778)",
+      "status": "merged",
+      "frozen": "(vi)"
+    },
+    "retention.title": {
+      "parent": "D03",
+      "row_id": "retention.title",
+      "surface": "SCR-141",
+      "state": "retention.title",
+      "string": "Retention policy",
+      "sources": {
+        "D03": "\"Retention policy\""
+      },
+      "cite": "`D03`:434",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.rule": {
+      "parent": "D03",
+      "row_id": "retention.rule",
+      "surface": "SCR-141",
+      "state": "retention.rule",
+      "string": "A symbol's rule wins over the global default. Pinned symbols are exempt.",
+      "sources": {
+        "D03": "\"A symbol's rule wins over the global default. Pinned symbols are exempt.\""
+      },
+      "cite": "`D03`:435",
+      "provenance": "new (`22` :5534–5535 in words)",
+      "status": "PROPOSED"
+    },
+    "retention.loading": {
+      "parent": "D03",
+      "row_id": "retention.loading",
+      "surface": "SCR-141",
+      "state": "retention.loading",
+      "string": "Loading retention policy…",
+      "sources": {
+        "D03": "\"Loading retention policy…\""
+      },
+      "cite": "`D03`:436",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.section.global": {
+      "parent": "D03",
+      "row_id": "retention.section.global",
+      "surface": "SCR-141",
+      "state": "retention.section.global",
+      "string": "Global defaults",
+      "sources": {
+        "D03": "\"Global defaults\""
+      },
+      "cite": "`D03`:437",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.section.overrides": {
+      "parent": "D03",
+      "row_id": "retention.section.overrides",
+      "surface": "SCR-141",
+      "state": "retention.section.overrides",
+      "string": "Per-symbol overrides",
+      "sources": {
+        "D03": "\"Per-symbol overrides\""
+      },
+      "cite": "`D03`:438",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.section.pinned": {
+      "parent": "D03",
+      "row_id": "retention.section.pinned",
+      "surface": "SCR-141",
+      "state": "retention.section.pinned",
+      "string": "Pinned symbols (exempt)",
+      "sources": {
+        "D03": "\"Pinned symbols (exempt)\""
+      },
+      "cite": "`D03`:439",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.stream.*": {
+      "parent": "D03",
+      "row_id": "retention.stream.*",
+      "surface": "SCR-141",
+      "state": "retention.stream.*",
+      "string": "Trades · Order-book deltas · Order-book snapshots · Tickers · Exchange klines · Liquidations · Open interest · Funding rates",
+      "sources": {
+        "D03": "trades \"Trades\" · orderbook_delta \"Order-book deltas\" · orderbook_snapshot \"Order-book snapshots\" · tickers \"Tickers\" · klines \"Exchange klines\" · liquidations \"Liquidations\" · open_interest \"Open interest\" · funding \"Funding rates\" (checked against `21` §7's rows and `24` §13.1's stream list)"
+      },
+      "cite": "`D03`:440",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.field.days": {
+      "parent": "D03",
+      "row_id": "retention.field.days",
+      "surface": "SCR-141",
+      "state": "retention.field.days",
+      "string": "Retention (days) · days",
+      "sources": {
+        "D03": "\"Retention (days)\" (the unit in the label; `suffix` \"days\")"
+      },
+      "cite": "`D03`:441",
+      "provenance": "new (`14` :2798)",
+      "status": "PROPOSED"
+    },
+    "retention.help.archive": {
+      "parent": "D03",
+      "row_id": "retention.help.archive",
+      "surface": "SCR-141",
+      "state": "retention.help.archive",
+      "string": "Days in the fast store before the nightly move to Parquet. Parquet keeps it for {total} in total. · Days in the fast store before the nightly move to Parquet. Parquet keeps it for 24 months in total.",
+      "sources": {
+        "D03": "\"Days in the fast store before the nightly move to Parquet. Parquet keeps it for {total} in total.\" · fixture \"Days in the fast store before the nightly move to Parquet. Parquet keeps it for 24 months in total.\""
+      },
+      "cite": "`D03`:442",
+      "provenance": "new (`22` :5535–5537)",
+      "status": "PROPOSED"
+    },
+    "retention.help.drop": {
+      "parent": "D03",
+      "row_id": "retention.help.drop",
+      "surface": "SCR-141",
+      "state": "retention.help.drop",
+      "string": "Days before this stream's data is deleted for good, Parquet included.",
+      "sources": {
+        "D03": "\"Days before this stream's data is deleted for good, Parquet included.\" (the four roll-off streams only; the other four take `retention.help.drop_cold`)"
+      },
+      "cite": "`D03`:443",
+      "provenance": "new (`22` :5537)",
+      "status": "PROPOSED"
+    },
+    "retention.help.derived": {
+      "parent": "D03",
+      "row_id": "retention.help.derived",
+      "surface": "SCR-141",
+      "state": "retention.help.derived",
+      "string": "Bars, footprints and profiles are rebuilt from trades, so trades must be kept at least as long as them.",
+      "sources": {
+        "D03": "\"Bars, footprints and profiles are rebuilt from trades, so trades must be kept at least as long as them.\""
+      },
+      "cite": "`D03`:444",
+      "provenance": "new (`21` :4715)",
+      "status": "PROPOSED"
+    },
+    "retention.kept_until": {
+      "parent": "D03",
+      "row_id": "retention.kept_until",
+      "surface": "SCR-141",
+      "state": "retention.kept_until",
+      "string": "Kept in Parquet until {total} · Kept in Parquet with no end date",
+      "sources": {
+        "D03": "\"Kept in Parquet until {total}\" (`{total}` = max(the hot window, the `21` §7 total)) · \"Kept in Parquet with no end date\" (klines, liquidations, open interest, funding)"
+      },
+      "cite": "`D03`:445",
+      "provenance": "new (`21` §7)",
+      "status": "PROPOSED"
+    },
+    "retention.action.archive_parquet": {
+      "parent": "D03",
+      "row_id": "retention.action.archive_parquet",
+      "surface": "SCR-141",
+      "state": "retention.action.archive_parquet",
+      "string": "Move to Parquet after",
+      "sources": {
+        "D03": "\"Move to Parquet after\""
+      },
+      "cite": "`D03`:446",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.action.drop": {
+      "parent": "D03",
+      "row_id": "retention.action.drop",
+      "surface": "SCR-141",
+      "state": "retention.action.drop",
+      "string": "Delete after",
+      "sources": {
+        "D03": "\"Delete after\""
+      },
+      "cite": "`D03`:447",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.baseline": {
+      "parent": "D03",
+      "row_id": "retention.baseline",
+      "surface": "SCR-141",
+      "state": "retention.baseline",
+      "string": "Default {n} d · Default 30 d",
+      "sources": {
+        "D03": "\"Default {n} d\" · fixture \"Default 30 d\""
+      },
+      "cite": "`D03`:448",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.reset": {
+      "parent": "D03",
+      "row_id": "retention.reset",
+      "surface": "SCR-141",
+      "state": "retention.reset",
+      "string": "Reset to default",
+      "sources": {
+        "D03": "\"Reset to default\""
+      },
+      "cite": "`D03`:449",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.no_source": {
+      "parent": "D03",
+      "row_id": "retention.no_source",
+      "surface": "SCR-141",
+      "state": "retention.no_source",
+      "string": "This stream has no other source. · Irreplaceable: there is no history to fetch again.",
+      "sources": {
+        "D03": "\"This stream has no other source.\" · liquidations \"Irreplaceable: there is no history to fetch again.\""
+      },
+      "cite": "`D03`:450",
+      "provenance": "new (`21` :4711)",
+      "status": "PROPOSED"
+    },
+    "retention.add": {
+      "parent": "D03",
+      "row_id": "retention.add",
+      "surface": "SCR-141",
+      "state": "retention.add",
+      "string": "Add override",
+      "sources": {
+        "D03": "\"Add override\""
+      },
+      "cite": "`D03`:451",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.remove": {
+      "parent": "D03",
+      "row_id": "retention.remove",
+      "surface": "SCR-141",
+      "state": "retention.remove",
+      "string": "Remove {symbol} {stream} rule · Remove ETHUSDT order-book deltas rule",
+      "sources": {
+        "D03": "\"Remove {symbol} {stream} rule\" · fixture \"Remove ETHUSDT order-book deltas rule\" (stages the removal, D03-D15)"
+      },
+      "cite": "`D03`:452",
+      "provenance": "new (E30-D03 N7 :102: the button names its object)",
+      "status": "PROPOSED"
+    },
+    "retention.removed.status": {
+      "parent": "D03",
+      "row_id": "retention.removed.status",
+      "surface": "SCR-141",
+      "state": "retention.removed.status",
+      "string": "Removed: follows the global rule ({n} d) · Removed: follows the global rule (7 d)",
+      "sources": {
+        "D03": "\"Removed: follows the global rule ({n} d)\" · fixture \"Removed: follows the global rule (7 d)\" (the struck row's Status cell)"
+      },
+      "cite": "`D03`:453",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.undo": {
+      "parent": "D03",
+      "row_id": "retention.undo",
+      "surface": "SCR-141",
+      "state": "retention.undo",
+      "string": "Undo",
+      "sources": {
+        "D03": "\"Undo\" (takes the Remove cell of a staged removal)"
+      },
+      "cite": "`D03`:454",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.remove.title": {
+      "parent": "D03",
+      "row_id": "retention.remove.title",
+      "surface": "SCR-141",
+      "state": "retention.remove.title",
+      "string": "Remove the {symbol} {stream} rule? · Remove the ETHUSDT trades rule?",
+      "sources": {
+        "D03": "\"Remove the {symbol} {stream} rule?\" · fixture \"Remove the ETHUSDT trades rule?\" (the typed confirm's title for K4: a removed override whose fallback total is shorter)"
+      },
+      "cite": "`D03`:455",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.removed": {
+      "parent": "D03",
+      "row_id": "retention.confirm.removed",
+      "surface": "SCR-141",
+      "state": "retention.confirm.removed",
+      "string": "{symbol} follows the global rule: {n} days, then Parquet. · ETHUSDT follows the global rule: 7 days, then Parquet.",
+      "sources": {
+        "D03": "\"{symbol} follows the global rule: {n} days, then Parquet.\" · fixture \"ETHUSDT follows the global rule: 7 days, then Parquet.\" (the plain confirm's detail for a removal whose fallback is longer)"
+      },
+      "cite": "`D03`:456",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.exempt": {
+      "parent": "D03",
+      "row_id": "retention.exempt",
+      "surface": "SCR-141",
+      "state": "retention.exempt",
+      "string": "Exempt (pinned)",
+      "sources": {
+        "D03": "\"Exempt (pinned)\""
+      },
+      "cite": "`D03`:457",
+      "provenance": "new (`22` :5535)",
+      "status": "PROPOSED"
+    },
+    "retention.pin.manage": {
+      "parent": "D03",
+      "row_id": "retention.pin.manage",
+      "surface": "SCR-141",
+      "state": "retention.pin.manage",
+      "string": "Manage pin in Recorder",
+      "sources": {
+        "D03": "\"Manage pin in Recorder\""
+      },
+      "cite": "`D03`:458",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.pin.help": {
+      "parent": "D03",
+      "row_id": "retention.pin.help",
+      "surface": "SCR-141",
+      "state": "retention.pin.help",
+      "string": "Pinned symbols are never deleted by retention. Unpin a symbol in the Recorder to let its data follow the policy; the Recorder states the volume that becomes eligible.",
+      "sources": {
+        "D03": "\"Pinned symbols are never deleted by retention. Unpin a symbol in the Recorder to let its data follow the policy; the Recorder states the volume that becomes eligible.\""
+      },
+      "cite": "`D03`:459",
+      "provenance": "new (E16-D02 :395)",
+      "status": "PROPOSED"
+    },
+    "retention.pin.none": {
+      "parent": "D03",
+      "row_id": "retention.pin.none",
+      "surface": "SCR-141",
+      "state": "retention.pin.none",
+      "string": "No pinned symbols.",
+      "sources": {
+        "D03": "\"No pinned symbols.\""
+      },
+      "cite": "`D03`:460",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.err.min": {
+      "parent": "D03",
+      "row_id": "retention.err.min",
+      "surface": "SCR-141",
+      "state": "retention.err.min",
+      "string": "Keep at least 1 day.",
+      "sources": {
+        "D03": "\"Keep at least 1 day.\""
+      },
+      "cite": "`D03`:461",
+      "provenance": "new (`22` :19321)",
+      "status": "PROPOSED"
+    },
+    "retention.err.max": {
+      "parent": "D03",
+      "row_id": "retention.err.max",
+      "surface": "SCR-141",
+      "state": "retention.err.max",
+      "string": "At most 3650 days (10 years).",
+      "sources": {
+        "D03": "\"At most 3650 days (10 years).\""
+      },
+      "cite": "`D03`:462",
+      "provenance": "new (`22` :19321)",
+      "status": "PROPOSED"
+    },
+    "retention.err.int": {
+      "parent": "D03",
+      "row_id": "retention.err.int",
+      "surface": "SCR-141",
+      "state": "retention.err.int",
+      "string": "Whole days only.",
+      "sources": {
+        "D03": "\"Whole days only.\""
+      },
+      "cite": "`D03`:463",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.err.summary": {
+      "parent": "D03",
+      "row_id": "retention.err.summary",
+      "surface": "SCR-141",
+      "state": "retention.err.summary",
+      "string": "Fix {n} fields before applying. · Fix 2 fields before applying.",
+      "sources": {
+        "D03": "\"Fix {n} fields before applying.\" · fixture \"Fix 2 fields before applying.\""
+      },
+      "cite": "`D03`:464",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.apply.no_changes": {
+      "parent": "D03",
+      "row_id": "retention.apply.no_changes",
+      "surface": "SCR-141",
+      "state": "retention.apply.no_changes",
+      "string": "No changes to apply.",
+      "sources": {
+        "D03": "\"No changes to apply.\" (the validity look on an empty diff, D03-D1)"
+      },
+      "cite": "`D03`:465",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.apply.preview_first": {
+      "parent": "D03",
+      "row_id": "retention.apply.preview_first",
+      "surface": "SCR-141",
+      "state": "retention.apply.preview_first",
+      "string": "Preview the change first.",
+      "sources": {
+        "D03": "\"Preview the change first.\""
+      },
+      "cite": "`D03`:466",
+      "provenance": "new (the ticket's security note)",
+      "status": "PROPOSED",
+      "frozen": "(iv)"
+    },
+    "retention.apply.typed": {
+      "parent": "D03",
+      "row_id": "retention.apply.typed",
+      "surface": "SCR-141",
+      "state": "retention.apply.typed",
+      "string": "Type {word} to confirm. · Type trades to confirm.",
+      "sources": {
+        "D03": "\"Type {word} to confirm.\" · fixture \"Type trades to confirm.\""
+      },
+      "cite": "`D03`:467",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.apply.invalid": {
+      "parent": "D03",
+      "row_id": "retention.apply.invalid",
+      "surface": "SCR-141",
+      "state": "retention.apply.invalid",
+      "string": "Fix {n} fields. · Fix 1 field. · Fix 2 fields.",
+      "sources": {
+        "D03": "\"Fix {n} fields.\" · fixtures \"Fix 1 field.\" · \"Fix 2 fields.\""
+      },
+      "cite": "`D03`:468",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.preview.button": {
+      "parent": "D03",
+      "row_id": "retention.preview.button",
+      "surface": "SCR-141",
+      "state": "retention.preview.button",
+      "string": "Preview changes",
+      "sources": {
+        "D03": "\"Preview changes\""
+      },
+      "cite": "`D03`:469",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.preview.title": {
+      "parent": "D03",
+      "row_id": "retention.preview.title",
+      "surface": "SCR-141",
+      "state": "retention.preview.title",
+      "string": "What becomes eligible for deletion",
+      "sources": {
+        "D03": "\"What becomes eligible for deletion\""
+      },
+      "cite": "`D03`:470",
+      "provenance": "new",
+      "status": "PROPOSED",
+      "frozen": "(iv)"
+    },
+    "retention.preview.row": {
+      "parent": "D03",
+      "row_id": "retention.preview.row",
+      "surface": "SCR-141",
+      "state": "retention.preview.row",
+      "string": "{symbol} · {stream} · {from} · {to} · about {size} · {symbol} · {stream} · — · — · about 0 GB now (recorded since about {since}) · ETHUSDT · Trades · — · — · about 0 GB now (recorded since about 2026-09-12)",
+      "sources": {
+        "D03": "\"{symbol} · {stream} · {from} · {to} · about {size}\" · when nothing predates the cut-off \"{symbol} · {stream} · — · — · about 0 GB now (recorded since about {since})\" · fixture \"ETHUSDT · Trades · — · — · about 0 GB now (recorded since about 2026-09-12)\""
+      },
+      "cite": "`D03`:471",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.preview.total": {
+      "parent": "D03",
+      "row_id": "retention.preview.total",
+      "surface": "SCR-141",
+      "state": "retention.preview.total",
+      "string": "About {size} across {n} symbols · About 0 GB now across 1 symbol",
+      "sources": {
+        "D03": "\"About {size} across {n} symbols\" · fixture \"About 0 GB now across 1 symbol\""
+      },
+      "cite": "`D03`:472",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.preview.none": {
+      "parent": "D03",
+      "row_id": "retention.preview.none",
+      "surface": "SCR-141",
+      "state": "retention.preview.none",
+      "string": "Nothing becomes eligible: this policy keeps data as long as today. · Nothing becomes eligible: this change keeps data longer.",
+      "sources": {
+        "D03": "\"Nothing becomes eligible: this policy keeps data as long as today.\" · after a lengthening \"Nothing becomes eligible: this change keeps data longer.\""
+      },
+      "cite": "`D03`:473",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.tiering": {
+      "parent": "D03",
+      "row_id": "retention.confirm.tiering",
+      "surface": "SCR-141",
+      "state": "retention.confirm.tiering",
+      "string": "Moves {stream} older than {n} days to Parquet sooner; it is still kept for {total}. This change deletes nothing. · Moves trades older than 7 days to Parquet sooner; it is still kept for 24 months. This change deletes nothing.",
+      "sources": {
+        "D03": "\"Moves {stream} older than {n} days to Parquet sooner; it is still kept for {total}. This change deletes nothing.\" · fixture \"Moves trades older than 7 days to Parquet sooner; it is still kept for 24 months. This change deletes nothing.\" (a lowered hot window on a Move-to-Parquet row whose total does not shrink: region (e)'s line and the plain confirm's detail; a hot window lowered from above the `21` §7 total is K7)"
+      },
+      "cite": "`D03`:474",
+      "provenance": "new (`22` :5535–5537; `21` :3095)",
+      "status": "PROPOSED"
+    },
+    "retention.preview.pinned": {
+      "parent": "D03",
+      "row_id": "retention.preview.pinned",
+      "surface": "SCR-141",
+      "state": "retention.preview.pinned",
+      "string": "{symbol} is pinned and is not affected. · BTCUSDT is pinned and is not affected.",
+      "sources": {
+        "D03": "\"{symbol} is pinned and is not affected.\" · fixture \"BTCUSDT is pinned and is not affected.\""
+      },
+      "cite": "`D03`:475",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.preview.caption": {
+      "parent": "D03",
+      "row_id": "retention.preview.caption",
+      "surface": "SCR-141",
+      "state": "retention.preview.caption",
+      "string": "Estimated from the storage report, per symbol across its recorded streams; the retention run's audit record carries the exact figures.",
+      "sources": {
+        "D03": "\"Estimated from the storage report, per symbol across its recorded streams; the retention run's audit record carries the exact figures.\""
+      },
+      "cite": "`D03`:476",
+      "provenance": "new (E16-D02 §6.5 :404's convention)",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.title": {
+      "parent": "D03",
+      "row_id": "retention.confirm.title",
+      "surface": "SCR-141",
+      "state": "retention.confirm.title",
+      "string": "Delete {stream} after {n} days? · Delete trades after 7 days? · Delete trades after 3 days?",
+      "sources": {
+        "D03": "\"Delete {stream} after {n} days?\" · fixtures \"Delete trades after 7 days?\" (K1) · \"Delete trades after 3 days?\" (K2; one stream over several symbols keeps this title too)"
+      },
+      "cite": "`D03`:477",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.title_symbol": {
+      "parent": "D03",
+      "row_id": "retention.confirm.title_symbol",
+      "surface": "SCR-141",
+      "state": "retention.confirm.title_symbol",
+      "string": "Delete {symbol} {stream} after {n} days? · Delete ETHUSDT trades after 14 days?",
+      "sources": {
+        "D03": "\"Delete {symbol} {stream} after {n} days?\" · fixture \"Delete ETHUSDT trades after 14 days?\" (K3)"
+      },
+      "cite": "`D03`:478",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.title_multi": {
+      "parent": "D03",
+      "row_id": "retention.confirm.title_multi",
+      "surface": "SCR-141",
+      "state": "retention.confirm.title_multi",
+      "string": "Shorten retention for {k} streams? · Shorten retention for 2 streams?",
+      "sources": {
+        "D03": "\"Shorten retention for {k} streams?\" · fixture \"Shorten retention for 2 streams?\" (K5)"
+      },
+      "cite": "`D03`:479",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.title_total_move": {
+      "parent": "D03",
+      "row_id": "retention.confirm.title_total_move",
+      "surface": "SCR-141",
+      "state": "retention.confirm.title_total_move",
+      "string": "Move {stream} to Parquet and shorten retention to {total}? · Move trades to Parquet and shorten retention to 24 months? · Move trades to Parquet and shorten retention to 800 days?",
+      "sources": {
+        "D03": "\"Move {stream} to Parquet and shorten retention to {total}?\" · fixture \"Move trades to Parquet and shorten retention to 24 months?\" · with an 800-day hot window \"Move trades to Parquet and shorten retention to 800 days?\" (K6: a `drop` row set to Move to Parquet whose total falls; its title differs from K7's)"
+      },
+      "cite": "`D03`:480",
+      "provenance": "new (`21` :3095)",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.title_total": {
+      "parent": "D03",
+      "row_id": "retention.confirm.title_total",
+      "surface": "SCR-141",
+      "state": "retention.confirm.title_total",
+      "string": "Shorten {stream} retention to {total}? · Shorten trades retention to 24 months?",
+      "sources": {
+        "D03": "\"Shorten {stream} retention to {total}?\" · fixture \"Shorten trades retention to 24 months?\" (K7: a hot window lowered from above the `21` §7 total; `{total}` as defined above)"
+      },
+      "cite": "`D03`:481",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.body": {
+      "parent": "D03",
+      "row_id": "retention.confirm.body",
+      "surface": "SCR-141",
+      "state": "retention.confirm.body",
+      "string": "{Stream} for {scope} older than {n} days become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days. · Trades for ETHUSDT older than 7 days become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. Nothing recorded before 2026-09-07 exists yet (about 0 GB now; recording started about 2026-09-12), so the first run deletes nothing. It cannot be undone. Replay, footprint history and the journal lose the deleted days.",
+      "sources": {
+        "D03": "\"{Stream} for {scope} older than {n} days become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" · fixture \"Trades for ETHUSDT older than 7 days become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. Nothing recorded before 2026-09-07 exists yet (about 0 GB now; recording started about 2026-09-12), so the first run deletes nothing. It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (the four roll-off streams only; the other four take `retention.confirm.body_cold`)"
+      },
+      "cite": "`D03`:482",
+      "provenance": "new (E16-D02 :395's grammar; `24` :3898)",
+      "status": "PROPOSED",
+      "frozen": "(viii)"
+    },
+    "retention.confirm.size": {
+      "parent": "D03",
+      "row_id": "retention.confirm.size",
+      "surface": "SCR-141",
+      "state": "retention.confirm.size",
+      "string": "About {size} across {symbol}'s recorded streams, recorded from {from} to {to}, goes at the first run. · Nothing recorded before {to} exists yet (about 0 GB now; recording started about {since}), so the first run deletes nothing. · this sweep",
+      "sources": {
+        "D03": "the size clause: \"About {size} across {symbol}'s recorded streams, recorded from {from} to {to}, goes at the first run.\" · when nothing predates the cut-off \"Nothing recorded before {to} exists yet (about 0 GB now; recording started about {since}), so the first run deletes nothing.\" (the fixture's case; \"this sweep\" with `apply_now`)"
+      },
+      "cite": "`D03`:483",
+      "provenance": "new (C-2.13, C-2.14)",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.body_now": {
+      "parent": "D03",
+      "row_id": "retention.confirm.body_now",
+      "surface": "SCR-141",
+      "state": "retention.confirm.body_now",
+      "string": "{Stream} for {scope} older than {n} days are deleted when you apply: a retention sweep starts now, and every daily run repeats it, Parquet included. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days. · Trades for ETHUSDT older than 7 days are deleted when you apply: a retention sweep starts now, and every daily run repeats it, Parquet included. Nothing recorded before 2026-09-07 exists yet (about 0 GB now; recording started about 2026-09-12), so this sweep deletes nothing. It cannot be undone. Replay, footprint history and the journal lose the deleted days.",
+      "sources": {
+        "D03": "\"{Stream} for {scope} older than {n} days are deleted when you apply: a retention sweep starts now, and every daily run repeats it, Parquet included. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" · fixture \"Trades for ETHUSDT older than 7 days are deleted when you apply: a retention sweep starts now, and every daily run repeats it, Parquet included. Nothing recorded before 2026-09-07 exists yet (about 0 GB now; recording started about 2026-09-12), so this sweep deletes nothing. It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (the four roll-off streams only; the other four take `retention.confirm.body_cold_now`)"
+      },
+      "cite": "`D03`:484",
+      "provenance": "new (`22` :5542)",
+      "status": "PROPOSED",
+      "frozen": "(viii)"
+    },
+    "retention.confirm.body_removed": {
+      "parent": "D03",
+      "row_id": "retention.confirm.body_removed",
+      "surface": "SCR-141",
+      "state": "retention.confirm.body_removed",
+      "string": "{symbol} then follows the global rule. · ETHUSDT then follows the global rule.",
+      "sources": {
+        "D03": "\"{symbol} then follows the global rule.\" + `retention.confirm.body` · fixture \"ETHUSDT then follows the global rule.\" (K4)"
+      },
+      "cite": "`D03`:485",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.body_multi": {
+      "parent": "D03",
+      "row_id": "retention.confirm.body_multi",
+      "surface": "SCR-141",
+      "state": "retention.confirm.body_multi",
+      "string": "{Stream} for {scope}: older than {n} days · become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. · It cannot be undone. Replay, footprint history and the journal lose the deleted days.",
+      "sources": {
+        "D03": "one line per stream × scope \"{Stream} for {scope}: older than {n} days\", then \"become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included.\" once, the size clause per line, then \"It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (K5; the four roll-off streams only: a stream without roll-off takes its `retention.confirm.body_cold` line)"
+      },
+      "cite": "`D03`:486",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.body_total": {
+      "parent": "D03",
+      "row_id": "retention.confirm.body_total",
+      "surface": "SCR-141",
+      "state": "retention.confirm.body_total",
+      "string": "{Stream} for {scope} older than {total} become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days. · Trades for ETHUSDT older than 24 months become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. Nothing recorded before 2024-09-14 exists yet (about 0 GB now; recording started about 2026-09-12), so the first run deletes nothing. It cannot be undone. Replay, footprint history and the journal lose the deleted days.",
+      "sources": {
+        "D03": "\"{Stream} for {scope} older than {total} become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" · fixture \"Trades for ETHUSDT older than 24 months become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. Nothing recorded before 2024-09-14 exists yet (about 0 GB now; recording started about 2026-09-12), so the first run deletes nothing. It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (K6, K7; the four roll-off streams only; the other four take `retention.confirm.body_cold`)"
+      },
+      "cite": "`D03`:487",
+      "provenance": "new (`21` :3095)",
+      "status": "PROPOSED"
+    },
+    "retention.help.drop_cold": {
+      "parent": "D03",
+      "row_id": "retention.help.drop_cold",
+      "surface": "SCR-141",
+      "state": "retention.help.drop_cold",
+      "string": "Days before this stream's Parquet copy is deleted for good. The fast store keeps its rows.",
+      "sources": {
+        "D03": "\"Days before this stream's Parquet copy is deleted for good. The fast store keeps its rows.\" (PROPOSED: a Delete-after row on `orderbook_snapshot`, `klines`, `open_interest` or `funding`, the streams without roll-off)"
+      },
+      "cite": "`D03`:488",
+      "provenance": "new (`21` :3095)",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.body_cold": {
+      "parent": "D03",
+      "row_id": "retention.confirm.body_cold",
+      "surface": "SCR-141",
+      "state": "retention.confirm.body_cold",
+      "string": "{Stream} for {scope}: the Parquet copy older than {n} days becomes eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it; the fast store keeps its rows. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.",
+      "sources": {
+        "D03": "\"{Stream} for {scope}: the Parquet copy older than {n} days becomes eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it; the fast store keeps its rows. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (PROPOSED: the streams without roll-off, in place of `retention.confirm.body`)"
+      },
+      "cite": "`D03`:489",
+      "provenance": "new (`21` :3095)",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.body_cold_now": {
+      "parent": "D03",
+      "row_id": "retention.confirm.body_cold_now",
+      "surface": "SCR-141",
+      "state": "retention.confirm.body_cold_now",
+      "string": "{Stream} for {scope}: the Parquet copy older than {n} days is deleted when you apply: a retention sweep starts now, and every daily run repeats it; the fast store keeps its rows. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.",
+      "sources": {
+        "D03": "\"{Stream} for {scope}: the Parquet copy older than {n} days is deleted when you apply: a retention sweep starts now, and every daily run repeats it; the fast store keeps its rows. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (PROPOSED: `retention.confirm.body_cold` with Apply now ticked, `retention.confirm.body_now`'s timing clause)"
+      },
+      "cite": "`D03`:490",
+      "provenance": "new (`21` :3095; `22` :5542)",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.trades_extra": {
+      "parent": "D03",
+      "row_id": "retention.confirm.trades_extra",
+      "surface": "SCR-141",
+      "state": "retention.confirm.trades_extra",
+      "string": "Bars built from these trades can no longer be rebuilt.",
+      "sources": {
+        "D03": "\"Bars built from these trades can no longer be rebuilt.\""
+      },
+      "cite": "`D03`:491",
+      "provenance": "new (`21` :4715)",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.typed": {
+      "parent": "D03",
+      "row_id": "retention.confirm.typed",
+      "surface": "SCR-141",
+      "state": "retention.confirm.typed",
+      "string": "Type {word} to confirm · Type trades to confirm",
+      "sources": {
+        "D03": "\"Type {word} to confirm\" · fixture \"Type trades to confirm\" (the typed field's label; `{word}` set in the mono face; the match is exact after trimming, case-sensitive — D03-D14)"
+      },
+      "cite": "`D03`:492",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.ok": {
+      "parent": "D03",
+      "row_id": "retention.confirm.ok",
+      "surface": "SCR-141",
+      "state": "retention.confirm.ok",
+      "string": "Apply · delete eligible data at the next run",
+      "sources": {
+        "D03": "\"Apply · delete eligible data at the next run\""
+      },
+      "cite": "`D03`:493",
+      "provenance": "new (E30-D03 N7 :102)",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.ok_now": {
+      "parent": "D03",
+      "row_id": "retention.confirm.ok_now",
+      "surface": "SCR-141",
+      "state": "retention.confirm.ok_now",
+      "string": "Apply · start the retention run",
+      "sources": {
+        "D03": "\"Apply · start the retention run\""
+      },
+      "cite": "`D03`:494",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.lengthen.title": {
+      "parent": "D03",
+      "row_id": "retention.confirm.lengthen.title",
+      "surface": "SCR-141",
+      "state": "retention.confirm.lengthen.title",
+      "string": "Keep {stream} for {n} days? · Keep trades for 90 days?",
+      "sources": {
+        "D03": "\"Keep {stream} for {n} days?\" · fixture \"Keep trades for 90 days?\""
+      },
+      "cite": "`D03`:495",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.lengthen.body": {
+      "parent": "D03",
+      "row_id": "retention.confirm.lengthen.body",
+      "surface": "SCR-141",
+      "state": "retention.confirm.lengthen.body",
+      "string": "Nothing is deleted. The fast store settles at most about {size}, plus pinned data. · Nothing is deleted. The fast store settles at most about 189.8 GB, plus pinned data. · This change deletes nothing more. The retention run that starts now still deletes what the current rules already make eligible. The fast store settles at most about {size}, plus pinned data.",
+      "sources": {
+        "D03": "\"Nothing is deleted. The fast store settles at most about {size}, plus pinned data.\" · fixture \"Nothing is deleted. The fast store settles at most about 189.8 GB, plus pinned data.\" (the fast store only: Parquet keeps each stream to its total, and four streams have no end date, `21` §7); true only while Apply now is unticked — with it ticked the body is \"This change deletes nothing more. The retention run that starts now still deletes what the current rules already make eligible. The fast store settles at most about {size}, plus pinned data.\""
+      },
+      "cite": "`D03`:496",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.plain.title": {
+      "parent": "D03",
+      "row_id": "retention.confirm.plain.title",
+      "surface": "SCR-141",
+      "state": "retention.confirm.plain.title",
+      "string": "Apply the retention changes?",
+      "sources": {
+        "D03": "\"Apply the retention changes?\" (the plain confirm, only when no total horizon shrinks: a tiering change or a removal whose fallback is not shorter)"
+      },
+      "cite": "`D03`:497",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.plain.body": {
+      "parent": "D03",
+      "row_id": "retention.confirm.plain.body",
+      "surface": "SCR-141",
+      "state": "retention.confirm.plain.body",
+      "string": "Nothing is deleted. {detail}",
+      "sources": {
+        "D03": "\"Nothing is deleted. {detail}\" (the detail drops its closing sentence) · the detail is `retention.confirm.tiering` or `retention.confirm.removed`; true only while no total horizon shrinks (§3) and Apply now is unticked"
+      },
+      "cite": "`D03`:498",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.confirm.plain.body_now": {
+      "parent": "D03",
+      "row_id": "retention.confirm.plain.body_now",
+      "surface": "SCR-141",
+      "state": "retention.confirm.plain.body_now",
+      "string": "This change deletes nothing more. The retention run that starts now still deletes what the current rules already make eligible. {detail} · Nothing is deleted.",
+      "sources": {
+        "D03": "\"This change deletes nothing more. The retention run that starts now still deletes what the current rules already make eligible. {detail}\" (the plain confirm and the lengthening confirm with Apply now ticked, in place of `retention.confirm.plain.body` and `retention.confirm.lengthen.body`'s \"Nothing is deleted.\"; the detail drops its closing sentence)"
+      },
+      "cite": "`D03`:499",
+      "provenance": "new (`22` :5542)",
+      "status": "PROPOSED"
+    },
+    "retention.dirty": {
+      "parent": "D03",
+      "row_id": "retention.dirty",
+      "surface": "SCR-141",
+      "state": "retention.dirty",
+      "string": "Unsaved changes — Cancel or Esc discards them.",
+      "sources": {
+        "D03": "\"Unsaved changes — Cancel or Esc discards them.\" (the footer caption while the form is dirty, D03-D16)"
+      },
+      "cite": "`D03`:500",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.stepup.code": {
+      "parent": "D03",
+      "row_id": "retention.stepup.code",
+      "surface": "SCR-141",
+      "state": "retention.stepup.code",
+      "string": "You'll confirm with your password and a code.",
+      "sources": {
+        "D03": "\"You'll confirm with your password and a code.\""
+      },
+      "cite": "`D03`:501",
+      "provenance": "E16-D02 §6.4 :380",
+      "status": "merged",
+      "frozen": "(iii)"
+    },
+    "retention.stepup.grace": {
+      "parent": "D03",
+      "row_id": "retention.stepup.grace",
+      "surface": "SCR-141",
+      "state": "retention.stepup.grace",
+      "string": "Still trusted for recorder changes · {mm:ss}",
+      "sources": {
+        "D03": "\"Still trusted for recorder changes · {mm:ss}\""
+      },
+      "cite": "`D03`:502",
+      "provenance": "E16-D02 §6.4 :380",
+      "status": "merged"
+    },
+    "retention.stepup.not_sent": {
+      "parent": "D03",
+      "row_id": "retention.stepup.not_sent",
+      "surface": "SCR-141",
+      "state": "retention.stepup.not_sent",
+      "string": "Not sent",
+      "sources": {
+        "D03": "\"Not sent\""
+      },
+      "cite": "`D03`:503",
+      "provenance": "E16-D02 §6.4 :380",
+      "status": "merged"
+    },
+    "retention.audited": {
+      "parent": "D03",
+      "row_id": "retention.audited",
+      "surface": "SCR-141",
+      "state": "retention.audited",
+      "string": "This action is audited.",
+      "sources": {
+        "D03": "\"This action is audited.\""
+      },
+      "cite": "`D03`:504",
+      "provenance": "E16-D02 §6.4 (CMP-093's line)",
+      "status": "merged"
+    },
+    "retention.apply_now": {
+      "parent": "D03",
+      "row_id": "retention.apply_now",
+      "surface": "SCR-141",
+      "state": "retention.apply_now",
+      "string": "Apply now (start a retention run)",
+      "sources": {
+        "D03": "\"Apply now (start a retention run)\""
+      },
+      "cite": "`D03`:505",
+      "provenance": "new (`22` :5552)",
+      "status": "PROPOSED"
+    },
+    "retention.footer.buttons": {
+      "parent": "D03",
+      "row_id": "retention.footer.buttons",
+      "surface": "SCR-141",
+      "state": "retention.footer.buttons",
+      "string": "Cancel · Apply · Close",
+      "sources": {
+        "D03": "\"Cancel\" · \"Apply\" · \"Close\" (after the outcome)"
+      },
+      "cite": "`D03`:506",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.next_run": {
+      "parent": "D03",
+      "row_id": "retention.next_run",
+      "surface": "SCR-141",
+      "state": "retention.next_run",
+      "string": "Next retention run: daily at 03:00 UTC",
+      "sources": {
+        "D03": "\"Next retention run: daily at 03:00 UTC\""
+      },
+      "cite": "`D03`:507",
+      "provenance": "`24` :3898",
+      "status": "merged"
+    },
+    "retention.job.queued": {
+      "parent": "D03",
+      "row_id": "retention.job.queued",
+      "surface": "SCR-141",
+      "state": "retention.job.queued",
+      "string": "Retention run queued",
+      "sources": {
+        "D03": "\"Retention run queued\""
+      },
+      "cite": "`D03`:508",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.job.running": {
+      "parent": "D03",
+      "row_id": "retention.job.running",
+      "surface": "SCR-141",
+      "state": "retention.job.running",
+      "string": "Retention run running · {pct} % · Retention run running · 42 %",
+      "sources": {
+        "D03": "\"Retention run running · {pct} %\" · fixture \"Retention run running · 42 %\""
+      },
+      "cite": "`D03`:509",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.job.succeeded": {
+      "parent": "D03",
+      "row_id": "retention.job.succeeded",
+      "surface": "SCR-141",
+      "state": "retention.job.succeeded",
+      "string": "Retention run succeeded · Retention run succeeded · about {size} freed",
+      "sources": {
+        "D03": "\"Retention run succeeded\" · with D03-G4 \"Retention run succeeded · about {size} freed\" (the contract's word, BQ-18 RULED)"
+      },
+      "cite": "`D03`:510",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.job.failed": {
+      "parent": "D03",
+      "row_id": "retention.job.failed",
+      "surface": "SCR-141",
+      "state": "retention.job.failed",
+      "string": "Retention run failed ({code}) · Some data may already be deleted: check the storage report.",
+      "sources": {
+        "D03": "\"Retention run failed ({code})\" · \"Some data may already be deleted: check the storage report.\""
+      },
+      "cite": "`D03`:511",
+      "provenance": "new (E16-D02 §3.2's pattern)",
+      "status": "PROPOSED"
+    },
+    "retention.job.cancelled": {
+      "parent": "D03",
+      "row_id": "retention.job.cancelled",
+      "surface": "SCR-141",
+      "state": "retention.job.cancelled",
+      "string": "Retention run cancelled",
+      "sources": {
+        "D03": "\"Retention run cancelled\""
+      },
+      "cite": "`D03`:512",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.outcome.saved": {
+      "parent": "D03",
+      "row_id": "retention.outcome.saved",
+      "surface": "SCR-141",
+      "state": "retention.outcome.saved",
+      "string": "Retention policy saved. Audited as retention.change.",
+      "sources": {
+        "D03": "\"Retention policy saved. Audited as retention.change.\""
+      },
+      "cite": "`D03`:513",
+      "provenance": "new (`22` :5545)",
+      "status": "PROPOSED"
+    },
+    "retention.refused.job_running": {
+      "parent": "D03",
+      "row_id": "retention.refused.job_running",
+      "surface": "SCR-141",
+      "state": "retention.refused.job_running",
+      "string": "A retention run is already running.",
+      "sources": {
+        "D03": "\"A retention run is already running.\""
+      },
+      "cite": "`D03`:514",
+      "provenance": "new (`22` :5542)",
+      "status": "PROPOSED"
+    },
+    "retention.refused.scheduler_off": {
+      "parent": "D03",
+      "row_id": "retention.refused.scheduler_off",
+      "surface": "SCR-141",
+      "state": "retention.refused.scheduler_off",
+      "string": "Retention runs are off on this server.",
+      "sources": {
+        "D03": "\"Retention runs are off on this server.\""
+      },
+      "cite": "`D03`:515",
+      "provenance": "new (BQ-17 RULED)",
+      "status": "PROPOSED"
+    },
+    "retention.refused.audit": {
+      "parent": "D03",
+      "row_id": "retention.refused.audit",
+      "surface": "SCR-141",
+      "state": "retention.refused.audit",
+      "string": "Not saved: the audit record could not be written.",
+      "sources": {
+        "D03": "\"Not saved: the audit record could not be written.\""
+      },
+      "cite": "`D03`:516",
+      "provenance": "new (`22` :5546)",
+      "status": "PROPOSED"
+    },
+    "retention.refused.invalid": {
+      "parent": "D03",
+      "row_id": "retention.refused.invalid",
+      "surface": "SCR-141",
+      "state": "retention.refused.invalid",
+      "string": "Bars can't be deleted before the ticks they came from are kept — adjust the tiers. · The server did not accept this policy set.",
+      "sources": {
+        "D03": "\"Bars can't be deleted before the ticks they came from are kept — adjust the tiers.\" (the derived rule) · else \"The server did not accept this policy set.\""
+      },
+      "cite": "`D03`:517",
+      "provenance": "`14` :2795 · new",
+      "status": "PROPOSED"
+    },
+    "retention.refused.unknown": {
+      "parent": "D03",
+      "row_id": "retention.refused.unknown",
+      "surface": "SCR-141",
+      "state": "retention.refused.unknown",
+      "string": "Something in this form is not accepted by the server.",
+      "sources": {
+        "D03": "\"Something in this form is not accepted by the server.\""
+      },
+      "cite": "`D03`:518",
+      "provenance": "new (`22` :5540)",
+      "status": "PROPOSED"
+    },
+    "retention.estimate": {
+      "parent": "D03",
+      "row_id": "retention.estimate",
+      "surface": "SCR-141",
+      "state": "retention.estimate",
+      "string": "Under this policy the fast store settles at most about {size} ({pct} % of {cap}), plus pinned data. · Under this policy the fast store settles at most about 189.8 GB (9 % of 2,000 GB), plus pinned data.",
+      "sources": {
+        "D03": "\"Under this policy the fast store settles at most about {size} ({pct} % of {cap}), plus pinned data.\" · fixture \"Under this policy the fast store settles at most about 189.8 GB (9 % of 2,000 GB), plus pinned data.\" (the bound is the fast store's: non-pinned growth × the longest hot window; Parquet's share follows the formula line)"
+      },
+      "cite": "`D03`:519",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "retention.estimate.formula": {
+      "parent": "D03",
+      "row_id": "retention.estimate.formula",
+      "surface": "SCR-141",
+      "state": "retention.estimate.formula",
+      "string": "Non-pinned growth 520 MB/day × the longest window 365 days ≈ 189.8 GB. Pinned symbols are never deleted by retention: about 780 MB/day today. Parquet keeps archived streams until their horizon; a per-stream figure needs the storage report to split by stream.",
+      "sources": {
+        "D03": "\"Non-pinned growth 520 MB/day × the longest window 365 days ≈ 189.8 GB. Pinned symbols are never deleted by retention: about 780 MB/day today. Parquet keeps archived streams until their horizon; a per-stream figure needs the storage report to split by stream.\""
+      },
+      "cite": "`D03`:520",
+      "provenance": "new (E16-D02 §8.3 :486's formula line)",
+      "status": "PROPOSED"
+    },
+    "retention.effect": {
+      "parent": "D03",
+      "row_id": "retention.effect",
+      "surface": "SCR-141",
+      "state": "retention.effect",
+      "string": "Shorter retention removes history from replay, footprint and profile look-backs and from journal back-fill after the cut-off date; those views then start at the oldest kept day and show  ·  Data a saved replay session or an unexported journal trade still needs is kept until they release it.",
+      "sources": {
+        "D03": "\"Shorter retention removes history from replay, footprint and profile look-backs and from journal back-fill after the cut-off date; those views then start at the oldest kept day and show \"Older data was removed by the retention policy (<N> days).\" Data a saved replay session or an unexported journal trade still needs is kept until they release it.\""
+      },
+      "cite": "`D03`:521",
+      "provenance": "new (E16-D01 :222; `24` :3898; `14` :83)",
+      "status": "PROPOSED"
+    },
+    "storage.title": {
+      "parent": "D04",
+      "row_id": "storage.title",
+      "surface": "SCR-142",
+      "state": "storage.title",
+      "string": "Storage and database",
+      "sources": {
+        "D04": "\"Storage and database\""
+      },
+      "cite": "`D04`:499",
+      "provenance": "`14` :2770 (the heading, cased)",
+      "status": "merged"
+    },
+    "storage.stamp": {
+      "parent": "D04",
+      "row_id": "storage.stamp",
+      "surface": "SCR-142",
+      "state": "storage.stamp",
+      "string": "Sampled {HH:MM:SS} UTC (every {every}) · Sampled 10:31:03 UTC (every 60 s)",
+      "sources": {
+        "D04": "\"Sampled {HH:MM:SS} UTC (every {every})\" · \"Sampled 10:31:03 UTC (every 60 s)\""
+      },
+      "cite": "`D04`:500",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.stamp.stale": {
+      "parent": "D04",
+      "row_id": "storage.stamp.stale",
+      "surface": "SCR-142",
+      "state": "storage.stamp.stale",
+      "string": "Sampled {HH:MM:SS} UTC, stale ({age} old) · Sampled 10:31:03 UTC, stale (3 min old)",
+      "sources": {
+        "D04": "\"Sampled {HH:MM:SS} UTC, stale ({age} old)\" · \"Sampled 10:31:03 UTC, stale (3 min old)\""
+      },
+      "cite": "`D04`:501",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.stamp.sampling": {
+      "parent": "D04",
+      "row_id": "storage.stamp.sampling",
+      "surface": "SCR-142",
+      "state": "storage.stamp.sampling",
+      "string": "Sampling…",
+      "sources": {
+        "D04": "\"Sampling…\""
+      },
+      "cite": "`D04`:502",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.meter.budget": {
+      "parent": "D04",
+      "row_id": "storage.meter.budget",
+      "surface": "SCR-142",
+      "state": "storage.meter.budget",
+      "string": "Recording budget: {used} of {cap} ({pct}) · Recording budget: 1,188.0 GB of 2,000.0 GB (59.4 %)",
+      "sources": {
+        "D04": "\"Recording budget: {used} of {cap} ({pct})\" · \"Recording budget: 1,188.0 GB of 2,000.0 GB (59.4 %)\""
+      },
+      "cite": "`D04`:503",
+      "provenance": "`new` (the numerator rule `22` :5424)",
+      "status": "PROPOSED"
+    },
+    "storage.meter.volume": {
+      "parent": "D04",
+      "row_id": "storage.meter.volume",
+      "surface": "SCR-142",
+      "state": "storage.meter.volume",
+      "string": "Disk volume: {used} of {total} ({pct}), {free} free · Disk volume: 1.2 TB of 4.0 TB (30.1 %), 2.8 TB free",
+      "sources": {
+        "D04": "\"Disk volume: {used} of {total} ({pct}), {free} free\" · \"Disk volume: 1.2 TB of 4.0 TB (30.1 %), 2.8 TB free\""
+      },
+      "cite": "`D04`:504",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.projection": {
+      "parent": "D04",
+      "row_id": "storage.projection",
+      "surface": "SCR-142",
+      "state": "storage.projection",
+      "string": "Full in about {d} days ({date}) at {growth}: the {wall} is the nearer wall · Full in about 560 days (2028-03-27) at 1.45 GB/day: the budget is the nearer wall (the volume about 1,928 days)",
+      "sources": {
+        "D04": "\"Full in about {d} days ({date}) at {growth}: the {wall} is the nearer wall\" · \"Full in about 560 days (2028-03-27) at 1.45 GB/day: the budget is the nearer wall (the volume about 1,928 days)\""
+      },
+      "cite": "`D04`:505",
+      "provenance": "`new` (E16-D02 :153's rule)",
+      "status": "PROPOSED"
+    },
+    "storage.headline.0": {
+      "parent": "D04",
+      "row_id": "storage.headline.0",
+      "surface": "SCR-142",
+      "state": "storage.headline.0",
+      "string": "Growing · auto-record pauses in about {d} days · Growing · auto-record pauses in about 422 days",
+      "sources": {
+        "D04": "\"Growing · auto-record pauses in about {d} days\" · \"Growing · auto-record pauses in about 422 days\""
+      },
+      "cite": "`D04`:506",
+      "provenance": "E16-D02 §8.3 :490",
+      "status": "merged"
+    },
+    "storage.headline.1": {
+      "parent": "D04",
+      "row_id": "storage.headline.1",
+      "surface": "SCR-142",
+      "state": "storage.headline.1",
+      "string": "Near limit · auto-record pauses in about {d} days · clears below {warn − 5} % · … about 131 days · clears below 75 %",
+      "sources": {
+        "D04": "\"Near limit · auto-record pauses in about {d} days · clears below {warn − 5} %\" · \"… about 131 days · clears below 75 %\""
+      },
+      "cite": "`D04`:507",
+      "provenance": "E16-D02 §8.3 :493",
+      "status": "merged"
+    },
+    "storage.headline.2": {
+      "parent": "D04",
+      "row_id": "storage.headline.2",
+      "surface": "SCR-142",
+      "state": "storage.headline.2",
+      "string": "Auto-record paused · resumes below {autostop − 5} % of the budget with 20 % of the volume free",
+      "sources": {
+        "D04": "\"Auto-record paused · resumes below {autostop − 5} % of the budget with 20 % of the volume free\""
+      },
+      "cite": "`D04`:508",
+      "provenance": "E16-D02 §8.3 :494",
+      "status": "merged"
+    },
+    "storage.headline.3": {
+      "parent": "D04",
+      "row_id": "storage.headline.3",
+      "surface": "SCR-142",
+      "state": "storage.headline.3",
+      "string": "Recording stopped · resumes below {halt − 5} % with 10 % of the volume free · … below 90 % …",
+      "sources": {
+        "D04": "\"Recording stopped · resumes below {halt − 5} % with 10 % of the volume free\" · \"… below 90 % …\""
+      },
+      "cite": "`D04`:509",
+      "provenance": "E16-D02 §8.3 :496",
+      "status": "merged"
+    },
+    "storage.level3.fact": {
+      "parent": "D04",
+      "row_id": "storage.level3.fact",
+      "surface": "SCR-142",
+      "state": "storage.level3.fact",
+      "string": "Open positions keep recording; other symbols' data is dropped and recorded as gaps.",
+      "sources": {
+        "D04": "\"Open positions keep recording; other symbols' data is dropped and recorded as gaps.\""
+      },
+      "cite": "`D04`:510",
+      "provenance": "E16-D02 §8.3 :496",
+      "status": "merged"
+    },
+    "storage.formula": {
+      "parent": "D04",
+      "row_id": "storage.formula",
+      "surface": "SCR-142",
+      "state": "storage.formula",
+      "string": "({autostop} % × {cap} − {used}) ÷ {growth} ≈ {d} days · (90 % × 2,000.0 GB − 1,188.0 GB) ÷ 1.45 GB/day ≈ 422 days",
+      "sources": {
+        "D04": "\"({autostop} % × {cap} − {used}) ÷ {growth} ≈ {d} days\" · \"(90 % × 2,000.0 GB − 1,188.0 GB) ÷ 1.45 GB/day ≈ 422 days\""
+      },
+      "cite": "`D04`:511",
+      "provenance": "E16-D02 §8.3 :490",
+      "status": "merged"
+    },
+    "storage.scale": {
+      "parent": "D04",
+      "row_id": "storage.scale",
+      "surface": "SCR-142",
+      "state": "storage.scale",
+      "string": "80 % warning · 90 % auto-record pauses · 95 % recording stops (open positions keep writing)",
+      "sources": {
+        "D04": "\"80 % warning · 90 % auto-record pauses · 95 % recording stops (open positions keep writing)\""
+      },
+      "cite": "`D04`:512",
+      "provenance": "E16-D02 §8.3 :499",
+      "status": "merged"
+    },
+    "storage.degradation": {
+      "parent": "D04",
+      "row_id": "storage.degradation",
+      "surface": "SCR-142",
+      "state": "storage.degradation",
+      "string": "Recording pauses before trading is affected.",
+      "sources": {
+        "D04": "\"Recording pauses before trading is affected.\""
+      },
+      "cite": "`D04`:513",
+      "provenance": "`new` (AC 2; `14` :2780)",
+      "status": "PROPOSED"
+    },
+    "storage.degradation.detail": {
+      "parent": "D04",
+      "row_id": "storage.degradation.detail",
+      "surface": "SCR-142",
+      "state": "storage.degradation.detail",
+      "string": "At 90 % of the recording budget auto-record pauses; at 95 % recording stops for symbols without an open position; orders and positions are never gated by the disk.",
+      "sources": {
+        "D04": "\"At 90 % of the recording budget auto-record pauses; at 95 % recording stops for symbols without an open position; orders and positions are never gated by the disk.\""
+      },
+      "cite": "`D04`:514",
+      "provenance": "`new` (`20` :905–907; `24` :3845, :3854)",
+      "status": "PROPOSED"
+    },
+    "storage.autostop.next": {
+      "parent": "D04",
+      "row_id": "storage.autostop.next",
+      "surface": "SCR-142",
+      "state": "storage.autostop.next",
+      "string": "Recording stops at {halt} % in about {d} days · Recording stops at 95 % in about 69 days",
+      "sources": {
+        "D04": "\"Recording stops at {halt} % in about {d} days\" · \"Recording stops at 95 % in about 69 days\""
+      },
+      "cite": "`D04`:515",
+      "provenance": "E16-D02 §8.3 :494",
+      "status": "merged"
+    },
+    "storage.accelerated": {
+      "parent": "D04",
+      "row_id": "storage.accelerated",
+      "surface": "SCR-142",
+      "state": "storage.accelerated",
+      "string": "Retention accelerated",
+      "sources": {
+        "D04": "\"Retention accelerated\""
+      },
+      "cite": "`D04`:516",
+      "provenance": "`new` (`22` :19243)",
+      "status": "PROPOSED"
+    },
+    "storage.volume_refused": {
+      "parent": "D04",
+      "row_id": "storage.volume_refused",
+      "surface": "SCR-142",
+      "state": "storage.volume_refused",
+      "string": "The recording volume was refused at start-up; the gate opens once it is fixed",
+      "sources": {
+        "D04": "\"The recording volume was refused at start-up; the gate opens once it is fixed\""
+      },
+      "cite": "`D04`:517",
+      "provenance": "`new` (`23` :4103–4104; SR-096)",
+      "status": "PROPOSED"
+    },
+    "storage.actions.shorten": {
+      "parent": "D04",
+      "row_id": "storage.actions.shorten",
+      "surface": "SCR-142",
+      "state": "storage.actions.shorten",
+      "string": "Shorten retention",
+      "sources": {
+        "D04": "\"Shorten retention\""
+      },
+      "cite": "`D04`:518",
+      "provenance": "E16-D02 §8.3 :503",
+      "status": "merged"
+    },
+    "storage.actions.depth": {
+      "parent": "D04",
+      "row_id": "storage.actions.depth",
+      "surface": "SCR-142",
+      "state": "storage.actions.depth",
+      "string": "Reduce depth",
+      "sources": {
+        "D04": "\"Reduce depth\""
+      },
+      "cite": "`D04`:519",
+      "provenance": "E16-D02 §8.3 :503",
+      "status": "merged"
+    },
+    "storage.actions.unpin": {
+      "parent": "D04",
+      "row_id": "storage.actions.unpin",
+      "surface": "SCR-142",
+      "state": "storage.actions.unpin",
+      "string": "Unpin",
+      "sources": {
+        "D04": "\"Unpin\""
+      },
+      "cite": "`D04`:520",
+      "provenance": "E16-D02 §8.3 :504",
+      "status": "merged"
+    },
+    "storage.tier.questdb": {
+      "parent": "D04",
+      "row_id": "storage.tier.questdb",
+      "surface": "SCR-142",
+      "state": "storage.tier.questdb",
+      "string": "QuestDB · hot",
+      "sources": {
+        "D04": "\"QuestDB · hot\""
+      },
+      "cite": "`D04`:521",
+      "provenance": "`new` (ADR-0003 :34)",
+      "status": "PROPOSED"
+    },
+    "storage.tier.parquet": {
+      "parent": "D04",
+      "row_id": "storage.tier.parquet",
+      "surface": "SCR-142",
+      "state": "storage.tier.parquet",
+      "string": "Parquet/DuckDB · cold",
+      "sources": {
+        "D04": "\"Parquet/DuckDB · cold\""
+      },
+      "cite": "`D04`:522",
+      "provenance": "`new` (ADR-0003 :35)",
+      "status": "PROPOSED"
+    },
+    "storage.tier.postgres": {
+      "parent": "D04",
+      "row_id": "storage.tier.postgres",
+      "surface": "SCR-142",
+      "state": "storage.tier.postgres",
+      "string": "Postgres · relational",
+      "sources": {
+        "D04": "\"Postgres · relational\""
+      },
+      "cite": "`D04`:523",
+      "provenance": "`new` (ADR-0003 :36)",
+      "status": "PROPOSED"
+    },
+    "storage.tier.rows": {
+      "parent": "D04",
+      "row_id": "storage.tier.rows",
+      "surface": "SCR-142",
+      "state": "storage.tier.rows",
+      "string": "Size · Share of budget · Retention · Growth/day · Projected full · Health · Ingestion · Last compaction · Last vacuum · Migration · Rows by table",
+      "sources": {
+        "D04": "\"Size\" · \"Share of budget\" · \"Retention\" · \"Growth/day\" · \"Projected full\" · \"Health\" · \"Ingestion\" · \"Last compaction\" · \"Last vacuum\" · \"Migration\" · \"Rows by table\""
+      },
+      "cite": "`D04`:524",
+      "provenance": "`new` (`14` :2772, :2777; \"Last compaction\", \"Last vacuum\", \"Migration\" and \"Rows by table\" label PROPOSED rows: D04-G6, D04-G7, D04-G3)",
+      "status": "PROPOSED"
+    },
+    "storage.tier.not_counted": {
+      "parent": "D04",
+      "row_id": "storage.tier.not_counted",
+      "surface": "SCR-142",
+      "state": "storage.tier.not_counted",
+      "string": "not counted",
+      "sources": {
+        "D04": "\"not counted\""
+      },
+      "cite": "`D04`:525",
+      "provenance": "`new` (`22` :5424)",
+      "status": "PROPOSED"
+    },
+    "storage.tier.all_tiers": {
+      "parent": "D04",
+      "row_id": "storage.tier.all_tiers",
+      "surface": "SCR-142",
+      "state": "storage.tier.all_tiers",
+      "string": "all tiers {growth} · all tiers 1.45 GB/day · all tiers 2028-03-27",
+      "sources": {
+        "D04": "\"all tiers {growth}\" · \"all tiers 1.45 GB/day\" · \"all tiers 2028-03-27\""
+      },
+      "cite": "`D04`:526",
+      "provenance": "`new` (D04-G1's fallback)",
+      "status": "PROPOSED"
+    },
+    "storage.tier.health": {
+      "parent": "D04",
+      "row_id": "storage.tier.health",
+      "surface": "SCR-142",
+      "state": "storage.tier.health",
+      "string": "healthy · degraded · warning · down · not deployed · not reported",
+      "sources": {
+        "D04": "\"healthy\" · \"degraded\" · \"warning\" · \"down\" · \"not deployed\" · \"not reported\""
+      },
+      "cite": "`D04`:527",
+      "provenance": "`22` :17419 (`ComponentState`); `new` the last",
+      "status": "PROPOSED"
+    },
+    "storage.tier.unreachable": {
+      "parent": "D04",
+      "row_id": "storage.tier.unreachable",
+      "surface": "SCR-142",
+      "state": "storage.tier.unreachable",
+      "string": "{Tier} unreachable since {HH:MM:SS} UTC · QuestDB unreachable since 10:24:03 UTC",
+      "sources": {
+        "D04": "\"{Tier} unreachable since {HH:MM:SS} UTC\" · \"QuestDB unreachable since 10:24:03 UTC\""
+      },
+      "cite": "`D04`:528",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.tier.retry": {
+      "parent": "D04",
+      "row_id": "storage.tier.retry",
+      "surface": "SCR-142",
+      "state": "storage.tier.retry",
+      "string": "Retry",
+      "sources": {
+        "D04": "\"Retry\""
+      },
+      "cite": "`D04`:529",
+      "provenance": "E16-D02 §3.1 :191",
+      "status": "merged"
+    },
+    "storage.ingestion": {
+      "parent": "D04",
+      "row_id": "storage.ingestion",
+      "surface": "SCR-142",
+      "state": "storage.ingestion",
+      "string": "Ingest {rate} msg/s, backlog {rows} rows, lag — · Ingest 18,400 msg/s, backlog 25,000 rows, lag — (PROPOSED — D04-G4, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57))",
+      "sources": {
+        "D04": "\"Ingest {rate} msg/s, backlog {rows} rows, lag —\" · \"Ingest 18,400 msg/s, backlog 25,000 rows, lag — (PROPOSED — D04-G4, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57))\""
+      },
+      "cite": "`D04`:530",
+      "provenance": "`new` (`23` :4060–4061; the lag PROPOSED, D04-G4)",
+      "status": "PROPOSED"
+    },
+    "storage.lag.banner": {
+      "parent": "D04",
+      "row_id": "storage.lag.banner",
+      "surface": "SCR-142",
+      "state": "storage.lag.banner",
+      "string": "Ingestion backlog {rows} rows — writes are behind the feed · Ingestion backlog 25,000 rows — writes are behind the feed",
+      "sources": {
+        "D04": "\"Ingestion backlog {rows} rows — writes are behind the feed\" · \"Ingestion backlog 25,000 rows — writes are behind the feed\""
+      },
+      "cite": "`D04`:531",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.proposed.caption": {
+      "parent": "D04",
+      "row_id": "storage.proposed.caption",
+      "surface": "SCR-142",
+      "state": "storage.proposed.caption",
+      "string": "PROPOSED — D04-G{n}, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row {row})",
+      "sources": {
+        "D04": "\"PROPOSED — D04-G{n}, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row {row})\""
+      },
+      "cite": "`D04`:532",
+      "provenance": "`new` (the orchestrator's ruling; ledger 1 rows 57–59)",
+      "status": "PROPOSED"
+    },
+    "storage.proposed.rows": {
+      "parent": "D04",
+      "row_id": "storage.proposed.rows",
+      "surface": "SCR-142",
+      "state": "storage.proposed.rows",
+      "string": "Row counts by table are not produced yet",
+      "sources": {
+        "D04": "\"Row counts by table are not produced yet\""
+      },
+      "cite": "`D04`:533",
+      "provenance": "`new` (D04-G3's fallback)",
+      "status": "PROPOSED"
+    },
+    "storage.proposed.queries": {
+      "parent": "D04",
+      "row_id": "storage.proposed.queries",
+      "surface": "SCR-142",
+      "state": "storage.proposed.queries",
+      "string": "Slowest queries are not produced yet",
+      "sources": {
+        "D04": "\"Slowest queries are not produced yet\""
+      },
+      "cite": "`D04`:534",
+      "provenance": "`new` (D04-G5's fallback)",
+      "status": "PROPOSED"
+    },
+    "storage.compaction.schedule": {
+      "parent": "D04",
+      "row_id": "storage.compaction.schedule",
+      "surface": "SCR-142",
+      "state": "storage.compaction.schedule",
+      "string": "weekly, Sundays 03:00 UTC",
+      "sources": {
+        "D04": "\"weekly, Sundays 03:00 UTC\""
+      },
+      "cite": "`D04`:535",
+      "provenance": "`21` :4410",
+      "status": "merged"
+    },
+    "storage.symbols.attributed": {
+      "parent": "D04",
+      "row_id": "storage.symbols.attributed",
+      "surface": "SCR-142",
+      "state": "storage.symbols.attributed",
+      "string": "{sum} of {used} attributed to symbols ({pct}) · 813.6 GB of 1,188.0 GB attributed to symbols (68.5 %)",
+      "sources": {
+        "D04": "\"{sum} of {used} attributed to symbols ({pct})\" · \"813.6 GB of 1,188.0 GB attributed to symbols (68.5 %)\""
+      },
+      "cite": "`D04`:536",
+      "provenance": "`new` (D04-CG3)",
+      "status": "PROPOSED"
+    },
+    "storage.migration.banner": {
+      "parent": "D04",
+      "row_id": "storage.migration.banner",
+      "surface": "SCR-142",
+      "state": "storage.migration.banner",
+      "string": "Migration pending · {n} pending · {from} → {to} — applied with the next release · Migration pending · 1 pending · 0008 → 0009 — applied with the next release",
+      "sources": {
+        "D04": "\"Migration pending · {n} pending · {from} → {to} — applied with the next release\" · \"Migration pending · 1 pending · 0008 → 0009 — applied with the next release\""
+      },
+      "cite": "`D04`:537",
+      "provenance": "`new` (PROPOSED D04-G7; `22` :11103)",
+      "status": "PROPOSED"
+    },
+    "storage.unavailable": {
+      "parent": "D04",
+      "row_id": "storage.unavailable",
+      "surface": "SCR-142",
+      "state": "storage.unavailable",
+      "string": "Disk figures could not be loaded.",
+      "sources": {
+        "D04": "\"Disk figures could not be loaded.\""
+      },
+      "cite": "`D04`:538",
+      "provenance": "E16-D02 §3.1 :191",
+      "status": "merged"
+    },
+    "storage.stale.announce": {
+      "parent": "D04",
+      "row_id": "storage.stale.announce",
+      "surface": "SCR-142",
+      "state": "storage.stale.announce",
+      "string": "Storage figures are stale",
+      "sources": {
+        "D04": "\"Storage figures are stale\""
+      },
+      "cite": "`D04`:539",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "notice.panel_read_only": {
+      "parent": "D04",
+      "row_id": "notice.panel_read_only",
+      "surface": "SCR-142",
+      "state": "notice.panel_read_only",
+      "string": "Read-only — read-only while viewing as {user}. · Read-only — read-only while viewing as alex.",
+      "sources": {
+        "D04": "\"Read-only — read-only while viewing as {user}.\" · \"Read-only — read-only while viewing as alex.\""
+      },
+      "cite": "`D04`:540",
+      "provenance": "E16-D02 D-16 :778 (E09-D09 §10's template)",
+      "status": "merged"
+    },
+    "storage.compact.button": {
+      "parent": "D04",
+      "row_id": "storage.compact.button",
+      "surface": "SCR-142",
+      "state": "storage.compact.button",
+      "string": "Compact Parquet…",
+      "sources": {
+        "D04": "\"Compact Parquet…\""
+      },
+      "cite": "`D04`:542",
+      "provenance": "`new` (E16-D02 §6.6's \"Compact now\" on SCR-140)",
+      "status": "PROPOSED"
+    },
+    "storage.compact.title": {
+      "parent": "D04",
+      "row_id": "storage.compact.title",
+      "surface": "SCR-142",
+      "state": "storage.compact.title",
+      "string": "Compact Parquet partitions?",
+      "sources": {
+        "D04": "\"Compact Parquet partitions?\""
+      },
+      "cite": "`D04`:543",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.compact.body": {
+      "parent": "D04",
+      "row_id": "storage.compact.body",
+      "surface": "SCR-142",
+      "state": "storage.compact.body",
+      "string": "Merges small files into partitions of at most 512 MiB. Nothing is deleted. Replay is paused on partitions it touches.",
+      "sources": {
+        "D04": "\"Merges small files into partitions of at most 512 MiB. Nothing is deleted. Replay is paused on partitions it touches.\""
+      },
+      "cite": "`D04`:544",
+      "provenance": "`new` (`21` :4414, :4417, :4418)",
+      "status": "PROPOSED"
+    },
+    "storage.vacuum.button": {
+      "parent": "D04",
+      "row_id": "storage.vacuum.button",
+      "surface": "SCR-142",
+      "state": "storage.vacuum.button",
+      "string": "Vacuum Postgres…",
+      "sources": {
+        "D04": "\"Vacuum Postgres…\""
+      },
+      "cite": "`D04`:545",
+      "provenance": "`new` (PROPOSED D04-G8)",
+      "status": "PROPOSED"
+    },
+    "storage.vacuum.title": {
+      "parent": "D04",
+      "row_id": "storage.vacuum.title",
+      "surface": "SCR-142",
+      "state": "storage.vacuum.title",
+      "string": "Vacuum Postgres?",
+      "sources": {
+        "D04": "\"Vacuum Postgres?\""
+      },
+      "cite": "`D04`:546",
+      "provenance": "`new` (PROPOSED D04-G8)",
+      "status": "PROPOSED"
+    },
+    "storage.vacuum.body": {
+      "parent": "D04",
+      "row_id": "storage.vacuum.body",
+      "surface": "SCR-142",
+      "state": "storage.vacuum.body",
+      "string": "Reclaims space from deleted rows. Nothing is deleted. Queries may be slower while it runs.",
+      "sources": {
+        "D04": "\"Reclaims space from deleted rows. Nothing is deleted. Queries may be slower while it runs.\""
+      },
+      "cite": "`D04`:547",
+      "provenance": "`new` (PROPOSED D04-G8)",
+      "status": "PROPOSED"
+    },
+    "storage.audited": {
+      "parent": "D04",
+      "row_id": "storage.audited",
+      "surface": "SCR-142",
+      "state": "storage.audited",
+      "string": "This action is audited.",
+      "sources": {
+        "D04": "\"This action is audited.\""
+      },
+      "cite": "`D04`:548",
+      "provenance": "E16-D03 §5 :210",
+      "status": "merged"
+    },
+    "storage.confirm.cancel": {
+      "parent": "D04",
+      "row_id": "storage.confirm.cancel",
+      "surface": "SCR-142",
+      "state": "storage.confirm.cancel",
+      "string": "Cancel",
+      "sources": {
+        "D04": "\"Cancel\""
+      },
+      "cite": "`D04`:549",
+      "provenance": "CMP-044 `15` :473",
+      "status": "merged"
+    },
+    "storage.job.running": {
+      "parent": "D04",
+      "row_id": "storage.job.running",
+      "surface": "SCR-142",
+      "state": "storage.job.running",
+      "string": "{verb} running · {pct} % · Compaction running · 42 % · Import running · 38 %",
+      "sources": {
+        "D04": "\"{verb} running · {pct} %\" · \"Compaction running · 42 %\" · \"Import running · 38 %\""
+      },
+      "cite": "`D04`:550",
+      "provenance": "E16-D03 §8 :262 (the grammar)",
+      "status": "merged"
+    },
+    "storage.job.started": {
+      "parent": "D04",
+      "row_id": "storage.job.started",
+      "surface": "SCR-142",
+      "state": "storage.job.started",
+      "string": "{verb} started · Compaction started · Import started",
+      "sources": {
+        "D04": "\"{verb} started\" · \"Compaction started\" · \"Import started\""
+      },
+      "cite": "`D04`:551",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.job.stop": {
+      "parent": "D04",
+      "row_id": "storage.job.stop",
+      "surface": "SCR-142",
+      "state": "storage.job.stop",
+      "string": "Stop job",
+      "sources": {
+        "D04": "\"Stop job\""
+      },
+      "cite": "`D04`:552",
+      "provenance": "`new` (PROPOSED D04-G10)",
+      "status": "PROPOSED"
+    },
+    "storage.job.refused.running": {
+      "parent": "D04",
+      "row_id": "storage.job.refused.running",
+      "surface": "SCR-142",
+      "state": "storage.job.refused.running",
+      "string": "A {verb} is already running. · A compaction is already running.",
+      "sources": {
+        "D04": "\"A {verb} is already running.\" · \"A compaction is already running.\""
+      },
+      "cite": "`D04`:553",
+      "provenance": "`new` (`22` :14942 `409 job_running`)",
+      "status": "PROPOSED"
+    },
+    "storage.compact.succeeded": {
+      "parent": "D04",
+      "row_id": "storage.compact.succeeded",
+      "surface": "SCR-142",
+      "state": "storage.compact.succeeded",
+      "string": "Compacted at {HH:MM} UTC · Compacted at 10:42 UTC",
+      "sources": {
+        "D04": "\"Compacted at {HH:MM} UTC\" · \"Compacted at 10:42 UTC\""
+      },
+      "cite": "`D04`:554",
+      "provenance": "E16-D02 §3.2 :204",
+      "status": "merged"
+    },
+    "storage.compact.failed": {
+      "parent": "D04",
+      "row_id": "storage.compact.failed",
+      "surface": "SCR-142",
+      "state": "storage.compact.failed",
+      "string": "Compaction failed (`<code>`); nothing was deleted.",
+      "sources": {
+        "D04": "\"Compaction failed (`<code>`); nothing was deleted.\""
+      },
+      "cite": "`D04`:555",
+      "provenance": "E16-D02 §3.2 :203",
+      "status": "merged"
+    },
+    "storage.compact.cancelled": {
+      "parent": "D04",
+      "row_id": "storage.compact.cancelled",
+      "surface": "SCR-142",
+      "state": "storage.compact.cancelled",
+      "string": "Compaction cancelled; nothing was deleted.",
+      "sources": {
+        "D04": "\"Compaction cancelled; nothing was deleted.\""
+      },
+      "cite": "`D04`:556",
+      "provenance": "E16-D02 §3.2 :203 (elided there; completed by D04-A8)",
+      "status": "merged"
+    },
+    "storage.compact.unknown": {
+      "parent": "D04",
+      "row_id": "storage.compact.unknown",
+      "surface": "SCR-142",
+      "state": "storage.compact.unknown",
+      "string": "Compaction status is no longer available on the server.",
+      "sources": {
+        "D04": "\"Compaction status is no longer available on the server.\""
+      },
+      "cite": "`D04`:557",
+      "provenance": "E16-D02 §3.2 :203",
+      "status": "merged"
+    },
+    "storage.vacuum.succeeded": {
+      "parent": "D04",
+      "row_id": "storage.vacuum.succeeded",
+      "surface": "SCR-142",
+      "state": "storage.vacuum.succeeded",
+      "string": "Vacuumed at {HH:MM} UTC",
+      "sources": {
+        "D04": "\"Vacuumed at {HH:MM} UTC\""
+      },
+      "cite": "`D04`:558",
+      "provenance": "`new` (PROPOSED D04-G8)",
+      "status": "PROPOSED"
+    },
+    "storage.vacuum.failed": {
+      "parent": "D04",
+      "row_id": "storage.vacuum.failed",
+      "surface": "SCR-142",
+      "state": "storage.vacuum.failed",
+      "string": "Vacuum failed (`<code>`); nothing was deleted.",
+      "sources": {
+        "D04": "\"Vacuum failed (`<code>`); nothing was deleted.\""
+      },
+      "cite": "`D04`:559",
+      "provenance": "`new` (PROPOSED D04-G8)",
+      "status": "PROPOSED"
+    },
+    "storage.vacuum.cancelled": {
+      "parent": "D04",
+      "row_id": "storage.vacuum.cancelled",
+      "surface": "SCR-142",
+      "state": "storage.vacuum.cancelled",
+      "string": "Vacuum cancelled; nothing was deleted.",
+      "sources": {
+        "D04": "\"Vacuum cancelled; nothing was deleted.\""
+      },
+      "cite": "`D04`:560",
+      "provenance": "`new` (PROPOSED D04-G8)",
+      "status": "PROPOSED"
+    },
+    "storage.vacuum.unknown": {
+      "parent": "D04",
+      "row_id": "storage.vacuum.unknown",
+      "surface": "SCR-142",
+      "state": "storage.vacuum.unknown",
+      "string": "Vacuum status is no longer available on the server.",
+      "sources": {
+        "D04": "\"Vacuum status is no longer available on the server.\""
+      },
+      "cite": "`D04`:561",
+      "provenance": "`new` (PROPOSED D04-G8)",
+      "status": "PROPOSED"
+    },
+    "storage.purge.button": {
+      "parent": "D04",
+      "row_id": "storage.purge.button",
+      "surface": "SCR-142",
+      "state": "storage.purge.button",
+      "string": "Purge data… · Purge…",
+      "sources": {
+        "D04": "\"Purge data…\" · \"Purge…\""
+      },
+      "cite": "`D04`:562",
+      "provenance": "E16-D02 §6.5 :404",
+      "status": "merged"
+    },
+    "storage.purge.title": {
+      "parent": "D04",
+      "row_id": "storage.purge.title",
+      "surface": "SCR-142",
+      "state": "storage.purge.title",
+      "string": "Purge {symbol} data? · Purge ETHUSDT data?",
+      "sources": {
+        "D04": "\"Purge {symbol} data?\" · \"Purge ETHUSDT data?\""
+      },
+      "cite": "`D04`:563",
+      "provenance": "E16-D02 §6.5 :408",
+      "status": "merged"
+    },
+    "storage.purge.body": {
+      "parent": "D04",
+      "row_id": "storage.purge.body",
+      "surface": "SCR-142",
+      "state": "storage.purge.body",
+      "string": "This deletes about {size} recorded from {from} to {to} from QuestDB and Parquet. It cannot be undone, and replay, footprint history and the journal lose this range. Shared QuestDB day partitions are freed by the nightly roll-off.",
+      "sources": {
+        "D04": "\"This deletes about {size} recorded from {from} to {to} from QuestDB and Parquet. It cannot be undone, and replay, footprint history and the journal lose this range. Shared QuestDB day partitions are freed by the nightly roll-off.\""
+      },
+      "cite": "`D04`:564",
+      "provenance": "E16-D02 §6.5 :410–412",
+      "status": "merged",
+      "frozen": "(viii)"
+    },
+    "storage.purge.before": {
+      "parent": "D04",
+      "row_id": "storage.purge.before",
+      "surface": "SCR-142",
+      "state": "storage.purge.before",
+      "string": "Delete data recorded before",
+      "sources": {
+        "D04": "\"Delete data recorded before\""
+      },
+      "cite": "`D04`:565",
+      "provenance": "E16-D02 §6.5 :409 (`22` :15086: `before`, required)",
+      "status": "merged",
+      "frozen": "(ii)"
+    },
+    "storage.purge.before.help": {
+      "parent": "D04",
+      "row_id": "storage.purge.before.help",
+      "surface": "SCR-142",
+      "state": "storage.purge.before.help",
+      "string": "Data recorded at or after this time is kept.",
+      "sources": {
+        "D04": "\"Data recorded at or after this time is kept.\""
+      },
+      "cite": "`D04`:566",
+      "provenance": "`new` (`22` :15053–15054)",
+      "status": "PROPOSED"
+    },
+    "storage.purge.before.reason": {
+      "parent": "D04",
+      "row_id": "storage.purge.before.reason",
+      "surface": "SCR-142",
+      "state": "storage.purge.before.reason",
+      "string": "Choose a time no later than now.",
+      "sources": {
+        "D04": "\"Choose a time no later than now.\""
+      },
+      "cite": "`D04`:567",
+      "provenance": "`new` (`22` :15054–15057 `before_in_future`)",
+      "status": "PROPOSED"
+    },
+    "storage.purge.refused.before": {
+      "parent": "D04",
+      "row_id": "storage.purge.refused.before",
+      "surface": "SCR-142",
+      "state": "storage.purge.refused.before",
+      "string": "Not started: the time is later than the server's ({server_time}). Choose a time at or before it. · Not started: the time is later than the server's (2026-09-14 10:31:03 UTC). Choose a time at or before it.",
+      "sources": {
+        "D04": "\"Not started: the time is later than the server's ({server_time}). Choose a time at or before it.\" · \"Not started: the time is later than the server's (2026-09-14 10:31:03 UTC). Choose a time at or before it.\""
+      },
+      "cite": "`D04`:568",
+      "provenance": "`new` (`22` :15054–15057: `422 validation_failed`, the server's time in `message`)",
+      "status": "PROPOSED"
+    },
+    "storage.purge.typed": {
+      "parent": "D04",
+      "row_id": "storage.purge.typed",
+      "surface": "SCR-142",
+      "state": "storage.purge.typed",
+      "string": "Type the symbol to confirm",
+      "sources": {
+        "D04": "\"Type the symbol to confirm\""
+      },
+      "cite": "`D04`:569",
+      "provenance": "E16-D02 §6.5 :415",
+      "status": "merged",
+      "frozen": "(ii)"
+    },
+    "storage.purge.typed.reason": {
+      "parent": "D04",
+      "row_id": "storage.purge.typed.reason",
+      "surface": "SCR-142",
+      "state": "storage.purge.typed.reason",
+      "string": "Type {symbol} exactly to confirm. · Type ETHUSDT exactly to confirm.",
+      "sources": {
+        "D04": "\"Type {symbol} exactly to confirm.\" · \"Type ETHUSDT exactly to confirm.\""
+      },
+      "cite": "`D04`:570",
+      "provenance": "`new` (the validity reason)",
+      "status": "PROPOSED",
+      "frozen": "(ii)"
+    },
+    "storage.purge.stepup": {
+      "parent": "D04",
+      "row_id": "storage.purge.stepup",
+      "surface": "SCR-142",
+      "state": "storage.purge.stepup",
+      "string": "You'll confirm with your password and a code.",
+      "sources": {
+        "D04": "\"You'll confirm with your password and a code.\""
+      },
+      "cite": "`D04`:571",
+      "provenance": "E16-D02 §6.4 :388",
+      "status": "merged",
+      "frozen": "(iii)"
+    },
+    "storage.purge.stepup.trusted": {
+      "parent": "D04",
+      "row_id": "storage.purge.stepup.trusted",
+      "surface": "SCR-142",
+      "state": "storage.purge.stepup.trusted",
+      "string": "Still trusted for recorder changes · {mm:ss}",
+      "sources": {
+        "D04": "\"Still trusted for recorder changes · {mm:ss}\""
+      },
+      "cite": "`D04`:572",
+      "provenance": "E16-D02 §6.4 :389 (never on purge: `recorder_purge` is no-grace, `22` :12495)",
+      "status": "merged",
+      "frozen": "(iii)"
+    },
+    "storage.purge.audited": {
+      "parent": "D04",
+      "row_id": "storage.purge.audited",
+      "surface": "SCR-142",
+      "state": "storage.purge.audited",
+      "string": "This action is audited (high severity).",
+      "sources": {
+        "D04": "\"This action is audited (high severity).\""
+      },
+      "cite": "`D04`:573",
+      "provenance": "E16-D02 §6.5 :417",
+      "status": "merged",
+      "frozen": "(ii)"
+    },
+    "storage.purge.confirm": {
+      "parent": "D04",
+      "row_id": "storage.purge.confirm",
+      "surface": "SCR-142",
+      "state": "storage.purge.confirm",
+      "string": "Purge {symbol} data · Purge ETHUSDT data",
+      "sources": {
+        "D04": "\"Purge {symbol} data\" · \"Purge ETHUSDT data\""
+      },
+      "cite": "`D04`:574",
+      "provenance": "E16-D02 §6.5 :418",
+      "status": "merged",
+      "frozen": "(ii)"
+    },
+    "storage.purge.refused.pinned": {
+      "parent": "D04",
+      "row_id": "storage.purge.refused.pinned",
+      "surface": "SCR-142",
+      "state": "storage.purge.refused.pinned",
+      "string": "Pinned data is excluded. Tick Include pinned to delete it too.",
+      "sources": {
+        "D04": "\"Pinned data is excluded. Tick Include pinned to delete it too.\""
+      },
+      "cite": "`D04`:575",
+      "provenance": "`new` (`22` :15045)",
+      "status": "PROPOSED"
+    },
+    "storage.purge.refused.audit": {
+      "parent": "D04",
+      "row_id": "storage.purge.refused.audit",
+      "surface": "SCR-142",
+      "state": "storage.purge.refused.audit",
+      "string": "Not started: the audit record could not be written.",
+      "sources": {
+        "D04": "\"Not started: the audit record could not be written.\""
+      },
+      "cite": "`D04`:576",
+      "provenance": "`new` (`22` :15073–15075)",
+      "status": "PROPOSED"
+    },
+    "storage.purge.failed": {
+      "parent": "D04",
+      "row_id": "storage.purge.failed",
+      "surface": "SCR-142",
+      "state": "storage.purge.failed",
+      "string": "Purge of {symbol} failed (`<code>`). Some data may already be deleted: check {symbol}'s size and gaps.",
+      "sources": {
+        "D04": "\"Purge of {symbol} failed (`<code>`). Some data may already be deleted: check {symbol}'s size and gaps.\""
+      },
+      "cite": "`D04`:577",
+      "provenance": "E16-D02 §3.2 :200",
+      "status": "merged"
+    },
+    "storage.purge.cancelled": {
+      "parent": "D04",
+      "row_id": "storage.purge.cancelled",
+      "surface": "SCR-142",
+      "state": "storage.purge.cancelled",
+      "string": "Purge of {symbol} was cancelled. Data deleted before the cancel is gone.",
+      "sources": {
+        "D04": "\"Purge of {symbol} was cancelled. Data deleted before the cancel is gone.\""
+      },
+      "cite": "`D04`:578",
+      "provenance": "E16-D02 §3.2 :201",
+      "status": "merged"
+    },
+    "storage.purge.unknown": {
+      "parent": "D04",
+      "row_id": "storage.purge.unknown",
+      "surface": "SCR-142",
+      "state": "storage.purge.unknown",
+      "string": "The purge's status is no longer available on the server. Check {symbol}'s size and gaps.",
+      "sources": {
+        "D04": "\"The purge's status is no longer available on the server. Check {symbol}'s size and gaps.\""
+      },
+      "cite": "`D04`:579",
+      "provenance": "E16-D02 §3.2 :202",
+      "status": "merged"
+    },
+    "storage.purge.succeeded": {
+      "parent": "D04",
+      "row_id": "storage.purge.succeeded",
+      "surface": "SCR-142",
+      "state": "storage.purge.succeeded",
+      "string": "Purged {size} of {symbol} data · Purged 1.2 GB of ETHUSDT data",
+      "sources": {
+        "D04": "\"Purged {size} of {symbol} data\" · \"Purged 1.2 GB of ETHUSDT data\""
+      },
+      "cite": "`D04`:580",
+      "provenance": "E16-D02 §3.2 :204",
+      "status": "merged"
+    },
+    "storage.import.button": {
+      "parent": "D04",
+      "row_id": "storage.import.button",
+      "surface": "SCR-142",
+      "state": "storage.import.button",
+      "string": "Import archives",
+      "sources": {
+        "D04": "\"Import archives\""
+      },
+      "cite": "`D04`:581",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.import.consequence": {
+      "parent": "D04",
+      "row_id": "storage.import.consequence",
+      "surface": "SCR-142",
+      "state": "storage.import.consequence",
+      "string": "Imports Bybit's public daily trade archives (trades only, no book data). Recorded data wins where they overlap. Re-running skips finished days.",
+      "sources": {
+        "D04": "\"Imports Bybit's public daily trade archives (trades only, no book data). Recorded data wins where they overlap. Re-running skips finished days.\""
+      },
+      "cite": "`D04`:582",
+      "provenance": "`new` (`22` :14981–14986)",
+      "status": "PROPOSED"
+    },
+    "storage.import.tag": {
+      "parent": "D04",
+      "row_id": "storage.import.tag",
+      "surface": "SCR-142",
+      "state": "storage.import.tag",
+      "string": "Archive-derived · trades only · no book data",
+      "sources": {
+        "D04": "\"Archive-derived · trades only · no book data\""
+      },
+      "cite": "`D04`:583",
+      "provenance": "`new` (`22` :14984–14985; US-REC-007 :4226)",
+      "status": "PROPOSED"
+    },
+    "storage.import.range.reason": {
+      "parent": "D04",
+      "row_id": "storage.import.range.reason",
+      "surface": "SCR-142",
+      "state": "storage.import.range.reason",
+      "string": "Choose a range of at most 366 days.",
+      "sources": {
+        "D04": "\"Choose a range of at most 366 days.\""
+      },
+      "cite": "`D04`:584",
+      "provenance": "`new` (`22` :14982)",
+      "status": "PROPOSED"
+    },
+    "storage.import.progress": {
+      "parent": "D04",
+      "row_id": "storage.import.progress",
+      "surface": "SCR-142",
+      "state": "storage.import.progress",
+      "string": "{done} of {n} days · {pct} % · 12 of 31 days · 38 % · 30 of 31 days · 96 %",
+      "sources": {
+        "D04": "\"{done} of {n} days · {pct} %\" · \"12 of 31 days · 38 %\" · \"30 of 31 days · 96 %\""
+      },
+      "cite": "`D04`:585",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.import.skipped_count": {
+      "parent": "D04",
+      "row_id": "storage.import.skipped_count",
+      "surface": "SCR-142",
+      "state": "storage.import.skipped_count",
+      "string": "{k} skipped · 1 skipped",
+      "sources": {
+        "D04": "\"{k} skipped\" · \"1 skipped\""
+      },
+      "cite": "`D04`:586",
+      "provenance": "`new` (PROPOSED D04-G11)",
+      "status": "PROPOSED"
+    },
+    "storage.import.finished": {
+      "parent": "D04",
+      "row_id": "storage.import.finished",
+      "surface": "SCR-142",
+      "state": "storage.import.finished",
+      "string": "Import finished: {symbol}, {from} → {to} · Import finished: BTCUSDT, 2026-01-01 → 2026-01-31",
+      "sources": {
+        "D04": "\"Import finished: {symbol}, {from} → {to}\" · \"Import finished: BTCUSDT, 2026-01-01 → 2026-01-31\""
+      },
+      "cite": "`D04`:587",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.import.columns": {
+      "parent": "D04",
+      "row_id": "storage.import.columns",
+      "surface": "SCR-142",
+      "state": "storage.import.columns",
+      "string": "Day · Status · Reason · Rows",
+      "sources": {
+        "D04": "\"Day\" · \"Status\" · \"Reason\" · \"Rows\""
+      },
+      "cite": "`D04`:588",
+      "provenance": "`new` (PROPOSED D04-G11)",
+      "status": "PROPOSED"
+    },
+    "storage.import.status": {
+      "parent": "D04",
+      "row_id": "storage.import.status",
+      "surface": "SCR-142",
+      "state": "storage.import.status",
+      "string": "done · skipped · error · downloading",
+      "sources": {
+        "D04": "\"done\" · \"skipped\" · \"error\" · \"downloading\""
+      },
+      "cite": "`D04`:589",
+      "provenance": "`new` (PROPOSED D04-G11)",
+      "status": "PROPOSED"
+    },
+    "storage.import.reason.checksum": {
+      "parent": "D04",
+      "row_id": "storage.import.reason.checksum",
+      "surface": "SCR-142",
+      "state": "storage.import.reason.checksum",
+      "string": "Checksum did not match; the file was skipped.",
+      "sources": {
+        "D04": "\"Checksum did not match; the file was skipped.\""
+      },
+      "cite": "`D04`:590",
+      "provenance": "`new` (`checksum_mismatch`, `22` :11809)",
+      "status": "PROPOSED"
+    },
+    "storage.import.reason.parse": {
+      "parent": "D04",
+      "row_id": "storage.import.reason.parse",
+      "surface": "SCR-142",
+      "state": "storage.import.reason.parse",
+      "string": "The file could not be read; it was skipped.",
+      "sources": {
+        "D04": "\"The file could not be read; it was skipped.\""
+      },
+      "cite": "`D04`:591",
+      "provenance": "`new` (`parse_error`; PROPOSED D04-G11)",
+      "status": "PROPOSED"
+    },
+    "storage.import.reason.download": {
+      "parent": "D04",
+      "row_id": "storage.import.reason.download",
+      "surface": "SCR-142",
+      "state": "storage.import.reason.download",
+      "string": "The file could not be downloaded; run the import again to retry it.",
+      "sources": {
+        "D04": "\"The file could not be downloaded; run the import again to retry it.\""
+      },
+      "cite": "`D04`:592",
+      "provenance": "`new` (`download_failed`)",
+      "status": "PROPOSED"
+    },
+    "storage.import.reason.already": {
+      "parent": "D04",
+      "row_id": "storage.import.reason.already",
+      "surface": "SCR-142",
+      "state": "storage.import.reason.already",
+      "string": "Already imported on an earlier run.",
+      "sources": {
+        "D04": "\"Already imported on an earlier run.\""
+      },
+      "cite": "`D04`:593",
+      "provenance": "`new` (`already_imported`; PROPOSED D04-G11; `22` :14985–14986)",
+      "status": "PROPOSED"
+    },
+    "storage.import.overlap": {
+      "parent": "D04",
+      "row_id": "storage.import.overlap",
+      "surface": "SCR-142",
+      "state": "storage.import.overlap",
+      "string": "{rows} rows inside recorded windows were discarded — recorded data wins. · 660,000 rows inside recorded windows were discarded — recorded data wins.",
+      "sources": {
+        "D04": "\"{rows} rows inside recorded windows were discarded — recorded data wins.\" · \"660,000 rows inside recorded windows were discarded — recorded data wins.\""
+      },
+      "cite": "`D04`:594",
+      "provenance": "`new` (PROPOSED D04-G11; `22` :14983–14984; US-REC-007 :4220)",
+      "status": "PROPOSED"
+    },
+    "storage.import.summary": {
+      "parent": "D04",
+      "row_id": "storage.import.summary",
+      "surface": "SCR-142",
+      "state": "storage.import.summary",
+      "string": "Imported {days} days of {symbol} trades · {k} file skipped · {e} file failed · {rows} overlapping rows discarded · Imported 29 days of BTCUSDT trades · 1 file skipped · 1 file failed · 660,000 overlapping rows discarded",
+      "sources": {
+        "D04": "\"Imported {days} days of {symbol} trades · {k} file skipped · {e} file failed · {rows} overlapping rows discarded\" · \"Imported 29 days of BTCUSDT trades · 1 file skipped · 1 file failed · 660,000 overlapping rows discarded\""
+      },
+      "cite": "`D04`:595",
+      "provenance": "`new` (PROPOSED D04-G11)",
+      "status": "PROPOSED"
+    },
+    "storage.import.failed": {
+      "parent": "D04",
+      "row_id": "storage.import.failed",
+      "surface": "SCR-142",
+      "state": "storage.import.failed",
+      "string": "Import failed ({code}). Finished days are kept; run it again to resume. · Import failed (download_failed). Finished days are kept; run it again to resume.",
+      "sources": {
+        "D04": "\"Import failed ({code}). Finished days are kept; run it again to resume.\" · \"Import failed (download_failed). Finished days are kept; run it again to resume.\""
+      },
+      "cite": "`D04`:596",
+      "provenance": "`new` (`22` :14985–14986)",
+      "status": "PROPOSED"
+    },
+    "storage.import.cancelled": {
+      "parent": "D04",
+      "row_id": "storage.import.cancelled",
+      "surface": "SCR-142",
+      "state": "storage.import.cancelled",
+      "string": "Import cancelled. Finished days are kept.",
+      "sources": {
+        "D04": "\"Import cancelled. Finished days are kept.\""
+      },
+      "cite": "`D04`:597",
+      "provenance": "`new` (PROPOSED D04-G10)",
+      "status": "PROPOSED"
+    },
+    "storage.import.unknown": {
+      "parent": "D04",
+      "row_id": "storage.import.unknown",
+      "surface": "SCR-142",
+      "state": "storage.import.unknown",
+      "string": "The import's status is no longer available on the server. Run it again: finished days are skipped.",
+      "sources": {
+        "D04": "\"The import's status is no longer available on the server. Run it again: finished days are skipped.\""
+      },
+      "cite": "`D04`:598",
+      "provenance": "`new`",
+      "status": "PROPOSED"
+    },
+    "storage.import.resume": {
+      "parent": "D04",
+      "row_id": "storage.import.resume",
+      "surface": "SCR-142",
+      "state": "storage.import.resume",
+      "string": "Run it again to resume: finished days are skipped.",
+      "sources": {
+        "D04": "\"Run it again to resume: finished days are skipped.\""
+      },
+      "cite": "`D04`:599",
+      "provenance": "`new` (`22` :14985–14986)",
+      "status": "PROPOSED"
+    },
+    "storage.links.storage_details": {
+      "parent": "D04",
+      "row_id": "storage.links.storage_details",
+      "surface": "SCR-142",
+      "state": "storage.links.storage_details",
+      "string": "Storage details →",
+      "sources": {
+        "D04": "\"Storage details →\""
+      },
+      "cite": "`D04`:600",
+      "provenance": "`new` (D04-A4; on SCR-140's card)",
+      "status": "PROPOSED"
+    },
+    "storage.links.health": {
+      "parent": "D04",
+      "row_id": "storage.links.health",
+      "surface": "SCR-142",
+      "state": "storage.links.health",
+      "string": "System health →",
+      "sources": {
+        "D04": "\"System health →\""
+      },
+      "cite": "`D04`:601",
+      "provenance": "`new` (the CMP-178 tile to SCR-143)",
+      "status": "PROPOSED"
+    },
+    "empty.heading.history_starts": {
+      "parent": "D05",
+      "row_id": "empty.heading.history_starts",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.heading.history_starts",
+      "string": "History starts {ts} — recording began then. · History starts 2026-09-01 00:00 UTC — recording began then.",
+      "sources": {
+        "D05": "\"History starts {ts} — recording began then.\" · \"History starts 2026-09-01 00:00 UTC — recording began then.\""
+      },
+      "cite": "`D05`:417",
+      "provenance": "`14` :83 (E11-D04 O-7 RULED)",
+      "status": "merged"
+    },
+    "empty.heading.not_recorded": {
+      "parent": "D05",
+      "row_id": "empty.heading.not_recorded",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.heading.not_recorded",
+      "string": "History starts when you record {symbol} — recording has not begun yet.",
+      "sources": {
+        "D05": "\"History starts when you record {symbol} — recording has not begun yet.\""
+      },
+      "cite": "`D05`:418",
+      "provenance": "E11-D04 :919 (C-4), :798",
+      "status": "merged"
+    },
+    "empty.heading.no_bars_between": {
+      "parent": "D05",
+      "row_id": "empty.heading.no_bars_between",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.heading.no_bars_between",
+      "string": "No bars for {symbol} {interval} between {from} and {to} UTC. · No bars for BTCUSDT 1m between 02:11 and 02:14 UTC.",
+      "sources": {
+        "D05": "\"No bars for {symbol} {interval} between {from} and {to} UTC.\" · \"No bars for BTCUSDT 1m between 02:11 and 02:14 UTC.\""
+      },
+      "cite": "`D05`:419",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.heading.no_bars_window": {
+      "parent": "D05",
+      "row_id": "empty.heading.no_bars_window",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.heading.no_bars_window",
+      "string": "No bars for {symbol} {interval} in this window.",
+      "sources": {
+        "D05": "\"No bars for {symbol} {interval} in this window.\""
+      },
+      "cite": "`D05`:420",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "empty.heading.retention_trimmed": {
+      "parent": "D05",
+      "row_id": "empty.heading.retention_trimmed",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.heading.retention_trimmed",
+      "string": "{symbol} history before {date} was removed by the retention policy. · BTCUSDT history before 2026-09-14 was removed by the retention policy.",
+      "sources": {
+        "D05": "\"{symbol} history before {date} was removed by the retention policy.\" · \"BTCUSDT history before 2026-09-14 was removed by the retention policy.\""
+      },
+      "cite": "`D05`:421",
+      "provenance": "new (D05-D4)",
+      "status": "PROPOSED"
+    },
+    "empty.heading.not_trading": {
+      "parent": "D05",
+      "row_id": "empty.heading.not_trading",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.heading.not_trading",
+      "string": "{symbol} is not trading on Bybit. · BTCUSDT is not trading on Bybit.",
+      "sources": {
+        "D05": "\"{symbol} is not trading on Bybit.\" · \"BTCUSDT is not trading on Bybit.\""
+      },
+      "cite": "`D05`:422",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.heading.no_history_here": {
+      "parent": "D05",
+      "row_id": "empty.heading.no_history_here",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.heading.no_history_here",
+      "string": "No history is available for {symbol} here.",
+      "sources": {
+        "D05": "\"No history is available for {symbol} here.\""
+      },
+      "cite": "`D05`:423",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "empty.cause.recorded_only": {
+      "parent": "D05",
+      "row_id": "empty.cause.recorded_only",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.cause.recorded_only",
+      "string": "Nothing is missing or broken: CandleViewer keeps only what it records.",
+      "sources": {
+        "D05": "\"Nothing is missing or broken: CandleViewer keeps only what it records.\""
+      },
+      "cite": "`D05`:424",
+      "provenance": "new (BQ-16 RULED; replaces E11-D04 :798's cause)",
+      "status": "PROPOSED"
+    },
+    "empty.gap.ws_disconnect": {
+      "parent": "D05",
+      "row_id": "empty.gap.ws_disconnect",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.gap.ws_disconnect",
+      "string": "Recording was interrupted (connection to the exchange lost).",
+      "sources": {
+        "D05": "\"Recording was interrupted (connection to the exchange lost).\""
+      },
+      "cite": "`D05`:425",
+      "provenance": "new (E11-D04 :798 \"connection lost\" extended)",
+      "status": "PROPOSED"
+    },
+    "empty.gap.backend_restart": {
+      "parent": "D05",
+      "row_id": "empty.gap.backend_restart",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.gap.backend_restart",
+      "string": "Recording was interrupted (CandleViewer restarted).",
+      "sources": {
+        "D05": "\"Recording was interrupted (CandleViewer restarted).\""
+      },
+      "cite": "`D05`:426",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.gap.exchange_outage": {
+      "parent": "D05",
+      "row_id": "empty.gap.exchange_outage",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.gap.exchange_outage",
+      "string": "Recording was interrupted (exchange outage).",
+      "sources": {
+        "D05": "\"Recording was interrupted (exchange outage).\""
+      },
+      "cite": "`D05`:427",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.gap.backpressure_drop": {
+      "parent": "D05",
+      "row_id": "empty.gap.backpressure_drop",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.gap.backpressure_drop",
+      "string": "Recording dropped data while the disk was under pressure.",
+      "sources": {
+        "D05": "\"Recording dropped data while the disk was under pressure.\""
+      },
+      "cite": "`D05`:428",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "empty.gap.seq_jump": {
+      "parent": "D05",
+      "row_id": "empty.gap.seq_jump",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.gap.seq_jump",
+      "string": "Recording lost order-book updates (sequence gap).",
+      "sources": {
+        "D05": "\"Recording lost order-book updates (sequence gap).\""
+      },
+      "cite": "`D05`:429",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "empty.gap.retention_purge": {
+      "parent": "D05",
+      "row_id": "empty.gap.retention_purge",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.gap.retention_purge",
+      "string": "Older data was removed by the retention policy ({N} days). · Older data was removed by the retention policy (30 days).",
+      "sources": {
+        "D05": "\"Older data was removed by the retention policy ({N} days).\" · \"Older data was removed by the retention policy (30 days).\""
+      },
+      "cite": "`D05`:430",
+      "provenance": "E11-D04 :798; E16-D01 :222",
+      "status": "merged"
+    },
+    "empty.gap.unknown": {
+      "parent": "D05",
+      "row_id": "empty.gap.unknown",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.gap.unknown",
+      "string": "Recording gap.",
+      "sources": {
+        "D05": "\"Recording gap.\""
+      },
+      "cite": "`D05`:431",
+      "provenance": "new (E16-D02 :134)",
+      "status": "PROPOSED"
+    },
+    "empty.gap.no_trades": {
+      "parent": "D05",
+      "row_id": "empty.gap.no_trades",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.gap.no_trades",
+      "string": "No trades were recorded in this window.",
+      "sources": {
+        "D05": "\"No trades were recorded in this window.\""
+      },
+      "cite": "`D05`:432",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.cause.interval_too_fine": {
+      "parent": "D05",
+      "row_id": "empty.cause.interval_too_fine",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.cause.interval_too_fine",
+      "string": "No {interval} bars fit this window — pick a coarser interval.",
+      "sources": {
+        "D05": "\"No {interval} bars fit this window — pick a coarser interval.\""
+      },
+      "cite": "`D05`:433",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "empty.cause.not_trading_status": {
+      "parent": "D05",
+      "row_id": "empty.cause.not_trading_status",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.cause.not_trading_status",
+      "string": "Status: Closed. · Status: Delivering. · Not trading yet — status: Pre-launch. · No live data will arrive.",
+      "sources": {
+        "D05": "\"Status: Closed.\" · \"Status: Delivering.\" · \"Not trading yet — status: Pre-launch.\" · \"No live data will arrive.\""
+      },
+      "cite": "`D05`:434",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.status.restricted": {
+      "parent": "D05",
+      "row_id": "empty.status.restricted",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.status.restricted",
+      "string": "Recording status restricted",
+      "sources": {
+        "D05": "\"Recording status restricted\""
+      },
+      "cite": "`D05`:435",
+      "provenance": "E16-D02 :340",
+      "status": "merged",
+      "frozen": "(vii)"
+    },
+    "rbac.owner_only": {
+      "parent": "D05",
+      "row_id": "rbac.owner_only",
+      "surface": "SCR-047 / SCR-151",
+      "state": "rbac.owner_only",
+      "string": "Only the owner can change recording.",
+      "sources": {
+        "D05": "\"Only the owner can change recording.\""
+      },
+      "cite": "`D05`:436",
+      "provenance": "E09-D09 :85, :108; E16-D02 :326 (BQ-8 RULED)",
+      "status": "merged",
+      "frozen": "(vi)"
+    },
+    "empty.cta.record": {
+      "parent": "D05",
+      "row_id": "empty.cta.record",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.cta.record",
+      "string": "`Record this symbol`",
+      "sources": {
+        "D05": "`Record this symbol`"
+      },
+      "cite": "`D05`:438",
+      "provenance": "E11-D04 :798; `14` :1074",
+      "status": "merged"
+    },
+    "empty.cta.record_now": {
+      "parent": "D05",
+      "row_id": "empty.cta.record_now",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.cta.record_now",
+      "string": "`Record now`",
+      "sources": {
+        "D05": "`Record now`"
+      },
+      "cite": "`D05`:439",
+      "provenance": "E12-D02 :313",
+      "status": "merged"
+    },
+    "empty.cta.go_recorded": {
+      "parent": "D05",
+      "row_id": "empty.cta.go_recorded",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.cta.go_recorded",
+      "string": "`Go to recorded history`",
+      "sources": {
+        "D05": "`Go to recorded history`"
+      },
+      "cite": "`D05`:440",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.cta.go_latest": {
+      "parent": "D05",
+      "row_id": "empty.cta.go_latest",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.cta.go_latest",
+      "string": "`Go to latest`",
+      "sources": {
+        "D05": "`Go to latest`"
+      },
+      "cite": "`D05`:441",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.cta.open_symbol": {
+      "parent": "D05",
+      "row_id": "empty.cta.open_symbol",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.cta.open_symbol",
+      "string": "`Open symbol info`",
+      "sources": {
+        "D05": "`Open symbol info`"
+      },
+      "cite": "`D05`:442",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.link.learn_more": {
+      "parent": "D05",
+      "row_id": "empty.link.learn_more",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.link.learn_more",
+      "string": "`Learn more`",
+      "sources": {
+        "D05": "`Learn more`"
+      },
+      "cite": "`D05`:443",
+      "provenance": "E11-D04 :798; `14` :1074",
+      "status": "merged"
+    },
+    "empty.link.show_coverage": {
+      "parent": "D05",
+      "row_id": "empty.link.show_coverage",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.link.show_coverage",
+      "string": "`Show coverage`",
+      "sources": {
+        "D05": "`Show coverage`"
+      },
+      "cite": "`D05`:444",
+      "provenance": "E11-D04 :798; `14` :2233",
+      "status": "merged"
+    },
+    "empty.link.switch_symbol": {
+      "parent": "D05",
+      "row_id": "empty.link.switch_symbol",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.link.switch_symbol",
+      "string": "`Switch symbol`",
+      "sources": {
+        "D05": "`Switch symbol`"
+      },
+      "cite": "`D05`:445",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "empty.link.switch_time_bars": {
+      "parent": "D05",
+      "row_id": "empty.link.switch_time_bars",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.link.switch_time_bars",
+      "string": "`Switch to time bars`",
+      "sources": {
+        "D05": "`Switch to time bars`"
+      },
+      "cite": "`D05`:446",
+      "provenance": "E12-D02 :313–314",
+      "status": "merged"
+    },
+    "empty.link.manage_symbols": {
+      "parent": "D05",
+      "row_id": "empty.link.manage_symbols",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.link.manage_symbols",
+      "string": "`Manage recorded symbols`",
+      "sources": {
+        "D05": "`Manage recorded symbols`"
+      },
+      "cite": "`D05`:447",
+      "provenance": "E12-D02 :314",
+      "status": "merged"
+    },
+    "empty.link.retention_policy": {
+      "parent": "D05",
+      "row_id": "empty.link.retention_policy",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.link.retention_policy",
+      "string": "`Retention policy`",
+      "sources": {
+        "D05": "`Retention policy`"
+      },
+      "cite": "`D05`:448",
+      "provenance": "new (D05-D4)",
+      "status": "PROPOSED"
+    },
+    "empty.live.now": {
+      "parent": "D05",
+      "row_id": "empty.live.now",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.live.now",
+      "string": "Live data is streaming now.",
+      "sources": {
+        "D05": "\"Live data is streaming now.\""
+      },
+      "cite": "`D05`:449",
+      "provenance": "E11-D04 :798, :351",
+      "status": "merged"
+    },
+    "empty.live.reduced": {
+      "parent": "D05",
+      "row_id": "empty.live.reduced",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.live.reduced",
+      "string": "Live data is streaming at a reduced rate.",
+      "sources": {
+        "D05": "\"Live data is streaming at a reduced rate.\""
+      },
+      "cite": "`D05`:450",
+      "provenance": "E11-D04 :798, :351",
+      "status": "merged"
+    },
+    "empty.live.resume": {
+      "parent": "D05",
+      "row_id": "empty.live.resume",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.live.resume",
+      "string": "Live data will resume when the connection returns.",
+      "sources": {
+        "D05": "\"Live data will resume when the connection returns.\""
+      },
+      "cite": "`D05`:451",
+      "provenance": "E11-D04 :798, :351 (SCR-152's copy)",
+      "status": "merged"
+    },
+    "empty.autorecord.countdown": {
+      "parent": "D05",
+      "row_id": "empty.autorecord.countdown",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.autorecord.countdown",
+      "string": "Recording starts automatically in 0:42",
+      "sources": {
+        "D05": "\"Recording starts automatically in 0:42\""
+      },
+      "cite": "`D05`:452",
+      "provenance": "E12-D02 :313",
+      "status": "merged"
+    },
+    "empty.outcome.started": {
+      "parent": "D05",
+      "row_id": "empty.outcome.started",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.outcome.started",
+      "string": "Recording started {time} UTC · Recording started 10:22 UTC",
+      "sources": {
+        "D05": "\"Recording started {time} UTC\" · \"Recording started 10:22 UTC\""
+      },
+      "cite": "`D05`:453",
+      "provenance": "E12-D02 :313",
+      "status": "merged"
+    },
+    "empty.refused.symbol_cap": {
+      "parent": "D05",
+      "row_id": "empty.refused.symbol_cap",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.refused.symbol_cap",
+      "string": "Recording has not started: the 20-symbol limit is reached",
+      "sources": {
+        "D05": "\"Recording has not started: the 20-symbol limit is reached\""
+      },
+      "cite": "`D05`:454",
+      "provenance": "E12-D02 :314",
+      "status": "merged"
+    },
+    "empty.refused.disk_pressure": {
+      "parent": "D05",
+      "row_id": "empty.refused.disk_pressure",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.refused.disk_pressure",
+      "string": "Recording has not started: the disk is nearly full",
+      "sources": {
+        "D05": "\"Recording has not started: the disk is nearly full\""
+      },
+      "cite": "`D05`:455",
+      "provenance": "E12-D02 :314",
+      "status": "merged"
+    },
+    "empty.mirror.root": {
+      "parent": "D05",
+      "row_id": "empty.mirror.root",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.mirror.root",
+      "string": "{symbol}, 1 minute — no bars · BTCUSDT, 1 minute — no bars",
+      "sources": {
+        "D05": "\"{symbol}, 1 minute — no bars\" · \"BTCUSDT, 1 minute — no bars\""
+      },
+      "cite": "`D05`:456",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
+    },
+    "chip.partial": {
+      "parent": "D05",
+      "row_id": "chip.partial",
+      "surface": "SCR-047 / SCR-151",
+      "state": "chip.partial",
+      "string": "Partial: {n} of {m} requested days recorded · Partial: 13 of 14 requested days recorded",
+      "sources": {
+        "D05": "\"Partial: {n} of {m} requested days recorded\" · \"Partial: 13 of 14 requested days recorded\""
+      },
+      "cite": "`D05`:457",
+      "provenance": "new (`14` :963 without \"only\", D05-C9)",
+      "status": "PROPOSED"
+    },
+    "chip.partial.missing": {
+      "parent": "D05",
+      "row_id": "chip.partial.missing",
+      "surface": "SCR-047 / SCR-151",
+      "state": "chip.partial.missing",
+      "string": "Missing: {range} ({cause}); … · Missing: 2026-09-04 02:11–02:14 UTC (connection lost).",
+      "sources": {
+        "D05": "\"Missing: {range} ({cause}); …\" · \"Missing: 2026-09-04 02:11–02:14 UTC (connection lost).\""
+      },
+      "cite": "`D05`:458",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "profile.gaps_excluded": {
+      "parent": "D05",
+      "row_id": "profile.gaps_excluded",
+      "surface": "SCR-047 / SCR-151",
+      "state": "profile.gaps_excluded",
+      "string": "Gaps excluded: {k} ranges, {duration} · Gaps excluded: 1 range, 3 min 20 s",
+      "sources": {
+        "D05": "\"Gaps excluded: {k} ranges, {duration}\" · \"Gaps excluded: 1 range, 3 min 20 s\""
+      },
+      "cite": "`D05`:459",
+      "provenance": "new (D05-D8)",
+      "status": "PROPOSED"
+    },
+    "gap.tooltip.title": {
+      "parent": "D05",
+      "row_id": "gap.tooltip.title",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.tooltip.title",
+      "string": "Recording gap · Removed by retention",
+      "sources": {
+        "D05": "\"Recording gap\" · \"Removed by retention\""
+      },
+      "cite": "`D05`:460",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "gap.tooltip.range": {
+      "parent": "D05",
+      "row_id": "gap.tooltip.range",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.tooltip.range",
+      "string": "{date} {from} → {to} UTC · {duration} · 2026-09-04 02:11 → 02:23 UTC · 12 min · 2026-09-04 02:11 → 02:14 UTC · 3 min 20 s",
+      "sources": {
+        "D05": "\"{date} {from} → {to} UTC · {duration}\" · \"2026-09-04 02:11 → 02:23 UTC · 12 min\" (the AC 2 band, board 06) · \"2026-09-04 02:11 → 02:14 UTC · 3 min 20 s\" (the `22` fixture gap, SCR-103)"
+      },
+      "cite": "`D05`:461",
+      "provenance": "new (D05-D7)",
+      "status": "PROPOSED"
+    },
+    "gap.tooltip.backfilled": {
+      "parent": "D05",
+      "row_id": "gap.tooltip.backfilled",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.tooltip.backfilled",
+      "string": "Bars from exchange klines; order flow missing.",
+      "sources": {
+        "D05": "\"Bars from exchange klines; order flow missing.\""
+      },
+      "cite": "`D05`:462",
+      "provenance": "new (PROPOSED until D05-G1)",
+      "status": "PROPOSED"
+    },
+    "gap.band.label": {
+      "parent": "D05",
+      "row_id": "gap.band.label",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.band.label",
+      "string": "Not recorded {from}–{to} UTC: {short cause} · Not recorded 02:11–02:23 UTC: connection lost",
+      "sources": {
+        "D05": "\"Not recorded {from}–{to} UTC: {short cause}\" · \"Not recorded 02:11–02:23 UTC: connection lost\""
+      },
+      "cite": "`D05`:463",
+      "provenance": "E12-D02 :276's form + the cause (new; D05-C13)",
+      "status": "PROPOSED"
+    },
+    "gap.band.kline_hole": {
+      "parent": "D05",
+      "row_id": "gap.band.kline_hole",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.band.kline_hole",
+      "string": "No bars for {from}–{to} UTC",
+      "sources": {
+        "D05": "\"No bars for {from}–{to} UTC\""
+      },
+      "cite": "`D05`:464",
+      "provenance": "E12-D02 :276",
+      "status": "merged"
+    },
+    "gap.axis.tag": {
+      "parent": "D05",
+      "row_id": "gap.axis.tag",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.axis.tag",
+      "string": "{from}–{to} gap · 02:11–02:23 gap",
+      "sources": {
+        "D05": "\"{from}–{to} gap\" · \"02:11–02:23 gap\""
+      },
+      "cite": "`D05`:465",
+      "provenance": "new (D05-A4)",
+      "status": "PROPOSED"
+    },
+    "gap.seam.label": {
+      "parent": "D05",
+      "row_id": "gap.seam.label",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.seam.label",
+      "string": "Recording gap {from}–{to} UTC · Series restarted {time} UTC",
+      "sources": {
+        "D05": "\"Recording gap {from}–{to} UTC\" · \"Series restarted {time} UTC\""
+      },
+      "cite": "`D05`:466",
+      "provenance": "E12-D02 :276",
+      "status": "merged"
+    },
+    "gap.cursor": {
+      "parent": "D05",
+      "row_id": "gap.cursor",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.cursor",
+      "string": "after a recording gap {from}–{to} UTC · after a recording gap 02:11–02:23 UTC",
+      "sources": {
+        "D05": "\"after a recording gap {from}–{to} UTC\" · \"after a recording gap 02:11–02:23 UTC\""
+      },
+      "cite": "`D05`:467",
+      "provenance": "E12-D02 :291",
+      "status": "merged"
+    },
+    "gap.table.row": {
+      "parent": "D05",
+      "row_id": "gap.table.row",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.table.row",
+      "string": "Recording gap {from}–{to} UTC · {duration} · {short cause} · Recording gap 02:11–02:23 UTC · 12 min · connection lost",
+      "sources": {
+        "D05": "\"Recording gap {from}–{to} UTC · {duration} · {short cause}\" · \"Recording gap 02:11–02:23 UTC · 12 min · connection lost\""
+      },
+      "cite": "`D05`:468",
+      "provenance": "new (E11-D04 D11's row, the words)",
+      "status": "PROPOSED"
+    },
+    "gap.table.retention": {
+      "parent": "D05",
+      "row_id": "gap.table.retention",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.table.retention",
+      "string": "Removed by retention before {date} · {N}-day policy · Removed by retention before 2026-09-14 · 30-day policy",
+      "sources": {
+        "D05": "\"Removed by retention before {date} · {N}-day policy\" · \"Removed by retention before 2026-09-14 · 30-day policy\""
+      },
+      "cite": "`D05`:469",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "gap.legend.row": {
+      "parent": "D05",
+      "row_id": "gap.legend.row",
+      "surface": "SCR-047 / SCR-151",
+      "state": "gap.legend.row",
+      "string": "Recording gap · Removed by retention",
+      "sources": {
+        "D05": "\"Recording gap\" · \"Removed by retention\""
+      },
+      "cite": "`D05`:470",
+      "provenance": "new (D05-A5)",
+      "status": "PROPOSED"
+    },
+    "confidence.gapped": {
+      "parent": "D05",
+      "row_id": "confidence.gapped",
+      "surface": "SCR-047 / SCR-151",
+      "state": "confidence.gapped",
+      "string": "Reconstructed after gap",
+      "sources": {
+        "D05": "\"Reconstructed after gap\""
+      },
+      "cite": "`D05`:471",
+      "provenance": "E08-D04 :46",
+      "status": "merged"
+    },
+    "confidence.backfilling": {
+      "parent": "D05",
+      "row_id": "confidence.backfilling",
+      "surface": "SCR-047 / SCR-151",
+      "state": "confidence.backfilling",
+      "string": "Loading history…",
+      "sources": {
+        "D05": "\"Loading history…\""
+      },
+      "cite": "`D05`:472",
+      "provenance": "E08-D04 :47",
+      "status": "merged"
+    },
+    "empty.outcome.loaded": {
+      "parent": "D05",
+      "row_id": "empty.outcome.loaded",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.outcome.loaded",
+      "string": "History loaded",
+      "sources": {
+        "D05": "\"History loaded\""
+      },
+      "cite": "`D05`:473",
+      "provenance": "new",
+      "status": "PROPOSED"
+    },
+    "empty.announce.enter": {
+      "parent": "D05",
+      "row_id": "empty.announce.enter",
+      "surface": "SCR-047 / SCR-151",
+      "state": "empty.announce.enter",
+      "string": "{heading} {cause}",
+      "sources": {
+        "D05": "\"{heading} {cause}\""
+      },
+      "cite": "`D05`:474",
+      "provenance": "new (D05-D15)",
+      "status": "PROPOSED"
+    },
+    "strip.order_flow_from": {
+      "parent": "D05",
+      "row_id": "strip.order_flow_from",
+      "surface": "SCR-047 / SCR-151",
+      "state": "strip.order_flow_from",
+      "string": "Order flow from {ts}; earlier bars come from exchange klines · Order flow from 2026-09-01 00:00 UTC; earlier bars come from exchange klines",
+      "sources": {
+        "D05": "\"Order flow from {ts}; earlier bars come from exchange klines\" · \"Order flow from 2026-09-01 00:00 UTC; earlier bars come from exchange klines\""
+      },
+      "cite": "`D05`:475",
+      "provenance": "E12-D02 :272",
+      "status": "merged"
+    },
+    "classes.created.heading": {
+      "parent": "D05",
+      "row_id": "classes.created.heading",
+      "surface": "SCR-047 / SCR-151",
+      "state": "classes.created.heading",
+      "string": "No workspaces yet · No symbols on this watchlist",
+      "sources": {
+        "D05": "\"No workspaces yet\" · \"No symbols on this watchlist\""
+      },
+      "cite": "`D05`:476",
+      "provenance": "E10-D03 :270; E08-D07 :105",
+      "status": "merged"
+    },
+    "classes.created.cause": {
+      "parent": "D05",
+      "row_id": "classes.created.cause",
+      "surface": "SCR-047 / SCR-151",
+      "state": "classes.created.cause",
+      "string": "You haven't created a workspace yet.",
+      "sources": {
+        "D05": "\"You haven't created a workspace yet.\""
+      },
+      "cite": "`D05`:477",
+      "provenance": "new (PROPOSED exemplar)",
+      "status": "PROPOSED"
+    },
+    "classes.created.cta": {
+      "parent": "D05",
+      "row_id": "classes.created.cta",
+      "surface": "SCR-047 / SCR-151",
+      "state": "classes.created.cta",
+      "string": "`Create a workspace` · `Add symbols to watch`",
+      "sources": {
+        "D05": "`Create a workspace` · `Add symbols to watch`"
+      },
+      "cite": "`D05`:478",
+      "provenance": "E10-D03 :270; E08-D07 :105",
+      "status": "merged"
+    },
+    "classes.filter.heading": {
+      "parent": "D05",
+      "row_id": "classes.filter.heading",
+      "surface": "SCR-047 / SCR-151",
+      "state": "classes.filter.heading",
+      "string": "No symbols match these filters",
+      "sources": {
+        "D05": "\"No symbols match these filters\""
+      },
+      "cite": "`D05`:479",
+      "provenance": "new (PROPOSED exemplar)",
+      "status": "PROPOSED"
+    },
+    "classes.filter.cause": {
+      "parent": "D05",
+      "row_id": "classes.filter.cause",
+      "surface": "SCR-047 / SCR-151",
+      "state": "classes.filter.cause",
+      "string": "Widen or clear a filter to see symbols.",
+      "sources": {
+        "D05": "\"Widen or clear a filter to see symbols.\""
+      },
+      "cite": "`D05`:480",
+      "provenance": "new (PROPOSED exemplar)",
+      "status": "PROPOSED"
+    },
+    "classes.filter.cta": {
+      "parent": "D05",
+      "row_id": "classes.filter.cta",
+      "surface": "SCR-047 / SCR-151",
+      "state": "classes.filter.cta",
+      "string": "`Clear filters`",
+      "sources": {
+        "D05": "`Clear filters`"
+      },
+      "cite": "`D05`:481",
+      "provenance": "new (PROPOSED exemplar)",
+      "status": "PROPOSED"
+    },
+    "rec.chip.*": {
+      "parent": "D05",
+      "row_id": "rec.chip.*",
+      "surface": "SCR-047 / SCR-151",
+      "state": "rec.chip.*",
+      "string": "REC · manual · Not recording · limit reached · Not recording · disk nearly full · REC gated · data dropped · REC degraded · Recording status restricted",
+      "sources": {
+        "D05": "\"REC · manual\" · \"Not recording · limit reached\" · \"Not recording · disk nearly full\" · \"REC gated · data dropped\" · \"REC degraded\" · \"Recording status restricted\""
+      },
+      "cite": "`D05`:482",
+      "provenance": "E16-D02 :331–340",
+      "status": "merged",
+      "frozen": "(vii)"
+    },
+    "replay.absence": {
+      "parent": "D05",
+      "row_id": "replay.absence",
+      "surface": "SCR-047 / SCR-151",
+      "state": "replay.absence",
+      "string": "Replay availability shading is E26's (CMP-172); it will take this deck's stem and causes.",
+      "sources": {
+        "D05": "\"Replay availability shading is E26's (CMP-172); it will take this deck's stem and causes.\""
+      },
+      "cite": "`D05`:483",
+      "provenance": "new (caption only)",
+      "status": "PROPOSED"
+    }
+  },
+  "script": {
+    "SR-01": {
+      "event": "A row's state changes (degraded, stopped, lingering, gated, …)",
+      "string": "the batch grammar \"ETHUSDT degraded; SOLUSDT stopped recording\" (the state words of D02 §4.1 per symbol)",
+      "politeness": "polite",
+      "host": "RG-10",
+      "cadence": "changes of state only, batched, at most once every 10 s; ticking numbers never (BG-01)",
+      "source": "`D02`:543–:545",
+      "consumer": "E16-S01"
+    },
+    "SR-02": {
+      "event": "A symbol stopped recording (T Scope string 1, stopped)",
+      "string": "\"SOLUSDT stopped recording\" (the batch's grammar)",
+      "politeness": "polite",
+      "host": "RG-10",
+      "cadence": "in the next 10 s batch",
+      "source": "`D02`:545",
+      "consumer": "E16-S01"
+    },
+    "SR-03": {
+      "event": "A symbol started recording on SCR-140 (T Scope string 1, started)",
+      "string": "no merged string in SCR-140's region — G-01 (the batch grammar implies the form; the chart's \"Recording started 10:22 UTC\" is SR-30, E12-D02's)",
+      "politeness": "— (G-01)",
+      "host": "RG-10",
+      "cadence": "would enter the 10 s batch (BG-01)",
+      "source": "`D02`:543–:545; `D05`:314",
+      "consumer": "E16-D02, E16-S01"
+    },
+    "SR-04": {
+      "event": "A lingering row ticks (\"stops in N min\")",
+      "string": "\"Recording · stops in 24 min\" — the state word changes in place; the countdown is never announced per minute",
+      "politeness": "never",
+      "host": "— (the row's text)",
+      "cadence": "n/a (BG-04)",
+      "source": "`D02`:231; `D02H`:112",
+      "consumer": "E16-S01"
+    },
+    "SR-05": {
+      "event": "Auto-record paused (level 2 reached)",
+      "string": "\"Auto-record paused\" (the batch example)",
+      "politeness": "polite",
+      "host": "RG-10",
+      "cadence": "once per level change, in the batch",
+      "source": "`D02`:545",
+      "consumer": "E16-S01"
+    },
+    "SR-06": {
+      "event": "A disk warning crossed: level 0 → 1, or 1 → 2 (T Scope string 2)",
+      "string": "the disk card's headline: \"Near limit · auto-record pauses in about {d} days · clears below {warn − 5} %\" / \"Auto-record paused · resumes below {autostop − 5} % of the budget with 20 % of the volume free\" — PROPOSED (F-07): the headline enters the 10 s batch once per level change; no new string",
+      "politeness": "polite",
+      "host": "RG-10",
+      "cadence": "once per level change (BG-01)",
+      "source": "`D02`:494–:495; `D02`:166",
+      "consumer": "E16-S01, E16-D02"
+    },
+    "SR-07": {
+      "event": "Level 3 reached (recording stopped)",
+      "string": "the level-3 banner: \"Recording stopped: the recording budget is 95 % used (190.4 GB of 200 GB). Data for symbols without an open position is being dropped and recorded as gaps; open positions keep recording. Free space to resume: purge data, shorten retention or raise the budget.\"",
+      "politeness": "assertive",
+      "host": "RG-11 (alert)",
+      "cadence": "once; never repeating while the condition holds",
+      "source": "`D02`:177; `D02`:546",
+      "consumer": "E16-S01"
+    },
+    "SR-08": {
+      "event": "An incident (dropped messages)",
+      "string": "\"Incident: 1 204 messages were dropped on ETHUSDT between 10:14:03 and 10:14:41 UTC. The lost interval is recorded as a gap; charts and replay show it as a gap.\"",
+      "politeness": "assertive",
+      "host": "RG-11 (alert)",
+      "cadence": "once",
+      "source": "`D02`:174; `D02`:546",
+      "consumer": "E16-S01"
+    },
+    "SR-09": {
+      "event": "A purge in progress (T Scope string 3, in progress)",
+      "string": "the busy control (aria-busy=\"true\", no announcement of its own) and the purge line \"Purging ADAUSDT data recorded before 2026-10-01: 42 %. Recording continues. Deleted data cannot be restored.\" — no start string (G-02: D04:357's \"Compaction started\" / \"Import started\" pattern has no purge row)",
+      "politeness": "polite",
+      "host": "RG-11 (status) · the info banner",
+      "cadence": "once at the line's arrival; the percentage never per tick (BG-02)",
+      "source": "`D02`:178; `D02`:183; `D02`:420",
+      "consumer": "E16-S01, E16-D02"
+    },
+    "SR-10": {
+      "event": "A purge failed (T Scope string 3, finished)",
+      "string": "\"Purge of ADAUSDT failed (<code>). Some data may already be deleted: check ADAUSDT's size and gaps.\"",
+      "politeness": "assertive",
+      "host": "RG-11 (alert)",
+      "cadence": "once",
+      "source": "`D02`:200",
+      "consumer": "E16-S01, E16-S04"
+    },
+    "SR-11": {
+      "event": "A purge cancelled · its status unknown",
+      "string": "\"Purge of ADAUSDT was cancelled. Data deleted before the cancel is gone.\" · \"The purge's status is no longer available on the server. Check ADAUSDT's size and gaps.\"",
+      "politeness": "polite",
+      "host": "RG-11 (status)",
+      "cadence": "once per terminal state",
+      "source": "`D02`:201–:202",
+      "consumer": "E16-S01, E16-S04"
+    },
+    "SR-12": {
+      "event": "A purge succeeded",
+      "string": "\"Purged 5.5 GB of ADAUSDT data\" — PROPOSED (F-08): polite, once (D02:204 names no politeness; D04:357's rule applied)",
+      "politeness": "polite",
+      "host": "RG-11 (status)",
+      "cadence": "once per terminal state",
+      "source": "`D02`:204; `D04`:357",
+      "consumer": "E16-S01, E16-S04"
+    },
+    "SR-13": {
+      "event": "A compaction's terminal state",
+      "string": "\"Compacted at 10:42 UTC\" · \"Compaction failed (<code>); nothing was deleted.\" · \"Compaction status is no longer available on the server.\"",
+      "politeness": "polite",
+      "host": "RG-11 (status) · RG-13",
+      "cadence": "once per terminal state",
+      "source": "`D02`:203–:204; `D04`:316",
+      "consumer": "E16-S01, E16-S04"
+    },
+    "SR-14": {
+      "event": "A T2 control pressed, or a bound key on it",
+      "string": "its reason, once: \"Recording stops {grace} after the last chart closes.\" · \"Stop is available once the last chart closes.\" · \"Recording continues while a position is open.\" · \"Stop is unavailable while a position is open.\" · \"The symbol limit is reached.\" · \"Read-only while viewing as {user}.\" · \"Only the owner can change recording.\"",
+      "politeness": "polite",
+      "host": "RG-17 (the shell announcer), never RG-10",
+      "cadence": "once per press (G-T2.3)",
+      "source": "`D02`:514–:518; `D02`:646; `D03`:346",
+      "consumer": "all"
+    },
+    "SR-15": {
+      "event": "The page turns stale",
+      "string": "\"Status stale since 10:31:02 UTC\" (the summary's words)",
+      "politeness": "polite",
+      "host": "RG-10",
+      "cadence": "once when it begins",
+      "source": "`D02`:194",
+      "consumer": "E16-S01"
+    },
+    "SR-16": {
+      "event": "A dialog, the drawer or the popover opens",
+      "string": "the title, then what focus lands on — read by role as focus enters",
+      "politeness": "none",
+      "host": "the dialog",
+      "cadence": "n/a (R-5)",
+      "source": "`D02`:561; `D02`:578",
+      "consumer": "all"
+    },
+    "SR-17": {
+      "event": "SCR-141: blur validation shows or changes a message",
+      "string": "the error line (\"Keep at least 1 day.\" · \"At most 3650 days (10 years).\" · \"Whole days only.\")",
+      "politeness": "polite",
+      "host": "CMP-040's error node",
+      "cadence": "once per change",
+      "source": "`D03`:339; `D03`:461–:463",
+      "consumer": "E16-S03"
+    },
+    "SR-18": {
+      "event": "SCR-141: Apply pressed with invalid fields, or a server refusal",
+      "string": "\"Fix 2 fields before applying.\" · the refusal sentence — read once by the focus move; no role=\"alert\" (F-10)",
+      "politeness": "none",
+      "host": "the summary (focus moves to it)",
+      "cadence": "once per press",
+      "source": "`D03`:340; `D03`:350; `D03`:289",
+      "consumer": "E16-S03"
+    },
+    "SR-19": {
+      "event": "SCR-141: a removal staged or undone",
+      "string": "\"Removed: follows the global rule (7 d)\"",
+      "politeness": "polite",
+      "host": "the row's Status cell",
+      "cadence": "once",
+      "source": "`D03`:347",
+      "consumer": "E16-S03"
+    },
+    "SR-20": {
+      "event": "SCR-141: the set saved",
+      "string": "\"Retention policy saved. Audited as retention.change.\"",
+      "politeness": "polite",
+      "host": "RG-12 (the footer; focus moves to it)",
+      "cadence": "once",
+      "source": "`D03`:342",
+      "consumer": "E16-S03"
+    },
+    "SR-21": {
+      "event": "SCR-141: the sweep job queued · running",
+      "string": "\"Retention run queued\" · \"Retention run running · 42 %\" — one announcement at the start (F-09: D03:343's \"≤ once per 5 s\" gives way to D04:357); progress stays visual text + aria-valuetext",
+      "politeness": "polite",
+      "host": "RG-12 (the footer)",
+      "cadence": "once at start; never per poll",
+      "source": "`D03`:343; `D04`:357",
+      "consumer": "E16-S03"
+    },
+    "SR-22": {
+      "event": "SCR-141: the sweep succeeded · cancelled",
+      "string": "\"Retention run succeeded\" · \"Retention run cancelled\"",
+      "politeness": "polite",
+      "host": "RG-12",
+      "cadence": "once per terminal state",
+      "source": "`D03`:344",
+      "consumer": "E16-S03"
+    },
+    "SR-23": {
+      "event": "SCR-141: the sweep failed",
+      "string": "\"Retention run failed ({code})\"",
+      "politeness": "assertive",
+      "host": "RG-12 (alert)",
+      "cadence": "once",
+      "source": "`D03`:345",
+      "consumer": "E16-S03"
+    },
+    "SR-24": {
+      "event": "SCR-142: a job starts",
+      "string": "\"Compaction started\" · \"Import started\"",
+      "politeness": "polite",
+      "host": "RG-13 (the strip)",
+      "cadence": "once per job",
+      "source": "`D04`:357; `D04`:551",
+      "consumer": "E16-S04"
+    },
+    "SR-25": {
+      "event": "SCR-142: an import's terminal state",
+      "string": "\"Import finished: BTCUSDT, 2026-01-01 → 2026-01-31\" · \"Import cancelled. Finished days are kept.\" · \"The import's status is no longer available on the server. Run it again: finished days are skipped.\"",
+      "politeness": "polite",
+      "host": "RG-13",
+      "cadence": "once per terminal state; a skipped file never announced",
+      "source": "`D04`:357; `D04`:587; `D04`:597–:598",
+      "consumer": "E16-S04"
+    },
+    "SR-26": {
+      "event": "SCR-142: an import failed",
+      "string": "\"Import failed (downloadfailed). Finished days are kept; run it again to resume.\"",
+      "politeness": "assertive",
+      "host": "the import card (alert)",
+      "cadence": "once",
+      "source": "`D04`:343; `D04`:357",
+      "consumer": "E16-S04"
+    },
+    "SR-27": {
+      "event": "SCR-142: the sample turns stale",
+      "string": "\"Storage figures are stale\"",
+      "politeness": "polite",
+      "host": "RG-13",
+      "cadence": "once when it begins; the stamp changes silently",
+      "source": "`D04`:357; `D04`:539",
+      "consumer": "E16-S04"
+    },
+    "SR-28": {
+      "event": "SCR-142: a server refusal at the point of action",
+      "string": "the CMP-027 sentence with the code in parentheses (\"A compaction is already running.\" · \"Pinned data is excluded. Tick Include pinned to delete it too.\")",
+      "politeness": "polite",
+      "host": "inline under the control",
+      "cadence": "once",
+      "source": "`D04`:172; `D04`:553; `D04`:575",
+      "consumer": "E16-S04"
+    },
+    "SR-29": {
+      "event": "An empty state is entered (SCR-047, a SCR-151 instance)",
+      "string": "\"{heading} {cause}\" — e.g. \"History starts when you record BTCUSDT — recording has not begun yet.\" then \"Nothing is missing or broken: CandleViewer keeps only what it records.\"; the sentence form adds the rbac. sentence",
+      "politeness": "polite",
+      "host": "RG-14",
+      "cadence": "once per reason entry",
+      "source": "`D05`:312–:313; `D05`:474",
+      "consumer": "E16-S05"
+    },
+    "SR-30": {
+      "event": "The first bar ends SCR-047 · auto-record started",
+      "string": "\"Recording started 10:22 UTC\" · the chart's own first-bar announcement",
+      "politeness": "polite",
+      "host": "RG-14",
+      "cadence": "once (an outcome)",
+      "source": "`D05`:314; `D05`:453",
+      "consumer": "E16-S05"
+    },
+    "SR-31": {
+      "event": "A backfill completes",
+      "string": "\"History loaded\"",
+      "politeness": "polite",
+      "host": "the host panel's region",
+      "cadence": "once",
+      "source": "`D05`:315; `D05`:473",
+      "consumer": "E16-S05"
+    },
+    "SR-32": {
+      "event": "A gap band or seam enters the view",
+      "string": "never — the chart region's accessible description names the gaps in view",
+      "politeness": "never",
+      "host": "RG-16",
+      "cadence": "n/a",
+      "source": "`D05`:316; `E12-D02`:288–:290",
+      "consumer": "E16-S05"
+    },
+    "SR-33": {
+      "event": "The data cursor crosses a gap (T Scope string 4)",
+      "string": "\"after a recording gap 02:11–02:23 UTC\" on the first slot out; inside the gap the tooltip's title and range (\"Recording gap\" · \"2026-09-04 02:11 → 02:23 UTC · 12 min\")",
+      "politeness": "polite",
+      "host": "the cursor's readout",
+      "cadence": "per cursor move, never per tick",
+      "source": "`D05`:317; `D05`:279; `D05`:460–:461",
+      "consumer": "E16-S05"
+    },
+    "SR-34": {
+      "event": "The partial chip appears or its numbers change",
+      "string": "\"Partial: 13 of 14 requested days recorded\" — in the panel's accessible name at mount only",
+      "politeness": "never",
+      "host": "RG-15 (mount only)",
+      "cadence": "never per tick",
+      "source": "`D05`:318; `D05`:246",
+      "consumer": "E16-S05"
+    },
+    "SR-35": {
+      "event": "An ambient value (a rate, a size, lag, a percentage, the sample stamp)",
+      "string": "never per tick",
+      "politeness": "never",
+      "host": "—",
+      "cadence": "n/a (BG-04)",
+      "source": "`D02`:545; `D02H`:110; `D04`:357",
+      "consumer": "all"
+    }
+  }
+}
