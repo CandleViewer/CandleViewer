@@ -63,6 +63,7 @@ def test_the_reason_set_is_closed() -> None:
         "account_disabled_by_policy",
         "no_active_key",
         "account_unhealthy",
+        "account_stale",  # E29-T06 (#914): reconciliation failed for 2 minutes, unresolved
     }
 
 

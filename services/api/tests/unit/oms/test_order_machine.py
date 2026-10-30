@@ -130,7 +130,16 @@ COMMANDS: dict[str, set[str]] = {
         f"RECON_FOUND_{found}": {"unknown", "quarantined", "untracked"}
         for found in ("LIVE", "PARTIAL", "FILLED", "CANCELLED")
     },
-    "RECON_MISS": {"unknown", "untracked"},
+    # Chart version 7 (#914): a settled live row a pass finds nowhere goes to `unknown`, and a
+    # row with a cancel or an amend in flight is left to its request (INV-B1-s).
+    "RECON_MISS": {
+        "submitted",
+        "triggered",
+        "partially_filled",
+        "quarantined",
+        "unknown",
+        "untracked",
+    },
 }
 
 

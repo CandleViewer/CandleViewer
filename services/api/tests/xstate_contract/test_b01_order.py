@@ -121,6 +121,14 @@ INVARIANTS: dict[str, str | tuple[str, ...]] = {
         "test_inv_b1_r_an_exit_is_taken_or_refused_never_kept_property",
         "test_b01_order_conformance.py::test_b01_version_6_is_version_5_with_the_exit_refusals_alone",
     ),
+    "INV-B1-s": (
+        "test_b01_order_reconcile.py::test_inv_b1_s_the_four_settled_live_states_take_a_miss_into_unknown_and_no_other_does",
+        "test_b01_order_reconcile.py::test_inv_b1_s_a_row_with_a_request_in_flight_takes_no_miss",
+        "test_b01_order_reconcile.py::test_inv_b1_s_a_live_row_a_pass_misses_waits_in_unknown_its_count_restarted",
+        "test_b01_order_reconcile.py::test_inv_b1_s_two_further_misses_end_the_row_rejected_with_the_code_the_second_carries",
+        "test_b01_order_reconcile.py::test_inv_b1_s_a_miss_never_ends_a_live_row_property",
+        "test_b01_order_conformance.py::test_b01_version_7_is_version_6_with_the_missing_remote_arms_alone",
+    ),
 }
 
 
