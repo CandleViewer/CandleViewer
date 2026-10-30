@@ -2999,13 +2999,14 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 
 ### SCR-150 — Global loading / app boot
 
-- **Type:** Full-screen state. Product mark, a determinate progress description ("Loading preferences → workspaces → market metadata → connecting"), and a "still working…" message after 5 s with a cancel/reload option after 15 s.
+- **Type:** Full-screen state. Product mark and one stage list, each stage with its state in words and a mark: **Starting the app · Signing in · Opening your workspace · Connecting to market data** (E15-D02 §5.14, D-33); a "still working…" message after 5 s naming what is waiting, with a reload option after 15 s. The workspace restore that follows the boot is the dock frame's, not this screen's (E15-D12).
 - **A11y:** progress is announced politely at each phase; never a bare spinner.
 - **Components:** CMP-014 Spinner / Loader, CMP-015 Skeleton, CMP-038 InlineSpinnerText, CMP-207 BuildFooter.
 - **Stories:** US-LAY-002, US-OBS-003.
-- **Performance:** Cold start to interactive shell <=2.5 s on the reference machine; the boot screen shows staged progress (shell, session, workspace, market data) and each stage has its own timeout with an actionable failure state rather than an indefinite spinner.
+- **Performance:** Cold start to interactive shell <=2.5 s on the reference machine; the boot screen shows the four stages of the Type line and each stage has its own timeout with an actionable failure state rather than an indefinite spinner. The workspace restore is a second clock (US-LAY-002, <=3 s for four panes): it runs from the dock frame's first paint to interactive, fills in the order shell → private account state → the focused panel → the remaining charts → the order-flow panels → the auxiliary panels (`23-ws-protocol.md` §9.3), and past 3 s each waiting panel says what it waits for while the ready panels stay usable (E15-D12).
 - **Analytics/audit:** `app.boot_started`, `app.boot_completed` `{durationMs, stages}`, `app.boot_failed` `{stage, reason}` (analytics; boot failures also land in the incident log).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.14 (Penpot page `E15-D02`, board 21; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
+- **Hi-fi (E15-D12):** the stages, the restore skeleton, the fill order, the slow restore and the one-pane failure in [E15-D12.md](../design/E15/E15-D12.md) §8 and [e15-responsive-and-degraded.md](../design/specs/e15-responsive-and-degraded.md) §9 (owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] staged progress drawn with named stages [ ] per-stage failure states with an action (retry, sign in again, open diagnostics) [ ] slow-boot state after 5 s explaining what is waiting [ ] the environment (DEMO/LIVE) is not shown until it is actually known - no default assumption [ ] version-mismatch handoff to SCR-157
 
 ### SCR-151 — Empty state pattern
@@ -3049,12 +3050,13 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 ### SCR-153 — Degraded-mode state
 
 - **Type:** Banner. Backend up but a dependency is impaired (exchange WS down → REST polling; recorder down → no new history; rule engine down → armed rules not evaluating; GPU fallback → reduced visuals). Each variant states precisely what still works and what does not.
-- **Components:** CMP-019 Icon (`lock`), CMP-028 Callout / Banner, CMP-069 InfoPanel, CMP-079 RbacGate, CMP-092 DegradedModeBanner, CMP-227 EstimatedBadge.
+- **Components:** CMP-011 Tag / Chip (`neutral`, the per-panel "Reduced" chip), CMP-019 Icon (`lock`), CMP-028 Callout / Banner, CMP-069 InfoPanel, CMP-079 RbacGate, CMP-092 DegradedModeBanner, CMP-227 EstimatedBadge (only where a degraded value is itself an estimate; never the GPU rows' chip, E15-D12).
 - **Stories:** US-DOM-005, US-SET-008, US-LAY-008.
 - **A11y:** A `role="status"` banner naming exactly which capability is degraded and what still works, in plain sentences; per-panel badges repeat the specific degradation in their accessible name.
-- **Performance:** Degraded mode is a deliberate reduction: the app sheds optional work (heatmap trail length, detector evaluation, non-focused panel update rate) to protect order entry and position display, which keep their full budget.
+- **Performance:** Degraded mode is a deliberate reduction: the app sheds optional work (heatmap trail length, detector evaluation, non-focused panel update rate) to protect order entry and position display, which keep their full budget. On E15's surfaces the reduced profile sheds three things only — heatmap depth one tier, the update rate of panels not in use (200 ms) and a cap on new panels (existing panels stay) — applied only on the user's click, and it never sheds the environment badge, the arm state, positions and orders, an error state, the protection states (the native stop), the stale and disconnected marks, alerts and fills, the Safety cluster, the SCR-152 region or any SCR-153 row (E15-D12).
 - **Analytics/audit:** `degraded.entered` `{cause, sheddedFeatures}`, `degraded.exited` `{durationMs}` (analytics + incident log).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.15 (Penpot page `E15-D02`, board 22; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
+- **Hi-fi (E15-D12):** the GPU suggestion and the reduced profile (the rows, Details, the "Reduced" chip, the DOM's callout, the manual control and its device disclosure, the exit) in [E15-D12.md](../design/E15/E15-D12.md) §6 and [e15-responsive-and-degraded.md](../design/specs/e15-responsive-and-degraded.md) §6–§8; the other causes are their owners' (E08, E16, E35, E10) (owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] each degradation cause drawn (backend partial outage, recorder down, cold tier unavailable, GPU budget exceeded, rate-limited) [ ] what still works vs what does not, stated per cause [ ] the automatic feature-shedding is disclosed, never silent [ ] manual 'reduce quality' control [ ] exit/restore state [ ] trading remains possible or is explicitly blocked - never ambiguous
 
 ### SCR-154 — Permission denied (403)
