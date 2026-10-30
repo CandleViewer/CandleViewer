@@ -138,6 +138,29 @@ describe("render loop", () => {
   });
 });
 
+describe("the frame scheduler in the runtime (E11-S01 PR3)", () => {
+  it("forwards budget and LOD step-down notices as recoverable errors; lodCandles shows it", () => {
+    const c = make(true);
+    const fake = (): number => vi.getMockedSystemTime()?.getTime() ?? 0; // fake timers, not wall
+    c.ctx.fillRect = (): void => void vi.setSystemTime(fake() + 20); // each frame costs 20 ms
+    for (let f = 0; f < 4; f += 1) {
+      rt.handle({ t: "command", id: 1, cmd: { k: "setViewport", timeStart: f, timeEnd: 9 } });
+      frame();
+    }
+    const codes = of("error").map((e) => [e.code, e.recoverable]);
+    expect(codes).toEqual([
+      ["ENGINE_FRAME_BUDGET_EXCEEDED", true],
+      ["ENGINE_LOD_STEPDOWN", true],
+    ]);
+    expect(of("error")[1]?.message).toMatch(/^LOD 0 -> 1; frame 20\.00 ms, worst stage compo/);
+    expect(of("frame").map((m) => m.lod.candles)).toEqual([0, 0, 0, 1]);
+    rt.handle({ t: "command", id: 1, cmd: { k: "release" } });
+    rt.handle({ t: "command", id: 1, cmd: { k: "setViewport", timeStart: 0, timeEnd: 9 } });
+    frame();
+    expect(of("frame")).toHaveLength(4); // released: its scheduler is disposed
+  });
+});
+
 describe("interaction", () => {
   it("pans on drag, zooms at the cursor, reports the crosshair and posts viewport once per frame", () => {
     make();

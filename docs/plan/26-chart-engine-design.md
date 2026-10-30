@@ -94,7 +94,7 @@ Chart
 └─ Legend / pane chrome (DOM, main thread)
 ```
 
-Node contract: every node has `id`, `visible`, `zIndex`, `dirty` flags (`DATA | LAYOUT | STYLE | TRANSFORM`) and implements `update(frameCtx)` and `collect(batchBuilder)`. Nodes never issue GL calls directly — they append to batches, which lets the backend sort by program/texture and minimise state changes.
+Node contract: every node has `id`, `visible`, `zIndex`, `dirty` flags (`DATA | LAYOUT | STYLE | TRANSFORM`) and implements `update(frameCtx)` and `collect(batchBuilder)`. Nodes never issue GL calls directly — they append to batches, which lets the backend sort by program/texture and minimise state changes. The `BatchBuilder` retains one batch per node and sorts within each layer, which keeps the fixed layer order (E11-S01, package README BQ-42).
 
 **Dirty-flag propagation.** A data update marks only the affected series `DATA`-dirty; a viewport change marks all series `TRANSFORM`-dirty but not `DATA`-dirty (so GPU buffers are reused and only uniforms change — the single most important optimisation for pan/zoom). A theme change marks `STYLE`. Layout changes (pane resize) mark `LAYOUT`.
 
@@ -138,9 +138,9 @@ Scheduler mapping (E11-S01, rulings BQ-S4 and BQ-S5): `06` §4.3's nine stages a
 | -------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
 | Input and animations | ≤ 1 ms (measured)                                                                                            | `inputHandling` (≤ 1 ms)                                                                                                          |
 | Mutation drain       | ≤ 4 ms, hard: the clock is read before each mutation                                                         | `dataWindowRecompute` (≤ 2 ms nominal, ~0 on static frames)                                                                       |
-| Layout               | ≤ 2 ms (measured)                                                                                            | `paneRedraw` (≤ 2 ms), shared until PR3 splits layout out, so a step-down notice can name it for layout cost                      |
-| Update and collect   | ≤ 2 ms (measured); once the budget is spent, every rung is shed in-frame (no cadence floor yet: E11-S01 PR3) | `candleGeometry`, until the per-layer collect fills `footprintTextGeometry`, `heatmapUpload`, `overlayRedraw` and `domMirrorSync` |
-| GL submit, present   | none                                                                                                         | `compositePresent` (≤ 1.6 ms)                                                                                                     |
+| Layout               | ≤ 2 ms (measured)                                                                                            | none: timed apart as `layout`, so a step-down notice can name it (package README BQ-43)                                           |
+| Update and collect   | ≤ 2 ms (measured); once the budget is spent, every rung is shed in-frame, each on its cadence floor (BQ-35). | `candleGeometry`, until the per-layer collect fills `footprintTextGeometry`, `heatmapUpload`, `overlayRedraw` and `domMirrorSync` |
+| GL submit, present   | none                                                                                                         | `paneRedraw` (the batch build, BQ-43), `compositePresent` (≤ 1.6 ms)                                                              |
 
 | `06` §4.4 rung                 | `DeferClass`                                                              | The ticket's rung                                              | While shed                                            |
 | ------------------------------ | ------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------- |
@@ -150,7 +150,7 @@ Scheduler mapping (E11-S01, rulings BQ-S4 and BQ-S5): `06` §4.3's nine stages a
 | 4 background panes             | `BACKGROUND_PANES`                                                        | non-focused pane redraw                                        | deferred, flags kept, collected at least every 500 ms |
 | never shed                     | `NONE`, a `critical` node (order and position lines, the DOM-mirror sync) | trading-critical overlays                                      | collected every frame                                 |
 
-Three consecutive frames over 16.7 ms shed the next rung and request one LOD level down (`ENGINE_LOD_STEPDOWN`, §11); three consecutive frames under 85 % of budget spanning at least 500 ms (the longest cadence) restore one rung; LOD recovery is E11-S12's policy.
+Three consecutive frames over 16.7 ms shed the next rung and request one LOD level down (`ENGINE_LOD_STEPDOWN`, §11), and the first frame of an over-budget run raises `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational); three consecutive frames under 85 % of budget spanning at least 500 ms (the longest cadence) restore one rung; LOD recovery is E11-S12's policy.
 
 ### 3.3 Data model
 
@@ -669,6 +669,7 @@ Replay uses exactly the same series and the same frame types — only the subscr
 | Out-of-memory on texture allocation            | Heatmap drops the coarse ring first, then halves rows; `MemoryGovernor` logs and emits a stats event                                                                                   |
 | Data sequence gap                              | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                        |
 | Frame budget exceeded for 3 consecutive frames | Step down one LOD level; if already at the lowest, reduce DPI of the heatmap layer; log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                              |
+| Frame budget exceeded (first frame of a run)   | Log the per-stage timings once per over-budget run; code `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational; package README BQ-44)                                             |
 | Worker crash                                   | The controller detects the `error`/`close` event, respawns the worker, replays store state from the last snapshot                                                                      |
 
 ---

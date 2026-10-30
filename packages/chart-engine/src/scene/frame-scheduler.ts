@@ -1,7 +1,7 @@
 // The frame scheduler (E11-S01, 26 §3.2): render on demand, one frame per wake, a clamped mutation
 // drain, dt-based animation, 06 §4.3 stage timings and the 06 §4.4 shedding ladder with the LOD
 // step-down trigger. DOM-free: the clock is injected (BQ-36); nothing here allocates per frame.
-import { DeferClass, SHED_ALL } from "./dirty.js";
+import { DeferClass } from "./dirty.js";
 import type { FrameClock } from "./frame-clock.js";
 import { FrameContext, type FrameCtx } from "./frame-context.js";
 import type { SceneGraph } from "./graph.js";
@@ -32,33 +32,49 @@ const RECOVER_BELOW = 0.85; // a frame under 85 % of budget counts toward recove
 const RECOVER_MS = 500; // = the longest cadence; strict < here vs >= in shedMask: zero margin
 const RUN = 3; // consecutive frames that trigger a step-down or a recovery
 
+const LAYOUT_SLICE_MS = 2; // the ticket's layout clamp (C-3), timed apart from 06's nine (BQ-43)
+
 /** Per-stage durations of the last frame, ms (internal, BQ-S3: §8 `FrameStats` is frozen). */
 export class FrameTimings {
   readonly ms = new Float64Array(FRAME_STAGES.length);
+  layoutMs = 0;
   total = 0;
 
-  /** The stage furthest over its 06 §4.3 slice (the first stage when none is over). */
-  worstStage(): FrameStage {
+  /** The stage furthest over its slice (the first stage when none is over). */
+  worstStage(): FrameStage | "layout" {
     let worst = 0;
     for (let i = 1; i < this.ms.length; i += 1) {
       const over = (this.ms[i] as number) - (STAGE_SLICE_MS[i] as number);
       if (over > (this.ms[worst] as number) - (STAGE_SLICE_MS[worst] as number)) worst = i;
     }
-    return FRAME_STAGES[worst] as FrameStage;
+    const over = (this.ms[worst] as number) - (STAGE_SLICE_MS[worst] as number);
+    return this.layoutMs - LAYOUT_SLICE_MS > over ? "layout" : (FRAME_STAGES[worst] as FrameStage);
   }
 }
 
 export const ENGINE_LOD_STEPDOWN = "ENGINE_LOD_STEPDOWN";
+export const ENGINE_FRAME_BUDGET_EXCEEDED = "ENGINE_FRAME_BUDGET_EXCEEDED";
 
-/** One reused notice; PR3 forwards it through `ChartEvents.error`, `recoverable: true` (BQ-S3). */
-export class LodStepdownNotice {
-  readonly code = ENGINE_LOD_STEPDOWN;
+/** One reused notice per code, forwarded as `ChartEvents.error`, `recoverable: true` (BQ-S3). */
+export class FrameNotice {
   readonly recoverable = true;
-  from = 0;
+  from = 0; // LOD levels (ENGINE_LOD_STEPDOWN only)
   to = 0;
-  stage: FrameStage = "inputHandling";
+  totalMs = 0;
+  stage: FrameStage | "layout" = "inputHandling";
   readonly timings = new Float64Array(FRAME_STAGES.length);
+  layoutMs = 0;
   pending = false;
+
+  constructor(readonly code: string) {}
+
+  raise(timings: FrameTimings): void {
+    this.totalMs = timings.total;
+    this.stage = timings.worstStage();
+    this.timings.set(timings.ms);
+    this.layoutMs = timings.layoutMs;
+    this.pending = true;
+  }
 }
 
 /** A time-based animation (26 §3.2 rule 2): it sees elapsed ms only, never a frame count. */
@@ -67,10 +83,11 @@ export interface Animation {
   step(dtMs: number, ctx: FrameCtx): boolean;
 }
 
-/** The stages PR3 binds: the input router, the `LayoutEngine` and the GL submit. */
+/** The stages bound by the runtime: input router, `LayoutEngine`, `BatchBuilder`, GL submit. */
 export interface SchedulerHooks {
   input?(ctx: FrameContext): void;
   layout?(ctx: FrameContext): void;
+  build?(sink: PooledBatchSink, ctx: FrameContext): void;
   submit?(sink: PooledBatchSink, ctx: FrameContext): void;
 }
 
@@ -79,7 +96,9 @@ export class FrameScheduler {
   readonly sink = new PooledBatchSink();
   readonly queue = new MutationQueue();
   readonly timings = new FrameTimings();
-  readonly notice = new LodStepdownNotice();
+  readonly notice = new FrameNotice(ENGINE_LOD_STEPDOWN);
+  /** Raised on the first frame of each over-budget run, never once per frame (BQ-44). */
+  readonly budgetNotice = new FrameNotice(ENGINE_FRAME_BUDGET_EXCEEDED);
   /** 0 to 4: rungs 1..shedLevel of 06 §4.4 are shed; `critical` nodes never are. */
   shedLevel = 0;
   lod = 0;
@@ -92,7 +111,7 @@ export class FrameScheduler {
   private scheduled = false;
   private parkedAt = Number.NaN; // NaN until the first park, and while a frame is requested or runs
   private resumed = true; // the next frame follows a park
-  private over = 0;
+  private over = 0; // consecutive frames over budget
   private under = 0;
   private underFrom = 0; // `t` of the first frame of the current run under 85 %
   private readonly shedAt = new Float64Array(CADENCE_MS.length).fill(-Infinity);
@@ -130,11 +149,11 @@ export class FrameScheduler {
     this.wake();
   }
 
-  /** The pending step-down notice, once; `null` when none was raised since the last call. */
-  takeNotice(): LodStepdownNotice | null {
-    if (!this.notice.pending) return null;
-    this.notice.pending = false;
-    return this.notice;
+  /** The pending notice, once; `null` when none was raised since the last call. */
+  takeNotice(notice: FrameNotice = this.notice): FrameNotice | null {
+    if (!notice.pending) return null;
+    notice.pending = false;
+    return notice;
   }
 
   dispose(): void {
@@ -143,9 +162,20 @@ export class FrameScheduler {
     this.handle = -1;
   }
 
-  /** input → mutation drain → layout → update/collect → submit (06 §4.3, BQ-S4). */
+  /** A throwing mutation or hook ends the frame, never the loop: the queue left re-wakes it. */
   private frame(t: number): void {
     this.scheduled = false;
+    let done = false;
+    try {
+      this.run(t);
+      done = true;
+    } finally {
+      if (!done) this.settle(this.queue.length > 0); // the throw itself propagates (26 §11)
+    }
+  }
+
+  /** input → drain → layout → update/collect → build → submit (06 §4.3, BQ-S4, BQ-43). */
+  private run(t: number): void {
     const { ctx, sink, timings, hooks } = this;
     const start = this.clock.now();
     timings.ms.fill(0);
@@ -164,17 +194,27 @@ export class FrameScheduler {
     this.deferredMutations = this.queue.drain(this.clock, this.drainMs);
     at = this.stage(DATA_WINDOW, at);
     hooks.layout?.(ctx);
-    at = this.stage(PANE, at);
+    const laidOut = this.clock.now();
+    timings.layoutMs = laidOut - at;
+    at = laidOut;
     ctx.budgetMsRemaining = this.budgetMs - (at - start);
     sink.reset();
-    this.graph.frame(ctx, sink, ctx.budgetMsRemaining < 0 ? SHED_ALL : this.shedMask(t));
+    // Spent before collect: shed every rung, each still on its cadence floor (BQ-35 closed).
+    const level = ctx.budgetMsRemaining < 0 ? DeferClass.BACKGROUND_PANES : this.shedLevel;
+    this.graph.frame(ctx, sink, this.shedMask(t, level));
     at = this.stage(GEOMETRY, at);
+    hooks.build?.(sink, ctx);
+    at = this.stage(PANE, at);
     hooks.submit?.(sink, ctx);
     timings.total = this.stage(PRESENT, at) - start;
     this.frames += 1;
     this.account(timings.total, t);
     const busy = ctx.stats.deferred > 0 || ctx.stats.updated > ctx.stats.collected;
-    if (busy || this.queue.length > 0 || this.animations.length > 0) this.wake();
+    this.settle(busy || this.queue.length > 0 || this.animations.length > 0);
+  }
+
+  private settle(busy: boolean): void {
+    if (busy) this.wake();
     else if (!this.scheduled) {
       this.parkedAt = this.clock.now();
       this.resumed = true;
@@ -188,14 +228,14 @@ export class FrameScheduler {
   }
 
   /** The rungs shed this frame, each on its cadence, so none goes stale (BQ-26, BQ-35). */
-  private shedMask(t: number): number {
+  private shedMask(t: number, level: number): number {
     let mask = 0;
-    for (let r = 1; r <= this.shedLevel; r += 1) {
+    for (let r = 1; r <= level; r += 1) {
       const late = t - (this.shedAt[r] as number) >= (CADENCE_MS[r] as number);
       if (r === DeferClass.INDICATOR_COALESCE ? (this.frames & 1) === 0 : late) this.shedAt[r] = t;
       else mask |= 1 << r;
     }
-    for (let r = this.shedLevel + 1; r < CADENCE_MS.length; r += 1) this.shedAt[r] = t;
+    for (let r = level + 1; r < CADENCE_MS.length; r += 1) this.shedAt[r] = t;
     return mask;
   }
 
@@ -212,15 +252,12 @@ export class FrameScheduler {
     }
     this.under = 0;
     this.over += 1;
-    if (this.over < RUN) return;
-    this.over = 0;
+    if (this.over === 1) this.budgetNotice.raise(this.timings);
+    if (this.over % RUN !== 0) return;
     this.shedLevel = Math.min(this.shedLevel + 1, DeferClass.BACKGROUND_PANES);
     if (this.lod >= this.maxLod) return;
-    const notice = this.notice;
-    notice.from = this.lod;
-    notice.to = this.lod += 1;
-    notice.stage = this.timings.worstStage();
-    notice.timings.set(this.timings.ms);
-    notice.pending = true;
+    this.notice.from = this.lod;
+    this.notice.to = this.lod += 1;
+    this.notice.raise(this.timings);
   }
 }

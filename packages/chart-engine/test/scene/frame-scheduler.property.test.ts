@@ -1,24 +1,29 @@
 // E11-S01 PR2, 10 000 seeded cases (mulberry32, BQ-21) of random marks, bursts and costs: no mutation
 // lost, reordered or started past the clamp, no double request, no critical node deferred, the shed
-// level moves one rung at a time, and with the pressure off it drains, collects and parks.
+// level moves one rung at a time, and with the pressure off it drains, collects and parks. PR3
+// (BQ-35 closed): no node goes stale past its rung's cadence, emergency-shed frames included.
 import { describe, expect, it } from "vitest";
 import { mulberry32 } from "../../bench/fixtures/rng.mjs";
 import { DeferClass, Dirty, LAYER_ORDER } from "../../src/scene/dirty.js";
-import { FrameScheduler } from "../../src/scene/frame-scheduler.js";
+import { FrameScheduler, HEATMAP_CADENCE_MS } from "../../src/scene/frame-scheduler.js";
 import { SceneGraph } from "../../src/scene/graph.js";
 import { NullSeries } from "../../src/scene/null-series.js";
 import { TestClock } from "./test-clock.js";
 
 const BASE_SEED = 20261030;
-const seen = { shed: 0, carried: 0, stepDowns: 0 }; // each path must run
+const seen = { shed: 0, carried: 0, stepDowns: 0, emergency: 0 }; // each path must run
+const CADENCE_MS = [0, HEATMAP_CADENCE_MS, 500, NaN, 500]; // by DeferClass; rung 3 counts frames
 
 function runCase(seed: number): string | null {
   const rng = mulberry32(seed);
   const int = (n: number): number => Math.floor(rng() * n);
   const graph = new SceneGraph();
   const clock = new TestClock();
-  let cost = 0; // the submit stage's cost this frame
-  const scheduler = new FrameScheduler(graph, clock, { submit: () => clock.advance(cost) });
+  let [pre, cost] = [0, 0]; // the layout and submit stages' costs this frame
+  const scheduler = new FrameScheduler(graph, clock, {
+    layout: () => clock.advance(pre), // over 16.7 ms: an emergency-shed frame
+    submit: () => clock.advance(cost),
+  });
   const nodes: NullSeries[] = [];
   for (let p = 0, panes = 1 + int(3); p < panes; p += 1) {
     graph.addPane(`p${p}`);
@@ -30,6 +35,7 @@ function runCase(seed: number): string | null {
       nodes.push(node);
     }
   }
+  const since = nodes.map(() => [clock.t, 0]); // when (ms, frame) each node turned dirty
   const applied: number[] = [];
   let queued = 0;
   let [late, drainStart, lastFrames, level] = [0, 0, -1, 0]; // late: started at or after the clamp
@@ -50,9 +56,26 @@ function runCase(seed: number): string | null {
         });
       }
     }
-    cost = rng() < 0.4 ? 18 + int(10) : int(16);
+    [pre, cost] = [rng() < 0.4 ? 17 + int(5) : 0, rng() < 0.4 ? 18 + int(10) : int(16)];
     const before = nodes.map((n) => (n.critical && n.dirty !== Dirty.NONE ? n.collects : -1));
-    if (!clock.tick(1 + int(30))) continue;
+    nodes.forEach((n, i) => {
+      if (n.dirty !== Dirty.NONE && Number.isNaN(since[i]?.[0]))
+        since[i] = [clock.t, scheduler.frames];
+    });
+    const t = clock.t + 1 + int(30);
+    if (!clock.tick(t - clock.t)) continue;
+    seen.emergency += scheduler.ctx.budgetMsRemaining < 0 ? 1 : 0;
+    for (const [i, n] of nodes.entries()) {
+      const [t0, f0] = since[i] as number[];
+      if (n.dirty === Dirty.NONE) since[i] = [NaN, 0];
+      else if (
+        n.deferClass === 3
+          ? scheduler.frames - (f0 as number) >= 2
+          : t - (t0 as number) >= (CADENCE_MS[n.deferClass] as number)
+      ) {
+        return `step ${s}: ${n.id} (rung ${n.deferClass}) dirty since ${t0}, stale at ${t}`;
+      }
+    }
     for (let i = 0; i < nodes.length; i += 1) {
       const n = nodes[i] as NullSeries;
       if ((before[i] ?? -1) >= 0 && n.collects === before[i]) {
@@ -65,7 +88,7 @@ function runCase(seed: number): string | null {
     seen.carried += scheduler.deferredMutations > 0 ? 1 : 0;
   }
   seen.stepDowns += scheduler.lod;
-  cost = 0;
+  [pre, cost] = [0, 0];
   for (let f = 0; f < 400 && clock.tick(); f += 1);
   if (clock.doubleRequests !== 0) return "a frame was requested twice";
   if (late !== 0) return `${late} mutations started after the clamp`;
@@ -83,6 +106,8 @@ describe("property: the scheduler drains, defers and parks correctly", () => {
       if (failure !== null) failures.push(`seed ${BASE_SEED + c}: ${failure}`); // re-run one seed
     }
     expect(failures).toEqual([]);
-    expect(Math.min(seen.shed / 10, seen.carried, seen.stepDowns)).toBeGreaterThan(1000);
+    expect(Math.min(seen.shed / 10, seen.carried, seen.stepDowns, seen.emergency)).toBeGreaterThan(
+      1000,
+    );
   });
 });

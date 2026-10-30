@@ -188,7 +188,59 @@ describe("06 §4.4 deferral order; critical nodes never deferred", () => {
     expect(ladder(level)).toEqual(want);
   });
 
-  it("sheds every rung in-frame when the budget is gone before collect, never a critical node", () => {
-    expect(ladder(0, 17)).toEqual([0, 0, 0, 0, 32]);
+  it("sheds every rung when the budget is gone before collect, each on its cadence floor", () => {
+    expect(ladder(0, 17)).toEqual([2, 1, 16, 1, 32]); // as level 4: nothing staler than its cadence
+  });
+});
+
+describe("Frame faults and the budget notice (26 §11, BQ-37, BQ-44)", () => {
+  it("a throwing mutation or hook ends its frame, not the loop; the queue left is kept", () => {
+    let throwIn = "";
+    const fault = (where: string): void => {
+      if (throwIn === where) throw new Error(where);
+    };
+    const { clock, scheduler } = build({ layout: () => fault("layout") });
+    const applied: number[] = [];
+    for (const id of [1, 2, 3]) scheduler.enqueue(() => (id === 2 ? fault("m") : applied.push(id)));
+    scheduler.enqueue(() => clock.advance(5)); // past the clamp: waits for the next frame
+    scheduler.enqueue(() => applied.push(5));
+    throwIn = "m";
+    expect(() => clock.tick()).toThrow("m");
+    expect([applied, scheduler.queue.length, scheduler.parked]).toEqual([[1], 3, false]);
+    throwIn = "";
+    clock.tick(); // re-woken by the queue left
+    clock.tick();
+    expect([applied, scheduler.queue.length, scheduler.parked]).toEqual([[1, 3, 5], 0, true]);
+    throwIn = "layout";
+    scheduler.wake();
+    expect(() => clock.tick()).toThrow("layout");
+    expect([scheduler.parked, clock.tick()]).toEqual([true, false]); // parked, not wedged
+    throwIn = "";
+    scheduler.wake();
+    expect([clock.tick(), scheduler.parked, clock.doubleRequests]).toEqual([true, true, 0]);
+  });
+
+  it("raises ENGINE_FRAME_BUDGET_EXCEEDED once per over-budget run, layout timed on its own", () => {
+    let layoutCost = 0;
+    const { graph, clock, scheduler } = build({ layout: () => clock.advance(layoutCost) });
+    scheduler.animate(forever(graph));
+    layoutCost = 18;
+    clock.tick();
+    const n = scheduler.takeNotice(scheduler.budgetNotice);
+    expect([n?.code, n?.recoverable, n?.stage, n?.totalMs, n?.layoutMs]).toEqual([
+      "ENGINE_FRAME_BUDGET_EXCEEDED",
+      true,
+      "layout",
+      18,
+      18,
+    ]);
+    clock.tick(); // still over: the same run, no second notice
+    expect(scheduler.takeNotice(scheduler.budgetNotice)).toBeNull();
+    layoutCost = 1;
+    clock.tick();
+    layoutCost = 18;
+    clock.tick(); // a new run
+    expect(scheduler.takeNotice(scheduler.budgetNotice)?.totalMs).toBe(18);
+    expect(scheduler.timings.ms[5]).toBe(0); // paneRedraw is the batch build's, not layout's
   });
 });

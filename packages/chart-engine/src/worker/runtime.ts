@@ -2,8 +2,10 @@
 // (`render-worker.ts`) runs it behind `postMessage`; `RunMode.inline` runs the SAME module on the
 // main thread behind a synchronous bus (26 §2), so only throughput differs between the modes.
 // One runtime drives every chart registered with it from one frame callback, in registration
-// order (§3.2 rule 1), and parks when nothing is dirty (§3.2 rule 5). No DOM types here (C-2.16):
-// the canvas is reached structurally, as an OffscreenCanvas and an HTMLCanvasElement both fit.
+// order (§3.2 rule 1), each through its own `FrameScheduler` (E11-S01), and parks when nothing
+// is dirty (§3.2 rule 5). No DOM types here (C-2.16): the canvas is reached structurally, as an
+// OffscreenCanvas and an HTMLCanvasElement both fit.
+import * as scene from "../scene/index.js";
 import {
   BACKGROUND_TOKEN,
   ENGINE_DECODE_ERROR,
@@ -68,7 +70,11 @@ interface Instance {
   widthCss: number;
   dpr: number;
   ready: boolean;
-  dirty: boolean;
+  /** The scheduler's requested frame, run by the shared callback; null while parked. */
+  readonly slot: { frame: scene.FrameCallback | null };
+  readonly graph: scene.SceneGraph;
+  readonly layout: scene.LayoutEngine;
+  readonly scheduler: scene.FrameScheduler;
   timeStart: number;
   timeEnd: number;
   viewportDirty: boolean;
@@ -86,6 +92,14 @@ const summarise = (timeUs: number): string => {
   return Number.isFinite(d.getTime()) ? d.toISOString() : "";
 };
 
+/** A notice's details for `ChartEvents.error`'s `message` (BQ-S3: §8 has no details field). */
+const describe = (n: scene.FrameNotice): string => {
+  const ms = scene.FRAME_STAGES.map((s, i) => `${s}=${n.timings[i]?.toFixed(2)}`).join(" ");
+  const lod = n.from === n.to ? "" : `LOD ${n.from} -> ${n.to}; `;
+  const head = `${lod}frame ${n.totalMs.toFixed(2)} ms, worst stage ${n.stage}`;
+  return `${head}; ms: ${ms} layout=${n.layoutMs.toFixed(2)}`;
+};
+
 export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   const charts = new Map<ChartId, Instance>();
   let scheduled = false;
@@ -96,17 +110,37 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   };
 
   const touch = (inst: Instance): void => {
-    inst.dirty = true;
-    if (scheduled) return;
-    scheduled = true;
-    deps.requestFrame(tick);
+    inst.scheduler.wake();
   };
+
+  /** One chart's scene, laid out as one pane until the multi-pane wiring (E11-S09, BQ-45). */
+  function createScene(slot: Instance["slot"], render: () => void) {
+    const graph = new scene.SceneGraph();
+    graph.addPane("main");
+    const layout = new scene.LayoutEngine(graph);
+    layout.addPane("main");
+    const builder = new scene.BatchBuilder(graph, { uploadSubRange: () => undefined }); // E11-S02
+    const clock = { now: () => deps.now(), requestFrame, cancel: () => (slot.frame = null) };
+    function requestFrame(cb: scene.FrameCallback): number {
+      slot.frame = cb;
+      if (!scheduled) deps.requestFrame(tick);
+      scheduled = true;
+      return 1;
+    }
+    const scheduler = new scene.FrameScheduler(graph, clock, {
+      layout: () => layout.run(),
+      build: (sink) => builder.build(sink),
+      submit: render,
+    });
+    return { graph, layout, scheduler };
+  }
 
   function setRange(inst: Instance, start: number, end: number): void {
     if (!(end > start) || !Number.isFinite(start) || !Number.isFinite(end)) return;
     inst.timeStart = start;
     inst.timeEnd = end;
     inst.viewportDirty = true;
+    inst.graph.markViewport(); // TRANSFORM, never DATA: buffers are reused
     touch(inst);
   }
 
@@ -167,10 +201,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         return;
       case "setTheme":
         inst.theme = cmd.theme;
+        inst.graph.markTheme();
         touch(inst);
         return;
       case "setLod":
         inst.lod = { candles: cmd.candles, footprint: cmd.footprint };
+        inst.scheduler.lod = Math.min(cmd.candles, inst.scheduler.maxLod);
         touch(inst);
         return;
       case "pickAt": {
@@ -192,6 +228,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         exportPng(inst, cmd.reqId);
         return;
       case "release":
+        inst.scheduler.dispose();
         charts.delete(inst.id);
         return;
       default:
@@ -210,7 +247,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       return;
     }
     if (msg.t === "init") {
+      const slot: Instance["slot"] = { frame: null };
+      const scene = createScene(slot, () => render(inst));
       const inst: Instance = {
+        ...scene,
+        slot,
         id: msg.id,
         canvas: msg.canvas as CanvasLike,
         theme: msg.theme,
@@ -218,7 +259,6 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         widthCss: (msg.canvas as CanvasLike).width / msg.dpr,
         dpr: msg.dpr,
         ready: false,
-        dirty: false,
         timeStart: 0,
         timeEnd: 1,
         viewportDirty: false,
@@ -245,6 +285,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         inst.canvas.height = Math.max(1, Math.round(msg.height * msg.dpr));
         inst.widthCss = msg.width;
         inst.dpr = msg.dpr;
+        inst.layout.setSize(msg.width, msg.height); // LAYOUT: recomputed on the next frame only
         touch(inst);
         return;
       case "input":
@@ -316,16 +357,26 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   function tick(): void {
     scheduled = false;
     for (const inst of charts.values()) {
-      if (!inst.dirty) continue;
-      inst.dirty = false;
+      const frame = inst.slot.frame;
+      if (frame === null) continue;
+      inst.slot.frame = null;
       // A throwing canvas or context fails its own chart's frame, recoverably; it never escapes
       // the frame callback, where a worker would turn it into an uncaught error (E11-T02).
       try {
-        render(inst);
+        frame(deps.now());
       } catch (e) {
         fail(inst.id, e instanceof Error ? e.message : "render failed");
       }
+      notify(inst, inst.scheduler.takeNotice(inst.scheduler.budgetNotice));
+      notify(inst, inst.scheduler.takeNotice());
     }
+  }
+
+  /** Forwards the scheduler's notices as recoverable, informational `error`s (BQ-S3, BQ-44). */
+  function notify(inst: Instance, n: scene.FrameNotice | null): void {
+    if (n === null) return;
+    if (n.from !== n.to) inst.lod = { ...inst.lod, candles: n.to as LodLevels["candles"] };
+    deps.post({ t: "error", id: inst.id, code: n.code, message: describe(n), recoverable: true });
   }
 
   return {

@@ -8,6 +8,9 @@ export class NullSeries extends ContentNode {
   cleanCollects = 0; // collects of a clean node: must stay 0
   lastFlags = 0;
   failCollect = false;
+  program = 0; // what its batch entry carries, for the batch builder's tests
+  texture = 0;
+  count = 1;
 
   override update(): void {
     this.updates += 1;
@@ -20,7 +23,9 @@ export class NullSeries extends ContentNode {
     if (this.failCollect) return false;
     const entry = sink.append();
     entry.nodeId = this.id;
-    entry.count = 1;
+    entry.program = this.program;
+    entry.texture = this.texture;
+    entry.count = this.count;
     return true;
   }
 }

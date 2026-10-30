@@ -24,6 +24,11 @@ export class ObjectPool<T> {
     return this.items[this.used - 1] as T; // grow() filled this slot
   }
 
+  /** The `i`-th object handed out since the last `releaseAll` (`i < inUse`). */
+  at(i: number): T {
+    return this.items[i] as T;
+  }
+
   /** Takes every object back; they are handed out again in the same order. */
   releaseAll(): void {
     for (let i = 0; i < this.used; i += 1) this.reset(this.items[i] as T);
@@ -63,7 +68,13 @@ const clearEntry = (e: BatchEntry): void => {
   e.program = e.texture = e.first = e.count = 0;
 };
 
-const makeEntry = (): BatchEntry => ({ nodeId: "", program: 0, texture: 0, first: 0, count: 0 });
+export const makeEntry = (): BatchEntry => ({
+  nodeId: "",
+  program: 0,
+  texture: 0,
+  first: 0,
+  count: 0,
+});
 
 /** A `BatchSink` over a pool: this frame's entries, in append order. */
 export class PooledBatchSink implements BatchSink {
@@ -74,6 +85,15 @@ export class PooledBatchSink implements BatchSink {
 
   append(): BatchEntry {
     return this.pool.acquire();
+  }
+
+  /** This frame's entries, in append order, for the batch builder. */
+  get length(): number {
+    return this.pool.inUse;
+  }
+
+  at(i: number): BatchEntry {
+    return this.pool.at(i);
   }
 
   reset(): void {
