@@ -205,7 +205,7 @@ The profile rule (E11-S02, package README BQ-50); each `reduced` limit adds one 
 | Blending      | Single pass, premultiplied alpha; opaque batches first, sorted front-to-back not required (2D, depth test off)                                              |
 | MSAA          | Off; crisp 2D shapes are produced by pixel-snapping in the shader instead                                                                                   |
 | DPI           | Backing store at `devicePixelRatio` (capped at 2 for the heatmap layer to bound texture cost); all geometry snaps to device pixels for hairlines            |
-| Future WebGPU | `GLBackend` sits behind a `RenderBackend` interface (`createBuffer`, `createTexture`, `draw(batch)`); a WebGPU backend can be added without touching layers |
+| Future WebGPU | `GLBackend` sits behind `RenderBackend` (an `UploadSink` + `submit(drawList)`, package README BQ-59); a WebGPU backend can be added without touching layers |
 
 ### 3.5 Viewport and transform math
 
@@ -673,7 +673,7 @@ Replay uses exactly the same series and the same frame types — only the subscr
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | WebGL2 unavailable                             | `RenderProfile = degraded-2d`: Canvas 2D candles, axes, lines, crosshair, drawings; footprint limited to coloured cells without text; heatmap disabled with an explanatory placeholder |
 | Context lost                                   | Loop stops, resources invalidated, rebuilt from `DataModel` on restore; a `error{recoverable:true}` event lets the UI show a one-line toast                                            |
-| Shader compile failure                         | Falls back to a simpler program for that layer; logs the info-log with the program key; never takes down the chart                                                                     |
+| Shader compile failure                         | `ENGINE_SHADER_COMPILE_FAILED` with program, renderer and info log; the whole chart goes `degraded-2d` (README BQ-52)                                                                  |
 | Out-of-memory on texture allocation            | Heatmap drops the coarse ring first, then halves rows; `MemoryGovernor` logs and emits a stats event                                                                                   |
 | Data sequence gap                              | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                        |
 | Frame budget exceeded for 3 consecutive frames | Step down one LOD level; if already at the lowest, reduce DPI of the heatmap layer; log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                              |

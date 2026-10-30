@@ -55,7 +55,7 @@ describe("Scenario: A chart mounts and reports frame stats through the stub", ()
     expect(canvas.attributes.get("aria-hidden")).toBe("true");
     expect(chart.runMode).toBe("inline"); // the fake realm has no OffscreenCanvas
     nextFrame(); // the runtime paints on its frame (26 §3.2), not inside createChart
-    expect(canvas.context2d?.fills).toEqual([{ color: "#0b0e11", w: 800, h: 600 }]);
+    expect(canvas.webgl2?.clears).toEqual(["#0b0e11"]); // GL clears to it (E11-S02)
     chart.dispose();
   });
 
@@ -101,11 +101,10 @@ describe("Scenario: A chart mounts and reports frame stats through the stub", ()
     chart.dispose();
   });
 
-  it("clears without filling when the theme lacks the background token or 2D is absent", () => {
+  it("clears to black when the theme lacks the background token, and survives without 2D", () => {
     const chart = mount({ theme: { ...theme, colors: {} } });
     nextFrame();
-    expect(canvasOf(container).context2d?.fills).toEqual([]);
-    expect(canvasOf(container).context2d?.clears).toBe(1);
+    expect(canvasOf(container).webgl2?.clears).toEqual(["#000000"]); // opaque: black
     chart.dispose();
 
     container = fakeContainer();
@@ -149,7 +148,7 @@ describe("createChart facade", () => {
     chart.setTheme({ ...theme, colors: { "color.chart.background": "#ffffff" } });
     chart.setDensity("dense");
     nextFrame();
-    expect(canvasOf(container).context2d?.fills.at(-1)?.color).toBe("#ffffff");
+    expect(canvasOf(container).webgl2?.clears.at(-1)).toBe("#ffffff");
     expect(chart.theme.colors["color.chart.background"]).toBe("#ffffff");
     expect(chart.density).toBe("dense");
     chart.dispose();

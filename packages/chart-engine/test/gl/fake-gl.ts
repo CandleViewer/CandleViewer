@@ -11,6 +11,9 @@ export interface FakeGlOptions {
   extensions?: Readonly<Record<string, object>>;
   /** What `getContextAttributes()` reports. */
   attributes?: ContextAttributes;
+  /** A shader whose source contains this fails COMPILE_STATUS with `infoLog`. */
+  failCompile?: string;
+  infoLog?: string;
 }
 
 /** Limits above every BQ-50 floor. */
@@ -24,6 +27,12 @@ export class FakeGl implements GL2Like {
   readonly log: string[] = [];
   /** Objects created and neither deleted nor dropped by a loss. */
   readonly alive = new Set<GLObject>();
+  /** Buffer writes: `full <bytes>` or `sub <dstByte> <srcOffset> <length>`. */
+  readonly writes: string[] = [];
+  /** The colour of each `clear`, as `#rrggbb`: the fake's pixels. */
+  readonly clears: string[] = [];
+  private color = "#000000";
+  private readonly sources = new Map<GLObject, string>();
   lost = false;
   /** 1-based call number that throws (a driver fault), or 0 for none. */
   failAt = 0;
@@ -88,6 +97,55 @@ export class FakeGl implements GL2Like {
   deleteTexture = (o: GLObject | null): void => this.remove("Texture", o);
   createVertexArray = (): GLObject | null => this.make("VertexArray");
   deleteVertexArray = (o: GLObject | null): void => this.remove("VertexArray", o);
+  createShader = (): GLObject | null => this.make("Shader");
+  deleteShader = (o: GLObject | null): void => this.remove("Shader", o);
+  shaderSource(shader: GLObject, source: string): void {
+    if (this.call("shaderSource")) this.sources.set(shader, source);
+  }
+  private fails(shader: GLObject): boolean {
+    const bad = this.opts.failCompile;
+    return bad !== undefined && (this.sources.get(shader) ?? "").includes(bad);
+  }
+  getShaderParameter(shader: GLObject): unknown {
+    return this.call("getShaderParameter") && !this.fails(shader);
+  }
+  getShaderInfoLog(shader: GLObject): string | null {
+    return this.call("getShaderInfoLog") && this.fails(shader) ? (this.opts.infoLog ?? "") : "";
+  }
+  getProgramParameter = (): unknown => this.call("getProgramParameter");
+  getProgramInfoLog = (): string | null => (this.call("getProgramInfoLog") ? "" : null);
+  getUniformLocation(_p: GLObject, name: string): unknown {
+    return this.call("getUniformLocation") ? { name } : null;
+  }
+  bufferData(_t: number, data: ArrayBufferView): void {
+    if (this.call("bufferData")) this.writes.push(`full ${data.byteLength}`);
+  }
+  bufferSubData(_t: number, dst: number, _src: ArrayBufferView, from: number, n: number): void {
+    if (this.call("bufferSubData")) this.writes.push(`sub ${dst} ${from} ${n}`);
+  }
+  compileShader = (): void => void this.call("compileShader");
+  attachShader = (): void => void this.call("attachShader");
+  linkProgram = (): void => void this.call("linkProgram");
+  useProgram = (): void => void this.call("useProgram");
+  bindBuffer = (): void => void this.call("bindBuffer");
+  bindVertexArray = (): void => void this.call("bindVertexArray");
+  activeTexture = (): void => void this.call("activeTexture");
+  bindTexture = (): void => void this.call("bindTexture");
+  texParameteri = (): void => void this.call("texParameteri");
+  texImage2D = (): void => void this.call("texImage2D");
+  texSubImage2D = (): void => void this.call("texSubImage2D");
+  viewport = (): void => void this.call("viewport");
+  clearColor(...rgba: number[]): void {
+    const hex = (v: number): string =>
+      Math.round(v * 255)
+        .toString(16)
+        .padStart(2, "0");
+    if (this.call("clearColor")) this.color = `#${rgba.slice(0, 3).map(hex).join("")}`;
+  }
+  clear(): void {
+    if (this.call("clear")) this.clears.push(this.color);
+  }
+  drawArraysInstanced = (): void => void this.call("drawArraysInstanced");
 }
 
 /** The `full` report a roomy context yields: the stub probe of the worker and host tests. */

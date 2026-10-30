@@ -75,7 +75,7 @@ function scenario(runMode: RunMode): unknown[] {
   // The backing store follows the resize in the runtime, the CSS box on the main thread.
   log.push([
     "pixels",
-    canvas?.context2d?.fills,
+    canvas?.webgl2?.clears,
     canvas?.width,
     canvas?.height,
     canvas?.style["width"],

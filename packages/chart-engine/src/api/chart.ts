@@ -125,6 +125,7 @@ export function createChart(opts: ChartOptions): Chart {
           uploadedBytesPerSec: msg.uploadedBytes,
           lodCandles: msg.lod.candles,
           lodFootprint: msg.lod.footprint,
+          gpuMemoryMbEstimate: msg.gpuMemoryMbEstimate,
         };
         emit("frameStats", lastStats);
         return;

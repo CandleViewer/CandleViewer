@@ -602,7 +602,7 @@ describe("worker mode falls back to inline when the worker cannot start", () => 
     expect(chart.runMode).toBe("inline");
     settle();
     const canvas = container.children.find((c) => c.tagName === "CANVAS") as FakeElement;
-    expect(canvas.context2d?.fills.length).toBeGreaterThan(0);
+    expect(canvas.webgl2?.clears.length).toBeGreaterThan(0);
     chart.dispose();
   });
 
@@ -615,7 +615,7 @@ describe("worker mode falls back to inline when the worker cannot start", () => 
     settle();
     const canvases = container.children.filter((c) => c.tagName === "CANVAS");
     expect(canvases).toHaveLength(1);
-    expect(canvases[0]?.context2d?.fills.length).toBeGreaterThan(0);
+    expect(canvases[0]?.webgl2?.clears.length).toBeGreaterThan(0);
     chart.dispose();
   });
 });
