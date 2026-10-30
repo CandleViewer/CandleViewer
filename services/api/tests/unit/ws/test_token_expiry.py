@@ -91,9 +91,9 @@ class _Stack:
         return minted
 
 
-@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
-def stack(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Iterator[_Stack]:
-    """The composed path, with `CV_WS_BACKPRESSURE_ENABLED` off and on (#412 S2a)."""
+@pytest.fixture
+def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Stack]:
+    """The composed path, with `CV_WS_BACKPRESSURE_ENABLED` on (#412 S2a; #2409: flag on only)."""
     clock = _Clock()
     auth = AuthService(session_repository=FakeSessionRepository(), clock=clock)
     cast(Any, auth)._repository = FullUsers()  # #2295: the WS classifies every session
@@ -105,9 +105,7 @@ def stack(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> It
             gateway.make_ws_router, clock=clock.monotonic, wall_ms=clock.wall_ms, tick_s=0.005
         ),
     )
-    app = app_module.create_app(
-        Settings(allowed_origins=_ORIGIN, ws_backpressure_enabled=request.param)
-    )
+    app = app_module.create_app(Settings(allowed_origins=_ORIGIN, ws_backpressure_enabled=True))
     with TestClient(app, client=("127.0.0.1", 50000), headers={"origin": _ORIGIN}) as client:
         assert client.portal is not None
         client.portal.call(auth.start, app.state.app_context)

@@ -3,11 +3,11 @@
 
 The hub stamps the data frame whose `s` is a multiple of `SAMPLE_EVERY`, and no other: the rest
 read no clock and are queued bare. The writer observes a stamped frame with that weight once
-`send_text` has returned. The span runs through the real `/ws` router, hub, queue and writer, on a
-fake clock that both ends of the span read; no test sleeps. `_on_loop` runs a function on the
-app's loop, where nothing else runs until it returns, so the writer cannot interleave with it. A
-`pong` is a barrier: the single writer finished every frame queued before it, observation
-included.
+`send_text` has returned. The span runs through the real `/ws` router, hub, budgeted pipeline
+and writer (#2409: the flag-on path), on a fake clock that both ends of the span read; no test
+sleeps. `_on_loop` runs a function on the app's loop, where nothing else runs until it returns, so
+the writer cannot interleave with it. A `pong` is a barrier: the single writer finished every frame
+queued before it, observation included.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from tests.unit.ws import test_sequencing_socket as sequencing_socket
 from tests.unit.ws._seq_support import ACC_A, Book, Clock, Conn, Source
 from tests.unit.ws.test_lifecycle_socket import JSON, _closed, _recv
 from tests.unit.ws.test_sequencing import _footprint_body
-from tests.unit.ws.test_sequencing_socket import _open, _rx, _World
+from tests.unit.ws.test_sequencing_socket import _PAST_WINDOW_S, _open, _rx, _World
 
 FANOUT = "cv_ws_fanout_seconds"
 CH = "book.BTCUSDT.50"
@@ -61,17 +61,21 @@ def _sub(ws: Any) -> None:
     assert (snap["t"], snap["s"]) == ("snap", 1)
 
 
-def _publish(w: _World, count: int, taken: float = 0.0, sent: float = 0.0) -> None:
-    """`count` deltas through the hub in one burst on the loop: the hub takes them at `taken` on
-    the fake clock, and the writer reads `sent` once the socket has them."""
+def _publish(w: _World, count: int, taken: float = 0.0, sent: float | None = None) -> list[float]:
+    """`count` deltas through the hub in one burst on the loop: the hub takes the first at `taken`
+    on the fake clock and each next `_PAST_WINDOW_S` later, so each leaves its book window alone
+    (§8.1); the writer reads `sent` (by default the last one's time) once the socket has them.
+    Returns the time each was taken."""
+    at = [taken + i * _PAST_WINDOW_S for i in range(count)]
 
     def burst() -> None:
-        w.clock.now = taken
-        for _ in range(count):
+        for now in at:
+            w.clock.now = now
             assert w.hub.publish(CH, BODY) == 1
-        w.clock.now = sent
+        w.clock.now = at[-1] if sent is None else sent
 
     _on_loop(w, burst)
+    return at
 
 
 def _read(ws: Any, first_s: int, count: int) -> list[dict[str, Any]]:
@@ -111,18 +115,20 @@ def test_series_is_live_catalogued_registered_once_re_exported_and_unlabelled() 
 
 
 def test_fanout_counts_the_weight_for_each_sampled_delta_and_times_it_hub_to_socket() -> None:
-    w = _World(backpressure=None)  # #2409: the flag-off writer path, until PR 2
+    w = _World()
     with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         _sub(ws)
         _barrier(ws)
         n0, t0 = _obs()
-        _publish(w, 2 * N - 1, taken=10.0, sent=10.5)  # `s` 2 to 2N: two sampled frames
+        sent = 10.0 + 2 * N * _PAST_WINDOW_S  # after the last delta is taken
+        taken = _publish(w, 2 * N - 1, taken=10.0, sent=sent)  # `s` 2 to 2N: two sampled
         frames = _read(ws, 2, 2 * N - 1)
         _barrier(ws)
         n1, t1 = _obs()
     assert n1 - n0 == 2 * N  # `N` times the sampled frames, not the frames
-    assert t1 - t0 == pytest.approx(2 * N * 0.5)  # the clock read at the socket minus the hub's
+    spans = [sent - taken[s - 2] for s in (N, 2 * N)]  # the socket's clock read minus the hub's
+    assert t1 - t0 == pytest.approx(N * sum(spans))
     assert set(frames[N - 2]) == {
         "t",
         "ch",
@@ -134,7 +140,7 @@ def test_fanout_counts_the_weight_for_each_sampled_delta_and_times_it_hub_to_soc
 
 
 def test_fanout_observes_a_sampled_snapshot_but_no_control_frame() -> None:
-    w = _World(backpressure=None)  # #2409: the flag-off writer path, until PR 2
+    w = _World()
     with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         _barrier(ws)
@@ -161,7 +167,7 @@ def test_fanout_ignores_a_frame_the_writer_drops_when_the_identity_ends(
 ) -> None:
     # A token an hour out: the fake monotonic clock passes its expiry at 3600 s.
     monkeypatch.setattr(sequencing_socket, "_EXPIRES", datetime.now(UTC) + timedelta(hours=1))
-    w = _World(backpressure=None)  # #2409: the flag-off writer path, until PR 2
+    w = _World()
     with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         _sub(ws)

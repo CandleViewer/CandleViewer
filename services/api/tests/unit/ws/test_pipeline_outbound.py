@@ -330,7 +330,8 @@ async def test_flag_off_wire_transcript_is_unchanged(encoding: str) -> None:
     """Flag off is byte-for-byte the gateway before #412 S2a: the transcript's digest was recorded
     on 731f4820f, before S2a touched the gateway. Its `system` frames (the `tick`, the shutdown
     notice) are framed by `_Connection.push_system`, so a change of production's framing of them
-    moves the digest too (#3198)."""
+    moves the digest too (#3198). #2409: kept until the removal PR, the only cover of a writer
+    that raises (`_join_writer` returns its error: the `fault` scenario)."""
     transcript = await _flag_off_session(encoding)
     digest = hashlib.sha256(json.dumps(transcript, sort_keys=True).encode()).hexdigest()
     kinds = {kind for _, sends, _, _ in transcript for kind, _ in sends}
@@ -1352,16 +1353,13 @@ class _TurnWire(_Wire):
         await super()._send(kind, payload)
 
 
-@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag-off", "flag-on"])
-async def test_the_writer_gives_the_loop_a_turn_while_it_drains_a_backlog(
-    backpressure: BackpressureConfig | None,
-) -> None:
+async def test_the_writer_gives_the_loop_a_turn_while_it_drains_a_backlog() -> None:
     """#571: a send to a writable socket never suspends, so a writer that suspends only on an
     empty queue writes its whole backlog (up to 2 000 frames) in one loop turn, and every other
     connection, the loop's timers and the `/metrics` listener on the same loop wait for all of it.
     Each writer yields after at most `WRITER_SLICE_FRAMES` sends in a row: no run of sends at one
     loop-turn count is longer."""
-    rig, sock = _Rig(backpressure), _TurnWire()
+    rig, sock = _Rig(), _TurnWire()
     n = 4 * gateway.WRITER_SLICE_FRAMES + 5
     async with asyncio.timeout(_DEADLINE_S):
         handler, _conn = await rig.open(sock)

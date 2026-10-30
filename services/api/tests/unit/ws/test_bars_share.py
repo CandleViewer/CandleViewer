@@ -492,27 +492,6 @@ async def test_a_slow_reader_mostly_bars_keeps_book_and_trades_and_resnapshots_b
     assert _grew(before) == {"drop_share": 1, "resnapshot": 1}
 
 
-@_ENCODINGS
-async def test_flag_off_has_no_share_its_push_bound_is_the_control(encoding: str) -> None:
-    """Ruling Q1: 600 `bars` deltas held, past half the 1 024-frame push bound, all arrive."""
-    rig, sock, before = _Rig(backpressure=None), _Wire(encoding), _counts()
-    rig.source.bodies["bars"] = SnapshotBody(_bars())
-    async with asyncio.timeout(_DEADLINE_S):
-        handler, conn = await rig.open(sock)
-        first = (await rig.sub(sock, _BARS))[1]["s"]
-        sock.hold()
-        rig.hub.broadcast_system({"kind": "held"})
-        await sock.parked.wait()
-        for i in range(600):
-            rig.sequencing.publish(_BARS, _bars(i))
-        sock.release()
-        _, *frames = await sock.next(601)
-        handler.cancel()
-        await asyncio.wait({handler})
-    assert getattr(conn, "pipeline", None) is None and _grew(before) == {}
-    assert [(f["t"], f["s"]) for f in frames] == [("d", s) for s in range(first + 1, first + 601)]
-
-
 #: What `bar_item` emits for a snapshot item of a non-time kind (no `amended`): the keys of every
 #: item, `close_t_ms` and `_DELTA_KEYS`. A time kind has no `close_t_ms`, and the delta keys are
 #: there only with `include_delta`.

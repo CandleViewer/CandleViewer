@@ -54,7 +54,6 @@ from typing import Any
 import pytest
 
 from candleviewer.ws import gateway, pacing, system_filter
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import _Connection
 from candleviewer.ws.metrics import cv_ws_system_frames_withheld_total
 from tests.unit.architecture.test_system_frame_callers import _sites
@@ -139,9 +138,8 @@ def _returns_only_a_literal(source: str, scope: str) -> bool:
     )
 
 
-@pytest.mark.parametrize("flag_on", [False, True], ids=["flag_off", "flag_on"])
 async def test_every_system_frame_of_the_rig_is_queued_by_push_system(
-    flag_on: bool, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Each body a test broadcasts is offered to its socket through `push_system`, once per body,
     and the frames that arrive are those. A hub that framed the bodies itself, as the rig's once
@@ -155,7 +153,7 @@ async def test_every_system_frame_of_the_rig_is_queued_by_push_system(
         push_system(conn, body, snap=snap)
 
     monkeypatch.setattr(_Connection, "push_system", spy)
-    rig, sock = _Rig(BackpressureConfig() if flag_on else None), _Wire()
+    rig, sock = _Rig(), _Wire()  # #2409: the budgeted pipeline
     bodies = [{"kind": "tick", "n": i} for i in range(3)]
     async with asyncio.timeout(_DEADLINE_S):
         handler, conn = await rig.open(sock)

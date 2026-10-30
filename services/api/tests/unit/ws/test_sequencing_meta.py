@@ -262,39 +262,6 @@ def test_a_d_meta_has_a_snapshots_owner_meta_bound(
     assert type(sent[0]["meta"]) is dict
 
 
-def _hold_back(sub: Subscription, state: str) -> None:
-    """Put `sub` in a state in which the emitter holds a `d` back (or leave it live)."""
-    if state == "pending":
-        sub.snapshot_pending = True
-    elif state == "paused":
-        sub.effective["paused"] = True
-    elif state == "ended":
-        sub.ended = True
-
-
-@_REFUSED
-@pytest.mark.parametrize("state", ["live", "pending", "paused", "ended"])
-def test_flag_off_a_refused_d_meta_is_the_publishers_error(
-    meta: Mapping[str, Any], state: str
-) -> None:
-    """It reaches the publisher, as a server-owned key does, whatever the subscription's state: not
-    a failed delivery the hub contains (that leaves it pending a `snap`). No `s` is taken."""
-    hub, [(conn, sub)] = _subscribed({"encoding": "structured"})
-    _hold_back(sub, state)
-    with pytest.raises(ValueError, match="delta meta"):
-        hub.publish(CH, EMPTY, meta=meta)
-    assert (conn.take(), sub.seq, sub.snapshot_pending) == ([], 1, state == "pending")
-
-
-def test_flag_off_a_waking_publish_raises_a_refused_d_meta_too() -> None:
-    """`wake` follows a contained failure with the `snap`; a refused `meta` is not contained, so
-    nothing is sent and the subscription is not held for one."""
-    hub, [(conn, sub)] = _subscribed({"encoding": "structured"})
-    with pytest.raises(ValueError, match="delta meta is over 1024 bytes"):
-        hub.publish(CH, EMPTY, meta=_spec(OWNER_META_MAX_BYTES + 1), wake=True)
-    assert (conn.take(), sub.seq, sub.snapshot_pending) == ([], 1, False)
-
-
 def test_a_refused_d_meta_is_refused_when_a_binary_part_rides_too() -> None:
     """A binary `d` carries its `meta` on the envelope beside the part: the same check."""
     hub, [(conn, sub)] = _subscribed({"encoding": "binary"})
@@ -379,15 +346,39 @@ class _Truth(Mapping[str, Any]):
         return len(self.content)
 
 
+def _routed_bars() -> tuple[SequencingHub, Any, list[Any], Subscription]:
+    """A hub whose one connection's sink is its pipeline (the flag-on path), subscribed to the
+    bars series past its snapshot: the hub, the pipeline, the closes it asked for and the
+    subscription."""
+    hub = SequencingHub()
+    pipe, asked, conn = _routed(hub)
+    sub = _structured(conn, _BARS)
+    _queued(pipe)
+    return hub, pipe, asked, sub
+
+
 @pytest.mark.parametrize("how", ["lies", "raises"])
-def test_flag_off_a_d_meta_is_checked_whatever_its_truth_value_says(how: str) -> None:
+def test_flag_on_a_d_meta_is_checked_whatever_its_truth_value_says(how: str) -> None:
     """Neither the emitter nor the hub asks the caller's mapping whether it is empty: it is read
-    once, and refused for what it holds, as the publisher's `ValueError`."""
-    hub, [(conn, sub)] = _subscribed({"encoding": "structured"})
+    once, and refused for what it holds: contained as any refused `meta` is (#2409: this pinned
+    the flag-off publisher's `ValueError`)."""
+    hub, pipe, asked, sub = _routed_bars()
     meta = _Truth(how)
-    with pytest.raises(ValueError, match="delta meta is over 1024 bytes"):
-        hub.publish(CH, EMPTY, meta=meta)
-    assert (conn.take(), sub.seq, meta.asked) == ([], 1, 0)
+    hub.publish(_BARS, {**_SERIES, "bars": [{**_BAR, "confirm": False}]}, meta=meta)
+    assert (sub.seq, sub.pending_reason, _queued(pipe), asked) == (1, "backpressure", [], [])
+    assert meta.asked == 0
+
+
+def test_flag_on_a_waking_publish_contains_a_refused_d_meta_too() -> None:
+    """`wake` follows a contained failure with the `snap`: a refused `meta` is contained the same
+    way, so no `s` is taken and the `backpressure` snapshot follows at the writer's turn (#2409:
+    this pinned the flag-off raise)."""
+    hub, pipe, asked, sub = _routed_bars()
+    body = {**_SERIES, "bars": [{**_BAR, "confirm": False}]}
+    hub.publish(_BARS, body, meta=_spec(OWNER_META_MAX_BYTES + 1), wake=True)
+    assert (sub.seq, sub.pending_reason, _queued(pipe), asked) == (1, "backpressure", [], [])
+    pipe.service(0.0)
+    assert [(f["t"], f["s"]) for f in _queued(pipe)] == [("snap", 2)]
 
 
 @_REFUSED

@@ -7,8 +7,8 @@ test drives the handler on the test's own loop through a fake socket and cancels
 blocked in `reader()`, behind a writer stuck sending, in the close-flush wait, in the join of a
 writer that refuses to die, in the very turn the writer ends, and a second cancel inside the close
 audit. A teardown step that raises must neither skip the rest nor replace the cancel. Waits are
-event-driven and bounded: no sleeps. Every case runs with the backpressure flag off and on (#412
-S2a: the budgeted writer, and the `pipeline` teardown step).
+event-driven and bounded: no sleeps. Every case runs on the budgeted pipeline (#412 S2a: the
+budgeted writer, and the `pipeline` teardown step; #2409: the flag-on path only).
 """
 
 from __future__ import annotations
@@ -168,9 +168,9 @@ class _Rig:
         assert (rec["actor_user_id"], rec["session_id"]) == (USER, SESSION)
 
 
-@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
-def rig(request: pytest.FixtureRequest) -> _Rig:
-    return _Rig(BackpressureConfig() if request.param else None)
+@pytest.fixture
+def rig() -> _Rig:
+    return _Rig()
 
 
 async def _cancel(handler: asyncio.Task[None]) -> None:
@@ -296,18 +296,14 @@ async def test_a_second_cancel_inside_the_close_audit_is_honoured_and_the_rest_s
 _STEPS = ["hub", "gauge", "sequencing", "registry", "revocation", "lifecycle"]
 
 
-@pytest.mark.parametrize(
-    ("flag", "step"),
-    [*((False, step) for step in _STEPS), *((True, step) for step in [*_STEPS, "pipeline"])],
-    ids=[*(f"flag_off-{s}" for s in _STEPS), *(f"flag_on-{s}" for s in [*_STEPS, "pipeline"])],
-)
+@pytest.mark.parametrize("step", [*_STEPS, "pipeline"])
 async def test_a_raising_teardown_step_never_skips_the_rest_or_replaces_the_cancel(
-    flag: bool, step: str, monkeypatch: pytest.MonkeyPatch
+    step: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def boom(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("step failed")
 
-    rig, sock = _Rig(BackpressureConfig() if flag else None), _Socket()
+    rig, sock = _Rig(), _Socket()
     try:
         async with asyncio.timeout(_DEADLINE_S):
             handler = await rig.authenticated(sock)
@@ -338,10 +334,15 @@ async def test_a_raising_teardown_step_never_skips_the_rest_or_replaces_the_canc
     )
 
 
-async def test_a_client_that_vanishes_mid_send_is_not_audited_as_shutdown(rig: _Rig) -> None:
+#: #2409: the flag-off case is kept until the removal PR, the only cover of the flag-off writer's
+#: `WebSocketDisconnect` mid-send.
+@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag_off", "flag_on"])
+async def test_a_client_that_vanishes_mid_send_is_not_audited_as_shutdown(
+    backpressure: BackpressureConfig | None,
+) -> None:
     """During the shutdown window a send to a client that left ends the writer, and no
     `websocket.disconnect` reaches the reader: the writer's error carries the close code."""
-    sock = _Socket()
+    rig, sock = _Rig(backpressure), _Socket()
     async with asyncio.timeout(_DEADLINE_S):
         handler = await rig.authenticated(sock)
         (conn,) = rig.hub.of_user(USER)

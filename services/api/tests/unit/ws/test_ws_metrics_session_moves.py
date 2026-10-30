@@ -21,7 +21,7 @@ Deliverable of #571 (Scope / Deliverables) -> series asserted:
   `book`, `trades`, `orders` (one public of each shape and a private family);
 * `cv_ws_fanout_seconds` (the budget #6 histogram, weighted 1 in `SAMPLE_EVERY`);
 * `cv_ws_queue_bytes`, `cv_ws_queue_frames`, `cv_ws_rtt_seconds` (one observation per
-  classification, flag on, the probe answered with a `pong`);
+  classification, the probe answered with a `pong`);
 * `cv_ws_closes_total{reason}` -> `shutdown`, `slow_consumer`; `cv_ws_auth_failures_total{reason}`;
   `cv_ws_revoked_total{reason}` -> `permission_revoked`; `cv_ws_clock_skew_ms`, and the E17-S01
   (#377) / E17-S02 (#378) `cv_ws_handshake_seconds` and `cv_ws_subscribe_total{topic,result}`.
@@ -69,7 +69,7 @@ def test_connection_gauges_rise_while_open_and_return_after_close(run: Run) -> N
 
 
 def test_handshake_and_clock_skew_are_observed(run: Run) -> None:
-    """E17-S01: a handshake is timed at each `auth_ok` (connections 1, 2, 3 and the flag-off one:
+    """E17-S01: a handshake is timed at each `auth_ok` (connections 1, 2, 3 and the msgpack one:
     4); the clock skew at each `hello`, so the failed-auth connection adds one (5)."""
     assert run.delta("cv_ws_handshake_seconds_count") == 4
     assert run.delta("cv_ws_clock_skew_ms_count") == 5
@@ -78,7 +78,7 @@ def test_handshake_and_clock_skew_are_observed(run: Run) -> None:
 def test_topics_depth_is_one_observation_per_subscribe_step(run: Run) -> None:
     """`cv_ws_topics_per_client`: connection 1 subscribes three topics (depth 1, 2, 3, read while
     it is open); over the session: connection 1 again after its `unsub` (2), connection 3 (1, 2)
-    and the flag-off one (1): 7 observations of 12."""
+    and the msgpack one (1): 7 observations of 12."""
     assert run.up("cv_ws_client_topics_depth_count") == 3
     assert run.up("cv_ws_client_topics_depth_sum") == 1 + 2 + 3
     assert run.delta("cv_ws_client_topics_depth_count") == 7
@@ -91,7 +91,7 @@ def test_topics_depth_is_one_observation_per_subscribe_step(run: Run) -> None:
     ids=lambda v: str(v),
 )
 def test_subscribe_results_count_each_topic_family(run: Run, topic: str, ok: int) -> None:
-    """E17-S02 `cv_ws_subscribe_total{topic,result}`: `book` on connections 1, 3 and the flag-off
+    """E17-S02 `cv_ws_subscribe_total{topic,result}`: `book` on connections 1, 3 and the msgpack
     one, `trades` on connection 1, `orders` on connections 1 and 3; nothing was refused."""
     assert run.delta("cv_ws_subscribe_total", topic=topic, result="ok") == ok
 
@@ -113,7 +113,7 @@ def test_snapshots_are_timed_and_sized_by_topic_family(
 
 def test_fanout_is_observed_in_sample_weights(run: Run) -> None:
     """Budget #6 `cv_ws_fanout_seconds`: one frame in `SAMPLE_EVERY` is stamped and observed with
-    that weight: the 64 deltas of connection 1 stamp two, the flag-off connection's one. The
+    that weight: the 64 deltas of connection 1 stamp two, the msgpack connection's one. The
     fake clock does not move between a stamp and the write, so the observed time is exactly 0."""
     assert run.delta("cv_ws_fanout_seconds_count") == _DELTAS + SAMPLE_EVERY
     assert run.delta("cv_ws_fanout_seconds_sum") == 0
@@ -124,8 +124,8 @@ def test_frame_encode_time_and_size_are_observed_per_codec(
     run: Run, kind: str, frames: int
 ) -> None:
     """`cv_ws_frame_encode_seconds{kind}` and `cv_ws_frame_bytes{kind}`: `json` from connection 1
-    (the pipeline's one encode per sampled delta, weighted), `msgpack` from the flag-off one (the
-    writer's)."""
+    (the pipeline's one encode per sampled delta, weighted), `msgpack` from the msgpack one (its
+    pipeline's, the same way)."""
     assert run.delta("cv_ws_frame_encode_seconds_count", kind=kind) == frames
     assert run.delta("cv_ws_frame_bytes_count", kind=kind) == frames
     assert run.delta("cv_ws_frame_bytes_sum", kind=kind) > 0  # the size is the codec's
@@ -170,7 +170,7 @@ def test_merged_window_is_counted_as_conflated_and_coalesced(run: Run) -> None:
 
 def test_queue_depth_and_rtt_are_observed_once_per_classification(run: Run) -> None:
     """`cv_ws_queue_bytes`, `cv_ws_queue_frames` and `cv_ws_rtt_seconds`: one observation per
-    classification of a flag-on connection, so all three move together: the 64 deltas, the
+    classification of a connection, so all three move together: the 64 deltas, the
     re-snapshot's and the overflow's classifications, and the closing ones: 66."""
     assert run.delta("cv_ws_rtt_seconds_count") == 66
     assert run.delta("cv_ws_queue_bytes_count") == 66
@@ -178,7 +178,7 @@ def test_queue_depth_and_rtt_are_observed_once_per_classification(run: Run) -> N
 
 
 def test_closes_count_by_reason(run: Run) -> None:
-    """`cv_ws_closes_total{reason}`: the planned shutdowns (connection 1 and the flag-off one)
+    """`cv_ws_closes_total{reason}`: the planned shutdowns (connection 1 and the msgpack one)
     and the slow consumer; no other reason moved (the two client disconnects count none)."""
     assert run.delta("cv_ws_closes_total", reason="shutdown") == 2
     assert run.delta("cv_ws_closes_total", reason="slow_consumer") == 1

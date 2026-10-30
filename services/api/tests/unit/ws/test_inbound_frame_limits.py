@@ -750,9 +750,8 @@ def test_an_oversized_pong_before_auth_ok_is_handled_as_before(
     assert _bye(conn) is None and [name for name, _ in handed.decoded] == [decoder]
 
 
-# -- the `pong` budget after `auth_ok` (§8.5), through the real router, flag off and on -----------
+# -- the `pong` budget after `auth_ok` (§8.5), through the real router (#2409: flag on) ----------
 
-_FLAGS = pytest.mark.parametrize("flag", [None, BackpressureConfig()], ids=["flag-off", "flag-on"])
 _BURST = 8  # the budget's most at once, as 23 §8.5 states it
 _PONG: Final = {"t": "pong", "id": "s-hb-1"}
 
@@ -767,14 +766,13 @@ async def _fenced(sock: _Wire, *frames: dict[str, Any]) -> list[dict[str, Any]]:
     return sent
 
 
-@_FLAGS
 @_ENCODINGS
 async def test_pongs_within_their_budget_never_reach_the_inbound_limiter(
-    flag: BackpressureConfig | None, encoding: str, allowed: list[bool]
+    encoding: str, allowed: list[bool]
 ) -> None:
     """Before `auth_ok` each `pong` is counted and spends no budget; after it the budget's 8, at
     one instant, are not counted by the limiter, and the 9th is the first it counts."""
-    rig, sock = _Rig(flag), _Wire(encoding)
+    rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
     handler = asyncio.create_task(rig.endpoint(sock))
     try:
         async with asyncio.timeout(5.0):

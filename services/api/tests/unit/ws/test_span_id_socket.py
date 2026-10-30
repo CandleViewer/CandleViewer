@@ -1,10 +1,11 @@
-"""E17-T06 (#571) slice D2: `sp` through the real `/ws` router, on both codecs and both writers
-(flag off, and `CV_WS_BACKPRESSURE_ENABLED` on): a string on MessagePack too, left out of
-`cv_ws_frame_bytes{json|msgpack}` (20 section 12.1) by exactly what the real encoders write for
-it, the writer's debug span record, a client's `sp` ignored, and `CV_TELEMETRY_ENABLED` choosing
-the id source. A fake clock times the span: the hub takes each delta at `t` and the writer sends it
-at `t` + 0.25 s, one delta at a time, so flag on each comes past the book window and the pacer lets
-it out at once (D12) and its span starts at that release (D7, #3269).
+"""E17-T06 (#571) slice D2: `sp` through the real `/ws` router, on both codecs and the budgeted
+writer (`CV_WS_BACKPRESSURE_ENABLED` on; #2409 runs it on that path only): a string on MessagePack
+too, left out of `cv_ws_frame_bytes{json|msgpack}` (20 section 12.1) by exactly what the real
+encoders write for it, the writer's debug span record, a client's `sp` ignored, and
+`CV_TELEMETRY_ENABLED` choosing the id source. A fake clock times the span: the hub takes each
+delta at `t` and the writer sends it at `t` + 0.25 s, one delta at a time, so each comes past the
+book window and the pacer lets it out at once (D12) and its span starts at that release (D7,
+#3269).
 """
 
 from __future__ import annotations
@@ -46,8 +47,8 @@ N = SAMPLE_EVERY
 SPAN = re.compile(r"[0-9a-f]{16}")
 BODY = {"symbol": "BTCUSDT", "bids": [["100.0", "1.500"]], "asks": []}
 PART = Frame(BOOK_DELTA, records=((0, 1000, 1500),), price_scale=1, qty_scale=3)
-FLAGS = pytest.mark.parametrize("flag", [False, True], ids=["flag_off", "flag_on"])
 ENCODINGS = pytest.mark.parametrize("encoding", [_JSON, _MSGPACK], ids=["json", "msgpack"])
+_ON = BackpressureConfig()
 SPAN_EVENT = "ws frame span"
 #: A valid-looking id a client sends: only where it came from tells it apart.
 CLIENT_SP = "c11e47c11e47c11e"
@@ -61,13 +62,17 @@ def _decoded(payload: str | bytes) -> dict[str, Any]:
 
 
 async def _session(
-    encoding: str, flag: bool, deltas: int, *, span_ids: bool = True
+    encoding: str,
+    deltas: int,
+    *,
+    span_ids: bool = True,
+    backpressure: BackpressureConfig | None = _ON,
 ) -> tuple[_Wire, str]:
     """`hello`, `auth`, a binary `book` subscription (its `snap` is `s` 1) and `deltas` deltas,
     with span ids on unless `span_ids` is off; returns the wire and the connection id once the
-    socket has closed. Delta k is taken at 1.0 + 0.25k s and sent 250 ms later: flag on, that is
-    past the book window, so none of them waits in the pacer (#3329)."""
-    rig = _Rig(BackpressureConfig() if flag else None)
+    socket has closed. Delta k is taken at 1.0 + 0.25k s and sent 250 ms later: that is past the
+    book window, so none of them waits in the pacer (#3329)."""
+    rig = _Rig(backpressure)
     rig.registry.services.span_ids = new_span_id if span_ids else None
     sock = _Wire(encoding)
     async with asyncio.timeout(_DEADLINE_S):
@@ -98,15 +103,14 @@ def _without_sp(frame: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in frame.items() if k != "sp"}
 
 
-@FLAGS
 @ENCODINGS
 async def test_sp_goes_out_as_a_string_and_is_left_out_of_the_frame_bytes(
-    encoding: str, flag: bool
+    encoding: str,
 ) -> None:
     msgpack_codec = encoding == _MSGPACK
     kind = MSGPACK_KIND if msgpack_codec else JSON_KIND
     before = _writer()[kind][1]
-    sock, _ = await _session(encoding, flag, N - 1)  # `s` 2 to N: the hub stamps N
+    sock, _ = await _session(encoding, N - 1)  # `s` 2 to N: the hub stamps N
     after = _writer()[kind][1]
     ((frame, payload),) = _carrying_sp(sock)
     assert frame["s"] == N and type(frame["sp"]) is str and SPAN.fullmatch(frame["sp"])
@@ -180,15 +184,18 @@ def test_only_a_sampled_frame_that_carries_sp_is_queued_as_spanned() -> None:
     assert item.key == (_BOOK, None) and not item.priority
 
 
-@FLAGS
+#: #2409: the flag-off case is kept until the removal PR, the only cover of the flag-off writer's
+#: span record.
+@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag_off", "flag_on"])
 async def test_the_writer_logs_one_debug_span_record_per_frame_that_carries_sp(
-    flag: bool, caplog: pytest.LogCaptureFixture
+    backpressure: BackpressureConfig | None, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The exact entry, with the writer task's context merged in: it holds the connection id and
     no user or session id (bound after the writer was spawned)."""
     caplog.set_level(logging.DEBUG)
     with capture_logs(processors=[structlog.contextvars.merge_contextvars]) as logs:
-        sock, connection_id = await _session(_JSON, flag, 2 * N - 1)  # `s` 2 to 2N
+        # `s` 2 to 2N
+        sock, connection_id = await _session(_JSON, 2 * N - 1, backpressure=backpressure)
     sent = [frame for frame, _ in _carrying_sp(sock)]
     assert [f["s"] for f in sent] == [N, 2 * N]
     assert [e for e in logs if e["event"] == SPAN_EVENT] == [
@@ -205,30 +212,28 @@ async def test_the_writer_logs_one_debug_span_record_per_frame_that_carries_sp(
     ]
 
 
-@FLAGS
 async def test_a_sampled_frame_with_no_id_source_is_sent_without_sp_and_logs_no_record(
-    flag: bool, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Latency telemetry off, the process at debug: the stamped delta still goes out and counts for
     the fan-out series, the writer goes on to the next frame, and nothing names a span for it."""
     caplog.set_level(logging.DEBUG)
     before = FANOUT_SECONDS.reading()[0][-1]
     with capture_logs() as logs:
-        sock, _ = await _session(_JSON, flag, N, span_ids=False)  # `s` 2 to N + 1
+        sock, _ = await _session(_JSON, N, span_ids=False)  # `s` 2 to N + 1
     assert FANOUT_SECONDS.reading()[0][-1] - before == N  # the stamped delta was observed
     sent = {f["s"] for f in (_decoded(p) for _, p in sock.raw) if f.get("t") == "d"}
     assert {N, N + 1} <= sent
     assert _carrying_sp(sock) == [] and [e for e in logs if e["event"] == SPAN_EVENT] == []
 
 
-@FLAGS
 async def test_no_span_record_unless_the_process_logs_at_debug(
-    flag: bool, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO)
     caplog.set_level(logging.DEBUG, logger=gateway.__name__)  # a module override cannot show it
     with capture_logs() as logs:
-        sock, _ = await _session(_JSON, flag, N - 1)
+        sock, _ = await _session(_JSON, N - 1)
     assert len(_carrying_sp(sock)) == 1
     assert [e for e in logs if e["event"] == SPAN_EVENT] == []
 

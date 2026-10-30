@@ -362,7 +362,8 @@ async def test_a_snapshot_that_raises_after_a_narrowing_is_contained_to_its_topi
 
         monkeypatch.setattr(rig.source, "build", raises)
         rig.grants = _grants(ACC_A)
-        await rig.registry.grants_changed(USER)
+        with capture_logs() as logs:
+            await rig.registry.grants_changed(USER)
         monkeypatch.setattr(rig.source, "build", build)
         rig.clock.now += 1.0  # the drain's retry pass is due, if it had parked the snapshot
         ends = [await sock.next(3) for sock in socks]
@@ -379,39 +380,13 @@ async def test_a_snapshot_that_raises_after_a_narrowing_is_contained_to_its_topi
         assert [(f["meta"]["reason"], f["p"]["positions"]) for f in snaps] == [
             ("backpressure", [_row(ACC_A)])
         ] * 2
-
-
-async def test_a_flag_off_reconfigure_snapshot_that_raises_is_contained_to_its_topic(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """§10.1 flag off (#415): a narrowing whose queued frames were dropped re-pends its topic, and
-    a `reconfigure` snapshot that then raises is contained as the hub contains one: the topic
-    stays pending with its reason, `ws snapshot failed` is logged, and nothing closes."""
-    rig, sock = _positions_rig(monkeypatch, ACC_A, ACC_B, flag=False), _Wire()
-    async with _connected(rig, sock) as conn:
-        await rig.sub(sock, "positions", exchange_account_ids=[str(ACC_A), str(ACC_B)])
-        await _held(rig, sock)
-        rig.sequencing.publish("positions", {"positions": [_row(ACC_B)]}, account=ACC_B)
-
-        def raises(sub: Subscription) -> SnapshotBody | None:
-            raise RuntimeError(_MARK)
-
-        monkeypatch.setattr(rig.source, "build", raises)
-        rig.grants = _grants(ACC_A)
-        with capture_logs() as logs:
-            await rig.registry.grants_changed(USER)
-        sock.release()
-        frames = await sock.next(3)
-        assert conn.authz is not None and sock.closed_with is None and conn.outbound.empty()
-        (sub,) = conn.authz.by_id.values()
-    assert [f["t"] for f in frames] == ["d", "permission_change", "revoked"]
-    assert (sub.snapshot_pending, sub.pending_reason) == (True, "reconfigure")
-    (line,) = [e for e in logs if e["event"] == "ws snapshot failed"]
-    assert (line["family"], line["error"], line["log_level"]) == (
-        "positions",
-        "RuntimeError",
-        "warning",
-    )
+    # contained as the hub contains it: one `ws snapshot failed` a connection, never the error's
+    # text (the deleted flag-off case pinned these; the code read on #5081)
+    failed = [e for e in logs if e["event"] == "ws snapshot failed"]
+    level = "error" if family == "orders" else "warning"
+    assert [(e["family"], e["error"], e["log_level"]) for e in failed] == [
+        (family, "RuntimeError", level)
+    ] * 2
     assert _MARK not in str(logs)
 
 
@@ -421,7 +396,10 @@ async def test_a_flag_off_settle_failure_leaves_the_other_narrowed_topic_its_sna
 ) -> None:
     """§10.1 flag off (#415): `orders` and `positions` narrowed together, both re-pended. The one
     whose `reconfigure` build raises stays pending with its reason and logs `ws snapshot failed`
-    (`error` for `orders`, else `warning`); the other still gets its `snap`, and nothing closes."""
+    (`error` for `orders`, else `warning`); the other still gets its `snap`, and nothing closes.
+    #2409: kept until the removal PR, the only cover of the flag-off settle's per-topic guard
+    (the router's `settle`, its `TopicEmitter` branch); the pipeline twin is
+    `test_a_snapshot_that_raises_after_a_narrowing_is_contained_to_its_topic`."""
     rig, sock = _positions_rig(monkeypatch, ACC_A, ACC_B, flag=False), _Wire()
     other = "positions" if failing == "orders" else "orders"
     async with _connected(rig, sock) as conn:
@@ -461,41 +439,6 @@ async def test_a_flag_off_settle_failure_leaves_the_other_narrowed_topic_its_sna
     assert _MARK not in str(logs)
 
 
-async def test_a_flag_off_snapshot_that_raises_after_its_mark_cleared_stays_pending(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """§10.1 flag off (#415): `TopicEmitter.snapshot` clears the pending mark before it queues its
-    frames. A raise there (here the push of the first `snap` frame) leaves the topic pending
-    again, so no `d` follows a `snap` its client lacks; the line is logged, nothing closes."""
-    rig, sock = _positions_rig(monkeypatch, ACC_A, ACC_B, flag=False), _Wire()
-    async with _connected(rig, sock) as conn:
-        await rig.sub(sock, "positions", exchange_account_ids=[str(ACC_A), str(ACC_B)])
-        await _held(rig, sock)
-        rig.sequencing.publish("positions", {"positions": [_row(ACC_B)]}, account=ACC_B)
-        assert conn.authz is not None and conn.emitter is not None
-        push = conn.emitter.push
-
-        def raises(frame: dict[str, Any]) -> None:
-            if frame["t"] == "snap":
-                raise RuntimeError(_MARK)
-            push(frame)
-
-        monkeypatch.setattr(conn.emitter, "push", raises)
-        rig.grants = _grants(ACC_A)
-        with capture_logs() as logs:
-            await rig.registry.grants_changed(USER)
-        (sub,) = conn.authz.by_id.values()
-        assert (sub.snapshot_pending, sub.pending_reason) == (True, "reconfigure")
-        rig.sequencing.publish("positions", {"positions": [_row(ACC_A, 2)]}, account=ACC_A)
-        sock.release()
-        frames = await sock.next(3)
-        assert sock.closed_with is None and sock.sent.empty() and conn.outbound.empty()
-    assert [f["t"] for f in frames] == ["d", "permission_change", "revoked"]
-    (line,) = [e for e in logs if e["event"] == "ws snapshot failed"]
-    assert (line["family"], line["log_level"]) == ("positions", "warning")
-    assert _MARK not in str(logs)
-
-
 async def test_an_on_settle_that_raises_evicts_only_its_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -509,27 +452,6 @@ async def test_an_on_settle_that_raises_evicts_only_its_socket(
     world.principals = {uid: _principal(uid, NONE) for uid in (PEER, THIRD)}
     await world.registry.kill_switch_changed()
     assert [len(f) for f in world.revoked()] == [1, 1] and world.closed == [0]
-
-
-async def test_flag_off_narrowing_stays_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
-    """§9.5, C-4.14 flag off: a narrowed subscription goes on in place, not re-snapshotted, and
-    neither a grant change nor a re-`auth` sends a snapshot that was pending (a book whose source
-    became ready meanwhile)."""
-    rig, sock = _positions_rig(monkeypatch, ACC_A, ACC_B, flag=False), _Wire()
-    async with _connected(rig, sock) as conn:
-        await rig.sub(sock, "positions", exchange_account_ids=[str(ACC_A), str(ACC_B)])
-        rig.source.unavailable.add("BTCUSDT")
-        sock.feed({"t": "sub", "id": "b", "p": {"topics": [{"ch": _BOOK, "opts": _STRUCTURED}]}})
-        assert [f["t"] for f in await sock.next()] == ["sub_ok"]  # its snapshot is not ready
-        rig.source.unavailable.clear()  # ready now: only a flush would send it
-        rig.grants = _grants(ACC_A)
-        await rig.registry.grants_changed(USER)
-        rig.sequencing.publish("positions", {"positions": [_row(ACC_A, 2)]}, account=ACC_A)
-        sock.feed({"t": "auth", "id": "a2", "p": {"access_token": "tok"}})
-        frames = await sock.next(4)
-        assert sock.sent.empty() and conn.outbound.empty()
-    assert [f["t"] for f in frames] == ["permission_change", "revoked", "d", "auth_ok"]
-    assert frames[2]["p"]["positions"] == [_row(ACC_A, 2)]  # the narrowed stream goes on
 
 
 # -- the pipeline and the hook --------------------------------------------------------------------

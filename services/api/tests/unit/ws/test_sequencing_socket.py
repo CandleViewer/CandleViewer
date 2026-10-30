@@ -75,6 +75,9 @@ class _World:
 
 
 def _rx(ws: Any) -> dict[str, Any]:
+    """The next frame, validated, past every server `ping`. `_recv` already skips the pipeline's
+    `connection_quality` notices and RTT probes (`test_lifecycle_socket._paced`), as `_receive`
+    does for the lifecycle tests (#2409)."""
     while True:
         frame = _recv(ws)
         if frame["t"] != "ping":
