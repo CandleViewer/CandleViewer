@@ -1,14 +1,14 @@
 # E13-D04 — Per-component handoff checklist (`16` §11.4), the deltas on E13-D03's
 
-Shared tables with a leading `Component` column — the E11-D05 / E25-D05 / E30-D03 / E13-D03 shape (one `16` §11.4 block per component contract this ticket changes, every line kept; Tables 1–5, the Density table and the Essential-exceptions table once each). This ticket **publishes** the tokens, ladders and variants four of E13-D03's five contracts consume: each block below is a **delta** on `docs/design/E13/E13-D03-handoff.md` at `f437dc6b4d75e69a3fd2484d6b9422785e5d6d25` — a cell that reads "as E13-D03-handoff :n" is unchanged there; CMP-197 ChartTooltip's contract is unchanged (the tooltip fade is E11-D06 row 12, already in `15` :2376) and keeps E13-D03's block. Status: owner approval pending; the boards PENDING (BLOCKED-PENPOT: page `E13-D04 Indicator palette and motion`, by name, its id pinned once created); the token PR pending (E05-T01's — BQ-4's rider, one carrier per row; the rows in `E13-D04.md` §2.3). Spec: `docs/design/E13/E13-D04.md`; tokens: `packages/ui/tokens` at `f364826c5a4dfff2da10060b0a4ec9918035911b`; numbers: `docs/design/_tools/e13_d04_palette_motion_audit.py` (the palette, the alpha and the CVD table regenerated through `e13_d03_palette_audit.py`, `--check` drift 0; the motion kinematics computed).
+Shared tables with a leading `Component` column — the E11-D05 / E25-D05 / E30-D03 / E13-D03 shape (one `16` §11.4 block per component contract this ticket changes, every line kept; Tables 1–5, the Density table and the Essential-exceptions table once each). This ticket **publishes** the tokens, ladders and variants four of E13-D03's five contracts consume: each block below is a **delta** on `docs/design/E13/E13-D03-handoff.md` at `f437dc6b4d75e69a3fd2484d6b9422785e5d6d25` — a cell that reads "as E13-D03-handoff :n" is unchanged there; CMP-197 ChartTooltip's contract is unchanged (the tooltip fade is E11-D06 row 12, already in `15` :2376) and keeps E13-D03's block. Status: RULED / approved — #315 Done 2026-10-29 (QA record 6485619130); the eight boards drawn (page `E13-D04 Indicator palette and motion` · id `3167bd9b-dbab-80b2-8008-dc84bb54af9e`, spec §0); the token PR pending (E05-T01's — BQ-4's rider, one carrier per row; the rows in `E13-D04.md` §2.3). Spec: `docs/design/E13/E13-D04.md`; tokens: `packages/ui/tokens` at `f364826c5a4dfff2da10060b0a4ec9918035911b`; numbers: `docs/design/_tools/e13_d04_palette_motion_audit.py` (the palette, the alpha and the CVD table regenerated through `e13_d03_palette_audit.py`, `--check` drift 0; the motion kinematics computed).
 
 ## Handoff checklist — CMP-194 IndicatorOverlay (E13-D04, #315)
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — PENDING: page `E13-D04 Indicator palette and motion` (created by name on the board script's first run; id pinned here once it exists); planned PNGs `docs/design/E13/img/E13-D04-01-palette-token-sheet.png`, `E13-D04-02-palette-token-sheet-light.png`, `E13-D04-03-ladders-and-variants.png`, `E13-D04-06-motion-timelines.png`; the DS library entry is the token set and the story list of spec §12; the Penpot DS-library step is E05 Runbook A's (spec G-18)
-- [ ] **Variants × States matrix** — PENDING the boards: the six line tiers, three bar tiers and three band tiers as published ids (spec §3) × the states as E13-D03-handoff :10, plus **re-computing** (spec §6 M6: the new draw at full alpha from frame 0, the old draw fading over `motion.duration.fast`; a cut under reduced motion); Table 1
+- [x] **Final Penpot link** — page `E13-D04 Indicator palette and motion` · id `3167bd9b-dbab-80b2-8008-dc84bb54af9e` (spec §0; boards 01, 02, 03, 06); exports `docs/design/E13/img/E13-D04-01-palette-token-sheet.png`, `E13-D04-02-palette-token-sheet-light.png`, `E13-D04-03-ladders-and-variants.png`, `E13-D04-06-motion-timelines.png`; the DS library entry is the token set and the story list of spec §12; the Penpot DS-library step is E05 Runbook A's (spec G-18)
+- [x] **Variants × States matrix** — drawn on boards 03 and 06: the six line tiers, three bar tiers and three band tiers as published ids (spec §3) × the states as E13-D03-handoff :10, plus **re-computing** (spec §6 M6: the new draw at full alpha from frame 0, the old draw fading over `motion.duration.fast`; a cut under reduced motion); Table 1
 - [ ] N/A — **Keyboard table**: as E13-D03-handoff :11 (the overlay is not focusable); Table 2 carries the legend's keys
 - [x] **Accessible name / role table** — as E13-D03-handoff :12 (named by its legend row, valued by the mirror); Table 3
 - [x] **Live data** — as E13-D03-handoff :13; a re-compute swaps the buffer and is announced once per commit by the legend's event line ("EMA 34 applied"), never per frame; Table 5
@@ -19,15 +19,15 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Data contract confirmed** — as E13-D03-handoff :18; the `style` object carries spec §4's closed vocabulary (five keys; the contract PR is E13-T03's, spec G-12)
 - [ ] **Contrast and CVD** — PENDING the token PR's `pairs.mjs` rows (CR-5) and the `cvd_sim.py` run on the exports: spec §2.1 / §2.5 (the tool's sections 2–3, equal to E13-D03's) — every slot ≥ 3:1 on the canvas in all three themes (lowest 3.05), ≥ 8 ΔE from every reserved token (smallest 8.3) and from every other slot (smallest 14.2); 84 slot-pair CVD rows with 1 tritanopia-only collapse; the band fill at 0.20 keeps the worst candle ratio 3.26:1 under / 3.04:1 over / 3.50:1 CVD-safe; the half-faded old draw (1.61–3.06:1 over the canvas) is decorative — the new draw carries the values
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B below
-- [ ] **Sign-off** — owner approval pending (owner `approved` comment or merged spec PR)
+- [x] **Sign-off** — RULED / approved — #315 Done 2026-10-29 (QA record 6485619130)
 
 ## Handoff checklist — CMP-195 AnnotationMarker (E13-D04, #315)
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — PENDING: page `E13-D04 Indicator palette and motion`; planned PNG `docs/design/E13/img/E13-D04-03-ladders-and-variants.png`
-- [ ] **Variants × States matrix** — PENDING the boards: `glyph.diamond` / `glyph.disc` / `glyph.square` (identity), ▲ / ▼ with "Flip up" / "Flip down" (direction), `icon/divergence` with its words, the provisional pivot (`pattern.dashed.provisional` + "provisional") × confirmed / provisional / hidden with its series (spec §3.4); Table 1
+- [x] **Final Penpot link** — page `E13-D04 Indicator palette and motion` · id `3167bd9b-dbab-80b2-8008-dc84bb54af9e` (spec §0; board 03); export `docs/design/E13/img/E13-D04-03-ladders-and-variants.png`
+- [x] **Variants × States matrix** — drawn on board 03: `glyph.diamond` / `glyph.disc` / `glyph.square` (identity), ▲ / ▼ with "Flip up" / "Flip down" (direction), `icon/divergence` with its words, the provisional pivot (`pattern.dashed.provisional` + "provisional") × confirmed / provisional / hidden with its series (spec §3.4); Table 1
 - [ ] N/A — **Keyboard table**: as E13-D03-handoff :30 (not focusable; the mirror row reads the word)
 - [x] **Accessible name / role table** — as E13-D03-handoff :31; Table 3
 - [x] **Live data** — as E13-D03-handoff :32; Table 5
@@ -38,15 +38,15 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Data contract confirmed** — as E13-D03-handoff :37
 - [ ] **Contrast and CVD** — PENDING as CMP-194: the glyph takes the slot's measured ratios (spec §2.1); direction and divergence carry words, so no CVD pair is relied on
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B
-- [ ] **Sign-off** — owner approval pending
+- [x] **Sign-off** — RULED / approved — #315 Done 2026-10-29 (QA record 6485619130)
 
 ## Handoff checklist — CMP-199 ChartLegend (E13-D04, #315)
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — PENDING: page `E13-D04 Indicator palette and motion`; planned PNGs `docs/design/E13/img/E13-D04-04-legend-chip-variant-matrix.png`, `E13-D04-05-legend-chip-variant-matrix-light.png`, `E13-D04-06-motion-timelines.png`, `E13-D04-07-themes-state-matrix.png`
-- [ ] **Variants × States matrix** — PENDING the boards: the four variant additions `ribbon` (collapsed / expanded), `errored`, `warming-up`, `provisional` (spec §5.1) × per density (32 / 24 / 24) × three themes, beside the normal row; the quick-edit commit **T2** while viewing as (`rbac.view_as`, the lock glyph, the full label, the reason under the row; inset `quick-edit-t2`) and for a Viewer (`rbac.permission` under the one header notice; the named inset `quick-edit-viewer`); row add (M7) and row remove (M8); Table 1
+- [x] **Final Penpot link** — page `E13-D04 Indicator palette and motion` · id `3167bd9b-dbab-80b2-8008-dc84bb54af9e` (spec §0; boards 04, 05, 06, 07); exports `docs/design/E13/img/E13-D04-04-legend-chip-variant-matrix.png`, `E13-D04-05-legend-chip-variant-matrix-light.png`, `E13-D04-06-motion-timelines.png`, `E13-D04-07-themes-state-matrix.png`
+- [x] **Variants × States matrix** — drawn on boards 04, 05, 06 and 07: the four variant additions `ribbon` (collapsed / expanded), `errored`, `warming-up`, `provisional` (spec §5.1) × per density (32 / 24 / 24) × three themes, beside the normal row; the quick-edit commit **T2** while viewing as (`rbac.view_as`, the lock glyph, the full label, the reason under the row; inset `quick-edit-t2`) and for a Viewer (`rbac.permission` under the one header notice; the named inset `quick-edit-viewer`); row add (M7) and row remove (M8); Table 1
 - [x] **Keyboard table** — as E13-D03-handoff :68 (E11-D02 D12 / E13-D02 §11 unchanged); on a T2 commit `Enter` commits nothing and re-shows the reason once, politely (E09-D09 §9.3); Table 2
 - [x] **Accessible name / role table** — as E13-D03-handoff :69; the variant words "ribbon" (the five lengths), "error", "34 more bars needed", "provisional" are already in the names; Table 3
 - [x] **Live data** — as E13-D03-handoff :70; the warming-up count recomputes as bars arrive and is announced once ("EMA 200 needs 34 more bars"), never per bar; Table 5
@@ -57,15 +57,15 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Data contract confirmed** — as E13-D03-handoff :75
 - [ ] **Contrast and CVD** — PENDING the token PR's rows and the export run: spec §11.1 — label 15.20 / 16.78 / 17.21, value 9.33 / 9.65 / 15.20, hidden 5.96 / 6.36 / 11.87, the error glyph 9.87 / 4.41 / 9.87, the T2 label 5.62 / 5.92 / 11.21 and reason 8.81 / 8.98 / 14.35 on raised, the ring 7.05 / 6.30 / 18.32; the swatch takes the slot's ratios; the half-faded row label (4.61 / 3.36 / 5.02 over the canvas) is decorative — the row's words carry it within 100 ms
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B
-- [ ] **Sign-off** — owner approval pending
+- [x] **Sign-off** — RULED / approved — #315 Done 2026-10-29 (QA record 6485619130)
 
 ## Handoff checklist — CMP-224 IndicatorChips (E13-D04, #315)
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — PENDING: page `E13-D04 Indicator palette and motion`; planned PNGs `docs/design/E13/img/E13-D04-04-legend-chip-variant-matrix.png`, `E13-D04-05-legend-chip-variant-matrix-light.png`, `E13-D04-07-themes-state-matrix.png`
-- [ ] **Variants × States matrix** — PENDING the boards: `Ind 0` · `Ind 4` · `Ind 4 · 1 hidden` · `Ind 4 · 1 error` · `Ind 4 · 2 stale` · `Ind 4 · 1 computing` · `Ind 20` · focused × compact / comfortable × three themes (spec §5.2); Table 1
+- [x] **Final Penpot link** — page `E13-D04 Indicator palette and motion` · id `3167bd9b-dbab-80b2-8008-dc84bb54af9e` (spec §0; boards 04, 05, 07); exports `docs/design/E13/img/E13-D04-04-legend-chip-variant-matrix.png`, `E13-D04-05-legend-chip-variant-matrix-light.png`, `E13-D04-07-themes-state-matrix.png`
+- [x] **Variants × States matrix** — drawn on boards 04, 05 and 07: `Ind 0` · `Ind 4` · `Ind 4 · 1 hidden` · `Ind 4 · 1 error` · `Ind 4 · 2 stale` · `Ind 4 · 1 computing` · `Ind 20` · focused × compact / comfortable × three themes (spec §5.2); Table 1
 - [x] **Keyboard table** — as E13-D03-handoff :87; Table 2
 - [x] **Accessible name / role table** — as E13-D03-handoff :88; Table 3
 - [x] **Live data** — as E13-D03-handoff :89; Table 5
@@ -76,7 +76,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Data contract confirmed** — as E13-D03-handoff :94
 - [ ] **Contrast and CVD** — PENDING the token PR's rows: as E13-D03-handoff :95 (the words 14.35 / 15.62 / 16.25 on raised, the error glyph 9.32 / 4.11 / 9.32, the ring 6.66 / 5.86 / 17.30); the hue rides on the glyph only
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B
-- [ ] **Sign-off** — owner approval pending
+- [x] **Sign-off** — RULED / approved — #315 Done 2026-10-29 (QA record 6485619130)
 
 ### Table 1 — Variants × States (delta rows; the rest as E13-D03-handoff Table 1 :100–:109)
 
@@ -140,10 +140,10 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 ## A. Design QA checklist (`16` §12), filled for this spec's scope
 
 - [x] Uses only published Tier-2 / Tier-3 tokens — every existing name resolved by the tool; the new names (`color.indicator.palette.1` … `.8`, `opacity.indicator.fill`, `size.stroke.*`) are this spec's publication with copy-ready rows for the token PR (spec §2.3); zero hard-coded hex or px beyond the measured tables and E13-D02's px.
-- [~] Verified in all three themes at both density modes — measured in all three themes (spec §2.1, §11.1); the boards are PENDING.
+- [x] Verified in all three themes at both density modes — measured in all three themes (spec §2.1, §11.1); drawn on boards 01–07 (dark and light twins 02 and 05; the themes × state matrix on 07).
 - [x] Passes the automated contrast-matrix check for every pair it introduces or touches — spec §11.1 FAIL 0 (the `pairs.mjs` rows land with the token PR, CR-5).
 - [~] CVD simulation reviewed for any new colour-carrying state — computed (spec §2.5); the export run and E13-D05's review follow the boards.
-- [~] Every documented State has a Penpot variant and a Storybook story — specified (Table 1; spec §12); the frames are PENDING.
+- [x] Every documented State has a Penpot variant and a Storybook story — drawn on boards 03–07 (Table 1; spec §0); the story list is spec §12.
 - [x] Disabled states use the disabled-with-reason pattern (CMP-079), never a bare disabled control, for any RBAC / env-gated action — the quick-edit commit while viewing as / for a Viewer and the Style tab's token controls under one tab-level reason (spec §13); form validity keeps the LANE-55 look, never a lock.
 - [x] Loading / empty / error states explicitly designed — E13-D03 §7.1's; the `errored` and `warming-up` variants (spec §5.1).
 - [x] Keyboard-interaction table completed — Table 2 (unchanged plus the T2 commit).
@@ -151,7 +151,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Canvas-adjacent components' DOM-mirror strategy specified — as E13-D03 (the mirror; the legend row); nothing deferred.
 - [x] Motion-safe / motion-reduce pair specified for any animated property — Table 4; spec §6 / §7 (9 rows, 9 twins).
 - [x] Hit targets ≥ 24 px (compact) — as E13-D03's Density table.
-- [~] Accessibility role signed off — E13-D05 in flight; the owner's `approved` pending.
+- [x] Accessibility role signed off — E13-D05 (#316 Done 2026-10-24; its QA record); approval recorded as #315 Done 2026-10-29 (QA record 6485619130).
 - [x] Trading-specific safety — no component here places an order; the DEMO / LIVE badges are unchanged; no palette slot aliases the env primitives (E13-D03 §3.2).
 - [x] Any heuristic / estimated value chip-tagged — no v1 indicator series is estimated; "(estimated)" by reference, in full.
 - [x] Reuses an existing CMP-\* — no new component.
