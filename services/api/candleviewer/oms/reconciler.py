@@ -40,8 +40,9 @@ and paged instead) before any write that can raise (SR-E27-19). B1's own steps a
 `persist_report` writes as `oms.reconcile` (C-2.9).
 
 **Step 5** (BQ-9; Sec.8.8 rules 4 and 6): a position with no exchange-side stop (none on the
-position and no stop order open for it) gets the record in force attached through E29-T04's
-recorded-stop writer on the `critical` lane (`ProtectiveStops`), counted in
+position and no stop order of the OMS's open for it, one bound to an own row or matching its
+recorded stop: a foreign stop never counts, SR-E29-06) gets the record in force attached through
+E29-T04's recorded-stop writer on the `critical` lane (`ProtectiveStops`), counted in
 `naked_position_alerts_total`; with no record in force it is paged P1 once, listed in `errors`
 (`no_record_in_force`, a standing item) and left to E32-T02, and order entry is not held for it
 (BQ-9). A Full-mode stop looser than the record is put back (`sl_restored`; a refusal is
@@ -720,6 +721,10 @@ class Plan:
     settled: list[int] = field(default_factory=list)
     #: The account's `untracked` rows: as read, then as the remediation leaves them.
     untracked: int = 0
+    #: The exchange order ids bound to the account's own rows the diff read (`untracked` ones
+    #: excepted, as their orders are foreign): an open stop order among them is the OMS's (step
+    #: 5). Empty when the order store could not be read, so the records alone decide.
+    ours: frozenset[str] = frozenset()
 
     @property
     def divergences(self) -> int:
@@ -857,14 +862,29 @@ def _raced(records: Sequence[RecordedStopRow]) -> bool:
 _STOP_KINDS: Final = frozenset({"stop_loss", "partial_stop_loss", "trailing_stop"})
 
 
-def _has_stop_order(position: Position, remote_open: Sequence[Order]) -> bool:
-    """A stop order open for the position (a Partial-mode stop's, or the venue's own row of one)."""
+def _covered(
+    position: Position,
+    remote_open: Sequence[Order],
+    ours: Collection[str],
+    records: Sequence[RecordedStopRow],
+) -> bool:
+    """A stop order of the OMS's open for the position (24 Sec.8.5 step 5's paired stops): one
+    bound to a row of the account that is not `untracked`, or one that matches a recorded stop of
+    the position (Sec.8.8 rule 6), as 3c's `_matching` reads it. A foreign stop never counts
+    (SR-E29-06): it is never paired with the position's protection, and 3c records and freezes
+    it. With the order store unread, `ours` is empty and the records alone decide, so a stop the
+    pass cannot show is the OMS's leaves the position to step 5's repair (C-2.6)."""
     closing = "sell" if position.side == "buy" else "buy"
-    return any(
-        o.order_kind in _STOP_KINDS
-        and (o.symbol, o.position_idx, o.side) == (position.symbol, position.position_idx, closing)
-        for o in remote_open
-    )
+    for o in remote_open:
+        if o.order_kind not in _STOP_KINDS or (o.symbol, o.position_idx, o.side) != (
+            position.symbol, position.position_idx, closing,
+        ):  # fmt: skip
+            continue
+        if o.exchange_order_id in ours:
+            return True
+        if matching_record(o, first_bindable(o, records)) is not None:
+            return True
+    return False
 
 
 class Reconciler:
@@ -1026,7 +1046,7 @@ class Reconciler:
                 continue
             record = _in_force(p, records)
             stop = p.stop_loss if p.stop_loss is not None and p.stop_loss > 0 else None
-            if stop is None and not _has_stop_order(p, f.remote_open):
+            if stop is None and not _covered(p, f.remote_open, plan.ours, records):
                 if record is None:  # BQ-9: paged, listed, left to E32-T02; entry is not held
                     plan.actions.append(PageNaked(p))
                     draft.error("5", NO_RECORD_IN_FORCE, p.symbol)
@@ -1110,6 +1130,7 @@ class _OrderDiff:
         self._bound = {r.exchange_order_id: r for r in rows if r.exchange_order_id}
         self._unbound = {r.order_link_id: r for r in rows if not r.exchange_order_id}
         self._by_xid.update(self._bound)
+        self._plan.ours = frozenset(x for x, r in self._bound.items() if r.state != "untracked")
         self._plan.untracked = sum(1 for row in rows if row.state == "untracked")
         await self._step_2(await self._unapplied())
         paired, rest = self._step_3a()

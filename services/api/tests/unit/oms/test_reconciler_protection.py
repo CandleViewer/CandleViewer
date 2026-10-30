@@ -10,6 +10,8 @@ from decimal import Decimal
 
 import pytest
 
+from candleviewer.domain.order_link import ext_key
+from candleviewer.exchange.base.models import Order
 from candleviewer.oms.reconcile_report import REPEATING_FIELDS, PassError
 from candleviewer.oms.reconciler import PositionDriftSeen
 from tests.unit.oms.reconcile_rig import LINK, T0, World, position, record, remote, row
@@ -160,6 +162,74 @@ async def test_step5_a_stop_order_open_for_the_position_is_not_naked() -> None:
     w.venue.seed_position(position(stop_loss=None))
     report = await w.run()
     assert (w.oms.effects("attach_recorded"), report.errors) == ([], ())
+
+
+def _foreign_stop(n: int = 5) -> Order:
+    """A Partial-mode stop someone else placed on the long's closing side: tiny and far away."""
+    return remote(
+        n, order_link_id=ext_key(f"x{n}"), order_kind="partial_stop_loss", side="sell",
+        order_type="market", price=None, trigger_price=Decimal(30000), qty=Decimal("0.001"),
+        leaves_qty=Decimal("0.001"), stop_loss=None,
+    )  # fmt: skip
+
+
+async def test_step5_a_foreign_stop_order_is_never_the_positions_protection() -> None:
+    """C-2.6, SR-E29-06 (24 Sec.8.5 step 5 tests the OMS's paired stops): a foreign stop on the
+    closing side leaves the position naked, so its record in force is attached, while 3c records
+    the foreign stop and opens the freeze."""
+    w = World()
+    w.oms.records = [record()]
+    w.venue.seed_order(_foreign_stop(), uid="1001")
+    w.venue.seed_position(position(stop_loss=None))
+    report = await w.run()
+    assert w.oms.effects("attach_recorded") == [
+        ("attach_recorded", "BTCUSDT", Decimal(62000), "00000000-0000-4000-8000-0000000000a1")
+    ]
+    assert (report.sl_repaired, report.foreign_stops) == (("BTCUSDT",), (ext_key("x5"),))
+    assert w.oms.effects("freeze") == [("freeze", "order", "x5")]
+    assert_protected(w, attached=frozenset({"BTCUSDT"}))
+
+
+async def test_step5_a_foreign_stop_with_no_record_in_force_is_paged_and_listed() -> None:
+    """BQ-9: with no record in force, a foreign stop does not hide the naked position."""
+    w = World()
+    w.venue.seed_order(_foreign_stop(), uid="1001")
+    w.venue.seed_position(position(stop_loss=None))
+    report = await w.run()
+    assert report.errors == (PassError("5", "no_record_in_force", "BTCUSDT"),)
+    assert [s for s, _ in w.oms.pages] == ["page"]
+    assert (report.foreign_stops, w.oms.effects("freeze")) == (
+        (ext_key("x5"),), [("freeze", "order", "x5")],
+    )  # fmt: skip
+    assert_protected(w, paged=frozenset({"BTCUSDT"}))
+
+
+async def test_step5_a_foreign_stop_recorded_untracked_still_leaves_the_position_naked() -> None:
+    """Its `untracked` row binds the foreign stop's id, which never makes it the OMS's."""
+    w = World()
+    w.oms.records = [record()]
+    w.venue.seed_order(_foreign_stop(), uid="1001")
+    w.venue.seed_position(position(stop_loss=None))
+    await w.run()
+    assert [r.state for r in w.oms.rows.values()] == ["untracked"]  # bound to x5 now
+    second = await w.run()
+    assert len(w.oms.effects("attach_recorded")) == 2
+    assert second.sl_repaired == ("BTCUSDT",)
+
+
+async def test_step5_an_oms_stop_not_yet_materialised_is_the_positions_protection() -> None:
+    """The OMS's own Partial-mode stop, open before its row exists, matches its record: 3c
+    materialises it, and step 5 attaches nothing over it."""
+    w = World()
+    w.oms.records = [record(tpsl_mode="Partial", size=Decimal("0.2"))]
+    ours = remote(5, order_link_id=ext_key("x5"), order_kind="partial_stop_loss", side="sell",
+                  order_type="market", price=None, trigger_price=Decimal(62000),
+                  qty=Decimal("0.2"), leaves_qty=Decimal("0.2"), stop_loss=None)  # fmt: skip
+    w.venue.seed_order(ours, uid="1001")
+    w.venue.seed_position(position(stop_loss=None))
+    report = await w.run()
+    assert (w.oms.effects("attach_recorded"), report.errors) == ([], ())
+    assert [e[2] for e in w.oms.effects("materialise")] == ["x5"]
 
 
 async def test_step5_a_pending_record_the_read_shows_in_force_counts_as_in_force() -> None:
