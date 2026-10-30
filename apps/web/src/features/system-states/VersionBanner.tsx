@@ -15,9 +15,10 @@ import { checkVersion, reportVersionMismatch } from "./versionMismatch";
 const ENTRY_CAP_MS = 15_000;
 
 /**
- * 9a's turn (`OfflineOverlay`; a pinned copy until 10b is a third caller): `enter` runs once both
- * shell regions have been quiet REGION_BUDGET_MS (E17-D02 §11), so CMP-077's row 1 is never cut;
- * re-armed by a write meanwhile, each wait at most the budget and ENTRY_CAP_MS in all.
+ * 9a's turn (`OfflineOverlay`; a pinned copy, as 10b's dialog opens at once, E10-D04 T-15):
+ * `enter` runs once both shell regions have been quiet REGION_BUDGET_MS (E17-D02 §11), so
+ * CMP-077's row 1 is never cut; re-armed by a write meanwhile, each wait at most the budget and
+ * ENTRY_CAP_MS in all.
  */
 function afterRegionBudget(enter: () => void): () => void {
   let id: ReturnType<typeof setTimeout> | undefined;
@@ -128,8 +129,8 @@ export interface VersionBannerSlotProps {
 }
 
 /**
- * SCR-157's container (#306 slice 10a), last in the banner slot: only `update_available` shows,
- * until Later (`incompatible` is 10b's dialog); each pair is a band of its own (keyed) and is
+ * SCR-157's container (#306 slice 10a), in the banner slot: only `update_available` shows, until
+ * Later (`incompatible` is `VersionDialogSlot`'s); each pair is a band of its own (keyed) and is
  * reported once, shown or not. The desktop app (the preload bridge, `createShellPort`'s rule) has
  * no Restart and update before signing (an absence, not T2) and no Reload.
  */

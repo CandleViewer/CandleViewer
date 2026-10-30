@@ -5,7 +5,7 @@
  * - `ShellBannerSlot`: one full-width row between the top bar and the canvas (D03 §2, 0 px when
  *   empty). It has no landmark of its own; a banner brings its own role (`status` / `alert`).
  *   #306 fills it with `ShellBanner`: the CMP-077 connection region (SCR-152), then CMP-092, then
- *   the SCR-157 update band.
+ *   the SCR-157 update band and the SCR-157 blocking dialog's container.
  * - `ShellConnectionSlot`: inside the header (`banner`) landmark. S3 fills it with the CMP-076 chip
  *   and the shell's live-region pair (`ConnectionStatusSlot`).
  * - `ShellCanvasOverlaySlot`: a positioned sibling of the route outlet inside `main`, covering the
@@ -79,7 +79,8 @@ export interface PanicLeg {
  * reads `claims` from the `/me` cache and compares `PanicLeg.permission` against
  * `claims.permissions` (never a role name, E09-D09 §2.1); it reads `scope` from the TopBar's
  * CMP-105 selector, the view-as context from `GET /auth/session/view-as` (E09-D09 §3.1), and the
- * health inputs (server reachability and the protocol state) for the `health.*` legs.
+ * health inputs (server reachability, and the protocol state: `protocolLeg`, its reason and the
+ * kill-switch line, #306) for the `health.*` legs.
  * It wraps each leg in CMP-079 RbacGate (T2: `aria-disabled`, stays in the Tab order).
  * An enabled or T2-disabled leg is a rendering hint only; the server's 403 is the truth and an
  * enabled button grants nothing.

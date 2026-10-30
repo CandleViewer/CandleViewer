@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, ReactNode, Ref } from "react";
+import { useLayoutEffect, type CSSProperties, type JSX, type ReactNode, type Ref } from "react";
 import { SKIP_LINK_COPY, SkipLink } from "@candleviewer/ui";
 
 /**
@@ -9,7 +9,11 @@ import { SKIP_LINK_COPY, SkipLink } from "@candleviewer/ui";
  * WorkspaceCanvas → RightRail → StatusBar); the grid places the banner row full width under the
  * top bar (E10-D03 §2). Landmarks per D02 :255: `banner`, `navigation` "Primary", `main`,
  * `complementary`, `contentinfo`. The top bar, right rail and status bar are empty placeholders
- * until slices S2–S6 fill them; `nav` takes the S5 rail.
+ * until slices S2–S6 fill them; `nav` takes the S5 rail. Under a CMP-043 modal the header, the
+ * banner slot and the footer stay live, outside the inert page (`data-cv-inert-exempt`, E05-D02
+ * H23; E10-D03 §1.2: the badges are never under a modal, above the reflow breakpoint), and the
+ * scrim covers `main`'s band only (`useScrimInsets`); at the breakpoint a dialog fills the viewport
+ * (§11.3).
  */
 export interface AppShellProps {
   /** id of the one `main`, the skip link's target. */
@@ -56,21 +60,63 @@ const SCROLL: CSSProperties = { height: "100%", overflow: "auto" };
 
 const OVERLAY: CSSProperties = { position: "absolute", inset: 0, pointerEvents: "none" };
 
+/** CMP-043's reflow breakpoint (`dialog.css`): 200 % zoom on the 1280 x 800 frame. */
+const SCRIM_REFLOW = "(max-width: 40rem), (max-height: 25rem)";
+
+/**
+ * The scrim's band, the shell's for every modal layer (E05-D02 H23; `dialog.css` and `drawer.css`
+ * read it): `main`'s rows, so the TopBar and the StatusBar are never scrimmed (E10-D03 §1.2, §9.1).
+ * At CMP-043's reflow breakpoint `main` is too short for a card (144 px at 200 %): no band, and a
+ * dialog fills the viewport (§11.3: "every dialog fills the viewport, its footer stays one sticky
+ * row and its body scrolls"). Re-measured as `main` or the viewport resizes (a zoom included).
+ */
+function useScrimInsets(mainId: string): void {
+  useLayoutEffect(() => {
+    const main = document.getElementById(mainId);
+    if (main === null) return undefined;
+    const root = document.documentElement.style;
+    const reflow = typeof window.matchMedia === "function" ? window.matchMedia(SCRIM_REFLOW) : null;
+    const clear = (): void => {
+      root.removeProperty("--cv-scrim-inset-top");
+      root.removeProperty("--cv-scrim-inset-bottom");
+    };
+    const place = (): void => {
+      if (reflow?.matches === true) {
+        clear();
+        return;
+      }
+      const { top, bottom } = main.getBoundingClientRect();
+      root.setProperty("--cv-scrim-inset-top", `${top}px`);
+      root.setProperty("--cv-scrim-inset-bottom", `${window.innerHeight - bottom}px`);
+    };
+    place();
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
+    resize?.observe(main);
+    window.addEventListener("resize", place);
+    return () => {
+      resize?.disconnect();
+      window.removeEventListener("resize", place);
+      clear();
+    };
+  }, [mainId]);
+}
+
 export function AppShell(props: AppShellProps): JSX.Element {
   const { mainId, mainRef, nav, connection, panic, banner, canvasOverlay, status, children } =
     props;
   const { rightRail, rightRailLabel } = props;
+  useScrimInsets(mainId);
   return (
     <div style={FRAME}>
       <SkipLink targets={[{ id: mainId, label: SKIP_LINK_COPY.main }]} />
-      <header style={{ ...CHROME, gridArea: "header" }}>
+      <header data-cv-inert-exempt="" style={{ ...CHROME, gridArea: "header" }}>
         {(props.topBar ?? ((slot) => slot))(<div data-shell-slot="connection">{connection}</div>)}
         {panic}
       </header>
       <nav aria-label="Primary" style={{ ...CHROME, gridArea: "nav" }}>
         {nav}
       </nav>
-      <div data-shell-slot="banner" style={{ gridArea: "banner" }}>
+      <div data-shell-slot="banner" data-cv-inert-exempt="" style={{ gridArea: "banner" }}>
         {banner}
       </div>
       <main id={mainId} ref={mainRef} tabIndex={-1} style={MAIN}>
@@ -84,7 +130,9 @@ export function AppShell(props: AppShellProps): JSX.Element {
       <aside aria-label={rightRailLabel} style={{ ...CHROME, gridArea: "aside" }}>
         {rightRail}
       </aside>
-      <footer style={{ ...CHROME, gridArea: "footer" }}>{status}</footer>
+      <footer data-cv-inert-exempt="" style={{ ...CHROME, gridArea: "footer" }}>
+        {status}
+      </footer>
     </div>
   );
 }

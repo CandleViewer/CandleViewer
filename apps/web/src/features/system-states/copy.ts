@@ -9,6 +9,7 @@
  * ruling on #306, 2026-10-27); every DEGRADED_COPY string is verbatim, and only the break-glass
  * row's tone and stillWorks pairing are PROPOSED.
  */
+import { CLIENT_PROTOCOL } from "../../lib/ws/protocol/frames";
 
 export type DegradedSeverity = "info" | "warning" | "blocking";
 
@@ -184,6 +185,31 @@ export const VERSION_COPY = {
   later: "Later",
   /** §9.1 and board 10: the browser's CMP-001 primary. */
   reload: "Reload",
+} as const;
+
+/**
+ * SCR-157's blocking dialog (E10-D03 §9.1, board 10; the heading is §10.2's PROPOSED name).
+ * `stops` and `works` are board 10's lines, which list what §9.1 names.
+ */
+export const VERSION_DIALOG_COPY = {
+  heading: "This version can't trade with the server",
+  /**
+   * PROPOSED: board 10's row ("Your client v1.4.2 (API 1.3) · the server requires API 1.4 (ws
+   * protocol cv.v1)") with what the client knows of each side: a version and a ws protocol. The
+   * server's is its free-text build label, printed bare as the banner prints it.
+   */
+  versions: (client: string, server: string | undefined, protocol: string | null): string =>
+    `Your client v${client} (ws protocol ${CLIENT_PROTOCOL}) · the server ` +
+    `${server === undefined ? "" : `${server} `}requires ` +
+    (protocol === null ? "a ws protocol this client can't read" : `ws protocol ${protocol}`),
+  stops: "What stops: new orders, cancel, reduce-only close, flatten, the in-app kill switch",
+  works: "Still works: read-only views — charts, positions, the journal",
+  /** §9.1: CMP-001 primary, the one dismiss (`Esc` too: E10-D04 §13.2). */
+  continue: "Continue read-only",
+  /** §1.3, §9.1: the gated set's T2 reason, PROPOSED key `health.protocol_incompatible` (G14). */
+  unavailable: "Unavailable until you update.",
+  /** §9.1 (D02 :128): the Safety cluster's kill-switch line meanwhile. */
+  killSwitchLine: "Kill switch: unknown — incompatible version",
 } as const;
 
 /**

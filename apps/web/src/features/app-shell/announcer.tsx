@@ -82,7 +82,13 @@ export function ShellAnnouncer(): JSX.Element {
   const region = (politeness: Politeness): JSX.Element => {
     const message = current[politeness];
     return (
-      <div aria-live={politeness} aria-atomic="true" className="cv-visually-hidden">
+      // live under a CMP-043 modal too (E05-D02 H23)
+      <div
+        aria-live={politeness}
+        aria-atomic="true"
+        className="cv-visually-hidden"
+        data-cv-inert-exempt=""
+      >
         {message === null ? null : (
           <p key={message.seq} data-seq={message.seq}>
             {message.text}
