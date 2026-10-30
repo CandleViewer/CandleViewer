@@ -156,6 +156,7 @@
 ["cv_feature_flag_evaluations_total", "counter", ["flag"], "live", "E42"]
 ["cv_feature_flag_unreadable_overrides_total", "counter", ["flag"], "live", "E42"]
 ["cv_flag_push_latency_seconds", "histogram", [], "live", "E42"]
+["cv_flag_view_stopped_total", "counter", ["flag"], "live", "E42"]
 ["cv_gc_blocks_in_use", "gauge", [], "live", "E04"]
 ["cv_gc_pause_seconds", "histogram", ["generation"], "live", "E04"]
 ["cv_http_request_duration_seconds", "histogram", ["route", "method", "status_class"], "live", "E04"]
