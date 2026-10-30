@@ -116,9 +116,13 @@ ERRORS: list[str] = []
 # from the R5 defect/polish reserve. Decision 2026-10-29 (#2701 ledger 2 row 50): E29-T13 (#4207)
 # moved S19 -> S14, so S14 carries +3 eng pts. Decision 2026-10-29 (#2701 ledger addendum A row
 # A24): E35-S03 (#863) split into E35-T07…T14, which must precede the parent in Sprint 15; S15
-# carries +39 eng pts and train R3 +6, funded from the R5 defect/polish reserve. These downgrade
-# to WARN so the governance CI gate stays meaningful for *new* overages.
-ACCEPTED_OVERAGE = {"sprint": {7: 2, 14: 3, 15: 39}, "train": {"R1": 2, "R3": 6}}
+# carries +39 eng pts and train R3 +6, funded from the R5 defect/polish reserve. Decision
+# 2026-10-30 (#2701 ledger addendum A row A48, corrected to train R1 in its follow-up comment):
+# E08-T10 (the refresh route E08-S09 #4703 consumes) planned in S07; S07 carries +5 eng pts and
+# train R1 +5 (this ticket's 3 on top of the +2 above), funded from the R5 defect/polish reserve
+# as A24 was. These downgrade to WARN so the governance CI gate stays meaningful for *new*
+# overages.
+ACCEPTED_OVERAGE = {"sprint": {7: 5, 14: 3, 15: 39}, "train": {"R1": 5, "R3": 6}}
 WARNINGS: list[str] = []
 MOVES: list[dict] = []
 UNFIXABLE_SPRINTS: set[int] = set()
