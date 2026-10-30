@@ -150,6 +150,7 @@ from candleviewer.oms.ports import (
     announce_interim_ports,
 )
 from candleviewer.oms.ports import StopResolver as StopPort
+from candleviewer.oms.position_writes import CloseFill, PositionWrites, PositionWritesDeps
 from candleviewer.oms.repository import (
     ExecutionRepository,
     IdempotencyAnchorRepository,
@@ -218,7 +219,10 @@ from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
 from candleviewer.storage.repositories.executions import ExecutionStore
 from candleviewer.storage.repositories.executions_sqlalchemy import SqlAlchemyExecutionStore
-from candleviewer.storage.repositories.idempotency_anchors import IdempotencyAnchorStore
+from candleviewer.storage.repositories.idempotency_anchors import (
+    AnchorOperation,
+    IdempotencyAnchorStore,
+)
 from candleviewer.storage.repositories.idempotency_anchors_sqlalchemy import (
     SqlAlchemyIdempotencyAnchorStore,
 )
@@ -233,7 +237,11 @@ from candleviewer.storage.repositories.orders import (
     UnfinishedOrders,
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
-from candleviewer.storage.repositories.positions import PositionSnapshotStore, PositionStore
+from candleviewer.storage.repositories.positions import (
+    PositionRow,
+    PositionSnapshotStore,
+    PositionStore,
+)
 from candleviewer.storage.repositories.positions_sqlalchemy import SqlAlchemyPositionStore
 from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
@@ -1862,6 +1870,8 @@ class _Parts:
     #: E29-T07 #915: `setPositionLeverage`'s service over the pipeline's account, instrument and
     #: profile reads, the routed port, the switches and the audit writer.
     leverage: PositionLeverage
+    #: E29-T07 #915: the position writes' pre-check, fill wait, records and Partial-mode sweep.
+    positions: PositionWrites
     #: E29-T13's snapshot reads on the lane, which the WS topics take once `ready`; None without
     #: the topics.
     topic_reads: TopicReads | None = None
@@ -1887,8 +1897,17 @@ class OnLane:
     async def answer_replay(self, account_id: AccountId, replay: Replay) -> SubmitOutcome:
         return await _on_lane(self.parts, self.parts.submission.answer_replay(account_id, replay))
 
-    async def lookup(self, created_by: UUID, client_ref: UUID, request_sha256: str) -> Lookup:
-        found = self.parts.anchors.lookup(created_by, client_ref, request_sha256)
+    async def lookup(
+        self,
+        created_by: UUID,
+        client_ref: UUID,
+        request_sha256: str,
+        *,
+        operation: AnchorOperation = "placeOrder",
+    ) -> Lookup:
+        found = self.parts.anchors.lookup(
+            created_by, client_ref, request_sha256, operation=operation
+        )
         return await _on_lane(self.parts, found)
 
     async def environment_of(self, account_id: AccountId) -> Environment:
@@ -2008,6 +2027,36 @@ class OnLaneLeverage:
     ) -> LeverageOutcome:
         change = self.parts.leverage.apply(request, actor=actor, request_id=request_id)
         return await _on_lane(self.parts, change, None)
+
+
+@dataclass(frozen=True, slots=True)
+class OnLanePositions:
+    """`OmsRuntime.positions` from the serving loop (E29-T07 #915): the reversal's native-stop
+    pre-check, its close's fill wait (bounded by its own deadline), the correlation records and a
+    full close's sweep, each awaited on the order lane, where B1's facade, the stores, the trading
+    port and the audit writer run."""
+
+    parts: _Parts
+
+    async def entry_stop_ready(self, account_id: AccountId) -> None:
+        await _on_lane(self.parts, self.parts.positions.entry_stop_ready(account_id), None)
+
+    async def await_fill(self, account_id: UUID, order_id: UUID, *, wait_s: float) -> CloseFill:
+        positions = self.parts.positions
+        deadline = positions.monotonic() + max(wait_s, 0.0)
+        fill = positions.await_fill(account_id, order_id, deadline=deadline)
+        return await _on_lane(self.parts, fill, None)
+
+    async def record(self, record: RequestRecord) -> bool:
+        return await _on_lane(self.parts, self.parts.positions.record(record), None)
+
+    async def sweep_after_close(
+        self, row: PositionRow, order_id: UUID, *, actor: SubmitActor, request_id: UUID | None
+    ) -> bool:
+        sweep = self.parts.positions.sweep_after_close(
+            row, order_id, actor=actor, request_id=request_id
+        )
+        return await _on_lane(self.parts, sweep)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2381,6 +2430,12 @@ class OmsRuntime:
         """`setPositionLeverage`'s service (E29-T07 #915), each change awaited on the order lane
         (`OnLaneLeverage`); `OmsNotReady` before it is composed."""
         return OnLaneLeverage(self._composed())
+
+    @property
+    def positions(self) -> OnLanePositions:
+        """The position writes' service (E29-T07 #915), each call awaited on the order lane
+        (`OnLanePositions`); `OmsNotReady` before it is composed."""
+        return OnLanePositions(self._composed())
 
     def _composed(self) -> _Parts:
         if self._parts is None:
@@ -3110,6 +3165,10 @@ class OmsRuntime:
                 accounts=accounts, instruments=instruments, profiles=profiles,
                 ports=router.port_for, switches=submits, audit=audit, environment=env,
             ))  # fmt: skip
+            writes = PositionWrites(PositionWritesDeps(
+                accounts=accounts, profiles=profiles, machines=machines, stops=stops,
+                ports=router.port_for, audit=audit, environment=env,
+            ), monotonic=self._monotonic)  # fmt: skip
             self._phase = "audit_start"
             await writer.start()
             self._phase = "sink_start"
@@ -3117,6 +3176,8 @@ class OmsRuntime:
             closers.insert(3, ("sink", lambda: lane.call(sink.stop())))  # after the commands
             # its exits end before the facade stops
             closers.insert(0, ("exits", lambda: lane.call(exits.aclose())))
+            # a full close's sweeps end before the exits, the facade and the trading port
+            closers.insert(0, ("position_sweeps", lambda: lane.call(writes.aclose())))
             # S4-F: a fold's call still out once the machines have cut its members' invokes, as
             # theirs are, is ended before the trading port closes
             after = [name for name, _ in closers].index("machines") + 1
@@ -3137,7 +3198,7 @@ class OmsRuntime:
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
-                stream, admit_after, preview, leverage, reads, observed,
+                stream, admit_after, preview, leverage, writes, reads, observed,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping
