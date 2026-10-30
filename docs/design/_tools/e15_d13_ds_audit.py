@@ -50,8 +50,10 @@ anchored value. The gates, each FAIL led by its code:
   parent's tool, names a token in its clause, or stands in §9's exception table; no exception row
   is stale.
 - [G-RULED] the stamps in their exact forms at their sites, the ruled words (RULING_PINS) and the
-  ruled sweep's note in both CMP-039's and CMP-080's rows (SWEEP_SITES); with
-  `--source NAME=FILE` each pin also stands in that saved copy of the ruling.
+  ruled sweep's note in both CMP-039's and CMP-080's rows (SWEEP_SITES); the dry run of record
+  (the outside reader's, DRYRUN_ID) named in the usage rules §9 and cited by AC3, the DoD line and
+  D3; the usage rules naming the sync badge's renderer (R-8) and how a kind is registered (§6);
+  with `--source NAME=FILE` each pin also stands in that saved copy of the ruling.
 - [G-RULED-PIN] a default-deny pin set over every unit of the three documents (each heading, table
   row by its lead cell, prose sentence and fenced block) in `e15_d13_ruled_pins.txt`, anchored
   values cut out. `--repin-ruled` is its only writer. When another gate FAILs, every G-RULED-PIN
@@ -105,6 +107,8 @@ CAT_REL = "docs/plan/15-component-catalogue.md"
 BRIEF_REL = "docs/plan/16-design-system-brief.md"
 TARGETS = {"15": CAT_REL, "16": BRIEF_REL}
 RULING_ID = "6519042539"
+R19_ID = "6521896277"  # the #367 comment mirroring the lane ruling R19
+DRYRUN_ID = "6521699455"  # the #367 comment recording the dry run by a reader outside E15
 E15 = "docs/design/E15/E15-"
 KEYS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -1139,7 +1143,7 @@ def count_values(t: Texts) -> dict[str, str]:
         "COUNT:gates": str(len(GATES)),
     }
     v.update(ledger_counts(t.spec))
-    walk = [r for r in table_rows(section(t.rules, "9.")) if re.fullmatch(r"W-\d+", r[0])]
+    walk = [r for r in table_rows(section(t.rules, "9.")) if re.fullmatch(r"N\d+", r[0])]
     v["COUNT:walk.needs"] = str(len(walk))
     v["COUNT:walk.nf"] = str(sum(r[2] == "not found" for r in walk))
     v["COUNT:walk.found"] = str(len(walk) - int(v["COUNT:walk.nf"]))
@@ -1251,7 +1255,7 @@ CITE = re.compile(
 )
 CONT = re.compile(r":(\d+)(?:[–-](\d+))?")
 # Load-bearing words: each stands on the line its cite names at the base.
-CITED: dict[tuple[str, int], str] = {
+CITED: dict[tuple[str, int], str | tuple[str, ...]] = {
     ("15", 31): "241–242 and 244–247 unassigned",
     ("15", 459): "`inset` drawing the ring inside the element",
     ("15", 892): "`Ctrl+Shift+Arrow` moves/swaps dock position",
@@ -1267,11 +1271,18 @@ CITED: dict[tuple[str, int], str] = {
     ("D03", 715): "`lo` = against the darkest",
     ("D04", 109): "The MoveModeBar",
     ("D04", 228): "Minimised panels",
-    ("D04", 105): "Two-tone carriers",
+    ("D04", 105): ("Two-tone carriers", "a 2 px halo at comfortable density is left to E15-D13"),
     ("D06", 119): "the final hues are its call",
     ("D15", 517): "F-05",
     ("D15", 521): "F-09",
     ("D07h", 3): "Table A is copy-ready for E15-D13",
+    ("D04h", 110): "two lines 56 / 72",
+    ("D04h", 111): "`size.row.compact` / `size.row.comfortable`",
+    ("D06", 507): "| A-14 | `15` CMP-043 Dialog (Modal)",
+    ("D06", 559): "A-14 to CMP-043's owner",
+    ("15", 505): "reflow (at 200 % zoom the dialog fills the viewport)",
+    ("16", 126): "Density changes spacing-token resolution only",
+    ("16", 129): "reflow toward a card/stacked layout",
 }
 
 
@@ -1303,7 +1314,9 @@ def g_cite(t: Texts) -> list[Finding]:
         bl = lines(at_base(KEYS[key]) or "")
         if (key, n) not in seen:
             bad.append(f"the load-bearing cite `{key}`:{n} is not in the documents")
-        elif not 1 <= n <= len(bl) or words not in bl[n - 1]:
+        elif not 1 <= n <= len(bl) or any(
+            w not in bl[n - 1] for w in ((words,) if isinstance(words, str) else words)
+        ):
             bad.append(f"`{key}`:{n} no longer holds {words!r}")
     return fails("G-CITE", bad)
 
@@ -1425,7 +1438,7 @@ def g_ac1(t: Texts) -> list[Finding]:
 STAMP_A39 = "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A39)"
 STAMP_A40 = "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A40)"
 STAMP_R367 = f"RULED (orchestrator, 2026-10-30, #367 ruling of record — {RULING_ID})"
-STAMP_R19 = "RULED (orchestrator, 2026-10-30, #367 lane ruling, R19)"
+STAMP_R19 = f"RULED (orchestrator, 2026-10-30, #367 lane ruling R19 — {R19_ID})"
 # Every stamp site: a line of the pack opening with these words carries that stamp.
 STAMP_SITES: dict[str, str] = {
     "- **BQ-04 (A39)": STAMP_A39,
@@ -1464,8 +1477,46 @@ SWEEP_NOTE = "a different responsibility"
 SWEEP_SITES = (("CMP-039", ""), ("CMP-080", "A11y"))
 
 
-def ruled_problems(t: Texts) -> list[str]:
+# BQ-19 as the text lens ruled it (#5055, round 1): the dry run of record is the outside reader's,
+# cited where the pack claims AC3 and the DoD line; the usage rules answer the run's two new needs
+# (N9, the sync badge's renderer; N10, registering a kind) by name.
+DRYRUN_SITES = (
+    "| AC3 ",
+    "- [x] The usage-rules document written",
+    "**Deviations, recorded.**",
+)
+BADGE_RULE: tuple[str, tuple[str, ...]] = (
+    "| R-8 ",
+    ("`syncBadge`", "CMP-011 `interactive`", "CMP-218"),
+)
+KIND_LIST: tuple[str, tuple[str, ...]] = (
+    "**Registering a new panel kind**",
+    ("`PaneKind`", "SCR-024", "`type`", "`15`"),
+)
+
+
+def dryrun_problems(t: Texts) -> list[str]:
     bad: list[str] = []
+    if DRYRUN_ID not in section(t.rules, "9."):
+        bad.append(f"the usage rules §9 does not name the outside run ({DRYRUN_ID})")
+    for lead in DRYRUN_SITES:
+        hit = [ln for ln in lines(t.spec) if ln.startswith(lead)]
+        if len(hit) != 1 or DRYRUN_ID not in hit[0]:
+            bad.append(f"{lead.strip('|-[x]* ')!r}: does not cite the outside run ({DRYRUN_ID})")
+    lead, words = BADGE_RULE
+    row = [ln for ln in lines(section(t.rules, "2.")) if ln.startswith(lead)]
+    if len(row) != 1 or any(w not in row[0] for w in words):
+        bad.append("the usage rules §2 names no renderer, slot and menu for the sync badge (R-8)")
+    lead, words = KIND_LIST
+    body = section(t.rules, "6.")
+    at = body.find(lead)
+    if at < 0 or any(w not in body[at:] for w in words):
+        bad.append("the usage rules §6 has no list for registering a new panel kind")
+    return bad
+
+
+def ruled_problems(t: Texts) -> list[str]:
+    bad: list[str] = dryrun_problems(t)
     seen: dict[str, int] = {}
     for ln in lines(t.spec):
         for lead, stamp in STAMP_SITES.items():
@@ -1991,6 +2042,26 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
             "inside a constant box; `16` §8 rule 5) — a different",
             "inside a constant box; `16` §8 rule 5) — another",
         ),
+    ),
+    (
+        "G-RULED",
+        "the usage rules §9 no longer names the outside run",
+        _sub("rules", f"#367 comment {DRYRUN_ID} (the orchestrator's deputy", "(the deputy"),
+    ),
+    (
+        "G-RULED",
+        "AC3 claimed with no outside run cited",
+        _sub("spec", f"reader outside E15, #367 comment {DRYRUN_ID} (the usage rules §9) |", "|"),
+    ),
+    (
+        "G-RULED",
+        "the sync badge's renderer dropped from the usage rules (N9)",
+        _sub("rules", "from its `syncBadge` prop as a CMP-011", "as a CMP-011"),
+    ),
+    (
+        "G-RULED",
+        "the list for registering a kind dropped from the usage rules (N10)",
+        _sub("rules", "**Registering a new panel kind**", "**New kinds**"),
     ),
     (
         "G-AROW",
