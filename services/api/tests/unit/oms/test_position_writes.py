@@ -182,12 +182,21 @@ class Accounts:
 
 @dataclass
 class Stops:
+    """The key's live stops: `rows`, then `later` from the second read on (a stop placed while
+    the sweep waited); `fail_at` raises on that read (0-based)."""
+
     rows: tuple[RecordedStopRow, ...] = ()
+    later: tuple[RecordedStopRow, ...] | None = None
+    fail_at: int | None = None
+    reads: int = 0
 
     async def live_for_key(
         self, account_id: uuid.UUID, symbol: str, position_idx: int
     ) -> tuple[RecordedStopRow, ...]:
-        return self.rows
+        read, self.reads = self.reads, self.reads + 1
+        if read == self.fail_at:
+            raise TimeoutError
+        return self.rows if read == 0 or self.later is None else self.later
 
 
 def stop(mode: str = "Partial", exchange_order_id: str | None = "ex-1", **over: Any) -> Any:
@@ -348,6 +357,33 @@ async def test_sweep_native_sl_an_unconfirmed_fill_or_an_unread_venue_cancels_no
         rig.port.unread = True
     await swept(rig)
     assert rig.port.cancels == []
+
+
+async def test_sweep_native_sl_a_partial_stop_placed_after_the_close_is_never_cancelled() -> None:
+    """Fable M3: the sweep snapshots the key's stops before it waits for the fill; a Partial-mode
+    stop placed after the close order is not in it and is never cancelled (C-2.6)."""
+    old, new = stop(), stop(exchange_order_id="ex-new")
+    rig = flat_rig(old)
+    rig.stops.later = (old, new)
+    await swept(rig)
+    assert [c.exchange_order_id for c in rig.port.cancels] == ["ex-1"]
+    assert rig.stops.reads == 2
+
+
+async def test_sweep_a_stop_gone_by_the_flat_read_is_not_cancelled() -> None:
+    gone = stop()
+    rig = flat_rig(gone)
+    rig.stops.later = ()
+    await swept(rig)
+    assert rig.port.cancels == []
+
+
+@pytest.mark.parametrize("fail_at", [0, 1], ids=["snapshot", "after_flat"])
+async def test_sweep_native_sl_unread_stops_cancel_nothing(fail_at: int) -> None:
+    rig = flat_rig(stop())
+    rig.stops.fail_at = fail_at
+    await swept(rig)
+    assert rig.port.cancels == [] and rig.audit.written == []
 
 
 async def test_sweep_an_unrecorded_cancel_is_never_sent_and_a_failed_one_is_let_go() -> None:

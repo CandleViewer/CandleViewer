@@ -22,7 +22,8 @@ module holds what the pipeline does not:
 * **The Partial-mode sweep** (`sweep_after_close`, 22 `closePosition` at 100 %): the venue's
   flatten ends the position's own Full-mode stop; the closed size's Partial-mode conditionals are
   cancelled here, and only once the close is filled and the venue reads the position flat (C-2.6:
-  never the protection of a position still open). Each cancel is recorded ahead
+  never the protection of a position still open), and only those live before the fill was awaited:
+  a stop placed after the close is never swept. Each cancel is recorded ahead
   (`position.closed`, reason `partial_stop_cancelled`) and never sent unrecorded. The sweep runs
   as a task the service tracks (C-2.18: at most `max_sweeps` at once), cancelled at `aclose`.
 
@@ -310,9 +311,15 @@ class PositionWrites:
     async def _sweep(self, job: _Sweep) -> None:
         row = job.row
         account_id = AccountId(row.exchange_account_id)
+        ids = {"position_id": str(row.id), "order_id": str(job.order_id)}
+        # The stops that existed before the close was confirmed: only these are the closed
+        # size's. One placed later (a new Partial-mode stop) is never swept (C-2.6).
+        before = await self._live_stops(row)
+        if before is None:
+            _log().info("oms_close_sweep_skipped", **ids, reason="stops_unread")
+            return
         deadline = self._monotonic() + self._sweep_wait_s
         fill = await self.await_fill(account_id, job.order_id, deadline=deadline)
-        ids = {"position_id": str(row.id), "order_id": str(job.order_id)}
         if fill != "filled":
             _log().info("oms_close_sweep_skipped", **ids, reason=fill)
             return
@@ -321,11 +328,27 @@ class PositionWrites:
         if not await self._flat(port, account, row):  # C-2.6: never strip an open position
             _log().info("oms_close_sweep_skipped", **ids, reason="position_open")
             return
-        async with asyncio.timeout(self._store_timeout_s):
-            live = await self._deps.stops.live_for_key(account_id, row.symbol, row.position_idx)
+        live = await self._live_stops(row)
+        if live is None:
+            _log().info("oms_close_sweep_skipped", **ids, reason="stops_unread")
+            return
+        existed = {stop.id for stop in before}
         for stop in live:
+            if stop.id not in existed:
+                continue
             if stop.tpsl_mode == "Partial" and stop.exchange_order_id is not None:
                 await self._cancel(port, account, job, stop, stop.exchange_order_id)
+
+    async def _live_stops(self, row: PositionRow) -> tuple[RecordedStopRow, ...] | None:
+        """The position key's live recorded stops, or None when they cannot be read in time."""
+        try:
+            async with asyncio.timeout(self._store_timeout_s):
+                return await self._deps.stops.live_for_key(
+                    row.exchange_account_id, row.symbol, row.position_idx
+                )
+        except Exception as exc:  # unread: nothing is cancelled on a guess
+            _log().warning("oms_close_sweep_stops_unread", failure=type(exc).__name__)
+            return None
 
     async def _flat(self, port: SweepPort, account: AccountRef, row: PositionRow) -> bool:
         """The venue's own read shows no size on the position's key; unread is not flat."""
