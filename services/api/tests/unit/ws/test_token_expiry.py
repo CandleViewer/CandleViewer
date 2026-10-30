@@ -31,6 +31,7 @@ from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.settings import Settings
 from candleviewer.ws import gateway
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.metrics import (
     AUTH_FAILURE_REASONS,
     cv_ws_auth_failures_total,
@@ -270,6 +271,7 @@ def _bare_gateway(result: Any, clock: _Clock, *, tick_s: float = 0.005, audit: A
             wall_ms=clock.wall_ms,
             tick_s=tick_s,
             allowed_origins=frozenset({_ORIGIN}),
+            backpressure=BackpressureConfig(),  # #2409: the budgeted pipeline
         )
     )
     gate = _Gate(app)
@@ -337,6 +339,9 @@ _NO_IDLE_TICK_S = 3600.0
 _FEED_PERIOD = timedelta(milliseconds=10)  # 100 Hz on the fake clock
 #: A role-neutral `system` frame (an unknown `kind` would reach nobody, SR-188).
 _TICK = {"kind": "notice", "message": "tick"}
+#: `system` frames queued behind the writer before an identity ends: a backlog its sealed close
+#: drops, well inside the pipeline's frame budget (§8.4).
+_BACKLOG = 1023
 
 
 def _broadcast(gw: _Bare, ws: Any, clock: _Clock) -> dict[str, Any]:
@@ -371,7 +376,7 @@ def test_expiry_drops_the_queued_backlog_and_sends_bye_next() -> None:
         assert _open(ws, "any")["t"] == "auth_ok"
 
         def burst_then_expire() -> None:
-            for _ in range(gateway.OUTBOUND_QUEUE_MAX - 1):
+            for _ in range(_BACKLOG):
                 gw.hub.broadcast_system(_TICK)
             clock.now = expiry
 
@@ -388,7 +393,7 @@ def test_revocation_drops_the_queued_backlog_and_sends_bye_next() -> None:
         assert _open(ws, "any")["t"] == "auth_ok"
 
         async def burst_then_revoke() -> int:
-            for _ in range(gateway.OUTBOUND_QUEUE_MAX - 1):
+            for _ in range(_BACKLOG):
                 gw.hub.broadcast_system(_TICK)
             return await gw.revocation.revoke("sess")
 
@@ -409,7 +414,7 @@ def test_an_enrolment_refused_re_auth_drops_the_queued_backlog_and_sends_bye_nex
         if len(presented) == 1:  # the first `auth`: a full session
             return ("sess", _USER, _T0 + ACCESS_TOKEN_TTL)
         assert gw is not None
-        for _ in range(gateway.OUTBOUND_QUEUE_MAX - 1):  # queued for the earlier identity
+        for _ in range(_BACKLOG):  # queued for the earlier identity
             gw.hub.broadcast_system(_TICK)
         raise gateway.AuthRefused("mfa_enrollment_required")
 
@@ -459,7 +464,7 @@ def test_expiry_during_a_close_under_way_still_drops_the_backlog() -> None:
             assert _open(ws, "any")["t"] == "auth_ok"
 
             async def burst_shutdown_then_expire() -> None:
-                for _ in range(gateway.OUTBOUND_QUEUE_MAX - 2):
+                for _ in range(_BACKLOG - 1):
                     gw.hub.broadcast_system(_TICK)
                 # A planned shutdown is an ordinary close: its `bye` follows the backlog...
                 await gw.hub.shutdown(grace_ms=0, sleep=_no_sleep)
@@ -470,10 +475,8 @@ def test_expiry_during_a_close_under_way_still_drops_the_backlog() -> None:
             assert (bye["t"], bye["p"]["reason"]) == ("bye", "shutdown"), bye
             assert _closed(ws) == 1001
     sealed = [e for e in logs if e["event"] == "ws close sealed"]
-    # One tick was in the writer's hand; the other 1021 ticks and the shutdown notice dropped.
-    assert [(e["reason"], e["dropped"]) for e in sealed] == [
-        ("token_expired", gateway.OUTBOUND_QUEUE_MAX - 2)
-    ]
+    # Nothing was in the writer's hand: the 1022 ticks and the shutdown notice dropped.
+    assert [(e["reason"], e["dropped"]) for e in sealed] == [("token_expired", _BACKLOG)]
     assert _closes("token_expired") == before + 1
 
 

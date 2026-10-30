@@ -12,6 +12,7 @@ harness (`_seq_support.validate`)."""
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from typing import Any, cast
 
@@ -27,6 +28,7 @@ from candleviewer.observability.health_probes import (
     ComponentState,
     HealthRegistry,
 )
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import FlagSnapshot, SystemBaseline, _Connection
 from candleviewer.ws.permissions import ConnectionAuthz
 from candleviewer.ws.system_filter import system_view
@@ -234,9 +236,7 @@ def test_a_hold_past_its_bound_keeps_the_newest_and_counts_each_drop() -> None:
         conn.push_system(body)
     assert count() - before == 3
     conn.push_system(_SNAP_BODY, snap=True)
-    frames = []
-    while not conn.outbound.empty():
-        frames.append(conn.outbound.get_nowait())
+    frames = _queued(conn)
     held = [f["p"]["reason"] for f in frames if f.get("ch") == "system" and f["t"] == "d"]
     assert held == [b["reason"] for b in bodies[3:]]  # the newest SYSTEM_HELD_MAX, in order
 
@@ -306,9 +306,19 @@ def _bare(who: PrincipalSnapshot) -> _Connection:
         wall_ms=lambda: 0,
         auth_timeout_s=10.0,
         flag_visible=default_registry().visible_to,
+        backpressure=BackpressureConfig(),  # #2409: the budgeted pipeline
     )
     conn.authz = ConnectionAuthz(who)
     return conn
+
+
+def _queued(conn: _Connection) -> list[dict[str, Any]]:
+    """Every frame `conn`'s pipeline holds, in order (§8.4; `system` rides the priority lane)."""
+    assert conn.pipeline is not None
+    frames = []
+    while (item := conn.pipeline.queue.pop()) is not None:
+        frames.append(json.loads(item.payload))
+    return frames
 
 
 @settings(max_examples=300, deadline=None)
@@ -325,9 +335,7 @@ def test_no_system_delta_is_ever_queued_before_the_snap(
         else:
             assert conn.authz is not None
             conn.authz.principal = arg
-    frames = []
-    while not conn.outbound.empty():
-        frames.append(conn.outbound.get_nowait())
+    frames = _queued(conn)
     system = [f for f in frames if f.get("ch") == "system"]
     if system:
         assert (system[0]["t"], system[0]["s"]) == ("snap", 1)

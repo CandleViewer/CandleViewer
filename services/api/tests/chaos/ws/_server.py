@@ -12,15 +12,15 @@ Served as production serves it: `PlannedShutdownServer`, so a stop (`should_exit
 planned shutdown, its grace slept on the virtual clock. `restart()` boots a second server
 process behind the same proxies; the stores above survive it, as a database and the exchange do.
 
-`flag_on()` is the same stack with E17-T03's `CV_WS_BACKPRESSURE_ENABLED` on: the router gets the
-default `BackpressureConfig` (8 MiB / 2 000 frames), every socket it accepts has a fixed
-`SEND_BUFFER`, and each of its lanes a fixed upstream receive buffer (`LANE_RCVBUF`), so a stopped
-reader's backlog reaches that budget once well under 1 MB is in flight (the sockets', the
-transport's and the proxy's buffers), not after the megabytes loopback autotuning holds. Its
-transport keepalive is off (`_boot`): it runs on wall time. Its per-connection frame budget
-(#2176) runs on the virtual clock (`_frames_on`). `flag_on(nodelay=True)`, for a wall-clock test,
-also sets `TCP_NODELAY` on the listening socket, which every accepted socket inherits; the default
-stack keeps Nagle there. `trades_step` replays the recorded tape.
+Every stack runs with E17-T03's `CV_WS_BACKPRESSURE_ENABLED` on (#2409; `flag_on()` names it):
+the router gets the default `BackpressureConfig` (8 MiB / 2 000 frames), every socket it accepts
+has a fixed `SEND_BUFFER`, and each of its lanes a fixed upstream receive buffer (`LANE_RCVBUF`),
+so a stopped reader's backlog reaches that budget once well under 1 MB is in flight (the
+sockets', the transport's and the proxy's buffers), not after the megabytes loopback autotuning
+holds. Its transport keepalive is off (`_boot`): it runs on wall time. Its per-connection frame
+budget (#2176) runs on the virtual clock (`_frames_on`). `flag_on(nodelay=True)`, for a wall-clock
+test, also sets `TCP_NODELAY` on the listening socket, which every accepted socket inherits; the
+default stack keeps Nagle there. `trades_step` replays the recorded tape.
 """
 
 from __future__ import annotations
@@ -121,12 +121,16 @@ class _Hub(GatewayHub):
         return await super().shutdown(**kw, sleep=_no_wait if self.instant else self.clock.sleep)
 
 
+#: E17-T03's default budget (#2409: every stack runs on it unless a test passes `None`).
+_ON = BackpressureConfig()
+
+
 class Stack:
     def __init__(
         self,
         clock: VirtualClock,
         *accounts: uuid.UUID,
-        backpressure: BackpressureConfig | None = None,
+        backpressure: BackpressureConfig | None = _ON,
         nodelay: bool = False,
     ) -> None:
         self.clock = clock

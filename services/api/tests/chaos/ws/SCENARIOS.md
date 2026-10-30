@@ -29,7 +29,7 @@ with a 5 s bound, except scenario 2's wait for the sleeper's snapshots, which it
 (below). Same seed, same backoff schedule and fault trace (scenario 6 pins the trace).
 A reset crosses the proxy, `PAUSE` also holds the chunk being read, no server behind it = reset (`down`).
 
-**Flag on.** `_server.flag_on()` (fixture `stack_on`, in `conftest.py`) serves the same router with
+**Flag on.** Every `Stack` (#2409; the fixtures `stack` and `stack_on`, `_server.flag_on()`) serves the router with
 E17-T03's `CV_WS_BACKPRESSURE_ENABLED` on: the default `BackpressureConfig` (8 MiB / 2 000 frames,
 the §8.4 ladder, pacing, classification and the RTT probe). Its listening socket has a fixed 32 KiB
 `SO_SNDBUF` (64 KiB once the kernel doubles it), which every accepted socket inherits, and each of
@@ -48,7 +48,7 @@ a slow run (coverage) would close a paused client mid-scenario. The §9.1 applic
 stays, on the virtual clock. Production keeps both: a reader stalled for 60 real seconds meets that
 `1011`, which this harness leaves out. The server's per-connection frame budget (#2176) is kept
 there but refilled on the virtual clock (`_server._frames_on`), like the gateway's own inbound
-limiter; the flag-off stack keeps the loop clock, as production does.
+limiter; production keeps the loop clock.
 `flag_on(nodelay=True)` (scenario 3's wall-clock tests) also sets `TCP_NODELAY` on the
 listening socket, which every accepted socket inherits: asyncio sets it only on the sockets it
 makes by host and port, so otherwise an update can wait about 40 ms on Nagle and the client's
@@ -56,7 +56,7 @@ delayed ACK (the stall scenario 1 prints); the default is unchanged, so the othe
 `Stack` are untouched. `trades_step` publishes the recorded BTCUSDT tape (production
 parser) as §14.2 batches, replayed in rounds with unique ids. Client opt-ins, set before `start()`:
 the §9.1 client `ping` (`heartbeat_s`), no permessage-deflate (`deflate`), and `on_data`, which
-takes the data frames of a stream too large to keep. The flag-off scenarios use none of these.
+takes the data frames of a stream too large to keep. Scenarios 4 to 7 use none of these.
 `_book.Replica` (and `replay`) rebuilds a structured book channel from the frames a `Client` kept: a
 `snap` replaces it, a `d` patches it, a gap discards until the next `snap` (§7.1). `_book.BookTap` is
 a `Client.on_data` for a channel too long to keep (a `Replica` and the disclosure of each `d`), and
@@ -81,7 +81,7 @@ attached during the outage, not a kill during an in-flight snapshot; and the gat
 feeds the hub yet, so the test plays the publisher, with production APIs only and nothing patched,
 as the §7.4 table reads: the upstream dying is `Source.unavailable` (what the production book source
 answers while rebuilding or desynced) and `SequencingHub.upstream_desync`; the upstream coming back
-is `upstream_reconnect`. Flag off and on. Three sockets: a full workspace (`book` structured,
+is `upstream_reconnect`. On the pipeline (#2409: the flag-off row went). Three sockets: a full workspace (`book` structured,
 `trades`, account A's `orders` for the symbol), a chart and a chart of ETHUSDT (a mirror book). Time
 moves 0.5 s once every update is delivered, a tick longer than any window a class can give (asserted
 at import). Three ticks warm, a 10 s outage (20 ticks), five after. Through the outage each recorded
@@ -358,7 +358,8 @@ broadcast skips the parked socket, whose `auth_ok.kill_switch` (§4.3; `welcome`
   drain gate (the woken sleeper's queue holds only control frames;
   `test_backpressure_drain_waits_until_the_queue_is_below_half`) and the redrop close
   (`test_three_redrops_close_with_close_redrop`).
-- **Scenario 1 mutation** (in memory, no file written): `s1`, flag off and on, fails on each of 13
+- **Scenario 1 mutation** (in memory, no file written): `s1`, flag off and on when recorded (#2409
+  dropped the flag-off row; the flag-off-only mutant below goes with the flag), fails on each of 13
   mutants of `ws/sequencing.py` and `ws/pacing.py`: a `d` taken by a subscription that waits for its
   `snap` (`TopicEmitter.delta` ignoring `snapshot_pending`, which only flag off reaches, since the
   pacer's `_held` refuses first; `_held` ignoring it, flag on only; both fail every test),
