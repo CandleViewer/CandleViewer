@@ -2871,7 +2871,7 @@ CREATE INDEX ix_oh_account ON oms_handovers (exchange_account_id, kind, id);
 - **Guard.** `trg_oh_guard` (BEFORE UPDATE, `ENABLE ALWAYS`) refuses with SQLSTATE 23514, naming itself, any change to the entry itself (every column but `empty_reads`, `first_empty_read_at` and `decided_at`), a count that goes down, and a stamp that changes once set.
 - **Statement cap.** Each unit of work caps its statements at `CV_OMS_STATEMENT_TIMEOUT_MS`, as the order store's do (§3.3.5), and its caller bounds the call (C-2.18).
 
-**Bound and overflow policy.** The table holds at most `MAX_HANDOVERS_PER_ACCOUNT` (1,000) entries per account, decided ones included (C-2.18). An append past the bound is refused (`HandoverStoreFull`, which the ports raise as `HandoverUnavailable`), never dropped silently: its caller logs, counts and pages it (24 §8.12 step 4), and the pass's step 2 still reads every execution of its window from the exchange, so a refused fill is met there. An entry already held answers its append at the bound too, as nothing is added.
+**Bound and overflow policy.** The table holds at most `MAX_HANDOVERS_PER_ACCOUNT` (1,000) entries per account, decided ones included (C-2.18). An append past the bound is refused (`HandoverStoreFull`, which the ports raise as `HandoverUnavailable`), never dropped silently: its caller logs and counts it (24 §8.12 step 4), and the pass's step 2 still reads every execution of its window from the exchange, so a refused fill is met there. An entry already held answers its append at the bound too, as nothing is added.
 
 **Readers.** The pass reads an account's entries of one kind in append order (§8.5 steps 2, 3c and 3d), at most the bound, and nothing else reads them.
 

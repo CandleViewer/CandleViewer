@@ -8,7 +8,7 @@ the normalised order or execution as its JSON record, under the account the port
 refuses a record that names another account (C-2.11). Every refusal is the ports'
 `HandoverUnavailable`, logged at ERROR and never silent: a record of another account, the store
 full at its bound (21 Sec.3.3.12's overflow policy), an outage, a refused statement, or a store
-that does not answer within `HANDOVER_TIMEOUT_S`. The callers log, count and page it (24 Sec.8.12
+that does not answer within `HANDOVER_TIMEOUT_S`. The callers log and count it (24 Sec.8.12
 step 4); cancellation passes through.
 
 The pass reads the entries back as their models (`waiting_orders`, `waiting_executions`), each

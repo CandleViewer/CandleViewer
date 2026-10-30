@@ -169,7 +169,7 @@ async def test_an_entry_the_store_cannot_keep_is_handover_unavailable(
     fail: BaseException, reason: str
 ) -> None:
     """21 Sec.3.3.12's overflow policy and an outage alike: never dropped silently, the port's
-    `HandoverUnavailable`, which its caller logs, counts and pages (24 Sec.8.12 step 4)."""
+    `HandoverUnavailable`, which its caller logs and counts (24 Sec.8.12 step 4)."""
     handovers = StoreHandovers(_Store(fail=fail), source="ws_private")
     with capture_logs() as logs, pytest.raises(HandoverUnavailable) as refused:
         await handovers.hand_over_execution(ACCOUNT, _fill())

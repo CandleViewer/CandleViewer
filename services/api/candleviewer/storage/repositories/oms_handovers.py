@@ -44,7 +44,7 @@ _CONTROL: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 class HandoverStoreFull(Exception):
     """The account holds `MAX_HANDOVERS_PER_ACCOUNT` entries: the append is refused, nothing is
-    written, and the caller logs, counts and pages it (21 Sec.3.3.12's overflow policy)."""
+    written, and the caller logs and counts it (21 Sec.3.3.12's overflow policy)."""
 
 
 def _key(raw: object, rule: str) -> None:
