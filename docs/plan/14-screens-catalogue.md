@@ -1525,7 +1525,7 @@ Drag preview                Drop zones
 
 ### SCR-064 — Position SL/TP editor (modal)
 
-- **Type:** Modal from a position row or chart overlay. Edit stop-loss, take-profit, trailing stop (fixed offset / % / ATR multiple / structure-based), break-even trigger, partial-TP ladder, and which of these are **native exchange-side** vs **engine-managed**.
+- **Type:** Modal from a position row or chart overlay. Edit stop-loss, take-profit, trailing stop (fixed offset / % / ATR multiple / structure-based), break-even trigger, partial-TP ladder, and which of these are **native exchange-side** vs **Emulated — run by CandleViewer, not Bybit** (E32-D05 D05-A3; the registered class word).
 
 ```
 +--------- Manage BTCUSDT long 0.25 (Main) ---------+
@@ -1545,7 +1545,7 @@ Drag preview                Drop zones
 
 - **Data:** `PUT /api/v1/positions/{positionId}/tpsl`; state via `positions`.
 - **Validation:** SL/TP side correctness; ladder percentages sum ≤100 % ("Ladder totals 110 % — reduce a step."); each ladder step ≥ min lot; native-SL invariant cannot be removed ("Every position keeps a native stop — you can move it, not delete it.").
-- **A11y:** R-multiples and percentages both shown; the warning about engine-managed stops is a persistent, readable note, not a tooltip.
+- **A11y:** R-multiples and percentages both shown; the Emulated layers' note (CMP-158 and the class sentence) is a persistent, readable note, not a tooltip (E32-D05 D05-A3).
 - **Audit:** `position.stop_modified`, `position.tp_ladder_set`. **Stories:** US-ORD-007..010, US-RISK-004.
 - **Performance:** Amend round-trip target <=500 ms p95 (same budget as order placement); the new SL/TP is rendered as pending until the exchange acknowledges, never optimistically as confirmed.
 - **Components:** CMP-001 Button, CMP-043 Dialog, CMP-100 PriceInput, CMP-119 BracketEditor, CMP-120 TrailingStopEditor, CMP-130 SlippageEstimateChip, CMP-158 SafetyInvariantNotice.
@@ -1575,7 +1575,7 @@ Drag preview                Drop zones
 - **Data:** `POST /api/v1/orders` (backend places N children and tracks them as one algo).
 - **Validation:** 2–50 child orders; each child ≥ min lot ("Child 5 is below the minimum — reduce the order count"); range must not cross the mark in the wrong direction (warning, not block).
 - **States:** preview · placing (per-child progress) · partial placement failure with retry.
-- **Components:** CMP-010 Slider, CMP-043 Dialog, CMP-049 Table, CMP-100 PriceInput, CMP-101 QtyInput, CMP-119 BracketEditor, CMP-130 SlippageEstimateChip, CMP-228 PreviewTile.
+- **Components:** CMP-010 Slider, CMP-043 Dialog, CMP-049 Table, CMP-100 PriceInput, CMP-101 QtyInput, CMP-119 BracketEditor, CMP-130 SlippageEstimateChip, CMP-158 SafetyInvariantNotice, CMP-228 PreviewTile.
 - **Stories:** US-ALGO-004, US-ALGO-009.
 - **A11y:** The generated ladder is previewed as a real table (level, price, qty, cumulative qty, cumulative notional, resulting average) before submission; each generator input is a labelled numeric field with units; the submit button names the total ('Place 8 orders, 0.64 BTC total').
 - **Performance:** Preview recomputes locally within one frame; submission fans the levels out in a single backend request so the per-account rate-limit budget is evaluated server-side and reported back before any order is sent.
