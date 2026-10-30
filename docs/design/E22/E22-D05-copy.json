@@ -1,0 +1,443 @@
+{
+  "pack": "E22-D05",
+  "version": "v1",
+  "base": "a584e5ef9b",
+  "note": "The copy deck of the E22-D05 hand-off pack: D02 §13's rows verbatim, D04 §7's new strings and D03's strings not in D02 §13. Keys are stable row ids. Checked by docs/design/_tools/e22_d05_handoff_audit.py.",
+  "strings": {
+    "d02.13.cp01": {
+      "row": "CP1",
+      "surface": "header",
+      "text": "\"Tape BTCUSDT\"",
+      "strings": ["Tape BTCUSDT"],
+      "source": "D02:333",
+      "provenance": "memo §5 line 272",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp02": {
+      "row": "CP2",
+      "surface": "header buttons",
+      "text": "\"Filter prints (Ctrl+F)\" · \"Threshold…\" · \"Pause tape (P)\" · \"Columns…\" · \"More (Shift+F10)\"",
+      "strings": [
+        "Filter prints (Ctrl+F)",
+        "Threshold…",
+        "Pause tape (P)",
+        "Columns…",
+        "More (Shift+F10)"
+      ],
+      "source": "D02:334",
+      "provenance": "D27; PROPOSED keys (BQ-3)",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp03": {
+      "row": "CP3",
+      "surface": "readout",
+      "text": "\"2 010 /s (1 s) · 33 /frame\" · \"2 010 /s (1 s) · 33 /frame · +41 filtered\" (a filter on) · \"2 010 /s (1 s)\" (the status-row ladder) · \"—\" · \"Loading…\" · \"0 /s · quiet\"",
+      "strings": [
+        "2 010 /s (1 s) · 33 /frame",
+        "2 010 /s (1 s) · 33 /frame · +41 filtered",
+        "2 010 /s (1 s)",
+        "—",
+        "Loading…",
+        "0 /s · quiet"
+      ],
+      "source": "D02:335",
+      "provenance": "memo line 125, §6 lines 281–285; E25-D01 F8 (82)",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp04": {
+      "row": "CP4",
+      "surface": "Paused chip",
+      "text": "\"Paused — 412 prints buffered\" · narrow \"Paused — 412 buffered\" · \"Paused — 412 prints buffered · Jump to live\" · \"Paused — buffer full · 10 000 kept\" (S22)",
+      "strings": [
+        "Paused — 412 prints buffered",
+        "Paused — 412 buffered",
+        "Paused — 412 prints buffered · Jump to live",
+        "Paused — buffer full · 10 000 kept"
+      ],
+      "source": "D02:336",
+      "provenance": "`14` line 1187 (full) · memo line 125 (narrow) — one chip, two widths (D02-C3)",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp05": {
+      "row": "CP5",
+      "surface": "feed chips",
+      "text": "\"Stale 12s\" · \"Stale 30s\" (strong) · \"Offline\" · \"Reconstructed after gap\"",
+      "strings": ["Stale 12s", "Stale 30s", "Offline", "Reconstructed after gap"],
+      "source": "D02:337",
+      "provenance": "E17-D01 §5 line 146–147; E08-D04 §3",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp06": {
+      "row": "CP6",
+      "surface": "threshold chips",
+      "text": "\"eff. 250k USDT\" · \"eff. 220k USDT\" (percentile p99) · \"eff. 34.7k USDT\" · \"capped\" · \"(estimated)\"",
+      "strings": ["eff. 250k USDT", "eff. 220k USDT", "eff. 34.7k USDT", "capped", "(estimated)"],
+      "source": "D02:338",
+      "provenance": "memo F20 (87), line 125",
+      "status": "as D02 §13",
+      "story": "E22-S02"
+    },
+    "d02.13.cp07": {
+      "row": "CP7",
+      "surface": "preset / mode",
+      "text": "\"Big only\" · \"Reconstructed 250 ms / 1 tick\" · \"Raw prints\"",
+      "strings": ["Big only", "Reconstructed 250 ms / 1 tick", "Raw prints"],
+      "source": "D02:339",
+      "provenance": "memo §4 row 10",
+      "status": "as D02 §13",
+      "story": "E22-S04"
+    },
+    "d02.13.cp08": {
+      "row": "CP8",
+      "surface": "filter chips",
+      "text": "\"≥ 10 000 USDT\" · \"Sell only\" · \"Buy only\" · \"Remove filter ≥ 10 000 USDT\"",
+      "strings": ["≥ 10 000 USDT", "Sell only", "Buy only", "Remove filter ≥ 10 000 USDT"],
+      "source": "D02:340",
+      "provenance": "D16; PROPOSED",
+      "status": "as D02 §13",
+      "story": "E22-S05"
+    },
+    "d02.13.cp09": {
+      "row": "CP9",
+      "surface": "dividers",
+      "text": "\"— 412 prints while paused —\" · \"— gap 14:02:11.331 → 14:02:19.004 —\" · \"— 1 240 prints while disconnected —\" · \"— No history before 13:58:02. Recording started then. —\" · \"— clustering off from here —\" · \"— clustering on from here —\" · \"— 12 000 prints while paused · 2 000 not kept —\" (S22)",
+      "strings": [
+        "— 412 prints while paused —",
+        "— gap 14:02:11.331 → 14:02:19.004 —",
+        "— 1 240 prints while disconnected —",
+        "— No history before 13:58:02. Recording started then. —",
+        "— clustering off from here —",
+        "— clustering on from here —",
+        "— 12 000 prints while paused · 2 000 not kept —"
+      ],
+      "source": "D02:341",
+      "provenance": "memo §6 lines 287–289; D02-G7; E16-D01 line 209 (E16-D05 owns the final copy)",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp10": {
+      "row": "CP10",
+      "surface": "actions",
+      "text": "\"Load missed prints\" · \"Clear filter\" · \"Jump to live\" · \"Apply 34 723\" · \"Keep 30 000\"",
+      "strings": [
+        "Load missed prints",
+        "Clear filter",
+        "Jump to live",
+        "Apply 34 723",
+        "Keep 30 000"
+      ],
+      "source": "D02:342",
+      "provenance": "memo §6 lines 286–288, F19 (86)",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp11": {
+      "row": "CP11",
+      "surface": "empty states",
+      "text": "\"No prints above 10 000 USDT in the last 5 min\" · \"No prints yet · last print 13:58:02\" · \"Loading…\"",
+      "strings": [
+        "No prints above 10 000 USDT in the last 5 min",
+        "No prints yet · last print 13:58:02",
+        "Loading…"
+      ],
+      "source": "D02:343",
+      "provenance": "`14` line 1187 (the 5-minute example; N = the store's span, S13); memo §6 lines 284–286",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp12": {
+      "row": "CP12",
+      "surface": "warning strip",
+      "text": "\"Threshold flags 23.5 % of prints — raised to 34 723 USDT (the window's p80); prints between 30 000 and 34 723 are not flagged\"",
+      "strings": [
+        "Threshold flags 23.5 % of prints — raised to 34 723 USDT (the window's p80); prints between 30 000 and 34 723 are not flagged"
+      ],
+      "source": "D02:344",
+      "provenance": "memo F19 (86); tool §15",
+      "status": "as D02 §13",
+      "story": "E22-S02"
+    },
+    "d02.13.cp13": {
+      "row": "CP13",
+      "surface": "strip labels",
+      "text": "\"Threshold\" · \"notional\" · \"percentile\" · \"absolute_size\" · \"Size tier 2 = 4× · 1M USDT\" · \"Bubbles · scale\" · \"area-linear\" · \"log\" · \"Rows\" · \"reconstructed 250 ms / 1 tick\" · \"Threshold & bubbles\"",
+      "strings": [
+        "Threshold",
+        "notional",
+        "percentile",
+        "absolute_size",
+        "Size tier 2 = 4× · 1M USDT",
+        "Bubbles · scale",
+        "area-linear",
+        "log",
+        "Rows",
+        "reconstructed 250 ms / 1 tick",
+        "Threshold & bubbles"
+      ],
+      "source": "D02:345",
+      "provenance": "memo F17, §3.5, §4 rows 5–6; BQ-4 (the ticket's `scale [log\\|linear] min [10k] whale [100k]` superseded — D02-C1)",
+      "status": "as D02 §13",
+      "story": "E22-S02"
+    },
+    "d02.13.cp14": {
+      "row": "CP14",
+      "surface": "strip summary",
+      "text": "\"▸ Threshold 250k · area-linear · 250 ms (estimated)\" (one line at the 332 px minimum)",
+      "strings": ["▸ Threshold 250k · area-linear · 250 ms (estimated)"],
+      "source": "D02:346",
+      "provenance": "D18; PROPOSED",
+      "status": "as D02 §13",
+      "story": "E22-S02"
+    },
+    "d02.13.cp15": {
+      "row": "CP15",
+      "surface": "row tags",
+      "text": "\"liq\" · \"blk\" · \"×7\" · \"⧉\" (flag only) · \"27 small prints · Σ 1.9\" · \"compressed\"",
+      "strings": ["liq", "blk", "×7", "⧉", "27 small prints · Σ 1.9", "compressed"],
+      "source": "D02:347",
+      "provenance": "memo §3.1 line 123, C18, §7 line 300",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp16": {
+      "row": "CP16",
+      "surface": "column headers",
+      "text": "\"Time\" · \"Price\" · \"Size\" · \"Notional\" · \"Side\" (tooltip \"Side (taker): Buy / Sell\")",
+      "strings": ["Time", "Price", "Size", "Notional", "Side", "Side (taker): Buy / Sell"],
+      "source": "D02:348",
+      "provenance": "memo F2 (69)",
+      "status": "as D02 §13",
+      "story": "E22-S05"
+    },
+    "d02.13.cp17": {
+      "row": "CP17",
+      "surface": "picker items",
+      "text": "\"Cluster ×N — structured feed only\" · \"Tick direction — structured feed only\" · \"Block — on the binary feed\" · \"Σ delta — client sum\" · \"2 columns need the structured feed\"",
+      "strings": [
+        "Cluster ×N — structured feed only",
+        "Tick direction — structured feed only",
+        "Block — on the binary feed",
+        "Σ delta — client sum",
+        "2 columns need the structured feed"
+      ],
+      "source": "D02:349",
+      "provenance": "memo F1 (68), §3.1; PROPOSED",
+      "status": "as D02 §13",
+      "story": "E22-S05"
+    },
+    "d02.13.cp18": {
+      "row": "CP18",
+      "surface": "CMP-227 tooltip",
+      "text": "\"Prints at the same price and side within 250 ms / 1 tick are shown as one row. Enter opens Why estimated?\"",
+      "strings": [
+        "Prints at the same price and side within 250 ms / 1 tick are shown as one row. Enter opens Why estimated?"
+      ],
+      "source": "D02:350",
+      "provenance": "D25; PROPOSED",
+      "status": "as D02 §13",
+      "story": "E22-S04"
+    },
+    "d02.13.cp19": {
+      "row": "CP19",
+      "surface": "bubble tooltips",
+      "text": "\"Big sell · 1.2M USDT · 64,012.0 · 14:02:11.208\" · \"Cluster ×7 · 1.9M USDT · Sell · 7 prints within 250 ms / 1 tick · first print 14:02:11.208 · bar 14:02 · (estimated)\"",
+      "strings": [
+        "Big sell · 1.2M USDT · 64,012.0 · 14:02:11.208",
+        "Cluster ×7 · 1.9M USDT · Sell · 7 prints within 250 ms / 1 tick · first print 14:02:11.208 · bar 14:02 · (estimated)"
+      ],
+      "source": "D02:351",
+      "provenance": "D23; US-BIG-004 sc. 1 / 3; PROPOSED",
+      "status": "as D02 §13",
+      "story": "E22-S03"
+    },
+    "d02.13.cp20": {
+      "row": "CP20",
+      "surface": "legend row",
+      "text": "\"Big trades · area-linear · 250k → 3 px · 1M → 24 px · >1M labelled\" · log variant · \"(estimated)\" while clustering is on",
+      "strings": [
+        "Big trades · area-linear · 250k → 3 px · 1M → 24 px · >1M labelled",
+        "(estimated)"
+      ],
+      "source": "D02:352",
+      "provenance": "memo F15 (82); BQ-6",
+      "status": "as D02 §13",
+      "story": "E22-S03"
+    },
+    "d02.13.cp21": {
+      "row": "CP21",
+      "surface": "above-cap label",
+      "text": "\"1.2M\" · \"18.9M\"",
+      "strings": ["1.2M", "18.9M"],
+      "source": "D02:353",
+      "provenance": "memo F14 (81); Q14 → E22-D03",
+      "status": "as D02 §13",
+      "story": "E22-S03"
+    },
+    "d02.13.cp22": {
+      "row": "CP22",
+      "surface": "corner badge",
+      "text": "\"Smaller prints hidden at this zoom\"",
+      "strings": ["Smaller prints hidden at this zoom"],
+      "source": "D02:354",
+      "provenance": "memo C13 (386); E22-S03's legend note; PROPOSED",
+      "status": "as D02 §13",
+      "story": "E22-S03"
+    },
+    "d02.13.cp23": {
+      "row": "CP23",
+      "surface": "announcements",
+      "text": "\"3 whale sells in 5 s, largest 410k at 64,012.0\" · \"Last 5 s: 212 prints, 61 % buy by notional, largest sell 134k at 64,012.0, 3 big\" · \"Resumed, 412 prints inserted\" · \"Reconnected — gap 14:02:11.331 to 14:02:19.004\" · \"1 240 missed prints loaded\" · \"Resumed, 10 000 prints inserted, 2 000 not kept\" · \"Threshold raised to 34 723 USDT — 23.5 % of prints were flagged\" · \"Tape stale 12 seconds.\" · \"Tape live.\" · \"Notional moved up, 3 of 5\"",
+      "strings": [
+        "3 whale sells in 5 s, largest 410k at 64,012.0",
+        "Last 5 s: 212 prints, 61 % buy by notional, largest sell 134k at 64,012.0, 3 big",
+        "Resumed, 412 prints inserted",
+        "Reconnected — gap 14:02:11.331 to 14:02:19.004",
+        "1 240 missed prints loaded",
+        "Resumed, 10 000 prints inserted, 2 000 not kept",
+        "Threshold raised to 34 723 USDT — 23.5 % of prints were flagged",
+        "Tape stale 12 seconds.",
+        "Tape live.",
+        "Notional moved up, 3 of 5"
+      ],
+      "source": "D02:355",
+      "provenance": "memo F21 (88), §6 lines 283, 288; E22-D04 owns the policy",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp24": {
+      "row": "CP24",
+      "surface": "T2 reasons",
+      "text": "\"Nothing to pause while disconnected.\" (`feed.disconnected_pause`, PROPOSED — E17-D01 §7 owner) · \"Read-only while viewing as {user}.\" (`rbac.view_as`) · \"Your role can't change settings.\" (`rbac.permission`, `settings:write` → \"change settings\") · \"Your role can't save workspaces.\" (`rbac.permission`, `workspaces:write` → \"save workspaces\") · the notices \"Read-only — your role can't change settings.\" · \"Read-only — your role can't save workspaces.\" (`notice.panel_read_only`)",
+      "strings": [
+        "Nothing to pause while disconnected.",
+        "Read-only while viewing as {user}.",
+        "Your role can't change settings.",
+        "change settings",
+        "Your role can't save workspaces.",
+        "save workspaces",
+        "Read-only — your role can't change settings.",
+        "Read-only — your role can't save workspaces."
+      ],
+      "source": "D02:356",
+      "provenance": "E09-D09 §3.1 (95), §3.2, §10; D28; D02-G2",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp25": {
+      "row": "CP25",
+      "surface": "menu",
+      "text": "\"Read tape summary\" · \"Reset columns\" · \"Density: Compact / Comfortable\" · \"Open settings\"",
+      "strings": [
+        "Read tape summary",
+        "Reset columns",
+        "Density: Compact / Comfortable",
+        "Open settings"
+      ],
+      "source": "D02:357",
+      "provenance": "memo F21; PROPOSED",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d02.13.cp26": {
+      "row": "CP26",
+      "surface": "row names",
+      "text": "\"Sell, 18.75 BTC at 64,012.0, 1.2M, whale, 14:02:11.208\" (the memo §5 line 269 template on the drawn row — D02-C9) · \"Big sell, 42,000 USDT, 65,410, 14:32:01\" (mirror)",
+      "strings": [
+        "Sell, 18.75 BTC at 64,012.0, 1.2M, whale, 14:02:11.208",
+        "Big sell, 42,000 USDT, 65,410, 14:32:01"
+      ],
+      "source": "D02:358",
+      "provenance": "memo §5 lines 269, 271; `15` CMP-112 line 1234",
+      "status": "as D02 §13",
+      "story": "E22-S01"
+    },
+    "d04.07.an01": {
+      "row": "AN-01",
+      "surface": "announcement (whale, opt-in)",
+      "text": "\"Whale sell, 410k at 64,012.0\"",
+      "strings": ["Whale sell, 410k at 64,012.0"],
+      "source": "D04:275",
+      "provenance": "E22-D04 §7 AN-01, the one-whale form",
+      "status": "PROPOSED",
+      "stamp": "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A38)",
+      "story": "E22-S01"
+    },
+    "d04.07.an02": {
+      "row": "AN-02",
+      "surface": "announcement (whale, opt-in)",
+      "text": "\"4 whale prints in 5 s: 3 sells, 1 buy, largest sell 410k at 64,012.0\"",
+      "strings": ["4 whale prints in 5 s: 3 sells, 1 buy, largest sell 410k at 64,012.0"],
+      "source": "D04:276",
+      "provenance": "E22-D04 §7 AN-02, the mixed template",
+      "status": "PROPOSED",
+      "stamp": "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A38)",
+      "story": "E22-S01"
+    },
+    "d04.07.optin": {
+      "row": "opt-in",
+      "surface": "SCR-117 setting and the SCR-053 menu item",
+      "text": "\"Announce whale prints (tape)\"",
+      "strings": ["Announce whale prints (tape)"],
+      "source": "D04:312",
+      "provenance": "E22-D04 §7, the opt-in (R577 BQ-10)",
+      "status": "PROPOSED",
+      "stamp": "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A38)",
+      "story": "E22-S01"
+    },
+    "d03.04.r01": {
+      "row": "R01",
+      "surface": "mirror name, single",
+      "text": "\"Big sell, 1,200,000 USDT, 64,012.0, 14:02:11\"",
+      "strings": ["Big sell, 1,200,000 USDT, 64,012.0, 14:02:11"],
+      "source": "D03:235",
+      "provenance": "E22-D03 §4.9 / §5, not in D02 §13",
+      "status": "PROPOSED (D03)",
+      "story": "E22-S03"
+    },
+    "d03.04.r02": {
+      "row": "R02",
+      "surface": "mirror name, cluster",
+      "text": "\"Cluster of 7, 1,900,000 USDT, sell, 14:02:11, estimated\"",
+      "strings": ["Cluster of 7, 1,900,000 USDT, sell, 14:02:11, estimated"],
+      "source": "D03:235",
+      "provenance": "E22-D03 §4.9 / §5, not in D02 §13",
+      "status": "PROPOSED (D03)",
+      "story": "E22-S04"
+    },
+    "d03.04.r03": {
+      "row": "R03",
+      "surface": "cluster badge name",
+      "text": "\"Estimated, Trade cluster\"",
+      "strings": ["Estimated, Trade cluster"],
+      "source": "D03:235",
+      "provenance": "E22-D03 §4.9 / §5, not in D02 §13",
+      "status": "PROPOSED (D03)",
+      "story": "E22-S04"
+    },
+    "d03.05.r01": {
+      "row": "R01",
+      "surface": "legend row, log law",
+      "text": "\"Big trades · log · 250k → 3 px · 1M → 24 px · >1M labelled\"",
+      "strings": ["Big trades · log · 250k → 3 px · 1M → 24 px · >1M labelled"],
+      "source": "D03:261",
+      "provenance": "E22-D03 §4.9 / §5, not in D02 §13",
+      "status": "PROPOSED (D03)",
+      "story": "E22-S03"
+    },
+    "d03.05.r02": {
+      "row": "R02",
+      "surface": "legend eye button name",
+      "text": "\"Big trades visible\"",
+      "strings": ["Big trades visible"],
+      "source": "D03:261",
+      "provenance": "E22-D03 §4.9 / §5, not in D02 §13",
+      "status": "PROPOSED (D03)",
+      "story": "E22-S03"
+    }
+  }
+}
