@@ -17,6 +17,7 @@ import { Combobox } from "./index.js";
 import { InfoPanel } from "./InfoPanel.js";
 import { Menu } from "./Menu.js";
 import { SearchBox } from "./SearchBox.js";
+import { SymbolPicker } from "./SymbolPicker.js";
 import { SymbolSearchInput } from "./SymbolSearchInput.js";
 import { Table, type TableColumn } from "./Table.js";
 import { Tabs } from "./Tabs.js";
@@ -102,6 +103,8 @@ const RANKED: readonly FuzzyListItem[] = ["ETHUSDT", "ETHFIUSDT"].map((s): Fuzzy
   hint: `${s.slice(0, -4)} / USDT`,
   values: ["—", "—"],
 }));
+/** CMP-219's trigger, as B02 draws it (E08-D05 §14): Chart 1's BTCUSDT at 1 minute. */
+const PICKED = { value: "BTCUSDT", interval: "1 minute" } as const;
 const TABS = [
   { id: "positions", label: "Positions" },
   { id: "orders", label: "Orders" },
@@ -191,6 +194,14 @@ function AllMolecules(): JSX.Element {
           activeId="ETHUSDT"
           onActivate={fn()}
         />
+      </Cell>
+      <Cell id="CMP-219 SymbolPicker">
+        {/* B02's frames: rest, recording, not recorded, delisted and expanded. */}
+        <SymbolPicker {...PICKED} onOpen={fn()} />
+        <SymbolPicker {...PICKED} onOpen={fn()} recording="recording" />
+        <SymbolPicker {...PICKED} onOpen={fn()} recording="not-recorded" />
+        <SymbolPicker {...PICKED} onOpen={fn()} value="LUNAUSDT" delisted />
+        <SymbolPicker {...PICKED} onOpen={fn()} expanded />
       </Cell>
       <Cell id="CMP-050 Card">
         <Card title="Accounts" actions={<Button variant="ghost">Manage</Button>}>

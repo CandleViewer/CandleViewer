@@ -63,3 +63,4 @@ import "../src/components/formfield.css";
 import "../src/components/formsection.css";
 import "../src/components/select.css";
 import "../src/components/stepper.css";
+import "../src/components/symbolpicker.css";
