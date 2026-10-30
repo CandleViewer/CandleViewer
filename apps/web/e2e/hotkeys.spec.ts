@@ -55,16 +55,17 @@ test.describe("SCR-113 conflict classes", () => {
       audits.push(r.request().postDataJSON());
       return r.fulfill({ status: 204 });
     });
-    await bind(page, "Cancel all working orders for symbol", "K");
+    // A letter is refused outright on a dangerous command (BQ-3, AC5): the acknowledged path is a bare non-letter.
+    await bind(page, "Cancel all working orders for symbol", "Del");
     await expect(page.getByRole("alert")).toContainText("destructive");
     await page.getByRole("button", { name: "I understand, bind anyway" }).click();
     await expect.poll(() => audits.length).toBe(1);
-    expect(audits[0]).toMatchObject({ command_id: "dom.cancel_all", after: "K" });
+    expect(audits[0]).toMatchObject({ command_id: "dom.cancel_all", after: "Del" });
   });
 
   test("audit survives a failed POST and is re-sent after reload", async ({ page }) => {
     await page.route("**/api/v1/settings/hotkey-audit", (r) => r.fulfill({ status: 503 }));
-    await bind(page, "Cancel all working orders for symbol", "K");
+    await bind(page, "Cancel all working orders for symbol", "Del");
     await page.getByRole("button", { name: "I understand, bind anyway" }).click();
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("cv.hotkey-audit-outbox.v1")))
