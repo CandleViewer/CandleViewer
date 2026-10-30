@@ -172,8 +172,9 @@ def test_instrument_parser_fuzz(raw: dict[str, Any]) -> None:
         pass  # #1896: escapes parse_instruments' per-row catch (xfail in test_market_integrity)
 
 
-@pytest.mark.xfail(strict=True, reason="#1896 launchTime=Infinity -> OverflowError escapes")
 def test_instrument_regression_launchtime_inf() -> None:
+    """#1896's `launchTime=Infinity` row is a rejected row, not an escape (fixed by #5040's
+    sibling PR: `OverflowError` maps to `InstrumentParseError`)."""
     raw = json.loads((REG / "instrument_launchtime_inf.frame").read_text(encoding="utf-8"))
     res = parse_instruments([raw], fetched_at_us=1)
     assert res.instruments == () and len(res.rejected) == 1
