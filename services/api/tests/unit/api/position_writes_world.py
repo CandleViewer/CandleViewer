@@ -129,6 +129,11 @@ class Principals:
 
     def __init__(self, *, fail: bool = False) -> None:
         self.tokens = {who: TradingPrincipal(SESSION, snapshot(who)) for who in USERS}
+        # The Owner viewing as a user in a live view-as context (a protective write the guard
+        # passed): `viewing-<who>` carries that user as the target (22 "View-as session").
+        for who in ("manager", "reader"):
+            viewing = TradingPrincipal(SESSION, snapshot("owner"), target=snapshot(who))
+            self.tokens[f"viewing-{who}"] = viewing
         self.fail = fail
 
     async def resolve(self, request: Any) -> TradingPrincipal | None:

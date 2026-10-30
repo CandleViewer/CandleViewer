@@ -13,7 +13,10 @@
 5. the position, read in the caller's scope in SQL (`OmsReads.position`, C-12.4): none composed
    is 503 `store_unavailable`; a foreign id and a missing one are the same 404 `not_found`, the
    foreign one counted and audited `rbac.denied` (SR-E29-13); then the trade grant on its account
-   (`enforce` with `requires_trade`): 403 `account_scope_denied`, audited.
+   (`enforce` with `requires_trade`): 403 `account_scope_denied`, audited. The scope is
+   `scope_for_target`'s: the caller's own, narrowed to the target's trade grants for a protective
+   close in a live view-as context (22 "View-as session"); the other routes never carry a target,
+   as the view-as guard refuses them first.
 
 No log line or problem carries the key, the fingerprint or a value of the row (C-12.6).
 """
@@ -39,14 +42,14 @@ from candleviewer.api.order_admission import (
     resolve_principal,
     submit_actor,
 )
-from candleviewer.api.order_principal import TradingPrincipal
+from candleviewer.api.order_principal import TradingPrincipal, scope_for_target
 from candleviewer.api.order_problems import order_problem
 from candleviewer.api.recording_writes import WriteLimiter
 from candleviewer.api.refusal_session import SessionsLike
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.metrics import count_authz_denial
-from candleviewer.auth.scopes import ForbiddenError, account_scope, enforce
+from candleviewer.auth.scopes import ForbiddenError, enforce
 from candleviewer.domain.primitives import AccountId
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.oms.errors import AccountScopeDenied, FieldError, StoreUnavailable
@@ -158,7 +161,7 @@ async def admit_position_write[T](
     if reads is None:  # step 5
         return problem(503, "store_unavailable", "The OMS reads are not available here.")
     try:
-        found = await reads.position(account_scope(snapshot), position_id)
+        found = await reads.position(scope_for_target(snapshot, principal.target), position_id)
     except (AccountScopeDenied, StoreUnavailable):
         return problem(503, "store_unavailable", "The OMS store is unavailable.")
     if not isinstance(found, PositionRow):

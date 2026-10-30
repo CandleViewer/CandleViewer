@@ -2694,9 +2694,11 @@ def create_app(
             auth=ctx.auth,
         )
     )
-    # E29-T07 #915 PR 2: `closePosition` and `closeAllPositions` (never gated by the arm token or
-    # the OMS flag, C-2.6) and `reversePosition` (armed on live; the flag gates its entry), their
-    # positions read in scope on the reads above and their orders sent on the OMS runtime's lane.
+    # E29-T07 #915 PR 2: `closePosition` and `closeAllPositions` (never gated by the arm token,
+    # the OMS flag, the kill switch, live enablement or the gate, C-2.6; protective writes the
+    # view-as guard passes once they register) and `reversePosition` (armed on live; the flag
+    # gates its entry), their positions read in scope on the reads above and their orders sent on
+    # the OMS runtime's lane.
     app.include_router(
         make_position_close_router(
             order_principals,
@@ -2706,6 +2708,7 @@ def create_app(
             records=order_records,
             metrics=metrics_facade,
             auth=ctx.auth,
+            protective=protective_writes,
         )
     )
     app.include_router(

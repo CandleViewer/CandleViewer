@@ -2,9 +2,12 @@
 (`closeAllPositions`) (E29-T07 #915; 22 as amended by #5013).
 
 **closePosition.** After the middleware (CSRF, the session state, and the view-as guard, which
-refuses it in a view-as context: it is not one of `PROTECTIVE_WRITES`) and the shared admission
-(`api.position_admission`, steps 1 to 5: principal, `positions:write`, the caller's rate, the body,
-the position in scope with a trade grant), each step before the next:
+passes it in a view-as context as the protective write it is, `PROTECTIVE_WRITES`, once the target
+holds `positions:write`: a close is protective whole, 22 "View-as session") and the shared
+admission (`api.position_admission`, steps 1 to 5: principal, `positions:write`, the caller's rate,
+the body, the position in scope with a trade grant; in a live view-as context the scope is also the
+target's trade grants, `scope_for_target`, the viewer staying the actor), each step before the
+next:
 
 6. the runtime: none composed is 501, one whose readiness is not `ok` 503 `oms_not_ready`;
 7. no arm token: a close is never refused for want of it (C-2.6, 22 `ArmToken`);
@@ -27,14 +30,15 @@ the position in scope with a trade grant), each step before the next:
     the position's protective orders are left as they are (C-2.6). One `position.closed` record
     correlates the request with its order before the answer returns.
 
-**closeAllPositions.** The principal, `positions:write`, the rate, the body (22: the account ids,
-the symbol, `cancel_open_orders`), the key and the 24 h record, the guard, the runtime; then the
-scope, all or nothing (SR-E29-13: one account outside the caller's trade grants, or missing,
-refuses the whole request 403 `account_scope_denied`, audited, nothing sent); then per account, its
-open orders cancelled when asked (`CancelAll`, never a recorded stop, C-2.6), each open position
-closed whole as above (`protective`, so the kill switch, live enablement and the gate refuse no
-leg), and one `position.flattened` record. Its answer is 22 `BulkAccountResult`.
-It is not anchored by this amendment (#5013): its repeats are answered from the 24 h record; each
+**closeAllPositions.** A protective write in a view-as context too, on the same terms. The
+principal, `positions:write`, the rate, the body (22: the account ids, the symbol,
+`cancel_open_orders`), the key and the 24 h record, the guard, the runtime; then the scope
+(`scope_for_target`), all or nothing (SR-E29-13: one account outside the caller's trade grants, or
+missing, refuses the whole request 403 `account_scope_denied`, audited, nothing sent); then per
+account, its open orders cancelled when asked (`CancelAll`, never a recorded stop, C-2.6), each open
+position closed whole as above (`protective`, so the kill switch, live enablement and the gate
+refuse no leg), and one `position.flattened` record. Its answer is 22 `BulkAccountResult`. It is not
+anchored by this amendment (#5013): its repeats are answered from the 24 h record; each
 close it sends still carries the pipeline's anchor under `closeAllPositions`, so a later repeat's
 persist meets it and sends nothing.
 
@@ -76,6 +80,7 @@ from candleviewer.api.order_admission import (
     resolve_principal,
     submit_actor,
 )
+from candleviewer.api.order_principal import scope_for_target
 from candleviewer.api.order_problems import order_problem, outcome_problem
 from candleviewer.api.position_admission import (
     POSITIONS_WRITE,
@@ -86,9 +91,10 @@ from candleviewer.api.position_admission import (
 )
 from candleviewer.api.recording_writes import WriteLimiter
 from candleviewer.api.refusal_session import SessionsLike
+from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.metrics import count_authz_denial
-from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, account_scope, enforce
+from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.domain.primitives import AccountId, Environment, GroupId
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
@@ -318,9 +324,14 @@ def make_position_close_router(
     reads: OmsReads | None, *, audit: AuditEmitter, records: SubmitAudit, metrics: Metrics,
     auth: SessionsLike | None = None, replays: IdempotencyCache | None = None,
     limiter: WriteLimiter | None = None, pager: Pager | None = None,
+    protective: ProtectiveWrites | None = None,
 ) -> APIRouter:  # fmt: skip
     """`closePosition` and `closeAllPositions` (module docstring). `audit` takes `rbac.denied`,
-    `records` the refusals; `replays` is the 24 h record of first `2xx` answers."""
+    `records` the refusals; `replays` is the 24 h record of first `2xx` answers; `protective`, the
+    view-as guard's registry, learns that these handlers decide a viewer's close themselves."""
+    if protective is not None:
+        protective.register(_OPERATION)
+        protective.register(_ALL_OPERATION)
     router = APIRouter(tags=["positions"])
     kept = replays if replays is not None else IdempotencyCache()
     rate = limiter if limiter is not None else WriteLimiter(rate_per_minute=RATE_PER_MINUTE)
@@ -362,7 +373,8 @@ def make_position_close_router(
         snapshot = adm.caller.principal.snapshot
         account = AccountId(adm.caller.row.exchange_account_id)
         try:
-            body, _row = await replayed_body(adm.oms, outcome, account_scope(snapshot), account)
+            scope = scope_for_target(snapshot, adm.caller.principal.target)
+            body, _row = await replayed_body(adm.oms, outcome, scope, account)
         except ValueError:
             return order_problem(OmsError("a replay read a group other than its outcome's"))
         return JSONResponse(body, 202, {"Idempotency-Replayed": "true"})
@@ -591,7 +603,7 @@ def make_position_close_router(
             parsed.cancel_open_orders,
         )
         selection = CancelAllRequest(named, symbol, frozenset(), exclude_reduce_only=True)
-        scope = account_scope(snapshot)
+        scope = scope_for_target(snapshot, principal.target)
         try:
             accounts = await oms.cancel_all.scope(scope, selection)
             if reads is None:

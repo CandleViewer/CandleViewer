@@ -22,8 +22,11 @@ from candleviewer.api.position_close import (
     CLOSE_PATH,
     CloseAllBody,
     close_all_body,
+    make_position_close_router,
 )
+from candleviewer.api.view_as_policy import PROTECTIVE_WRITES, ProtectiveWrites
 from candleviewer.domain.order_entry import OrderEntryRefusal
+from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import (
     ExchangeRejected,
     OmsNotReady,
@@ -45,6 +48,7 @@ from tests.unit.api.position_writes_world import (
     ON_A,
     ON_B,
     ON_LIVE,
+    USERS,
     World,
     first_close,
     on,
@@ -183,6 +187,47 @@ async def test_close_position_a_fenced_switch_is_503_not_ready_unrecorded() -> N
     answer = await close(world)
     assert (answer.status_code, answer.json()["code"]) == (503, "oms_not_ready")
     assert closes(world) == [] and world.submitted() == []
+
+
+# --- view-as: a close is a protective write (22 "View-as session"; Fable M1) -------------------
+
+
+def test_close_routes_register_as_protective_writes_on_mount() -> None:
+    """Both handlers register as they are mounted, so the view-as guard passes them on."""
+    registry = ProtectiveWrites(op for op, _ in PROTECTIVE_WRITES.values())
+    make_position_close_router(None, lambda: None, None, audit=World().audit,
+                               records=World().records, metrics=Metrics("demo"),
+                               protective=registry)  # fmt: skip
+    assert registry.is_registered(("POST", CLOSE_PATH))
+    assert registry.is_registered(("POST", CLOSE_ALL_PATH))
+
+
+async def test_close_position_view_as_runs_as_the_viewer_in_the_targets_trade_grants() -> None:
+    """A viewer's close is admitted within the target's trade grants and runs as the viewer."""
+    world = World()
+    answer = await close(world, who="viewing-manager")
+    assert answer.status_code == 202, answer.text
+    [(_request, context)] = world.pipeline.submitted
+    assert context.actor.user_id == USERS["owner"] and context.protective is True
+
+
+async def test_close_position_view_as_a_target_without_a_trade_grant_is_404_nothing_sent() -> None:
+    """The account half (`scope_for_target`): the Owner viewer's own reach is narrowed to what the
+    target may trade, so a position the target may only view reads as not found, audited."""
+    world = World()
+    answer = await close(world, who="viewing-reader")
+    assert (answer.status_code, answer.json()["code"]) == (404, "not_found")
+    assert world.audit.actions() == ["rbac.denied"] and world.submitted() == []
+
+
+async def test_close_all_view_as_flattens_only_the_targets_trade_grants() -> None:
+    narrowed, refused = World(), World()
+    answer = await flatten(narrowed, who="viewing-manager")
+    assert answer.status_code == 200 and answer.json()["requested"] == 1
+    assert {c.actor.user_id for _, c in narrowed.pipeline.submitted} == {USERS["owner"]}
+    outside = await flatten(refused, who="viewing-reader")  # the target trades no account
+    assert (outside.status_code, outside.json()["code"]) == (403, "account_scope_denied")
+    assert refused.submitted() == []
 
 
 # --- closePosition: the body ------------------------------------------------------------------
