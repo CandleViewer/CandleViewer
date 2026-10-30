@@ -485,10 +485,10 @@ describe("SCR-102, the rest of E08-D05 §6 (E08-S09 PR C2)", () => {
   const accepted = (): Promise<Response> => Promise.resolve(new Response("{}", { status: 202 }));
   const urls = (): string[] => apiFetch.mock.calls.map(([url]) => url);
   /** The instrument routes answer as the test says; the rest of the shell still has no network. */
-  const instruments = (answer: (url: string) => Promise<Response>): void =>
-    void apiFetch.mockImplementation((url) =>
+  const instruments = (answer: (url: string, init?: RequestInit) => Promise<Response>): void =>
+    void apiFetch.mockImplementation((url, init) =>
       url.startsWith("/api/v1/instruments/")
-        ? answer(url)
+        ? answer(url, init)
         : Promise.reject(new TypeError("no network")),
     );
   const said = (): (string | null)[] =>
@@ -666,6 +666,87 @@ describe("SCR-102, the rest of E08-D05 §6 (E08-S09 PR C2)", () => {
     expect(within(dialog()).queryByRole("button", { name: "Check again" })).toBeNull();
     await act(() => vi.advanceTimersByTimeAsync(300));
     expect(urls()).toEqual([]);
+  });
+
+  it("CR-DD-01: a no-match no check answers ('x', 'xy') is said once its query rests, never per keystroke", async () => {
+    await shell(CHART_1);
+    vi.useFakeTimers({ now: T0 });
+    press(trigger());
+    for (const query of ["x", "xy"]) {
+      type(query);
+      expect(region()?.textContent).toBe(""); // the block is drawn at once; its sentence names the query
+    }
+    expect(heading()).toHaveTextContent("No USDT perpetual matches 'xy'.");
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    const sentence = "v1 supports Bybit USDT linear perpetuals only.";
+    expect(region()?.textContent).toBe(`No USDT perpetual matches 'xy'. ${sentence}`);
+    type("x"); // each keystroke's rest starts afresh: what was said goes, and nothing new is said yet
+    expect(region()?.textContent).toBe("");
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(region()?.textContent).toBe(`No USDT perpetual matches 'x'. ${sentence}`);
+    expect(urls()).toEqual([]); // V10: nothing to check
+  });
+
+  it("CR-DD2-03: a query is rested only after its own rest: back at the one that rested last, it is quiet again", async () => {
+    await shell(CHART_1);
+    vi.useFakeTimers({ now: T0 });
+    press(trigger());
+    const sentence = (query: string): string =>
+      `No USDT perpetual matches '${query}'. v1 supports Bybit USDT linear perpetuals only.`;
+    type("xy");
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(region()?.textContent).toBe(sentence("xy"));
+    type("xyz");
+    await act(() => vi.advanceTimersByTimeAsync(100)); // inside xyz's rest
+    type("xy"); // the query that rested last, but not yet for this keystroke
+    expect(region()?.textContent).toBe("");
+    await act(() => vi.advanceTimersByTimeAsync(299));
+    expect(region()?.textContent).toBe("");
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(region()?.textContent).toBe(sentence("xy"));
+    expect(urls()).toEqual([]);
+  });
+
+  describe("CR-DD2-01: the host stays mounted while SCR-102 is closed, and nothing is looked up for it then", () => {
+    it("Esc inside the check's rest sends no lookup", async () => {
+      await shell(CHART_1);
+      vi.useFakeTimers({ now: T0 });
+      instruments(() => reply(404));
+      press(trigger());
+      type("xyzzy");
+      await act(() => vi.advanceTimersByTimeAsync(100));
+      key("Escape");
+      await act(() => vi.advanceTimersByTimeAsync(500)); // the rest is long over
+      expect(urls()).toEqual([]);
+    });
+
+    it("Esc with a lookup in flight aborts it at once", async () => {
+      await shell(CHART_1);
+      vi.useFakeTimers({ now: T0 });
+      const signals: AbortSignal[] = [];
+      instruments((_url, init) => {
+        if (init?.signal) signals.push(init.signal);
+        return new Promise<Response>(() => undefined);
+      });
+      press(trigger());
+      type("xyzzy");
+      await act(() => vi.advanceTimersByTimeAsync(300));
+      expect(signals.map((signal) => signal.aborted)).toEqual([false]);
+      key("Escape");
+      expect(signals.map((signal) => signal.aborted)).toEqual([true]);
+    });
+
+    it("a re-read that lands once it is closed asks nothing of the abandoned query", async () => {
+      const { put } = await shell(CHART_1);
+      vi.useFakeTimers({ now: T0 });
+      instruments(() => reply(404));
+      press(trigger());
+      type("eth"); // ranks two symbols: nothing to check
+      key("Escape");
+      put({ entries: listed("BTCUSDT") }); // the new listing drops both: "eth" now ranks nothing
+      await act(() => vi.advanceTimersByTimeAsync(500));
+      expect(urls()).toEqual([]);
+    });
   });
 
   it("§6.2: a check with no usable answer (a 503) says so in the block", async () => {
@@ -978,6 +1059,18 @@ describe("SCR-102, the rest of E08-D05 §6 (E08-S09 PR C2)", () => {
       },
     ]);
     expect(JSON.stringify(events)).not.toContain("eth");
+  });
+
+  it("CR-DD2-02: a query abandoned inside its rest is not reported: SCR-102 is closed, its host mounted", async () => {
+    const events = analytics();
+    await shell(CHART_1);
+    vi.useFakeTimers({ now: T0 });
+    press(trigger());
+    type("eth");
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    key("Escape");
+    await act(() => vi.advanceTimersByTimeAsync(500)); // the 300 ms are long up
+    expect(events).toEqual([]);
   });
 
   it("§12.1: the same query with a trailing space is not reported again (once per query)", async () => {
