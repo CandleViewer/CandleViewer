@@ -103,6 +103,9 @@ async def test_a_socket_that_ends_in_time_leaves_no_flush_timer(
     if not closes:
         hang_up(sock)
     await _ended(handler)
+    # One timer: on the pipeline a close's flush is the pipeline's own deadline, not a second
+    # timer (covered by `test_a_close_whose_peer_stopped_reading_ends_at_its_flush_deadline`).
+    assert conn.pipeline is not None
     assert conn.flush_timer is None and len(armed) == 1
     assert all(timer is not None and timer.cancelled() for timer in armed)
     arm(1.0)

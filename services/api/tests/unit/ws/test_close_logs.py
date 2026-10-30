@@ -43,6 +43,18 @@ def _bare(backpressure: BackpressureConfig | None = None) -> _Connection:
     return _Connection(cast(Any, _Wire()), **kw, backpressure=backpressure)
 
 
+def test_the_flag_off_deadline_line_says_the_flush_was_abandoned() -> None:
+    # The bare connection keeps the flag-off flush timer until #2409's removal PR, which deletes
+    # this test with the branch it covers (`_flush_deadline_passed`, `pipeline is None`).
+    conn = _bare()
+    conn.end_writer = lambda: True  # the writer still ran at its deadline
+    with capture_logs() as logs:
+        conn._flush_deadline_passed()
+    (line,) = _lines(logs, "ws close deadline passed")
+    assert (line["log_level"], line["flush_abandoned"]) == ("warning", True)
+    assert line["connection_id"] == conn.connection_id and "trigger" not in line
+
+
 # -- row 1: `ws close` ---------------------------------------------------------------------------
 
 
