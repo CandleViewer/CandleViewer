@@ -4620,8 +4620,11 @@ export interface paths {
      *     as `placeOrder`'s is (`21-database-schema.md` section 3.3.10), one permanent anchor
      *     naming its order, so the exact repeat never sends a second close; a repeat while the
      *     first is still running, or within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of an anchor a crash
-     *     left undecided, is `409 idempotency_in_flight` with `Retry-After: 1`. Never refused for
-     *     want of the arm (C-2.6). Amended 2026-10-29 by an orchestrator contract decision (#915),
+     *     left undecided, is `409 idempotency_in_flight` with `Retry-After: 1`; later, an
+     *     undecided close is decided `202` with its order in its reconciled state, as
+     *     `placeOrder`'s is. A close refused at the send for want of an exchange rate token is
+     *     recorded on its anchor, and that `429` is replayed with `Idempotency-Replayed: true` and
+     *     no `Retry-After`. Never refused for want of the arm (C-2.6). Amended 2026-10-29 by an orchestrator contract decision (#915),
      *     before the route was implemented.
      */
     post: operations["closePosition"];
@@ -4684,19 +4687,26 @@ export interface paths {
      *     One `Idempotency-Key` covers both orders. The request is anchored as `placeOrder`'s is
      *     (`21-database-schema.md` section 3.3.10, 24-internal-schemas.md section 8.3 rule 1):
      *     one permanent anchor per order, scoped to the caller and the operation and keyed
-     *     `uuid5(key, "close")` and `uuid5(key, "open")`, so the exact repeat reaches the first
+     *     `str(uuid5(UUID(key), "close"))` and `str(uuid5(UUID(key), "open"))`; the entry's one-leg
+     *     group keeps the raw key as its `client_group_ref`, as `placeOrder`'s does. So the exact
+     *     repeat reaches the first
      *     request's rows before any send and never sends a second close or a second entry. Each
      *     order's `orderLinkId` is minted by the server as every order's is (C-2.10); no
      *     client-supplied string goes into it. Every `202`, whatever its `outcome`, is stored and
      *     replayed verbatim (`Idempotency-Replayed: true`). A repeat while the first request is
      *     still running, or within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of an anchor a crash left
      *     undecided, is `409 idempotency_in_flight` with `Retry-After: 1`. Later, an undecided
-     *     reversal is decided, never resumed: its deadline has long passed, so no entry is sent,
-     *     and the answer follows the close's reconciled state: `close_unfilled` or
-     *     `close_partially_filled`, `entry_refused` with `reason` `timeout` once the close
-     *     filled, and `close_unfilled` with `close.reconciling` true while reconciliation has not
-     *     resolved it. So no repeat ever sends an order. A repeat still passes the arm check,
-     *     which precedes the lookup. The refusals knowable before any send (the
+     *     reversal is decided, never resumed, and no repeat sends an order; an entry already
+     *     persisted is B1's to resume (24-internal-schemas.md section 8.2, Recovery). When the
+     *     entry's anchor exists, the answer is `reversed` with `open` the entry in its reconciled
+     *     state (`open.reconciling` true while unresolved), never `entry_refused`. When it does
+     *     not, the deadline has long passed, so no entry is sent and the answer follows the
+     *     close's reconciled state: `close_unfilled` or `close_partially_filled`,
+     *     `entry_refused` with `reason` `timeout` once the close filled, and `close_unfilled`
+     *     with `close.reconciling` true while reconciliation has not resolved it. A close refused
+     *     at the send for want of an exchange rate token is recorded on its anchor as
+     *     `placeOrder`'s is: that `429` is replayed with `Idempotency-Replayed: true` and no
+     *     `Retry-After`. A repeat still passes the arm check, which precedes the lookup. The refusals knowable before any send (the
      *     `trading_disabled` checks of the binding point under Idempotency: the OMS flag, live
      *     trading not enabled, the kill switch and the order-entry gate) are checked before the
      *     close, as for any order submit: `403 trading_disabled`, nothing sent.
@@ -12169,7 +12179,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target` and, for `live_enablement` and `killswitch`, `step_up_reason`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On `placeOrder`, and on an `amendOrder` that increases exposure (#913 slice 4 ruling Q10), the `trading.oms_enabled` flag, while off, also refuses with `trading_disabled` and no `reason`, after the lookup and ahead of the three (#913 slice 3 ruling Q3), an admission that opens or increases exposure only: an order whose body says `reduce_only` passes it (21-database-schema.md section 10.7). On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). On `createTradeGroup`, `previewTradeGroup` and `amendTradeGroup` it may be `code: risk_limit_breached`: a request whose submitted values would take a leg past its bound profile's caps and risk budget is refused whole, never clamped, with one `errors[]` entry per offending leg (`field`, `rule`, `limit`, and the requested value in `message`; example `tradeGroupWidening`, ADR-0040 (proposed, #4461) Decision 1). */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target` and, for `live_enablement` and `killswitch`, `step_up_reason`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On `placeOrder`, on an `amendOrder` that increases exposure (#913 slice 4 ruling Q10), and on `reversePosition` before its close (#915), the `trading.oms_enabled` flag, while off, also refuses with `trading_disabled` and no `reason`, after the lookup and ahead of the three (#913 slice 3 ruling Q3), an admission that opens or increases exposure only: an order whose body says `reduce_only` passes it (21-database-schema.md section 10.7). On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). On `createTradeGroup`, `previewTradeGroup` and `amendTradeGroup` it may be `code: risk_limit_breached`: a request whose submitted values would take a leg past its bound profile's caps and risk budget is refused whole, never clamped, with one `errors[]` entry per offending leg (`field`, `rule`, `limit`, and the requested value in `message`; example `tradeGroupWidening`, ADR-0040 (proposed, #4461) Decision 1). */
     Forbidden: {
       headers: {
         [name: string]: unknown;
@@ -19079,9 +19089,10 @@ export interface operations {
         };
       };
       422: components["responses"]["UnprocessableEntity"];
-      /** @description `exchange_rate_limited` with `Retry-After`, or the per-user `rate_limited` of every route. Nothing was sent. */
+      /** @description `exchange_rate_limited` with `Retry-After`, or the per-user `rate_limited` of every route, before the persist: nothing was sent and no key was bound. A refusal at the send is recorded on the anchor (see the description) and replayed with `Idempotency-Replayed: true` and no `Retry-After`. */
       429: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           "RateLimit-Limit": components["headers"]["RateLimitLimit"];
           "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
           "RateLimit-Reset": components["headers"]["RateLimitReset"];
@@ -19253,9 +19264,10 @@ export interface operations {
         };
       };
       422: components["responses"]["UnprocessableEntity"];
-      /** @description `exchange_rate_limited` with `Retry-After`, or the per-user `rate_limited` of every route. Nothing was sent. */
+      /** @description `exchange_rate_limited` with `Retry-After`, or the per-user `rate_limited` of every route, before the persist: nothing was sent and no key was bound. A refusal at the send is recorded on the anchor (see the description) and replayed with `Idempotency-Replayed: true` and no `Retry-After`. */
       429: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           "RateLimit-Limit": components["headers"]["RateLimitLimit"];
           "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
           "RateLimit-Reset": components["headers"]["RateLimitReset"];
