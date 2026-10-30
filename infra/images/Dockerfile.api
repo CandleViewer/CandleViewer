@@ -29,6 +29,13 @@ COPY services/api/candleviewer ./candleviewer
 COPY services/api/README.md ./README.md
 RUN uv sync --frozen --no-default-groups
 
+# #2893: the dev and account-fixture compose overrides run THIS stage as the api, with a bare
+# `python` entrypoint (and `docker compose exec api python ...`). uv made the venv above, but only
+# the runtime stage put a venv on PATH (its own, below), so here `python` was the base image's and
+# had none of the locked dependencies: the api exited at import (ModuleNotFoundError). The runtime
+# stage starts from its own FROM, so this ENV never reaches the release image.
+ENV PATH="/build/.venv/bin:$PATH"
+
 # --- runtime -----------------------------------------------------------------
 FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS runtime
 

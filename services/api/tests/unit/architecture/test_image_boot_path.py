@@ -12,6 +12,8 @@ around it:
   and the boot path must need neither PyYAML nor openapi-spec-validator (#2616).
 - No `COPY` or `ADD` source carries a dev-only tree: the `cvdev` package or the account pack
   (#2893, ADR-0036). `tools/ci/check_image_no_dev_modules.py` checks the built image itself.
+- The `builder` stage, which the dev override and the account-fixture override run as the api,
+  puts the venv its `uv sync` creates first on `PATH`, so their bare `python` is the venv's (#2893).
 
 Limits: these are AST heuristics, so the following are NOT caught.
 - Climbs spelled another way: `os.path.dirname` chains, `/ "../.."` joins, `joinpath("..")`.
@@ -23,6 +25,8 @@ Limits: these are AST heuristics, so the following are NOT caught.
   (`R = Path(__file__).parent`, then `R.parents[3]`).
 - `import candleviewer.api` followed by `candleviewer.api.rbac_conformance`.
 - Dynamic imports (`importlib.import_module`, `__import__`).
+- A stage's `PATH` or venv location set by a `RUN` (`export`, a script), a build argument, or an
+  `ENV` that expands another variable (`$VENV/bin`); a venv made by anything but `uv sync`.
 """
 
 from __future__ import annotations
@@ -31,13 +35,16 @@ import ast
 import fnmatch
 import json
 import posixpath
+import shlex
 import subprocess
 import sys
 import warnings
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 import pytest
+import yaml
 
 import candleviewer
 
@@ -180,6 +187,128 @@ def test_the_image_copies_no_dev_only_package() -> None:
     assert offenders == [], (
         f"infra/images/Dockerfile.api copies a dev-only tree: {offenders}. Copy only "
         "services/api/candleviewer (and named files), never a directory above it (#2893)."
+    )
+
+
+#: The compose overrides that run the `builder` stage as the api (#2893): the dev stack (`make up`),
+#: and the account-fixture override layered on it, which sets no entrypoint of its own.
+COMPOSE = DOCKERFILE.parents[1] / "compose"
+DEV_OVERRIDE = COMPOSE / "docker-compose.dev.yml"
+FIXTURE_OVERRIDE = COMPOSE / "docker-compose.account-fixture.yml"
+
+
+def _stage_path(dockerfile: str, stage: str) -> tuple[str, list[str]]:
+    """The `bin` directory of the venv the stage's last `uv sync` creates (`.venv` under the
+    `WORKDIR` it runs in, unless `UV_PROJECT_ENVIRONMENT` names another), and the `PATH` entries
+    the stage ends with: `['']` when it sets none, and `$PATH` stays an entry as written."""
+    workdir = PurePosixPath("/")
+    env: dict[str, str] = {}
+    venv: PurePosixPath | None = None
+    inside = False
+    for line in dockerfile.replace("\\\n", " ").splitlines():
+        keyword, _, rest = line.strip().partition(" ")
+        if keyword.startswith("#"):
+            continue
+        keyword = keyword.upper()
+        if keyword == "FROM":
+            words = rest.split()
+            inside = len(words) > 2 and words[-2].upper() == "AS" and words[-1] == stage
+        elif inside and keyword == "WORKDIR":
+            workdir = workdir / rest
+        elif inside and keyword == "ENV":
+            words = shlex.split(rest)
+            if "=" not in words[0]:  # the legacy `ENV name value` form
+                words = [f"{words[0]}={' '.join(words[1:])}"]
+            env.update({name: value for name, _, value in (word.partition("=") for word in words)})
+        elif inside and keyword == "RUN" and "uv sync" in rest:
+            venv = PurePosixPath(env.get("UV_PROJECT_ENVIRONMENT", workdir / ".venv"))
+    assert venv is not None, f"stage `{stage}` runs no `uv sync`, so it creates no venv to find"
+    return str(venv / "bin"), env.get("PATH", "").split(":")
+
+
+def _two_stages(before: str, after: str) -> str:
+    """A builder and a runtime stage (whose own `PATH` is the real one's), with `before` ahead of
+    the builder's `uv sync` and `after` behind it."""
+    return (
+        f"FROM base AS builder\nWORKDIR /build\n{before}\nRUN uv sync --frozen\n{after}\n"
+        'FROM base AS runtime\nENV PATH="/app/.venv/bin:$PATH"\n'
+    )
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("", ""),  # #2893: the runtime stage's `PATH` is not the builder's
+        ("", 'ENV PATH="$PATH:/build/.venv/bin"'),  # behind the base image's: its `python` wins
+        ("", 'ENV PATH="/app/.venv/bin:$PATH"'),  # the runtime stage's venv, which this one lacks
+        ("", 'ENV PATH="/build/venv/bin:$PATH"'),  # not where uv creates it
+        ("ENV UV_PROJECT_ENVIRONMENT=/opt/venv", 'ENV PATH="/build/.venv/bin:$PATH"'),
+        ("WORKDIR /srv/api", 'ENV PATH="/build/.venv/bin:$PATH"'),  # the sync runs in /srv/api
+    ],
+)
+def test_a_stage_path_that_does_not_lead_with_its_venv_is_found(before: str, after: str) -> None:
+    venv_bin, path = _stage_path(_two_stages(before, after), "builder")
+    assert path[0] != venv_bin
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("", 'ENV PATH="/build/.venv/bin:$PATH"'),
+        ("", "ENV PATH=/build/.venv/bin:${PATH}"),
+        ("", "ENV PATH /build/.venv/bin:$PATH"),  # the legacy `ENV name value` form
+        ("", 'ENV UV_LINK_MODE=copy \\\n    PATH="/build/.venv/bin:$PATH"'),  # one of several pairs
+        ("", 'ENV PATH="/build/.venv/bin:$PATH"\nWORKDIR /elsewhere'),  # the venv is made already
+        ("WORKDIR /srv/api", 'ENV PATH="/srv/api/.venv/bin:$PATH"'),
+        ("ENV UV_PROJECT_ENVIRONMENT=/opt/venv", 'ENV PATH="/opt/venv/bin:$PATH"'),
+    ],
+)
+def test_a_stage_path_that_leads_with_its_venv_is_allowed(before: str, after: str) -> None:
+    venv_bin, path = _stage_path(_two_stages(before, after), "builder")
+    assert path[0] == venv_bin
+
+
+def test_a_stage_that_is_missing_or_runs_no_uv_sync_is_refused() -> None:
+    with pytest.raises(AssertionError, match="runs no `uv sync`"):
+        _stage_path(_two_stages("", "").replace("uv sync", "uv lock"), "builder")
+    with pytest.raises(AssertionError, match="runs no `uv sync`"):
+        _stage_path(_two_stages("", ""), "dev")
+
+
+def test_the_builder_stage_puts_the_venv_its_uv_sync_creates_first_on_path() -> None:
+    """#2893: only the runtime stage put a venv on `PATH`. The dev and account-fixture overrides
+    run the builder stage, where `python` was then the base image's, which has none of the locked
+    dependencies, and the api exited at import (`ModuleNotFoundError: No module named 'structlog'`).
+    """
+    venv_bin, path = _stage_path(DOCKERFILE.read_text(encoding="utf-8"), "builder")
+    assert path[0] == venv_bin, (
+        f"infra/images/Dockerfile.api: the builder stage's PATH starts with {path[0]!r}, not "
+        f"{venv_bin}, the venv its `uv sync` creates, so the dev and account-fixture api start the "
+        'python of the base image (#2893). Add `ENV PATH="<venv>/bin:$PATH"` after its last sync.'
+    )
+
+
+@pytest.mark.parametrize("override", [DEV_OVERRIDE, FIXTURE_OVERRIDE], ids=lambda path: path.name)
+def test_an_override_runs_the_venv_python_of_the_stage_it_builds(override: Path) -> None:
+    """The dev override's entrypoint is `python -m candleviewer.server --reload`; the fixture
+    override sets none and is driven with `docker compose exec api python`. A bare `python` resolves
+    through `PATH`, so the stage it builds must lead its `PATH` with its venv; an entrypoint that
+    names the venv's `python` by path would not need that."""
+
+    def api(path: Path) -> dict[str, Any]:
+        return dict(yaml.safe_load(path.read_text(encoding="utf-8"))["services"]["api"])
+
+    service = api(override)
+    entrypoint = service.get("entrypoint") or api(DEV_OVERRIDE)["entrypoint"]
+    if isinstance(entrypoint, str):
+        entrypoint = shlex.split(entrypoint)
+    stage = service["build"]["target"]
+    venv_bin, path = _stage_path(DOCKERFILE.read_text(encoding="utf-8"), stage)
+    command = PurePosixPath(entrypoint[0])
+    runs_from = str(command.parent) if len(command.parts) > 1 else path[0]
+    assert (command.name, runs_from) == ("python", venv_bin), (
+        f"{override.name}: its entrypoint starts `{entrypoint[0]}` from {runs_from!r}, not the "
+        f"python of the venv ({venv_bin}) in the `{stage}` stage it builds (#2893)."
     )
 
 

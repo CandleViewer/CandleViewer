@@ -589,6 +589,19 @@ jobs:
           -c 'import candleviewer.server, candleviewer.main as m;
           print("boot smoke OK:", len(m.app.routes), "routes")'
 
+      # #2893: `make up` and the account-fixture override run this image's `builder` stage, not the
+      # runtime stage smoked above, as `python -m candleviewer.server` from its WORKDIR (/build).
+      # Only the runtime stage put its venv on PATH, so there `python` was the base image's, with
+      # none of the locked dependencies, and the api exited at import. The stage is in the build
+      # cache from the build above, so this adds a tag, not a build. Offline, no env or secrets,
+      # on the writable root the dev override gives it (`read_only: false`).
+      - name: Boot smoke - the dev stack's builder stage imports the entrypoint
+        timeout-minutes: 5
+        run: |
+          docker build -f infra/images/Dockerfile.api --target builder -t candleviewer-api:ci-builder .
+          docker run --rm --pull never --network none --entrypoint python \
+            candleviewer-api:ci-builder -c 'import candleviewer.server'
+
       # #3285 item 3, the image half: Docker copies a mount point's owner and mode into an empty
       # named volume, so the audit volume's mount point must be the runtime user's, mode 0700.
       - name: Image - the audit volume's mount point is 10001:10001, mode 0700
