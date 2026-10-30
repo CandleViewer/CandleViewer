@@ -96,7 +96,14 @@ from .handovers import HandoverRead, WaitingExecution, WaitingOrder
 from .order_link_resolution import HistoryRetentionPolicy
 from .order_machine import Actor, CommandEvent, PushEvent
 from .pairing import STOP_SIDES, first_bindable, is_stop_claim, matching_record, takes_waiting
-from .ports import Finding, ForeignOrderLockout, RateReading, TradingAccounts
+from .ports import (
+    ExecutionHandovers,
+    Finding,
+    ForeignOrderLockout,
+    OrderHandovers,
+    RateReading,
+    TradingAccounts,
+)
 from .push_mapping import exec_payload, money_text, order_event, push_payload
 from .reconcile_report import (
     HANDOVER_UNREADABLE,
@@ -235,18 +242,13 @@ class RecordedStopCopy(Protocol):
     async def live_for_account(self, account_id: UUID) -> Sequence[RecordedStopRow]: ...
 
 
-class Handovers(Protocol):
-    """`handovers.StoreHandovers`: what the stream and the lookups kept for the pass."""
+class Handovers(OrderHandovers, ExecutionHandovers, Protocol):
+    """The hand-over store (`oms/handovers.py`, 21 Sec.3.3.12): the two writers' ports the stream
+    and the lookups take, and the pass's reads, its decision on a fill and its prune."""
 
     async def waiting_orders(self, account_id: AccountId) -> HandoverRead[WaitingOrder]: ...
 
     async def waiting_executions(self, account_id: AccountId) -> HandoverRead[WaitingExecution]: ...
-
-    async def hand_over_order(self, account_id: AccountId, order: Order) -> None: ...
-
-    async def hand_over_execution(
-        self, account_id: AccountId, execution: Execution, *, empty_read: bool = False
-    ) -> None: ...
 
     async def decide(self, account_id: AccountId, exec_id: str) -> bool: ...
 
