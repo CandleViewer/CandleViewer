@@ -145,6 +145,7 @@ from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.idempotency_anchors import (
     MAX_RET_CODE,
     MIN_RET_CODE,
+    AnchorOperation,
     AnchorOutcome,
     AnchorStatus,
     NewAnchor,
@@ -404,6 +405,16 @@ class SubmitContext:
     client_ref: UUID = field(repr=False)
     request_sha256: str = field(repr=False)
     request_id: UUID | None = None
+    #: The operation the anchor is kept under (21 Sec.3.3.10, `ia_operation`), and the anchor's
+    #: own ref when it is not the key: a reversal's `uuid5(key, "close" | "open")` (E29-T07 #915).
+    #: An entry's group keeps the raw key (`client_ref`) as its `client_group_ref` either way.
+    operation: AnchorOperation = "placeOrder"
+    anchor_ref: UUID | None = field(default=None, repr=False)
+
+    @property
+    def anchored_ref(self) -> UUID:
+        """The ref the anchor is written and found under: `anchor_ref`, else the key."""
+        return self.client_ref if self.anchor_ref is None else self.anchor_ref
 
 
 @dataclass(frozen=True, slots=True)
@@ -1330,8 +1341,9 @@ class OrderSubmission:
         refused."""
         context = trace.context
         lookup = await self._anchors.after_taken(
-            taken.constraint, context.actor.user_id, context.client_ref, context.request_sha256
-        )
+            taken.constraint, context.actor.user_id, context.anchored_ref, context.request_sha256,
+            operation=context.operation,
+        )  # fmt: skip
         if isinstance(lookup, InFlight | KeyReuse):
             raise lookup.refusal()
         if not isinstance(lookup, Replay):  # a held key is never fresh
@@ -1789,8 +1801,8 @@ def _anchor(
     return NewAnchor(
         id=anchor_id,
         created_by=context.actor.user_id,
-        operation="placeOrder",
-        client_ref=str(context.client_ref),
+        operation=context.operation,
+        client_ref=str(context.anchored_ref),
         request_sha256=context.request_sha256,
         trade_group_id=trade_group_id,
         order_id=order_id,

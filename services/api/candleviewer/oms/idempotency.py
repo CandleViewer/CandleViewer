@@ -42,7 +42,11 @@ from uuid import UUID
 import structlog
 
 from candleviewer.storage.errors import StorageError
-from candleviewer.storage.repositories.idempotency_anchors import AnchorOutcome, AnchorRow
+from candleviewer.storage.repositories.idempotency_anchors import (
+    AnchorOperation,
+    AnchorOutcome,
+    AnchorRow,
+)
 from candleviewer.storage.repositories.orders import OrderStoreError
 from candleviewer.storage.repositories.submissions import UX_TG_CREATOR_REF, AnchorConstraint
 
@@ -132,12 +136,21 @@ class AnchorService:
         under it (`OrderSubmission`, D-2B2-01)."""
         return self._stuck_after_s
 
-    async def lookup(self, created_by: UUID, client_ref: UUID, request_sha256: str) -> Lookup:
-        """The answer of a request whose key `created_by` may have sent before."""
-        found = await self._bounded(self._anchors.find(created_by, client_ref, request_sha256))
+    async def lookup(
+        self,
+        created_by: UUID,
+        client_ref: UUID,
+        request_sha256: str,
+        *,
+        operation: AnchorOperation = "placeOrder",
+    ) -> Lookup:
+        """The answer of a request whose key `created_by` may have sent before, on `operation`
+        (`placeOrder`, or E29-T07's `closePosition` and `reversePosition`, 21 Sec.3.3.10)."""
+        find = self._anchors.find(created_by, client_ref, request_sha256, operation=operation)
+        found = await self._bounded(find)
         if found is None:
             return Fresh()
-        return await self._answer(found, created_by, client_ref, request_sha256)
+        return await self._answer(found, created_by, client_ref, request_sha256, operation)
 
     async def after_taken(
         self,
@@ -145,11 +158,14 @@ class AnchorService:
         created_by: UUID,
         client_ref: UUID,
         request_sha256: str,
+        *,
+        operation: AnchorOperation = "placeOrder",
     ) -> Lookup:
         """The answer of a first persist refused because the key is held (`AnchorTaken`)."""
-        found = await self._bounded(self._anchors.find(created_by, client_ref, request_sha256))
+        find = self._anchors.find(created_by, client_ref, request_sha256, operation=operation)
+        found = await self._bounded(find)
         if found is not None:
-            return await self._answer(found, created_by, client_ref, request_sha256)
+            return await self._answer(found, created_by, client_ref, request_sha256, operation)
         if constraint == UX_TG_CREATOR_REF:
             _log().info("oms_idempotency_key_reuse", user_id=str(created_by), held_by="trade_group")
             return KeyReuse()
@@ -163,7 +179,12 @@ class AnchorService:
         return await self._bounded(self._anchors.record_outcome(anchor_id, outcome))
 
     async def _answer(
-        self, anchor: AnchorRow, created_by: UUID, client_ref: UUID, request_sha256: str
+        self,
+        anchor: AnchorRow,
+        created_by: UUID,
+        client_ref: UUID,
+        request_sha256: str,
+        operation: AnchorOperation,
     ) -> Lookup:
         ids = {"anchor_id": str(anchor.id), "user_id": str(created_by)}
         if not anchor.body_matches:
@@ -180,7 +201,8 @@ class AnchorService:
         if await self.record(anchor.id, decided):
             _log().warning("oms_anchor_decided_stale", **ids)
             return Replay(replace(anchor, outcome_status=202, decided_at=now))
-        winner = await self._bounded(self._anchors.find(created_by, client_ref, request_sha256))
+        find = self._anchors.find(created_by, client_ref, request_sha256, operation=operation)
+        winner = await self._bounded(find)
         if winner is None or winner.outcome_status is None:  # the compare-and-set said decided
             _log().error("oms_anchor_decision_unread", **ids)
             raise StoreUnavailable
