@@ -34,7 +34,8 @@ anchored value. The gates, each FAIL led by its code:
   fragment in New), E15-D07 Table A (anchors dropped, `\\|` read as `|`, "spec" named E15-D07); the
   letter rule on `color.sync.*` and in CMP-218 and CMP-082.
 - [G-LEDGER] §2: dispositions from the vocabulary, the counts, every "Here" row present in §C.
-- [G-TOKEN] §5: each addition aliases a primitive that exists at the base and is itself new; no
+- [G-TOKEN] §5 (post-2T mode, by content: the ten tokens already ship at the base, so each is
+  asserted present with the pack's alias, the token files may change under G-UNTOUCHED): each addition aliases a primitive that exists at the base and is itself new; no
   `e15.*` name; each confirmation exists; each retirement is absent from the token source; no
   document carries a name R19 rejected (the frame's old name, a tab-strip row token); every
   token named in a §C Tokens line is shipped, added here, or retired with "(Replaces".
@@ -947,6 +948,26 @@ TOKEN_RE = re.compile(
 )
 
 
+def post_2t() -> bool:
+    """Post-2T mode, by content: the ten tokens already ship at the base (PR 2T, #5075)."""
+    return set(ADDED) <= token_names()
+
+
+def post_2t_problems() -> list[str]:
+    bad: list[str] = []
+    dark = theme_set("dark")
+    for n, a in ALIAS.items():
+        if dark[n]["$value"] != "{" + a + "}":
+            bad.append(f"{n} is {dark[n]['$value']}, not {{{a}}} (post-2T)")
+    for s, refs in SYNC_REF.items():
+        for th in ("dark", "light"):
+            want = "{" + refs[th] + "}"
+            got = theme_set(th)[f"color.sync.{s}"]["$value"]
+            if got != want:
+                bad.append(f"color.sync.{s} ({th}) is {got}, not {want} (post-2T)")
+    return bad
+
+
 def token_problems(spec: str, rows: list[ARow], others: tuple[str, ...] = ()) -> list[str]:
     bad: list[str] = []
     for k, text in enumerate((spec, *others)):
@@ -954,8 +975,11 @@ def token_problems(spec: str, rows: list[ARow], others: tuple[str, ...] = ()) ->
             if name in text:
                 bad.append(f"document {k}: the rejected name {name} (R19)")
     names, prims = token_names(), primitive_names()
+    post = post_2t()
+    if post:
+        bad.extend(post_2t_problems())
     for n in ADDED:
-        if n in names:
+        if n in names and not post:
             bad.append(f"{n} already exists at the base (not an addition)")
         if n.startswith("e15.") or ".e15." in n:
             bad.append(f"{n}: an e15.* name")
@@ -963,7 +987,7 @@ def token_problems(spec: str, rows: list[ARow], others: tuple[str, ...] = ()) ->
         if a not in prims:
             bad.append(f"{n}'s alias {a} is not a primitive at the base")
     for s, refs in SYNC_REF.items():
-        for th in THEMES:
+        for th in () if post else THEMES:
             ref = refs["light" if th == "light" else "dark"]
             if ref not in prims:
                 bad.append(f"color.sync.{s}: {ref} is not a primitive")
@@ -1330,7 +1354,10 @@ def g_untouched(t: Texts) -> list[Finding]:
         return fails(
             "G-UNTOUCHED", [f"PR 1 changes {p}, not one of the pack's five" for p in other]
         )
-    bad = [f"PR 2 changes {p}, not `15` or `16`" for p in other if p not in TARGETS.values()]
+    ok = set(TARGETS.values())
+    if post_2t():  # the token files carry the pack's tokens at the base: they may change too
+        ok |= {p for p in other if p.startswith(TOKENS_DIR + "/") or p.endswith("pairs.mjs")}
+    bad = [f"PR 2 changes {p}, not `15` or `16`" for p in other if p not in ok]
     rows, _ = a_rows(t.spec)
     now, mb = dict(t.now), dict(t.mbase)
     for key, rel in TARGETS.items():
@@ -2071,6 +2098,16 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
 )
 
 
+# Post-2T mutation, kept out of PROBES: the pack's text pins that tuple's length (COUNT:probes).
+POST_2T_PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
+    (
+        "G-TOKEN",
+        "post-2T: the splitter's alias expected as another primitive",
+        _patch(ALIAS, "size.dock.splitter.hit", "size.control.compact"),
+    ),
+)
+
+
 def fail_keys(fs: list[Finding]) -> list[tuple[str, str]]:
     return [(f.gate, f.msg) for f in fs if f.level == "FAIL"]
 
@@ -2083,7 +2120,7 @@ def self_test(t: Texts) -> list[str]:
     before = digests()
     base = fail_keys(run(t))
     bad: list[str] = []
-    for label, items in (("M", MUTATIONS), ("P", PROBES)):
+    for label, items in (("M", MUTATIONS), ("P", PROBES), ("T", POST_2T_PROBES)):
         for n, (gate, desc, fn) in enumerate(items, 1):
             try:
                 mt = fn(t)
