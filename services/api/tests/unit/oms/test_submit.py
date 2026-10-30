@@ -1957,7 +1957,7 @@ async def test_a_held_key_whose_anchor_cannot_be_read_is_503(
     anchor = next(iter(rig.store._anchors.values()))
     read = anchor.read(SHA)
 
-    async def after_taken(*_args: Any) -> Any:
+    async def after_taken(*_args: Any, **_kw: Any) -> Any:
         if answer == "fresh":
             return Fresh()
         return Replay(replace(read, outcome_status=200))
