@@ -565,7 +565,10 @@ def test_the_flag_is_narrower_than_the_gate_and_the_security_lens_nits_are_writt
         "`order_events` and its row",
     )
     gateway = _words(_RESPONSES["OrderExchangeError"]["description"])
-    assert "today only by `placeOrder`'s anchor" in gateway
+    # #915 (#5013): close and reverse anchor their keys too, so a `502` is stored by any of three.
+    assert (
+        "by `placeOrder`'s anchor or the `closePosition` and `reversePosition` anchors" in gateway
+    )
     sizing = _between(_INTERNAL_DOC, "### 9.3 Sizing algorithm", "**9.3.1 Stop resolution.**")
     assert not _missing(
         sizing,

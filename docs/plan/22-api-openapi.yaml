@@ -421,8 +421,9 @@ info:
     `view_as_read_only` and `view_as_expired` of #3085), authorisation (RBAC, account scope,
     `step_up_required` and the arm state's `session_not_armed` of SR-043) and, on an order
     submit or amend, the `trading_disabled` refusals (on `placeOrder` and an amend that increases
-    exposure, and on `reversePosition` before its close, the `trading.oms_enabled` flag, then live trading not enabled, the B18 kill switch
-    and the order-entry gate; see `Forbidden`). A request refused by
+    exposure the `trading.oms_enabled` flag, then live trading not enabled, the B18 kill switch
+    and the order-entry gate; see `Forbidden`); `reversePosition` meets the same refusals before
+    its close (#915). A request refused by
     any of them stores no idempotency record and executes nothing; only the refusal's own
     effects remain (such as its audit record, where that refusal is audited, and for
     `step_up_required` the challenge it issues).
