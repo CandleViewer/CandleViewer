@@ -527,6 +527,26 @@ async def test_native_sl_a_reversals_entry_carries_the_profiles_stop_on_the_real
     assert anchor.key()[1:] == ("reversePosition", str(reversal_refs(key)[1]))
 
 
+@pytest.mark.parametrize(("idx", "other"), [(1, 2), (2, 1)])
+async def test_native_sl_a_hedge_reversals_entry_carries_the_profiles_stop_on_the_real_pipeline(
+    rig: SubmitRig, idx: int, other: int
+) -> None:
+    """#915 QA hold: a hedge-mode reversal's entry opens the other side's index through the real
+    pipeline and carries the profile's native stop, as the one-way entry does (C-2.6)."""
+    held = row(exchange_account_id=ACCOUNT, position_idx=idx)
+    key = uuid.uuid4()
+    entry = entry_request(held, "market", None)
+    assert entry.stop_loss is None  # the profile, never the request, gives the stop
+    outcome = await rig.pipeline.submit(
+        entry, replace(context(client_ref=key), operation="reversePosition",
+                       anchor_ref=reversal_refs(key)[1]),
+    )  # fmt: skip
+    assert outcome.status == 202 and outcome.trade_group_id is not None
+    [create] = _creates(rig)
+    assert (create.position_idx, create.reduce_only) == (other, False)
+    assert create.stop_loss is not None  # C-2.6
+
+
 async def test_native_sl_a_partial_close_sends_only_its_reduce_only_order(rig: SubmitRig) -> None:
     """22 closePosition below 100 %: one reduce-only order, no trading-stop and no cancel, so the
     remaining position keeps its native stop (C-2.6)."""
