@@ -1,24 +1,25 @@
 # E05 Design system v0: component black-box test plan and exploratory charter
 
-Ticket: E05-Q01 (#261). Status: v0.9, the deliverable of #261, written on the before-writing question list's **proposed defaults**
-(BQ-01 to BQ-24, posted on #261 as comment 6533789549 on 2026-10-30, read from `main` `174c691e1`); the orchestrator's ruling is
-**pending**, so section R carries every BQ with its default and the status `pending`, and a ruling that changes a row changes the
-sections that row names in one pass. The plan holds the conventions, the scope and the lateness report, the test matrix, the
-cases per component family of the v0 set, the six composition scenarios, the keyboard-only and screen-reader passes, the two
-abuse legs and the jank observation, the exploratory charter, the time-control table, the environment and reset protocol, the
-surface catalogue, the entry and exit criteria with the regression subset, what it references, the traceability and the open
-questions with the † table. It contains no code and adds no story, tag, probe or test (proposed as BQ-15).
+Ticket: E05-Q01 (#261). Status: v1.0, the deliverable of #261, with the orchestrator's ruling of record applied (#261 comment
+6535944497, 2026-10-30, under the owner's 2026-10-29 delegation, on the before-writing question list BQ-01 to BQ-24, comment
+6533789549, read from `main` `174c691e1`): all 24 stand as proposed, with riders; section R carries every BQ as `RULED`. The plan
+holds the conventions, the scope and the lateness report, the test matrix, the cases per component family of the v0 set, the six
+composition scenarios, the keyboard-only pass and the delegated screen-reader pass, the two abuse legs and the jank observation,
+the exploratory charter, the time-control table, the environment and reset protocol, the surface catalogue, the entry and exit
+criteria with the regression subset, what it references, the traceability and the open questions with the † table. It contains
+no code and adds no story, hook, tag, probe or test (BQ-15, ruled).
 
 ## 0. Conventions
 
-- **Base and READY sha.** This plan is written at `origin/main` `9c16743339181eaf27ea5c2cd92603edd1ab7ef7` (`9c1674333`), the
-  worktree's base. The BQ list read `174c691e1`; the three commits between them (#5116 the E13 plan, #5106 an OMS test, #5114 a
-  ledger row) touch no file under `packages/ui/` or `docs/plan/15-*`, so every cite and every † row of the list holds at the base.
-  Until the ruling lands, the READY sha **is** this base; when the ruling folds in, every † and blocked row of section 10 is
-  re-grepped at the then READY sha and this line names it. The visual-regression baselines cited throughout were merged at
-  `6dc942aff` (#5104, E05-T04), an ancestor of the base.
+- **Base and READY sha.** The ruling folded in on `origin/main` `b8575c6f1b71bbb480490768aaf439047a39c861` (`b8575c6f1`), fetched
+  and rebased onto before the ruling's commit; **this is the READY sha**. The first draft was written at `b8575c6f1` and the BQ
+  list read `174c691e1`; the commits since touch no file under `packages/ui/`, `apps/web/` or `docs/plan/15-*`. Every † and
+  blocked row of section 10 was re-grepped at `b8575c6f1`: **no status changed** (CMP-062 ThemeSwitcher, CMP-063 DensityToggle,
+  CMP-228 PreviewTile, `FormTooltip`, `FormNotice`, a 500-row story, an advisory state: still none under `packages/ui/src` or
+  `apps/web/src`; `pattern.hatch.unprotected` still named only by `Callout.tsx`; 4,356 VR baselines). The visual-regression
+  baselines cited throughout were merged at `6dc942aff` (#5104, E05-T04), an ancestor of the base.
 
-- **Lateness report (no waiver claimed; proposed as BQ-23).** The ticket is Sprint 04, 2026-10-16 to 2026-10-22
+- **Lateness report (no waiver claimed; BQ-23, ruled: reported, no waiver).** The ticket is Sprint 04, 2026-10-16 to 2026-10-22
   (`docs/plan/backlog/_tools/calendar_cv.py`:13–15: one-week sprints from Friday 2026-09-25). Its blocker E05-S03 (#266) closed
   on 2026-10-29 02:46Z and was declared Done on its engineering evidence and the delegated Security sign-off in the orchestrator's
   note of 2026-10-29 07:56Z (#261 comment 6491190592), so no work on this ticket could start before Sprint 05's last day. The
@@ -48,18 +49,18 @@ questions with the † table. It contains no code and adds no story, tag, probe 
     with the export's line; `E13` is the template plan `docs/qa/test-plans/e13-indicators.md` and `E16` is
     `docs/qa/test-plans/e16-recorder.md` (their form is followed, never their content).
 - **Where the ticket text and the merged design differ**, the case follows the merged design (`E16`'s rule, `E13` BQ-03;
-  proposed here as BQ-08): each difference is a row in section 10 and the case is marked **blocked on** its owner. Nothing is
+  ruled here as BQ-08): each difference is a row in section 10 and the case is marked **blocked on** its owner. Nothing is
   guessed: a component, story, string, token or number that no merged source states is a † or a blocked row with an owner, never
   a value of this plan's.
 - **Environment:** the built Storybook of `packages/ui` served on loopback (section 5): no backend, no network, no fixture from
   `packages/fixtures`, no key, account or production data. Every surface is a story and the story's inline data is its fixture
-  (proposed as BQ-13). No host, key, account, user name or private record id appears in a step or an evidence file.
-- **Case ids:** `E05-Q01-Cnn`, numbered in section order (proposed as BQ-05; the ticket names no scheme; E05-Q03 (#263) references
+  (ruled as BQ-13). No host, key, account, user name or private record id appears in a step or an evidence file.
+- **Case ids:** `E05-Q01-Cnn`, numbered in section order (ruled as BQ-05; the ticket names no scheme; E05-Q03 (#263) references
   these ids for its "one story per fixed composition defect"). The line under the id names the layer (`03` §2: `e2e`, `a11y`,
   `perf`, `security`; every case here is black-box against the built Storybook), the family and owning story (section 1) and what
   it mirrors. **[R]** joins the regression subset (section 7); **[F]** marks a failure path; every case ends with a **Blocked on**
   line naming an owner, or `none`.
-- **Oracles, in order (proposed as BQ-08):** (1) the merged `15` entry — Props, States, A11y, the Storybook list and the "As built"
+- **Oracles, in order (ruled as BQ-08):** (1) the merged `15` entry — Props, States, A11y, the Storybook list and the "As built"
   lines — and the `D02` slice text; (2) the story's play assertion or the hand-off's named test, cited as white-box evidence,
   never re-run by the plan; (3) the VR baseline PNG for the at-rest look (presentation; the next bullet); (4) the `storybook`
   job's axe result for the story (`.github/workflows/_job-a11y.yml`:188–296: zero serious or critical) where the case touches
@@ -67,7 +68,7 @@ questions with the † table. It contains no code and adds no story, tag, probe 
   copy deck. A string is asserted verbatim only where `15`, an A-row, `RBAC_REASONS` (`packages/ui/src/components/rbacReasons.ts`
   :8–14) or `SKIP_LINK_COPY` (`packages/ui/src/components/SkipLink.tsx`:10–14) states it; otherwise the case asserts presence and
   role, not words.
-- **The VR baselines as the visual oracle (proposed as BQ-09).** `vr/baselines/{story-id}--{theme}--{density}.png`: 4,356 cells
+- **The VR baselines as the visual oracle (ruled as BQ-09).** `vr/baselines/{story-id}--{theme}--{density}.png`: 4,356 cells
   at the base, 726 stories × the 3 × 2 of `store`:9–10 (`dark | light | high-contrast` × `compact | comfortable`), committed and
   compared by `pnpm --filter @candleviewer/ui vr` (`vr/vr.spec.ts` through `vr/playwright.config.ts`) against the built
   Storybook's `storybook-static/index.json`, the matrix's only source (`vr/settings.ts`:12–14). The plan **never re-captures**: a
@@ -89,7 +90,7 @@ questions with the † table. It contains no code and adds no story, tag, probe 
 
 ## 1. Scope, families and deviations
 
-**In scope (proposed as BQ-01, BQ-02):** the **v0 set**, the 62 CMP ids of E05-D02's Scope (`docs/plan/backlog/E05.json` E05-D02
+**In scope (ruled as BQ-01, BQ-02):** the **v0 set**, the 62 CMP ids of E05-D02's Scope (`docs/plan/backlog/E05.json` E05-D02
 "Scope / Deliverables"): atoms CMP-001 to CMP-039 (39); molecules CMP-040, 041, 042, 043, 044, 045, 046, 047, 048, 049, 050,
 054, 059, 062, 063, 065, 069 (17); cross-band CMP-079, 085, 089, 090, 091, 228 (6). **Built at the base: 59** — every export of
 `packages/ui/src/components/index.ts` (the fifteen E05-S03 molecules `HO-S03`:3 names; the Organisms band holds ForbiddenState,
@@ -105,7 +106,7 @@ E05-Q03's); application screens. Components in `packages/ui` outside the set —
 (CMP-160), FuzzyList (CMP-213), ColorConventionLegend (`Trading/*`) and the `Foundations/Placeholder` story — are E08-S09's and the
 shell's and are not cases here.
 
-**Families (proposed as BQ-03).** The five slices of the merged E05-D02 plan, each component block naming its owning story so
+**Families (ruled as BQ-03).** The five slices of the merged E05-D02 plan, each component block naming its owning story so
 the ticket's "grouped by band" traceability holds in section 9:
 
 | Section | Family (D02 slice)                                           | Components                                                                                                                                                                                                                                                                                               | Owning stories                                                          | VR stories · cells at the base |
@@ -125,13 +126,13 @@ screen-reader passes, the abuse legs with the jank observation, and the explorat
 and §8.1 (`05`:30–33, :131, :202–221); `15` §0.3 (`15`:33–42) and the 62 entries; the five `D02` slices; `HO-S01`, `HO-S03`,
 `SR-S03`, `SR-S02`; `packages/ui/README.md` "Visual regression (E05-T04)".
 
-**Deviations from the ticket** (repeated in the PR; proposed as BQ-04, BQ-05, BQ-21, BQ-22): the path is
+**Deviations from the ticket** (repeated in the PR; ruled as BQ-04, BQ-05, BQ-21, BQ-22): the path is
 `docs/qa/test-plans/e05-components.md` (the ticket says "under `docs/plan/` or the QA space"; the template's folder); the case ids
 are `E05-Q01-Cnn` (the ticket names none); the branch is `test/e05-q01-components-plan` (the ticket's
 `chore/design-system-test-plan` is a `chore` type for a `type/test` ticket) and the PR title is a conventional commit (the
 ticket's `E05-Q01: …` form is not, C-4.10); the PR closes #261 on the document, with section 7 stating what runs today and what
 waits, the execution pass following on #261 as comments in the same sprint (Reading A of BQ-22; Reading B, that #261 stays open
-until the runnable set has recorded results, is a DoD reading for the ruling). Items the merged design reads differently from
+until the runnable set has recorded results, was not taken: the ruling is Reading A, and the execution pass is owed, not waived). Items the merged design reads differently from
 the ticket, each a section 10 row: the "500-row table story" (none; `15`:585 bounds v0 at 200 rows), the below-1280 × 800
 advisory state (the shell's, not a `packages/ui` state), "Chromium at the Electron version" (no pin), the Combobox-inside-Dialog
 and Menu-inside-Drawer stories (none), RbacGate's `FormTooltip` / `FormNotice` stories (not exported), A-12 (no visible reason
@@ -139,42 +140,41 @@ echo on an atom), the S04 trio (unbuilt), the D03 motion recipes (#3174 open).
 
 ## R. Rulings applied
 
-The before-writing question list (BQ-01 to BQ-24, #261 comment 6533789549, read from `main` `174c691e1`) proposed a default for
-every question. **The orchestrator's ruling is pending**: every row below is `pending` and the plan applies the proposed default
-exactly as the list states it. When the ruling lands, each row's status becomes RULED (with the comment id) or names the change,
-and the sections in the row's last column are changed in the same pass. Eight BQs were named for confirmation: BQ-02, BQ-07,
-BQ-10, BQ-16, BQ-20, BQ-21, BQ-22, BQ-23.
+The before-writing question list (BQ-01 to BQ-24, #261 comment 6533789549, read from `main` `174c691e1`) was ruled by the
+orchestrator on 2026-10-30 under the owner's 2026-10-29 delegation (ruling of record, #261 comment 6535944497): all 24 stand as
+proposed, with riders; each row below states the ruling and carries its stamp, and the sections named in the last-but-one column
+carry the wording. Eight BQs had been named for confirmation: BQ-02, BQ-07, BQ-10, BQ-16, BQ-20, BQ-21, BQ-22, BQ-23.
 
-| BQ    | Question                             | Default applied in this plan                                                                                                                                                                                                                                                                                                                                                                                                                         | Sections    | Status  |
-| ----- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------- |
-| BQ-01 | stories and scenarios covered        | the 28 scenarios S01.1–S04.7, the six compositions, the two abuse steps, the keyboard-only pass, the jank observation and the 2026-10-29 charter line (NVDA + Chromium on CMP-043 / 048 / 049, `SR-S03` filled); Q02, Q03, X02, D04, D05 referenced only; the four S04 scenarios on CMP-062 / 063 / 228 blocked on E05-S04 (#267)                                                                                                                    | 1, 3, 9     | pending |
-| BQ-02 | the v0 set by CMP id                 | the 62 ids of E05-D02's Scope; 59 built (every `index.ts` export), 3 unbuilt (CMP-062, 063, 228); SymbolPicker, SymbolSearchInput, FuzzyList, ColorConventionLegend and Placeholder out of this plan                                                                                                                                                                                                                                                 | 1, 3, 6     | pending |
-| BQ-03 | families                             | the five merged D02 slices as §3.1–3.5, each block naming its owning story; §3.6 compositions, §3.7 the keyboard-only and screen-reader passes, §3.8 the abuse legs and the jank observation, §3.9 the charter                                                                                                                                                                                                                                       | 1, 3        | pending |
-| BQ-04 | path                                 | `docs/qa/test-plans/e05-components.md`; the ticket's "under `docs/plan/` or the QA space" a deviation row                                                                                                                                                                                                                                                                                                                                            | 1           | pending |
-| BQ-05 | case ids                             | `E05-Q01-Cnn` in section order; E05-Q03 (#263) references them                                                                                                                                                                                                                                                                                                                                                                                       | 0, 1        | pending |
-| BQ-06 | sections and case shape              | the template's ten plus R; every case Pre / Steps / Expected / Oracle with `[R]` / `[F]` and a Blocked-on line; §5 renamed to "environment and reset protocol" (no data to destroy); §4 the components' own clocks only                                                                                                                                                                                                                              | all         | pending |
-| BQ-07 | the matrix                           | the 3 × 2 theme × density through the VR baselines for every story, never by hand; manual cells named from motion `system / on / off`, browser zoom 100 % / 200 %, in-app text scale 100 / 112 / 125 / 150 (no 200 in-app), viewport 1280 × 800 / 1920 × 1080; the below-1280 advisory state is the shell's (a † row); the plan verifies only that no component clips at 1280 × 800                                                                  | 2, 3        | pending |
-| BQ-08 | oracle ladder                        | the merged `15` entry and D02 text > the story's play or the hand-off's test (white-box evidence) > the VR PNG (presentation) > the `storybook` job's axe result; the merged design wins over the ticket text; strings only where `15`, an A-row, `RBAC_REASONS` or `SKIP_LINK_COPY` states them                                                                                                                                                     | 0, 3        | pending |
-| BQ-09 | VR as the visual oracle              | the 4,356 committed cells cited, never re-captured; what VR does not cover (1280 × 800, 200 % zoom, motion-safe frames, hover and mid-transition, `perf` stories) is manual; the matrix stories cited at their six equal-global cells; triage per `packages/ui/README.md`                                                                                                                                                                            | 0, 2, 6     | pending |
-| BQ-10 | a11y split with E05-Q02              | Q02 owns the axe / pa11y sweep, the §8.1 coverage matrix, the 125 % text-scale pass and the reduced-motion information-loss pass; this plan keeps (a) the keyboard-only full pass, one `[R]` walk per family scripted by the mdx tables; (b) the delegated NVDA + Chromium pass on CMP-043 / 048 / 049 lifting `SR-S03` D1–D10, C1–C10, B1–B11; (c) one colour-never-alone smoke leg per family; `SR-S02` and S04's SR DoD stay with Q02             | 3.7, 8      | pending |
-| BQ-11 | what runs today                      | runs today: the 21 S01–S03 scenarios, the compositions on BQ-16's surfaces, the abuse legs, the keyboard-only pass, the jank observation, the three S04 scenarios whose components exist (RbacGate, SkipLink, GlobalErrorBoundaryFallback); waits: the four S04 scenarios on CMP-062 / 063 / 228, the NVDA pass (a human on Windows), "Chromium at the Electron version" (no pin; the version run is recorded)                                       | 7           | pending |
-| BQ-12 | the exploratory charter              | two 90 min sessions, C-1 theme × density × motion × zoom × viewport over the five families, C-2 layer stacking and composition; the E09 charter format with an honest-scope line for an agent-driven session; session notes land in `docs/qa/charters/E05-charter-{1,2}-*.md` in the execution pass, not in this PR                                                                                                                                  | 3.9         | pending |
-| BQ-13 | fixtures                             | none from `packages/fixtures`, no network; the stories' inline data is the fixture; §6 is a surface catalogue                                                                                                                                                                                                                                                                                                                                        | 5, 6        | pending |
-| BQ-14 | the † policy                         | one §10 table in `E16`'s form: each hook, story or state a case names that nothing provides at the base, its owner and the stand-in asserted meanwhile, re-grepped at the READY sha                                                                                                                                                                                                                                                                  | 10          | pending |
-| BQ-15 | new hooks, stories or tests          | none: every surface used exists; no story, tag, probe or test is added, so no outside dry run (the routing's condition); a BQ-16 ruling that wants committed composition stories reverses this and needs a dry run                                                                                                                                                                                                                                   | 6, 10       | pending |
-| BQ-16 | the six compositions' surfaces       | (1) Combobox-in-Dialog on `CommandPalette` and `Dialog` `EscTopmost`, a † row for the missing CMP-048-in-CMP-043 story; (2) `Toast` `RegionUnderModal`; (3) Menu-in-Drawer: no story, a † row and a C-2 probe; (4) `Table` `Reflow` at `high-contrast` / `compact` plus the `AllMolecules` `HighContrastCompact` stacked cell; (5) `ConfirmDialog` `HoldReducedMotion`; (6) `Tooltip` `EchoReason` and `IconButton` `DisabledWithReason`, A-12 noted | 3.6, 10     | pending |
-| BQ-17 | the abuse legs and `security-review` | two black-box legs asserting only the answer and naming the controls' executors (E05-X02 #272); no step-by-step beyond the ticket's sentence; no `security-review` label (no control of the plan's own)                                                                                                                                                                                                                                              | 3.8, 8      | pending |
-| BQ-18 | the human legs                       | the NVDA pass and any human charter session are "blocked on a human tester" until run; `SR-S03`'s tester row is filled by whoever runs it; the plan never writes a result it did not observe; the likely tester is the owner                                                                                                                                                                                                                         | 3.7, 3.9, 7 | pending |
-| BQ-19 | the performance observation          | no 500-row story (`15`:585: a bound of 200); the observation runs on `Table` `Scrolling` and `Perf200Rows` (`CV_STORYBOOK_PERF=1`) and the `AllMolecules` matrix while switching theme and density; subjective, recorded, escalated against E05-T02's budget (cited, never re-measured); `ThemeRuntime` `StyleRecalcBenchmark` is the measuring artefact                                                                                             | 3.8, 10     | pending |
-| BQ-20 | defects, sign-offs, hand-over        | defects are rows of the execution record with `03` §11.3 severities and a WCAG / `15` cite; filing them waits for the orchestrator's go (the 2026-10-19 filing freeze); sign-off comments on #264, #265, #266 and, for the rows that ran, #267; regression candidates a "For E05-Q03 (#263)" table in §8                                                                                                                                             | 7, 8        | pending |
-| BQ-21 | PR shape                             | one PR, one file, branch `test/e05-q01-components-plan`, title `docs(design-system): add the E05 component black-box test plan and exploratory charter (E05-Q01)`, body `Closes #261`, labels `type/test`, `area/design-system`, `priority/p1`, `qa`; `large-pr-approved` at READY if over 800 lines; no `security-review`; review = the independent Sonnet one-look plus the orchestrator's read                                                    | PR          | pending |
-| BQ-22 | closing on the document              | Reading A (proposed): the PR closes #261 on the plan, the runnable execution following on #261 in the same sprint, the human and S04 legs blocked and named, E05-Q03 assembling the epic sign-off; Reading B: #261 stays open until the runnable set has results (the DoD's "All scenarios executed")                                                                                                                                                | 1, 7        | pending |
-| BQ-23 | lateness                             | eight days past Sprint 04, blocked until 2026-10-29; no waiver claimed; READY inside Sprint 06; the epic's QA lane late as a whole                                                                                                                                                                                                                                                                                                                   | 0, PR       | pending |
-| BQ-24 | open questions carried               | one §10 row per ticket-vs-merged difference, both readings each, owner named; CMP-062's J15 role rule (PROPOSED, `15`:706) asserted only once built; nothing re-decided                                                                                                                                                                                                                                                                              | 10          | pending |
+| BQ    | Question                             | As ruled                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Sections    | Status                                                                        |
+| ----- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------- |
+| BQ-01 | stories and scenarios covered        | as proposed, plus the delegated NVDA pass on CMP-043 / 048 / 049; the unbuilt CMP-062 / 063 / 228 (#267) are cases marked blocked on E05-S04, never asserted                                                                                                                                                                                                                                                                                                                          | 1, 3, 9     | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-02 | the v0 set by CMP id                 | as proposed: the 62-id v0 set; 59 built, the three unbuilt blocked on E05-S04, never asserted                                                                                                                                                                                                                                                                                                                                                                                         | 1, 3, 6     | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-03 | families                             | as proposed: the five E05-D02 families, the owning story on every block                                                                                                                                                                                                                                                                                                                                                                                                               | 1, 3        | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-04 | path                                 | as proposed: `docs/qa/test-plans/e05-components.md`; the ticket's path wording is a deviation row                                                                                                                                                                                                                                                                                                                                                                                     | 1           | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-05 | case ids                             | as proposed: `E05-Q01-Cnn` in section order                                                                                                                                                                                                                                                                                                                                                                                                                                           | 0, 1        | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-06 | sections and case shape              | as proposed: the template's ten sections plus R; section 5 renamed with its reason; the components' own clocks are the only clocks, no sleep in anything automated (C-13.7)                                                                                                                                                                                                                                                                                                           | all         | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-07 | the matrix                           | as proposed: the 3 × 2 runs through the VR baselines, never re-captured, what VR does not cover stated in section 0; motion / zoom / viewport as named cells; the below-1280 × 800 advisory state is the shell's (†, blocked on the E15 / E10 owner)                                                                                                                                                                                                                                  | 2, 3        | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-08 | oracle ladder                        | as proposed: the oracle ladder `15` + slice text, then the play / hand-off test (cited, not re-run), then the VR PNG, axe secondary; the merged design wins over the ticket text, each difference a section 10 row; strings asserted only where a source words them                                                                                                                                                                                                                   | 0, 3        | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-09 | VR as the visual oracle              | as proposed: the 4,356 VR cells cited, never re-captured; what VR does not cover is manual and stated in section 0                                                                                                                                                                                                                                                                                                                                                                    | 0, 2, 6     | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-10 | a11y split with E05-Q02              | as proposed; the delegation is not extended: `SR-S02` and S04's screen-reader DoD pass stay with E05-Q02 and are listed under section 8 as Q02's; this plan keeps the keyboard-only pass, the three `SR-S03` cases (results written back into that log, one line per component) and one colour-redundancy smoke leg per family                                                                                                                                                        | 3.7, 8      | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-11 | what runs today                      | as proposed; the NVDA pass and any human charter are "blocked on a human tester" until run; the owner is the likely tester and is asked through the #2701 digest, never assumed                                                                                                                                                                                                                                                                                                       | 7           | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-12 | the exploratory charter              | two 90-minute charters C-1 and C-2 in E09's form; an agent-driven Playwright session counts as one of the two timeboxed sessions only with the honest-scope line (E09's precedent) and never stands in for the human pass; session notes land under `docs/qa/charters/` in the execution pass, not in this PR                                                                                                                                                                         | 3.9         | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-13 | fixtures                             | as proposed: no fixtures, no network                                                                                                                                                                                                                                                                                                                                                                                                                                                  | 5, 6        | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-14 | the † policy                         | as proposed: the † table in `E16`'s form, every candidate row named, re-grepped at the READY sha (section 0)                                                                                                                                                                                                                                                                                                                                                                          | 10          | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-15 | new hooks, stories or tests          | as proposed: no new hook, story or test; no throwaway composition stories, so no outside dry run                                                                                                                                                                                                                                                                                                                                                                                      | 6, 10       | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-16 | the six compositions' surfaces       | as proposed: CMP-059 CommandPalette plus `Dialog` `EscTopmost` as the Combobox-in-Dialog surface, with a † row for the missing CMP-048-in-CMP-043 story; Menu-in-Drawer a † row and a C-2 probe; the other four compositions on their named stories; a † surface records "blocked on", never a guessed pass                                                                                                                                                                           | 3.6, 10     | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-17 | the abuse legs and `security-review` | as proposed: two black-box legs citing the controls' executors, findings to E05-X02 (#272); no `security-review` label                                                                                                                                                                                                                                                                                                                                                                | 3.8, 8      | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-18 | the human legs                       | as proposed: results are never written unobserved; defects are rows in the execution record and filing waits for the orchestrator's go under the 2026-10-19 freeze (a gate defect or a P0 / P1 on `main` is filed at once when told); sign-off comments on #264 / #265 / #266 and the S04 rows that ran on #267; a "For E05-Q03 (#263)" table in section 8                                                                                                                            | 3.7, 3.9, 7 | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-19 | the performance observation          | as proposed: the observation on `Table` `Scrolling` / `Perf200Rows` (perf env) and the matrix toolbar switch, escalated against E05-T02's budget by cite; the 500-row gap is a section 10 row                                                                                                                                                                                                                                                                                         | 3.8, 10     | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-20 | defects, sign-offs, hand-over        | as proposed: defects are rows in the execution record, filing waits for the orchestrator's go; sign-off comments on #264 / #265 / #266, the S04 rows that ran on #267; the "For E05-Q03 (#263)" table in section 8                                                                                                                                                                                                                                                                    | 7, 8        | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-21 | PR shape                             | as proposed: one PR, one file, `Closes #261`, the branch-name deviation row, labels `type/test` `area/design-system` `priority/p1` `qa`; `large-pr-approved` applied by the orchestrator on #5127 (1,741 lines); review = the Sonnet one-look plus the orchestrator's read                                                                                                                                                                                                            | PR          | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-22 | closing on the document              | Reading A: the PR closes #261 on the document, as #404 and #422 did; section 7 states what runs today and what waits; the execution pass of the runnable set is owed on #261 as comments inside Sprint 06 and is not waived; the human and S04 legs are blocked and named; E05-Q03 (#263) assembles the epic sign-off; the DoD's "executed; results recorded per scenario" is read as the section 7 ledger plus that execution pass (the same reading as E13-Q01's, 6532529903 BQ-21) | 1, 7        | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-23 | lateness                             | reported, no waiver: the dates in section 1 and the PR body; READY falls inside Sprint 06                                                                                                                                                                                                                                                                                                                                                                                             | 0, PR       | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
+| BQ-24 | open questions carried               | as proposed; nothing re-decided                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 10          | RULED (orchestrator, 2026-10-30, #261 ruling of record — 6533789549's answer) |
 
 ## 2. The test matrix
 
-**The axes (proposed as BQ-07).** **Theme** `dark | light | high-contrast` and **density** `compact | comfortable` (`store`:9–10;
+**The axes (ruled as BQ-07).** **Theme** `dark | light | high-contrast` and **density** `compact | comfortable` (`store`:9–10;
 the toolbar globals `theme` and `density` of `preview`:44–53, written as `data-theme` and `data-density` on the document root,
 `16`:167). **Motion** `system | on | off` (`store`:12; the `motion` toolbar global, `preview`:54–60; the runtime writes
 `data-motion="safe|reduce"`, `16`:167; `on` means the in-app override forces `reduce`, as `ConfirmDialog` `HoldReducedMotion`
@@ -330,7 +330,7 @@ double-submit"; `15`:53 loading, :54 `aria-busy`; `Button.stories.tsx`:89 `Loadi
 - Blocked on: none.
 
 **E05-Q01-C06 Colour is never the only signal in the family (smoke)** (`a11y`; 3.1 · S01, S02; mirrors `15`:37 rule 3 and `05`
-§4; proposed as BQ-10 (c); `Button.stories.tsx`:40 `BuySellPair`, `Toggle.stories.tsx`:34 `Critical`, `Checkbox.stories.tsx`:24
+§4; ruled as BQ-10 (c); `Button.stories.tsx`:40 `BuySellPair`, `Toggle.stories.tsx`:34 `Critical`, `Checkbox.stories.tsx`:24
 `Indeterminate`, `ColorSwatch.stories.tsx`:65 `Picker`, `Spinner.stories.tsx`:59 `Labelled`)
 
 - Pre: high-contrast · compact; then the same stories rendered in greyscale (the browser's rendering emulation; no story
@@ -1187,7 +1187,7 @@ carries it); `KeyValueRow` `Missing` and `Stale`; `CommandPalette` `Gated` and `
 
 ### 3.6 The six composition scenarios (#261 Scope)
 
-Each composition is the ticket's sentence run on the surface the base offers (proposed as BQ-16). A composition with no story
+Each composition is the ticket's sentence run on the surface the base offers (ruled as BQ-16). A composition with no story
 records "blocked on" its owner and the charter probes it (section 3.9); nothing is guessed. E05-Q03 (#263) adds "one story per
 fixed composition defect" from what these cases find.
 
@@ -1208,10 +1208,10 @@ inside the APG Dialog (Modal); `Molecules.mdx`:135); `15`:223 (a popover inside 
   stays visible when the list opens near the dialog's edge; at 200 % on 1280 × 800 the dialog fills the viewport and the list
   still fits inside it with no clipped row. A stand-alone **CMP-048 Combobox composed in a CMP-043 Dialog has no story at the
   base**: the Combobox half of the scenario is read through CMP-059 (built on the same pattern) and is a † row; the charter's C-2
-  probes it on `Dialog` `Default` with the browser's devtools only if the ruling allows an ad-hoc composition, else it waits.
+  probes it on `Dialog` `Default` as a probe on its stand-ins; no ad-hoc composition is mounted (BQ-15, ruled: no throwaway story), so the composition itself waits.
 - Oracle: `15`:571, :681, :223 > `Dialog.test.tsx` "Esc closes the topmost layer only …" and `CommandPalette.test.tsx`
   (`HO-S03`:72, :77) > the focus target and the layer order. 2nd: axe for `CommandPalette` `Default`.
-- Blocked on: the CMP-048-in-CMP-043 story (none; owner E05-Q03 #263 for a composition story, or the ruling on BQ-16; OQ-5). The
+- Blocked on: the CMP-048-in-CMP-043 story (none; owner E05-Q03 #263 for a composition story, a † row per BQ-16, ruled; OQ-5). The
   CMP-059 and `EscTopmost` legs run today.
 
 **E05-Q01-C54 Toast while a Dialog is open [R]** (`e2e`, `a11y`; composition 2; `15`:530 (a toast never auto-dismisses content
@@ -1246,7 +1246,7 @@ caps its height to the room below its trigger and scrolls; `Tab` closes it), :54
   `Esc` closes the menu alone, the drawer staying open with focus on the trigger. **No story composes a Menu in a Drawer at the
   base**; the charter's C-2 probes the stand-ins and the plan records "blocked on" for the composition itself.
 - Oracle: `15`:484–485, :541–542, :223 > the tree and the layer geometry (UI only). 2nd: axe for `Scrolling` and `LongText`.
-- Blocked on: the Menu-in-Drawer story (none; owner E05-Q03 #263, or the BQ-16 ruling; OQ-5).
+- Blocked on: the Menu-in-Drawer story (none; owner E05-Q03 #263; a † row and a C-2 probe per BQ-16, ruled; OQ-5).
 
 **E05-Q01-C56 Table reflow at 200 % zoom, compact density, high-contrast theme [R]** (`e2e`, `a11y`; composition 4; `15`:580,
 :586; `Table.stories.tsx`:325 `Reflow` (compact; root font size 200 % on the 1280 × 800 frame and at 640 px); `AllMolecules.stories.tsx`
@@ -1308,7 +1308,7 @@ and is the description; the tooltip only repeats it"), :98 `EchoName`; `IconButt
 
 **E05-Q01-C59 The keyboard-only full pass over the five families [R]** (`e2e`, `a11y`; #261 Accessibility notes ("Keyboard-only
 execution of at least one full pass (no mouse) is mandatory; anything unreachable is a defect regardless of axe result");
-`05`:30 rule 1, :33 rule 4; `15`:38 rule 4; `HO-S01`:30 and `HO-S03`:138 ("the … Overview tables are the script"); proposed as
+`05`:30 rule 1, :33 rule 4; `15`:38 rule 4; `HO-S01`:30 and `HO-S03`:138 ("the … Overview tables are the script"); ruled as
 BQ-10 (a))
 
 - Pre: one session, the pointer unplugged or untouched throughout; dark · compact at 100 % · 1920 × 1080 for the whole pass, then
@@ -1343,7 +1343,7 @@ the protocol and tester row, :17–30 rows D1–D10; `05`:221 §8.1 row 3 (Windo
   2nd: the axe result for the same stories (not a substitute: `packages/ui/README.md` "Snapshot review never replaces the manual
   screen-reader pass").
 - Blocked on: **a human tester** (an agent cannot run NVDA; `05`:221 pins NVDA 2024.x on Windows 11). The likely tester is the
-  owner (proposed as BQ-18). Until run, the row in the execution record is "blocked on a human tester", never a result.
+  owner, who is asked through the #2701 digest and never assumed (BQ-11, ruled). Until run, the row in the execution record is "blocked on a human tester", never a result.
 
 **E05-Q01-C61 NVDA + Chromium on CMP-048 Combobox: `SR-S03` C1–C10 — blocked on a human tester** (`a11y`; as C60; `SR-S03`:32–45
 rows C1–C10 on `Sync`, `AsyncLoading`, `NoResults`, `SearchFailed`, `DisabledWithReason`)
@@ -1374,7 +1374,7 @@ rows B1–B11 on `Default`, `Sortable`, `Loading`, `Empty`, `Error`, `Reflow`, `
 ### 3.8 The abuse legs and the jank observation
 
 The two abuse legs are the ticket's two sentences (#261 Security notes) run as black-box legs that assert only the answer and
-name the controls' executors (proposed as BQ-17; `E13`'s rider 2): the plan carries no step beyond the ticket's sentence, adds no
+name the controls' executors (ruled as BQ-17; `E13`'s rider 2): the plan carries no step beyond the ticket's sentence, adds no
 control, and its findings go to E05-X02 (#272), which executes the controls' verification (`HO-S03`:80–128 is the gate matrix it
 lifts). No `security-review` label: nothing here is a control of this plan's own.
 
@@ -1413,7 +1413,7 @@ observed stall is escalated against E05-T02's measured budget"); E05-T02 Perform
 the 500-row benchmark; zero component remounts; zero WebGL context loss"); S04 Performance notes ("inherits E05-T02's one-frame
 budget"); `15`:585–586 (v0 renders a bound of 200 rows); `Table.stories.tsx`:245 `Scrolling`, :381 `Perf200Rows` (`perf`-tagged,
 skipped unless `CV_STORYBOOK_PERF=1`, `vitest.config.mjs`:8–9); `ThemeRuntime.stories.tsx`:227 `StyleRecalcBenchmark` (the
-median of 30 warmed switches over 500 rows within 16.6 ms; `perf`-tagged); `AllMolecules` `DarkCompact`; proposed as BQ-19)
+median of 30 warmed switches over 500 rows within 16.6 ms; `perf`-tagged); `AllMolecules` `DarkCompact`; ruled as BQ-19)
 
 - Pre: a quiet machine; dark · compact; `Table` `Scrolling`, then `Perf200Rows` with `CV_STORYBOOK_PERF=1` set for the Storybook
   run, then `AllMolecules` `DarkCompact`.
@@ -1431,14 +1431,15 @@ median of 30 warmed switches over 500 rows within 16.6 ms; `perf`-tagged); `AllM
 ### 3.9 The exploratory charter
 
 Two session-based charters of 90 min each (#261 Scope "2 × 90 min"; `03` §11.2's 60–120 min time box with mission, areas,
-oracles and a debrief; proposed as BQ-12). The charter text lives here; the session notes, when run, land as
+oracles and a debrief; ruled as BQ-12). The charter text lives here; the session notes, when run, land as
 `docs/qa/charters/E05-charter-1-theme-density-motion-zoom.md` and `docs/qa/charters/E05-charter-2-layers-and-composition.md`
 in the execution pass, in the format of `docs/qa/charters/E09-charter-1-auth-state-machine.md` (ticket and format line, the
 charter, oracles defined up front, areas covered with evidence, not probed, anomalies with a dismissal reason for their absence,
 follow-ups) — with E09's **"Deviation (honest scope)"** line whenever a session is an agent driving the built Storybook through
 Playwright rather than a human at a desk, stating what was not available (no screen reader, no human time box, no recording).
-Whether an agent-driven session counts as one of the two timeboxed sessions is for the ruling (BQ-12); a human session is
-"blocked on a human tester" until run (BQ-18). The orchestrator's 2026-10-29 line is part of this ticket's charter: the NVDA +
+An agent-driven session counts as one of the two timeboxed sessions only with that honest-scope line and never stands in for the
+human pass (BQ-12, ruled); a human session is "blocked on a human tester" until run, the owner being asked through the #2701
+digest and never assumed (BQ-11). The orchestrator's 2026-10-29 line is part of this ticket's charter: the NVDA +
 Chromium pass on CMP-043, CMP-048 and CMP-049 (C60–C62) is run once, here, filling `SR-S03`'s blank log.
 
 **Charter C-1 — theme × density × motion × zoom × viewport over the five families.** Mission (the ticket's words): "explore theme
@@ -1460,7 +1461,7 @@ overlays, keyboard-only" (the ticket's composition point, section 3.6). Areas: `
 and `WithConfirms`; `Toast` `RegionUnderModal` and `ActionGated`; `ConfirmDialog` `ConfirmGated`, `HoldKeyboard` and
 `CountingDown`; `Popover` `Modal` inside a dialog (`EscTopmost`); every T2 control inside an overlay (a gated menu item, a gated
 palette row, a gated toast action, a gated Confirm), operated by keyboard only; the two missing compositions (C53's Combobox-in-
-Dialog, C55's Menu-in-Drawer) probed on their stand-ins, and on an ad-hoc composition only if the BQ-16 ruling allows one.
+Dialog, C55's Menu-in-Drawer) probed on their stand-ins (BQ-16, ruled: a † row each, Menu-in-Drawer also a C-2 probe), never on an ad-hoc composition.
 Oracles: O1 `Esc` ever closing more than the topmost layer, or nothing; O2 focus ever reaching the inert page or a portal outside
 the trap; O3 a timer running behind a modal, or a toast lost; O4 a T2 control that acts, loses its reason, or speaks it more than
 once per press; O5 a layer opening inside a scrolling body's clip, or detaching when the body scrolls; O6 focus returned to
@@ -1470,7 +1471,7 @@ story per fixed composition defect" (section 8).
 ## 4. Time control
 
 The only clocks in this plan are the components' own; no case moves a clock, sleeps in automation, or waits more than 20 s of
-real time in a manual step (C-13.7, `CONSTITUTION.md`:890; proposed as BQ-06). Automation of these cases is E05-Q03's and the
+real time in a manual step (C-13.7, `CONSTITUTION.md`:890; ruled as BQ-06). Automation of these cases is E05-Q03's and the
 stories' own, where the plays use their story clocks (`ConfirmDialog.stories.tsx` `clock.t`, `Countdown.stories.tsx` `T0`) and
 VR freezes `Date` at `2026-10-27T14:02:00Z` outside a play (`vr/settings.ts`:37–43). No `CV_TEST_CLOCK` and no server clock
 exists here: there is no server.
@@ -1495,7 +1496,7 @@ No assertion sits on an exact instant: a release "at 400 ms" is read as "before 
 
 ## 5. Environment and reset protocol
 
-There is **nothing to destroy** (proposed as BQ-06, BQ-13): the surface is a static Storybook with no backend, no database, no
+There is **nothing to destroy** (ruled as BQ-06, BQ-13): the surface is a static Storybook with no backend, no database, no
 fixture file and no network, so this section replaces `E13`'s destructive protocol with the environment and the reset between
 cells.
 
@@ -1521,12 +1522,12 @@ cells.
   by keyboard (C59); a composition that loses a toast or a timer behind a modal (C54); clipping that hides a value at a supported
   cell (C22, C56). Anything else is P2 or P3 by `03` §11.3's definitions, each with a WCAG criterion or a `15` line.
 - **Defects.** Rows of the execution record with the severity, the case id, the cell, the story and the cite; **filing them as
-  issues waits for the orchestrator's go** (the plan-first filing freeze of 2026-10-19; proposed as BQ-20). An accepted-risk note
+  issues waits for the orchestrator's go** (the plan-first filing freeze of 2026-10-19; ruled as BQ-20). An accepted-risk note
   on a failing scenario is the owner's, never this plan's (#261 "Sign-off blocks Done").
 
 ## 6. The surface catalogue
 
-All surfaces are stories of the built Storybook at the base (proposed as BQ-13); none is added by this plan (BQ-15). `index.json`
+All surfaces are stories of the built Storybook at the base (ruled as BQ-13); none is added by this plan (BQ-15). `index.json`
 of the build is the matrix's only source (`vr/settings.ts`:12–14): 726 stories, of which 683 belong to the v0 set and its two
 matrix pages and 43 to components outside it (section 1).
 
@@ -1553,33 +1554,33 @@ advisory state (section 2); SG-7 a Chromium pinned to the Electron version (sect
 
 ## 7. Entry and exit criteria, and the regression subset
 
-**Entry (`03` §16), per group — what runs today against the built Storybook at the base, and what waits (proposed as BQ-11).**
+**Entry (`03` §16), per group — what runs today against the built Storybook at the base, and what waits (ruled as BQ-11).**
 
-| Group                                          | Cases                                                                  | At the base `9c1674333`                                                                                                                                                 |
-| ---------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| the 21 S01–S03 scenarios                       | C01–C05, C10, C11, C17–C22, C29–C32, C34–C37                           | **runs today**: 59 components built, the build and the VR run green at `6dc942aff`                                                                                      |
-| the family matrix, walk and smoke cases        | C06–C09, C12–C16, C23, C25–C28, C33, C38, C41–C46, C52                 | **runs today**                                                                                                                                                          |
-| the three S04 scenarios whose components exist | C24 (RbacGate), C47 (SkipLink), C39 (GlobalErrorBoundaryFallback), C40 | **runs today**, except C24's `FormTooltip` / `FormNotice` / `Denied(EnvMismatch)` legs                                                                                  |
-| the four S04 scenarios on CMP-062 / 063 / 228  | C48, C49, C50, C51                                                     | **waits** for E05-S04 (#267, open; slices A–D merged, the trio not); the C48 / C49 stand-ins run today and are recorded as stand-ins                                    |
-| the six compositions                           | C53, C54, C56, C57, C58 run; C55 blocked                               | **runs today** on BQ-16's surfaces; C53's CMP-048 half and C55 **blocked on a story**; C58's `FormTooltip` leg blocked on #267                                          |
-| the keyboard-only full pass                    | C59                                                                    | **runs today**                                                                                                                                                          |
-| the delegated screen-reader pass               | C60, C61, C62                                                          | **blocked on a human tester** (NVDA 2024.x on Windows 11, `05`:221)                                                                                                     |
-| the abuse legs                                 | C63, C64                                                               | **runs today**                                                                                                                                                          |
-| the jank observation                           | C65                                                                    | **runs today** on a quiet machine with `CV_STORYBOOK_PERF=1`                                                                                                            |
-| the charters                                   | C-1, C-2                                                               | an agent-driven session runs today with the honest-scope line; whether it counts as a timeboxed session is BQ-12's ruling; a human session is blocked on a human tester |
+| Group                                          | Cases                                                                  | At the base `b8575c6f1`                                                                                                                                                                                             |
+| ---------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the 21 S01–S03 scenarios                       | C01–C05, C10, C11, C17–C22, C29–C32, C34–C37                           | **runs today**: 59 components built, the build and the VR run green at `6dc942aff`                                                                                                                                  |
+| the family matrix, walk and smoke cases        | C06–C09, C12–C16, C23, C25–C28, C33, C38, C41–C46, C52                 | **runs today**                                                                                                                                                                                                      |
+| the three S04 scenarios whose components exist | C24 (RbacGate), C47 (SkipLink), C39 (GlobalErrorBoundaryFallback), C40 | **runs today**, except C24's `FormTooltip` / `FormNotice` / `Denied(EnvMismatch)` legs                                                                                                                              |
+| the four S04 scenarios on CMP-062 / 063 / 228  | C48, C49, C50, C51                                                     | **waits** for E05-S04 (#267, open; slices A–D merged, the trio not); the C48 / C49 stand-ins run today and are recorded as stand-ins                                                                                |
+| the six compositions                           | C53, C54, C56, C57, C58 run; C55 blocked                               | **runs today** on BQ-16's surfaces; C53's CMP-048 half and C55 **blocked on a story**; C58's `FormTooltip` leg blocked on #267                                                                                      |
+| the keyboard-only full pass                    | C59                                                                    | **runs today**                                                                                                                                                                                                      |
+| the delegated screen-reader pass               | C60, C61, C62                                                          | **blocked on a human tester** (NVDA 2024.x on Windows 11, `05`:221)                                                                                                                                                 |
+| the abuse legs                                 | C63, C64                                                               | **runs today**                                                                                                                                                                                                      |
+| the jank observation                           | C65                                                                    | **runs today** on a quiet machine with `CV_STORYBOOK_PERF=1`                                                                                                                                                        |
+| the charters                                   | C-1, C-2                                                               | an agent-driven session runs today with the honest-scope line and counts as one of the two sessions only with it, never standing in for the human pass (BQ-12, ruled); a human session is blocked on a human tester |
 
 Environment at entry: the build from `storybook:build` served on loopback (section 5); the Chromium that runs it is Playwright
 `^1.64.1`'s (`packages/ui/package.json`), while the desktop pins `electron ^45.0.0` (`apps/desktop/package.json`): the ticket's
 "Chromium at the Electron version" has **no pin on `main`**, so every execution record states the Chromium version actually run
-and claims no match (OQ-3). This PR closes #261 on the document (proposed as BQ-22, Reading A, as #404 and #422 did); the
-execution of the runnable set follows on #261 as comments in the same sprint; the human and S04 legs stay blocked and named.
+and claims no match (OQ-3). This PR closes #261 on the document (ruled as BQ-22, Reading A, as #404 and #422 did); the
+execution pass of the runnable set is owed on #261 as comments inside Sprint 06 and is **not waived**; the human and S04 legs stay blocked and named, and E05-Q03 (#263) assembles the epic sign-off. The DoD's "executed; results recorded per scenario" is read as this section's ledger plus that execution pass (BQ-22, ruled; the same reading as E13-Q01's, 6532529903 BQ-21).
 
 **Exit (the ticket's "Sign-off blocks Done"; `02`:77 QA sign-off).** Every case has a recorded result (pass, fail, blocked with
 its owner, or "stand-in" where the plan says so), the build sha, the cell and the Chromium version; no P0 or P1 is open (section
 5); every **[R]** case ran and every **[F]** case ran; the six compositions each have a result or a named blocker (#261
 "Composition defects are hunted deliberately"); the two charter sessions have notes in `docs/qa/charters/` with areas covered,
 found and not covered (#261 "Exploratory charter produces evidence"); `SR-S03`'s log is filled or its rows are "blocked on a human
-tester"; section 9 has no gap. **Sign-off comments** (proposed as BQ-20) go on #264 (S01), #265 (S02) and #266 (S03) — closed and
+tester"; section 9 has no gap. **Sign-off comments** (ruled as BQ-20) go on #264 (S01), #265 (S02) and #266 (S03) — closed and
 Done on their QA records, where `02`:77's per-scenario sign-off was recorded as owed to E05-Q01 — with pass / fail per scenario,
 and on #267 for the S04 rows that ran; a failing scenario without an accepted-risk note blocks the owning story's Done (#261).
 This plan's sign-off is necessary, not sufficient: E05-Q03 (#263) assembles the epic's.
@@ -1593,15 +1594,17 @@ C19, C20, C23, C24, C25; 3.4 C32, C35, C36, C38, C39; 3.5 C46, C51; 3.8 C63, C64
 
 ## 8. What this plan references and does not contain
 
-- **E05-Q02 (#262), the a11y audit:** the full axe-core sweep over every story at every theme and density and the `pa11y-ci`
-  complementary sweep; the §8.1 screen-reader coverage matrix beyond the three components delegated here — `SR-S02` (Tooltip,
-  Popover, MaskedValue: T1–T6, P1–P6, M1–M9, "not run") and S04's DoD screen-reader pass on ThemeSwitcher, PreviewTile and
-  SkipLink; the 125 % text-scale pass; the reduced-motion information-loss pass; findings with WCAG references (its Scope). This
-  plan's a11y legs are the three the delegation and the ticket keep (section 3.7, the per-family smoke legs; proposed as BQ-10).
+- **E05-Q02 (#262), the a11y audit** (BQ-10, ruled; the delegation is not extended): the full axe-core sweep over every story at
+  every theme and density and the `pa11y-ci` complementary sweep; the §8.1 screen-reader coverage matrix beyond the three
+  components delegated here. **Q02's, not this plan's:** `SR-S02` (Tooltip, Popover, MaskedValue: T1–T6, P1–P6, M1–M9, "not
+  run") and S04's DoD screen-reader pass on ThemeSwitcher, PreviewTile and SkipLink; also the 125 % text-scale pass, the
+  reduced-motion information-loss pass and findings with WCAG references (its Scope). This plan keeps exactly three a11y legs:
+  the keyboard-only pass (C59), the three `SR-S03` cases (C60–C62, results written back into that log, one line per component)
+  and one colour-redundancy smoke leg per family (section 3.7).
 - **E05-Q03 (#263), the regression pack and the epic sign-off:** the curated VR / interaction / a11y subset per PR and the
   nightly sweep; "one story per fixed composition defect" found here; the VR diff triage workflow; the epic-level regression run
   and the epic QA sign-off comment with pass / fail per story group; the "how to not break the design system" note. **For
-  E05-Q03 (#263)** — regression candidates handed over (proposed as BQ-20):
+  E05-Q03 (#263)** — the table of regression candidates handed over (BQ-20, ruled):
 
   | Candidate                                                           | From       | Why                                                                                           |
   | ------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------- |
@@ -1662,7 +1665,7 @@ C50, C51.
 
 ## 10. Open questions
 
-Each row is a question for the owner of the source it names, with both readings, never a guess (proposed as BQ-24); a case it
+Each row is a question for the owner of the source it names, with both readings, never a guess (ruled as BQ-24); a case it
 blocks says so, and the other cases of the same family run. Nothing is re-decided here; the merged design wins meanwhile
 (BQ-08).
 
@@ -1685,11 +1688,10 @@ advisory` over `packages/ui/src` and `apps/web/src` finds none at the base): it 
   (`15`:888): twelve stories exist. Reading B (`RbacGate.stories.tsx`:43–93: nine exports; `git grep FormTooltip` finds none): the
   `tooltip` and `notice` forms have no story at the base; the tooltip form is read through `Tooltip` `EchoReason` and the notice
   form through `FormSection` `DisabledWithReason` (one notice, many pointers, `HO-S03`:54).
-- **OQ-5 The two missing composition stories** (C53, C55; owner: E05-Q03 #263, or the BQ-16 ruling). Reading A (#261 Scope): the
+- **OQ-5 The two missing composition stories** (C53, C55; owner: E05-Q03 #263; BQ-16, ruled). Reading A (#261 Scope): the
   compositions are run as written, which needs a Combobox-in-Dialog and a Menu-in-Drawer story or an ad-hoc mount. Reading B
-  (BQ-15: this plan adds no story): CMP-059 is the built Combobox-in-Dialog and the Menu-in-Drawer is probed on its stand-ins;
-  a committed composition story is E05-Q03's "one story per fixed composition defect", and a ruling that wants throwaway stories
-  here reverses BQ-15 and needs a dry run.
+  (BQ-15, ruled: this plan adds no story): CMP-059 is the built Combobox-in-Dialog and the Menu-in-Drawer is probed on its stand-ins;
+  a committed composition story is E05-Q03's "one story per fixed composition defect"; Reading B is ruled (BQ-16), each a † row.
 - **OQ-6 A-12, the atom's visible reason echo** (C03, C58; owner: CMP-016 / CMP-040 per the accepted A-row, 2026-10-27). Reading A
   (S01.3 "the reason is shown" on hover or focus; `15`:51's "rendered inline or echoed by a focus+hover CMP-016 tooltip"): every
   atom shows its reason visibly. Reading B (A-12, `E05-S01-catalogue-a-rows.md`:18; `HO-S01`:26): the atom carries a hidden
@@ -1709,14 +1711,14 @@ advisory` over `packages/ui/src` and `apps/web/src` finds none at the base): it 
   control invokes it to observe. Reading B (`store`:56–59, :238: the runtime's `emit` names the events and the sink is a no-op by
   default): the emitter exists in the runtime, the controls that invoke it from a user action do not; a black-box observation
   needs an injected sink, which is the host's, so the plan asserts the root attribute and marks the callback †.
-- **OQ-10 Does the PR close #261 on the plan alone?** (section 1, 7; owner: the ruling on BQ-22, the owner if the DoD line is
-  waived). Reading A: as #404 and #422, the document closes the ticket and the execution follows on #261. Reading B: the DoD's
-  "All scenarios executed; results recorded per scenario" holds #261 open until the runnable set has results. The plan is
-  written for either: section 7 is the execution's entry sheet.
+- **OQ-10 Does the PR close #261 on the plan alone?** (section 1, 7; ruled, BQ-22, Reading A). The document closes the ticket, as
+  #404 and #422 did; the DoD's "All scenarios executed; results recorded per scenario" is read as section 7's ledger plus the
+  execution pass owed on #261 as comments inside Sprint 06, not waived; the human and S04 legs are blocked and named; E05-Q03
+  (#263) assembles the epic sign-off. Section 7 is the execution's entry sheet.
 
 **Known gaps: hooks, stories and states a case names that nothing provides at the base** (a `git grep` over `packages/ui/src`
-and `apps/web/src` at `9c1674333` finds no emitter for each, except where the row says what exists; a † marks each use in a
-case; re-grepped at the READY sha when the ruling folds in). A case asserts the stand-in until the owner ships it or amends its
+and `apps/web/src` at `b8575c6f1` finds no emitter for each, except where the row says what exists; a † marks each use in a
+case; re-grepped at the READY sha `b8575c6f1`, section 0). A case asserts the stand-in until the owner ships it or amends its
 ticket. Stories that **exist** and are asserted directly are the 683 of section 1; the analytics events `appearance.*` and
 `a11y.preference_changed` exist as the runtime's `emit` (`store`:56–59, :231, :238) and are listed below only for the control that
 is missing.
@@ -1727,8 +1729,8 @@ is missing.
 | the below-1280 × 800 advisory state (`advisory`: none in `packages/ui/src`, `apps/web/src`)                                                                                                                                                                                  | section 2, C-1     | #261 Technical notes; `16`:269 (the shell: E15 / E10)                                                                            | no component clips at 1280 × 800 (`Table` `Reflow`, `Dialog` `Reflow`, the walks)                      |
 | a Chromium pinned to the Electron version                                                                                                                                                                                                                                    | section 7          | #261 Technical notes (the desktop lane; E05-X02 #272)                                                                            | the Chromium version actually run, recorded                                                            |
 | `RbacGate` `FormTooltip`, `FormNotice`, `Denied(EnvMismatch)` (none)                                                                                                                                                                                                         | C15, C24, C58      | `15`:888 (E05-S04 #267)                                                                                                          | `Tooltip` `EchoReason`; `FormSection` `DisabledWithReason`; `FormInline`                               |
-| a CMP-048 Combobox composed in a CMP-043 Dialog                                                                                                                                                                                                                              | C53                | #261 Scope composition 1 (E05-Q03 #263; the BQ-16 ruling)                                                                        | `CommandPalette` `Default` / `Gated`; `Dialog` `EscTopmost`                                            |
-| a Menu in a scrolling Drawer                                                                                                                                                                                                                                                 | C55                | #261 Scope composition 3 (E05-Q03 #263; the BQ-16 ruling)                                                                        | `Drawer` `LongText`; `Menu` `Scrolling`, `EscTopmost`                                                  |
+| a CMP-048 Combobox composed in a CMP-043 Dialog                                                                                                                                                                                                                              | C53                | #261 Scope composition 1 (E05-Q03 #263; † per BQ-16, ruled)                                                                      | `CommandPalette` `Default` / `Gated`; `Dialog` `EscTopmost`                                            |
+| a Menu in a scrolling Drawer                                                                                                                                                                                                                                                 | C55                | #261 Scope composition 3 (E05-Q03 #263; † per BQ-16, ruled)                                                                      | `Drawer` `LongText`; `Menu` `Scrolling`, `EscTopmost`                                                  |
 | CMP-062 ThemeSwitcher and its stories Default, MatchSystem, Light, HighContrast (none)                                                                                                                                                                                       | C42, C48, C49      | `15`:702–709; S04.1, S04.2 (E05-S04 #267)                                                                                        | the toolbar `theme` global; `ThemeRuntime` `Default` (no remount); the root `data-theme`               |
 | CMP-063 DensityToggle and its stories Global, PanelOverride, ChartPanelDense, MenuForm (none)                                                                                                                                                                                | C42                | `15`:712–719 (E05-S04 #267)                                                                                                      | the toolbar `density` global; the root `data-density`                                                  |
 | CMP-228 PreviewTile and its stories (none)                                                                                                                                                                                                                                   | C42, C50, C51      | `15`:2920–2926; S04.3, S04.4 (E05-S04 #267)                                                                                      | —                                                                                                      |
@@ -1738,4 +1740,4 @@ is missing.
 | `Table` `Virtualized(10k rows)`, `MergedCell`, `SortUnavailable` (none)                                                                                                                                                                                                      | C15, C23           | `15`:583; deferred by `15`:585–587 ("the epic that first needs 10k+ rows")                                                       | not asserted; the 200-row bound                                                                        |
 | `ProgressBar` `Running`, `Failed`, `Unknown`, `InWizard`; `Callout` `ChartStrip`, `BarRebuildProgress`; `Tag` `EstimatedChip`; `Avatar` `ColorPalette`; `KeyValueRow` `LiveFreshness`; `ConfirmDialog` `Rung1`–`Rung4`, `TwoChoice`, `TwoChoiceUnknown`, `RuleDisarm` (none) | C08, C27, C42      | `15`:283, :339, :159, :179, :425, :520 — their design rows (E25-D05 / CMP-227, the avatar palette E2, CMP-239, E42-D02, E35-D02) | not asserted; the as-built lines (`15`:161, :181, :341, :427) say they wait                            |
 | the `pattern.hatch.unprotected` token (`Callout.tsx` names it; the edge is not built)                                                                                                                                                                                        | C33                | `15`:341 (#265 ruling 6)                                                                                                         | `ProtectionPendingSolidEdge`: the solid 2 px edge                                                      |
-| a human NVDA tester                                                                                                                                                                                                                                                          | C60–C62, C-1, C-2  | the 2026-10-29 line; `05`:221 (the owner, BQ-18)                                                                                 | "blocked on a human tester"; never a result                                                            |
+| a human NVDA tester                                                                                                                                                                                                                                                          | C60–C62, C-1, C-2  | the 2026-10-29 line; `05`:221 (the owner, asked through the #2701 digest, never assumed; BQ-11)                                  | "blocked on a human tester"; never a result                                                            |
