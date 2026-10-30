@@ -44,7 +44,7 @@ def table_frame(fid: str, mode: str, *, rail: str, focus_k: int | None = 3, stat
                 announce: str = "Data table, row k of N (D04E11:115 D2)", full: bool = True,
                 base_cols: tuple[str, ...] = ()) -> tuple[dict[str, Any], tuple[str, list[str]]]:
     """A 1280 x 800 window, one chart panel, the table open in place; rows from 3 bars ahead of the sweep, as many as
-    fit. Auto columns (close time, duration; delta's buy / sell) join when the auto set fits the dock (§5 L214)."""
+    fit. Auto columns (close time, duration; delta's buy / sell) join when the auto set fits the dock (§5 L215)."""
     w = k.dock_w(rail)
     rows_all, i0 = sweep_rows(mode)
     auto_cols = k.shown_columns(mode, auto=True)

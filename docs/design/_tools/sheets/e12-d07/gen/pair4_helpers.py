@@ -15,7 +15,7 @@ MODE = "time"
 SPAN = ("13:24", "13:42")  # build notes §4 row "04 states/all-words": 13:24-13:42, the forming bar last
 
 # §6's specimen rows on the all-words frame: hh:mm -> tagged words (forming and `no range` are derived, never tagged).
-# `corrected` lasts "until the next close" (§6 L225), so it sits on the last closed bar (13:41).
+# `corrected` lasts "until the next close" (§6 L226), so it sits on the last closed bar (13:41).
 SPECIMENS = {"13:25": ("POC",), "13:27": ("Est.",), "13:29": ("Est.", "POC"), "13:31": ("width capped",),
              "13:37": ("stale",), "13:41": ("corrected",)}
 WORD_LINE = {w: k.find_line(f"| `{w}`") for w in ("forming", "corrected", "stale", "width capped", "no range",
@@ -113,7 +113,7 @@ def stale_caption_frame(fid: str) -> tuple[k.Node, tuple[str, list[str]], list[k
     cap = k.caption_text(rows, MODE, loaded=loaded, feed_stale=True)
     assert cap.endswith("values as of 13:42:05"), cap
     focus = rows[-1]
-    focus = k.tag(focus, "stale")  # §6 L226: the forming row while the feed is Stale is stale too (forming shows first)
+    focus = k.tag(focus, "stale")  # §6 L227: the forming row while the feed is Stale is stale too (forming shows first)
     rows[-1] = focus
     body = [k.bar_row(b, cols, MODE, i + 1, focused=b is focus) for i, b in enumerate(rows)]
     t = k.table(body, w=w, h=k.table_room(), caption_chars=cap, header=k.header_row(cols, MODE),

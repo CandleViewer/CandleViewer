@@ -2,7 +2,7 @@
 
 File `E12-D07 boards`, page `E12-D07 SCR-045 data table`; export `docs/design/E12/img/E12-D07-10-separator-rows-light.png`; sheet `10-separator-rows-light.json` (validated); theme light.
 
-Board 10 of ten (§0 L83: light twin of 05). Grid (24000, 3200); 3280 x 1981 px; footer "page E12-D07 SCR-045 data table · board 10 · r1".
+Board 10 of ten (§0 L84: light twin of 05). Grid (24000, 3200); 3280 x 1981 px; footer "page E12-D07 SCR-045 data table · board 10 · r1".
 
 ## Frames
 
@@ -12,7 +12,7 @@ Board 10 of ten (§0 L83: light twin of 05). Grid (24000, 3200); 3280 x 1981 px;
 - SCR-045∕separators∕time-axis · light: 1280 x 800
 - SCR-045∕separators∕non-time · light caption: BTCUSDT Vol 50 BTC — 17 bars visible on the chart (2026-10-19 16:40–09:21 UTC) of 171 loaded · open 63,995.9 · close 63,989.2 (−0.01 %) · high 63,995.9 · low 63,982.7 · volume 850.742 · delta +15.250 · prices in USDT, volume in BTC · Bar order · not time · each bar closes at 50 BTC of volume · durations as h:mm:ss
 - SCR-045∕separators∕time-axis · light caption: top “BTCUSDT 1 m — 4 bars visible on the chart (2026-10-19 16:37–16:40 UTC) of 1,266 loaded · open 64,001.5 · close 63,992.8 (−0.01 %) · high 64,002.3 · low 63,992.7 · volume 122.802 · delta +6.480 · prices in USDT, volume in BTC”; bottom “BTCUSDT 1 m — 5 bars visible on the chart (2026-10-19 16:59–17:03 UTC) of 1,266 loaded · open 63,987.2 · close 63,989.3 (+0.00 %) · high 63,990.4 · low 63,986.2 · volume 111.320 · delta +8.530 · prices in USDT, volume in BTC”
-- sources: as board 05 (spec §7.1 L255–263, L265, §7.2 L269, §7.4 L276, §13; E11-D04 §10 L325); theme light (light twin of 05, §0)
+- sources: as board 05 (spec §7.1 L256–264, L266, §7.2 L270, §7.4 L277, §13; E11-D04 §10 L325); theme light (light twin of 05, §0)
 
 ## Validator and size
 
@@ -45,16 +45,16 @@ Board 10 of ten (§0 L83: light twin of 05). Grid (24000, 3200); 3280 x 1981 px;
 
 ## Copy keys (10)
 
-- W-7 (§13 L350, verbatim)
-- W-6 (§13 L349, verbatim)
-- W-2 (§13 L345, verbatim)
-- W-1 (§13 L344, verbatim)
-- W-10 (§13 L353, verbatim)
-- W-12 (§13 L355, PROPOSED, the registry's unit)
+- W-7 (§13 L351, verbatim)
+- W-6 (§13 L350, verbatim)
+- W-2 (§13 L346, verbatim)
+- W-1 (§13 L345, verbatim)
+- W-10 (§13 L354, verbatim)
+- W-12 (§13 L356, PROPOSED, the registry's unit)
 - loading-older: E11-D04's band (D04E11:325), unchanged
-- W-5 (§13 L348, verbatim)
-- W-3 (§13 L346, verbatim)
-- W-18 (§13 L361, PROPOSED)
+- W-5 (§13 L349, verbatim)
+- W-3 (§13 L347, verbatim)
+- W-18 (§13 L362, PROPOSED)
 
 ## Copy gaps (0)
 
@@ -65,7 +65,7 @@ Board 10 of ten (§0 L83: light twin of 05). Grid (24000, 3200); 3280 x 1981 px;
 
 ## Sources (1)
 
-- spec E12-D07.md md5 561a7fee (§0 L83); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 299bc3f6 (§0 L84); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (32)
 

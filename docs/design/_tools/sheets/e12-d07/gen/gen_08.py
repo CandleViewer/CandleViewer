@@ -1,5 +1,5 @@
-"""E12-D07 board 08 `reflow-200` (dark): §0 L81 — the tick set at 640 CSS px (200 %): the stacked block with close
-time and duration (§5 L214). Frame (hand-off §H L106): reflow/tick-200, the 1280 x 800 window at 200 % drawn as
+"""E12-D07 board 08 `reflow-200` (dark): §0 L82 — the tick set at 640 CSS px (200 %): the stacked block with close
+time and duration (§5 L215). Frame (hand-off §H L106): reflow/tick-200, the 1280 x 800 window at 200 % drawn as
 640 x 400 CSS px, the chart panel maximised (D04E11:214 step 3, no hint when maximised); export at 2x (A-6).
 Writes build/08-reflow-200.json (validated), 08-reflow-200.md beside the kit, and packs v4/.
 Usage: python3 -I -B gen/gen_08.py

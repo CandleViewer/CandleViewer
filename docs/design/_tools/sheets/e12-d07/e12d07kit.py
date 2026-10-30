@@ -57,7 +57,7 @@ SPEC = _repo("docs/design/E12/E12-D07.md")
 HANDOFF = _repo("docs/design/E12/E12-D07-handoff.md")
 SHELL = _repo("docs/design/E11/E11-D04.md")
 D06 = _repo("docs/design/E12/E12-D06.md")
-SPEC_MD5 = {SPEC.name: "561a7fee320d3d728e5ab74c1448497e", HANDOFF.name: "5f7f9099d51cd9182539b94221f8b627",
+SPEC_MD5 = {SPEC.name: "299bc3f63790220d0aa71a682442010f", HANDOFF.name: "5f7f9099d51cd9182539b94221f8b627",
             SHELL.name: "02f3ff690f4c840aebb734889d0a17c6", D06.name: "b9a9bc5790d48a240c24e915d4d046a6"}
 
 FILE_NAME = "E12-D07 boards"
@@ -213,6 +213,7 @@ class Column:
     def width(self, mode: str) -> int:
         """Cell width in CSS px: chars x 6.6 (11 px mono, 0.6 em) + 16 (8 px padding a side), §5's arithmetic."""
         ch = self.chars[0] if mode == "time" else self.chars[1]
+        ch = max(ch, len(self.name))  # the header word fits too (§0, D07-C17): only `brick` grows, 4 -> 5
         return round(ch * 6.6 + 16)
 
 

@@ -3,7 +3,7 @@
 Spec (binding; every string comes from it): `docs/design/E12/E12-D07.md` (§0 the ten boards; §2 row header; §3 the
 column sets; §4 chart-type cells; §5 widths; §6 `state` words; §7 separator rows and captions; §9 sync; §13 the copy
 deck W-1..W-22; §14 tokens) and `docs/design/E12/E12-D07-handoff.md` (§H the frames; §E the owner walkthrough), read
-from this checkout by repo-relative path, as this PR commits them (md5 pins in the kit's `SPEC_MD5`: spec `561a7fee`,
+from this checkout by repo-relative path, as this PR commits them (md5 pins in the kit's `SPEC_MD5`: spec `299bc3f6`,
 hand-off `5f7f9099`, E11-D04 `02f3ff69`, E12-D06 `b9a9bc57`; the kit refuses to run on drifted bytes, so every
 `L<n>` cite, looked up by `k.L` / `k.HL`, holds against the committed text). The SCR-045 shell is E11-D04's
 (`docs/design/E11/E11-D04.md` §2 anatomy, §5 columns/200 %, §6 rows, §7 banner, §10 table states): consume it, never
@@ -174,6 +174,8 @@ specimens (forming and `no range` are derived, never tagged). `k.at(mode, "10:22
   it inside the visible-range clause "(2026-10-20 10:09–10:39 UTC)".
 - **A-12 (buy/sell text colour).** `color.text.buy` / `color.text.sell` are unregistered (E11-D04 CR-D04-2); drawn as
   `color.buy.default` / `color.sell.default` (fallback line), the sign is the carrier.
+- **A-13 (`brick` width).** §3.1 and §5 count `brick` at 4 characters, from its values; the header word is 5,
+  so the kit sizes every column to fit its header too (`Column.width`), and only `brick` grows (49 px; §0, D07-C17).
 
 ## 7. Pairs for the five board authors (a light twin goes with its base board)
 

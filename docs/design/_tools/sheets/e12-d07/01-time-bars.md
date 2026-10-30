@@ -2,7 +2,7 @@
 
 File `E12-D07 boards`, page `E12-D07 SCR-045 data table`; export `docs/design/E12/img/E12-D07-01-time-bars.png`; sheet `01-time-bars.json` (validated); theme dark.
 
-Board 01 of ten (§0 L74): the time-mode set (§3), the caption with its units (§7.4), `forming` and `—` in `state`, the sort chip with the forming row last. Three 1280 × 800 windows, one chart panel each (RightRail strip, dock 1,168 CSS px), compact density, dark.
+Board 01 of ten (§0 L75): the time-mode set (§3), the caption with its units (§7.4), `forming` and `—` in `state`, the sort chip with the forming row last. Three 1280 × 800 windows, one chart panel each (RightRail strip, dock 1,168 CSS px), compact density, dark.
 
 ## Frames
 
@@ -33,7 +33,7 @@ Board 01 of ten (§0 L74): the time-mode set (§3), the caption with its units (
 
 ## Spec gaps (3)
 
-- CVD: E11-D04 D3 (D04E11:116) has CVD rejoin automatically at ≥ 708 CSS px; §3.1 (L164) tiers it E. The 1,168 px panel is wider than 708, but the board draws §3.1's set (the kit's reading for every board); flag for the set's consistency review
+- CVD: E11-D04 D3 (D04E11:116) has CVD rejoin automatically at ≥ 708 CSS px; §3.1 (L165) tiers it E. The 1,168 px panel is wider than 708, but the board draws §3.1's set (the kit's reading for every board); flag for the set's consistency review
 - sort order of rows whose delta is — : not ruled; avoided here (the loaded series holds trade-built bars only, so every closed row has a delta)
 - the separator row's text for this load (kline hole meeting the 09:15 restart) is §7.1's “No bars for 17:02–09:14 UTC · Series restarted 09:15 UTC”; it is off-screen in all three frames
 
@@ -41,7 +41,7 @@ Board 01 of ten (§0 L74): the time-mode set (§3), the caption with its units (
 
 ## Copy keys (1)
 
-- W-17 (§13 L360, PROPOSED)
+- W-17 (§13 L361, PROPOSED)
 
 ## Copy gaps (0)
 
@@ -52,7 +52,7 @@ Board 01 of ten (§0 L74): the time-mode set (§3), the caption with its units (
 
 ## Sources (1)
 
-- spec E12-D07.md md5 561a7fee (§0 L74); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 299bc3f6 (§0 L75); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (32)
 

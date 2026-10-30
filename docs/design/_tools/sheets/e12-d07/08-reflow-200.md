@@ -2,14 +2,14 @@
 
 File `E12-D07 boards`, page `E12-D07 SCR-045 data table`; export `docs/design/E12/img/E12-D07-08-reflow-200.png`; sheet `08-reflow-200.json` (validated); theme dark.
 
-Board 08 of ten (§0 L81: the tick set at 640 CSS px (200 %): the stacked block with close time and duration (§5)). Grid (12000, 3200); 1280 x 1253 px; footer "page E12-D07 SCR-045 data table · board 08 · r1".
+Board 08 of ten (§0 L82: the tick set at 640 CSS px (200 %): the stacked block with close time and duration (§5)). Grid (12000, 3200); 1280 x 1253 px; footer "page E12-D07 SCR-045 data table · board 08 · r1".
 
 ## Frames
 
 - `SCR-045∕reflow∕tick-200 · dark`
-- reflow/tick-200: tick, maximised panel 640 × 400 CSS px, stacked blocks (spec §5 L207, L214; E11-D04 :214)
+- reflow/tick-200: tick, maximised panel 640 × 400 CSS px, stacked blocks (spec §5 L208, L215; E11-D04 :214)
 - Walkthrough (hand-off §E L65): at 200 % the stacked block keeps every value of the tick row
-- Copy: W-10 (spec L353), W-11 (L354); theme dark; export docs/design/E12/img/E12-D07-08-reflow-200.png at 2x
+- Copy: W-10 (spec L354), W-11 (L355); theme dark; export docs/design/E12/img/E12-D07-08-reflow-200.png at 2x
 
 ## Validator and size
 
@@ -28,7 +28,7 @@ Board 08 of ten (§0 L81: the tick set at 640 CSS px (200 %): the stacked block 
 
 ## Spec gaps (4)
 
-- A-2: bars 1–4 of 5 close at their open millisecond (duration 0:00.0) under §2.2 L135's rule; the focused bar 5 of 5 carries a non-zero duration; L137's example string is not drawn
+- A-2: bars 1–4 of 5 close at their open millisecond (duration 0:00.0) under §2.2 L136's rule; the focused bar 5 of 5 carries a non-zero duration; L138's example string is not drawn
 - A-6: no token scales type 2×; the frame is drawn in CSS px (640 × 400) and exported at 2x
 - A-8: seeded synthetic stream; tick size and qty step from the recorded instrument fixture
 - A-12: buy / sell text tokens unregistered: color.buy.default / color.sell.default, the sign carries it
@@ -39,8 +39,8 @@ Board 08 of ten (§0 L81: the tick set at 640 CSS px (200 %): the stacked block 
 
 ## Copy keys (2)
 
-- W-10 (§13 L353, verbatim)
-- W-11 (§13 L354, PROPOSED, the registry's unit)
+- W-10 (§13 L354, verbatim)
+- W-11 (§13 L355, PROPOSED, the registry's unit)
 
 ## Copy gaps (0)
 
@@ -50,7 +50,7 @@ Board 08 of ten (§0 L81: the tick set at 640 CSS px (200 %): the stacked block 
 
 ## Sources (1)
 
-- spec E12-D07.md md5 561a7fee (§0 L81); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 299bc3f6 (§0 L82); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (27)
 

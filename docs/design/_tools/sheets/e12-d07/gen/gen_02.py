@@ -1,4 +1,4 @@
-"""E12-D07 board 02 `tick-volume-delta` (dark): §0 L74 — the non-time row header (§2.2); tick's `trades`; the volume
+"""E12-D07 board 02 `tick-volume-delta` (dark): §0 L76 — the non-time row header (§2.2); tick's `trades`; the volume
 and delta variants as frames of one board, delta's `buy` and `sell` among them; `close time` and `duration` as auto
 columns. Frames (hand-off §H L100): tick/default, tick/wide-auto, volume/default, delta/default (2 x 2).
 Writes build/02-tick-volume-delta.json (validated), 02-tick-volume-delta.md beside the kit, and packs v4/.

@@ -2,14 +2,14 @@
 
 File `E12-D07 boards`, page `E12-D07 SCR-045 data table`; export `docs/design/E12/img/E12-D07-03-range-renko.png`; sheet `03-range-renko.json` (validated); theme dark.
 
-Board 03 of ten (§0 L76: `range` in ticks; `brick` as a word; a seam inside the renko rows). Grid (12000, 0); 4640 x 2587 px; footer "page E12-D07 SCR-045 data table · board 03 · r1".
+Board 03 of ten (§0 L77: `range` in ticks; `brick` as a word; a seam inside the renko rows). Grid (12000, 0); 4640 x 2587 px; footer "page E12-D07 SCR-045 data table · board 03 · r1".
 
 ## Frames
 
 - `SCR-045∕range∕default · dark`
 - `SCR-045∕renko∕default · dark`
 - `SCR-045∕renko∕seam · dark`
-- sources: spec §0 L76; §2.2 L132; §3.1 range L159, brick L160; §3.2 L169; §5 L200; §7.1 seam L255; §7.2 L267; §7.4 L276; §13 W-1 L344, W-10 L353, W-13 L356, W-15 L358; hand-off §H L101
+- sources: spec §0 L77; §2.2 L133; §3.1 range L160, brick L161; §3.2 L170; §5 L201; §7.1 seam L256; §7.2 L268; §7.4 L277; §13 W-1 L345, W-10 L354, W-13 L357, W-15 L359; hand-off §H L101
 - theme dark; export docs/design/E12/img/E12-D07-03-range-renko.png
 
 ## Validator and size
@@ -40,10 +40,10 @@ Board 03 of ten (§0 L76: `range` in ticks; `brick` as a word; a seam inside the
 
 ## Copy keys (4)
 
-- W-10 (§13 L353, verbatim)
-- W-13 (§13 L356, PROPOSED, the registry's unit)
-- W-15 (§13 L358, PROPOSED, the registry's unit)
-- W-1 (§13 L344, verbatim)
+- W-10 (§13 L354, verbatim)
+- W-13 (§13 L357, PROPOSED, the registry's unit)
+- W-15 (§13 L359, PROPOSED, the registry's unit)
+- W-1 (§13 L345, verbatim)
 
 ## Copy gaps (0)
 
@@ -54,7 +54,7 @@ Board 03 of ten (§0 L76: `range` in ticks; `brick` as a word; a seam inside the
 
 ## Sources (1)
 
-- spec E12-D07.md md5 561a7fee (§0 L76); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 299bc3f6 (§0 L77); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (32)
 

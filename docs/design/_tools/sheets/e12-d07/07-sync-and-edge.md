@@ -2,13 +2,13 @@
 
 File `E12-D07 boards`, page `E12-D07 SCR-045 data table`; export `docs/design/E12/img/E12-D07-07-sync-and-edge.png`; sheet `07-sync-and-edge.json` (validated); theme dark.
 
-Board 07 of ten (§0 L80: the crosshair before the loaded window: the first loaded row under its boundary row (§9.1); the stale banner naming a non-time bar (§9.1, W-22)). Grid (6000, 3200); 3280 x 2148 px; footer "page E12-D07 SCR-045 data table · board 07 · r1".
+Board 07 of ten (§0 L81: the crosshair before the loaded window: the first loaded row under its boundary row (§9.1); the stale banner naming a non-time bar (§9.1, W-22)). Grid (6000, 3200); 3280 x 2148 px; footer "page E12-D07 SCR-045 data table · board 07 · r1".
 
 ## Frames
 
 - `SCR-045∕sync∕before-loaded · dark`
 - `SCR-045∕sync∕stale-banner-non-time · dark`
-- sources: spec §0 L80; §2.2 L132; §7.1 L249; §7.2 L267; §9.1 L286; §13 W-16 L359, W-22 L365, W-10 L353, W-11 L354; E11-D04 §7 L266, loading-older L325; hand-off §H L105
+- sources: spec §0 L81; §2.2 L133; §7.1 L250; §7.2 L268; §9.1 L287; §13 W-16 L360, W-22 L366, W-10 L354, W-11 L355; E11-D04 §7 L266, loading-older L325; hand-off §H L105
 - theme dark; export docs/design/E12/img/E12-D07-07-sync-and-edge.png
 
 ## Validator and size
@@ -38,11 +38,11 @@ Board 07 of ten (§0 L80: the crosshair before the loaded window: the first load
 
 ## Copy keys (5)
 
-- W-10 (§13 L353, verbatim)
-- W-11 (§13 L354, PROPOSED, the registry's unit)
+- W-10 (§13 L354, verbatim)
+- W-11 (§13 L355, PROPOSED, the registry's unit)
 - loading-older: E11-D04's band (D04E11:325), unchanged
-- W-16 (§13 L359, PROPOSED)
-- W-22 (§13 L365, PROPOSED)
+- W-16 (§13 L360, PROPOSED)
+- W-22 (§13 L366, PROPOSED)
 
 ## Copy gaps (0)
 
@@ -53,7 +53,7 @@ Board 07 of ten (§0 L80: the crosshair before the loaded window: the first load
 
 ## Sources (1)
 
-- spec E12-D07.md md5 561a7fee (§0 L80); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 299bc3f6 (§0 L81); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (34)
 

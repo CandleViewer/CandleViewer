@@ -2,14 +2,14 @@
 
 File `E12-D07 boards`, page `E12-D07 SCR-045 data table`; export `docs/design/E12/img/E12-D07-06-chart-type-cells.png`; sheet `06-chart-type-cells.json` (validated); theme dark.
 
-Board 06 of ten (§0 L79): baseline `vs base`, delta-volume `buy` and `sell`, equi-volume `width capped` (§4). Three 1280 × 800 windows, one chart panel each (RightRail strip, dock 1,168 CSS px), compact density, dark.
+Board 06 of ten (§0 L80): baseline `vs base`, delta-volume `buy` and `sell`, equi-volume `width capped` (§4). Three 1280 × 800 windows, one chart panel each (RightRail strip, dock 1,168 CSS px), compact density, dark.
 
 ## Frames
 
 - `SCR-045∕chart-type∕baseline · dark`
 - `SCR-045∕chart-type∕delta-volume · dark`
 - `SCR-045∕chart-type∕equi-volume · dark`
-- `SCR-045∕chart-type∕baseline · dark`: time, Baseline, B 63,988.2, 20 rows; §4 L193, D06:163
+- `SCR-045∕chart-type∕baseline · dark`: time, Baseline, B 63,988.2, 20 rows; §4 L194, D06:163
 - `SCR-045∕chart-type∕delta-volume · dark`: Vol 50 BTC, Delta-volume, 20 rows + buy, sell; §4, W-10, W-12
 - `SCR-045∕chart-type∕equi-volume · dark`: time, Equi-volume, `state` 12 ch, 10:22 `width capped`; §4, §5, §6
 
@@ -43,8 +43,8 @@ Board 06 of ten (§0 L79): baseline `vs base`, delta-volume `buy` and `sell`, eq
 
 ## Copy keys (2)
 
-- W-10 (§13 L353, verbatim)
-- W-12 (§13 L355, PROPOSED, the registry's unit)
+- W-10 (§13 L354, verbatim)
+- W-12 (§13 L356, PROPOSED, the registry's unit)
 
 ## Copy gaps (0)
 
@@ -55,7 +55,7 @@ Board 06 of ten (§0 L79): baseline `vs base`, delta-volume `buy` and `sell`, eq
 
 ## Sources (1)
 
-- spec E12-D07.md md5 561a7fee (§0 L79); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 299bc3f6 (§0 L80); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (32)
 
