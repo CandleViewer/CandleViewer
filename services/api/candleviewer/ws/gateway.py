@@ -990,7 +990,7 @@ class _Connection:
         if snap and self.system_snapped:
             return
         if not snap and not self.system_snapped:  # the snap goes first; this follows it
-            if len(self.system_held) == SYSTEM_HELD_MAX:  # the oldest goes; never silently
+            if len(self.system_held) == self.system_held.maxlen:  # the oldest goes; counted
                 cv_ws_system_frames_withheld_total.labels(reason="held_overflow").inc()
                 if not self.system_held_overflowed:
                     self.system_held_overflowed = True

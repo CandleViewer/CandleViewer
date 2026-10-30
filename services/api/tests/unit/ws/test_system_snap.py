@@ -219,16 +219,20 @@ async def test_the_late_snap_of_a_socket_that_gained_a_role_is_followed_by_the_n
 def test_a_hold_past_its_bound_keeps_the_newest_and_counts_each_drop() -> None:
     """Fable Minor 1 on #5039: the hold before the snap is bounded (C-2.18); past it the oldest
     goes, never silently: each drop is counted as `held_overflow`."""
-    from candleviewer.ws.gateway import SYSTEM_HELD_MAX
-    from candleviewer.ws.metrics import cv_ws_system_frames_withheld_total
+    from prometheus_client import REGISTRY
 
-    counter = cv_ws_system_frames_withheld_total.labels(reason="held_overflow")
-    before = counter._value.get()
+    from candleviewer.ws.gateway import SYSTEM_HELD_MAX
+
+    def count() -> float:
+        name, labels = "cv_ws_system_frames_withheld_total", {"reason": "held_overflow"}
+        return REGISTRY.get_sample_value(name, labels) or 0.0
+
+    before = count()
     conn = _bare(OWNER)
     bodies = [dict(NOTICE, reason=f"r{i}") for i in range(SYSTEM_HELD_MAX + 3)]
     for body in bodies:
         conn.push_system(body)
-    assert counter._value.get() - before == 3
+    assert count() - before == 3
     conn.push_system(_SNAP_BODY, snap=True)
     frames = []
     while not conn.outbound.empty():
