@@ -3605,7 +3605,7 @@ CREATE TABLE hotkey_profiles (
   owner_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name          text NOT NULL,
   is_active     boolean NOT NULL DEFAULT false,
-  bindings      jsonb NOT NULL,   -- {"order.buy_market":["b"],"order.flatten_all":["ctrl+shift+f"],…}
+  bindings      jsonb NOT NULL,   -- {"ticket.side_buy":["B"],"positions.close_all":["Ctrl+Shift+W"],…}
   scheme_base   text NOT NULL DEFAULT 'candleviewer',  -- candleviewer | tradingview | sierra
   requires_arm  boolean NOT NULL DEFAULT true,         -- trading hotkeys need the arm toggle
   created_at    timestamptz NOT NULL DEFAULT now(),
@@ -3618,7 +3618,15 @@ CREATE UNIQUE INDEX ux_hk_name   ON hotkey_profiles (owner_user_id, lower(name))
 CREATE UNIQUE INDEX ux_hk_active ON hotkey_profiles (owner_user_id) WHERE is_active AND deleted_at IS NULL;
 ```
 
-Conflict detection (two actions on one chord) is a save-time application check with the offending chord returned as a 422; it is not expressible as a SQL constraint over JSONB without a trigger, and the trigger `trg_hk_conflicts` implements it by expanding `bindings` values and asserting uniqueness.
+The keys of `bindings` are command ids of the client's default keymap,
+`apps/web/src/keymap/keymap.json`, the one action vocabulary (`22` `HotkeyBinding.action`); the
+chords use `22`'s notation. A binding's scope is not stored: it follows from its command's keymap
+context by the fixed table under `22` `HotkeyBinding.scope` (E10-S02, #305).
+
+Conflict detection is an application check at save time, not a trigger, because a binding's scope is
+derived from its id rather than stored: two bindings conflict when they share a chord within an
+overlapping scope, and the save is refused with `409 conflict` naming the pair, as `22`
+`createHotkeyProfile` states.
 
 #### 3.8.6 `watchlists`
 
@@ -5276,26 +5284,11 @@ built-in's name.
 
 ### 10.6 Default hotkey profile (`CandleViewer Default`, `requires_arm = true`)
 
-| Action                          | Chord                 |
-| ------------------------------- | --------------------- |
-| `order.buy_market`              | `B`                   |
-| `order.sell_market`             | `S`                   |
-| `order.buy_bid`                 | `Shift+B`             |
-| `order.sell_ask`                | `Shift+S`             |
-| `order.submit`                  | `Ctrl+Enter`          |
-| `order.cancel_all_symbol`       | `Esc`                 |
-| `order.flatten_symbol`          | `Ctrl+Shift+F`        |
-| `order.flatten_all`             | `Ctrl+Alt+Shift+F`    |
-| `order.reverse`                 | `Ctrl+R`              |
-| `size.preset_1..5`              | `1`–`5`               |
-| `trading.arm_toggle`            | `Ctrl+Shift+A`        |
-| `layout.preset_1..9`            | `Ctrl+1`–`Ctrl+9`     |
-| `replay.play_pause`             | `Space`               |
-| `replay.step_bar_fwd` / `back`  | `→` / `←`             |
-| `replay.step_tick_fwd` / `back` | `Shift+→` / `Shift+←` |
-| `replay.jump_realtime`          | `R`                   |
-| `chart.crosshair_sync_toggle`   | `Ctrl+K`              |
-| `symbol.search`                 | `Ctrl+P`              |
+Its bindings are **not listed here**. They are the client's default keymap,
+`apps/web/src/keymap/keymap.json`, the single source of the default hotkeys (E49-T04): its command
+ids, the one action vocabulary (`22` `HotkeyBinding.action`, #305), each with its default chord, as
+`scripts/keymap_lint.py --docs` renders them in `docs/generated/default-keymap.md`. A copy here
+would drift from that file.
 
 Env switching has **no** hotkey by design (digest 23: must be a deliberate click).
 

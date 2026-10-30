@@ -5202,7 +5202,8 @@ class HotkeyBinding(BaseModel):
     action: Annotated[
         str,
         Field(
-            examples=["order.buy_market", "position.flatten", "chart.toggle_footprint"],
+            description="A command id of the client's default keymap, `apps/web/src/keymap/keymap.json` (E49-T04), which is the one action vocabulary; `HotkeyBindingAuditInput.command_id` carries the same ids. No parallel set of action names exists.",
+            examples=["ticket.side_buy", "positions.close_all", "chart.footprint_toggle"],
             max_length=60,
         ),
     ]
@@ -5213,7 +5214,26 @@ class HotkeyBinding(BaseModel):
             max_length=60,
         ),
     ]
-    scope: Literal["global", "chart", "dom", "tape", "orders", "positions"]
+    scope: Annotated[
+        Literal[
+            "global",
+            "chart",
+            "dom",
+            "tape",
+            "orders",
+            "positions",
+            "auth",
+            "workspace",
+            "ticket",
+            "replay",
+            "rules",
+            "admin",
+            "settings",
+        ],
+        Field(
+            description="The view the binding is active in (E10-S02, #305). It is fixed by the action: the\nscope that the `context` of its `keymap.json` command maps to in this table. The table\ngoes by `context`, not by id prefix: `global.auth.submit` is an `Auth` command, so its\nscope is `auth`.\n\n| `keymap.json` context | `scope`     |\n| --------------------- | ----------- |\n| `Global`              | `global`    |\n| `Auth`                | `auth`      |\n| `Workspace`           | `workspace` |\n| `Chart`               | `chart`     |\n| `DOM`                 | `dom`       |\n| `Ticket`              | `ticket`    |\n| `Positions`           | `positions` |\n| `Replay`              | `replay`    |\n| `Rules`               | `rules`     |\n| `Admin`               | `admin`     |\n| `Settings`            | `settings`  |\n\nSeven contexts had no scope among the original six, so each has its own (`auth`,\n`workspace`, `ticket`, `replay`, `rules`, `admin`, `settings`) rather than a fold into\nanother scope. The defaults reuse a key in contexts the keymap declares never active\ntogether (`B` is `ticket.side_buy` and `replay.bookmark`; `Enter` is\n`global.auth.submit`, `positions.open_sltp` and `rules.inspect_node`), and one shared\nscope would make each such pair a `conflict` under `createHotkeyProfile`'s rule. The\norder ticket is `ticket`, not `orders`: `05-accessibility-standard.md` §3.4 makes the\nOrder Ticket and Positions & Orders separate regions. `tape` and `orders` have no\nclient context yet. **Open-ended for readers:** clients must tolerate values they do\nnot know, so adding a scope is an additive change (C-6.3). Writers must send a listed\nvalue, the one this table gives the action.\n"
+        ),
+    ]
     requires_arm: Annotated[
         StrictBool,
         Field(

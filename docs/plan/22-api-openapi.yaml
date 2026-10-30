@@ -10554,61 +10554,60 @@ paths:
                         is_active: true
                         bindings:
                           - {
-                              action: order.buy_market,
-                              keys: "F1",
-                              scope: chart,
-                              requires_arm: true,
-                            }
-                          - {
-                              action: order.sell_market,
-                              keys: "F2",
-                              scope: chart,
-                              requires_arm: true,
-                            }
-                          - {
-                              action: order.buy_bid,
-                              keys: "Shift+F1",
-                              scope: dom,
-                              requires_arm: true,
-                            }
-                          - {
-                              action: position.flatten,
-                              keys: "Ctrl+Shift+F",
-                              scope: global,
-                              requires_arm: false,
-                              confirm: true,
-                            }
-                          - {
-                              action: position.reverse,
-                              keys: "Ctrl+Shift+R",
-                              scope: global,
-                              requires_arm: true,
-                              confirm: true,
-                            }
-                          - {
-                              action: orders.cancel_all,
-                              keys: "Esc Esc",
-                              scope: global,
-                              requires_arm: false,
-                              confirm: false,
-                            }
-                          - {
-                              action: killswitch.engage,
-                              keys: "Ctrl+Alt+K",
-                              scope: global,
-                              requires_arm: false,
-                              confirm: true,
-                            }
-                          - {
-                              action: chart.cycle_bar_type,
+                              action: ticket.side_buy,
                               keys: "B",
-                              scope: chart,
+                              scope: ticket,
                               requires_arm: false,
                             }
                           - {
-                              action: chart.toggle_footprint,
+                              action: ticket.submit,
+                              keys: "Ctrl+Enter",
+                              scope: ticket,
+                              requires_arm: true,
+                              confirm: true,
+                            }
+                          - {
+                              action: dom.cancel_all,
+                              keys: "Ctrl+Shift+X",
+                              scope: dom,
+                              requires_arm: false,
+                              confirm: true,
+                            }
+                          - {
+                              action: positions.close_all,
+                              keys: "Ctrl+Shift+W",
+                              scope: positions,
+                              requires_arm: false,
+                              confirm: true,
+                            }
+                          - {
+                              action: chart.footprint_toggle,
                               keys: "F",
                               scope: chart,
+                              requires_arm: false,
+                            }
+                          - {
+                              action: replay.play_pause,
+                              keys: "Space",
+                              scope: replay,
+                              requires_arm: false,
+                            }
+                          - {
+                              action: rules.graph_mode,
+                              keys: "Alt+G",
+                              scope: rules,
+                              requires_arm: false,
+                            }
+                          - {
+                              action: workspace.save,
+                              keys: "Ctrl+S",
+                              scope: workspace,
+                              requires_arm: false,
+                            }
+                          - {
+                              action: global.account_picker,
+                              keys: "Ctrl+Shift+A",
+                              scope: global,
                               requires_arm: false,
                             }
                         updated_at: "2026-09-10T11:00:00Z"
@@ -22564,7 +22563,8 @@ components:
           {
             type: string,
             maxLength: 60,
-            examples: ["order.buy_market", "position.flatten", "chart.toggle_footprint"],
+            description: "A command id of the client's default keymap, `apps/web/src/keymap/keymap.json` (E49-T04), which is the one action vocabulary; `HotkeyBindingAuditInput.command_id` carries the same ids. No parallel set of action names exists.",
+            examples: ["ticket.side_buy", "positions.close_all", "chart.footprint_toggle"],
           }
         keys:
           {
@@ -22572,7 +22572,55 @@ components:
             maxLength: 60,
             description: "Chord notation, e.g. `Ctrl+Shift+F` or a sequence `Esc Esc`.",
           }
-        scope: { type: string, enum: [global, chart, dom, tape, orders, positions] }
+        scope:
+          type: string
+          enum:
+            [
+              global,
+              chart,
+              dom,
+              tape,
+              orders,
+              positions,
+              auth,
+              workspace,
+              ticket,
+              replay,
+              rules,
+              admin,
+              settings,
+            ]
+          description: |
+            The view the binding is active in (E10-S02, #305). It is fixed by the action: the
+            scope that the `context` of its `keymap.json` command maps to in this table. The table
+            goes by `context`, not by id prefix: `global.auth.submit` is an `Auth` command, so its
+            scope is `auth`.
+
+            | `keymap.json` context | `scope`     |
+            | --------------------- | ----------- |
+            | `Global`              | `global`    |
+            | `Auth`                | `auth`      |
+            | `Workspace`           | `workspace` |
+            | `Chart`               | `chart`     |
+            | `DOM`                 | `dom`       |
+            | `Ticket`              | `ticket`    |
+            | `Positions`           | `positions` |
+            | `Replay`              | `replay`    |
+            | `Rules`               | `rules`     |
+            | `Admin`               | `admin`     |
+            | `Settings`            | `settings`  |
+
+            Seven contexts had no scope among the original six, so each has its own (`auth`,
+            `workspace`, `ticket`, `replay`, `rules`, `admin`, `settings`) rather than a fold into
+            another scope. The defaults reuse a key in contexts the keymap declares never active
+            together (`B` is `ticket.side_buy` and `replay.bookmark`; `Enter` is
+            `global.auth.submit`, `positions.open_sltp` and `rules.inspect_node`), and one shared
+            scope would make each such pair a `conflict` under `createHotkeyProfile`'s rule. The
+            order ticket is `ticket`, not `orders`: `05-accessibility-standard.md` §3.4 makes the
+            Order Ticket and Positions & Orders separate regions. `tape` and `orders` have no
+            client context yet. **Open-ended for readers:** clients must tolerate values they do
+            not know, so adding a scope is an additive change (C-6.3). Writers must send a listed
+            value, the one this table gives the action.
         requires_arm:
           {
             type: boolean,

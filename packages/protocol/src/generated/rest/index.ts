@@ -8524,9 +8524,10 @@ export interface components {
     };
     HotkeyBinding: {
       /**
-       * @example order.buy_market
-       * @example position.flatten
-       * @example chart.toggle_footprint
+       * @description A command id of the client's default keymap, `apps/web/src/keymap/keymap.json` (E49-T04), which is the one action vocabulary; `HotkeyBindingAuditInput.command_id` carries the same ids. No parallel set of action names exists.
+       * @example ticket.side_buy
+       * @example positions.close_all
+       * @example chart.footprint_toggle
        */
       action: string;
       /** @default false */
@@ -8541,8 +8542,53 @@ export interface components {
        * @default true
        */
       requires_arm: boolean;
-      /** @enum {string} */
-      scope: "global" | "chart" | "dom" | "tape" | "orders" | "positions";
+      /**
+       * @description The view the binding is active in (E10-S02, #305). It is fixed by the action: the
+       *     scope that the `context` of its `keymap.json` command maps to in this table. The table
+       *     goes by `context`, not by id prefix: `global.auth.submit` is an `Auth` command, so its
+       *     scope is `auth`.
+       *
+       *     | `keymap.json` context | `scope`     |
+       *     | --------------------- | ----------- |
+       *     | `Global`              | `global`    |
+       *     | `Auth`                | `auth`      |
+       *     | `Workspace`           | `workspace` |
+       *     | `Chart`               | `chart`     |
+       *     | `DOM`                 | `dom`       |
+       *     | `Ticket`              | `ticket`    |
+       *     | `Positions`           | `positions` |
+       *     | `Replay`              | `replay`    |
+       *     | `Rules`               | `rules`     |
+       *     | `Admin`               | `admin`     |
+       *     | `Settings`            | `settings`  |
+       *
+       *     Seven contexts had no scope among the original six, so each has its own (`auth`,
+       *     `workspace`, `ticket`, `replay`, `rules`, `admin`, `settings`) rather than a fold into
+       *     another scope. The defaults reuse a key in contexts the keymap declares never active
+       *     together (`B` is `ticket.side_buy` and `replay.bookmark`; `Enter` is
+       *     `global.auth.submit`, `positions.open_sltp` and `rules.inspect_node`), and one shared
+       *     scope would make each such pair a `conflict` under `createHotkeyProfile`'s rule. The
+       *     order ticket is `ticket`, not `orders`: `05-accessibility-standard.md` §3.4 makes the
+       *     Order Ticket and Positions & Orders separate regions. `tape` and `orders` have no
+       *     client context yet. **Open-ended for readers:** clients must tolerate values they do
+       *     not know, so adding a scope is an additive change (C-6.3). Writers must send a listed
+       *     value, the one this table gives the action.
+       * @enum {string}
+       */
+      scope:
+        | "global"
+        | "chart"
+        | "dom"
+        | "tape"
+        | "orders"
+        | "positions"
+        | "auth"
+        | "workspace"
+        | "ticket"
+        | "replay"
+        | "rules"
+        | "admin"
+        | "settings";
     };
     HotkeyBindingAuditInput: {
       acknowledged_unsafe: boolean;
