@@ -346,8 +346,14 @@ async def test_pages_read_their_index_in_order_and_never_sort_every_row(
         pg_dsn, "INSERT INTO user_account_access (user_id, exchange_account_id, can_view) "
         "VALUES (%s, %s, true)", manager, BULK_1,
     )  # fmt: skip
-    deep = Keyset(start + timedelta(seconds=1_000), uuid4())  # 149,000 rows down each account
+    # #5037: deep, yet 75,000 rows still below the cursor on each account. Near the end of the
+    # history (the earlier 999 rows) reading every remaining row cost about as much as a page, so
+    # the CI planner's choice between them was a coin toss on its sampled statistics; here a read
+    # of every remaining row costs hundreds of pages, so only the indexed page read is chosen.
+    deep = Keyset(start + timedelta(seconds=_BULK // 2), uuid4())
     limit, owner, grant = 101, OwnerScope(OWNER), GrantScope(manager, frozenset({BULK_1}))
+    below = int((deep.at - start).total_seconds()) - 1  # rows n = 1 .. below sort under the cursor
+    assert below >= 100 * limit, below  # a full read must cost far more than a page (#5037)
     cases = [
         ("grant, one account", grant, [BULK_1], None),
         ("owner, two accounts", owner, bulk, None),
