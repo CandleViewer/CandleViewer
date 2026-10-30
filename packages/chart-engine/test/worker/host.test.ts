@@ -406,7 +406,10 @@ describe("Scenario: Worker death is recovered", () => {
     expect(inboxOf(second, "command")).toContainEqual(
       expect.objectContaining({ cmd: { k: "setViewport", timeStart: 100, timeEnd: 200 } }),
     );
-    expect(seen["visibleRangeNeedsData"]).toEqual([{ fromTime: 100, toTime: 200 }]);
+    // The data layer pages the range the runtime derived (E11-S03: clamped in bar space).
+    const r = chart.timeScale.getVisibleRange();
+    expect(seen["visibleRangeNeedsData"]).toEqual([{ fromTime: r?.from, toTime: r?.to }]);
+    expect((r?.from ?? 0) - 100).toBeCloseTo(0, 6);
     expect(chart.getStats().renderProfile).toBe("full");
     await expect(pending).resolves.toMatch(/could not be encoded/);
     chart.dispose();

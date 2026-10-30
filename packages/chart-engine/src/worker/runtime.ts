@@ -11,6 +11,13 @@ import { acquireContext } from "../gl/context.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import * as scene from "../scene/index.js";
 import {
+  ChartViewport,
+  createPaneUniforms,
+  type PaneUniforms,
+  screenToTime,
+  writePaneUniforms,
+} from "../viewport/index.js";
+import {
   BACKGROUND_TOKEN,
   ENGINE_DECODE_ERROR,
   ENGINE_NO_WEBGL2,
@@ -77,8 +84,10 @@ interface Instance {
   canvas: CanvasLike;
   theme: ThemeLut;
   readonly config: ChartConfig;
-  widthCss: number;
-  dpr: number;
+  /** The shared transform (E11-S03): pan, zoom and `setViewport` all go through it. */
+  readonly viewport: ChartViewport;
+  /** Pane 0's GPU block, rewritten once per frame before submission. */
+  readonly uniforms: PaneUniforms;
   ready: boolean;
   /** The scheduler's requested frame, run by the shared callback; null while parked. */
   readonly slot: { frame: scene.FrameCallback | null };
@@ -93,8 +102,6 @@ interface Instance {
   loss: ContextLoss | null;
   /** Removes the context-loss listeners. */
   detach: (() => void) | null;
-  timeStart: number;
-  timeEnd: number;
   viewportDirty: boolean;
   summary: string;
   a11yDirty: boolean;
@@ -138,6 +145,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     canvas: () => CanvasLike,
     render: () => void,
     opened: (backend: GLBackend | null) => void,
+    viewport: ChartViewport,
   ) {
     const graph = new scene.SceneGraph();
     graph.addPane("main");
@@ -160,6 +168,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         builder.build(sink);
       },
       submit: render,
+      viewport,
     });
     function open(): void {
       if (gpu.backend !== undefined) return;
@@ -190,6 +199,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       if (!inst.gpu.forced) post(ENGINE_NO_WEBGL2, why, true);
       return;
     }
+    backend.setPaneUniforms(() => inst.uniforms); // one pane until E11-S09 (BQ-45)
     const c = inst.canvas;
     if (typeof c.addEventListener !== "function") return;
     const loss = new ContextLoss({
@@ -228,20 +238,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     inst.gpu.backend?.dispose();
   }
 
-  function setRange(inst: Instance, start: number, end: number): void {
-    if (!(end > start) || !Number.isFinite(start) || !Number.isFinite(end)) return;
-    inst.timeStart = start;
-    inst.timeEnd = end;
+  /** After a viewport setter: TRANSFORM, never DATA, so buffers are reused (a uniform write). */
+  function moved(inst: Instance, changed: boolean): void {
+    if (!changed) return;
     inst.viewportDirty = true;
-    inst.graph.markViewport(); // TRANSFORM, never DATA: buffers are reused
+    inst.graph.markViewport();
     touch(inst);
-  }
-
-  function zoomAt(inst: Instance, x: number, factor: number): void {
-    const span = inst.timeEnd - inst.timeStart;
-    const at = inst.widthCss > 0 ? x / inst.widthCss : 0.5;
-    const anchor = inst.timeStart + at * span;
-    setRange(inst, anchor - at * span * factor, anchor + (1 - at) * span * factor);
   }
 
   function crosshairAt(inst: Instance, timeUs: number | null): void {
@@ -257,22 +259,21 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       const type = ev[i] as number;
       const x = ev[i + 1] as number;
       const buttons = ev[i + 3] as number;
-      const span = inst.timeEnd - inst.timeStart;
+      const vp = inst.viewport;
+      // BQ-70: a factor > 1 zooms in, so a wheel down (positive delta) zooms out.
       if (type === INPUT.down) inst.dragX = x;
       else if (type === INPUT.up) inst.dragX = null;
-      else if (type === INPUT.wheel) zoomAt(inst, x, Math.exp(buttons * 0.002));
+      else if (type === INPUT.wheel) moved(inst, vp.zoomAt(x, Math.exp(-buttons * 0.002)));
       else if (type === INPUT.key) {
         if (x === KEY.zoomIn || x === KEY.zoomOut) {
-          zoomAt(inst, inst.widthCss / 2, x === KEY.zoomIn ? 0.8 : 1.25);
+          moved(inst, vp.zoomAt(vp.plotWidth / 2, x === KEY.zoomIn ? 1.25 : 0.8));
         }
       } else if (type === INPUT.move) {
-        if (inst.dragX !== null && (buttons & 1) === 1 && inst.widthCss > 0) {
-          const dt = ((x - inst.dragX) / inst.widthCss) * span;
+        if (inst.dragX !== null && (buttons & 1) === 1) {
+          moved(inst, vp.pan(x - inst.dragX)); // BQ-83: momentum is E11-S04's
           inst.dragX = x;
-          setRange(inst, inst.timeStart - dt, inst.timeEnd - dt);
         }
-        const w = inst.widthCss > 0 ? inst.widthCss : 1;
-        crosshairAt(inst, inst.timeStart + (x / w) * (inst.timeEnd - inst.timeStart));
+        crosshairAt(inst, screenToTime(vp, x));
       }
     }
   }
@@ -292,7 +293,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   function command(inst: Instance, cmd: Command): void {
     switch (cmd.k) {
       case "setViewport":
-        setRange(inst, cmd.timeStart, cmd.timeEnd);
+        moved(inst, inst.viewport.setTimeRange(cmd.timeStart, cmd.timeEnd));
         return;
       case "setTheme":
         inst.theme = cmd.theme;
@@ -336,7 +337,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if (msg.t === "sync") {
       for (const inst of charts.values()) {
         if (inst.config.syncGroup !== msg.groupId) continue;
-        setRange(inst, msg.timeRange[0], msg.timeRange[1]);
+        moved(inst, inst.viewport.setTimeRange(msg.timeRange[0], msg.timeRange[1]));
         crosshairAt(inst, msg.crosshair);
       }
       return;
@@ -348,26 +349,29 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       if (old !== undefined) retire(old);
       const slot: Instance["slot"] = { frame: null };
       const gpu: Instance["gpu"] = { backend: undefined, forced: msg.profile === "degraded-2d" };
+      const c = msg.canvas as CanvasLike;
+      const viewport = new ChartViewport();
+      viewport.setSize(c.width / msg.dpr, c.height / msg.dpr, msg.dpr);
+      viewport.setPanePlot(0, 0, c.height / msg.dpr);
       const scene = createScene(
         slot,
         gpu,
         () => inst.canvas,
         () => render(inst),
         (backend) => opened(inst, backend),
+        viewport,
       );
       const inst: Instance = {
         ...scene,
         slot,
         gpu,
         id: msg.id,
-        canvas: msg.canvas as CanvasLike,
+        canvas: c,
         theme: msg.theme,
         config: msg.config,
-        widthCss: (msg.canvas as CanvasLike).width / msg.dpr,
-        dpr: msg.dpr,
+        viewport,
+        uniforms: createPaneUniforms(),
         ready: false,
-        timeStart: 0,
-        timeEnd: 1,
         viewportDirty: false,
         summary: "",
         a11yDirty: false,
@@ -393,8 +397,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "resize":
         inst.canvas.width = Math.max(1, Math.round(msg.width * msg.dpr));
         inst.canvas.height = Math.max(1, Math.round(msg.height * msg.dpr));
-        inst.widthCss = msg.width;
-        inst.dpr = msg.dpr;
+        inst.viewport.setPanePlot(0, 0, msg.height);
+        moved(inst, inst.viewport.setSize(msg.width, msg.height, msg.dpr));
         inst.layout.setSize(msg.width, msg.height); // LAYOUT: recomputed on the next frame only
         touch(inst);
         return;
@@ -427,6 +431,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     const { width, height } = inst.canvas;
     if (backend !== null && backend.failure === null) {
+      writePaneUniforms(inst.viewport, 0, inst.uniforms); // once per pane per frame (§3.5)
       backend.setBackground(inst.theme[BACKGROUND_TOKEN]);
       const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
       // The R1 budget closes on the first complete frame after a restore (BQ-49).
@@ -449,14 +454,16 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     if (inst.viewportDirty) {
       inst.viewportDirty = false;
+      const vp = inst.viewport;
+      const pane = vp.panes[0];
       deps.post({
         t: "viewport",
         id: inst.id,
-        timeStart: inst.timeStart,
-        timeEnd: inst.timeEnd,
-        priceLow: 0,
-        priceHigh: 0,
-        barSpacing: 0,
+        timeStart: vp.timeStart,
+        timeEnd: vp.timeEnd,
+        priceLow: pane?.priceLow ?? 0,
+        priceHigh: pane?.priceHigh ?? 0,
+        barSpacing: vp.barSpacing,
       });
     }
     if (inst.a11yDirty) {

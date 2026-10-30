@@ -170,6 +170,20 @@ describe("the WebGL2 path (E11-S02 PR2)", () => {
     expect(of("frame")[0]).toMatchObject({ drawCalls: 0, triangles: 0, gpuMemoryMbEstimate: 0 });
   });
 
+  it("Scenario: Panning does not touch GPU buffers (a 200 px drag through the runtime)", () => {
+    const gl = new FakeGl({ params: ROOMY });
+    make(true, null, 1, Object.assign(canvas(), { getContext: (): unknown => gl }));
+    rt.handle({ t: "command", id: 1, cmd: { k: "setViewport", timeStart: 0, timeEnd: 2e9 } });
+    frame();
+    const at = gl.log.length;
+    rt.handle({ t: "input", id: 1, kind: "pointer", events: row(INPUT.down, 0) });
+    rt.handle({ t: "input", id: 1, kind: "pointer", events: row(INPUT.move, 200, 1) });
+    frame();
+    expect(gl.log.slice(at).filter((c) => /^buffer/.test(c))).toEqual([]);
+    expect(gl.writes).toEqual([]);
+    expect(of("viewport").at(-1)?.timeStart).toBeCloseTo(-2e9, 0); // 200 px of 6 px minute bars
+  });
+
   it("redraws before an export encodes, and frees its GL objects on release", async () => {
     const gl = new FakeGl({ params: ROOMY });
     const at: number[] = [];
@@ -248,11 +262,11 @@ describe("interaction", () => {
       {
         t: "viewport",
         id: 1,
-        timeStart: -5e8,
+        timeStart: expect.closeTo(-5e8, 0),
         timeEnd: 1.5e9,
-        priceLow: 0,
-        priceHigh: 0,
-        barSpacing: 0,
+        priceLow: 0, // no autoscale until E11-S05: the default one-tick window
+        priceHigh: 1,
+        barSpacing: 6, // 2e9 µs of the default 60 s grid over 200 px
       },
     ]);
     expect(of("a11y")).toHaveLength(1);
@@ -295,6 +309,17 @@ describe("interaction", () => {
     rt.handle({ t: "input", id: 1, kind: "wheel", events: row(INPUT.wheel, 0, 1e9) });
     frame();
     expect(of("viewport")).toEqual([]);
+  });
+
+  it("posts only finite viewports for an off-plot wheel anchor at the minimum spacing", () => {
+    make();
+    rt.handle({ t: "input", id: 1, kind: "wheel", events: row(INPUT.wheel, 0, 5000) });
+    rt.handle({ t: "input", id: 1, kind: "wheel", events: row(INPUT.wheel, 3e38, -1) });
+    frame();
+    const vp = of("viewport").at(-1);
+    expect(vp && Object.values(vp).every((v) => typeof v !== "number" || Number.isFinite(v))).toBe(
+      true,
+    );
   });
 });
 

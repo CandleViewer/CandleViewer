@@ -1,7 +1,7 @@
 // Pane facade (stub). Series, overlay and indicator handles record their lifecycle only; the
 // stores, batches and plugin hosting behind them are E11-T03 / E11-S01 / E12+.
 import { encodeCandles, type BufferLayout, type DataOp, type StoreId } from "../worker/protocol.js";
-import { createPriceScale } from "./scales.js";
+import { createPriceScale, type PriceScaleState } from "./scales.js";
 import type {
   CandleData,
   IndicatorHandle,
@@ -31,6 +31,7 @@ export interface SeriesInternal<T extends SeriesType> extends SeriesHandle<T> {
 }
 
 export interface PaneInternal extends Pane {
+  readonly priceScale: PriceScaleState;
   readonly heightRatio: number;
   readonly seriesCount: number;
   readonly removed: boolean;
