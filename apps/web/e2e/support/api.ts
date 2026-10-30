@@ -1,4 +1,7 @@
 import type { Page, Route } from "@playwright/test";
+import type { generated } from "@candleviewer/protocol";
+
+type Schemas = generated.rest.components["schemas"];
 
 // Network-layer stubs shared by the E09-Q02 specs (no live backend, C-13.5). App code is not mocked.
 export const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => ({
@@ -11,6 +14,89 @@ export const json = (body: unknown, status = 200, headers: Record<string, string
 export interface MeOptions {
   readonly role: "owner" | "manager" | "viewer";
   readonly elevatedUntil?: () => string | null;
+}
+
+/** `GET /settings` as `22-api-openapi.yaml` `getSettings` answers it: its `effective` example. */
+export const SETTINGS: Schemas["Settings"] = {
+  appearance: {
+    theme: "dark",
+    density: "compact",
+    font_scale: 1,
+    reduce_motion: false,
+    high_contrast: false,
+  },
+  chart: {
+    default_bar_type: "time",
+    default_param: "1",
+    crosshair_sync: true,
+    bar_close_countdown: true,
+    price_scale_mode: "logarithmic",
+  },
+  orderflow: {
+    heatmap_bid_colour: "#2FA37A",
+    heatmap_ask_colour: "#D2504B",
+    imbalance_ratio: 3,
+    min_stack: 3,
+    value_area_pct: 70,
+    big_trade_threshold_mode: "relative",
+    big_trade_k: 7,
+  },
+  trading: {
+    one_click_armed: false,
+    arm_timeout_seconds: 300,
+    confirm_market_orders: true,
+    confirm_flatten: true,
+    default_environment: "demo",
+    default_qty_presets: ["0.01", "0.05", "0.1", "0.25"],
+  },
+  notifications: {
+    desktop_enabled: true,
+    email_enabled: false,
+    webhook_url: null,
+    quiet_hours: null,
+  },
+  data: { default_depth: 200, stale_badge_after_ms: 2000, max_history_bars: 100000 },
+  _meta: {
+    overridden: ["appearance.density", "trading.default_qty_presets"],
+    updated_at: "2026-09-13T19:02:00Z",
+  },
+};
+
+/**
+ * `GET /auth/session` as 22 `authGetSession` answers it (its `manager` example), for `role` with the empty
+ * permissions `/me` gives here: unlocked, 15 min from the idle lock, so `SessionLockHost` reads it again only 14 min on.
+ */
+export function sessionInfo(role: MeOptions["role"]): Schemas["SessionInfo"] {
+  return {
+    user: {
+      id: "11111111-2222-3333-4444-555555555555",
+      username: "viewer.alice",
+      email: "alice@example.com",
+      roles: [role],
+      status: "active",
+      mfa_enabled: true,
+      mfa_required: true,
+    },
+    permissions: [],
+    account_scope: [],
+    server_time: "2026-09-14T10:31:02.114Z",
+    session: {
+      id: "5b1f0c3e-7d2a-4c11-9e8f-0a1b2c3d4e5f",
+      issued_at: "2026-09-14T10:24:00Z",
+      expires_at: "2026-09-14T20:05:00Z",
+      idle_deadline: "2026-09-14T10:46:02Z",
+      idle_timeout_s: 900,
+      locked: false,
+    },
+  };
+}
+
+/** Answers `GET` to `path` with `body`; any other method goes on to the routes before it, or the network. */
+async function stubGet(page: Page, path: string, body: () => unknown): Promise<void> {
+  await page.route(
+    (url) => url.pathname === path,
+    (r) => (r.request().method() === "GET" ? r.fulfill(json(body())) : r.fallback()),
+  );
 }
 
 /** Stub the session bootstrap calls the shell makes for an authenticated user. */
@@ -42,6 +128,12 @@ export async function stubSession(page: Page, opts: MeOptions): Promise<void> {
   );
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(json({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
+  // The shell's own calls after its first paint: the settings (`PreferencesProvider`), the session
+  // (`SessionLockHost`) and, every 2 s, the liveness probe (`liveness.ts`). Unstubbed, `vite preview`
+  // answers each with the SPA's index.html.
+  await stubGet(page, "/api/v1/settings", () => SETTINGS);
+  await stubGet(page, "/api/v1/auth/session", () => sessionInfo(opts.role));
+  await stubGet(page, "/api/v1/health/live", () => ({ status: "ok" })); // 22 `getLiveness`
 }
 
 /**
