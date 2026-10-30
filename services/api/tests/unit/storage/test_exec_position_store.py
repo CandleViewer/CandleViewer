@@ -26,7 +26,12 @@ from candleviewer.exchange.base.frame_guard import MAX_FUTURE_SKEW_MS
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories import executions_sqlalchemy as ex
 from candleviewer.storage.repositories import positions_sqlalchemy as pos
-from candleviewer.storage.repositories.executions import ExecType, ExecutionRow, NewExecution
+from candleviewer.storage.repositories.executions import (
+    MAX_RECENT,
+    ExecType,
+    ExecutionRow,
+    NewExecution,
+)
 from candleviewer.storage.repositories.orders import (
     OrderConstraintError,
     OrderNotFoundError,
@@ -135,6 +140,7 @@ _STATEMENTS: dict[Any, dict[str, Any]] = {
     ex: {
         "insert_statement": ex.insert_statement(_fill(order_id=ORDER)),
         "get_statement": ex.get_statement(ACCOUNT, "E1"),
+        "list_recent_statement": ex.list_recent_statement(ACCOUNT, 100),
     },
     pos: {
         "upsert_statement": pos.upsert_statement(_state(), _HORIZON),
@@ -163,6 +169,25 @@ def test_an_execution_insert_dedupes_on_ux_exec_id_and_scopes_its_order() -> Non
     owned = "WHERE orders.exchange_account_id = $1::UUID AND orders.id = $2::UUID), $3::UUID, "
     assert "VALUES (gen_random_uuid(), (SELECT orders.id \nFROM orders \n" + owned in sql
     assert "SELECT" not in _sql(ex.insert_statement(_fill()))  # no order: NULL, as asked
+
+
+def test_the_recent_fills_read_is_an_accounts_order_fills_newest_first_bounded() -> None:
+    """E29-T13: the `executions` snapshot's read, over `ix_exec_acct_time`: the account's fills of
+    an order, newest first, `id` breaking a tie, at most the limit asked."""
+    sql = _sql(ex.list_recent_statement(ACCOUNT, 7))
+    where = "WHERE executions.exchange_account_id = $1::UUID AND executions.order_id IS NOT NULL"
+    assert where in sql
+    assert sql.endswith("ORDER BY executions.exec_ts DESC, executions.id DESC \n LIMIT $2::INTEGER")
+
+
+@pytest.mark.parametrize("limit", [0, MAX_RECENT + 1, True, 1.5], ids=repr)
+async def test_a_recent_fills_limit_outside_its_bound_is_refused_before_any_statement(
+    limit: Any,
+) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError, match="limit"):
+        await _EXEC(cast(Any, rel)).list_recent(ACCOUNT, limit=limit)
+    assert rel.units == []
 
 
 def test_a_position_upsert_takes_every_state_column_and_stamps_now() -> None:
@@ -269,6 +294,7 @@ _EXEC, _POS = ex.SqlAlchemyExecutionStore, pos.SqlAlchemyPositionStore
 _CALLS: dict[str, tuple[type[Any], Callable[[Any], Awaitable[object]], list[_Result]]] = {
     "insert": (_EXEC, lambda s: s.insert(_fill()), [_Result([SimpleNamespace(order_id=None)])]),
     "get": (_EXEC, lambda s: s.get(ACCOUNT, "E1"), [_Result()]),
+    "list_recent": (_EXEC, lambda s: s.list_recent(ACCOUNT), [_Result()]),
     "commit_fill": (_EXEC, lambda s: s.commit_fill(scripted._FILL), scripted._FILL_SCRIPT),
     "upsert": (_POS, lambda s: s.upsert(_state()), [_Result([_POSITION_ROW])]),
     "list_open": (_POS, lambda s: s.list_open(ACCOUNT), [_Result()]),
@@ -305,6 +331,12 @@ _SNAP_OUT = PositionSnapshotRow(**_SNAPSHOT_ROW)
 _MAPPED: dict[str, tuple[type[Any], Callable[[Any], Awaitable[object]], _Result, object]] = {
     "get": (_EXEC, lambda s: s.get(ACCOUNT, "E1"), _Result([_EXEC_ROW]), _EXEC_OUT),
     "get_absent": (_EXEC, lambda s: s.get(ACCOUNT, "E2"), _Result(), None),
+    "list_recent": (
+        _EXEC,
+        lambda s: s.list_recent(ACCOUNT, limit=2),
+        _Result([_EXEC_ROW] * 2),
+        (_EXEC_OUT,) * 2,
+    ),
     "upsert": (_POS, lambda s: s.upsert(_state()), _Result([_POSITION_ROW]), _POS_OUT),
     "list_open": (
         _POS,

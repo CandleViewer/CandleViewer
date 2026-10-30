@@ -150,6 +150,16 @@ from candleviewer.oms.submit import (
     SubmitOutcome,
 )
 from candleviewer.oms.validator import ReadOnlyCheck, Validator
+from candleviewer.oms.ws_topics import (
+    OVERTAKES,
+    AttachedTopics,
+    Family,
+    LaneClock,
+    PublishedPositions,
+    StepPublisher,
+    TopicReads,
+    View,
+)
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, Lane, LaneStopped, OrderLane, Serving
 from candleviewer.oms_stream_wiring import (
     ExchangeWallClock,
@@ -891,11 +901,11 @@ class OrderNoticesRouter:
 
 class OrderStateFeed:
     """The machine-state member of the order facade's publisher (`order_machine.CompositePublisher`,
-    23 Sec.6.4 `machines.order:{id}.state`; the WS `orders` topics are E29-T10's): each order's slot
-    bound through `RegistryFeed` once, scoped to its account (OM-I02), and dropped on its last
-    step. A machine stopped before its last step keeps its slot, so at most `max_orders` (one or
-    more) are held, the least recently published dropped first (C-2.18): a later step binds it
-    again.
+    23 Sec.6.4 `machines.order:{id}.state`; the WS `orders` topics are E29-T13's, from the step
+    writer's commits, `oms.ws_topics`): each order's slot bound through `RegistryFeed` once,
+    scoped to its account (OM-I02), and dropped on its last step. A machine stopped before its
+    last step keeps its slot, so at most `max_orders` (one or more) are held, the least recently
+    published dropped first (C-2.18): a later step binds it again.
 
     It publishes into the WS registry directly, which is single-threaded and bound to the serving
     loop, so it runs there: the order facade runs on the order lane (CV-C13), and `ServedFeed`
@@ -1642,6 +1652,9 @@ class _Parts:
     stream: StreamWiring
     #: When the fencing grace since the lock was taken ends, on the runtime's `monotonic`.
     admit_after: float
+    #: E29-T13's snapshot reads on the lane, which the WS topics take once `ready`; None without
+    #: the topics.
+    topic_reads: TopicReads | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1671,6 +1684,21 @@ class OnLane:
 
     async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None:
         return await _on_lane(self.parts, self.parts.route.orders.get(account_id, order_id))
+
+
+@dataclass(frozen=True, slots=True)
+class OnLaneTopicReads:
+    """E29-T13's snapshot reads (`ws_topics.SnapshotReads`) from the serving loop: each awaited on
+    the order lane within `HOP_TIMEOUT_S`, where the OMS's pool runs; `OmsNotReady` once the lane
+    has stopped or the hop's bound passed, which the topics read as a failed load."""
+
+    parts: _Parts
+
+    async def read(self, family: Family, account: UUID) -> View:
+        reads = self.parts.topic_reads
+        if reads is None:  # composed without the topics: never attached
+            raise OmsNotReady
+        return await _on_lane(self.parts, reads.read(family, account))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1944,6 +1972,7 @@ class OmsRuntime:
         health: StreamHealth,
         hub: SystemBroadcast,
         lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
+        topics: AttachedTopics | None = None,
         stores: Callable[[], OmsStores] | None = None,
         pager: Pager | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -1974,6 +2003,10 @@ class OmsRuntime:
         #: E29-T05 S8b: account health and the gateway's hub, as the private-stream consumer takes
         #: them (`StreamHealth`, its account notices' `broadcast_system`).
         self._health, self._hub = health, hub
+        #: E29-T13 (#4207): the gateway's `orders`, `executions` and `positions` topics, which the
+        #: lane publishes its committed steps and position rows to (`StepPublisher`) and which read
+        #: their snapshots on the lane once `ready` (`OnLaneTopicReads`); None composes neither.
+        self._topics = topics
         #: The consumer's start, sent to the lane once `ready`: None until the lane answers it, True
         #: once it started the consumer, False once it failed; `readyz` reads all but True as not
         #: started.
@@ -2298,6 +2331,8 @@ class OmsRuntime:
         with self._handoff:
             parts, self._parts = self._parts, None
         closers: list[_Closer] = [("cancelled", lambda: asyncio.wait(pending))] if pending else []
+        if self._topics is not None:  # E29-T13: no snapshot read hops to a stopping lane
+            closers.insert(0, ("ws_topic_reads", self._topics.detach))
         if lane is not None:  # its work cancelled above, a composition asked again among it
             closers.append(("lane", lane.idle))
         if parts is not None:
@@ -2390,6 +2425,8 @@ class OmsRuntime:
             if swept and not self._stopping:  # a stop that began meanwhile clears `ready` for good
                 self._ready.set()
                 _log().info("oms_ready")
+                if self._topics is not None:  # E29-T13: snapshots read on the lane from now on
+                    self._topics.attach(OnLaneTopicReads(parts))
                 await self._stream_started(parts)
             return
 
@@ -2653,11 +2690,20 @@ class OmsRuntime:
                 switches=submits, audit=audit, submit_audit=audit, gate=gate, notices=notices,
                 now_us=self._now_us, submit_timeout_s=bounds.submit_timeout_s, figures=figures,
             )  # fmt: skip
+            fills = ExecutionRepository(stores.executions, timer)
+            # E29-T13 (#4207): the WS topics' lane half, fed by each committed step and applied
+            # position row, its frames crossing to the serving loop (`Serving.notify`)
+            lane_clock = LaneClock(self._now)
+            published = None if self._topics is None else StepPublisher(
+                self._topics, serving.notify, fills, environment=env, clock=lane_clock,
+                overtaken=_counter(metrics, OVERTAKES).child().inc,
+            )  # fmt: skip
             steps = OrderStepWriter(
                 orders,
-                ExecutionRepository(stores.executions, timer),
+                fills,
                 clock=self._now,
                 submissions=SubmissionRepository(stores.submissions, timer),
+                on_commit=None if published is None else published.committed,
             )
             # the lane's own, at one path whether or not a bundle holds the serving loop's
             sink = stores.sink(lane_sink_wal(settings))  # (ruling Q13, SEC-S3L2-03)
@@ -2673,12 +2719,16 @@ class OmsRuntime:
                 latch=ChainTripLatch() if bundle is None else bundle.latch,
                 now_us=self._now_us, registry=self._registry, max_machines=self._max,
             )  # fmt: skip
+            if published is not None:  # a position waits for the fills held before their bind
+                published.bind(machines.held_fills)
             closers[:0] = [
                 # the stop gate first: its reads end with the startup task's, before the machines
                 ("stop_gate", lambda: lane.call(gate.aclose())),
                 ("machines", lambda: lane.call(machines.stop())),
                 ("commands", lambda: lane.call(commands.aclose())),
             ]
+            if published is not None:  # before the stop gate: nothing taken once the stop begins
+                closers.insert(0, ("ws_topics", lambda: lane.call(published.aclose())))
             self._phase = "stream"
             # E29-T05 S8b (24 Sec.8.12): the private-stream consumer over the facade, built and not
             # started (`_stream_started`), its stop the stop's first step (`_stream_stop`); its
@@ -2690,7 +2740,7 @@ class OmsRuntime:
             positions = stores.positions(wall)
             stream = build_stream_consumer(
                 facade=machines, orders=orders, stops=stops,
-                positions=PositionRepository(positions, timer),
+                positions=_published(PositionRepository(positions, timer), published),
                 snapshots=PositionSnapshotRepository(positions, timer),
                 accounts=HealthAccounts(self._health), trading=accounts, ports=router,
                 health=self._health.feed, hub=self._hub, serving=serving, credentials=rejections,
@@ -2775,10 +2825,16 @@ class OmsRuntime:
             # it watches the lock until the lock's own closer, the last, releases it
             at_lock = [name for name, _ in closers].index("environment_lock")
             closers.insert(at_lock, ("heartbeat", lambda: lane.call(_cancelled(beating))))
+            # E29-T13: scoped to the process's environment (C-2.11) through the OMS's own account
+            # read, so a missing or deleted account, or another environment's, reads as no rows
+            reads = None if published is None else TopicReads(
+                orders, PositionRepository(positions, timer), fills, accounts=accounts,
+                environment=env, clock=lane_clock,
+            )  # fmt: skip
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
-                stream, admit_after,
+                stream, admit_after, reads,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping
@@ -2794,6 +2850,19 @@ class OmsRuntime:
 
     def _now_us(self) -> int:
         return (self._now() - _EPOCH) // _US
+
+
+def _counter(metrics: Metrics, name: str) -> BoundedMetric:
+    spec = next(spec for spec in CATALOGUE if spec.name == name)
+    return metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
+
+
+def _published(
+    positions: PositionRepository, publisher: StepPublisher | None
+) -> PositionRepository | PublishedPositions:
+    """The consumer's position store: E29-T13's `PublishedPositions` over it when the topics are
+    composed, so each applied row is published too; else the store itself."""
+    return positions if publisher is None else PublishedPositions(positions, publisher)
 
 
 def _histogram(metrics: Metrics, name: str) -> BoundedMetric:
@@ -2819,13 +2888,16 @@ def build_oms_runtime(
     health: StreamHealth,
     hub: SystemBroadcast,
     lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
+    topics: AttachedTopics | None = None,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
     `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order
     lane's own (#913 L2), never the serving loop's; `lane_signing` is M2's binder of the lane's own
     signing, and `lane_transport` the dev-only account fixture's lane transport, None in
     production (#913 L1d). `health` (the account health runtime) and `hub` (the gateway's) are
-    what its private-stream consumer takes (E29-T05 S8b)."""
+    what its private-stream consumer takes (E29-T05 S8b); `topics`, the gateway's `orders`,
+    `executions` and `positions` topics, what its committed steps and position rows feed and its
+    lane's snapshot reads serve (E29-T13)."""
     if settings.storage_backend != "real":
         return None
     return OmsRuntime(
@@ -2833,5 +2905,5 @@ def build_oms_runtime(
         read_only=ctx.oms_read_only_gate, metrics=metrics, gate=gate,
         standings=standings, oms_enabled=oms_enabled, live_enabled=live_enabled,
         profiles=profiles, persistence=persistence, feed=feed, lane_signing=lane_signing,
-        health=health, hub=hub, lane_transport=lane_transport,
+        health=health, hub=hub, lane_transport=lane_transport, topics=topics,
     )  # fmt: skip

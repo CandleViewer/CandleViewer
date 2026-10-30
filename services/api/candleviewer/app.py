@@ -333,6 +333,7 @@ from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oms.service import OmsService
+from candleviewer.oms.ws_topics import FAMILIES as OMS_FAMILIES
 from candleviewer.oms_reads_wiring import oms_reads, order_versions
 from candleviewer.oms_wiring import InterimKillSwitch, OmsAudit, OmsRuntime, build_oms_runtime
 from candleviewer.orderbook_wiring import BookStream
@@ -536,6 +537,7 @@ from candleviewer.ws_wiring import (
     heatmap_topic,
     ingestion_streams,
     loop_call_later,
+    oms_topics,
     recorder_topic,
     series_stale,
     ticker_topic,
@@ -1773,6 +1775,11 @@ def create_app(
     # runtime built below, which attaches to it, and its deltas go out through this hub.
     ws_wallet = wallet_topic(ws_sequencing)
     snapshot_adapters["wallet"] = ws_wallet
+    # E29-T13 (#4207): the OMS's `orders`, `executions` and `positions` topics. The OMS runtime
+    # built below attaches its lane's reads once ready, and publishes its committed steps and
+    # position rows through this hub; before, every such subscription stays `snapshot_pending`.
+    ws_oms = oms_topics(ws_sequencing)
+    snapshot_adapters.update(dict.fromkeys(OMS_FAMILIES, ws_oms))
     # E40-T04: the alerts module's `alerts` topic. The deliveries reader is attached below, with
     # the alerts store; its deltas come from the dispatcher and the inbox routes (`on_change`).
     ws_alerts = alerts_topic(ws_sequencing)
@@ -2551,6 +2558,7 @@ def create_app(
         lane_transport=None if account_fixture is None else account_fixture.lane_rest_transport,
         health=account_health,
         hub=ws_hub,
+        topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
     )
     # #913 slice 3F (24 Sec.8.4): `placeOrder` over that runtime, mounted whatever
     # `trading.oms_enabled` says (it gates admission). The principal is the session's with its

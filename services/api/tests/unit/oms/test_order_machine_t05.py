@@ -347,3 +347,38 @@ async def test_push_protection_answers_false_once_follows_is_spent(rig: Rig) -> 
         await held.aclose()
         assert await asyncio.wait_for(waiting, 5) is False
     assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+
+
+async def test_held_fills_names_a_fill_the_order_holds_before_its_bind_and_none_after(
+    rig: Rig,
+) -> None:
+    """E29-T13 (23 Sec.6.2.3): the EXEC that came before its order's bind waits in the reorder
+    buffer, and `held_fills` names it on the order's position alone, from the plain view; the bind
+    applies it, and none is left to name."""
+    order, gate = await _unbound(rig)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", _end("x1", cum_exec_qty="0.4"))
+    assert rig.facade.held_fills(_KEY) == frozenset({"e1"})  # the end is no fill
+    assert rig.facade.held_fills(_ETH) == frozenset()
+    assert rig.facade.held_fills(PositionKey(AccountId(OTHER), "BTCUSDT", 0)) == frozenset()
+    assert rig.facade.held_fills(PositionKey(AccountId(ACCOUNT), "BTCUSDT", 1)) == frozenset()
+    gate.set()
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.cum_exec_qty == Decimal("0.4")
+    assert rig.facade.held_fills(_KEY) == frozenset()
+
+
+async def test_held_fills_names_the_fill_a_resyncing_order_holds(rig: Rig) -> None:
+    """The `_resyncing` arm, as `protecting`'s (#4511 code 1): while the facade rebuilds an order
+    (`_resync`), its closed machine, found there alone, still holds the EXEC that came before its
+    bind until the successor takes it over, so `held_fills` names it and a position still waits
+    for it (23 Sec.6.2.3)."""
+    order, gate = await _unbound(rig)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    rig.facade._resyncing[order.id] = rig.facade._orders.pop(order.id)
+    assert rig.facade.held_fills(_KEY) == frozenset({"e1"})
+    rig.facade._orders[order.id] = rig.facade._resyncing.pop(order.id)  # rebuilt; the ack binds it
+    gate.set()
+    await rig.quiet()
+    assert rig.facade.held_fills(_KEY) == frozenset()

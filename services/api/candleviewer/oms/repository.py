@@ -35,6 +35,7 @@ from candleviewer.observability.metrics import BoundedMetric
 from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.executions import (
+    MAX_RECENT,
     ExecutionRow,
     ExecutionStore,
     NewExecution,
@@ -312,6 +313,13 @@ class ExecutionRepository:
 
     async def get(self, account_id: UUID, exec_id: str) -> ExecutionRow | None:
         return await self._store.get(account_id, exec_id)
+
+    async def list_recent(
+        self, account_id: UUID, *, limit: int = MAX_RECENT
+    ) -> tuple[ExecutionRow, ...]:
+        """The account's newest fills of an order, newest first (the `executions` WS snapshot,
+        E29-T13); `ValueError` for a `limit` outside 1 to `MAX_RECENT`."""
+        return await self._store.list_recent(account_id, limit=limit)
 
 
 def _log_step(name: str, done: CommittedStep, **extra: str) -> None:

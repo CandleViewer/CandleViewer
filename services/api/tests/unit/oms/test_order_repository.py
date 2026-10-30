@@ -893,3 +893,19 @@ async def test_an_end_its_store_refuses_logs_nothing_and_maps_only_a_late_audit(
     assert logs == [] and err.value.__cause__ is None and not isinstance(err.value, TimeoutError)
     assert (err.value is error) == (typed is StaleRecordedStop)
     assert err.value.__suppress_context__ is (typed is AuditNotDurable)  # only the mapped one
+
+
+async def test_the_recent_fills_read_passes_the_account_and_its_bound_through() -> None:
+    """E29-T13: the `executions` snapshot's read, the store's answer as it is; a limit outside 1 to
+    `MAX_RECENT` is the store's refusal, before any statement."""
+    calls: list[tuple[uuid.UUID, int]] = []
+
+    class _Fills:
+        async def list_recent(self, account_id: uuid.UUID, *, limit: int) -> tuple[Any, ...]:
+            calls.append((account_id, limit))
+            return ("newest", "older")
+
+    repo = ExecutionRepository(cast(Any, _Fills()))
+    assert await repo.list_recent(ACCOUNT) == ("newest", "older")
+    assert await repo.list_recent(ACCOUNT, limit=7) == ("newest", "older")
+    assert calls == [(ACCOUNT, 100), (ACCOUNT, 7)]

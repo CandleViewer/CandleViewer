@@ -896,6 +896,34 @@ Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, fa
 - **Snapshot and deltas.** The current status, its `symbols` narrowed to the subscription's `symbols` option when it names any. A requested symbol the recorder does not track is `{symbol, state: "idle"}` in a full frame and is left out of a restricted one, where a missing symbol is unknown (§15.8). A delta is the whole frame, at most one a 1 000 ms window; frames are never merged (§8.2).
 - **Integrity.** Private: never cached or shared by the gateway (§7.7), and every `snapshot: false` attach is `snapshot_forced` (§7.6). A frame the server could not publish re-snapshots the topic's subscriptions with reason `upstream_desync` (§7.4).
 
+#### 6.2.3 `orders`, `executions` and `positions` topics
+
+**As built (E29-T13, #4207).** The OMS module owns the adapter (`oms/ws_topics.py`); the gateway only wires it (`ws_wiring.oms_topics`). Permissions and scope are §6.3's: `orders:read`, `executions:read` and `positions:read`, granted accounts, each delta delivered only to a subscription that holds its account. No frame shape changes (§15.1 to §15.3).
+
+- **Source.** The private stream, never the REST acknowledgement, is the source of truth (ADR-0006, 24 §8.12). Each order step is published once its write-ahead write commits (24 §8.2), carrying the order row as it then stands. So every step is a frame of its own, a second partial fill included (S4), and a step that reconciliation writes is published the same way. A fill also publishes its `executions` row, read back for its `id`. Each position row the projection applies is published too, but a stale write's stored row is not.
+- **Snapshot.** Each is narrowed to the subscription's accounts (§6.2) and its `symbols`:
+  - `orders`: the account's open orders, those in `pending_submit`, `submitted`, `accepted`, `partially_filled`, `pending_cancel`, `pending_amend`, `triggered`, `unknown` or `quarantined` (never `held` or `untracked`).
+  - `positions`: the open positions, those of size above 0.
+  - `executions`: the newest 100 fills of an order across the subscription's accounts, oldest first. Each account's newest 100 are read, then narrowed to `symbols`, so a `symbols` subscription can get fewer.
+
+  It is read from Postgres beside the subscription, which stays `snapshot_pending` until the read lands, and until the OMS is ready (§7.7). Each account's read is scoped to the process's environment, as every other read surface is (C-2.11): an account that is missing, deleted or of another environment reads as one with no rows, and none of its rows is read. A read that fails is tried three times, backed off; after the third the subscription stays pending until a change of its account or a resync. Private: never cached, and every `snapshot: false` attach is `snapshot_forced` (§7.6).
+
+- **Deltas.**
+  - **`orders`:** one item per step, never coalesced or throttled (S4).
+    - `change` follows the step's event: `created`, `submitted`, `ack`, `reject`, `fill`, `amend`, `cancel`, `expire` or `reconcile`. A trigger and a local error carry none.
+    - An order leaving the open set carries its id in `removed`. An `open_only: true` subscription gets that removal alone (`orders: []`).
+    - `trade_group_id` and `algo_kind` are not sent; the order row holds neither. `rejected_reason` is the reject code, never the exchange's text.
+  - **`executions`:** one item per fill of an order (§15.3 requires `order_id`), never coalesced or throttled (S4).
+  - **`positions`:** one item per applied row, merged as §8.2 says; a flat position is `{"positions": [], "removed": [id]}`. The row cannot tell `native_stop_present`, `margin_mode`, `realised_pnl_session`, `trade_group_id` or `r_multiple`, so none is sent: a stop a Partial-mode order holds is on no position row (24 §8.12).
+  - **`updated_at_ms`** is the server's, on one clock that never goes back. A delta's is the time its step committed or its row applied; a snapshot item's is the time its read began. So a delta older than a snapshot reads as older, and §15's rule discards it.
+- **Causal order (S5).** An account's frames leave in the order the OMS committed them, a fill's execution before its order's step.
+  - **Fills.** A fill's step waits for its execution's row, 2 s at most. Past that, or on a failure, the order's frame goes alone and the account's `executions` subscriptions are re-snapshotted. The account's later steps queue behind it, at most 256 an account. One more drops the queue and re-snapshots the account's three topics.
+  - **Positions.** A position waits while a fill of its position (account, symbol, `position_idx`) is unpublished: one the OMS holds before its order's bind (24 §8.12, pairing step 2), or one awaiting its read. It leaves right after that fill's frames, and a later row of the same position replaces it while it waits.
+  - **Past the bound.** At 1 s, or when it finds 64 positions of its account already waiting, a position leaves at once. That overtake is counted (`oms_ws_position_overtakes_total`, `20-architecture.md` §12.1). The hold is the shorter bound, so a fill that is committed but slow to read (between 1 s and 2 s) is overtaken by its position, counted; that is by design. A held fill the store refuses never commits, so the position waiting for it is also published at 1 s and counted.
+  - **Unseen fills.** A position the exchange pushes before its fill, with that fill not yet held or unpublished, is published as applied: the consumer takes rows in arrival order (24 §8.12). A position that arrives while a held fill is being committed is also published at once, and not counted: from the OMS's release of that fill until its write-ahead write returns, the fill is neither held nor unpublished.
+- **Integrity.** A change the server could not publish re-snapshots the affected subscriptions with `upstream_desync` (§7.4), so a client never silently misses one. That covers the causes above, a publish that raised, and a step or position whose frame could not be built: that change is dropped, its account's three topics are re-snapshotted, and the account's later steps still go. A snapshot read that a change raced is read again, at most three times, then served and re-snapshotted.
+- **Backpressure.** `orders` and `executions` ride the priority lane and are never dropped. A client that cannot keep up is closed `slow_consumer` (`4429`, §8.4 step 3), while `positions` follows the §8.4 ladder.
+
 ### 6.3 Topic → permission matrix
 
 | Topic family                                                                                     | Required permission | Scope narrowing             |
@@ -1182,7 +1210,7 @@ _As built (#2787):_ with `bars_enabled` (off by default, C-4.13), `create_app` s
 
 `upstream_desync` and `backpressure` are counted as incidents in Prometheus (`cv_ws_resync_total{reason}`) with alert thresholds in `06-performance-and-load-standard.md`.
 
-_As built (flag off, #3363):_ the server also sends `upstream_desync` after a `d` it failed to emit, on a subscription of any family (§10.1). The flag-off path has no `backpressure` ladder, so that subscription is re-snapshotted as after an upstream gap. The `ch` is the primary tell: the upstream trigger is `book.*` only, and `alerts` also sends it for causes of its own (§6.2.1, logged `alerts_topic_*` by the alerts module), so any other `ch` is an emission fault. The evidence is that family's `ws delta failed` lines (one a second, `suppressed` counting the rest; `orders` and `executions` log each) and `cv_ws_malformed_updates_total{topic}`, which counts each. A distinct reason for it is #3451.
+_As built (flag off, #3363):_ the server also sends `upstream_desync` after a `d` it failed to emit, on a subscription of any family (§10.1). The flag-off path has no `backpressure` ladder, so that subscription is re-snapshotted as after an upstream gap. The `ch` is the primary tell: the upstream trigger is `book.*` only, `alerts` also sends it for causes of its own (§6.2.1, logged `alerts_topic_*` by the alerts module), and so do `orders`, `executions` and `positions` (§6.2.3, logged `oms_ws_*` by the OMS), so any other `ch` is an emission fault. The evidence is that family's `ws delta failed` lines (one a second, `suppressed` counting the rest; `orders` and `executions` log each) and `cv_ws_malformed_updates_total{topic}`, which counts each. A distinct reason for it is #3451.
 
 ### 7.5 Client-initiated resync
 

@@ -923,6 +923,22 @@ class OrderMachines:
                 found[o.order_id] = None
         return tuple(found)
 
+    def held_fills(self, key: PositionKey) -> frozenset[str]:
+        """The `exec_id`s of the EXECs that the orders on the position `key` names hold in their
+        reorder buffers (S5: a fill before its order's bind, SR-E29-03), a resyncing order's too:
+        fills the OMS has taken and not yet applied. E29-T13's `positions` frame waits for them (23
+        Sec.6.2.3). Plain view only, never the interpreter (C-2.20)."""
+        found: set[str] = set()
+        for o in (*self._orders.values(), *self._resyncing.values()):
+            if (
+                o.account_id == key.account_id
+                and o.view.get("symbol") == key.symbol
+                and o.position_idx == key.position_idx
+            ):
+                exec_ids = (_exec_id(held.push) for held in o.held if held.event == "EXEC")
+                found.update(exec_id for exec_id in exec_ids if exec_id is not None)
+        return frozenset(found)
+
     async def push_protection(
         self, account_id: UUID, order_id: UUID, event: str, payload: Mapping[str, Any]
     ) -> bool:
@@ -2059,9 +2075,11 @@ class OrderMachines:
 
 class CompositePublisher:
     """A `MachinePublisher` over several (E29-T04 #913 slice 3, commitment b): the machine-state
-    feed now, the WS `orders` topics with E29-T10. Each member gets each payload in turn, the
-    same mapping, and is synchronous and non-blocking, as a plugin hook calls it. One that raises
-    is logged and stops neither the others nor the step."""
+    feed. The WS `orders`, `executions` and `positions` topics (E29-T13) are no member: `_publish`
+    skips a view that did not change, as a second partial fill leaves it, so they take the step
+    writer's commits instead (`order_steps.CommittedOrderStep`). Each member gets each payload in
+    turn, the same mapping, and is synchronous and non-blocking, as a plugin hook calls it. One
+    that raises is logged and stops neither the others nor the step."""
 
     def __init__(self, *members: MachinePublisher) -> None:
         self._members = members

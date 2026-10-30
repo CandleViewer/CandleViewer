@@ -24,10 +24,14 @@ from candleviewer.storage.repositories.orders import (
     OrderState,
     OrderTransition,
     check_fields,
+    require_limit,
     typed_fields,
 )
 
 ExecType = Literal["Trade", "AdlTrade", "Funding", "BustTrade", "Settle", "SessionSettlePnl"]
+#: The most rows one `list_recent` read answers: the `executions` WS snapshot's "Last 100 fills"
+#: (23-ws-protocol.md Sec.6.2, E29-T13).
+MAX_RECENT: Final = 100
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -125,6 +129,13 @@ class OrderFill:
             raise FillRefused(order_id, "state_mismatch")
 
 
+def require_recent_limit(limit: int) -> None:
+    """`list_recent`'s bound: an int of 1 to `MAX_RECENT`, never a bool (C-2.18)."""
+    require_limit(limit)
+    if limit > MAX_RECENT:
+        raise ValueError(f"limit must be at most {MAX_RECENT}")
+
+
 class ExecutionStore(Protocol):
     """Insert and account-scoped reads of `executions`."""
 
@@ -136,6 +147,14 @@ class ExecutionStore(Protocol):
         ...
 
     async def get(self, account_id: UUID, exec_id: str) -> ExecutionRow | None: ...
+
+    async def list_recent(
+        self, account_id: UUID, *, limit: int = MAX_RECENT
+    ) -> tuple[ExecutionRow, ...]:
+        """The account's newest fills of an order (`order_id` set), newest first by `exec_ts`
+        (`ix_exec_acct_time`), at most `limit`: 1 to `MAX_RECENT`, else `ValueError` before any
+        statement (C-2.18)."""
+        ...
 
     async def commit_fill(self, fill: OrderFill) -> CommittedStep | None:
         """The execution and, only if it is new, the order's totals, state and event, in one
