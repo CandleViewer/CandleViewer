@@ -48,6 +48,7 @@ SPAN = re.compile(r"[0-9a-f]{16}")
 BODY = {"symbol": "BTCUSDT", "bids": [["100.0", "1.500"]], "asks": []}
 PART = Frame(BOOK_DELTA, records=((0, 1000, 1500),), price_scale=1, qty_scale=3)
 ENCODINGS = pytest.mark.parametrize("encoding", [_JSON, _MSGPACK], ids=["json", "msgpack"])
+_ON = BackpressureConfig()
 SPAN_EVENT = "ws frame span"
 #: A valid-looking id a client sends: only where it came from tells it apart.
 CLIENT_SP = "c11e47c11e47c11e"
@@ -60,12 +61,18 @@ def _decoded(payload: str | bytes) -> dict[str, Any]:
     return frame
 
 
-async def _session(encoding: str, deltas: int, *, span_ids: bool = True) -> tuple[_Wire, str]:
+async def _session(
+    encoding: str,
+    deltas: int,
+    *,
+    span_ids: bool = True,
+    backpressure: BackpressureConfig | None = _ON,
+) -> tuple[_Wire, str]:
     """`hello`, `auth`, a binary `book` subscription (its `snap` is `s` 1) and `deltas` deltas,
     with span ids on unless `span_ids` is off; returns the wire and the connection id once the
     socket has closed. Delta k is taken at 1.0 + 0.25k s and sent 250 ms later: that is past the
     book window, so none of them waits in the pacer (#3329)."""
-    rig = _Rig(BackpressureConfig())
+    rig = _Rig(backpressure)
     rig.registry.services.span_ids = new_span_id if span_ids else None
     sock = _Wire(encoding)
     async with asyncio.timeout(_DEADLINE_S):
@@ -177,14 +184,18 @@ def test_only_a_sampled_frame_that_carries_sp_is_queued_as_spanned() -> None:
     assert item.key == (_BOOK, None) and not item.priority
 
 
+#: #2409: the flag-off case is kept until the removal PR, the only cover of the flag-off writer's
+#: span record.
+@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag_off", "flag_on"])
 async def test_the_writer_logs_one_debug_span_record_per_frame_that_carries_sp(
-    caplog: pytest.LogCaptureFixture,
+    backpressure: BackpressureConfig | None, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The exact entry, with the writer task's context merged in: it holds the connection id and
     no user or session id (bound after the writer was spawned)."""
     caplog.set_level(logging.DEBUG)
     with capture_logs(processors=[structlog.contextvars.merge_contextvars]) as logs:
-        sock, connection_id = await _session(_JSON, 2 * N - 1)  # `s` 2 to 2N
+        # `s` 2 to 2N
+        sock, connection_id = await _session(_JSON, 2 * N - 1, backpressure=backpressure)
     sent = [frame for frame, _ in _carrying_sp(sock)]
     assert [f["s"] for f in sent] == [N, 2 * N]
     assert [e for e in logs if e["event"] == SPAN_EVENT] == [

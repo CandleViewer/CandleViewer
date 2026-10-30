@@ -152,7 +152,7 @@ class _Rig:
             "registry": not self.registry._conns,
             "revocation": not self.revocation._sockets,
             "lifecycle": conn.lifecycle.state is ConnState.CLOSED,
-            "pipeline": conn.pipeline is not None and conn.pipeline.released,
+            "pipeline": conn.pipeline is None or conn.pipeline.released,
         }
 
     def assert_clean(self, conn: Any, reason: str, severity: str = "info") -> None:
@@ -334,10 +334,15 @@ async def test_a_raising_teardown_step_never_skips_the_rest_or_replaces_the_canc
     )
 
 
-async def test_a_client_that_vanishes_mid_send_is_not_audited_as_shutdown(rig: _Rig) -> None:
+#: #2409: the flag-off case is kept until the removal PR, the only cover of the flag-off writer's
+#: `WebSocketDisconnect` mid-send.
+@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag_off", "flag_on"])
+async def test_a_client_that_vanishes_mid_send_is_not_audited_as_shutdown(
+    backpressure: BackpressureConfig | None,
+) -> None:
     """During the shutdown window a send to a client that left ends the writer, and no
     `websocket.disconnect` reaches the reader: the writer's error carries the close code."""
-    sock = _Socket()
+    rig, sock = _Rig(backpressure), _Socket()
     async with asyncio.timeout(_DEADLINE_S):
         handler = await rig.authenticated(sock)
         (conn,) = rig.hub.of_user(USER)

@@ -22,7 +22,7 @@ from candleviewer.ws.metrics import cv_ws_malformed_updates_total
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.pipeline import ConnectionPipeline
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody, cv_ws_resync_total
-from tests.unit.ws._seq_support import ACC_A, Source
+from tests.unit.ws._seq_support import ACC_A, Conn, Source
 from tests.unit.ws.test_pipeline_outbound import (
     _BOOK,
     _DEADLINE_S,
@@ -151,6 +151,40 @@ async def test_a_raising_orders_build_is_logged_at_error_and_closes_the_connecti
     assert _failures(logs) == [("orders", "KeyError", "error")] and _MARK not in repr(logs)
     assert bad.pipe.terminal is not None  # the terminal slot holds that close's `bye` (§8.6)
     assert bad.pipe.terminal.bye["p"]["reason"] == "internal_error"
+
+
+def _flag_off_side(
+    hub: SequencingHub, entry: Any
+) -> tuple[Source, Subscription, Callable[[], list[dict[str, Any]]]]:
+    """A flag-off connection on `hub`, its sink its `TopicEmitter`, subscribed to `entry` with its
+    first `snap` taken: its source, its subscription and what it was sent since the last look."""
+    src = Source()
+    src.bodies["orders"] = SnapshotBody({"orders": []})
+    conn = Conn(src)
+    hub.register(conn.authz, conn.emitter)
+    _, sub = conn.sub(entry)
+    conn.take()
+    return src, sub, conn.take
+
+
+def test_a_flag_off_raising_orders_build_stays_pending_and_is_logged_at_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§10.1 flag off: the `TopicEmitter` has no close path, so an `orders` re-snapshot whose build
+    raises stays pending with its reason, logged once at `error`; the other connection gets its
+    `snap`. #2409: kept until the removal PR, the only cover of the hub's guard around a sink that
+    raises (`SequencingHub.resnapshot`); the pipeline twin is
+    `test_a_raising_orders_build_is_logged_at_error_and_closes_the_connection`."""
+    hub = SequencingHub()
+    (bad_source, bad, bad_sent), (_, _, good_sent) = (_flag_off_side(hub, _ORDERS) for _ in "ab")
+    monkeypatch.setattr(bad_source, "build", _lookup_fails)
+    with capture_logs() as logs:
+        assert hub.instrument_revision("BTCUSDT") == 1
+    [snap] = good_sent()
+    assert (snap["ch"], snap["meta"]["reason"]) == ("orders", "instrument_revision")
+    assert bad_sent() == []
+    assert (bad.snapshot_pending, bad.pending_reason) == (True, "instrument_revision")
+    assert _failures(logs) == [("orders", "KeyError", "error")] and _MARK not in repr(logs)
 
 
 def test_a_cancelled_build_leaves_the_trigger_and_every_subscription_pending(
