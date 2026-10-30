@@ -36,7 +36,10 @@
   several folds at once, and the burst-parse residual names its host and CI's reading; no row, rating or count
   changes. Revision 27 records #848's S8b and S9: OM-T05b's and OM-D13's controls as S4-F (#4561) built them,
   their §12.2 residuals recorded for the orchestrator's #2701 ledger, and the live refusal of the lockout's paging
-  stand-in; no row, rating or count changes.
+  stand-in; no row, rating or count changes. Revision 28 records #914's contract PR (E29-T06): D6 is resolved for
+  v1 as automatic adoption only, audited as `order.adopted_untracked` (§4.3, BQ-17), the pass's two audit actions
+  are registered before their first emitter, and the carries BQ-2 moved are named as E45-T01's; no row, rating or
+  count changes.
 - Path: the ticket names `docs/security/e29-oms-threat-model.md`, but GOV-008 scans only
   `docs/security/threat-models/E<nn>-<slug>.md`, so this file is `E29-oms.md` (D3).
 - Timing: design-time model, approved while some inputs are open. E27-T02 (#835), E27-X01 (#838), E27-T03 (#836) and

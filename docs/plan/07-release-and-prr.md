@@ -1285,6 +1285,8 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 | 6. Escalation         | Owner immediately: a mixed-up key can read, and trade on, the wrong account.                                                                                                                   |
 | 7. Verify recovery    | No further increase for an hour after the key is replaced, and the account's next reconciliation pass is clean.                                                                                |
 
+A page inhibits its own component's tickets, so while `KekUnavailable` pages (component `secrets`) this ticket is held, not lost, and goes out once the page clears.
+
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
 
 ```bash
