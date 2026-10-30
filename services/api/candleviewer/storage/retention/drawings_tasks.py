@@ -43,7 +43,7 @@ class DrawingsMetrics:
     conflicts: BoundedMetric
     purged: BoundedMetric
     rows: BoundedMetric  # cv_drawings_rows{tool}: live drawings per tool (set by the purge task)
-    #: cv_drawings_rows_per_user{stat}: max and p95 of live drawings per owner (#2727)
+    #: cv_drawings_rows_per_user{kind}: max and p95 of live drawings per owner (#2727)
     rows_per_user: BoundedMetric | None = None
 
 

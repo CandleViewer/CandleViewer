@@ -2246,7 +2246,8 @@ export interface paths {
      *     Write rate limit (#2727): every `createDrawing`, `updateDrawing`, `deleteDrawing` and
      *     `batchUpsertDrawings` call takes one token from the caller's bucket of 20, refilled at 60 a
      *     minute, after the permission check. A call that finds no token is `429 rate_limited` with
-     *     `Retry-After`, and nothing is written.
+     *     `Retry-After` (the drawings bucket sends no `RateLimit-*` headers), and nothing is
+     *     written. A create past both quotas is answered for the per-symbol one.
      */
     post: operations["createDrawing"];
     delete?: never;
