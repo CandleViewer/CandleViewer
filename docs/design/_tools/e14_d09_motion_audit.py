@@ -1,8 +1,8 @@
 """E14-D09 (#353) audit: the motion table, the do-not-animate list, the arithmetic, the cites.
 
-Stdlib only, offline (`python3 -I -B`). It reads the spec from the working tree, and every cited
-file and the token JSON AS TEXT at the pinned base with `git show`. Nine gates, each FAIL led by
-its code, at most one G1 FAIL per table row:
+Stdlib only, offline (`python3 -I -B`). It reads the spec and the prototype's results from the
+working tree, and every cited file and the token JSON AS TEXT at the pinned base with `git show`.
+Ten gates, each FAIL led by its code, at most one G1 FAIL per table row:
 
 - [G1-TABLE] section 2 holds D9-01 to D9-13 in order, every cell filled, no Carrier or reduce cell
   a dash; the moving rows are exactly MOVING; each row's layer is RULED_LAYER's; a cut reads the
@@ -10,8 +10,10 @@ its code, at most one G1 FAIL per table row:
   row's AC 1 cell starts "carries:"; only D9-03 runs during a drag; every other moving row cuts
   to rest at the drag threshold (DNA-4).
 - [G2-TOKEN] every backticked name in a token group exists in the token JSON at the base or is
-  one of R352's two ruled names; no motion token but the seven; each row's timing cell names its
-  ruled motion tokens in order (RULED_TIMING; a cut names `motion.duration.instant` only).
+  one of D08's two proposed names; no motion token but the seven; each row's timing cell names its
+  ruled motion tokens in order (RULED_TIMING; a cut names `motion.duration.instant` only); a
+  moving row whose recomputed verdict is "inconclusive" leads with its minimal form
+  (MINIMAL_TIMING, R353 BQ-11).
 - [G3-PROPERTY] a moving canvas half animates one instance alpha or one per-instance scale; a DOM half
   only `opacity` or `transform`; a moving canvas row costs "+0 draw calls"; every canvas row says
   "the drawings layer only" and every row with a DOM layer "no layout on the chart container".
@@ -29,17 +31,25 @@ its code, at most one G1 FAIL per table row:
 - [G7-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base;
   each pinned cite still carries its words, and pins and cited spans match both ways (every pin
   cited, every in-range cited span pinned), so a cite moved to other lines fails; each cited
-  file is identical at the BQ list's base and E05-D03 at its merge commit, whenever those
+  file is identical at the BQ list's base (bar ADDED_SINCE_BQ) and E05-D03 at its merge commit, whenever those
   commits are readable; no cite lands in `16` section 7's recipe lines (FORBIDDEN).
 - [G8-HYGIENE] no local path, host, closing keyword, id or open-approval wording in the spec, and
   no word or substring on the lane's public-text list or a host name in the spec or this tool.
 - [G9-BOARDS] section 10: six boards, 01 to 05 dark and 06 the light twin, names and exports in
   the ruled pattern, every board PENDING until PR 3.
+- [G10-RESULTS] `proto-results.json` (PR 2) carries the "not the engine" note, 200 drawings, 5
+  repetitions, the three entries, PROTO_RUNS runs and every capture it lists on disk; each entry
+  costs +0 draw calls, uploads at most section 6's bytes per frame and emphasises at most HS-1's
+  cap in the bulk restore; every play run in PLAYS is there, a normal one with at most 2 starts per
+  element and 3 per region in any 1 s (MR-1, HS-1b), a reduce one with 0 starts; section 6.1's
+  table carries each figure as recorded, the with-entry p95 spread over the runs, and the verdict
+  recomputed from BUDGETS under #220's below-class rule (met = every run inside the budget,
+  conservative evidence; a miss = "inconclusive").
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL, 0 WARN is the bar);
 `--self-test` applies one mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory copy
-of the spec and passes only when each adds exactly one new FAIL with its gate's code, a re-run on
-the unmutated text reproduces the base result and no file on disk changed.
+of the spec or of the results and passes only when each adds exactly one new FAIL with its gate's
+code, a re-run on the unmutated text reproduces the base result and no file on disk changed.
 
 Usage: python3 -I -B docs/design/_tools/e14_d09_motion_audit.py [--check] [--json] [--self-test]
        [--source R352=FILE] [--source R353=FILE] [--source A28=FILE] [--source L1=FILE]
@@ -61,8 +71,13 @@ from typing import Any, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "docs" / "design" / "E14" / "E14-D09.md"
-BASE = "7cb279c542"  # origin/main; every cite is read here
+PROTO = ROOT / "docs" / "design" / "E14" / "E14-D09-proto" / "proto-results.json"
+BASE = "e87be9b978"  # origin/main; every cite is read here
 BQ_BASE = "3bac78e344"  # where the BQ list (6511707123) read every cite
+# a cited file may differ from its BQ_BASE text only by lines added at a known place: key ->
+# (first added line, count); `26` took E11-T02's shipped-deltas paragraph and its blank line (#5017);
+# `14` took the E14-D08 pointer line (#5025)
+ADDED_SINCE_BQ: dict[str, tuple[int, int]] = {"26": (350, 2), "14": (961, 1)}
 E05_PIN = "29fe3d5b2e"  # the merge commit of E05-D03 (#4990), cited by row, rule and section id
 KEYS = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -73,6 +88,7 @@ KEYS = {
     "D03": "docs/design/E14/E14-D03.md",
     "D04": "docs/design/E14/E14-D04.md",
     "D07": "docs/design/E14/E14-D07.md",
+    "D08": "docs/design/E14/E14-D08.md",
     "D04H": "docs/design/E14/E14-D04-handoff.md",
     "D05H": "docs/design/E14/E14-D05-handoff.md",
     "D06H": "docs/design/E14/E14-D06-handoff.md",
@@ -100,9 +116,9 @@ FORBIDDEN = ("16", 180, 186)  # `16` section 7's pre-E05-D03 recipe lines (R353 
 # key|line|words that must stand on that line at the base (the load-bearing cites)
 CITE_PINS = """\
 05|208|No content flashes more than 3 times per second;14|954|>=58 fps with 200 drawings
-14|1080|SCR-046;16|104|motion.duration.{instant,fast,normal,slow};26|130|Time-based animation
+14|1081|SCR-046;16|104|motion.duration.{instant,fast,normal,slow};26|130|Time-based animation
 26|133|Render on demand;26|224|drawing labels a third;26|262|optimistic local writes
-26|682|Drawing interaction: 200 drawings, drag one;D02|283|a count chip "7 selected"
+26|684|Drawing interaction: 200 drawings, drag one;D02|283|a count chip "7 selected"
 D02|291|small travel threshold;D02|326|`aria-pressed` for selected;D02|332|**Nudges never snap.**
 D02|332|a 10 px ring with the value text "High 65,400";D02|428|an undo that restores one focuses it
 D02|453|nothing here animates by design;D02|500|"changes not saved" chip
@@ -137,6 +153,11 @@ E05-D03|121|One-shot rows start only on a state change, a user action
 D02|521|armed, first time in session;D02|522|"Horizontal line tool on."
 D02|523|"Horizontal line tool off.";D02|524|"Anchor 1 of 2 at 13:40, 64,012.5."
 D02|526|"Horizontal line at 64,210.5 created on all BTCUSDT panes. Selected."
+D08|19|the 8 / 10 / 24 px handle numbers and the 12 px magnet radius travel as `EngineTheme.metrics`
+D08|19|the 10 px ring + value text vs the 8 px dot keeps the two apart by shape
+D08|19|band `ChartEngine/DrawingToolOverlay`;D08|129|`color.drawing.handle.active`
+D08|131|`color.drawing.snap`;D08|239|none by design;D08|239|will append here
+D08|299|E14-T04 (#359);D08|309|the E14-T04 comment and the implementer's acknowledgement at pickup
 D02|530|"Selection cleared.";D02|534|"Trendline removed. Undo available."
 D02|536|"200 drawings hidden." / "All drawings locked.";D02|723|motion: creation, selection
 D04|299|`save-failed`;D04H|15|the popover's open / close is `16` §7's dialog recipe
@@ -146,7 +167,7 @@ D07|313|scrolls the virtualised list so the row is in view;D07|317|with the **"r
 D07H|15|the restore flash `motion.duration.normal`"""
 STAMP = "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A28)"
 WALK = "owner walkthrough: post-Done (#2701)"
-PARTIAL = "Partial: PR 1 of 3"
+PARTIAL = "Partial: PR 2 of 3"
 # The ruled words, by ruling (R352 = #352 6510321645, R353 = #353 6511761951, A28 = #2701
 # 6511768701, L1 = R353's precisions in the orchestrator lens round 1 on #5014, 6512980157);
 # each stands in the spec, and in the saved copy given with --source.
@@ -154,13 +175,7 @@ RULING_PINS: dict[str, tuple[str, ...]] = {
     "R352": (
         "TP-13 `color.drawing.snap`",
         "the 10 px ring + value text vs the 8 px dot keeps the two apart by shape",
-        (
-            "the 8 / 10 / 24 px handle numbers and the 12 px magnet radius travel as "
-            "`EngineTheme.metrics` (routed to E14-T04 #359)"
-        ),
-        "the engine card with the implementer's acknowledgement",
         "band `ChartEngine/DrawingToolOverlay`",
-        "none by design; the pairs are E14-D09's (#353) and will append here",
     ),
     "R353": (
         "E05-D03 row 3, restored-row use (RULED #353 BQ-08)",
@@ -217,11 +232,35 @@ RULED_TIMING: dict[str, tuple[str, ...]] = {
     # tree: R353 BQ-08 precision (L1): `normal` with row 3's easing (its fade-out curve)
     "D9-09": (D + "slow", E + "standard", D + "normal", E + "accelerate"),
 }
+# R353 BQ-11: an inconclusive row leads with its minimal form (one property, <= `fast`), the full
+# form after it; D9-03 already is one property at `fast`, so its minimal form is its ruled timing
+# (R353 M-1); the halos play over `fast`; the tree half is unchanged
+MINIMAL_TIMING: dict[str, tuple[str, ...]] = {
+    "D9-03": RULED_TIMING["D9-03"],
+    "D9-05": (D + "fast", E + "standard", D + "normal", E + "standard"),
+    "D9-09": (D + "fast", E + "standard", D + "slow", D + "normal", E + "accelerate"),
+}
+# entry -> (row, p95 budget ms, inclusive, fps floor or 0, the budget cell of section 6.1's table)
+BUDGETS: dict[str, tuple[str, float, bool, float, str]] = {
+    "snap": ("D9-03", 12.0, True, 58.0, "≤ 12 ms and ≥ 58 fps"),
+    "select": ("D9-05", 16.0, False, 0.0, "< 16 ms"),
+    "undo": ("D9-09", 16.0, False, 0.0, "< 16 ms"),
+}
+NOT_ENGINE = "the prototype is not the engine"
+# captures: 3 entries x start/mid/end x normal/reduce in the full form, plus start/mid/end of the
+# two minimal forms that differ from the full one (D9-05, D9-09); PROTO_RUNS measure runs
+PROTO_DRAWINGS, PROTO_REPS, CAPTURES, PROTO_RUNS = 200, 5, 24, 3
+# the play runs: (entry, motion, form); D9-03's minimal form is its full form
+PLAYS = frozenset(
+    [(e, m, "full") for e in ("snap", "select", "undo") for m in ("normal", "reduce")]
+    + [(e, "normal", "min") for e in ("select", "undo")]
+)
+MR1_PER_ELEMENT, REGION_STARTS = 2, 3  # starts in any 1 s: per element (HS-1 gap), per region
 MOTION7 = frozenset(
     [D + x for x in ("instant", "fast", "normal", "slow")]
     + [E + x for x in ("standard", "decelerate", "accelerate")]
 )
-PROPOSED = frozenset({"color.drawing.snap", "color.drawing.handle.active"})  # R352 TP-13, TP-11
+PROPOSED = frozenset({"color.drawing.snap", "color.drawing.handle.active"})  # D08:131, :129
 CUT_TIMING = "`motion.duration.instant` · `—`"
 GL_FORMS = ("instance alpha", "per-instance scale")
 HZ, HS1_GAP_MS, MR1_MAX, HS1_CAP = 60, 500, 3, 20  # HS-1: 500 ms, 20 per frame; MR-1: 3 per 1 s
@@ -280,6 +319,7 @@ class Ctx(NamedTuple):
     bq_base: dict[str, str]
     e05_pin: str
     sources: dict[str, str]
+    results: str
 
 
 class Result:
@@ -298,7 +338,17 @@ def load_ctx(sources: dict[str, str]) -> Ctx:
     tokens = token_values([git_show(BASE, p) for p in TOKEN_FILES])
     tool = Path(__file__).read_text(encoding="utf-8")
     e05 = git_show(E05_PIN, KEYS["E05-D03"])
-    return Ctx(SPEC.read_text(encoding="utf-8"), tool, base, tokens, bq, e05, sources)
+    results = PROTO.read_text(encoding="utf-8") if PROTO.exists() else ""
+    return Ctx(SPEC.read_text(encoding="utf-8"), tool, base, tokens, bq, e05, sources, results)
+
+
+def without_added(text: str, key: str) -> str:
+    """`text` less the lines ADDED_SINCE_BQ says were added to the file since the BQ base."""
+    if key not in ADDED_SINCE_BQ:
+        return text
+    first, count = ADDED_SINCE_BQ[key]
+    lines = text.splitlines(keepends=True)
+    return "".join(lines[: first - 1] + lines[first - 1 + count :])
 
 
 def flat(text: str) -> str:
@@ -397,6 +447,41 @@ def gate_table(ctx: Ctx, r: Result) -> None:
     r.numbers["moving"] = sorted(x["d9"] for x in rs if x.get("ac1", "").startswith("carries:"))
 
 
+# --- the prototype's results (read by G2 and G10) ----------------------------------------------
+def load_results(ctx: Ctx) -> dict[str, Any] | None:
+    try:
+        data = json.loads(ctx.results)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def run_figures(data: dict[str, Any], entry: str) -> list[tuple[float, float]]:
+    """(with-entry window p95, with-entry fps) of each recorded run of one entry."""
+    out = []
+    for run_ in data.get("runs", []):
+        w = run_.get("entries", {}).get(entry, {}) if isinstance(run_, dict) else {}
+        if isinstance(w.get("with_p95_ms"), (int, float)) and isinstance(
+            w.get("fps"), (int, float)
+        ):
+            out.append((float(w["with_p95_ms"]), float(w["fps"])))
+    return out
+
+
+def verdicts(ctx: Ctx) -> dict[str, str]:
+    """Row -> "met" or "inconclusive": met only when every run's with-entry window p95 (and, for
+    D9-03, its fps) is inside BUDGETS."""
+    data = load_results(ctx) or {}
+    out: dict[str, str] = {}
+    for entry, (rid, p95, inclusive, fps, _) in BUDGETS.items():
+        figs = run_figures(data, entry)
+        if len(figs) != PROTO_RUNS:
+            continue
+        ok = all((x <= p95 if inclusive else x < p95) and f >= fps for x, f in figs)
+        out[rid] = "met" if ok else "inconclusive"
+    return out
+
+
 # --- G2: tokens -------------------------------------------------------------------------------
 def gate_token(ctx: Ctx, r: Result) -> None:
     groups = {n.split(".")[0] for n in ctx.tokens}
@@ -405,9 +490,12 @@ def gate_token(ctx: Ctx, r: Result) -> None:
         r.fail("G2-TOKEN", f"token names not in the token JSON at the base: {missing}")
     if extra := sorted(t for t in named if t.startswith("motion.") and t not in MOTION7):
         r.fail("G2-TOKEN", f"motion names outside the seven: {extra}")
+    verdict = verdicts(ctx)
     for row in table(ctx.spec):
         said = tuple(t for t in TOKEN.findall(row.get("timing", "")) if t.startswith("motion."))
-        want = RULED_TIMING.get(row.get("d9", ""), (D + "instant",))
+        rid = row.get("d9", "")
+        ruled = MINIMAL_TIMING if verdict.get(rid) == "inconclusive" else RULED_TIMING
+        want = ruled.get(rid, (D + "instant",))
         if said != want:
             r.fail("G2-TOKEN", f"{row.get('d9')}: timing names {list(said)}, ruled {list(want)}")
     r.numbers["tokens_named"] = sorted(named)
@@ -535,7 +623,7 @@ def expected_figures(ctx: Ctx) -> tuple[dict[str, tuple[str, ...]], list[str]]:
 
 
 def gate_arith(ctx: Ctx, r: Result) -> None:
-    sec6 = section(ctx.spec, 6)
+    sec6 = section(ctx.spec, 6).split("\n### 6.1")[0]  # layer 1; section 6.1 is G10's
     cells, sentences = expected_figures(ctx)
     got = {x[0]: tuple(x[1:6]) for x in rows(sec6) if x}
     for rid, want in cells.items():
@@ -614,7 +702,7 @@ def gate_cite(ctx: Ctx, r: Result) -> None:
             "G7-CITE",
             f"pins and cites disagree: pinned, not cited {uncited}; cited, not pinned {unpinned}",
         )
-    moved = [k for k, v in ctx.bq_base.items() if v and v != ctx.base[k]]
+    moved = [k for k, v in ctx.bq_base.items() if v and v != without_added(ctx.base[k], k)]
     if moved:
         r.fail("G7-CITE", f"cited files changed between {BQ_BASE} and {BASE}: {moved}")
     if ctx.e05_pin and ctx.e05_pin != ctx.base["E05-D03"]:
@@ -623,7 +711,9 @@ def gate_cite(ctx: Ctx, r: Result) -> None:
     r.numbers["pins"] = len(pins)
     r.numbers["spans"] = len(spans)
     r.numbers["bq_base"] = (
-        f"{BQ_BASE} -> {BASE}: identical" if any(ctx.bq_base.values()) else "not readable"
+        f"{BQ_BASE} -> {BASE}: identical bar {ADDED_SINCE_BQ}"
+        if any(ctx.bq_base.values())
+        else "not readable"
     )
 
 
@@ -664,6 +754,108 @@ def gate_boards(ctx: Ctx, r: Result) -> None:
     r.numbers["boards"] = len(bs)
 
 
+# --- G10: the measured results (PR 2) --------------------------------------------------------
+def results_section(spec: str) -> str:
+    sec6 = section(spec, 6)
+    return sec6.split("\n### 6.1", 1)[1] if "\n### 6.1" in sec6 else ""
+
+
+def result_cells(
+    entry: str, e: dict[str, Any], verdict: str, figs: list[tuple[float, float]]
+) -> tuple[str, ...]:
+    wo, wi = e.get("without", {}), e.get("with", {})
+
+    def f(x: object) -> str:
+        return f"{x:.1f}" if isinstance(x, (int, float)) else "?"
+
+    calls = f"{(wo.get('draw_calls') or ['?'])[0]} / {(wi.get('draw_calls') or ['?'])[0]}"
+    spread = f"{f(min(x for x, _ in figs))} to {f(max(x for x, _ in figs))}" if figs else "?"
+    return (
+        entry,
+        f(wo.get("window_p50_ms")),
+        f(wo.get("window_p95_ms")),
+        f(wi.get("window_p50_ms")),
+        f(wi.get("window_p95_ms")),
+        spread,
+        f(wo.get("fps")),
+        f(wi.get("fps")),
+        calls,
+        str(wi.get("entry_bytes_max")),
+        BUDGETS[entry][4],
+        verdict,
+    )
+
+
+def gate_results(ctx: Ctx, r: Result) -> None:
+    data = load_results(ctx)
+    if data is None:
+        r.fail("G10-RESULTS", "proto-results.json is missing or not a JSON object")
+        return
+    if data.get("note") != NOT_ENGINE:
+        r.fail("G10-RESULTS", f"proto-results.json does not carry the note {NOT_ENGINE!r}")
+    if data.get("drawings") != PROTO_DRAWINGS or data.get("reps") != PROTO_REPS:
+        r.fail("G10-RESULTS", f"the run is not {PROTO_DRAWINGS} drawings x {PROTO_REPS} reps")
+    caps = [c.get("file", "") for c in data.get("captures", []) if isinstance(c, dict)]
+    gone = [c for c in caps if not (PROTO.parent / c).is_file()]
+    if len(caps) != CAPTURES or gone:
+        r.fail("G10-RESULTS", f"{len(caps)} captures listed (ruled {CAPTURES}); not on disk {gone}")
+    verdict, got = verdicts(ctx), {x[0]: tuple(x[1:]) for x in rows(results_section(ctx.spec))}
+    for entry, (rid, *_rest) in BUDGETS.items():
+        e = data.get("entries", {}).get(entry)
+        if not isinstance(e, dict) or e.get("row") != rid:
+            r.fail("G10-RESULTS", f"{rid}: no {entry!r} entry in proto-results.json")
+            continue
+        wo, wi = e.get("without", {}), e.get("with", {})
+        limit = HS1_CAP * BYTES if rid == "D9-09" else BYTES
+        if wo.get("draw_calls") != wi.get("draw_calls"):
+            r.fail(
+                "G10-RESULTS", f"{rid}: draw calls {wi.get('draw_calls')} with the entry, not +0"
+            )
+        elif not isinstance(wi.get("entry_bytes_max"), int) or wi["entry_bytes_max"] > limit:
+            r.fail("G10-RESULTS", f"{rid}: {wi.get('entry_bytes_max')} B per frame, over {limit}")
+        elif got.get(rid) != (
+            want := result_cells(entry, e, verdict.get(rid, "?"), run_figures(data, entry))
+        ):
+            r.fail("G10-RESULTS", f"{rid}: section 6.1 reads {got.get(rid)}, recomputed {want}")
+    bulk = data.get("entries", {}).get("undo", {}).get("bulk_last_rep", {})
+    if not isinstance(bulk.get("emphasised"), int) or bulk["emphasised"] > HS1_CAP:
+        r.fail(
+            "G10-RESULTS", f"the bulk restore emphasised {bulk.get('emphasised')}, cap {HS1_CAP}"
+        )
+    if len(data.get("runs", [])) != PROTO_RUNS:
+        r.fail(
+            "G10-RESULTS", f"{len(data.get('runs', []))} measure runs recorded, not {PROTO_RUNS}"
+        )
+    gate_plays(data, r)
+    if NOT_ENGINE not in flat(results_section(ctx.spec)).lower():
+        r.fail("G10-RESULTS", f"section 6.1 does not say {NOT_ENGINE!r}")
+    r.numbers["verdicts"] = verdict
+    r.numbers["captures"] = len(caps)
+
+
+def gate_plays(data: dict[str, Any], r: Result) -> None:
+    """The play runs' claims: MR-1 per element, HS-1b's start clause per region, none in reduce."""
+    plays = [p for p in data.get("play", []) if isinstance(p, dict)]
+    keys = [(p.get("play"), p.get("motion"), p.get("form")) for p in plays]
+    if len(keys) != len(PLAYS) or set(keys) != PLAYS:
+        r.fail(
+            "G10-RESULTS", f"play runs {sorted(map(str, keys))}, ruled {sorted(map(str, PLAYS))}"
+        )
+    for p in plays:
+        name = f"play {p.get('play')} {p.get('motion')} {p.get('form')}"
+        el, reg = p.get("max_starts_per_element_per_1s"), p.get("max_starts_per_region_per_1s")
+        if (
+            not isinstance(el, int)
+            or not isinstance(reg, int)
+            or not isinstance(p.get("starts"), int)
+        ):
+            r.fail("G10-RESULTS", f"{name}: no start counts")
+        elif p.get("motion") == "reduce" and (p["starts"] or p.get("settles", 0)):
+            r.fail("G10-RESULTS", f"{name}: {p['starts']} starts under motion reduce, not 0")
+        elif el > MR1_PER_ELEMENT or reg > REGION_STARTS:
+            r.fail("G10-RESULTS", f"{name}: {el} starts per element, {reg} per region in 1 s")
+
+
 GATE_FNS: tuple[tuple[str, Callable[[Ctx, Result], None]], ...] = (
     ("G1-TABLE", gate_table),
     ("G2-TOKEN", gate_token),
@@ -674,6 +866,7 @@ GATE_FNS: tuple[tuple[str, Callable[[Ctx, Result], None]], ...] = (
     ("G7-CITE", gate_cite),
     ("G8-HYGIENE", gate_hygiene),
     ("G9-BOARDS", gate_boards),
+    ("G10-RESULTS", gate_results),
 )
 
 
@@ -687,6 +880,15 @@ def run(ctx: Ctx) -> Result:
 # --- self-test --------------------------------------------------------------------------------
 def sub(old: str, new: str) -> Callable[[Ctx], Ctx]:
     return lambda ctx: ctx._replace(spec=ctx.spec.replace(old, new, 1))
+
+
+def edit_results(fn: Callable[[dict[str, Any]], None]) -> Callable[[Ctx], Ctx]:
+    def apply(ctx: Ctx) -> Ctx:
+        data = json.loads(ctx.results)
+        fn(data)
+        return ctx._replace(results=json.dumps(data))
+
+    return apply
 
 
 def regex(pattern: str, repl: str) -> Callable[[Ctx], Ctx]:
@@ -708,6 +910,7 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G7-CITE", sub("`m0-report.mjs`:733;", "`m0-report.mjs`:9733;")),
     ("G8-HYGIENE", sub("(a spec cannot split from its tool;", "(a spec cannot split, /tmp/x;")),
     ("G9-BOARDS", regex(r"^(\| 06 .*?\| )light( +\|)", r"\1dark \2")),
+    ("G10-RESULTS", regex(r"^(\| D9-05 +\| select .*\| )inconclusive( *\|)$", r"\1met\2")),
 )
 
 # Probes: edits a weaker gate would let through; each must add one FAIL.
@@ -749,11 +952,32 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
         "G8-HYGIENE",
         sub("- **Hand-offs.**", "- **Hand-offs.** " + codecs.decode("Nggnpx", "rot13") + "."),
     ),
+    ("G10-RESULTS", edit_results(lambda d: d["entries"]["select"]["with"].update(draw_calls=[3]))),
+    (
+        "G10-RESULTS",
+        edit_results(lambda d: d["entries"]["undo"]["with"].update(entry_bytes_max=84)),
+    ),
+    (
+        "G10-RESULTS",
+        edit_results(lambda d: d["entries"]["snap"]["without"].update(window_p50_ms=99)),
+    ),
+    (
+        "G10-RESULTS",
+        edit_results(lambda d: d["entries"]["undo"]["bulk_last_rep"].update(emphasised=21)),
+    ),
+    ("G10-RESULTS", edit_results(lambda d: d.update(note="the prototype"))),
+    ("G10-RESULTS", edit_results(lambda d: d["captures"].pop())),
+    ("G10-RESULTS", edit_results(lambda d: d["play"][1].update(starts=1))),
+    ("G10-RESULTS", edit_results(lambda d: d["play"][2].update(max_starts_per_element_per_1s=3))),
+    ("G10-RESULTS", edit_results(lambda d: d["play"][4].update(max_starts_per_region_per_1s=4))),
+    ("G10-RESULTS", edit_results(lambda d: d["play"].pop())),
+    ("G10-RESULTS", edit_results(lambda d: d["runs"][2]["entries"]["snap"].update(with_p95_ms=99))),
 )
 
 
 def digests() -> dict[str, str]:
-    return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in (SPEC, Path(__file__))}
+    paths = (SPEC, Path(__file__), PROTO)
+    return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.exists()}
 
 
 def self_test(ctx: Ctx, base: Result) -> list[str]:
@@ -763,7 +987,7 @@ def self_test(ctx: Ctx, base: Result) -> list[str]:
     bad += [f"self-test: gate {g} has no mutation" for g, _ in GATE_FNS if g not in covered]
     for code, fn in (*MUTATIONS, *PROBES):
         mutated = fn(ctx)
-        if mutated.spec == ctx.spec:
+        if (mutated.spec, mutated.results) == (ctx.spec, ctx.results):
             bad.append(f"self-test {code}: the mutation did not apply")
             continue
         new = sorted(set(run(mutated).fails) - set(base.fails))
@@ -817,7 +1041,7 @@ def main(argv: list[str]) -> int:
             f"{n.get('cites')} ({n.get('spans')} distinct spans, {n.get('pins')} pins); ruling "
             f"pins {n.get('ruling_pins')} "
             f"(saved copies {n.get('sources_checked')}); boards {n.get('boards')}; "
-            f"{n.get('bq_base')}"
+            f"{n.get('bq_base')}; results {n.get('verdicts')}, captures {n.get('captures')}"
         )
         out.append(f"gates: {len(GATE_FNS)}; FAIL {len(res.fails)}, WARN {len(res.warns)}")
         if args.self_test:

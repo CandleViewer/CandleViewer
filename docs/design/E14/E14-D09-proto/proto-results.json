@@ -1,0 +1,913 @@
+{
+  "host": "development laptop (WSL2), software GL (SwiftShader, the runner's --disable-gpu); below class, not the 06 section 3.1 reference machine",
+  "assembled": "measure = the runner's output for 2000 5, run 3 times (entries = run 1; runs = each run's with-entry figures); play and captures = the runner's output per mode (each object verbatim, the PNG data moved to captures/)",
+  "note": "the prototype is not the engine",
+  "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.8078.4 Safari/537.36",
+  "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+  "cores": 28,
+  "canvas": [1280, 720],
+  "drawings": 200,
+  "seed": 353,
+  "win_ms": 2000,
+  "reps": 5,
+  "gl": "software GL (SwiftShader, the runner's --disable-gpu); below class",
+  "metric": "work = performance.now() read first in the rAF callback to a 1 px readPixels after the draw (the main thread's scene update, the draw and the GL wait of one frame; a compositor-side DOM animation, D9-09's tree overlay, is outside it); fps = rAF frames per second; window = the frames inside the entry's canvas duration from each start the scenario makes, the same population in both arms; active = frames where the entry runs (with only); without = the same scenario with RenderFlags.animate off (each start drawn at rest); the full forms",
+  "entries": {
+    "snap": {
+      "row": "D9-03",
+      "without": {
+        "frames": 548,
+        "p50_ms": 14.9,
+        "p95_ms": 19.7,
+        "max_ms": 25.3,
+        "active_frames": 0,
+        "active_p50_ms": 0,
+        "active_p95_ms": 0,
+        "window_frames": 117,
+        "window_p50_ms": 14.8,
+        "window_p95_ms": 19.3,
+        "fps": 54.53,
+        "fps_per_rep": [57.05, 55, 54.05, 54.5, 52],
+        "dropped_ge_33ms": 55,
+        "draw_calls": [2],
+        "entry_bytes_max": 0,
+        "cut_bytes_max": 36
+      },
+      "with": {
+        "frames": 554,
+        "p50_ms": 15.2,
+        "p95_ms": 19.4,
+        "max_ms": 23.8,
+        "active_frames": 34,
+        "active_p50_ms": 14.3,
+        "active_p95_ms": 21.1,
+        "window_frames": 118,
+        "window_p50_ms": 15.1,
+        "window_p95_ms": 19.4,
+        "fps": 54.95,
+        "fps_per_rep": [55.54, 52.56, 56.53, 55.05, 55.04],
+        "dropped_ge_33ms": 51,
+        "draw_calls": [2],
+        "entry_bytes_max": 4,
+        "cut_bytes_max": 36
+      },
+      "latches_last_rep": {
+        "settles": 4,
+        "at_rest": 56
+      }
+    },
+    "select": {
+      "row": "D9-05",
+      "without": {
+        "frames": 534,
+        "p50_ms": 15.7,
+        "p95_ms": 21.1,
+        "max_ms": 32.6,
+        "active_frames": 0,
+        "active_p50_ms": 0,
+        "active_p95_ms": 0,
+        "window_frames": 224,
+        "window_p50_ms": 15.8,
+        "window_p95_ms": 21.2,
+        "fps": 53.05,
+        "fps_per_rep": [53.56, 55.04, 52.5, 55.04, 49.09],
+        "dropped_ge_33ms": 70,
+        "draw_calls": [2],
+        "entry_bytes_max": 0,
+        "cut_bytes_max": 64
+      },
+      "with": {
+        "frames": 542,
+        "p50_ms": 15.6,
+        "p95_ms": 20.6,
+        "max_ms": 28.6,
+        "active_frames": 228,
+        "active_p50_ms": 15.6,
+        "active_p95_ms": 20.6,
+        "window_frames": 228,
+        "window_p50_ms": 15.6,
+        "window_p95_ms": 20.6,
+        "fps": 53.75,
+        "fps_per_rep": [53.56, 52.07, 55.05, 55.04, 53.06],
+        "dropped_ge_33ms": 63,
+        "draw_calls": [2],
+        "entry_bytes_max": 4,
+        "cut_bytes_max": 108
+      }
+    },
+    "undo": {
+      "row": "D9-09",
+      "without": {
+        "frames": 507,
+        "p50_ms": 16.6,
+        "p95_ms": 22.2,
+        "max_ms": 31.6,
+        "active_frames": 0,
+        "active_p50_ms": 0,
+        "active_p95_ms": 0,
+        "window_frames": 406,
+        "window_p50_ms": 16.6,
+        "window_p95_ms": 22.1,
+        "fps": 50.45,
+        "fps_per_rep": [54.5, 51.08, 48, 51.57, 47.11],
+        "dropped_ge_33ms": 96,
+        "draw_calls": [2],
+        "entry_bytes_max": 0,
+        "cut_bytes_max": 160
+      },
+      "with": {
+        "frames": 491,
+        "p50_ms": 17.1,
+        "p95_ms": 24.1,
+        "max_ms": 42.8,
+        "active_frames": 393,
+        "active_p50_ms": 17.2,
+        "active_p95_ms": 24.5,
+        "window_frames": 393,
+        "window_p50_ms": 17.2,
+        "window_p95_ms": 24.5,
+        "fps": 48.62,
+        "fps_per_rep": [54.55, 41.8, 46.5, 50.58, 49.68],
+        "dropped_ge_33ms": 113,
+        "draw_calls": [2],
+        "entry_bytes_max": 76,
+        "cut_bytes_max": 996
+      },
+      "bulk_last_rep": {
+        "group": 40,
+        "emphasised": 16,
+        "tagged": 24,
+        "not_started": {
+          "region": 24
+        }
+      }
+    }
+  },
+  "runs": [
+    {
+      "run": 1,
+      "entries": {
+        "snap": {
+          "without_p95_ms": 19.3,
+          "with_p95_ms": 19.4,
+          "with_active_p95_ms": 21.1,
+          "fps": 54.95
+        },
+        "select": {
+          "without_p95_ms": 21.2,
+          "with_p95_ms": 20.6,
+          "with_active_p95_ms": 20.6,
+          "fps": 53.75
+        },
+        "undo": {
+          "without_p95_ms": 22.1,
+          "with_p95_ms": 24.5,
+          "with_active_p95_ms": 24.5,
+          "fps": 48.62
+        }
+      }
+    },
+    {
+      "run": 2,
+      "entries": {
+        "snap": {
+          "without_p95_ms": 23.1,
+          "with_p95_ms": 23.2,
+          "with_active_p95_ms": 25.7,
+          "fps": 47.56
+        },
+        "select": {
+          "without_p95_ms": 21.7,
+          "with_p95_ms": 21.2,
+          "with_active_p95_ms": 21.2,
+          "fps": 52.35
+        },
+        "undo": {
+          "without_p95_ms": 21.1,
+          "with_p95_ms": 20.9,
+          "with_active_p95_ms": 20.9,
+          "fps": 52.19
+        }
+      }
+    },
+    {
+      "run": 3,
+      "entries": {
+        "snap": {
+          "without_p95_ms": 24.7,
+          "with_p95_ms": 21,
+          "with_active_p95_ms": 26.1,
+          "fps": 51.08
+        },
+        "select": {
+          "without_p95_ms": 21.5,
+          "with_p95_ms": 22.3,
+          "with_active_p95_ms": 22.3,
+          "fps": 50.53
+        },
+        "undo": {
+          "without_p95_ms": 21.3,
+          "with_p95_ms": 22.1,
+          "with_active_p95_ms": 22.1,
+          "fps": 50.56
+        }
+      }
+    }
+  ],
+  "play": [
+    {
+      "play": "snap",
+      "motion": "normal",
+      "form": "full",
+      "drawings": 200,
+      "events": [
+        {
+          "planned_ms": 3000,
+          "applied_ms": 3025.4,
+          "what": "drag ends",
+          "result": "ring and text cut"
+        }
+      ],
+      "frames": 172,
+      "parks": 1,
+      "starts": 6,
+      "max_starts_per_element_per_1s": 2,
+      "max_starts_per_region_per_1s": 0,
+      "settles": 6,
+      "at_rest": 86,
+      "max_starts_per_1s": 2
+    },
+    {
+      "play": "snap",
+      "motion": "reduce",
+      "form": "full",
+      "drawings": 200,
+      "events": [
+        {
+          "planned_ms": 3000,
+          "applied_ms": 3027.5,
+          "what": "drag ends",
+          "result": "ring and text cut"
+        }
+      ],
+      "frames": 169,
+      "parks": 1,
+      "starts": 0,
+      "max_starts_per_element_per_1s": 0,
+      "max_starts_per_region_per_1s": 0,
+      "settles": 0,
+      "at_rest": 95,
+      "max_starts_per_1s": 0
+    },
+    {
+      "play": "select",
+      "motion": "normal",
+      "form": "full",
+      "drawings": 200,
+      "events": [
+        {
+          "planned_ms": 300,
+          "applied_ms": 300.3,
+          "what": "select 2 (three overlap)",
+          "result": "start"
+        },
+        {
+          "planned_ms": 900,
+          "applied_ms": 900.2,
+          "what": "select 1",
+          "result": "start"
+        },
+        {
+          "planned_ms": 1000,
+          "applied_ms": 1022.1,
+          "what": "press on the selection",
+          "result": "down"
+        },
+        {
+          "planned_ms": 1010,
+          "applied_ms": 1040,
+          "what": "the press moves 3 px",
+          "result": "held (3.0 px)"
+        },
+        {
+          "planned_ms": 1020,
+          "applied_ms": 1040,
+          "what": "the press moves 6 px: past DRAG_THRESHOLD",
+          "result": "drag (6.0 px): cut 1 to rest"
+        },
+        {
+          "planned_ms": 1700,
+          "applied_ms": 1700.4,
+          "what": "select 3",
+          "result": "start"
+        },
+        {
+          "planned_ms": 1800,
+          "applied_ms": 1804.1,
+          "what": "select 3 again inside 500 ms",
+          "result": "gap"
+        },
+        {
+          "planned_ms": 2600,
+          "applied_ms": 2600.5,
+          "what": "select 2",
+          "result": "start"
+        }
+      ],
+      "frames": 43,
+      "parks": 5,
+      "starts": 4,
+      "max_starts_per_element_per_1s": 1,
+      "max_starts_per_region_per_1s": 2
+    },
+    {
+      "play": "select",
+      "motion": "reduce",
+      "form": "full",
+      "drawings": 200,
+      "events": [
+        {
+          "planned_ms": 300,
+          "applied_ms": 300.2,
+          "what": "select 2 (three overlap)",
+          "result": "reduce"
+        },
+        {
+          "planned_ms": 900,
+          "applied_ms": 900.3,
+          "what": "select 1",
+          "result": "reduce"
+        },
+        {
+          "planned_ms": 1000,
+          "applied_ms": 1000.1,
+          "what": "press on the selection",
+          "result": "down"
+        },
+        {
+          "planned_ms": 1010,
+          "applied_ms": 1024.2,
+          "what": "the press moves 3 px",
+          "result": "held (3.0 px)"
+        },
+        {
+          "planned_ms": 1020,
+          "applied_ms": 1024.3,
+          "what": "the press moves 6 px: past DRAG_THRESHOLD",
+          "result": "drag (6.0 px): cut 0 to rest"
+        },
+        {
+          "planned_ms": 1700,
+          "applied_ms": 1700.2,
+          "what": "select 3",
+          "result": "reduce"
+        },
+        {
+          "planned_ms": 1800,
+          "applied_ms": 1800.1,
+          "what": "select 3 again inside 500 ms",
+          "result": "reduce"
+        },
+        {
+          "planned_ms": 2600,
+          "applied_ms": 2601,
+          "what": "select 2",
+          "result": "reduce"
+        }
+      ],
+      "frames": 8,
+      "parks": 8,
+      "starts": 0,
+      "max_starts_per_element_per_1s": 0,
+      "max_starts_per_region_per_1s": 0
+    },
+    {
+      "play": "undo",
+      "motion": "normal",
+      "form": "full",
+      "drawings": 200,
+      "events": [
+        {
+          "planned_ms": 300,
+          "applied_ms": 300.4,
+          "what": "delete one trendline (a cut)",
+          "result": "cut"
+        },
+        {
+          "planned_ms": 1000,
+          "applied_ms": 1000.5,
+          "what": "Ctrl+Z: restore it",
+          "result": "{\"started\":1,\"tagged\":0,\"why\":{}}"
+        },
+        {
+          "planned_ms": 1800,
+          "applied_ms": 1800.2,
+          "what": "delete it again (a cut)",
+          "result": "cut"
+        },
+        {
+          "planned_ms": 2200,
+          "applied_ms": 2200.4,
+          "what": "Ctrl+Z: restore it",
+          "result": "{\"started\":1,\"tagged\":0,\"why\":{}}"
+        },
+        {
+          "planned_ms": 2350,
+          "applied_ms": 2363.9,
+          "what": "press on the restored object",
+          "result": "down"
+        },
+        {
+          "planned_ms": 2360,
+          "applied_ms": 2364,
+          "what": "the press moves 3 px",
+          "result": "held (3.0 px)"
+        },
+        {
+          "planned_ms": 2370,
+          "applied_ms": 2379.7,
+          "what": "the press moves 6 px: past DRAG_THRESHOLD",
+          "result": "drag (6.0 px): cut 2 to rest"
+        },
+        {
+          "planned_ms": 3000,
+          "applied_ms": 3001,
+          "what": "delete 40 (a cut)",
+          "result": "cut"
+        },
+        {
+          "planned_ms": 3600,
+          "applied_ms": 3600.3,
+          "what": "Ctrl+Z: restore 40",
+          "result": "{\"started\":16,\"tagged\":24,\"why\":{\"region\":24}}"
+        }
+      ],
+      "frames": 63,
+      "parks": 7,
+      "starts": 18,
+      "max_starts_per_element_per_1s": 1,
+      "max_starts_per_region_per_1s": 3
+    },
+    {
+      "play": "undo",
+      "motion": "reduce",
+      "form": "full",
+      "drawings": 200,
+      "events": [
+        {
+          "planned_ms": 300,
+          "applied_ms": 300.8,
+          "what": "delete one trendline (a cut)",
+          "result": "cut"
+        },
+        {
+          "planned_ms": 1000,
+          "applied_ms": 1000.3,
+          "what": "Ctrl+Z: restore it",
+          "result": "{\"started\":0,\"tagged\":1,\"why\":{\"reduce\":1}}"
+        },
+        {
+          "planned_ms": 1800,
+          "applied_ms": 1800.2,
+          "what": "delete it again (a cut)",
+          "result": "cut"
+        },
+        {
+          "planned_ms": 2200,
+          "applied_ms": 2200.2,
+          "what": "Ctrl+Z: restore it",
+          "result": "{\"started\":0,\"tagged\":1,\"why\":{\"reduce\":1}}"
+        },
+        {
+          "planned_ms": 2350,
+          "applied_ms": 2350.5,
+          "what": "press on the restored object",
+          "result": "down"
+        },
+        {
+          "planned_ms": 2360,
+          "applied_ms": 2364.7,
+          "what": "the press moves 3 px",
+          "result": "held (3.0 px)"
+        },
+        {
+          "planned_ms": 2370,
+          "applied_ms": 2370.2,
+          "what": "the press moves 6 px: past DRAG_THRESHOLD",
+          "result": "drag (6.0 px): cut 0 to rest"
+        },
+        {
+          "planned_ms": 3000,
+          "applied_ms": 3000.4,
+          "what": "delete 40 (a cut)",
+          "result": "cut"
+        },
+        {
+          "planned_ms": 3600,
+          "applied_ms": 3600.7,
+          "what": "Ctrl+Z: restore 40",
+          "result": "{\"started\":0,\"tagged\":40,\"why\":{\"reduce\":40}}"
+        }
+      ],
+      "frames": 9,
+      "parks": 9,
+      "starts": 0,
+      "max_starts_per_element_per_1s": 0,
+      "max_starts_per_region_per_1s": 0
+    },
+    {
+      "play": "select",
+      "motion": "normal",
+      "form": "min",
+      "drawings": 200,
+      "events": [
+        {
+          "planned_ms": 300,
+          "applied_ms": 300.3,
+          "what": "select 2 (three overlap)",
+          "result": "start"
+        },
+        {
+          "planned_ms": 900,
+          "applied_ms": 900.4,
+          "what": "select 1",
+          "result": "start"
+        },
+        {
+          "planned_ms": 925,
+          "applied_ms": 935.2,
+          "what": "press on the selection",
+          "result": "down"
+        },
+        {
+          "planned_ms": 935,
+          "applied_ms": 935.2,
+          "what": "the press moves 3 px",
+          "result": "held (3.0 px)"
+        },
+        {
+          "planned_ms": 945,
+          "applied_ms": 951.8,
+          "what": "the press moves 6 px: past DRAG_THRESHOLD",
+          "result": "drag (6.0 px): cut 1 to rest"
+        },
+        {
+          "planned_ms": 1700,
+          "applied_ms": 1700.3,
+          "what": "select 3",
+          "result": "start"
+        },
+        {
+          "planned_ms": 1800,
+          "applied_ms": 1811.7,
+          "what": "select 3 again inside 500 ms",
+          "result": "gap"
+        },
+        {
+          "planned_ms": 2600,
+          "applied_ms": 2600.4,
+          "what": "select 2",
+          "result": "start"
+        }
+      ],
+      "frames": 27,
+      "parks": 5,
+      "starts": 4,
+      "max_starts_per_element_per_1s": 1,
+      "max_starts_per_region_per_1s": 2
+    },
+    {
+      "play": "undo",
+      "motion": "normal",
+      "form": "min",
+      "drawings": 200,
+      "events": [
+        {
+          "planned_ms": 300,
+          "applied_ms": 300.4,
+          "what": "delete one trendline (a cut)",
+          "result": "cut"
+        },
+        {
+          "planned_ms": 1000,
+          "applied_ms": 1000.4,
+          "what": "Ctrl+Z: restore it",
+          "result": "{\"started\":1,\"tagged\":0,\"why\":{}}"
+        },
+        {
+          "planned_ms": 1800,
+          "applied_ms": 1800.5,
+          "what": "delete it again (a cut)",
+          "result": "cut"
+        },
+        {
+          "planned_ms": 2200,
+          "applied_ms": 2200.4,
+          "what": "Ctrl+Z: restore it",
+          "result": "{\"started\":1,\"tagged\":0,\"why\":{}}"
+        },
+        {
+          "planned_ms": 2225,
+          "applied_ms": 2246.6,
+          "what": "press on the restored object",
+          "result": "down"
+        },
+        {
+          "planned_ms": 2235,
+          "applied_ms": 2246.7,
+          "what": "the press moves 3 px",
+          "result": "held (3.0 px)"
+        },
+        {
+          "planned_ms": 2245,
+          "applied_ms": 2246.7,
+          "what": "the press moves 6 px: past DRAG_THRESHOLD",
+          "result": "drag (6.0 px): cut 2 to rest"
+        },
+        {
+          "planned_ms": 3000,
+          "applied_ms": 3000.5,
+          "what": "delete 40 (a cut)",
+          "result": "cut"
+        },
+        {
+          "planned_ms": 3600,
+          "applied_ms": 3600.5,
+          "what": "Ctrl+Z: restore 40",
+          "result": "{\"started\":16,\"tagged\":24,\"why\":{\"region\":24}}"
+        }
+      ],
+      "frames": 30,
+      "parks": 7,
+      "starts": 18,
+      "max_starts_per_element_per_1s": 1,
+      "max_starts_per_region_per_1s": 3
+    }
+  ],
+  "captures": [
+    {
+      "capture": "snap",
+      "at": "start",
+      "at_ms": 0,
+      "motion": "normal",
+      "form": "full",
+      "ring_scale": 1.4,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-snap-start.png"
+    },
+    {
+      "capture": "snap",
+      "at": "start",
+      "at_ms": 0,
+      "motion": "reduce",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-snap-start-reduce.png"
+    },
+    {
+      "capture": "snap",
+      "at": "mid",
+      "at_ms": 50,
+      "motion": "normal",
+      "form": "full",
+      "ring_scale": 1.04,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-snap-mid.png"
+    },
+    {
+      "capture": "snap",
+      "at": "mid",
+      "at_ms": 50,
+      "motion": "reduce",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-snap-mid-reduce.png"
+    },
+    {
+      "capture": "snap",
+      "at": "end",
+      "at_ms": 100,
+      "motion": "normal",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-snap-end.png"
+    },
+    {
+      "capture": "snap",
+      "at": "end",
+      "at_ms": 100,
+      "motion": "reduce",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-snap-end-reduce.png"
+    },
+    {
+      "capture": "select",
+      "at": "start",
+      "at_ms": 0,
+      "motion": "normal",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [0.6],
+      "overlay": 0,
+      "file": "captures/E14-D09-select-start.png"
+    },
+    {
+      "capture": "select",
+      "at": "start",
+      "at_ms": 0,
+      "motion": "reduce",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-select-start-reduce.png"
+    },
+    {
+      "capture": "select",
+      "at": "mid",
+      "at_ms": 100,
+      "motion": "normal",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [0.07],
+      "overlay": 0,
+      "file": "captures/E14-D09-select-mid.png"
+    },
+    {
+      "capture": "select",
+      "at": "mid",
+      "at_ms": 100,
+      "motion": "reduce",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-select-mid-reduce.png"
+    },
+    {
+      "capture": "select",
+      "at": "end",
+      "at_ms": 200,
+      "motion": "normal",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-select-end.png"
+    },
+    {
+      "capture": "select",
+      "at": "end",
+      "at_ms": 200,
+      "motion": "reduce",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-select-end-reduce.png"
+    },
+    {
+      "capture": "undo",
+      "at": "start",
+      "at_ms": 0,
+      "motion": "normal",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [0.6],
+      "overlay": 0.25,
+      "file": "captures/E14-D09-undo-start.png"
+    },
+    {
+      "capture": "undo",
+      "at": "start",
+      "at_ms": 0,
+      "motion": "reduce",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-undo-start-reduce.png"
+    },
+    {
+      "capture": "undo",
+      "at": "mid",
+      "at_ms": 100,
+      "motion": "normal",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [0.24],
+      "overlay": 0.16,
+      "file": "captures/E14-D09-undo-mid.png"
+    },
+    {
+      "capture": "undo",
+      "at": "mid",
+      "at_ms": 100,
+      "motion": "reduce",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-undo-mid-reduce.png"
+    },
+    {
+      "capture": "undo",
+      "at": "end",
+      "at_ms": 400,
+      "motion": "normal",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-undo-end.png"
+    },
+    {
+      "capture": "undo",
+      "at": "end",
+      "at_ms": 400,
+      "motion": "reduce",
+      "form": "full",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-undo-end-reduce.png"
+    },
+    {
+      "capture": "select",
+      "at": "start",
+      "at_ms": 0,
+      "motion": "normal",
+      "form": "min",
+      "ring_scale": 1,
+      "halo": [0.6],
+      "overlay": 0,
+      "file": "captures/E14-D09-select-min-start.png"
+    },
+    {
+      "capture": "select",
+      "at": "mid",
+      "at_ms": 50,
+      "motion": "normal",
+      "form": "min",
+      "ring_scale": 1,
+      "halo": [0.07],
+      "overlay": 0,
+      "file": "captures/E14-D09-select-min-mid.png"
+    },
+    {
+      "capture": "select",
+      "at": "end",
+      "at_ms": 100,
+      "motion": "normal",
+      "form": "min",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-select-min-end.png"
+    },
+    {
+      "capture": "undo",
+      "at": "start",
+      "at_ms": 0,
+      "motion": "normal",
+      "form": "min",
+      "ring_scale": 1,
+      "halo": [0.6],
+      "overlay": 0.25,
+      "file": "captures/E14-D09-undo-min-start.png"
+    },
+    {
+      "capture": "undo",
+      "at": "mid",
+      "at_ms": 50,
+      "motion": "normal",
+      "form": "min",
+      "ring_scale": 1,
+      "halo": [0.07],
+      "overlay": 0.22,
+      "file": "captures/E14-D09-undo-min-mid.png"
+    },
+    {
+      "capture": "undo",
+      "at": "end",
+      "at_ms": 200,
+      "motion": "normal",
+      "form": "min",
+      "ring_scale": 1,
+      "halo": [],
+      "overlay": 0,
+      "file": "captures/E14-D09-undo-min-end.png"
+    }
+  ]
+}
