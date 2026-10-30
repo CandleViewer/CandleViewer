@@ -35,6 +35,11 @@ const HEADING: CSSProperties = {
   font: "var(--type-ui-heading-md-font-weight) var(--type-ui-heading-md-font-size) / var(--type-ui-heading-md-line-height) var(--type-ui-heading-md-font-family)",
 };
 const P: CSSProperties = { margin: 0 };
+/** Board 10 draws the block's line semibold, on SCR-159 and SCR-157 alike. */
+const LABEL: CSSProperties = {
+  color: "var(--color-text-primary)",
+  fontWeight: "var(--font-weight-semibold)",
+};
 const ACTIONS: CSSProperties = { display: "flex", flexWrap: "wrap", gap: "var(--space-2)" };
 const CODE: CSSProperties = {
   margin: 0,
@@ -45,6 +50,27 @@ const CODE: CSSProperties = {
   color: "var(--color-text-primary)",
   fontFamily: "var(--font-family-mono)",
 };
+
+/**
+ * SCR-157's fallback block (E10-D03 §9.1, §9.2; CMP-068 with CMP-033, SR-086): the server console
+ * command, the stop-harm route while no in-app exit reaches the server; on SCR-159 and SCR-157.
+ * `id` names the line, and `{id}-command` the command, for a host that reads them (SCR-157).
+ */
+export function ConsoleFallback({ id }: { readonly id?: string }): JSX.Element {
+  return (
+    <>
+      <p id={id} style={{ ...P, ...LABEL }}>
+        {SCR159_COPY.fallback}
+      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+        <pre id={id === undefined ? undefined : `${id}-command`} style={CODE}>
+          <code>{SCR159_COPY.command}</code>
+        </pre>
+        <CopyButton value={SCR159_COPY.command} label={SCR159_COPY.copyCommand} />
+      </div>
+    </>
+  );
+}
 
 /**
  * The SCR-159 page template (E10-D03 §9.2): the `disconnected` glyph, a heading, one plain
@@ -81,17 +107,7 @@ export function OfflinePage(props: OfflinePageProps): JSX.Element {
       <p style={P}>{sentence}</p>
       {children}
       {retryInS === null ? null : <p style={P}>{SCR159_COPY.retryIn(retryInS)}</p>}
-      {fallback === true ? (
-        <>
-          <p style={{ ...P, color: "var(--color-text-primary)" }}>{SCR159_COPY.fallback}</p>
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-            <pre style={CODE}>
-              <code>{SCR159_COPY.command}</code>
-            </pre>
-            <CopyButton value={SCR159_COPY.command} label={SCR159_COPY.copyCommand} />
-          </div>
-        </>
-      ) : null}
+      {fallback === true ? <ConsoleFallback /> : null}
       {secondary === undefined ? (
         retry
       ) : (

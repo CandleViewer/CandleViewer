@@ -173,19 +173,46 @@ describe("the server's build label (23 §2.3, §4.2; E10-S04 SCR-157)", () => {
     serverVersion: wire(serverVersion),
   });
 
-  it("is null until a welcome; each welcome refreshes it, and a lost link keeps the last", () => {
-    expect(INITIAL_WS_STATE.server).toBeNull(); // never welcomed, unlike a welcome's refused label
-    const up = run(connecting, welcome("cv.v1", "1.4.2"), authOk(OFF));
-    expect(up.server).toEqual({ protocol: "cv.v1", version: "1.4.2" });
-    expect(up.orderEntry.enabled).toBe(true); // a label says nothing of the kill switch
-    const lost = reduce(up, retry(1));
-    expect(lost.server).toBe(up.server);
+  /** Welcomed with 1.4.2 on cv.v1, then authenticated with the kill switch off. */
+  const welcomed = (): WsState => run(connecting, welcome("cv.v1", "1.4.2"), authOk(OFF));
+
+  it("is null until a welcome, unlike a welcome's refused label", () => {
+    expect(INITIAL_WS_STATE.server).toBeNull();
+  });
+
+  it("is the welcome's label", () => {
+    expect(welcomed().server).toEqual({ protocol: "cv.v1", version: "1.4.2" });
+  });
+
+  it("leaves order entry to the kill switch", () => {
+    expect(welcomed().orderEntry.enabled).toBe(true);
+  });
+
+  it("is kept through a lost link", () => {
+    const up = welcomed();
+    expect(reduce(up, retry(1)).server).toBe(up.server);
+  });
+
+  it("is refreshed by the next welcome", () => {
     const next = run(connecting, welcome("cv.v1", "1.4.2"), authOk(OFF), retry(1), connecting);
     expect(reduce(next, welcome("cv.v2", "2.0.0")).server).toEqual({
       protocol: "cv.v2",
       version: "2.0.0",
     });
-    expect(reduce(up, welcome("cv.v1", "1.4.2"))).toBe(up); // the same label changes nothing
+  });
+
+  it("changes nothing, state and all, for a welcome with the same label", () => {
+    const up = welcomed();
+    expect(reduce(up, welcome("cv.v1", "1.4.2"))).toBe(up);
+  });
+
+  it("refuses a control character or DEL inside a label, not only at its end (CR-10AD-01)", () => {
+    for (const value of ["1\x1f4", "1\x7f4"]) {
+      expect(reduce(INITIAL_WS_STATE, welcome(value, value)).server).toEqual({
+        protocol: null,
+        version: null,
+      });
+    }
   });
 
   it("keeps 1 to 32 printable ASCII characters, unpadded, of each part: anything else is null", () => {

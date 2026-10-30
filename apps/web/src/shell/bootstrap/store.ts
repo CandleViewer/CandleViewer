@@ -18,8 +18,8 @@
  *    with row 9's 10 s hand-over to R5 timed here (E17-D02 §6);
  *  - SCR-159's reachability, the liveness probe's verdict (`liveness.ts`), and the desktop
  *    shell's last GPU-process crash while its page shows (`gpuCrash.ts`);
- *  - SCR-157's facts: the last `welcome`'s build label, which the worker read and vetted, and
- *    whether the update banner was postponed.
+ *  - SCR-157's facts: the last `welcome`'s build label, which the worker read and vetted, whether
+ *    the update banner was postponed, and the incompatible build Continue read-only answered.
  */
 import type { generated } from "@candleviewer/protocol";
 import {
@@ -94,6 +94,8 @@ export interface ShellState {
   readonly serverVersion: string | undefined;
   /** SCR-157's Later: the update banner is gone for the session, and the StatusBar reminds. */
   readonly updateDeferred: boolean;
+  /** SCR-157's Continue read-only: the build (`incompatibleBuild`) it answered, till it changes. */
+  readonly continuedFor: string | undefined;
 }
 
 const INITIAL_BOOTSTRAP: BootstrapPhase = { kind: "loading" };
@@ -117,6 +119,7 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
   serverProtocol: undefined,
   serverVersion: undefined,
   updateDeferred: false,
+  continuedFor: undefined,
 });
 
 let state: ShellState = INITIAL_SHELL_STATE;
@@ -152,9 +155,15 @@ export function subscribeShellState(listener: () => void): () => void {
 }
 
 export function setShellState(patch: Partial<ShellState>): void {
+  const was = state;
   state = { ...state, ...patch };
   // Latched on the first live link; only `resetShellState` (logout, a stopped shell) clears it.
   if (patch.connection?.kind === "live" && !state.everLive) state = { ...state, everLive: true };
+  // SCR-157: another build, or the state's end (E10-D04 T-18), ends the answer, so an incompatible
+  // build that comes back is the server's answer again and opens the dialog (T-15)
+  if (state.serverProtocol !== was.serverProtocol || state.serverVersion !== was.serverVersion) {
+    state = { ...state, continuedFor: undefined };
+  }
   for (const listener of listeners) listener();
 }
 
@@ -202,6 +211,11 @@ export function keepSoftwareRendering(): void {
 /** SCR-157's Later (E10-D03 §9.1): the banner goes until the next launch; the StatusBar reminds. */
 export function deferUpdate(): void {
   setShellState({ updateDeferred: true });
+}
+
+/** SCR-157's Continue read-only (E10-D03 §9.1): that build's dialog goes; its T2 legs stay. */
+export function continueReadOnly(build: string): void {
+  setShellState({ continuedFor: build });
 }
 
 /** Test-only reset to the initial, unauthenticated shell state. */
