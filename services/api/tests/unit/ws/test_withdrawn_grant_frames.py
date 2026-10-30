@@ -32,6 +32,8 @@ from tests.unit.ws.test_pipeline_invalidation import _RS, _STRUCTURED, _connecte
 from tests.unit.ws.test_pipeline_outbound import (
     _BOOK,
     _ENCODINGS,
+    _JSON,
+    _MSGPACK,
     _closes,
     _overflow,
     _Rig,
@@ -63,10 +65,13 @@ def _body(family: str, *accounts: uuid.UUID, at: int = 1) -> dict[str, Any]:
     return {family: [row | {"id": f"{family}-{row['exchange_account_id']}-{at}"} for row in rows]}
 
 
-def _rig(monkeypatch: pytest.MonkeyPatch, max_frames: int = QUEUE_FRAMES) -> _Rig:
+def _rig(
+    monkeypatch: pytest.MonkeyPatch, max_frames: int = QUEUE_FRAMES, *, flag: bool = True
+) -> _Rig:
     """A rig whose user reads the four private families on A and B, audited; a private snapshot
-    holds one row per account of its subscription as it is when it is built."""
-    rig = _Rig(BackpressureConfig(max_frames=max_frames))
+    holds one row per account of its subscription as it is when it is built. `flag=False` only
+    for the two `test_flag_off_*` cases kept until the removal PR (#2409)."""
+    rig = _Rig(BackpressureConfig(max_frames=max_frames) if flag else None)
     rig.perms, rig.grants = PERMS | {Permission.ACCOUNTS_READ}, _grants(ACC_A, ACC_B)
     rig.registry.services.audit = rig.audit
     build = rig.source.build
@@ -130,12 +135,11 @@ async def _drained(sock: _Wire, conn: _Connection) -> list[dict[str, Any]]:
     or too few shows as a diff, not as a timeout; the budget's accounting is back at zero."""
     sock.release()
     pipe = conn.pipeline
-    assert pipe is not None
     frames = await sock.next()
-    while len(pipe.queue):
+    while conn.outbound.qsize() if pipe is None else len(pipe.queue):  # flag off: `outbound`
         frames += await sock.next()
     frames += [sock.sent.get_nowait() for _ in range(sock.sent.qsize())]
-    assert (pipe.queue.bytes, pipe.queue.key_bytes()) == (0, {})
+    assert pipe is None or (pipe.queue.bytes, pipe.queue.key_bytes()) == (0, {})
     return frames
 
 
@@ -163,9 +167,14 @@ class _Run(NamedTuple):
 
 
 async def _withdraw_b(
-    encoding: str, monkeypatch: pytest.MonkeyPatch, plan: Planned, how: str = "removed"
+    encoding: str,
+    monkeypatch: pytest.MonkeyPatch,
+    plan: Planned,
+    how: str = "removed",
+    *,
+    flag: bool = True,
 ) -> _Run:
-    rig, sock = _rig(monkeypatch), _Wire(encoding)
+    rig, sock = _rig(monkeypatch, flag=flag), _Wire(encoding)
     async with _connected(rig, sock) as conn:
         queued = await _parked(rig, sock, plan)
         before, mark = _overflow("withdrawn"), len(rig.audit.records)
@@ -193,6 +202,19 @@ async def test_withdrawal_with_bs_frames_queued_drops_them_and_keeps_the_rest_in
     run = await _withdraw_b(encoding, monkeypatch, _ROUND * 2, how)
     kept = [q for q in run.queued if q[1] not in _OF_B]
     assert _sent(run.frames) == [("d", "system"), *_order(kept + _CHANGE)]
+    assert _rows(run.frames, ACC_B) == [] and len(_rows(run.frames, ACC_A)) == 4
+    assert run.dropped == len(run.queued) - len(kept) == 4
+
+
+async def test_flag_off_withdrawal_drops_bs_queued_frames_and_keeps_the_rest_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kept flag off until the removal PR (#2409): the only cover of the flag-off purge putting a
+    frame it keeps back on `outbound`. As the flag-on twin above, B's four frames go and the rest
+    follow the change, in the order they were queued (no lanes)."""
+    run = await _withdraw_b(_MSGPACK, monkeypatch, _ROUND * 2, flag=False)
+    kept = [q for q in run.queued if q[1] not in _OF_B]
+    assert _sent(run.frames) == [("d", "system"), *kept, *_CHANGE]
     assert _rows(run.frames, ACC_B) == [] and len(_rows(run.frames, ACC_A)) == 4
     assert run.dropped == len(run.queued) - len(kept) == 4
 
@@ -506,14 +528,22 @@ def _failing_swap(conn: _Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(conn.authz, "_drop", raises)
 
 
-@_ENCODINGS
+@pytest.mark.parametrize(
+    ("encoding", "flag"),
+    [
+        pytest.param(_JSON, True, id="json"),
+        pytest.param(_MSGPACK, True, id="msgpack"),
+        pytest.param(_MSGPACK, False, id="flag-off-msgpack"),
+    ],
+)
 async def test_a_swap_that_raises_evicts_the_socket_with_none_of_the_queued_frames(
-    encoding: str, monkeypatch: pytest.MonkeyPatch
+    encoding: str, flag: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A swap that raises mid-way never reaches the purge, so the registry evicts the socket. The
     eviction is sealed: the client gets its `bye`, none of B's queued frames and
-    nothing else that was queued (a stalled consumer cannot flush anyway)."""
-    rig, sock = _rig(monkeypatch), _Wire(encoding)
+    nothing else that was queued (a stalled consumer cannot flush anyway). The flag-off row is
+    kept until the removal PR (#2409): the only cover of the flag-off eviction (`seal=True`)."""
+    rig, sock = _rig(monkeypatch, flag=flag), _Wire(encoding)
     async with _connected(rig, sock) as conn:
         await _parked(rig, sock, _ROUND)
         _failing_swap(conn, monkeypatch)
