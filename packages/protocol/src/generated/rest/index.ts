@@ -1072,6 +1072,106 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/admin/reconciliation/{accountId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Run a reconciliation pass on one exchange account now (owner)
+     * @description Owner only (`admin:write`). The on-demand trigger of `24-internal-schemas.md` §8.5: the
+     *     account's reconciliation job (B19, `28-statechart-catalogue.md`) is sent `SWEEP_DUE`
+     *     with `trigger: manual`, the same pass the 30 s cadence runs, with the same report, record
+     *     and notices. The call answers once the pass is taken, never once it has run: the pass's
+     *     outcome is its `oms.reconcile` record and the job's state, which the Owner reads on
+     *     `machines.reconciliation:{accountId}.state` (`23-ws-protocol.md` §6.4).
+     *
+     *     **One pass at a time.** While a pass is running for the account the call answers that
+     *     pass's `pass_id` with `joined: true` and starts no second one, so a repeated request
+     *     never queues passes. A job that waits for the operator after a pass (`divergent`) starts
+     *     a new pass.
+     *
+     *     **Refusals.** Once the request is admitted (authentication, CSRF, session state,
+     *     validation and RBAC) and the idempotency lookup finds no earlier answer, these refuse it,
+     *     in this order, and start nothing: `404` for an account that does not exist or that this
+     *     process's environment does not serve (C-2.11); `503 oms_not_ready` with `Retry-After`
+     *     while the OMS is not ready; and `409 conflict` with rule `reconciliation_locked` while
+     *     the account's job is locked stale (`stale_lockout`, which refuses its order entry with
+     *     `account_stale`), since no pass runs until the operator resolves it
+     *     (`resolveReconciliation`). Until E29-T06 wires the job the operation answers
+     *     `501 not_implemented` and starts nothing.
+     *
+     *     **Idempotent.** The same `Idempotency-Key` for the same account is answered with the
+     *     stored `202` and starts nothing again. Only the `202` is stored; a refusal is evaluated
+     *     afresh on a retry.
+     *
+     *     **Audit (C-2.9).** `oms.reconcile` with `stage: requested` is written before the `202`,
+     *     naming the acting Owner, the account, `trigger: manual`, the `pass_id` and `joined`.
+     *     When it cannot be written the answer is `503 audit_unavailable` and no pass starts. The
+     *     pass writes its own `oms.reconcile` record, `stage: finished` with its report
+     *     (`24-internal-schemas.md` §15.5), when it ends.
+     */
+    post: operations["reconcileAccount"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/reconciliation/{accountId}/resolve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Resolve an account's stale or divergent reconciliation (owner, step-up `accounts`)
+     * @description Owner only (`admin:write`), with step-up class `accounts`, a fresh code each time
+     *     (`POST /auth/step-up` defines the step-up rules). The operator's decision of
+     *     `24-internal-schemas.md` §8.5: the account's reconciliation job (B19,
+     *     `28-statechart-catalogue.md`) is sent `OPERATOR_RESOLVED`, the one event that leaves
+     *     `stale_lockout` (INV-B19-b), so the account's order entry, refused with `account_stale`
+     *     while the job is locked, opens again once the job records the unlock (C-2.21). From
+     *     `divergent` it ends the wait for the operator. The job returns to `idle`, and the next
+     *     trigger runs a pass.
+     *
+     *     **Refusals.** Once the request is admitted (authentication, CSRF, session state,
+     *     validation, RBAC and the step-up) and the idempotency lookup finds no earlier answer,
+     *     these refuse it, in this order, and change nothing: `404` for an account that does not
+     *     exist or that this process's environment does not serve (C-2.11); `503 oms_not_ready`
+     *     with `Retry-After` while the OMS is not ready; and `409 conflict` with rule
+     *     `nothing_to_resolve` while the account's job is neither locked (`stale_lockout`) nor
+     *     waiting for the operator (`divergent`), as `OPERATOR_RESOLVED` is sent to no other
+     *     state. Until E29-T06 wires the job the operation answers `501 not_implemented` and
+     *     changes nothing.
+     *
+     *     **Idempotent.** The same `Idempotency-Key` and body are answered with the stored `200`
+     *     and resolve nothing again. Only the `200` is stored; a refusal is evaluated afresh on a
+     *     retry.
+     *
+     *     **Audit (C-2.9).** `oms.reconcile` with `stage: resolved` is written before the job is
+     *     told, naming the acting Owner, the account, the state resolved, `reason` and the
+     *     `challenge_id` of the `accounts` grant it spent. When it cannot be written the answer is
+     *     `503 audit_unavailable` and nothing changes.
+     */
+    post: operations["resolveReconciliation"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/admin/recorder/compact": {
     parameters: {
       query?: never;
@@ -9481,11 +9581,15 @@ export interface components {
       };
     };
     /**
-     * @description Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).
+     * @description Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. `account_stale` (E29-T06, #914): reconciliation has failed for 2 minutes on the account and no operator has resolved it yet (`resolveReconciliation`). **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).
      * @enum {string}
      */
     OrderEntryRefusalReason:
-      "maintenance" | "account_disabled_by_policy" | "no_active_key" | "account_unhealthy";
+      | "maintenance"
+      | "account_disabled_by_policy"
+      | "no_active_key"
+      | "account_unhealthy"
+      | "account_stale";
     /** @description One entry of an order's append-only event chain, served without its stored payload (SR-E29-09). The exchange record behind an exchange-sourced event is served only by the audited diagnostics read, as `OrderDiagnostics.exchange_calls` (SR-E29-08). */
     OrderEvent: {
       /** Format: date-time */
@@ -9994,6 +10098,33 @@ export interface components {
       tick_direction?: "PlusTick" | "ZeroPlusTick" | "MinusTick" | "ZeroMinusTick";
       /** Format: date-time */
       ts?: string;
+    };
+    /** @description `reconcileAccount`'s answer (E29-T06, #914): the pass the request started, or the one already running for the account (`joined`). Its outcome is its `oms.reconcile` record (`24-internal-schemas.md` §15.5), never this answer. */
+    ReconciliationPass: {
+      /** Format: uuid */
+      exchange_account_id: string;
+      /** @description True when a pass already running answered, so no second pass started. */
+      joined: boolean;
+      /** Format: uuid */
+      pass_id: string;
+      /** @constant */
+      trigger: "manual";
+    };
+    /** @description `resolveReconciliation`'s answer (E29-T06, #914): the job left the state named, and the account's order entry opens again if that state was `stale_lockout`. */
+    ReconciliationResolved: {
+      /** Format: uuid */
+      exchange_account_id: string;
+      /**
+       * @description The reconciliation job's state the operator's decision left (B19).
+       * @enum {string}
+       */
+      resolved: "stale_lockout" | "divergent";
+      /** Format: date-time */
+      resolved_at: string;
+    };
+    ReconciliationResolveRequest: {
+      /** @description Why the operator resolves it, written to the `oms.reconcile` record; human text that must carry no secret. */
+      reason: string;
     };
     RecordedSymbol: {
       /** Format: uuid */
@@ -13775,6 +13906,110 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  reconcileAccount: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The pass is taken, started now or already running (`joined`). */
+      202: {
+        headers: {
+          "Cache-Control"?: "no-store";
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReconciliationPass"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      /** @description `conflict` with rule `reconciliation_locked`: the account's reconciliation is locked stale and runs no pass until the operator resolves it (`resolveReconciliation`). `idempotency_key_reuse`: the key was first used for another account. `idempotency_in_flight`: a call with the same key is still running. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      422: components["responses"]["UnprocessableEntity"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  resolveReconciliation: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ReconciliationResolveRequest"];
+      };
+    };
+    responses: {
+      /** @description The job recorded the operator's decision and returned to `idle`. */
+      200: {
+        headers: {
+          "Cache-Control"?: "no-store";
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReconciliationResolved"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      /** @description `conflict` with rule `nothing_to_resolve`: the account's reconciliation is neither locked stale nor waiting for the operator. `idempotency_key_reuse`: the key was first used with another body. `idempotency_in_flight`: a call with the same key is still running. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      422: components["responses"]["UnprocessableEntity"];
+      501: components["responses"]["NotImplemented"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

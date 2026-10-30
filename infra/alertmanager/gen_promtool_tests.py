@@ -294,6 +294,11 @@ _WARN = 'cv_key_rotation_notices_total{env="live",state="warn"}'
 _OVERDUE = 'cv_key_rotation_notices_total{env="live",state="overdue"}'
 # One overdue key, counted at 6 min and again a day later.
 _A_DAY_APART = "0+0x5 1+0x1439 2+0x700"
+# #914 (E29-T06, BQ-12): the trading reads' refused rows of another of our accounts, and of
+# another environment (silent); a first refusal binds the series, so it starts with no sample.
+_ACCOUNT_ROWS = 'bybit_rows_refused_total{env="live",reason="account"}'
+_ENV_ROWS = 'bybit_rows_refused_total{env="live",reason="environment"}'
+_FIRST_ROW = "_x5 1+0x700"
 
 
 def _closes(fast: int, under_5: int, slow: int) -> dict[str, str]:
@@ -405,6 +410,17 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("9h52m", False, {_WARN: _RISE}),
         ("30m", False, {_WARN: _FLAT}),
         ("6m", False, {_WARN: _ZERO, _OVERDUE: _RISE}),
+    ),
+    # #914 (BQ-12): a rise, or a first sample with none an hour before, tickets at once and holds
+    # through the quiet hours (the hour's window and 9 h 30 m), then resolves; another reason's
+    # rows are silent, and so is a count already held an hour before, once its first hold ends.
+    "BybitRowsRefusedAccount": (
+        ("6m", True, {_ACCOUNT_ROWS: _RISE}),
+        ("10h", True, {_ACCOUNT_ROWS: _RISE}),
+        ("11h", False, {_ACCOUNT_ROWS: _RISE}),
+        ("6m", True, {_ACCOUNT_ROWS: _FIRST_ROW}),
+        ("6m", False, {_ENV_ROWS: _RISE}),
+        ("11h", False, {_ACCOUNT_ROWS: _FLAT}),
     ),
     # #837: the same; resolved between two daily counts (20 h), fired again by the next (24 h 7 m).
     "KeyRotationOverdue": (

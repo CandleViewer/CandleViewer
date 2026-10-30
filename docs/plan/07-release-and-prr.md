@@ -1272,6 +1272,27 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'withdraw' | tail -20
 ```
 
+<a id="alert-bybitrowsrefusedaccount"></a>
+
+### BybitRowsRefusedAccount
+
+| Element               | Detail                                                                                                                                                                                         |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | A trading read returned a row whose id names another of our accounts; the adapter dropped and counted it (`bybit_rows_refused_total{reason="account"}`). Ticket, held through the quiet hours. |
+| 2. User impact        | None directly: the row was never applied. A key that reads another account's rows means a key and an account are mixed up (C-2.11).                                                            |
+| 3. What is still safe | The account's own rows, its stops and every other account; reconciliation never applies such a row (`24-internal-schemas.md` §8.5).                                                            |
+| 5. Remediation        | Find the account in the logs (`bybit_row_refused`, reason `account`), check at the exchange that its key is its own, and replace the key if not (Owner; audited).                              |
+| 6. Escalation         | Owner immediately: a mixed-up key can read, and trade on, the wrong account.                                                                                                                   |
+| 7. Verify recovery    | No further increase for an hour after the key is replaced, and the account's next reconciliation pass is clean.                                                                                |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=increase(bybit_rows_refused_total{reason="account"}[1h])'
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 2h api | grep 'bybit_row_refused' | grep '"account"' | tail -20
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 2h api | grep -i 'reconcil' | tail -20
+```
+
 <a id="alert-omsraterejects"></a>
 
 ### OmsRateRejects

@@ -293,6 +293,26 @@ groups:
         annotations:
           summary: "Exchange credential verification failed"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-credentialverificationfailures"
+      - alert: BybitRowsRefusedAccount
+        # E29-T06 (#914, the orchestrator's BQ-12 ruling): a trading read returned a row whose id
+        # names another of our accounts, which the adapter dropped and counted (24 Sec.14.2 rule
+        # 12): a key and an account mixed up (C-2.11). A rise in the hour, or a first sample with
+        # none an hour before (the series is bound by its first refusal, so `increase` alone
+        # misses it, as AuthOwnerBootstrapped's second arm reads a first sample): at most once an
+        # hour. Held 9 h 30 m as the any-event tickets are (ws_gateway.yml header), so one raised
+        # at night is sent at 07:00. `secrets`, never inhibited by a Postgres outage (SR-125).
+        expr: >-
+          sum by (env) (increase(bybit_rows_refused_total{reason="account"}[1h])) > 0
+          or (sum by (env) (bybit_rows_refused_total{reason="account"}) > 0
+          unless sum by (env) (bybit_rows_refused_total{reason="account"} offset 1h))
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: secrets
+        annotations:
+          summary: "A trading read returned a row of another exchange account"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-bybitrowsrefusedaccount"
       - alert: OmsRateRejects
         expr: increase(oms_rate_reject_total[10m]) > 0
         for: 0m

@@ -2220,12 +2220,13 @@
         "type": "object"
       },
       "OrderEntryRefusalReason": {
-        "description": "Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).\n",
+        "description": "Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. `account_stale` (E29-T06, #914): reconciliation has failed for 2 minutes on the account and no operator has resolved it yet (`resolveReconciliation`). **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).\n",
         "enum": [
           "maintenance",
           "account_disabled_by_policy",
           "no_active_key",
-          "account_unhealthy"
+          "account_unhealthy",
+          "account_stale"
         ],
         "type": "string"
       },
@@ -3678,6 +3679,26 @@
         "x-rbac": {
           "permissions": [
             "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/reconciliation/{accountId}": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "admin:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/reconciliation/{accountId}/resolve": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "admin:write"
           ],
           "scope": "none"
         }

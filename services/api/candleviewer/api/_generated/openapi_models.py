@@ -121,6 +121,45 @@ class FrontendTelemetry(BaseModel):
     __null_refused = field_validator("fe_gpu_memory_mb", mode="before")(_refuse_null)
 
 
+class ReconciliationPass(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    pass_id: UUID
+    exchange_account_id: UUID
+    trigger: Literal["manual"]
+    joined: Annotated[
+        StrictBool,
+        Field(description="True when a pass already running answered, so no second pass started."),
+    ]
+
+
+class ReconciliationResolveRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    reason: Annotated[
+        str,
+        Field(
+            description="Why the operator resolves it, written to the `oms.reconcile` record; human text that must carry no secret.\n",
+            max_length=280,
+            min_length=3,
+        ),
+    ]
+
+
+class ReconciliationResolved(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    exchange_account_id: UUID
+    resolved: Annotated[
+        Literal["stale_lockout", "divergent"],
+        Field(description="The reconciliation job's state the operator's decision left (B19)."),
+    ]
+    resolved_at: AwareDatetime
+
+
 class Error(BaseModel):
     field: str | None = None
     rule: str | None = None
@@ -6928,9 +6967,15 @@ class TradingDisabledProblem(Problem):
         Field(description="Stable machine-readable error code from `x-error-codes`."),
     ]
     reason: Annotated[
-        Literal["maintenance", "account_disabled_by_policy", "no_active_key", "account_unhealthy"],
+        Literal[
+            "maintenance",
+            "account_disabled_by_policy",
+            "no_active_key",
+            "account_unhealthy",
+            "account_stale",
+        ],
         Field(
-            description="Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).\n"
+            description="Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. `account_stale` (E29-T06, #914): reconciliation has failed for 2 minutes on the account and no operator has resolved it yet (`resolveReconciliation`). **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).\n"
         ),
     ]
 
