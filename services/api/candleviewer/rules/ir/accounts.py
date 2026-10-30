@@ -1,15 +1,17 @@
 """Generic account-reference walker over a rule IR document (E35-X02 j/k).
 
 Any key named like ``account_id`` / ``account_ids`` (case-insensitive, any depth, including
-free-form ``params`` dicts) is an account reference, and so is every value it holds at any depth:
-the grant check reads what an export strips (G-6). Tests assert the walker covers every such IR
-model field, and every action param the catalogue naming rule spells.
+free-form ``params`` dicts) is an account reference, and so is what it holds at any depth: values,
+and the UUID-shaped keys of a held object. The grant check reads what an export strips (G-6).
+Tests assert the walker covers every such IR model field, and every action param the catalogue
+naming rule spells.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -68,10 +70,21 @@ def _values(v: Any, out: list[str]) -> None:
         for x in v:
             _values(x, out)
     elif isinstance(v, dict):
-        for x in v.values():
+        for k, x in v.items():
+            if _uuid_shaped(k):  # an account id in key position; a plain key (`id`) is none
+                out.append(str(k))
             _values(x, out)
     else:
         out.append(str(v))
+
+
+def _uuid_shaped(key: object) -> bool:
+    """Whether a held object's key parses as a UUID, the form an account id takes."""
+    try:
+        UUID(str(key))
+    except ValueError:
+        return False
+    return True
 
 
 def redact_account_ids(doc: Any) -> Any:

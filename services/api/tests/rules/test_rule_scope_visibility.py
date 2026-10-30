@@ -1,16 +1,19 @@
 """#4836 (E36-X01 G-6, G-10, G-14, G-15): the scope and visibility of rules and their accounts.
 
 G-6: an action param naming an account takes the walker's spelling (the catalogue naming rule), and
-the walker reads every value an account key holds wherever an action's params take any JSON. G-10:
-an import keeps each account reference the importer is granted, as written, and refuses a bundle
-naming any other. G-14: a rule's name conflicts only with a rule its caller owns or may read. G-15:
-a quarantined rule's view carries its stored IR only in the form an export carries it. The conflict
-response carries only the version and the time. The export strips by an allow-list of IR keys, and
-an import needs its ir_version, ignores the keys the server sets and lands at version 1.
+the walker reads what an account key holds wherever an action's params take any JSON: values, and
+the UUID-shaped keys of a held object. G-10: an import keeps each account reference the importer is
+granted, as written, and refuses a bundle naming any other. G-14: a rule's name conflicts only with
+a rule its caller owns or may read. G-15: a quarantined rule's view carries its stored IR only in
+the form an export carries it. The conflict response carries only the version and the time. The
+export strips by an allow-list of IR keys, and an import needs its ir_version, ignores the keys the
+server sets and lands at version 1; it weighs a bundle in one order, and waits a bounded time for
+each refusal's record.
 """
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import re
@@ -20,7 +23,9 @@ from typing import Any
 import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
+from pydantic import ValidationError
 
+from candleviewer.rules import manager as rules_manager
 from candleviewer.rules.ir import ir_hash
 from candleviewer.rules.ir.accounts import collect_account_ids, redact_account_ids
 from candleviewer.rules.ir.models import Rule, RuleScope
@@ -31,14 +36,26 @@ from candleviewer.rules.vocabulary.catalogue import ACTIONS
 from tests.rules.test_rules_routes import _ir
 from tests.rules.test_scope import A, B, C
 
-USER_A, USER_B = str(uuid.UUID(int=0xA)), str(uuid.UUID(int=0xB))
+#: Apart from every account id (`A`, `B` and `C` are 10, 11 and 12), so a user never passes for one.
+USER_A, USER_B = str(uuid.UUID(int=0xA1)), str(uuid.UUID(int=0xB1))
 WRITE = frozenset({"rules:read", "rules:write"})
 OWNER = Actor(str(uuid.UUID(int=0xF)), "s-owner", WRITE, is_owner=True)
 #: The catalogue naming rule (G-6): a param naming an account is spelled `account_id` or
 #: `account_ids`, alone or after a snake_case prefix (`target_account_id`).
 NAMING_RULE = re.compile(r"(?:[a-z][a-z0-9]*_)*account_ids?")
-#: A param name that mentions an account, however it is spelled.
-MENTIONS_ACCOUNT = re.compile(r"acc(?:oun)?t", re.IGNORECASE)
+#: The words this domain and the exchange use for an account, as the catalogue's module docstring
+#: lists them: `account`, `acct` or `wallet` anywhere in a name ...
+MENTIONS_ACCOUNT = re.compile(r"acc(?:oun)?t|wallet", re.IGNORECASE)
+#: ... or `acc`, `accid`, `acnt`, `uid`, `subuid`, `member` or `memberid`, plural too, as a whole
+#: word of a snake_case, kebab-case or camelCase name: `subUid` holds one, `liquidity` none.
+ACCOUNT_WORD = re.compile(r"(?:acc|accid|acnt|uid|subuid|member|memberid)s?")
+
+
+def _mentions_account(name: str) -> bool:
+    """Whether a param name mentions an account, however it is spelled."""
+    words = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", name).lower()
+    whole = any(ACCOUNT_WORD.fullmatch(w) for w in re.split(r"[^a-z]+", words))
+    return whole or MENTIONS_ACCOUNT.search(name) is not None
 
 
 def _manager(user: str, *granted: uuid.UUID) -> Actor:
@@ -70,7 +87,7 @@ def _misnamed(schema: Any) -> list[str]:
         if isinstance(cur, dict):
             names = cur.get("properties")
             if isinstance(names, dict):
-                out += [n for n in names if MENTIONS_ACCOUNT.search(n)]
+                out += [n for n in names if _mentions_account(n)]
             todo += cur.values()
         elif isinstance(cur, list):
             todo += cur
@@ -86,53 +103,69 @@ def test_every_param_naming_an_account_in_the_catalogue_and_the_ir_takes_the_nam
 @pytest.mark.parametrize(
     "name",
     ["account", "accounts", "target_account", "acct_id", "account_uuid", "account_name",
-     "sub_account", "exchangeAccountId", "Account_Id", "account-id"],
+     "sub_account", "exchangeAccountId", "Account_Id", "account-id", "uid", "sub_uid", "subUid",
+     "parentUID", "member_id", "subMemberIds", "wallet", "wallet_id", "acc_id", "accid",
+     "acnt_id", "exchange_acc"],
 )  # fmt: skip
 def test_the_naming_rule_fails_a_param_naming_an_account_any_other_way_at_any_depth(
     name: str,
 ) -> None:
-    """Scenario: ... a field named otherwise fails the catalogue naming rule."""
+    """Scenario: ... a field named otherwise fails the catalogue naming rule, by any word this
+    domain or the exchange uses for an account."""
     nested = {"properties": {"algo": {"type": "array", "items": {"properties": {name: {}}}}}}
     assert _misnamed(nested) == [name]
 
 
 def test_the_naming_rule_passes_each_spelling_it_allows() -> None:
-    spelled = dict.fromkeys(("account_id", "account_ids", "target_account_id", "a_b2_account_ids"))
-    assert _misnamed({"properties": spelled}) == []
+    """The naming rule's own spellings pass, and so does a name holding the letters of a short
+    account word inside another word (it mentions no account)."""
+    spelled = ("account_id", "account_ids", "target_account_id", "a_b2_account_ids")
+    unrelated = ("liquidity", "fluid", "remember", "accept", "uuid", "node_id")
+    assert _misnamed({"properties": dict.fromkeys(spelled + unrelated)}) == []
 
 
-def _holding(schema: dict[str, Any], key: str) -> tuple[dict[str, Any], list[str]]:
+def _holding(schema: dict[str, Any], key: str, keyed: bool) -> tuple[dict[str, Any], list[str]]:
     """Params holding a distinct account under `key` at their root and inside every param whose
-    schema takes any JSON (an object, an array or an untyped value), with the accounts placed."""
+    schema takes any JSON (an object, an array or an untyped value), with the accounts placed:
+    each as a value, or `keyed`, as the key of an object the account key holds."""
+
+    def held(ref: str) -> Any:
+        return {ref: None} if keyed else ref
+
     refs = [str(uuid.UUID(int=0xACC0))]
-    params: dict[str, Any] = {key: refs[0]}
+    params: dict[str, Any] = {key: held(refs[0])}
     for name, sub in schema["properties"].items():
         if sub.get("type") in ("object", "array", None):
             refs.append(str(uuid.UUID(int=0xACC0 + len(refs))))
-            nested = {"legs": [{key: [refs[-1]]}]}
+            nested = {"legs": [{key: [held(refs[-1])]}]}
             params[name] = [nested] if sub.get("type") == "array" else nested
     return params, refs
 
 
 @settings(deadline=None, max_examples=40)
-@given(key=st.from_regex(NAMING_RULE, fullmatch=True))
-@example(key="account_ids")
-@example(key="target_account_id")
+@given(key=st.from_regex(NAMING_RULE, fullmatch=True), keyed=st.booleans())
+@example(key="account_ids", keyed=False)
+@example(key="target_account_id", keyed=True)
 def test_the_walker_matches_every_spelling_the_naming_rule_allows_in_every_actions_params(
-    key: str,
+    key: str, keyed: bool
 ) -> None:
     """Scenario: Every action's params_schema is walked: every field that can name an account is
-    matched by the walker, for the grant check and for export stripping alike."""
+    matched by the walker, for the grant check and for export stripping alike, an account held
+    as a value or in key position."""
     for spec in ACTIONS:
-        params, refs = _holding(spec.params_schema, key)
+        params, refs = _holding(spec.params_schema, key, keyed)
         assert set(collect_account_ids(params)) == set(refs), spec.type
         assert not [r for r in refs if r in json.dumps(redact_account_ids(params))], spec.type
 
 
-@pytest.mark.parametrize("held", [{"id": str(C)}, [{"legs": [str(C)]}], {"legs": {"x": str(C)}}])
+@pytest.mark.parametrize(
+    "held", [{"id": str(C)}, [{"legs": [str(C)]}], {"legs": {"x": str(C)}}, {str(C): None}]
+)
 async def test_every_value_an_account_key_holds_is_grant_checked_as_it_is_export_stripped(
     held: Any,
 ) -> None:
+    """What an account key holds is read at any depth, values and the UUID-shaped keys of a held
+    object (a plain key such as `id` is no account), for the grant check as for the strip."""
     ir = _ir(name="nested")
     ir["actions"][0]["params"]["target_account_id"] = held
     assert collect_account_ids(ir) == (str(C),)
@@ -163,7 +196,7 @@ async def test_an_import_keeps_each_granted_reference_as_written_and_names_no_ot
     assert (out["mode"], stored["scope"]["environments"]) == ("disabled", ["demo"])
 
 
-@pytest.mark.parametrize("where", ["scope", "metric", "param", "nested"])
+@pytest.mark.parametrize("where", ["scope", "metric", "param", "nested", "keyed"])
 async def test_an_import_naming_a_granted_and_an_ungranted_account_refuses_the_ungranted_one(
     where: str,
 ) -> None:
@@ -177,8 +210,26 @@ async def test_an_import_naming_a_granted_and_an_ungranted_account_refuses_the_u
     elif where == "metric":
         ir["conditions"]["left"]["account_id"] = str(C)
     else:
-        held = str(C) if where == "param" else {"legs": [str(C)]}
+        held = {"param": str(C), "nested": {"legs": [str(C)]}, "keyed": {str(C): None}}[where]
         ir["actions"][0]["params"]["target_account_id"] = held
+    with pytest.raises(RuleError) as refused:
+        await m.import_rule({"ir": ir}, _manager(USER_A, A))
+    assert (refused.value.status, refused.value.code) == (403, "forbidden")
+    refusal = {"actor": USER_A, "reason": "ungranted_account", "count": 1}
+    assert audits == [("rule.import_refused", refusal)] and await m._s.all() == []
+
+
+@pytest.mark.parametrize("lacks", ["ir_version", "an object ir"])
+async def test_an_import_naming_an_ungranted_account_is_the_audited_403_whatever_else_it_lacks(
+    lacks: str,
+) -> None:
+    """The grant check comes first (C-12.4): a bundle naming an ungranted account that also carries
+    no `ir_version`, or whose `ir` is a list, is the audited `403`, and nothing is stored."""
+    m, audits = _mgr()
+    ir: Any = _ir(name="imp", scope={"level": "account", "account_ids": [str(A), str(C)]})
+    del ir["ir_version"]
+    if lacks == "an object ir":
+        ir = [ir]
     with pytest.raises(RuleError) as refused:
         await m.import_rule({"ir": ir}, _manager(USER_A, A))
     assert (refused.value.status, refused.value.code) == (403, "forbidden")
@@ -445,22 +496,24 @@ async def test_an_exported_bundle_holds_only_ir_keys() -> None:
     assert (await m.get(rid, OWNER))["export_json"] == bundle["ir"]
 
 
-async def test_an_import_validates_the_ir_version_a_bundle_carries() -> None:
+@pytest.mark.parametrize("carried", [2, None])
+async def test_an_import_validates_the_ir_version_a_bundle_carries(carried: int | None) -> None:
     """`ir_version` is read as the bundle carries it, never supplied: a version the server does not
-    read is refused 422 at its path (AC-RA-08) and nothing is stored."""
-    m, _ = _mgr()
-    bundle = {"format": "cv-rule-bundle/1", "ir": _ir(name="imp", ir_version=2)}
+    read, `null` among them (carried, so not missing), is refused 422 at its path (AC-RA-08),
+    unaudited as a value the model refuses is, and nothing is stored."""
+    m, audits = _mgr()
+    bundle = {"format": "cv-rule-bundle/1", "ir": _ir(name="imp", ir_version=carried)}
     with pytest.raises(RuleError) as refused:
         await m.import_rule(bundle, OWNER)
     assert (refused.value.status, refused.value.extra.get("path")) == (422, "/ir_version")
-    assert await m._s.all() == []
+    assert audits == [] and await m._s.all() == []
 
 
 @pytest.mark.parametrize("importer", [_manager(USER_A, A), OWNER])
 async def test_an_import_refuses_a_bundle_that_carries_no_ir_version(importer: Actor) -> None:
     """`ir_version` is never supplied or defaulted on import: a bundle carrying none is refused as
     a bundle missing any other required key is, `422 rule_ir_invalid` at its path, audited as the
-    import's refusals are, and nothing is stored."""
+    ungranted-account refusal is, and nothing is stored."""
     m, audits = _mgr()
     unnamed, ir = _ir(), _ir(name="imp")
     del unnamed["name"], ir["ir_version"]
@@ -473,3 +526,72 @@ async def test_an_import_refuses_a_bundle_that_carries_no_ir_version(importer: A
     assert refused.value.extra == {"path": "/ir_version"}
     refusal = {"actor": importer.user_id, "reason": "ir_version_missing", "count": 1}
     assert audits == [("rule.import_refused", refusal)] and await m._s.all() == []
+
+
+# ----- an import weighs a bundle in one order and bounds each refusal's record ---------------
+#: Bundles with no object `ir`, or whose scope is not an object, each with the path its refusal
+#: names: the bundle's own `ir` member, or the IR's `scope` as a save names it.
+_SHAPES: dict[str, tuple[dict[str, Any], str]] = {
+    "no ir": ({"format": "cv-rule-bundle/1"}, "/ir"),
+    "ir a string": ({"ir": "ir_version"}, "/ir"),
+    "ir a list": ({"ir": [1]}, "/ir"),
+    "scope a scalar": ({"ir": _ir(name="imp", scope=5)}, "/scope"),
+    "scope a list": ({"ir": _ir(name="imp", scope=[["level", "account"]])}, "/scope"),
+}
+
+
+def _model_words(doc: Any) -> str:
+    """How `_validated` words the model's first refusal of `doc`."""
+    with pytest.raises(ValidationError) as refused:
+        Rule.model_validate(doc)
+    return f"The rule document is not valid: {refused.value.errors()[0]['msg']}"
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+async def test_an_import_refuses_a_bundle_whose_ir_or_scope_is_no_object_unaudited(
+    shape: str,
+) -> None:
+    """A bundle with no `ir`, or whose `ir` or `scope` is not an object (a list of pairs neither),
+    is refused `422 rule_ir_invalid` in the words `_validated` gives the model's refusal, before
+    any read that takes it for an object: unaudited, as a shape failure on create is, and nothing
+    is stored."""
+    bundle, path = _SHAPES[shape]
+    m, audits = _mgr()
+    with pytest.raises(RuleError) as refused:
+        await m.import_rule(copy.deepcopy(bundle), _manager(USER_A, A))
+    answer = (refused.value.status, refused.value.code, refused.value.message)
+    assert answer == (422, "rule_ir_invalid", _model_words(bundle.get("ir", {})))
+    assert refused.value.extra == {"path": path}
+    assert audits == [] and await m._s.all() == []
+
+
+@pytest.mark.parametrize("reason", ["ungranted_account", "ir_version_missing"])
+@pytest.mark.parametrize("hook", ["stalls", "raises"])
+async def test_an_import_refusal_whose_record_is_not_written_in_time_is_unrecorded(
+    reason: str, hook: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.9: each import refusal waits at most `REFUSAL_AUDIT_TIMEOUT_S` for its record, as a scope
+    refusal does: a hook that stalls past the bound, or raises, is `RuleRefusalUnrecorded` (the
+    routes' `503`), and nothing is stored."""
+    m, _ = _mgr()
+    seen: list[tuple[str, str]] = []
+    down = ConnectionError("audit down")
+
+    async def broken(action: str, payload: dict[str, Any]) -> None:
+        seen.append((action, payload["reason"]))
+        if hook == "raises":
+            raise down
+        await asyncio.Event().wait()  # never set: only the bound ends this wait
+
+    m.set_hooks(audit=broken)
+    monkeypatch.setattr(rules_manager, "REFUSAL_AUDIT_TIMEOUT_S", 0.0)
+    ir = _ir(name="imp", scope={"level": "account", "account_ids": [str(C)]})
+    if reason == "ir_version_missing":
+        ir = _ir(name="imp")
+        del ir["ir_version"]
+    async with asyncio.timeout(1):  # the test's own guard: the record's bound ends the wait first
+        with pytest.raises(rules_manager.RuleRefusalUnrecorded) as unrecorded:
+            await m.import_rule({"ir": ir}, _manager(USER_A, A))
+    cause = unrecorded.value.__cause__
+    assert (cause is down) if hook == "raises" else isinstance(cause, TimeoutError)
+    assert seen == [("rule.import_refused", reason)] and await m._s.all() == []

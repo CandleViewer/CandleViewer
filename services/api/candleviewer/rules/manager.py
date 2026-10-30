@@ -48,8 +48,9 @@ from candleviewer.rules.vocabulary import MetricRegistry
 COMPILER_VERSION = "1.0.0"
 #: Bounded replay cache for `Idempotency-Key` (C-2.18); see `set_mode`.
 IDEM_CACHE_MAX = 4096
-#: How long a refusal waits for its own audit record (C-2.9), `set_mode`'s and every scope
-#: refusal's: `api.csrf.AUDIT_TIMEOUT_S`, which `rules` may not import (a test pins them equal).
+#: How long a refusal waits for its own audit record (C-2.9): `set_mode`'s, every scope refusal's
+#: and the import's. It is `api.csrf.AUDIT_TIMEOUT_S`, which `rules` may not import (a test pins
+#: them equal).
 REFUSAL_AUDIT_TIMEOUT_S: Final = 2.0
 #: Bound on one disarm of a rule armed above a hard cap, run beside the evaluator tick (#3232).
 TICK_DISARM_TIMEOUT_S: Final = 2.0
@@ -103,9 +104,10 @@ class RuleAuditUnavailable(RuleError):
 
 
 class RuleRefusalUnrecorded(Exception):
-    """A scope refusal's own record was not written (C-2.9) and nothing changed: the hook failed,
-    or did not answer within `REFUSAL_AUDIT_TIMEOUT_S`; `__cause__` says which, for the route to
-    answer (`rules` may not import `audit`). A success record's failure is never wrapped."""
+    """A scope or import refusal's own record was not written (C-2.9) and nothing changed: the
+    hook failed, or did not answer within `REFUSAL_AUDIT_TIMEOUT_S`; `__cause__` says which, for
+    the route to answer (`rules` may not import `audit`). A success record's failure is never
+    wrapped."""
 
 
 def _ir_invalid(issues: list[Issue]) -> RuleError:
@@ -303,6 +305,28 @@ def _exported(ir: Any) -> Any:
     return out
 
 
+#: How `_validated` words the model's refusal of a missing key and of one holding no object.
+_MISSING: Final = "The rule document is not valid: Field required"
+_NO_OBJECT: Final = (
+    "The rule document is not valid: Input should be a valid dictionary or instance of "
+)
+
+
+def _bundled_ir(bundle: dict[str, Any]) -> dict[str, Any]:
+    """The bundle's `ir`, refused `422 rule_ir_invalid` in `_validated`'s words unless it is an
+    object whose `scope`, when present, is one too (a list of pairs is not): at `/ir`, the
+    bundle's own member, or at `/scope`, as a save names it. Unaudited, as a shape failure on
+    create is."""
+    if "ir" not in bundle:
+        raise RuleError(422, "rule_ir_invalid", _MISSING, path="/ir")
+    ir = bundle["ir"]
+    if not isinstance(ir, dict):
+        raise RuleError(422, "rule_ir_invalid", _NO_OBJECT + "Rule", path="/ir")
+    if not isinstance(ir.get("scope", {}), dict):
+        raise RuleError(422, "rule_ir_invalid", _NO_OBJECT + "RuleScope", path="/scope")
+    return ir
+
+
 def _raised_limits(rule: Rule) -> dict[str, Any]:
     """Audit member for a version whose action budget is above its defaults (04 §8.3 rule 4):
     each raised field, with the default it is raised from and its value; empty when none is."""
@@ -405,12 +429,18 @@ class RulesManager:
 
     async def _refuse_scope(self, rule_id: str, op: str, reason: str, actor: Actor) -> None:
         """C-2.9: a refused rule mutation/arm is itself audited (write-ahead, before the raise),
-        waiting at most `REFUSAL_AUDIT_TIMEOUT_S` for its record, as `set_mode`'s refusal does: a
-        record not written is `RuleRefusalUnrecorded`, before anything is stored."""
+        as `rule.scope_refused`, through `_write_refusal`."""
         record = {"rule_id": rule_id, "op": op, "reason": reason, "actor": actor.user_id}
+        await self._write_refusal("rule.scope_refused", record)
+
+    async def _write_refusal(self, action: str, record: dict[str, Any]) -> None:
+        """A refusal's own record (C-2.9), written ahead of its answer and waited for at most
+        `REFUSAL_AUDIT_TIMEOUT_S`, as `set_mode`'s refusal is: a record not written is
+        `RuleRefusalUnrecorded`, before anything is stored. Every scope refusal and every import
+        refusal writes through it."""
         try:
             async with asyncio.timeout(REFUSAL_AUDIT_TIMEOUT_S):
-                await self._audit("rule.scope_refused", record)
+                await self._audit(action, record)
         except Exception as lost:  # the hook names no error type: `rules` may not import `audit`
             raise RuleRefusalUnrecorded from lost
 
@@ -473,29 +503,31 @@ class RulesManager:
     async def import_rule(self, bundle: dict[str, Any], actor: Actor) -> dict[str, Any]:
         """Always lands disabled, on demo, at version 1: the keys the server sets (`_SERVER_SET`,
         those an export strips) are dropped, so any value a bundle carries for them is ignored.
-        Its `ir_version` is validated as carried, never supplied or defaulted: a bundle carrying
-        none is refused as a malformed one is, audited as the import's refusals are. Every account
-        id anywhere in the bundle must be granted to the importer, else the bundle is refused,
-        audited with the count refused (never the ids) and nothing is stored; each one is then
-        kept as written, never remapped (G-10). A bundle naming no account lands naming none, so
-        it applies to every account its owner is granted."""
-        self.check_document(bundle.get("ir", {}))  # the bounds, before the copy and walks below
-        ir = copy.deepcopy(bundle.get("ir", {}))
-        refs = collect_account_ids(ir)
+        Every account id anywhere in the bundle must be granted to the importer, else the bundle is
+        refused, audited with the count refused (never the ids) and nothing is stored; each one is
+        then kept as written, never remapped (G-10). A bundle naming no account lands naming none,
+        so it applies to every account its owner is granted. Its `ir_version` is validated as
+        carried, never supplied or defaulted: a bundle carrying none is refused as a malformed one
+        is, audited as the ungranted-account refusal is. The order is the bounds, the grant check
+        and its audited `403` (C-12.4), the shape (`_bundled_ir`, unaudited), the `ir_version`
+        presence, then the strip. Each record waits at most `REFUSAL_AUDIT_TIMEOUT_S`."""
+        held = bundle.get("ir")
+        self.check_document(held)  # the bounds, before the walk and the copy below
+        refs = collect_account_ids(held)  # any shape: a string or a number names no account
         denied = [] if actor.is_owner else [a for a in refs if a not in actor.granted_accounts]
         if denied:
-            await self._audit(
+            await self._write_refusal(
                 "rule.import_refused",
                 {"actor": actor.user_id, "reason": "ungranted_account", "count": len(denied)},
             )
             raise RuleError(403, "forbidden", "The bundle references an account you cannot access.")
+        ir = copy.deepcopy(_bundled_ir(bundle))
         if "ir_version" not in ir:
-            await self._audit(
+            await self._write_refusal(
                 "rule.import_refused",
                 {"actor": actor.user_id, "reason": "ir_version_missing", "count": 1},
             )
-            missing = "The rule document is not valid: Field required"  # as `_validated` words it
-            raise RuleError(422, "rule_ir_invalid", missing, path="/ir_version")
+            raise RuleError(422, "rule_ir_invalid", _MISSING, path="/ir_version")
         ir = {k: v for k, v in ir.items() if k not in _SERVER_SET}
         scope = dict(ir.get("scope", {}))
         scope["environments"] = ["demo"]
