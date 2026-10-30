@@ -38,10 +38,13 @@ Ten gates, each FAIL led by its code, at most one G1 FAIL per table row:
 - [G9-BOARDS] section 10: six boards, 01 to 05 dark and 06 the light twin, names and exports in
   the ruled pattern, every board PENDING until PR 3.
 - [G10-RESULTS] `proto-results.json` (PR 2) carries the "not the engine" note, 200 drawings, 5
-  repetitions, the three entries and every capture it lists on disk; each entry costs +0 draw
-  calls, uploads at most section 6's bytes per frame and emphasises at most HS-1's cap in the bulk
-  restore; section 6.1's table carries each figure to 0.1 and the verdict recomputed from BUDGETS
-  under #220's below-class rule (met = conservative evidence, a miss = "inconclusive").
+  repetitions, the three entries, PROTO_RUNS runs and every capture it lists on disk; each entry
+  costs +0 draw calls, uploads at most section 6's bytes per frame and emphasises at most HS-1's
+  cap in the bulk restore; every play run in PLAYS is there, a normal one with at most 2 starts per
+  element and 3 per region in any 1 s (MR-1, HS-1b), a reduce one with 0 starts; section 6.1's
+  table carries each figure as recorded, the with-entry p95 spread over the runs, and the verdict
+  recomputed from BUDGETS under #220's below-class rule (met = every run inside the budget,
+  conservative evidence; a miss = "inconclusive").
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL, 0 WARN is the bar);
 `--self-test` applies one mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory copy
@@ -240,7 +243,15 @@ BUDGETS: dict[str, tuple[str, float, bool, float, str]] = {
     "undo": ("D9-09", 16.0, False, 0.0, "< 16 ms"),
 }
 NOT_ENGINE = "the prototype is not the engine"
-PROTO_DRAWINGS, PROTO_REPS, CAPTURES = 200, 5, 18  # 3 entries x start/mid/end x normal/reduce
+# captures: 3 entries x start/mid/end x normal/reduce in the full form, plus start/mid/end of the
+# two minimal forms that differ from the full one (D9-05, D9-09); PROTO_RUNS measure runs
+PROTO_DRAWINGS, PROTO_REPS, CAPTURES, PROTO_RUNS = 200, 5, 24, 3
+# the play runs: (entry, motion, form); D9-03's minimal form is its full form
+PLAYS = frozenset(
+    [(e, m, "full") for e in ("snap", "select", "undo") for m in ("normal", "reduce")]
+    + [(e, "normal", "min") for e in ("select", "undo")]
+)
+MR1_PER_ELEMENT, REGION_STARTS = 2, 3  # starts in any 1 s: per element (HS-1 gap), per region
 MOTION7 = frozenset(
     [D + x for x in ("instant", "fast", "normal", "slow")]
     + [E + x for x in ("standard", "decelerate", "accelerate")]
@@ -432,16 +443,29 @@ def load_results(ctx: Ctx) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def run_figures(data: dict[str, Any], entry: str) -> list[tuple[float, float]]:
+    """(with-entry window p95, with-entry fps) of each recorded run of one entry."""
+    out = []
+    for run_ in data.get("runs", []):
+        w = run_.get("entries", {}).get(entry, {}) if isinstance(run_, dict) else {}
+        if isinstance(w.get("with_p95_ms"), (int, float)) and isinstance(
+            w.get("fps"), (int, float)
+        ):
+            out.append((float(w["with_p95_ms"]), float(w["fps"])))
+    return out
+
+
 def verdicts(ctx: Ctx) -> dict[str, str]:
-    """Row -> "met" or "inconclusive", from the with-entry p95 (and D9-03's fps) against BUDGETS."""
+    """Row -> "met" or "inconclusive": met only when every run's with-entry window p95 (and, for
+    D9-03, its fps) is inside BUDGETS."""
     data = load_results(ctx) or {}
     out: dict[str, str] = {}
     for entry, (rid, p95, inclusive, fps, _) in BUDGETS.items():
-        w = data.get("entries", {}).get(entry, {}).get("with", {})
-        if not isinstance(w.get("active_p95_ms"), (int, float)):
+        figs = run_figures(data, entry)
+        if len(figs) != PROTO_RUNS:
             continue
-        ok = w["active_p95_ms"] <= p95 if inclusive else w["active_p95_ms"] < p95
-        out[rid] = "met" if ok and w.get("fps", 0) >= fps else "inconclusive"
+        ok = all((x <= p95 if inclusive else x < p95) and f >= fps for x, f in figs)
+        out[rid] = "met" if ok else "inconclusive"
     return out
 
 
@@ -721,19 +745,23 @@ def results_section(spec: str) -> str:
     return sec6.split("\n### 6.1", 1)[1] if "\n### 6.1" in sec6 else ""
 
 
-def result_cells(entry: str, e: dict[str, Any], verdict: str) -> tuple[str, ...]:
+def result_cells(
+    entry: str, e: dict[str, Any], verdict: str, figs: list[tuple[float, float]]
+) -> tuple[str, ...]:
     wo, wi = e.get("without", {}), e.get("with", {})
 
     def f(x: object) -> str:
         return f"{x:.1f}" if isinstance(x, (int, float)) else "?"
 
     calls = f"{(wo.get('draw_calls') or ['?'])[0]} / {(wi.get('draw_calls') or ['?'])[0]}"
+    spread = f"{f(min(x for x, _ in figs))} to {f(max(x for x, _ in figs))}" if figs else "?"
     return (
         entry,
-        f(wo.get("p50_ms")),
-        f(wo.get("p95_ms")),
-        f(wi.get("active_p50_ms")),
-        f(wi.get("active_p95_ms")),
+        f(wo.get("window_p50_ms")),
+        f(wo.get("window_p95_ms")),
+        f(wi.get("window_p50_ms")),
+        f(wi.get("window_p95_ms")),
+        spread,
         f(wo.get("fps")),
         f(wi.get("fps")),
         calls,
@@ -770,17 +798,47 @@ def gate_results(ctx: Ctx, r: Result) -> None:
             )
         elif not isinstance(wi.get("entry_bytes_max"), int) or wi["entry_bytes_max"] > limit:
             r.fail("G10-RESULTS", f"{rid}: {wi.get('entry_bytes_max')} B per frame, over {limit}")
-        elif got.get(rid) != (want := result_cells(entry, e, verdict.get(rid, "?"))):
+        elif got.get(rid) != (
+            want := result_cells(entry, e, verdict.get(rid, "?"), run_figures(data, entry))
+        ):
             r.fail("G10-RESULTS", f"{rid}: section 6.1 reads {got.get(rid)}, recomputed {want}")
     bulk = data.get("entries", {}).get("undo", {}).get("bulk_last_rep", {})
     if not isinstance(bulk.get("emphasised"), int) or bulk["emphasised"] > HS1_CAP:
         r.fail(
             "G10-RESULTS", f"the bulk restore emphasised {bulk.get('emphasised')}, cap {HS1_CAP}"
         )
+    if len(data.get("runs", [])) != PROTO_RUNS:
+        r.fail(
+            "G10-RESULTS", f"{len(data.get('runs', []))} measure runs recorded, not {PROTO_RUNS}"
+        )
+    gate_plays(data, r)
     if NOT_ENGINE not in flat(results_section(ctx.spec)).lower():
         r.fail("G10-RESULTS", f"section 6.1 does not say {NOT_ENGINE!r}")
     r.numbers["verdicts"] = verdict
     r.numbers["captures"] = len(caps)
+
+
+def gate_plays(data: dict[str, Any], r: Result) -> None:
+    """The play runs' claims: MR-1 per element, HS-1b's start clause per region, none in reduce."""
+    plays = [p for p in data.get("play", []) if isinstance(p, dict)]
+    keys = [(p.get("play"), p.get("motion"), p.get("form")) for p in plays]
+    if len(keys) != len(PLAYS) or set(keys) != PLAYS:
+        r.fail(
+            "G10-RESULTS", f"play runs {sorted(map(str, keys))}, ruled {sorted(map(str, PLAYS))}"
+        )
+    for p in plays:
+        name = f"play {p.get('play')} {p.get('motion')} {p.get('form')}"
+        el, reg = p.get("max_starts_per_element_per_1s"), p.get("max_starts_per_region_per_1s")
+        if (
+            not isinstance(el, int)
+            or not isinstance(reg, int)
+            or not isinstance(p.get("starts"), int)
+        ):
+            r.fail("G10-RESULTS", f"{name}: no start counts")
+        elif p.get("motion") == "reduce" and (p["starts"] or p.get("settles", 0)):
+            r.fail("G10-RESULTS", f"{name}: {p['starts']} starts under motion reduce, not 0")
+        elif el > MR1_PER_ELEMENT or reg > REGION_STARTS:
+            r.fail("G10-RESULTS", f"{name}: {el} starts per element, {reg} per region in 1 s")
 
 
 GATE_FNS: tuple[tuple[str, Callable[[Ctx, Result], None]], ...] = (
@@ -884,13 +942,21 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
         "G10-RESULTS",
         edit_results(lambda d: d["entries"]["undo"]["with"].update(entry_bytes_max=84)),
     ),
-    ("G10-RESULTS", edit_results(lambda d: d["entries"]["snap"]["without"].update(p50_ms=99.0))),
+    (
+        "G10-RESULTS",
+        edit_results(lambda d: d["entries"]["snap"]["without"].update(window_p50_ms=99)),
+    ),
     (
         "G10-RESULTS",
         edit_results(lambda d: d["entries"]["undo"]["bulk_last_rep"].update(emphasised=21)),
     ),
     ("G10-RESULTS", edit_results(lambda d: d.update(note="the prototype"))),
     ("G10-RESULTS", edit_results(lambda d: d["captures"].pop())),
+    ("G10-RESULTS", edit_results(lambda d: d["play"][1].update(starts=1))),
+    ("G10-RESULTS", edit_results(lambda d: d["play"][2].update(max_starts_per_element_per_1s=3))),
+    ("G10-RESULTS", edit_results(lambda d: d["play"][4].update(max_starts_per_region_per_1s=4))),
+    ("G10-RESULTS", edit_results(lambda d: d["play"].pop())),
+    ("G10-RESULTS", edit_results(lambda d: d["runs"][2]["entries"]["snap"].update(with_p95_ms=99))),
 )
 
 

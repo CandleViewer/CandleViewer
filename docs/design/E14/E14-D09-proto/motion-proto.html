@@ -7,11 +7,13 @@
       /* E14-D09 prototype (design evidence only; the prototype is not the engine). Raw WebGL2, 200 drawings
          over a seeded candle series in one instanced batch. Colours are the dark tokens' values at the base:
          color.surface.canvas, color.drawing.default / .selected, TP-13 color.drawing.snap = {color.focus.ring},
-         color.candle.*, color.surface.raised / .selected, color.text.*. */
+         color.candle.*, color.surface.raised / .selected, color.text.*. Every figure it prints is from
+         this host's software GL (SwiftShader, the runner's --disable-gpu), below class. */
       :root {
         --canvas: #11151a;
         --raised: #161b22;
         --row-selected: #2e363e;
+        --drawing-selected: #f0b441;
         --text: #e8eaed;
         --text-2: #b1bac4;
         --text-3: #8b949e;
@@ -77,10 +79,11 @@
         color: var(--text);
       }
       .row .ov {
-        /* the D9-09 tree half: an opacity overlay pre-tinted color.surface.selected; never a fill tween */
+        /* the D9-09 tree half (R353 BQ-08 precision): an overlay tinted color.drawing.selected over the
+           row's opaque color.surface.selected fill, opacity 0.25 -> 0; never a fill tween */
         position: absolute;
         inset: 0;
-        background: var(--row-selected);
+        background: var(--drawing-selected);
         opacity: 0;
         pointer-events: none;
       }
@@ -96,8 +99,9 @@
   </head>
   <body>
     <div id="out">
-      E14-D09 prototype. Modes: ?play=snap|select|undo, ?motion=reduce, ?drawings=N, ?ms=&amp;reps=
-      (measure), ?capture=snap|select|undo&amp;at=start|mid|end. The prototype is not the engine.
+      E14-D09 prototype. Modes: ?play=snap|select|undo, ?motion=reduce, ?form=min, ?drawings=N,
+      ?ms=&amp;reps= (measure), ?capture=snap|select|undo&amp;at=start|mid|end. The prototype is not
+      the engine; figures from SwiftShader (--disable-gpu) are below class.
     </div>
     <div id="stage">
       <div id="chart">
@@ -116,6 +120,7 @@
         capture: P("capture", ""),
         at: P("at", "start"),
         reduce: P("motion", "") === "reduce",
+        form: P("form", "full") === "min" ? "min" : "full", // min: section 2's shipping (minimal) forms
         drawings: Math.max(6, Math.min(2000, Math.floor(+P("drawings", 200)) || 200)),
         ms: Math.max(200, +P("ms", 2000) || 2000),
         reps: Math.max(1, Math.floor(+P("reps", 5)) || 5),
@@ -138,22 +143,30 @@
         down: "#E5484D",
         wick: "#8B949E",
       };
-      const HS1_GAP = 500; // ms between starts on one element (HS-1)
+      // ms between starts on one element (HS-1): per element for the halos; the snap ring is one element (the
+      // one marker), so for it the same gap is a single global gap
+      const HS1_GAP = 500;
       const HS1_CAP = 20; // emphasised objects per frame (HS-1)
       const REGION = [341, 256]; // HS-1b's region
       const AREA_CAP = 21824; // 25 % of 341 x 256 px
+      const REGION_STARTS = 3; // halo starts per region per half-open 1 000 ms window (HS-1b's start clause)
+      const OVERLAY_PEAK = 0.25; // the tree overlay's peak opacity (R353 BQ-08 precision)
       const BAND = 4; // the halo widens the outline by 4 px (2 px each side)
       const HALO_PEAK = 0.6;
       const RING_R = 5; // the 10 px ring
       const RING_FROM = 1.4; // scale 1.4 -> 1.0 (14 -> 10 px)
       const MAGNET = 12; // px
       const DRAG_THRESHOLD = 4; // px; a press that travels further is a drag
+      // the full forms; ?form=min plays section 2's minimal forms (R353 BQ-11): D9-03 is already one property
+      // at `fast` (unchanged), the halos of D9-05 and of D9-09's canvas half play over `fast`, the tree half keeps
+      // its timing
+      const MIN = CFG.form === "min";
       const ENTRY = {
         snap: { row: "D9-03", dur: DUR.fast, ease: "decelerate" },
-        select: { row: "D9-05", dur: DUR.normal, ease: "standard" },
+        select: { row: "D9-05", dur: MIN ? DUR.fast : DUR.normal, ease: "standard" },
         undo: {
           row: "D9-09",
-          dur: DUR.slow,
+          dur: MIN ? DUR.fast : DUR.slow,
           ease: "standard",
           tree: DUR.normal,
           treeEase: "accelerate",
@@ -484,7 +497,20 @@
         halos: [], // { slot, d, t0, dur, ease }
         lastStart: new Map(), // per element (HS-1)
         overlays: [], // the tree halves: { el, anim }
-        ring: { key: "", t0: -1e9, last: -1e9, shown: false, settles: 0, atRest: 0, starts: [] },
+        ring: {
+          key: "",
+          t0: -1e9,
+          last: -1e9,
+          wLast: -1e9,
+          shown: false,
+          settles: 0,
+          atRest: 0,
+          starts: [],
+        },
+        regionStarts: new Map(), // region -> halo start times (HS-1b's start clause)
+        starts: [], // every start: { el, t, regions } (the play runs' MR-1 and HS-1b counts)
+        win: -1e9, // when the entry's window opened, with or without motion (the matched frame population)
+        press: null, // a pointer press: { x, y } until it ends or crosses DRAG_THRESHOLD
         deleted: new Set(),
         log: [],
       };
@@ -526,7 +552,21 @@
       function regionOf(d) {
         return `${Math.floor(d.cx / REGION[0])}:${Math.floor(d.cy / REGION[1])}`;
       }
-      // HS-1 and HS-1b: latest start wins, nothing queues; 500 ms per element; 20 per frame; 21 824 px² per region
+      // every 341 x 256 px region a halo touches (its outline's box widened by the band)
+      function regionsTouched(d) {
+        const m = (1.5 + BAND) / 2,
+          x0 = Math.max(0, Math.min(d.x0, d.x1) - m),
+          x1 = Math.min(W - 1, Math.max(d.x0, d.x1) + m),
+          y0 = Math.max(0, Math.min(d.y0, d.y1) - m),
+          y1 = Math.min(H - 1, Math.max(d.y0, d.y1) + m),
+          keys = [];
+        for (let gx = Math.floor(x0 / REGION[0]); gx <= Math.floor(x1 / REGION[0]); gx++)
+          for (let gy = Math.floor(y0 / REGION[1]); gy <= Math.floor(y1 / REGION[1]); gy++)
+            keys.push(`${gx}:${gy}`);
+        return keys;
+      }
+      // HS-1 and HS-1b: latest start wins, nothing queues; 500 ms per element; 20 per frame; at most 3 starts per
+      // region in any half-open 1 000 ms window; 21 824 px² per region
       function startHalo(i, now, entry) {
         const d = drawings[i];
         const running = S.halos.find((h) => h.d === i);
@@ -534,6 +574,9 @@
         if (!S.animate) return "reduce";
         if (now - (S.lastStart.get(i) ?? -1e9) < HS1_GAP) return "gap";
         if (S.halos.length >= HS1_CAP) return "cap";
+        const touched = regionsTouched(d);
+        const recent = (k) => (S.regionStarts.get(k) || []).filter((t) => now - t < 1000).length;
+        if (touched.some((k) => recent(k) >= REGION_STARTS)) return "region";
         const area = new Map();
         for (const h of S.halos)
           area.set(
@@ -545,6 +588,8 @@
         let slot = 0;
         while (used.has(slot)) slot++;
         S.lastStart.set(i, now);
+        for (const k of touched) S.regionStarts.set(k, [...(S.regionStarts.get(k) || []), now]);
+        S.starts.push({ el: i, t: now, regions: touched });
         geo.set([d.x0, d.y0, d.x1, d.y1], (HALO0 + slot) * 4);
         sty.set([d.kind, 1.5 + BAND, 0, 0], (HALO0 + slot) * 4);
         col.set(C.selected, (HALO0 + slot) * 3);
@@ -565,10 +610,12 @@
         if (!S.animate) return;
         const e = ENTRY.undo;
         if (frozenAt != null) {
-          ov.style.opacity = String(1 - EASING[e.treeEase](Math.min(1, frozenAt / e.tree)));
+          ov.style.opacity = String(
+            OVERLAY_PEAK * (1 - EASING[e.treeEase](Math.min(1, frozenAt / e.tree))),
+          );
           return;
         }
-        const anim = ov.animate([{ opacity: 1 }, { opacity: 0 }], {
+        const anim = ov.animate([{ opacity: OVERLAY_PEAK }, { opacity: 0 }], {
           duration: e.tree,
           easing: `cubic-bezier(${EASE[e.treeEase].join(",")})`,
         });
@@ -581,9 +628,23 @@
       }
       // DNA-4: a press that crosses the drag threshold cuts every running halo and overlay to rest in that frame
       function dragCut() {
+        const n = S.halos.length + S.overlays.length;
         for (const h of [...S.halos]) freeHalo(h);
         for (const o of [...S.overlays]) o.anim.cancel();
         S.overlays.length = 0;
+        return n;
+      }
+      // the pointer test: a press is a drag once it travels more than DRAG_THRESHOLD px from where it went down
+      function pointerDown(x, y) {
+        S.press = { x, y };
+        return "down";
+      }
+      function pointerMove(x, y) {
+        if (!S.press) return "no press";
+        const dist = Math.hypot(x - S.press.x, y - S.press.y);
+        if (dist <= DRAG_THRESHOLD) return `held (${dist.toFixed(1)} px)`;
+        S.press = null;
+        return `drag (${dist.toFixed(1)} px): cut ${dragCut()} to rest`;
       }
       function stepHalos(now) {
         for (const h of [...S.halos]) {
@@ -620,6 +681,7 @@
         const key = best ? `${ptr.i}:${best.f}` : "";
         if (key !== R.key) {
           R.key = key;
+          if (best && now - R.wLast >= HS1_GAP) R.wLast = S.win = now; // the window, with or without motion
           if (best) {
             geo.set([ax, ay, ax, ay], RING * 4);
             put("geo", geo, RING, 4);
@@ -632,6 +694,7 @@
               R.t0 = R.last = now;
               R.settles++;
               R.starts.push(now);
+              S.starts.push({ el: "ring", t: now, regions: [] });
             } else {
               R.t0 = -1e9; // latest latch wins: drawn at rest, nothing queues
               R.atRest++;
@@ -669,10 +732,15 @@
         setSelected(-1);
         rowsEl.forEach((r) => (r.querySelector(".tag").textContent = ""));
         S.lastStart.clear();
+        S.regionStarts.clear();
+        S.starts = [];
+        S.win = -1e9;
+        S.press = null;
         Object.assign(S.ring, {
           key: "",
           t0: -1e9,
           last: -1e9,
+          wLast: -1e9,
           shown: false,
           settles: 0,
           atRest: 0,
@@ -687,24 +755,30 @@
         put("geo", geo, DRAW0 + DRAG, 4);
         snaptext.style.display = "none";
         ringScale = 1;
+        gl.useProgram(drawProg);
+        gl.uniform1f(U.ring, 1); // the ring at rest before the arm starts, outside its byte count
+        ringSent = 1;
         S.animate = animate;
         S.phase = -1;
         S.restored = -1;
-        S.bulk = { started: 0, tagged: 0 };
+        S.bulk = { started: 0, tagged: 0, why: {} };
       }
       function restore(ids, now) {
         // tree order among the restored objects on screen; past the caps: the "restored" tag only
         let started = 0;
+        const why = {};
+        S.win = now;
         for (const i of ids) {
           setAlive(i, true);
           rowsEl[i].querySelector(".tag").textContent = "restored";
-          if (startHalo(i, now, "undo") === "start") {
+          const r = startHalo(i, now, "undo");
+          if (r === "start") {
             started++;
             startOverlay(i, now);
-          }
+          } else why[r] = (why[r] || 0) + 1;
         }
         if (ids.length === 1) setSelected(ids[0]);
-        return { started, tagged: ids.length - started };
+        return { started, tagged: ids.length - started, why };
       }
       // one frame of a measured arm; returns whether the entry is running in this frame
       function tick(entry, now, t) {
@@ -714,6 +788,7 @@
           S.phase = n;
           const i = (n * 7) % N;
           setSelected(i);
+          S.win = now;
           startHalo(i, now, "select");
         }
         if (entry === "undo") {
@@ -725,30 +800,34 @@
           } else if (t - n * HS1_GAP >= 50 && S.restored !== n) {
             S.restored = n;
             const r = restore(ids, now);
-            S.bulk.started = Math.max(S.bulk.started, r.started);
-            S.bulk.tagged = Math.max(S.bulk.tagged, r.tagged);
+            if (r.started >= S.bulk.started) S.bulk = r; // the largest emphasis of the run
           }
         }
         stepHalos(now);
         return S.halos.length > 0;
       }
+      // the matched population: the frames inside the entry's window (its canvas duration from each start that
+      // the scenario makes), the same frames whether or not motion runs
+      const inWindow = (entry, now) => now - S.win < ENTRY[entry].dur;
       // ---- measure mode: p50 / p95 frame work time and fps, with and without each entry -------------------
-      const raf = () => new Promise(requestAnimationFrame);
+      // t0 is read first thing inside the rAF callback, so the promise's microtask hop is inside the work time
+      const raf = () =>
+        new Promise((r) => requestAnimationFrame((ts) => r([ts, performance.now()])));
       async function runArm(entry, animate, ms) {
         reset(animate);
         const a = {
           work: [],
           active: [],
+          window: [],
           deltas: [],
           draws: new Set(),
           entryBytes: 0,
           cutBytes: 0,
         };
-        const start = await raf();
+        const [start] = await raf();
         let last = start;
         for (;;) {
-          const now = await raf();
-          const t0 = performance.now();
+          const [now, t0] = await raf();
           F.entryBytes = F.cutBytes = 0;
           const active = tick(entry, now, now - start);
           render();
@@ -756,6 +835,7 @@
           const work = performance.now() - t0;
           a.work.push(work);
           if (active) a.active.push(work);
+          if (inWindow(entry, now)) a.window.push(work);
           a.deltas.push(now - last);
           a.draws.add(F.draws);
           a.entryBytes = Math.max(a.entryBytes, F.entryBytes);
@@ -769,6 +849,7 @@
       function summary(arms) {
         const all = arms.flatMap((a) => a.work),
           act = arms.flatMap((a) => a.active),
+          win = arms.flatMap((a) => a.window),
           del = arms.flatMap((a) => a.deltas);
         const frames = all.length,
           secs = arms.reduce((s, a) => s + a.elapsed, 0) / 1000;
@@ -780,6 +861,9 @@
           active_frames: act.length,
           active_p50_ms: r2(pct(act, 50)),
           active_p95_ms: r2(pct(act, 95)),
+          window_frames: win.length,
+          window_p50_ms: r2(pct(win, 50)),
+          window_p95_ms: r2(pct(win, 95)),
           fps: r2(frames / secs),
           fps_per_rep: arms.map((a) => r2(a.work.length / (a.elapsed / 1000))),
           dropped_ge_33ms: del.filter((x) => x >= 33).length,
@@ -802,10 +886,14 @@
           seed: CFG.seed,
           win_ms: CFG.ms,
           reps: CFG.reps,
+          gl: "software GL (SwiftShader, the runner's --disable-gpu); below class",
           metric:
-            "work = rAF callback start to a 1 px readPixels after the draw (CPU + GPU of one frame); fps = rAF " +
-            "frames per second; active = frames where the entry runs; without = the same scenario with " +
-            "RenderFlags.animate off (each start drawn at rest)",
+            "work = performance.now() read first in the rAF callback to a 1 px readPixels after the draw (the " +
+            "main thread's scene update, the draw and the GL wait of one frame; a compositor-side DOM animation, " +
+            "D9-09's tree overlay, is outside it); fps = rAF frames per second; window = the frames inside the " +
+            "entry's canvas duration from each start the scenario makes, the same population in both arms; " +
+            "active = frames where the entry runs (with only); without = the same scenario with " +
+            "RenderFlags.animate off (each start drawn at rest); the full forms",
           entries: {},
         };
         out.textContent = "measuring…";
@@ -816,7 +904,7 @@
           for (let r = 0; r < CFG.reps; r++)
             for (const arm of ["without", "with"]) {
               arms[arm].push(await runArm(e, arm === "with", CFG.ms));
-              if (e === "undo" && arm === "with") bulk = { ...S.bulk };
+              if (e === "undo" && arm === "with") bulk = { ...S.bulk, why: { ...S.bulk.why } };
               if (e === "snap" && arm === "with")
                 bulk = { settles: S.ring.settles, at_rest: S.ring.atRest };
             }
@@ -830,6 +918,7 @@
               group: GROUP,
               emphasised: bulk.started,
               tagged: bulk.tagged,
+              not_started: bulk.why,
             };
           if (e === "snap") res.entries[e].latches_last_rep = bulk;
         }
@@ -847,7 +936,7 @@
           P.pending = false;
           P.frames++;
           const t = now - T0;
-          const dragging = t < P.dragUntil;
+          const dragging = P.dragUntil > 0 && t < P.dragUntil; // only the snap scenario drags
           const ring = dragging ? stepSnap(now, t, false) : false;
           stepHalos(now);
           render();
@@ -870,15 +959,18 @@
               done();
             }, ms),
           );
-        out.textContent = `playing ${entry}${CFG.reduce ? " (motion reduce)" : ""}… the prototype is not the engine`;
+        out.textContent = `playing ${entry}${CFG.reduce ? " (motion reduce)" : ""}${MIN ? " (minimal form)" : ""}… the prototype is not the engine`;
         kick();
-        const pick = UNDO_PICK;
+        const pick = UNDO_PICK,
+          pk = drawings[pick];
         const plan = {
           snap: [[3200, "drag ends", () => ((snaptext.style.display = "none"), "end")]],
           select: [
             [300, "select 2 (three overlap)", (n) => (setSelected(1), startHalo(1, n, "select"))],
             [900, "select 1", (n) => (setSelected(0), startHalo(0, n, "select"))],
-            [1000, "press crosses the drag threshold: cut to rest", () => (dragCut(), "cut")],
+            [1000, "press on the selection", () => pointerDown(640, 360)],
+            [1010, "the press moves 3 px", () => pointerMove(643, 360)],
+            [1020, "the press moves 6 px: past DRAG_THRESHOLD", () => pointerMove(646, 360)],
             [1700, "select 3", (n) => (setSelected(2), startHalo(2, n, "select"))],
             [
               1800,
@@ -892,7 +984,13 @@
             [1000, "Ctrl+Z: restore it", (n) => JSON.stringify(restore([pick], n))],
             [1800, "delete it again (a cut)", () => (setAlive(pick, false), "cut")],
             [2200, "Ctrl+Z: restore it", (n) => JSON.stringify(restore([pick], n))],
-            [2350, "press crosses the drag threshold: cut to rest", () => (dragCut(), "cut")],
+            [2350, "press on the restored object", () => pointerDown(pk.cx, pk.cy)],
+            [2360, "the press moves 3 px", () => pointerMove(pk.cx, pk.cy + 3)],
+            [
+              2370,
+              "the press moves 6 px: past DRAG_THRESHOLD",
+              () => pointerMove(pk.cx, pk.cy + 6),
+            ],
             [
               3000,
               `delete ${GROUP} (a cut)`,
@@ -914,18 +1012,28 @@
         if (!plan) throw new Error(`unknown play mode ${entry}`);
         await Promise.all(plan.map(([ms, what, fn]) => at(ms, what, fn)));
         await new Promise((r) => setTimeout(r, 600));
+        // the most starts in any half-open 1 000 ms window, over a list of start times
+        const maxPer1s = (ts) =>
+          Math.max(0, ...ts.map((s) => ts.filter((x) => x >= s && x < s + 1000).length));
         const starts = S.ring.starts.map((s) => s - T0);
-        const per1s = Math.max(
-          0,
-          ...starts.map((s) => starts.filter((x) => x >= s && x < s + 1000).length),
-        );
+        const per1s = maxPer1s(starts);
+        const byEl = new Map(),
+          byRegion = new Map();
+        for (const st of S.starts) {
+          byEl.set(st.el, [...(byEl.get(st.el) || []), st.t]);
+          for (const k of st.regions) byRegion.set(k, [...(byRegion.get(k) || []), st.t]);
+        }
         const res = {
           play: entry,
           motion: CFG.reduce ? "reduce" : "normal",
+          form: CFG.form,
           drawings: N,
           events: ev,
           frames: P.frames,
           parks: P.parks,
+          starts: S.starts.length,
+          max_starts_per_element_per_1s: Math.max(0, ...[...byEl.values()].map(maxPer1s)),
+          max_starts_per_region_per_1s: Math.max(0, ...[...byRegion.values()].map(maxPer1s)),
         };
         if (entry === "snap")
           Object.assign(res, {
@@ -936,12 +1044,15 @@
         out.textContent = "RESULT" + JSON.stringify(res);
       }
       // ---- capture mode: one frozen frame (start / mid / end) as a small PNG, composited with its DOM half ----
+      // undo: "mid" is the middle of the shorter half and "end" the end of the longer one, so both halves show;
+      // snap: a 3x zoom of the ring sits beside the crop (fixture data only), so the settle reads from a still
       function capture(entry, atWord) {
         reset(!CFG.reduce);
         const e = ENTRY[entry];
         if (!e) throw new Error(`unknown capture ${entry}`);
-        const half = entry === "undo" ? e.tree / 2 : e.dur / 2; // undo: the middle of the tree half
-        const at = { start: 0, mid: half, end: e.dur }[atWord] ?? 0;
+        const half = entry === "undo" ? Math.min(e.dur, e.tree) / 2 : e.dur / 2;
+        const end = entry === "undo" ? Math.max(e.dur, e.tree) : e.dur;
+        const at = { start: 0, mid: half, end }[atWord] ?? 0;
         const T0 = 10000;
         let focus,
           overlay = 0;
@@ -959,15 +1070,18 @@
           setAlive(UNDO_PICK, false);
           restore([UNDO_PICK], T0);
           startOverlay(UNDO_PICK, T0, at);
-          overlay = S.animate ? 1 - EASING[e.treeEase](Math.min(1, at / e.tree)) : 0;
+          overlay = S.animate
+            ? OVERLAY_PEAK * (1 - EASING[e.treeEase](Math.min(1, at / e.tree)))
+            : 0;
           stepHalos(T0 + at);
           focus = [drawings[UNDO_PICK].cx, drawings[UNDO_PICK].cy];
         }
         render();
         const cw = 360,
           ch = 200,
-          tw = entry === "undo" ? 200 : 0,
-          cap = 30;
+          tw = entry === "select" ? 0 : 200,
+          cap = 44,
+          Z = 3;
         const sx = Math.round(Math.min(W - cw, Math.max(0, focus[0] - cw / 2))),
           sy = Math.round(Math.min(H - ch, Math.max(0, focus[1] - ch / 2)));
         const c2 = document.createElement("canvas");
@@ -981,11 +1095,30 @@
         x.textBaseline = "middle";
         x.fillStyle = "#E8EAED";
         const mo = CFG.reduce ? "reduce" : "normal";
-        x.fillText(`${e.row} ${entry} · ${atWord} ${at} ms · motion ${mo}`, 6, 8);
+        x.fillText(
+          `${e.row} ${entry} · ${atWord} ${at} ms · motion ${mo} · form ${CFG.form}`,
+          6,
+          8,
+        );
         x.fillText("the prototype is not the engine", 6, 22);
+        x.fillText("SwiftShader, --disable-gpu, below class", 6, 36);
         if (entry === "snap" && S.ring.text)
           x.fillText(S.ring.text, S.ring.at[0] - sx + 10, S.ring.at[1] - sy + cap - 12);
-        if (tw) {
+        if (entry === "snap") {
+          // the zoom: a 60 x 60 px square around the ring, drawn 3x (180 px) without smoothing
+          const zs = 60,
+            zx = Math.round(S.ring.at[0] - zs / 2),
+            zy = Math.round(S.ring.at[1] - zs / 2);
+          x.fillStyle = "#161B22";
+          x.fillRect(cw, cap, tw, ch);
+          x.imageSmoothingEnabled = false;
+          x.drawImage(canvas, zx, zy, zs, zs, cw + 1, cap, zs * Z, zs * Z);
+          x.strokeStyle = "#8B949E";
+          x.strokeRect(cw + 0.5, cap + 0.5, zs * Z, zs * Z);
+          x.strokeRect(zx - sx + 0.5, zy - sy + cap + 0.5, zs, zs);
+          x.fillStyle = "#E8EAED";
+          x.fillText(`3× zoom · ring scale ${ringScale.toFixed(2)}`, cw + 6, cap + ch - 2);
+        } else if (tw) {
           x.fillStyle = "#161B22";
           x.fillRect(cw, cap, tw, ch);
           for (let r = 0; r < 8; r++) {
@@ -998,15 +1131,15 @@
               x.strokeStyle = "#8B949E";
               x.strokeRect(cw + 0.5, y + 0.5, tw - 1, 23);
               x.globalAlpha = overlay;
-              x.fillStyle = "#2E363E";
+              x.fillStyle = "#F0B441";
               x.fillRect(cw, y, tw, 24);
               x.globalAlpha = 1;
             }
             x.fillStyle = sel ? "#E8EAED" : "#B1BAC4";
             x.fillText(`${id + 1}. ${drawings[id].name}`, cw + 8, y + 12);
             if (sel) {
-              x.fillStyle = "#8B949E";
-              x.fillText(`restored · ${overlay.toFixed(2)}`, cw + 110, y + 12);
+              x.fillStyle = "#B1BAC4";
+              x.fillText(`restored · ${overlay.toFixed(2)}`, cw + 100, y + 12);
             }
           }
         }
@@ -1017,12 +1150,19 @@
             at: atWord,
             at_ms: at,
             motion: mo,
+            form: CFG.form,
             ring_scale: r2(ringScale),
             halo: S.halos.map((h) => r2(alpha[HALO0 + h.slot])),
             overlay: r2(overlay),
             png: c2.toDataURL("image/png"),
           });
       }
+      // a person can try the drag cut too: a press on the chart that travels more than DRAG_THRESHOLD px
+      canvas.addEventListener("pointerdown", (ev) => pointerDown(ev.offsetX, ev.offsetY));
+      canvas.addEventListener("pointermove", (ev) => {
+        if (S.press) pointerMove(ev.offsetX, ev.offsetY);
+      });
+      canvas.addEventListener("pointerup", () => (S.press = null));
       // ---- boot --------------------------------------------------------------------------------------------
       try {
         if (MODE === "measure") measure();
