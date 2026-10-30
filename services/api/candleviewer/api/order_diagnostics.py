@@ -2,7 +2,7 @@
 `ExchangeCallRecord`; SR-E29-08, SR-E29-09; E29 threat model section 6, OM-I05, OM-I06).
 
 An order's events carry, under `record`, the allow-listed record the exchange adapter built of
-the call behind the step (`exchange.bybit.record`), which the store redacted before insert
+the call behind the step (the adapter's record module), which the store redacted before insert
 (`storage.repositories.exchange_payload`). Each is served only after two checks on the way out,
 and a record that fails either is never served: the read fails closed (`RecordRefused`, the
 route's `503`), never a partial answer.

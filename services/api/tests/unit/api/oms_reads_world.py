@@ -162,7 +162,7 @@ def event(n: int, order_id: uuid.UUID, payload: dict[str, object], **over: Any) 
     return OrderEventRow(**(values | over))
 
 
-#: The adapter's record of one create (`exchange.bybit.record`), as the store keeps it.
+#: The exchange adapter's record of one create, as the store keeps it.
 RECORD: Final[dict[str, object]] = {
     "transport": "rest", "method": "POST", "endpoint": "/v5/order/create", "ret_code": 0,
     "ret_msg": "OK", "latency_ms": 12,

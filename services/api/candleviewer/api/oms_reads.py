@@ -382,6 +382,8 @@ def make_oms_reads_router(
             lambda row: Keyset(row.execution.exec_ts, row.execution.id), lambda q: q.accounts,
         )  # fmt: skip
 
+    # 22 `getOrderDiagnostics`: a contract route, Owner-only and audited (D7), not a probe.
+    # nosemgrep: cv-no-debug-probe-in-prod reason=contract-route owner=@CandleViewer/security review=2027-04-27  # noqa: E501
     @router.get("/orders/{orderId}/diagnostics", tags=["trading"])
     async def get_order_diagnostics(
         request: Request, order_ref: Annotated[str, Path(alias="orderId")]
