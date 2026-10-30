@@ -4,8 +4,8 @@ Stdlib only, offline (`python3 -I -B`). It reads the spec from the working tree;
 the shipped precedence test and `16` / `15` (for the A-row pre-images) AS TEXT at the pinned base
 with `git show`; and the token JSON through `packages/ui/tokens/tests/verify_tokens.py`'s loader,
 resolver and `over()` (dark = primitives + semantic-dark, light = + semantic-light, hc = +
-semantic-hc), so the numbers agree with E08-D11's. Seven gate groups, ten gates, each FAIL led by
-its code:
+semantic-hc), so the numbers agree with E08-D11's. It reads `16` / `15` in the working tree as well,
+for the A-rows PR 2 applies. Seven gate groups, eleven gates, each FAIL led by its code:
 
 - [G1-TABLE] section 2 holds recipes 1 to 7, every cell filled, every reduce cell `none` literally.
 - [G2-PROPERTY] the Property column names only `opacity`, `transform` or `none`.
@@ -16,13 +16,18 @@ its code:
   surface's interval gives <= 2; the ticket's 333 ms is shown to admit 4); MR-2 (period x runs <=
   5 000 ms unless request-bound, the period equal to its duration token x the multiplier); MR-3 (a
   carrier on every row); row 3 carries A23's rate cap, cell cap and the 10 s stop; the MR texts and
-  A23's acceptance text verbatim.
-- [G3-HS1B] HS-1b (ledger row A23a) states the region (341 x 256 px), its emphasised-area cap
-  (25 % of it, 21 824 px2) and at most 3 flash starts in any half-open 1 000 ms window.
+  R162 BQ-09's acceptance text (= A23) verbatim.
+- [G3-HS1B] HS-1b (ledger row A23a) states the sliding rectangle (any 341 x 256 px, anywhere on
+  screen), its source (WCAG's 10 degree field at 1024 x 768 CSS px), its emphasised-area cap (25 %
+  of it, 21 824 px2) and at most 3 flash starts in any half-open 1 000 ms window; row 3 names
+  HS-1b; no area above 21 824 px2 appears outside the Q-2 row.
 - [G4-FLASH] section 5's numbers recomputed unrounded from the tokens and compared at the printed
-  precision (truncated, never rounded), and every verdict re-derived.
+  precision (each ratio and luminance step truncated, never rounded; the hue, which meets no bar,
+  rounded), and every verdict re-derived.
 - [G5-AROW] each A-row's pre-image stands byte for byte on its cited line of `16` / `15` at the base
-  under the heading it names, and each post text equals the pinned copy.
+  under the heading it names, and each post text equals the pinned copy; in the working tree each
+  post stands once under the same heading, a replaced pre-image is gone, and an inserted post
+  follows its anchor line (PR 2 applies them).
 - [G5-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base, and
   each pinned cite still carries its words.
 - [G6-PRECEDENCE] section 6's 4 x 3 table equals the shipped test's 18 rows (twin `false` and absent
@@ -30,7 +35,7 @@ its code:
 - [G7-HYGIENE] no local path, host, closing keyword, "approval pending", or a word on the lane's
   public-text list (kept rot13-encoded here so the list itself passes the same scan).
 - [G7-BOARDS] section 9: 8 boards + 1 light twin, at most 10, twins at most a third, names and
-  exports in the ruled pattern, every board PENDING until PR 2.
+  exports in the ruled pattern, every board PENDING until PR 3.
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL, 0 WARN is the bar);
 `--self-test` applies one mutation per gate (MUTATIONS) and the paraphrase probes (PROBES) to an
@@ -58,8 +63,9 @@ from typing import Any, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "docs" / "design" / "E05" / "E05-D03.md"
+APPLIED = ("15", "16")  # the files PR 2 edits; read in the working tree as well as at the base
 TOKENS = ROOT / "packages" / "ui" / "tokens"
-BASE = "9c9742ed2c"  # origin/main when the spec was written; every cite is read here
+BASE = "2d0bd4fd33"  # origin/main at PR 2 (PR 1 read 9c9742ed2c); every cite is read here
 THEMES = ("dark", "light", "high-contrast")
 UI, WEB = "packages/ui/src/", "apps/web/src/"
 KEYS = {
@@ -97,7 +103,7 @@ KEYS = {
 # key|line|words that must stand on that line at the base (the load-bearing cites)
 CITE_PINS = """\
 05|78|Session override;05|208|No content flashes more than 3 times per second
-11|5182|chart inertia are disabled;14|2406|### SCR-117;15|188|pulses opacity 1 ↔ 0.8
+11|5182|chart inertia are disabled;14|2408|### SCR-117;15|188|pulses opacity 1 ↔ 0.8
 15|196|stopped at 5 s;16|139|wins over `prefers-reduced-motion` in both directions
 16|184|Node-graph edge draw;16|219|over `normal` / `accelerate`;16|232|Until E05-D03 lands
 E08-D11|71|**0.25**;E08-D11|72|**≥ 500 ms between starts per cell**;E08-D11|367|A-1 `16` §7
@@ -108,7 +114,7 @@ E11-D06|255|Last-price pill;theme.css|48|--cv-motion-scale: 1;theme.css|69|prefe
 dialog.css|29|prefers-reduced-motion: no-preference;drawer.css|118|no-preference
 select.css|106|no-preference;toast.css|56|no-preference;skeleton.css|34|linear 4
 spinner.css|29|linear infinite;store.ts|172|os.reduceMotion;themeFromSettings.ts|87|flag === true
-model.ts|60|flashOnTick: !calm;14|2411|disable flash-on-update;14|2412|frame budget
+model.ts|60|flashOnTick: !calm;14|2413|disable flash-on-update;14|2414|frame budget
 KeymapHost.tsx|71|Locked;E33-D04-handoff|135|C.8"""
 RULE_TEXT = {
     "MR-1": "no element starts more than 3 flashes in any 1 000 ms window",
@@ -117,14 +123,14 @@ RULE_TEXT = {
     "exception is a request- or job-bound busy indicator with its in-flight label",
     "MR-3": "every row names a non-motion carrier (text, glyph, sign, ARIA state) present in "
     "the reduce end state; the reduce snapshot's accessibility tree equals the safe end state's",
-    "A23": "The light-theme flash is **accepted as designed**: at ≤ 2 starts per second per cell "
+    "R162 BQ-09 (= A23)": "The light-theme flash is **accepted as designed**: at ≤ 2 starts per second per cell "
     "with the fast-market stop it passes WCAG 2.3.1 by rate (and 2.3.2's three-per-second bar), "
     "the emphasised area is small and capped, and reduce mode removes it entirely; the light "
     "alpha stays 0.25 (PROPOSED within E08-D11's 0.15–0.35 as a _tuning_, not a gate) for the "
     "owner's later prototype run.",
 }
-HS1B_W, HS1B_H = 341, 256  # A23a's region; 25 % of it is WCAG 2.3.1's area bound, 21 824 px2
-AROW_SHA = "f0142b644a4c"  # sha256 prefix over every A-row's id, line, heading, pre and post
+HS1B_W, HS1B_H = 341, 256  # A23a's rectangle; 25 % of it is WCAG 2.3.1's area bound, 21 824 px2
+AROW_SHA = "85a05fb2ea5e"  # sha256 prefix over every A-row's id, line, heading, pre and post
 # A-7 as R162 BQ-16 rules it (the list's ASCII arrow written as `16`'s, with `16`'s full stop)
 A7_POST = (
     "- Node-graph connection made: `fast` `opacity` fade, never a line-draw (a stroke-dash draw "
@@ -185,6 +191,7 @@ class Ctx(NamedTuple):
 
     spec: str
     base: dict[str, str]
+    work: dict[str, str]
     tokens: dict[str, Any]
     colours: dict[str, dict[str, str]]
 
@@ -201,8 +208,9 @@ class Result:
 
 def load_ctx() -> Ctx:
     base = {k: git_show(p) for k, p in KEYS.items()}
+    work = {k: (ROOT / KEYS[k]).read_text(encoding="utf-8") for k in APPLIED}
     colours = {t: theme_colours(t) for t in THEMES}
-    return Ctx(SPEC.read_text(encoding="utf-8"), base, all_tokens(), colours)
+    return Ctx(SPEC.read_text(encoding="utf-8"), base, work, all_tokens(), colours)
 
 
 def section(spec: str, num: int) -> str:
@@ -317,7 +325,7 @@ def duration_ms(ctx: Ctx, cell: str) -> float:
 def gate_rules(ctx: Ctx, r: Result) -> None:
     rules = section(ctx.spec, 4)
     for rid, text in RULE_TEXT.items():
-        where = section(ctx.spec, 5) if rid == "A23" else rules
+        where = section(ctx.spec, 5) if rid.startswith("R162") else rules
         if flat(text) not in flat(where):
             r.fail("G3-RULES", f"{rid}'s ruled text is not verbatim in its section")
     n = {"hot": max_starts(HOT_MS), "ticket_333": max_starts(333), "ceiling_334": max_starts(334)}
@@ -333,7 +341,7 @@ def gate_rules(ctx: Ctx, r: Result) -> None:
             if starts > CEILING or (int(cap.group(1)) < HOT_MS):
                 r.fail("G3-RULES", f"row {rid}: MR-1 {starts} starts per 1 000 ms")
             if not ("≤ 20" in rep and "10 s" in rep and "latest wins" in rep):
-                r.fail("G3-RULES", f"row {rid}: A23's cell cap, latest-wins or 10 s stop missing")
+                r.fail("G3-RULES", f"row {rid}: R162 BQ-09's cell cap, latest wins or stop missing")
         elif loop:
             period = float(loop.group(1).replace(" ", ""))
             if period != duration_ms(ctx, row.get("enter", "")):
@@ -350,7 +358,7 @@ def gate_rules(ctx: Ctx, r: Result) -> None:
         if row.get("recipe", "").startswith("Value flash") and not (
             cap and re.search(r"≥ 1 Hz for 10 s", rep)
         ):
-            r.fail("G3-RULES", f"row {rid}: A23 needs the per-cell cap and the 1 Hz-for-10 s stop")
+            r.fail("G3-RULES", f"row {rid}: R162 BQ-09 needs the cell cap and the 10 s stop")
         if rid == "7" and (
             "static glyph" not in row.get("reduce", "") or "puls" in rep + row.get("reduce", "")
         ):
@@ -370,18 +378,31 @@ def gate_rules(ctx: Ctx, r: Result) -> None:
     r.numbers["mr1"] = n
 
 
+AREA = re.compile(r"(?<!\d)(?<!\d )(\d{1,3}(?:[ ,]\d{3})+|\d+) px²")
+
+
 def gate_hs1b(ctx: Ctx, r: Result) -> None:
     m = re.search(r"\*\*HS-1b .*?(?=\n- \*\*|\n\n)", section(ctx.spec, 4), re.DOTALL)
     text = flat(m.group(0)) if m else ""
-    area = int(HS1B_W * HS1B_H * 0.25)
+    area = HS1B_W * HS1B_H // 4
     for need in (
         "RULED as #2701 ledger row A23a",
-        f"{HS1B_W} × {HS1B_H} px region",
+        f"any {HS1B_W} × {HS1B_H} px rectangle, anywhere on screen (sliding)",
+        "WCAG 2.3.1's 10° field at 1024 × 768 CSS px",
         f"at most {area:,} px²".replace(",", " "),
         "at most 3 flash starts in any half-open 1 000 ms window",
     ):
         if need not in text:
             r.fail("G3-HS1B", f"HS-1b does not state {need!r}")
+    row3 = next((row for row in table(ctx) if row.get("#") == "3"), {})
+    if not all("HS-1b" in row3.get(col, "") for col in ("repeat", "source")):
+        r.fail("G3-HS1B", "row 3's Repeat and Source cells do not both name HS-1b")
+    for line in ctx.spec.splitlines():
+        if line.startswith("| Q-2 "):
+            continue
+        for num in AREA.findall(line):
+            if int(re.sub(r"[ ,]", "", num)) > area:
+                r.fail("G3-HS1B", f"{num} px² exceeds {area} px² outside the Q-2 row")
     r.numbers["hs1b_area"] = area
 
 
@@ -414,7 +435,7 @@ def gate_flash(ctx: Ctx, r: Result) -> None:
         f = flash(ctx, theme, surface, "buy" if side == "up" else "sell")
         out[f"{row[0]} {surface} {side}"] = f
         want = [
-            trunc(f["hue"], 1),
+            f"{f['hue']:.1f}",  # a hue meets no bar, so it is rounded (145.0, not 144.9)
             trunc(f["dl"], 3),
             trunc(f["digits"], 2),
             trunc(f["dir_peak"], 2),
@@ -449,7 +470,7 @@ def gate_flash(ctx: Ctx, r: Result) -> None:
 
 # --- G5: the A-rows and the cites -------------------------------------------------------------
 AROW = re.compile(
-    r"^#### (A-\d+) — `(15|16)`:(\d+), under `([^`]+)`[^\n]*\n\n"
+    r"^#### (A-\d+) — `(15|16)`:(\d+), under `([^`]+)`([^\n]*)\n\n"
     r"Pre-image:\n\n```text\n(.*?)\n```\n\n"
     r"Post:\n\n```text\n(.*?)\n```",
     re.MULTILINE | re.DOTALL,
@@ -466,7 +487,7 @@ def heading_of(text: str, line: int) -> str:
 def gate_arow(ctx: Ctx, r: Result) -> None:
     found = AROW.findall(section(ctx.spec, 8))
     digest = hashlib.sha256()
-    for aid, key, line, head, pre, post in found:
+    for aid, key, line, head, tail, pre, post in found:
         lines = ctx.base[key].splitlines()
         n = int(line)
         if not 0 < n <= len(lines) or pre not in lines[n - 1]:
@@ -476,11 +497,32 @@ def gate_arow(ctx: Ctx, r: Result) -> None:
         digest.update(f"{aid}|{key}|{line}|{head}|{pre}|{post}\n".encode())
         if aid == "A-7" and post != A7_POST:
             r.fail("G5-AROW", "A-7's post is not R162's ruled text")
+        applied(ctx, r, aid, key, head, pre, post, "new " in tail)
     r.numbers["arows"], r.numbers["arow_sha"] = len(found), digest.hexdigest()[:12]
-    if len(found) != 11:
-        r.fail("G5-AROW", f"{len(found)} A-rows, expected 11 (8 + pointer + tail + `15`:188)")
+    if len(found) != 12:
+        r.fail("G5-AROW", f"{len(found)} A-rows, expected 12 (8 + pointer + tail + `15` + CR-1)")
     if digest.hexdigest()[:12] != AROW_SHA:
         r.fail("G5-AROW", f"A-row text {digest.hexdigest()[:12]} differs from the pinned copy")
+
+
+def applied(
+    ctx: Ctx, r: Result, aid: str, key: str, head: str, pre: str, post: str, insert: bool
+) -> None:
+    """PR 2's edit in the working tree: the post once, under its heading; the pre-image gone, or
+    (an inserted row) the post on the line after its anchor, a blank line between allowed."""
+    work = ctx.work[key]
+    lines = work.splitlines()
+    hits = [i for i, ln in enumerate(lines) if post in ln]
+    if len(hits) != 1:
+        r.fail("G5-AROW", f"{aid}: the post stands {len(hits)} times in `{key}`, not once")
+    elif heading_of(work, hits[0] + 1) != head:
+        r.fail("G5-AROW", f"{aid}: the applied post is not under {head!r}")
+    elif insert:
+        prev = [ln for ln in lines[: hits[0]] if ln.strip()]
+        if not prev or pre not in prev[-1]:
+            r.fail("G5-AROW", f"{aid}: the inserted post does not follow its anchor")
+    elif any(pre in ln for ln in lines):
+        r.fail("G5-AROW", f"{aid}: the pre-image still stands in `{key}`")
 
 
 CITE = re.compile(r"`([A-Za-z0-9.-]+)`((?::\d+(?:-\d+)?)(?:, :\d+(?:-\d+)?)*)")
@@ -559,7 +601,7 @@ def gate_boards(ctx: Ctx, r: Result) -> None:
     for b in bs:
         m = re.fullmatch(r"`E05-D03 / (\d\d(?:-light)?) ([a-z0-9-]+)`", b[1] if len(b) > 1 else "")
         exp = f"`docs/design/E05/img/E05-D03-{m.group(1)}-{m.group(2)}.png`" if m else ""
-        if not m or b[2] != exp or b[0] != m.group(1) or b[-1] != "PENDING (PR 2)":
+        if not m or b[2] != exp or b[0] != m.group(1) or b[-1] != "PENDING (PR 3)":
             r.fail("G7-BOARDS", f"board row {b[:2]}: name, export or status off the pattern")
     if len(bs) > 10 or len(twins) * 3 > len(bs) or (len(bs), len(twins)) != (9, 1):
         r.fail("G7-BOARDS", f"{len(bs)} boards, {len(twins)} twins (ruled 8 + 1, cap 10, ⅓)")
@@ -599,14 +641,25 @@ def regex(pattern: str, repl: str) -> Callable[[Ctx], Ctx]:
     )
 
 
+def in_tree(key: str, old: str, new: str) -> Callable[[Ctx], Ctx]:
+    """Mutate the working-tree copy of `15` / `16` (in memory) instead of the spec."""
+    return lambda ctx: ctx._replace(work={**ctx.work, key: ctx.work[key].replace(old, new, 1)})
+
+
 MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G1-TABLE", sub("| `none` — a static glyph", "| a static glyph")),
     ("G2-PROPERTY", regex(r"\| `transform`( +\| `rotate\(0\)`)", r"| `rotate`\1")),
     ("G2-TOKEN", sub("scrim 0 → `opacity.scrim`", "scrim 0 → `opacity.scrims`")),
     ("G3-RULES", sub("1 200 ms × 4", "1 200 ms × 5")),
-    ("G3-HS1B", sub("at most 21 824 px² of emphasised", "at most 21 842 px² of emphasised")),
+    ("G3-HS1B", sub("at most 21 824 px² of emphasised", "at most 21 284 px² of emphasised")),
     ("G4-FLASH", regex(r"\| 9\.07( +)\|", r"| 9.08\1|")),
-    ("G5-AROW", sub("T-08; SCR-015).", "T-08; SCR-014).")),
+    (
+        "G5-AROW",
+        sub(
+            "\nopacity-only pulse instead of scale+rotate for spinners\n",
+            "\ninstead of scale+rotate for spinners\n",
+        ),
+    ),
     ("G5-CITE", sub("`16`:219", "`16`:2190")),
     ("G6-PRECEDENCE", regex(r"(\| twin true, OS no-preference +\| )`reduce`", r"\1`safe`  ")),
     ("G7-HYGIENE", sub("(BQ-20, RULED", "(BQ-20, owner approval pending, RULED")),
@@ -615,18 +668,41 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
 
 # Paraphrase probes (lens round 1): edits a weaker gate would let through; each must add one FAIL.
 PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
-    ("G3-RULES", regex(r"≥ 500 ms between starts per cell, ≤ 20[^|]*", "one-shot, once per tick ")),
+    (
+        "G3-RULES",
+        regex(r"≥ 500 ms between starts per cell, ≤ 20[^|]*?(?=; in light)", "one-shot, per tick"),
+    ),
     ("G3-RULES", sub("a cell at ≥ 1 Hz for 10 s stops", "a cell at ≥ 9 Hz for 10 s stops")),
     ("G3-RULES", sub("| `none` — a static glyph", "| `none` — an opacity pulse, a static glyph")),
     (
         "G3-RULES",
         sub("At least 500 ms between flash starts", "At least 400 ms between flash starts"),
     ),
+    # PR 2's carries and the applied rows: each new check, one probe
+    ("G3-HS1B", sub("in light, HS-1b (A23a) bounds area", "in light, the area rule bounds area")),
+    ("G3-HS1B", sub("500 ms is the setting.", "500 ms is the setting; 38 400 px² is one field.")),
+    ("G3-HS1B", sub("anywhere on screen (sliding)", "in a fixed grid of tiles")),
+    ("G3-HS1B", sub("10° field at 1024 × 768 CSS px", "10° field at 1280 × 1024 CSS px")),
+    ("G4-FLASH", sub("| 145.0° ", "| 144.9° ")),
+    ("G5-AROW", in_tree("16", A7_POST, "- Node-graph edge draw: `fast` line-draw animation.")),
+    (
+        "G5-AROW",
+        in_tree(
+            "16",
+            "skeletons)",
+            "skeletons; opacity-only pulse instead of scale+rotate for spinners)",
+        ),
+    ),
+    (
+        "G5-AROW",
+        in_tree("16", "\n  - Value flash, restored-row", "\n  - X.\n  - Value flash, restored-row"),
+    ),
 )
 
 
 def digests() -> dict[str, str]:
-    return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in (SPEC, Path(__file__))}
+    paths = (SPEC, Path(__file__), *(ROOT / KEYS[k] for k in APPLIED))
+    return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 
 def self_test(ctx: Ctx, base: Result) -> list[str]:
@@ -636,7 +712,7 @@ def self_test(ctx: Ctx, base: Result) -> list[str]:
     bad += [f"self-test: gate {g} has no mutation" for g, _ in GATE_FNS if g not in covered]
     for code, fn in (*MUTATIONS, *PROBES):
         mutated = fn(ctx)
-        if mutated.spec == ctx.spec:
+        if mutated == ctx:
             bad.append(f"self-test {code}: the mutation did not apply")
             continue
         new = sorted(set(run(mutated).fails) - set(base.fails))
