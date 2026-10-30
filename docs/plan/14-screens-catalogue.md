@@ -1123,6 +1123,7 @@ Drag preview                Drop zones
 - **UX research:** [e16-recorder-mental-model.md](../design/research/e16-recorder-mental-model.md) §4 (E16-D01; proposes scoping the live-data sentence and naming the cause; copy owned by E16-D05).
 - **Design sign-off acceptance checklist:** [ ] three distinct reasons drawn (never recorded / no data in this range / instrument not trading) [ ] owner CTA to SCR-140 and non-owner explanatory copy both drawn [ ] live-data-still-works note present where true [ ] no infinite spinner path
 - **Hi-fi (E16-D05, #373):** [E16-D05.md](../design/E16/E16-D05.md) — the final recorder-dependent copy deck, the `retention_purge` treatment, the partial-history chip and the gap band's legend/tooltip; anatomy per E11-D04 §11.
+- **A11y review and hand-off (E16-D06):** [E16-D06.md](../design/E16/E16-D06.md) (E16-D06; the keyboard, focus and announcement rows of the recorder-dependent empty state, the sentence form's T2 reading and the first-bar focus restoration; owner approval pending).
 
 ### SCR-048 — Chart error state
 
@@ -2806,6 +2807,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 
 - **UX research (E16-D01):** [recorder mental model, auto-record disclosure and disk framing](../design/research/e16-recorder-mental-model.md) — heuristic research, recommendations pending confirmation: owner decisions on the linger default and toast vs silent auto-record, a state-first disk headline, and the recorder contract asks (`lingering`, disk level and gate, `cap_bytes`).
 - **Design (E16-D02):** [hi-fi states, CMP-177 contract, copy, motion and redlines](../design/E16/E16-D02.md) (#323), owner approval pending.
+- **A11y review and hand-off (E16-D06):** [E16-D06.md](../design/E16/E16-D06.md) (E16-D06; the consolidated keyboard and focus model, the 10 s announcement budget, the T2 table and the hand-off package for the recorder set; owner approval pending).
 - **Type:** Page. **Route:** `/admin/recorder`.
 
 ```
@@ -2846,6 +2848,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Analytics/audit:** `retention.default_changed` `{before, after}`, `retention.symbol_override_set` `{symbol, before, after}`, `retention.pin_changed`, `retention.compaction_started|completed` - **audited** (data destruction).
 - **Design sign-off acceptance checklist:** [ ] global default (30 days) and per-symbol overrides drawn [ ] pin-forever control [ ] the 'this will delete N GB covering dates X-Y' warning before applying a reduction [ ] typed confirmation for destructive reductions [ ] compaction job state [ ] the effect on replay and journal back-fill stated
 - **Design (hi-fi):** [E16-D03.md](../design/E16/E16-D03.md) (E16-D03; owner approval pending; the retention policy editor as one modal over SCR-140: the eight global rows on the `21` §7 seed with the baseline chip, the per-symbol override grid, the pinned list with sizes marked exempt, the upper-bound steady-state estimate, the dry-run preview before any reduction and the typed confirmation whose consequence sentence names the stream, scope, dates, size and timing, the validation messages in product terms, the `retention_sweep` job states; the bars / footprint tiers and the analytics keys recorded as contradictions for the catalogue owner; the preview and next-sweep fields recorded as contract gaps for E16-T06; Penpot page by name + id in the spec).
+- **A11y review and hand-off (E16-D06):** [E16-D06.md](../design/E16/E16-D06.md) (E16-D06; Cancel first on the typed confirm, the job footer's start-and-end announcements, the error summary read by focus and never `role="alert"`; owner approval pending).
 
 ### SCR-142 — Admin: storage & database panel
 
@@ -2859,6 +2862,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Analytics/audit:** `storage.panel_viewed` (analytics); `storage.compaction_triggered`, `storage.vacuum_triggered`, `storage.tier_migration_triggered` are **audited**.
 - **Design sign-off acceptance checklist:** [ ] all three tiers drawn with size, growth rate and projected full date [ ] per-symbol breakdown for the hot tier [ ] maintenance actions with progress and cancel [ ] low-disk warning and critical states drawn with what stops working first (recording pauses before trading is affected - stated) [ ] query-performance indicators [ ] error state when a tier is unreachable
 - **Design (hi-fi):** [E16-D04.md](../design/E16/E16-D04.md) (E16-D04; owner approval pending; the storage and database panel as a section of the recorder admin area: two labelled meters (recording budget, disk volume) with the sample time, three tier cards with health as text, per-tier tables and the hot-tier per-symbol table, the maintenance actions with their jobs strip and the archive import with per-file skip and error reporting; the degradation order stated in text on every warning state; every field the catalogue asks for beyond `StorageUsage` — row counts, slowest queries, last vacuum / compaction, the schema version, per-tier growth and projection, a cancel, a vacuum — drawn as a PROPOSED contract gap beside its shipped fallback; the fifth state "a tier unreachable" and the audit names recorded as contradictions for the catalogue owner).
+- **A11y review and hand-off (E16-D06):** [E16-D06.md](../design/E16/E16-D06.md) (E16-D06; Cancel first on the reused purge dialog, the jobs strip's start-and-end announcement rule, the motion pairs and tabular figures as F rows; owner approval pending).
 
 ### SCR-143 — Admin: system health
 
@@ -3010,6 +3014,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the backfill variant's determinate CMP-023 bar, no indeterminate loop).
 - **Design sign-off acceptance checklist:** [ ] the three empty-state classes drawn (nothing created yet / nothing matches the filter / data not recorded yet) [ ] role-aware action vs explanation variants [ ] the recorder-dependent variant carries the recording-start timestamp [ ] copy for each class written and reviewed [ ] the pattern is applied consistently in every panel that can be empty
 - **Hi-fi (E16-D05, #373):** [E16-D05.md](../design/E16/E16-D05.md) (the recorder-dependent variant, the three classes, the role legs).
+- **A11y review and hand-off (E16-D06):** [E16-D06.md](../design/E16/E16-D06.md) (E16-D06; the pattern's keyboard and announcement rows, the partial chip as a described static stop, the gap band reached by the data cursor only; owner approval pending).
 
 ### SCR-152 — Disconnected / reconnecting state
 

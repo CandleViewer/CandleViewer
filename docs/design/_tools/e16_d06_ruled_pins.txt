@@ -1,0 +1,873 @@
+# E16-D06 pins: KEY|line|words that stand on that line at origin/main (the tool's G10-CITE).
+# Written by `--repin-ruled` only; `--check` reads it (never hand-edit).
+02|25|- [ ] Design-ahead check: if the Epic has user-facing screens, a desig
+02|53|- [ ] Design has been Done for ≥2 sprints (design-ahead rule) OR an ex
+02|56|- [ ] The design ticket carries its completed per-component handoff ch
+02|76|- [ ] design handoff **[if the Story consumes a `CMP-*`/`SCR-*` design
+02|101|- [ ] design handoff **[if the Task is a `design`-labelled `CMP-*` tic
+02|180|- **a11y**: default-on (WCAG 2.2 AA) for any ticket that ships or chan
+04|368|| S19 | Elevation of privilege | A Manager (not the Owner) changes glo
+04|958|| SR-099 | Retention jobs MUST honour pins, run dry-run-first with a r
+04|1203|| # | Capability | Permission · operation | Owner | Manager | Viewer |
+04|1216|| 8 | Add/remove symbols from the recorded-symbols list (start/stop re
+04|1217|| 9 | Pin a recording / change a symbol's retention (add, update: with
+04|1218|| 9a | Purge recorded data irreversibly | `recording:write` · `purgeRe
+05|30|1. Every interactive element (buttons, chart drawing tools, DOM ladder
+05|31|2. A **single global hotkey layer** governs the whole app (confirmed d
+05|35|6. No functionality may depend on hover-only or drag-only interaction:
+05|46|| | Toggle sidebar / panel focus cycle | `Ctrl+\` | Cycles focus betwe
+05|85|3. **Reserved, non-remappable keys**: `Esc` (universal cancel) and `Ct
+05|94|1. **Landmark regions**: each major panel (Chart, DOM/Heatmap, Order T
+05|95|2. **Roving tabindex** within composite widgets (DOM ladder rows, foot
+05|96|3. **Focus is never silently stolen**: a live price update, a new fill
+05|97|4. **Modal dialogs** (order confirm, flatten-all confirm, Demo→Live sw
+05|99|6. **Visible focus indicator**: WCAG 2.2 SC 2.4.11 (Focus Not Obscured
+05|100|7. **Target size**: WCAG 2.2 SC 2.5.8 (Target Size, Minimum, AA) — all
+05|101|8. **Dragging alternatives**: WCAG 2.2 SC 2.5.7 (Dragging Movements, A
+05|107|**Rule (non-negotiable, applies everywhere)**: colour is always a _rei
+05|116|- Demo vs Live: colour (documented owner decision: Live = red-accented
+05|117|2. **Deuteranopia/protanopia/tritanopia validation**: the design-syste
+05|125|1. **Text contrast (WCAG 1.4.3, AA)**: body text and labels ≥4.5:1 aga
+05|126|2. **Non-text/UI component contrast (WCAG 1.4.11, AA)**: buttons, form
+05|130|6. **User-adjustable contrast**: a high-contrast theme toggle (`Ctrl+S
+05|131|7. **Text resize (WCAG 1.4.4, AA)**: UI must remain usable with 200% b
+05|147|- `aria-live="polite"` region for ambient updates (best bid/ask, mark 
+05|148|- `aria-live="assertive"` (or `role="alert"`) reserved for discrete, l
+05|150|- **Region hygiene**: live regions are pre-rendered empty containers o
+05|206|- Heatmap "decay/trail" fade animations, big-trade-bubble pop/scale-in
+05|211|## 8. Screen-reader test protocol
+05|217|| # | Platform + OS version | Browser/shell (pinned) | Screen reader (
+05|219|| 1 | Windows 11 23H2+ | Electron shell (production build, primary AT 
+05|222|| 4 | macOS 14 Sonoma+ | Electron shell (production build) | VoiceOver
+05|230|3. **Task-based pass** — the tester performs, keyboard+SR only, each o
+05|238|5. **Defect severity bar**: any task in the script that cannot be comp
+05|257|## 10. Accessibility acceptance-criteria template
+05|261|```gherkin
+05|321|7. **Sign-off gate**: per the brief's "design-ahead" rule, a screen's 
+14|83|3. **Recorder-dependent emptiness is a designed state**, never a blank
+14|85|5. **RBAC denies server-side; the UI presents.** A control the session
+14|86|6. **WCAG 2.2 AA.** Every canvas surface has an equal-status non-canva
+14|1032|- **States:** no match ("No USDT perpetual matches 'xyz'." "v1 support
+14|1034|- **Stories:** US-MKT-002, US-CHART-005, US-REC-002.
+14|1105|### SCR-047 — Chart empty / no-data state
+14|1120|- **A11y:** Empty state is a heading + paragraph + action, not an icon
+14|1124|- **Design sign-off acceptance checklist:** [ ] three distinct reasons
+14|1125|- **Hi-fi (E16-D05, #373):** [E16-D05.md](../design/E16/E16-D05.md) — 
+14|2253|| ETHUSDT 3,144 -0.18 840M 0.008 -0.4% 0.1 REC |
+14|2263|- **A11y:** ARIA grid (`role="grid"`, roving tabindex, caption) with s
+14|2298|### SCR-103 — Symbol info / instrument detail
+14|2303|- **States:** populated · not recorded · not recorded for a manager or
+14|2805|### SCR-140 — Admin: recorder & storage
+14|2808|- **Design (E16-D02):** [hi-fi states, CMP-177 contract, copy, motion 
+14|2830|- **A11y:** the disk meter has numeric text; gaps are a table with sta
+14|2833|- **Sign-off:** [ ] disk projection formula shown [ ] purge is irrever
+14|2836|- **Design sign-off acceptance checklist:** [ ] the user-managed recor
+14|2838|### SCR-141 — Admin: retention policy editor
+14|2844|- **A11y:** Form with a global default and a per-symbol override table
+14|2847|- **Design sign-off acceptance checklist:** [ ] global default (30 day
+14|2848|- **Design (hi-fi):** [E16-D03.md](../design/E16/E16-D03.md) (E16-D03;
+14|2850|### SCR-142 — Admin: storage & database panel
+14|2857|- **A11y:** Per-tier tables (QuestDB hot, Parquet/DuckDB cold, Postgre
+14|2860|- **Design sign-off acceptance checklist:** [ ] all three tiers drawn 
+14|2861|- **Design (hi-fi):** [E16-D04.md](../design/E16/E16-D04.md) (E16-D04;
+14|3001|### SCR-151 — Empty state pattern
+14|3006|- **A11y:** The pattern mandates: a heading, one sentence of explanati
+14|3011|- **Design sign-off acceptance checklist:** [ ] the three empty-state 
+14|3012|- **Hi-fi (E16-D05, #373):** [E16-D05.md](../design/E16/E16-D05.md) (t
+15|307|### CMP-026 EmptyState
+15|310|- **Props**: `icon` · `title` · `description` · `cta?: {label,onClick}
+15|484|- **A11y**: WAI-ARIA "Menu Button" pattern, arrow-key nav, type-ahead,
+15|512|### CMP-044 ConfirmDialog
+15|566|- **A11y**: WAI-ARIA Combobox pattern, `aria-activedescendant`, `aria-
+15|574|### CMP-049 Table (base data table)
+15|878|### CMP-079 RbacGate (disabled-with-reason wrapper)
+15|952|### CMP-087 AdminLayout (RBAC-gated shell)
+15|1008|### CMP-093 AuditActionTrigger (wraps any state-changing control to gu
+15|2187|### CMP-177 RecorderStatusRow
+15|2193|- **Storybook**: Recording, Stopped, Pinned, NearDiskBudget, AutoChart
+15|2678|### CMP-212 ToastHost
+16|514|### 11.4 Per-component handoff checklist (every CMP-\* design ticket; 
+16|623|## 12. Design QA checklist
+16|677|### 13.3 Definition of Done (a design ticket may move to "Done," unblo
+22|1114|- recording:read
+22|1115|- recording:write
+22|4350|`recording_started_at` returns `no_data_recorded` (422) rather than si
+22|5235|/recording/symbols:
+22|5246|`refusal` says why a stop is refused now. `role_restricted: true` mark
+22|5248|A malformed, foreign or expired `cursor` is `400 invalid_cursor`.
+22|5261|x-rbac: { permissions: [recording:read], scope: none }
+22|5319|Adding a symbol already present is idempotent and returns `200` with t
+22|5320|symbol listed without `manual` (auto-recorded, or `lingering`) gains t
+22|5321|An unlisted symbol is `422 validation_failed`, and past the symbol cap
+22|5322|(`RecordingStatus.policy.max_symbols`) an add is `422 recorder_symbol_
+22|5324|`recorder` step-up (`403 step_up_required`); a plain add needs none.
+22|5325|Audited as `recorder.start`.
+22|5326|x-rbac: { permissions: [recording:write], scope: none }
+22|5367|/recording/symbols/{recordedSymbolId}:
+22|5396|`purgeRecordedData` for that. `pinned` or `retention_days` in the body
+22|5397|step-up (`403 step_up_required`); `streams` and `depth` alone need non
+22|5399|x-rbac: { permissions: [recording:write], scope: none }
+22|5427|operationId: removeRecordedSymbol
+22|5430|Ends the `manual` reason at once. Within 5 s the row reads `lingering:
+22|5435|`conflict` while an auto-record trigger is still active (open chart or
+22|5436|`force=true`. `purge_data=true` is deprecated and refused with `422 va
+22|5437|`use_purge_route`): `purgeRecordedData` is the one path that deletes r
+22|5439|recording for the remaining reason, and its pin is untouched. Audited 
+22|5440|x-rbac: { permissions: [recording:write], scope: none }
+22|5463|/recording/symbols/{recordedSymbolId}/pin:
+22|5471|PATCH with `{pinned}`. Always needs the `recorder` step-up (`403 step_
+22|5511|operationId: getRecordingStatus
+22|5520|x-rbac: { permissions: [recording:read], scope: none }
+22|5580|operationId: getStorageUsage
+22|5592|x-rbac: { permissions: [recording:read], scope: none }
+22|5635|/recording/retention-policies:
+22|5640|x-rbac: { permissions: [recording:read], scope: none }
+22|5691|`downsample`, `pin` and `applies_to_pinned: true` are `422 retention_i
+22|5693|an unknown field is `422 validation_failed`. Owner-only (`admin:write`
+22|5695|needs the `recorder` step-up (`403 step_up_required`). Changes apply a
+22|5696|starts one `retention_sweep` job: `409 job_running` while one is queue
+22|5697|`409 conflict` while the retention scheduler is off (`CV_RETENTION_ENA
+22|5699|Audited as `retention.change` (the set before and after), written befo
+22|5700|stored; if it cannot be written the answer is `503 audit_unavailable` 
+22|5701|x-rbac: { permissions: [admin:write], scope: none }
+22|5738|operationId: listRecordingSessions
+22|12445|evicted job id is `404 not_found`. `error` carries a stable code, neve
+22|12453|catalogue row, `getBackup`). Every `404` here carries rule `job_unknow
+22|12458|no principal resolver is wired, and `503 audit_unavailable` when the a
+22|12516|No job with this id is visible to the caller (`code: not_found`, rule 
+22|12828|Grants a **5-minute** server-side grace for `action_class` on the curr
+22|12829|(24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minut
+22|12831|`recorder_purge` are no-grace: the response is `single_use: true` and 
+22|12833|every write except `POST /auth/logout`, `POST /auth/session/extend`, `
+22|12834|`DELETE /auth/session/view-as`; `POST /auth/step-up` answers it itself
+22|12836|`auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly
+22|12904|E27-S04's (#898), which lands them in slices (C-6.1). `recorder_purge`
+22|12905|purging recorded data (`purgeRecordedData`), one fresh code per purge:
+22|15325|Merges small files produced by the export job into target-sized partit
+22|15327|One compaction at a time (`409 job_running`); a key reused with anothe
+22|15328|`422 idempotency_key_reused`.
+22|15360|/admin/recorder/import:
+22|15363|operationId: importTradeArchive
+22|15366|Downloads the exchange's public daily trade archives for `symbol` over
+22|15372|(`kind: archive_import`); `result` carries the import summary. One imp
+22|15373|time (409 `job_running`). Audited as `recorder.import`.
+22|15408|description: Idempotency-Key reused with a different body (`422 idempo
+22|15414|/admin/recorder/purge:
+22|15418|summary: Irreversibly delete recorded data (owner, step-up `recorder_p
+22|15425|**Step-up.** `recorder_purge` is a no-grace step-up class: each purge 
+22|15427|`POST /auth/step-up`), and without one the route answers `403 step_up_
+22|15429|owner-only), then the body (`422 validation_failed` and `422 purge_con
+22|15430|decided before the gate, spend no code), then the step-up, then the id
+22|15431|(pinned without `include_pinned`) and `409 job_running` (a purge is qu
+22|15440|validation_failed` with `errors: [{field: before, rule: before_in_futu
+22|15451|idempotency_key_reuse` whose `errors[0]` names `before` and gives the 
+22|15453|`before` and another difference in the body is `422 idempotency_key_re
+22|15458|The audit record (`retention.purge`, exact window, partition count, ro
+22|15461|x-rbac: { permissions: [recording:write], scope: none }
+22|15502|(rule `idempotency_bound_mismatch`) and gives the anchored bound in `m
+22|17425|Problem:
+22|17434|detail: { type: string }
+22|19534|ws_disconnect,
+22|19546|RecordedSymbol:
+22|19601|RecordingStatus:
+22|19664|StorageUsage:
+22|19670|projected_full_at: { type: ["string", "null"], format: date-time }
+22|19671|daily_growth_bytes: { type: integer, format: int64 }
+22|19700|RetentionPolicyInput:
+22|19703|properties:
+22|19713|RetentionPolicy:
+23|865|| `recorder` | `symbols` | Current recorder status | 1 000 ms | [`Reco
+23|893|**Contract (E16-T08, #492).** `recording:read`, scope none (§6.3). The
+23|4084|### 15.8 `RecorderUpdate`
+CAL|13|SPRINT01_START = datetime.date(2026, 9, 25) # Friday
+CAL|14|SPRINT_DAYS = 7
+D02|19|`05-accessibility-standard.md`; `16-design-system-brief.md`; `docs/des
+D02|24|| # | Decision | Where it shows in this design |
+D02|27|| 2 | Disclosure A′: silent auto-record after the 60 s dwell; the REC 
+D02|29|| 4 | Managers do not get `recording:write` in the design | SCR-140 it
+D02|30|| 5 | The recording-status contract amendment lands first, in its own 
+D02|36|| Checklist: recorded-symbol list with add/remove | §1, §6.1 (board 15
+D02|37|| Checklist: auto-record triggers as labelled rules, with review of wh
+D02|38|| Checklist: per-symbol state + start timestamp + disk used | §4; `CMP
+D02|39|| Checklist: disk budget with projection (formula as text) | §3, §8.3;
+D02|40|| Checklist: per-symbol retention with pin = keep forever | §4, §6.4 |
+D02|41|| Checklist: the "nothing is recorded by default" statement | §1, §8.1
+D02|42|| Checklist: stop confirmation | §6.2 (board 16 not drawn — the text b
+D02|43|| Checklist: empty state | §3 `empty` (board 08 not drawn — the text b
+D02|44|| Catalogue sign-off: purge is irreversible and says so; gap visualisa
+D02|57|Admin screens default to **comfortable** density (`16-design-system-br
+D02|93|| Shell | CMP-087 AdminLayout | admin nav (assumed 240 px; CMP-087 nam
+D02|99|| Search + filters | CMP-054 SearchBox, CMP-055 FilterBar | a symbol s
+D02|100|| Recorded symbols | CMP-049 Table, as a grid (§10.1), of CMP-177 Reco
+D02|103|**Column plan (comfortable).** Content width = viewport − nav 240 − 2 
+D02|110|| Since | 104 | hidden (row detail) | UTC date; the time is in the row
+D02|116|| **Sum** | **1152** | **992** | |
+D02|118|At 200 % text size the table reflows to one card per symbol (label/val
+D02|121|**200 % and the in-app text scale** (`Ctrl+=`; `05` §5 item 7; WCAG 1.
+D02|122|**Forced colours** (`forced-colors: active`): every carrier is a word,
+D02|140|| Rows | `GET /recording/symbols` → `RecordedSymbol[]` (all states); r
+D02|141|| Symbol, reason | `symbol`, `reason` ∈ manual · chart_open · position
+D02|142|| State word | `state` ∈ idle · starting · recording · degraded · stop
+D02|149|| Retention, Keep forever | `retention_days` (1–3650, `null` when pinn
+D02|152|| Disk bar and numbers | bar numerator: `GET /recording/storage` `tier
+D02|153|| Growth and projection | `StorageUsage.daily_growth_bytes` (the 7-day
+D02|154|| Thresholds and configured values | **amendment** `policy`: `autostar
+D02|156|| Role | the session's permissions and view-as context (E09-D09 §2.3);
+D02|157|| Purge, compact progress | `POST /admin/recorder/purge` / `…/compact`
+D02|158|| Stopped row | `GET /recording/sessions` (symbol filter) → the last `
+D02|160|## 3. Screen states
+D02|166|Levels 1 and 2 speak in the disk card (warning icon + words, polite); 
+D02|167|danger banner (`role="alert"`, announced once). Every disk figure carr
+D02|172|| **running** | `overall` healthy, `level` 0, at least one row recordi
+D02|173|| **starting** (initial snapshot) | a row in `starting` | that row rea
+D02|174|| **degraded** (gaps recorded) | a row in `degraded` (a stream unhealt
+D02|177|| **disk critical** (level 3, recording stopped) | `level` 3, `write_g
+D02|178|| **purge in progress** | a purge job this client started is queued or
+D02|179|| **empty** (no symbols recorded yet) | no `RecordedSymbol` rows and n
+D02|181|Banner priority, when several apply: level 3 → incident → purge runnin
+D02|183|banner holds the slot, so the purge's progress shows as the card's pur
+D02|184|an inset on `disk-critical`, where "Purge data…" in the banner and the
+D02|190|| State (board) | Condition | What the screen shows |
+D02|192|| **loading** | the first `GET /recording/symbols`, `/status` or `/sto
+D02|194|| **stale** | no `recorder` frame for 2 s while the socket is up, or t
+D02|196|### 3.2 Job terminal states (purge and compact)
+D02|200|- **Purge failed:** CMP-028 danger, `role="alert"` once: "Purge of ADA
+D02|201|- **Purge cancelled:** info, polite: "Purge of ADAUSDT was cancelled. 
+D02|202|- **Purge status unknown:** info, polite: "The purge's status is no lo
+D02|203|- **Compact failed / cancelled / unknown:** the card's compact line, p
+D02|204|- **Succeeded:** the card states the result from `Job.result` ("Purged
+D02|206|Extra boards (NN 09-23 in this order; under the cap 17, 19, 20, 21 and
+D02|210|Insets, so every named state on a drawn board has a frame (on a board 
+D02|216|`add-symbol`.
+D02|220|### 4.1 Row states
+D02|222|The state word is always `color.text.primary`; the tone sits on the ic
+D02|224|| Row state | Condition | State cell (word + icon) | Action cell (Owne
+D02|231|| Lingering | **amendment** `lingering`, `linger_until` | "Recording ·
+D02|232|| Starting | `state` starting | "Starting · initial book snapshot" + s
+D02|234|| Gated | **amendment** `write_gate` closed, row `refusal` not `positi
+D02|237|| Silent | `last_event_at` older than 60 s while the market is active 
+D02|238|| Error | `state` error | "Error · retrying" + octagon (danger); the e
+D02|240|| Stopped | `state` stopped; the last session's `ended_at` | "Stopped 
+D02|244|"1 204 messages dropped (incident)".
+D02|246|### 4.2 CMP-177 RecorderStatusRow (shipped spec)
+D02|257|| `state` | `"starting" | "recording" | "lingering" | "degraded" | "ga
+D02|269|| `writeReason` | `"rbac.owner_only" | "rbac.view_as" | null` | from t
+D02|270|| `stale` | `boolean` | no `recorder` frame for 2 s: sunken row backgr
+D02|271|| `variant` | `"table" | "standalone"` | `table` inside CMP-049 (SCR-1
+D02|272|| callbacks | `onStop`, `onKeepRecording`, `onRecordAgain`, `onToggleP
+D02|274|**Composition.** CMP-001 Button (Stop, Keep recording, Record again), 
+D02|277|truncated state), CMP-019 Icon (`lock`), CMP-079 RbacGate (`ReadOnly`)
+D02|279|**Storybook states** (catalogue names first): `Recording`, `Stopped`, 
+D02|283|**ReadOnly** = `writeReason` non-null (standalone only; SCR-140 is own
+D02|287|Auto-record stays silent: no toast, no prompt. Four elements carry dis
+D02|289|### 5.1 The reason tag and its "Why?" popover
+D02|294|> **Recorded automatically**
+D02|297|> [ Keep recording ] (adds the symbol to your list, so closing the cha
+D02|300|30 min after the last reason ends." The rule and alert variants name t
+D02|301|Keep recording; Esc returns focus to Why?.
+D02|305|- The summary line counts them ("Recording 4 symbols · 2 auto-recorded
+D02|310|### 5.3 One-click stop, within today's limits (decision 3)
+D02|317|(decision 3).
+D02|319|### 5.4 REC chip state sheet (cross-screen)
+D02|321|The REC chip appears on SCR-100 watchlist rows, the CMP-219 SymbolPick
+D02|322|draws its states so the copy has one source; the chip itself belongs t
+D02|323|its state in text. Every blocked item is T2 (§10.5): a CMP-041 item (`
+D02|325|(14 §0.5 rule 5); CMP-079 RbacGate wraps the role legs. The menu is de
+D02|326|§2.1): view-as first (`rbac.view_as`), then a session without `recordi
+D02|327|change recording."), then the row's state (§8.5).
+D02|329|| Chip text | When | Menu, Owner | Menu, no `recording:write` (Manager
+D02|331|| "REC · manual" | recording, reason manual, `refusal` none or chart_o
+D02|336|| "Not recording · limit reached" | refusal symbol_cap | "Open recorde
+D02|338|| "REC gated · data dropped" | write gate closed, no position | "Open 
+D02|340|| "Recording status restricted" | **amendment** `role_restricted`, the
+D02|344|### 6.1 Record a symbol (add)
+D02|346|CMP-043 Dialog. Fields: Symbol (CMP-048 Combobox over USDT linear perp
+D02|350|`policy.max_symbols`; a manual add above it is 422, 20 §7.2), "Start r
+D02|352|when a symbol stops, up to {grace} after its last reason ends." A 422 
+D02|353|recording", secondary "Cancel".
+D02|355|### 6.2 Stop confirmation
+D02|357|CMP-044 ConfirmDialog, no typed confirmation (stopping deletes nothing
+D02|363|> [ Keep recording ] [ Stop recording ]
+D02|365|On a lingering row, "Keep recording" adds the symbol to the owner's li
+D02|366|reason to an already-listed symbol; amendment).
+D02|368|### 6.3 Stop refused or limited
+D02|374|A 409 `conflict` on a confirmed stop (the frame lagged; its body names
+D02|376|re-sent, and the confirm is CMP-001 `loading` until the next `recorder
+D02|378|returns to T1.
+D02|382|The ticket's security note routes retention changes through CMP-044 wi
+D02|383|requires step-up for pin and retention. The design takes that path for
+D02|386|dialog closes on the server's answer. Esc, expiry or the third failure
+D02|387|its inputs, and focus returns to its primary. Before the audit line, e
+D02|389|02:14" inside a live grace window.
+D02|391|- **Keep forever on** (CMP-004 switch "Keep BTCUSDT data forever") → C
+D02|397|- **Retention** (CMP-009 select in the row detail: 7 · 30 · 90 · 365 d
+D02|399|eligible.
+D02|404|### 6.5 Purge data (per symbol; Owner + step-up + typed symbol + reaso
+D02|406|`purgeRecordedData` deletes one symbol's data recorded before a date, 
+D02|408|> **Purge ADAUSDT data?**
+D02|410|> This deletes **about 5.5 GB** recorded from 2026-09-20 to 2026-10-01
+D02|413|> Reason (required, 3–280 characters): [ …………………… ]
+D02|415|> Type the symbol to confirm: [ ADAUSDT ]
+D02|417|> This action is audited (high severity). (Dialog copy; CMP-093 record
+D02|418|> [ Cancel ] [ Purge ADAUSDT data ] (enabled only when the reason is v
+D02|420|The size is an estimate from the storage report and the coverage inter
+D02|422|### 6.6 Compact now
+D02|424|`compactRecorder`, non-destructive, no confirmation. While a compactio
+D02|426|("Compacted at 10:42 UTC"). A purge does not block it: no rule does (E
+D02|428|### 6.7 Row detail (CMP-046 Drawer)
+D02|430|Enter on a row, or a click on the symbol, opens a right-hand CMP-046 D
+D02|431|recording"; Esc closes it and focus returns to the row):
+D02|437|- **Cost:** size, rate (7-day trend), share of the budget (CMP-023 wit
+D02|441|- **Tab**, from the heading: Depth → Retention → Keep forever → the ac
+D02|442|grid it covers takes no focus.
+D02|446|| Role | SCR-140 | Elsewhere |
+D02|449|| Manager | not reachable: `/admin/*` is hidden from navigation and re
+D02|455|this design, is the control.
+D02|459|Variables, all from the **amendment** `policy` object: `{dwell}` = `au
+D02|486|### 8.3 Disk card (keyed on `level`)
+D02|494|| 1 | "Near limit · auto-record pauses in about {d} days · clears belo
+D02|495|| 2 | "Auto-record paused · resumes below {autostop − 5} % of the budg
+D02|502|(filters pinned rows).
+D02|506|As in §3 and §6. Destructive confirmations always state what is delete
+D02|510|An A-row to E09-D09 §3.1 registers them beside E30-D02 §14 and E17-D01
+D02|514|| `recorder.stop_blocked.chart_auto` | "Recording stops {grace} after 
+D02|517|| `recorder.stop_blocked.position_manual` | "Stop is unavailable while
+D02|518|| `recorder.symbol_cap` | "The symbol limit is reached." | the active 
+D02|522|### 9.1 1 Hz updates never move the layout
+D02|524|- The `recorder` topic updates at 1 Hz. Values change **in place**: no
+D02|526|- Numbers use tabular figures (`type.num.sm`) in fixed-width, right-al
+D02|527|shifts a neighbour. The State cell is one line with an ellipsis, so a 
+D02|528|- A row entering or leaving appears or disappears without a transition
+D02|530|recording, T2 ↔ T1) keeps focus: the element updates and is never re-m
+D02|534|| Element | motion-safe | `prefers-reduced-motion: reduce` |
+D02|537|| Purge / compact progress bar | same tween | jumps |
+D02|539|| Everything else | none animated | none animated |
+D02|543|One polite live region (`role="status"`) holds the summary line, witho
+D02|545|"ETHUSDT degraded; SOLUSDT stopped recording", "Auto-record paused". T
+D02|546|incident banners are announced once as `role="alert"` and never repeat
+D02|552|| Key | Where | Action | Focus after |
+D02|554|| Tab / Shift+Tab | page | header action → banner actions → disk card 
+D02|555|| ↑ ↓ · ← → · Home / End | the grid (`role="grid"`, one tab stop, rovi
+D02|556|| Enter | a row | opens the row detail drawer (§6.7) | the drawer's he
+D02|557|| Enter / Space | Stop | opens the stop confirmation; a T2 Stop opens 
+D02|559|| Esc | a dialog, popover, T2 echo or the drawer | closes it without a
+D02|561|Dialogs (E42-D02 D3, D18; `05` §3.4 item 4). Add: first focus on the S
+D02|563|No single unmodified key changes recording; every change goes through 
+D02|570|| Recorded symbols | `grid` (CMP-049, E42-D02 D18) | "Recorded symbols
+D02|571|| Row | `row` (cells `gridcell`) | "BTCUSDT, manual, recording since 1
+D02|572|| Why? | `button` (CMP-002) | "Why is SOLUSDT recorded?" | `aria-expan
+D02|573|| Stop | `button` | "Stop recording BTCUSDT" | T2 (§10.5): `aria-disab
+D02|574|| Keep forever | `switch` (CMP-004) | "Keep BTCUSDT data forever" | `a
+D02|575|| Disk bar | `progressbar` (CMP-023, unchanged) | "Recording budget" |
+D02|576|| Threshold scale | text | "80 % warning, 90 % auto-record pauses, 95 
+D02|577|| Gap table | `table` | "Gaps recorded in the last 24 hours" | columns
+D02|578|| Row detail | `dialog` (CMP-046) | "BTCUSDT recording" | focus trappe
+D02|579|| Summary | `status` | the summary line without its timestamp | polite
+D02|583|Every state is a word plus an icon of a distinct shape (dot, triangle,
+D02|594|| Use | Foreground | Background | Dark | Light | High contrast | Need 
+D02|610|| Links ("View gaps") | `color.text.link` | `color.surface.raised` | 6
+D02|613|| T2 reason (inline; CMP-016 echo) | `color.text.secondary` | `color.s
+D02|629|4. **A blocked control is T2 (§10.5), never dimmed.** `color.text.disa
+D02|641|Every blocked control here is E09-D09's T2, decided in its §2.1 order:
+D02|643|- **Semantics.** The control keeps its native role and full label ("St
+D02|644|- **Rendering.** 2a (under or beside the control; a menu item's second
+D02|646|- **Keys.** It stays focusable (Tab; ← → in the grid; ↑ ↓ in a menu). 
+D02|650|The board `SCR-140/redlines` annotates one row (SOLUSDT's, with its T2
+D02|656|| Element | Tokens |
+D02|658|| Page, cards | page `color.surface.canvas`; cards `color.surface.rais
+D02|659|| H1, statement | `type.ui.heading-lg` + `color.text.primary`; stateme
+D02|660|| Table header | `color.surface.sunken`, `type.ui.label`, `color.text.
+D02|661|| Row text | symbol `type.ui.body-strong`; numbers `type.num.sm` (tabu
+D02|662|| Row hover / focus | `color.surface.hover`; focus ring `color.focus.r
+D02|663|| State icons | `size.icon.sm`; success `color.status.success.strong`,
+D02|664|| Disk bar | CMP-023 (its own tokens); tone primary / warning / danger
+D02|665|| Banners | CMP-028 tones danger and info (its own tokens) |
+D02|666|| Buttons | CMP-001 (primary "Record a symbol"; secondary card actions
+D02|667|| T2 (§10.5) | fill `color.surface.raised` + `color.border.default` ha
+D02|668|| Dialogs, drawer | CMP-043/044/046: `color.surface.overlay`, `elevati
+D02|669|| Motion | `motion.duration.normal` (200 ms), `motion.easing.decelerat
+D02|676|## 12. Analytics and audit events
+D02|688|of the four `recorder.*` events (§15, D-3); the design depends on none
+D02|714|1. Open the Penpot page; step through the prototype flow in §3 from `r
+D02|725|A moderated session protocol for the later live check is E16-D01 §5 (T
+D02|748|- **D-2 (CMP-177 contract):** `recording: boolean` and `onToggleRecord
+D02|760|- **D-8 (owner decision):** the security note routes every retention c
+D02|769|- **D-12 (shell):** CMP-087 names `color.surface.admin-tint`, which no
+D02|770|`color.surface.canvas`. The nav width (240 px) is assumed; CMP-087 nam
+D02|777|- **D-15 (2b in the grid):** a fixed-height row has no inline room for
+D02|778|- **D-16 (the view-as notice):** E09-D09's `notice.panel_read_only` te
+D02|779|- **D-17 (target size, for the design-system owner beside D-9 and D-14
+D02|794|**Drawn (boards PR, 2026-10-24).** The text merged first (2026-10-23).
+D02|803|- `17 SCR-140/stop-refused` — board id `2ed23a08-d251-802d-8008-d6a940
+D02|809|CVD renders (§10.4: the running and disk-critical boards; `docs/design
+D02|811|- `docs/design/E16/img/E16-D02-01-scr-140-running-greyscale.png` and `
+D02|812|- `docs/design/E16/img/E16-D02-06-scr-140-disk-critical-greyscale.png`
+D02|816|**C-8, after L794** (lens round 1 on the boards PR, 2026-10-24: §15's 
+D02|818|- **C-8 (open, for the contract owner and this design):** §3 L177 word
+D02H|15|- [x] **Final Penpot link** — page `E16-D02` · id `2f3d2667-6b0f-80a6-
+D02H|18|- [ ] **Variants × States matrix** — every state of the shipped spec i
+D02H|30|button and the switch at table size; CMP-002 asks 44: E16-D02 D-17), 2
+D02H|40|- [ ] **Contrast and CVD** — every pair is computed in E16-D02 §10.4 a
+D02H|44|`text.tertiary` on `color.surface.hover`). That is a security-owned `t
+D02H|46|the boards
+D02H|48|- [ ] **Sign-off** — owner `approved` comment or merged spec PR
+D02H|52|| State (Storybook) | Penpot variant | Condition | Notes |
+D02H|72|| `Stale` | State=recording, Stale=true | no `recorder` frame for 2 s 
+D02H|76|| Key | Variant | Action | Focus after | Global conflict? |
+D02H|78|| ↑ ↓ · ← → · Home / End | table | the CMP-049 grid (one tab stop, rov
+D02H|79|| Tab / Shift+Tab | table | enters or leaves the grid | the grid's cur
+D02H|80|| Tab / Shift+Tab | standalone | the row's controls in order: Why? → K
+D02H|84|| Esc | both | close a popover, the T2 echo, a dialog or the row detai
+D02H|88|| Element | Variant | Role | Accessible name (source) | States / prope
+D02H|90|| Row | table | `row` in the CMP-049 `grid` (cells `gridcell`) | "BTCU
+D02H|91|| Row | standalone | `group` | "BTCUSDT recording" + the same summary 
+D02H|96|| Action button | both | `button` | "Stop recording BTCUSDT" / "Keep r
+D02H|97|| Read-only notice | standalone | text | "Read-only — only the owner c
+D02H|101|| Property | motion-safe | motion-reduce | Duration / easing tokens |
+D02H|104|| everything else | none animated | none animated | — |
+D02H|108|| Field | Politeness | Cadence | Coalescing | Notes |
+D02H|110|| size, rate, share, since | none (visual only) | 1 Hz from `recorder`
+D02H|112|| lingering countdown | none | per minute | latest | "stops in N min",
+D02H|116|| Mode | Row / control height | Padding tokens | Smallest target |
+D02H|119|| compact | `size.row.compact` / `size.control.compact` | cells `space
+D03|11|**Inputs pinned.** Base `origin/main` `df19904ab7c33a0ff14b01922afa35e
+D03|13|**Key.** `NN` = `docs/plan/NN-*.md` (`22` = `22-api-openapi.yaml`). **
+D03|29|| Test plan — raise, lower (dry-run path), add an override, unpin (the
+D03|33|| Observability — `retention.default_changed`, `symbol_override_set`, 
+D03|36|## The twenty questions (BQ-1…BQ-20) — RULED by the orchestrator (2026
+D03|46|| BQ-7 | "held rows" and relaxing retention on them | held = pinned ro
+D03|47|| BQ-8 | when a reduction deletes | two timings, both in the confirm: 
+D03|50|| BQ-11 | an environment dimension | none: no env pill; the one C-2.11
+D03|51|| BQ-12 | the raw-tick ≤ bar rule with no bar stream | no client pre-c
+D03|53|| BQ-14 | a separate cold-tier migration age | no: for `archive_parque
+D03|59|| BQ-20 | SCR-141 stays a modal | yes: one CMP-043 Dialog, 960 <!-- au
+D03|61|**Standing (binding on every section):** the standing gates are applie
+D03|63|## 0. Boards (drawn — the register below)
+D03|65|The boards are drawn on the self-hosted Penpot, in file `E16-D03 board
+D03|76|| 08 | `E16-D03 / 08 keyboard-a11y-copy` | the focus-order maps (dialo
+D03|78|| 10 | `E16-D03 / 10 scr-141-light` | the composite light twin in `sem
+D03|89|- `08 keyboard-a11y-copy` — board id `f5d056cd-3de8-808d-8008-dc54545a
+D03|93|CVD renders (boards 03 and 06; `docs/design/_tools/cvd_sim.py`, greysc
+D03|95|- `docs/design/E16/img/E16-D03-03-scr-141-preview-confirm-greyscale.pn
+D03|96|- `docs/design/E16/img/E16-D03-06-scr-141-job-states-greyscale.png` an
+D03|137|| The only size source today is `StorageUsage`: per tier and per symbo
+D03|143|**T2 — disabled with a visible reason** (E09-D09 §2.2 :49, §3.1 :85–95
+D03|145|**The validity look is not T2** (E09-D09 §9.1 :230; E30-D02 D3 :128): 
+D03|151|| every write while viewing as — every field, every Action select, Add
+D03|153|| Apply while the diff is empty, a field is invalid, the typed value d
+D03|154|| Apply now while a `retention_sweep` job this client started is queue
+D03|155|| `409 job_running` with no job id (after a reload) · `409 conflict` (
+D03|158|| pinned symbols in the preview, the pinned list and the override grid
+D03|162|| Role | SCR-141 | Elsewhere |
+D03|168|The UI renders what the server allows (C-12.4). `04` :1171 / :1217 and
+D03|172|One CMP-043 Dialog (`role="dialog"`, labelled "Retention policy"), 960
+D03|197|- **(a) Header.** H2 "Retention policy" (`type.ui.heading-lg`); the ru
+D03|198|- **(b) Global defaults — CMP-065 FormSection** (`fieldset` / `legend`
+D03|200|- **(d) Pinned symbols — a list** (`<ul>`, not a grid): every `Storage
+D03|202|- **Footer (sticky).** The job line (`role="status"`, polite; §8) — at
+D03|208|| the current set | `GET /recording/retention-policies` (`22` :5485; `
+D03|212|| Apply | `PUT /recording/retention-policies` (`22` :5531) with the **
+D03|213|| sizes, growth, pinned flags, the cap | `GET /recording/storage` alre
+D03|214|| the sweep job | the `202`'s `job_id` → `GET /admin/jobs/{jobId}` (`2
+D03|217|**Reduction detection (D03-D5, client-side on the diff, server-confirm
+D03|221|| Frame | Producer | Shows | Class | Copy keys | Board |
+D03|231|| `SCR-141/scheduler-off` | the server's `409 conflict` on Apply while
+D03|233|| `SCR-141/stale-after-reload` | the page reloaded while a sweep ran: 
+D03|239|**The pattern (reusable, D03-A4 to `15` CMP-044's Purpose line).** A d
+D03|243|| Frame | Producer | Shows | Class | Copy keys | Board |
+D03|246|| `SCR-141/confirm-reduce` | Apply pressed after the preview, Apply no
+D03|249|| `SCR-141/confirm-lengthen` | Apply pressed on the trades 30 → 90 dif
+D03|251|**The reduction kinds (D03-D5's grammar; every kind shrinks a total ho
+D03|261|| K7 | a lowered `retain_days` on an `archive_parquet` row that was ab
+D03|263|The confirm is `role="dialog"` (not `alertdialog`: it carries a scroll
+D03|267|CMP-049 `role="grid"` (one roving Tab stop; ← → between cells, ↑ ↓ bet
+D03|269|| Frame | Producer | Shows | Class | Copy keys | Board |
+D03|275|| `SCR-141/row-view-as` | the grid while viewing as | every cell's con
+D03|277|| `SCR-141/row-removed` | Remove on the ETHUSDT order-book deltas rule
+D03|281|Field-level, on blur (CMP-008 parses and range-checks on blur, never m
+D03|283|| Frame | Producer | Shows | Class | Copy keys | Board |
+D03|289|| `SCR-141/error-summary` | Apply pressed with two invalid fields | th
+D03|290|| `SCR-141/apply-validity` | the four Apply reasons side by side | App
+D03|292|The unknown-field refusal (`422 validation_failed`, `22` :5540) shows 
+D03|296|The footer's job line is one `role="status"` region (polite), its text
+D03|298|| Frame | Producer | Shows | Class | Copy keys | Board |
+D03|300|| `SCR-141/footer-next-run` | at rest; no job of this client | "Next r
+D03|301|| `SCR-141/footer-queued` | `202` → `Job.status` `queued` | "Retention
+D03|302|| `SCR-141/footer-running` | `running`, `progress_pct` 42 | "Retention
+D03|306|| `SCR-141/footer-outcome` | the `200` after Apply | "Retention policy
+D03|308|The CVD strip on board 06 (greyscale and deuteranopia, `cvd_sim.py`) s
+D03|312|| Frame | Producer | Shows | Class | Copy keys | Board |
+D03|317|| `SCR-141/reflow-1280x800` | 1280 × 800 at 200 % (`05` §5 item 7) | t
+D03|321|**The dialog.** Initial focus on the first retention field (Trades · R
+D03|323|| Key | Where | Action | Focus after |
+D03|325|| ↑ / ↓ · Shift+↑ / ↓ · PageUp / PageDown · Home / End | a Retention (
+D03|326|| ← → · ↑ ↓ · Home / End | the override grid (`role="grid"`) | cells ·
+D03|327|| Enter / Space | Add override | appends an editable row | the new row
+D03|328|| Enter / Space | Remove (a row) | stages the removal: the row is stru
+D03|329|| Enter / Space | Preview changes | renders the preview panel (a read;
+D03|331|| Enter / Space | Apply (valid, previewed) | opens the typed confirm (
+D03|332|| Tab (the confirm) | the typed confirm | the typed input → Cancel → t
+D03|333|| Esc | a confirm, a grid edit, the dialog | closes it without acting;
+D03|335|No single unmodified key changes retention; every change goes through 
+D03|337|| Event | Politeness | Cadence | String |
+D03|339|| blur validation shows or changes a message | polite, once (CMP-040's
+D03|340|| Apply pressed with invalid fields; a server refusal | the summary `r
+D03|341|| the preview rendered | polite, once | discrete | "What becomes eligi
+D03|342|| the set saved | polite, once; focus moves to it | discrete | "Retent
+D03|343|| the job: queued, running | polite; progress ≤ once per 5 s | the 2 s
+D03|344|| the job: succeeded, cancelled | polite, once | discrete | "Retention
+D03|345|| the job: failed | `role="alert"`, once | discrete | "Retention run f
+D03|346|| a T2 press (view-as) | polite, once per press | E09-D09 §9.3 | "Read
+D03|347|| a removal staged or undone | polite, once (the row's Status cell) | 
+D03|348|| the estimate recomputed on blur | not announced (read on Preview) | 
+D03|350|No update moves focus (`05` §3.4 item 3) except the two the user cause
+D03|358|| Element | Tokens |
+D03|360|| Dialog | CMP-043: `color.surface.overlay`, `elevation.dialog`, `radi
+D03|361|| Headings, body | H2 `type.ui.heading-lg` + `color.text.primary`; sec
+D03|362|| Fields (CMP-040 + CMP-008) | the CMP-007 well on `color.surface.app`
+D03|363|| Sections (CMP-065) | `space.stack.xs` heading to description, `space
+D03|364|| Grid (CMP-049) | header `color.surface.sunken` + `type.ui.label` + `
+D03|365|| Chips | "Default {n} d", "Exempt (pinned)": `radius.badge`, `color.s
+D03|366|| Banners | CMP-028 info (the rule), warning (no other source), succes
+D03|367|| Buttons | CMP-001: primary Apply `color.action.primary.default` + `c
+D03|368|| T2 (§1.3) | fill `color.surface.raised` + `color.border.default` hai
+D03|369|| Validity look (§1.3) | the control's own fill and label at `opacity.
+D03|370|| Focus | `color.focus.ring` (CMP-039), 2 px outside the control |
+D03|371|| Motion | `motion.duration.normal` (200 ms) + `motion.easing.decelera
+D03|388|| `apply_now`, `409 job_running`, `409 conflict`, `503 audit_unavailab
+D03|392|**SR-099 (`04` :958) in this design.** Retention jobs honour pins — th
+D03|396|**Components used** (each has a `15` heading; the tool checks): CMP-00
+D03|400|| D03-A1 | `14` SCR-141 Components line (:2754): + CMP-043, 009, 049, 
+D03|405|| D03-A6 | `14` SCR-141 Validation line (:2795): the raw-tick ≤ bar ru
+D03|406|| D03-C1 | `04` §7.2.1 :1171 and row 9 :1217, and `22` `x-permissions`
+D03|415|| D03-G1 | the dry-run preview: PROPOSED `POST /recording/retention-po
+D03|416|| D03-G2 | `next_sweep_at`, `last_sweep_at`, `last_sweep_deleted_bytes
+D03|417|| D03-G3 | a read-side scheduler flag (`retention_enabled`) so the dia
+D03|418|| D03-G4 | `Job.result` for `kind: retention_sweep`: `{deleted_bytes, 
+D03|419|| D03-G5 | `StorageUsage.symbols[].streams[] {stream, used_bytes, dail
+D03|423|| D03-Q4 | SCR-140's "Custom…" (E16-D02 :397) opens SCR-141 from a row
+D03|425|**Decisions of this spec (PROPOSED unless RULED):** **D03-D1** one dia
+D03|429|Variables: `{n}` days; `{stream}` the display word (or the `22` kind w
+D03|452|| `retention.remove` | "Remove {symbol} {stream} rule" · fixture "Remo
+D03|461|| `retention.err.min` | "Keep at least 1 day." | new (`22` :19321) |
+D03|463|| `retention.err.int` | "Whole days only." | new |
+D03|504|| `retention.audited` | "This action is audited." | E16-D02 §6.4 (CMP-
+D03|523|1 <!-- audit:reason_keys=1 --> T2 reason key (`rbac.view_as`, E09-D09'
+D03|527|Dark / light / high-contrast = `semantic-dark`; `semantic-light` over 
+D03|544|| destructive Apply label on the danger fill | `color.text.on-action` 
+D03|566|| 14:2775 global default (30 days) and per-symbol overrides drawn | `S
+D03|567|| 14:2775 pin-forever control | `SCR-141/pinned-list` with "Manage pin
+D03|568|| 14:2775 the 'this will delete N GB covering dates X-Y' warning befor
+D03|569|| 14:2775 typed confirmation for destructive reductions | `SCR-141/con
+D03|570|| 14:2775 compaction job state | `SCR-141/footer-queued` … `SCR-141/fo
+D03|571|| 14:2775 the effect on replay and journal back-fill stated | `SCR-141
+D03|589|**Owner walkthrough (≤ 10, to post on #324 at merge):** 1 open the edi
+D03|593|**DoD:** the six checklist items → §16 (the `14` boxes are posted on #
+D04|5|**Penpot page:** `E16-D04 Storage and database` · id `f5d056cd-3de8-80
+D04|11|**Inputs pinned.** Base `origin/main` `965cf14090e590781d3e19c51a719ff
+D04|25|## The twenty-two questions (BQ-1…BQ-22) — RULED by the orchestrator (
+D04|37|| BQ-9 | purge on SCR-142 | the one E16-D02 §6.5 dialog from its entry
+D04|52|**Conditions (RULED with the list; the same four as the sibling specs)
+D04|56|Boards are on the self-hosted Penpot page `E16-D04 Storage and databas
+D04|67|| 08 | `E16-D04 / 08 keyboard-a11y-copy` | 0 <!-- audit:board_frames.0
+D04|69|| 10 | `E16-D04 / 10 light-twins` | 3 <!-- audit:board_frames.10=3 -->
+D04|80|- `08 keyboard-a11y-copy` — board id `8151935f-ff84-80bf-8008-dca31887
+D04|151|| Item | Source | What it fixes here |
+D04|153|| the admin area | `14` §0.3 :43, :2390; CMP-087 `15` :884–890 | `/adm
+D04|159|| the three routes and the job poll | `22` :14934–15142, :12097–12133,
+D04|164|| what stays out | `21` §8 :4567; `04` SR-048 :873; E16-D03 BQ-6 :45; 
+D04|168|**T2 — disabled with a visible reason** (E09-D09 §2.2 :49, §3.1 :85–95
+D04|170|**The validity look is not T2** (E09-D09 §9.1 :230; E30-D02 D3 :128): 
+D04|172|**Status · outcome · absence · refusal** (E09-D09 §9.1 :231; the orche
+D04|178|| every write while viewing as — Compact Parquet…, Purge data… and the
+D04|180|| Import archives while the range is empty, inverted or over 366 days;
+D04|181|| Compact Parquet… / Import archives / Purge… while this client's job 
+D04|182|| `409 job_running` (a second press, or after a reload with no job id)
+D04|183|| disk full (`level` 3, `write_gate` closed) · a tier `down` · the ing
+D04|186|| exits and links: Cancel, Esc and the close ✕ in a dialog, Retry, the
+D04|190|The ladder is the server's (`20` :904–908; `24` §13.4.1 :3833–3840): a
+D04|194|A section of `/admin/recorder` (BQ-6 RULED; `14` :2772 "Page section")
+D04|208|| Health ✓ healthy Health ✓ healthy Health ✓ healthy · Migration — |
+D04|225|| (a) | H2 "Storage and database" (`type.ui.heading-lg`); the sample s
+D04|226|| (b) | two CMP-023 `kind="meter"` (`15` :265), each labelled with wha
+D04|228|| (d) | per-tier tables (CMP-049 table variant inside a CMP-051 Accord
+D04|229|| (e) | the hot-tier per-symbol table (CMP-049 table variant): Symbol 
+D04|234|| Frame | Producer | Shows | Controls (class per §1.3) | Class | Board
+D04|237|| `SCR-142/healthy-200-zoom` | the same report at 200 <!-- audit:layou
+D04|245|| the sample stamp | `StorageUsage.generated_at` (`22` :19233); the ca
+D04|250|| per-tier size and retention | `tiers[] {tier, used_bytes, retention_
+D04|251|| per-tier growth rate and projected full date (AC 1) | none: only the
+D04|252|| per-tier health, the "unreachable" state | `HealthReport.components[
+D04|253|| the per-symbol table | `symbols[] {symbol, used_bytes, daily_growth_
+D04|254|| per-symbol oldest / newest, the sparkline history | none | UTC date,
+D04|259|| the schema version and pending migrations | none; `HealthReport.vers
+D04|260|| compaction, purge, import progress | `202 {job_id}` → `getJob`: `Job
+D04|261|| a vacuum | none: no route, no `Job.kind` (`22` :22002–22014); `21` :
+D04|264|| the archive-derived label on coverage | prose only (`22` :14984–1498
+D04|266|**The fixture** is the header's: the `22` example (:5435–5462) and its
+D04|268|## 4. Tier cards and the tables (board 02; 6 frames)
+D04|270|The three cards are the AC 1 surface: Size · Share of budget · Retenti
+D04|272|| Frame | Producer | Shows | Controls (class per §1.3) | Class | Board
+D04|278|| `TIER/per-symbol` | `symbols[]` (shipped) | CMP-049 table variant: S
+D04|279|| `TIER/query-performance` | PROPOSED `slow_queries[]` (D04-G5); nothi
+D04|283|The ticket's five states and E16-D02 §3.1's page states (`SCR-142/load
+D04|285|| Frame | Producer | Shows | Controls (class per §1.3) | Class | Board
+D04|289|| `SCR-142/read-only-disk-full` | `level` 3, `write_gate` closed, `wri
+D04|291|| `SCR-142/view-as` | `GET /auth/session/view-as` reports an active co
+D04|292|| `SCR-142/tier-unreachable-questdb` | `HealthReport.components[]` que
+D04|294|| `SCR-142/migration-pending` | PROPOSED `pending_migrations` 1, `sche
+D04|295|| `SCR-142/stale-sample` | no new report for more than 2 × 60 s (the s
+D04|297|| `SCR-142/unavailable` | `/recording/storage` answers 503 or fails; `
+D04|299|## 6. Maintenance actions and the jobs strip (board 05; 5 frames)
+D04|301|**Who may run them:** the Owner, on the admin surface, with a fresh re
+D04|305|| Compact Parquet | `compactRecorder` (`22` :14937); `Job.kind` PROPOS
+D04|308|| Import archives | `importTradeArchive` (`22` :14978); `Job.kind` `ar
+D04|310|| Frame | Producer | Shows | Controls (class per §1.3) | Class | Board
+D04|312|| `JOB/confirm-compact` | Compact Parquet… pressed | CMP-044 standard 
+D04|313|| `JOB/confirm-vacuum` | the Vacuum Postgres… inset pressed (the whole
+D04|314|| `JOB/strip-running` | this client's `202` → `Job.status` running for
+D04|315|| `JOB/strip-refused-409` | a second Compact Parquet… press while one 
+D04|316|| `JOB/outcomes` | `Job.status` succeeded / failed / cancelled, or `40
+D04|318|## 7. Purge (board 06; 7 frames) — E16-D02 §6.5 reused whole
+D04|320|Purge is the one destructive action here: Owner-only, step-up authenti
+D04|322|| Frame | Producer | Shows | Controls (class per §1.3) | Class | Board
+D04|325|| `PURGE/dialog` | Purge… pressed on the ETHUSDT row | E16-D02 §6.5's 
+D04|326|| `PURGE/dialog-validity` | the typed symbol differs from ETHUSDT, the
+D04|329|| `PURGE/step-up` | Confirm pressed with a valid form: the server answ
+D04|330|| `PURGE/outcomes` | `Job.status` terminal, or `404 job_unknown` | ins
+D04|332|## 8. Import (board 07; 6 frames; US-REC-007 :4210–4226)
+D04|334|`importTradeArchive` (`22` :14975–15028) imports the exchange's public
+D04|336|| Frame | Producer | Shows | Controls (class per §1.3) | Class | Board
+D04|338|| `IMPORT/form` | the import card at rest (`importTradeArchive`, `22` 
+D04|339|| `IMPORT/form-validity` | the range empty, inverted or longer than 36
+D04|341|| `IMPORT/running-with-skips` | day 14 (2026-01-14) fails its checksum
+D04|342|| `IMPORT/summary` | `Job.status` succeeded; `result` (PROPOSED `Archi
+D04|343|| `IMPORT/failed` | `Job.status` failed, `error` a stable code (downlo
+D04|347|| Role | SCR-142 |
+D04|349|| Owner viewing as another user | the **first leg** on every write (E0
+D04|351|| Manager / Viewer | not reachable: `/admin/*` is hidden from navigati
+D04|355|**Initial focus** on entry: the H2 (a route-section change, not a dial
+D04|357|**Announcements** (`05` §6.2 :146–150; CMP-023 `15` :267): the jobs st
+D04|359|| Key | Where | Effect |
+D04|362|| `Enter` / `Space` | a button | opens the confirm (compact; the vacuu
+D04|363|| `Enter` | From / To | next field; on Import archives: submit |
+D04|364|| `Esc` | a dialog | Cancel; focus returns to the opener |
+D04|366|| `Enter` / `Space` | an Accordion header (per-tier table) | toggles; 
+D04|370|| Element | Tokens |
+D04|372|| the page | `color.surface.canvas` (CMP-087's `color.surface.admin-ti
+D04|373|| a meter (CMP-023 `kind="meter"`) | track `color.surface.sunken` (CMP
+D04|374|| a tier card (CMP-050 + CMP-036) | `color.surface.raised`, `color.bor
+D04|375|| a PROPOSED carrier | the same card or row with a dashed `color.borde
+D04|376|| the jobs strip | one line `type.ui.body` `color.text.primary`; CMP-0
+D04|377|| the per-file table (CMP-049, the PROPOSED D04-G11 inset) | header `c
+D04|378|| a T2 control (view-as) | `color.surface.raised` + `color.border.defa
+D04|379|| a validity control | its own fill and label at `opacity.disabled` 0.
+D04|380|| banners (CMP-028) | warning `color.status.warning.subtle` / glyph `.
+D04|381|| focus | `color.focus.ring`, 2 px outside; `motion.duration.normal` f
+D04|419|| R-4 | health is a `ComponentState` word in every tier card; a tier d
+D04|424|| R-9 | the skip frame keeps its bar moving and draws no banner, callo
+D04|444|**Components used** (each has a `15` heading; the tool checks): CMP-00
+D04|448|| D04-A1 | `15` CMP-178 :2071 Props — Old: "`label` · `value` · `unit`
+D04|455|| D04-A8 | E16-D02 §3.2 :203 (merged `736f995e`), the compact line — O
+D04|456|| D04-C1 | `14` :2779 audits `storage.compaction_triggered`, `storage.
+D04|459|| D04-C4 | `15` CMP-087 binds `color.surface.admin-tint`, which the to
+D04|461|| D04-C6 | E16-D02 §6.6 :424 (merged `736f995e`) runs `compactRecorder
+D04|462|| D04-G1 | `StorageUsage.tiers[].daily_growth_bytes` and `tiers[].proj
+D04|463|| D04-G2 | `symbols[].oldest_at`, `symbols[].newest_at`, `symbols[].hi
+D04|464|| D04-G3 | `tiers[].tables[] {name, rows, bytes, oldest_at, newest_at}
+D04|465|| D04-G4 | `ingest_lag_ms` on the recorder topic (or `StorageUsage`); 
+D04|466|| D04-G5 | `slow_queries[] {tier, kind, p95_ms, count_1h}` on a PROPOS
+D04|467|| D04-G6 | `tiers[].last_compaction_at` (parquet), `tiers[].last_vacuu
+D04|468|| D04-G7 | `schema_version`, `target_version`, `pending_migrations: in
+D04|469|| D04-G8 | `POST /admin/db/vacuum` (Postgres only; Owner-only with the
+D04|470|| D04-G9 | `Job.kind` `parquet_compaction` for `compactRecorder`'s job
+D04|471|| D04-G10 | `POST /admin/jobs/{jobId}/cancel` → `202`; `409 job_not_ca
+D04|472|| D04-G11 | `ArchiveImportResult {days_total, days_done, files[] {date
+D04|473|| D04-G12 | a per-interval `source: recorded | archive` on `GET /marke
+D04|481|| D04-Q4 | the lag-warning threshold: 5 ILP batches of `write_backlog_
+D04|491|| D04-D10 | analytics `storage.panel_viewed` once per entry (`14` :277
+D04|495|Variables: `{HH:MM:SS}` 10:31:03; `{every}` 60 s; `{used}` / `{cap}` 1
+D04|513|| `storage.degradation` | "Recording pauses before trading is affected
+D04|514|| `storage.degradation.detail` | "At 90 % of the recording budget auto
+D04|539|| `storage.stale.announce` | "Storage figures are stale" | `new` | `SC
+D04|548|| `storage.audited` | "This action is audited." | E16-D03 §5 :210 | `J
+D04|551|| `storage.job.started` | "{verb} started" · "Compaction started" · "I
+D04|553|| `storage.job.refused.running` | "A {verb} is already running." · "A 
+D04|575|| `storage.purge.refused.pinned` | "Pinned data is excluded. Tick Incl
+D04|587|| `storage.import.finished` | "Import finished: {symbol}, {from} → {to
+D04|597|| `storage.import.cancelled` | "Import cancelled. Finished days are ke
+D04|598|| `storage.import.unknown` | "The import's status is no longer availab
+D04|601|| `storage.links.health` | "System health →" | `new` (the CMP-178 tile
+D04|605|Dark / light / high-contrast = `semantic-dark`; `semantic-light` over 
+D04|632|| destructive Confirm label on the danger fill (Purge) | `color.text.o
+D04|645|| 14:2780 all three tiers drawn with size, growth rate and projected f
+D04|646|| 14:2780 per-symbol breakdown for the hot tier | `TIER/per-symbol` (b
+D04|647|| 14:2780 maintenance actions with progress and cancel | `JOB/confirm-
+D04|648|| 14:2780 low-disk warning and critical states drawn with what stops w
+D04|649|| 14:2780 query-performance indicators | `TIER/query-performance` (boa
+D04|650|| 14:2780 error state when a tier is unreachable | `SCR-142/tier-unrea
+D04|668|**Owner walkthrough** (posted on #372 at merge, not in `14`): W1 read 
+D04|672|**DoD:** the six checklist items → §16 (the `14` boxes are posted on #
+D05|5|**Penpot page:** `E16-D05 Empty and partial history` · id `f5d056cd-3d
+D05|11|**Inputs pinned.** Base `origin/main` `57daf6d06035bc0af242235f2685a2d
+D05|25|## The twenty questions (BQ-1…BQ-20) — RULED by the orchestrator (issu
+D05|50|**Standing additions (RULED with the list, issue comment 6392445279).*
+D05|52|## 0. Boards (drawn — this boards PR)
+D05|54|Boards are on the self-hosted Penpot page `E16-D05 Empty and partial h
+D05|65|| 08 | `E16-D05 / 08 keyboard-a11y-copy` | 0 <!-- audit:board_frames.0
+D05|67|| 10 | `E16-D05 / 10 light-twin` | 5 <!-- audit:board_frames.10=5 --> 
+D05|69|Boards as drawn (2026-10-28, from the board script r5 — sha256 `b63f27
+D05|78|- `08 keyboard-a11y-copy` — board id `f5d056cd-3de8-808d-8008-dc61591e
+D05|92|| SCR-047's anatomy, the no-GL rule, CMP-029 = loading only | E11-D04 
+D05|95|| the in-canvas carriers of partial history and gaps | E12-D02 §7 :272
+D05|97|| the hatch geometries | E11-D05 :315–316, :327–328; E11-D02 D8 :115, 
+D05|107|**T2 — disabled with a visible reason** (E09-D09 §2.2 :49, §3.1 :85–95
+D05|109|**The sentence form is T2's rendering for an empty state whose sole CT
+D05|113|**Absence · status · outcome** (E09-D09 §2.1 step 1 hiding, §9.1 loadi
+D05|119|| `Record this symbol` while viewing as (the Owner viewing as a Manage
+D05|120|| `Record this symbol` for a session without `recording:write` (Manage
+D05|122|| `Retention policy` link on a retention-trimmed frame | **Owner: link
+D05|123|| `Manage recorded symbols` / `Record now` on an auto-record-refused f
+D05|124|| `Go to latest`, `Go to recorded history`, `Switch symbol`, `Open sym
+D05|125|| the pane while the fetch decides the reason (CMP-029 Skeleton-Chart 
+D05|130|| the symbol in a `role_restricted` set | **status text** | "Recording
+D05|132|| any control disabled by form validity | **not present** | no form on
+D05|136|| Role | SCR-047 and every SCR-151 instance | The populated surfaces |
+D05|144|The UI renders what the server allows (C-12.4). Reading coverage, bars
+D05|148|| Recorder fact (source) | Chart pane SCR-047 | Panel SCR-151 instance
+D05|150|| never recorded (`InstrumentDetail.recorded=false`, `recording_starte
+D05|153|| a gap inside the span (`gaps[].reason`) | 2 with the cause by reason
+D05|159|| `role_restricted` set | "Recording status restricted" as the cause (
+D05|163|**Anatomy (cited).** SCR-151's anatomy, which SCR-047 instantiates (`1
+D05|186|8 <!-- audit:gap_causes=8 --> gap-reason sentences (the 7 <!-- audit:r
+D05|192|| never recorded | `InstrumentDetail.recorded` false + `recording_star
+D05|194|| the window before the start | `/market/bars` 422 `no_data_recorded` 
+D05|195|| covered intervals and gaps | `GET /market/data-coverage` `streams[].
+D05|197|| the history depth at subscribe | `sub_ok` warning `no_data_recorded`
+D05|198|| auto-record and refusal | `23` :1828 (an unrecorded symbol triggers 
+D05|200|| backfilled gaps | `21` `recording_gaps.backfilled`, `backfill_source
+D05|204|**The fixture, derived by the tool from `22` :4601–4636.** Trades: 202
+D05|210|The anatomy, the reasons' sources, the exits and the no-GL rule are E1
+D05|212|| Frame | Producer / condition (source) | Heading | Cause | CTA · link
+D05|214|| `SCR-047/never-recorded-owner` | 1a: `recorded` false, `recording_st
+D05|215|| `SCR-047/before-start` | 1b: `/market/bars` 422 `no_data_recorded`, 
+D05|220|| `SCR-047/never-recorded-view-as` | 1a for the Owner viewing as {user
+D05|221|| `SCR-047/never-recorded-sentence` | 1a for a Manager or a Viewer — n
+D05|225|| `SCR-047/role-restricted` | the symbol in a `role_restricted` set an
+D05|226|| `SCR-047/in-situ` | the refused-cap deck inside the chassis: toolbar
+D05|228|The deck's one voice: the cause on every frame agrees with the REC chi
+D05|232|The pattern every empty panel uses (`14` :2916, :2919): a heading stat
+D05|234|| Frame | Producer (source) | Heading | Cause | Controls (role-resolve
+D05|239|| `SCR-151/sentence-form` | the never-recorded case for a Manager or a
+D05|240|| `SCR-151/role-restricted` | the panel's symbol in a `role_restricted
+D05|246|The panel's carrier of partial coverage (D05-D5; `14` SCR-038 :963): a
+D05|248|| Frame | Producer (source) | Text | Look | Keyboard · a11y | Class |
+D05|250|| `CHIP/partial-days` | the profile's requested window (US-CHART-010) 
+D05|251|| `CHIP/partial-with-gaps` | the same window with one gap inside it — 
+D05|254|| `SURF/chart-strip-line` | the chart's counterpart: the US-CHART-010 
+D05|256|## 7. The hatched gap band at three zoom levels (board 05; 6 GAP frame
+D05|258|The band reuses the registered geometry (BQ-11 RULED; E11-D05 :315–316
+D05|260|| Frame | Zoom / producer | Geometry (pattern · edges) | Label | Toolt
+D05|262|| `GAP/band-wide` | 0.5 px / min: the 12-minute gap is 6 px wide, unde
+D05|267|| `GAP/forced-colors` | `forced-colors: active` inset of the tight ban
+D05|269|Degraded rendering (E11-D02 :692 "rung 2+: edges only"): under the eng
+D05|273|| Frame | Producer (source) | Content | Look | Keyboard · a11y | Class
+D05|275|| `GAP/tooltip` | hover over the band or the seam; focus of the data-c
+D05|276|| `GAP/legend` | any band or seam in view (CMP-199 ChartLegend, `14` :
+D05|278|| `GAP/table-row` | SCR-045's separator row per gap (E11-D04 D11; E12-
+D05|279|| `GAP/cursor-announce` | the keyboard data cursor lands on the first 
+D05|283|| Frame | Surface | Carrier | Words (the deck, §14) | Class |
+D05|285|| `SURF/scr-038-partial` | SCR-038 Profile panel (`14` :963) over a wi
+D05|286|| `SURF/scr-038-no-history` | SCR-038 with no recorded history for the
+D05|289|| `SURF/scr-103-coverage` | SCR-103's coverage section (E08-D06 §4.3 :
+D05|290|| `SURF/replay-absence` | replay (the replay screens, CMP-172 `Partial
+D05|292|SCR-045's band rows are E11-D04 D11's (board 07 there), cross-referenc
+D05|296|**SCR-047 in the chassis** (E12-D02 :338's focus order kept): the head
+D05|300|| `Tab` / `Shift+Tab` | SCR-047 block | toolbar → CTA (if drawn) → lin
+D05|301|| `Enter` / `Space` | the CTA | `Record this symbol` → SCR-140 (a rout
+D05|302|| `Enter` / `Space` | the link | `Learn more` → M-023 (D05-Q1); `Show 
+D05|303|| `Tab` | a panel with the chip | title → the chip (`role="note"`) → t
+D05|304|| `Esc` | the chip's or the band's tooltip | closes the echo; nothing 
+D05|305|| `←` `→` (the data cursor) | the chart | slot by slot, through the ga
+D05|306|| `Home` / `End` | the chart | the chart's (E11-D02); `End` = latest, 
+D05|310|| Event | Region | Cadence | String |
+D05|312|| an empty state is entered | the block's `role="status"` (pre-rendere
+D05|313|| the sentence form is entered | the same region | once, polite | "{he
+D05|314|| the first bar ends SCR-047; "Recording started 10:22 UTC" | the same
+D05|315|| a backfill completes | the host panel's region | once, polite | "His
+D05|316|| a gap band or seam enters the view | none — the chart region's acces
+D05|317|| the data cursor crosses a gap | the cursor's readout (polite, the cu
+D05|318|| the chip appears or its numbers change | the panel's accessible name
+D05|320|**200 % and 1280 × 800** (`05` :131): the CMP-026 block's 480 px colum
+D05|324|Every binding is a semantic token of `packages/ui/tokens` (dark `seman
+D05|328|| `SURF/redlines` | the CMP-026 block (E05-D02 :1271–1276): `space.ins
+D05|330|**Token audit (as drawn, the per-set export).** The boards are drawn i
+D05|374|**Components used** (each has a `15` heading; the tool checks): CMP-00
+D05|378|| D05-A1 | `15` CMP-026: CR-D04-4 restated as co-owned with E11-D04 (:
+D05|383|| D05-A6 | `14` SCR-047 Analytics line (:1087): `chart.empty_state_sho
+D05|384|| D05-A7 | `14` SCR-038 States (:963): the chip reads "Partial: {n} of
+D05|386|| D05-A9 | `14` SCR-030 `partial-history` / `coverage-gap` rows (:724–
+D05|387|| D05-C1 | the ticket's "HTTP 410 `resource_purged`" vs `22`: the 410 
+D05|392|| D05-C6 | `23` :1824's server-authored `message` ("SOLUSDT recording 
+D05|398|| D05-C12 | the Owner CTA's destination: E11-D04 §11.2 :342 (SCR-140, 
+D05|401|| D05-G1 | `backfilled: boolean` and `backfill_source: string | null` 
+D05|403|| D05-CG1 | `/market/data-coverage` answers the last 90 days and clips
+D05|404|| D05-Q1 | `Learn more`'s destination: M-023 "Recording toggle / reten
+D05|405|| D05-Q2 | does the `role_restricted` set also narrow `/market/data-co
+D05|409|**Decisions of this spec (PROPOSED unless RULED):** **D05-D1** the sco
+D05|413|Variables: `{symbol}` BTCUSDT; `{interval}` 1m; `{ts}` "2026-09-01 00:
+D05|438|| `empty.cta.record` | `Record this symbol` | E11-D04 :798; `14` :1074
+D05|444|| `empty.link.show_coverage` | `Show coverage` | E11-D04 :798; `14` :2
+D05|453|| `empty.outcome.started` | "Recording started {time} UTC" · "Recordin
+D05|460|| `gap.tooltip.title` | "Recording gap" · "Removed by retention" | new
+D05|461|| `gap.tooltip.range` | "{date} {from} → {to} UTC · {duration}" · "202
+D05|473|| `empty.outcome.loaded` | "History loaded" | new | a backfill complet
+D05|474|| `empty.announce.enter` | "{heading} {cause}" | new (D05-D15) | every
+D05|483|| `replay.absence` | "Replay availability shading is E26's (CMP-172); 
+D05|487|Dark / light / high-contrast = `semantic-dark`; `semantic-light` over 
+D05|521|| 14:1089 three distinct reasons drawn (never recorded / no data in th
+D05|522|| 14:1089 owner CTA to SCR-140 and non-owner explanatory copy both dra
+D05|523|| 14:1089 live-data-still-works note present where true | the Live sen
+D05|524|| 14:1089 no infinite spinner path | §1.3's loading row (CMP-029 under
+D05|525|| 14:2924 the three empty-state classes drawn (nothing created yet / n
+D05|526|| 14:2924 role-aware action vs explanation variants | `SCR-151/recordi
+D05|527|| 14:2924 the recorder-dependent variant carries the recording-start t
+D05|528|| 14:2924 copy for each class written and reviewed | §14 (the deck; th
+D05|529|| 14:2924 applied consistently in every panel that can be empty | §9: 
+D05|548|**Owner walkthrough (posted on the issue at review).** W1 the stem on 
+D05|552|**DoD:** the SCR-047 and SCR-151 checklist items → §16 (the `14` boxes
+DS|15|orchestrator's round. A **G-T2 miss is a Major** in the pre-lens; a **
+DS|17|## G-T2 — the controls E09-D09 §2.1 routes to T2 are specified as T2
+DS|36|- **G-T2.1d** (§2.2, §8): CMP-079 RbacGate wraps every §2.1 step-3 con
+DS|39|the icon; the sentence form has no glyph and no button).
+DS|61|covers those surfaces.
+DS|65|- **R1 Text resize** (`05` §5 item 7, WCAG 1.4.4): for every dialog, d
+DS|83|assembled from split string literals).
+E09-D09|85|Every T2 reason is one of these seven keys, or a key of a registered *
+E09-D09|90|| `rbac.owner_only` | "Only the owner can {verb}." | the operation's p
+E09-D09|236|The reason node is rendered at mount and stays in the DOM while the co
+E09-D09|243|| `Enter` / `Space` / the bound hotkey (`Ctrl+Enter`, `Alt+…`) | nothi
+E09-D09|250|Announcements are §4.4 plus: a T2 keystroke → polite, the reason; the 
+E11-D04|334|### 11.1 Anatomy and the no-GL rule
+E11-D04|338|### 11.2 The three reasons, drawn separately
+E11-D04|343|| **1b recorded, window before the start** (`not_recorded`) | `GET /ma
+E11-D04|345|| **3 not trading / delisted** (`symbol_delisted`) | `Instrument.statu
+E11-D04|347|Every heading names the symbol and, where it has one, the interval; ev
+E11-D04|349|### 11.3 The live-data sentence and the state's exits
+E11-D04|351|- **"Live data is streaming now."** is shown only when the symbol's li
+E11-D04|352|- **Exits.** 1a and 1b leave the empty state when the first bar exists
+E12-D02|288|loading band announce as its §10 says (once on entry and exit; once pe
+E12-D02|290|OQ-14), never announced. The data cursor (26 §12) adds "forming", "cor
+E12-D02|338|**Focus order.** Heading and text are read in order and are not focusa
+E42-D02|669|| dialogs | **Cancel** → fields in reading order → confirm (never auto
+ICONS|48|calendar: {
+README|11|| Penpot instance | **Self-hosted Penpot 2.18** since 2026-10-21 (URL,
+README|14|| Files | **One Penpot file per design set** (since 2026-10-26, [PENPO
+README|47|- **Penpot reference** to the ticket's page, in the PR body _and_ the 
+README|50|SaaS links in merged documents are historical.
+README|78|2. `docs/design/<epic>/<ticket>.md` — spec: purpose, states, data, int
+README|81|4. For `CMP-*` tickets (and `SCR-*` tickets that change a component co
+README|82|`docs/design/<epic>/<ticket>-handoff.md`, per `16-design-system-brief.
+SEED|149|"code": "recording:write",
+SEED|151|"dangerous": true
+SEED|217|"recording:write",
