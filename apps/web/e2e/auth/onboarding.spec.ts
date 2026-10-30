@@ -95,3 +95,41 @@ test("E09-TC-E05 skip persists: dismissed checklist stays hidden after reload", 
   await page.reload();
   await expect(page.getByText("Setup complete.")).toHaveCount(0);
 });
+
+test("E09-TC-E03 keyboard-only: the whole wizard is reachable and submittable with Tab, Space and Enter", async ({
+  page,
+}) => {
+  await page.route(`**/api/v1/invites/${INVITE_ID}`, (r) =>
+    r.request().method() === "GET"
+      ? r.fulfill(json({ display_name: "Ann", role: "viewer", expires_at: "2026-02-01T00:00:00Z" }))
+      : r.fulfill(json({ method_id: "m1", otpauth_uri: "otpauth://x", secret_base32: OTP_SEED })),
+  );
+  const confirms: unknown[] = [];
+  await page.route(`**/api/v1/invites/${INVITE_ID}/confirm`, (r) => {
+    confirms.push(r.request().postDataJSON());
+    return r.fulfill(json({ status: "active", role: "viewer", recovery_codes: ["rc-1", "rc-2"] }));
+  });
+  await page.goto(`/invite/${INVITE_ID}`);
+  await expect(page.getByRole("heading", { name: "Welcome, Ann" })).toBeVisible();
+  // each step replaces the control that had focus, so the next Tab starts from the top of the new step
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Accept invitation" })).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("heading", { name: "Choose a password" })).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(page.getByLabel("New password")).toBeFocused();
+  await page.keyboard.type("correct horse battery");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Set up your authenticator" })).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(page.getByLabel("Authenticator code")).toBeFocused();
+  const code = totp(OTP_SEED, Date.UTC(2026, 0, 1));
+  await page.keyboard.type(code);
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Activate account" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "You are set up" })).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "Go to sign in" })).toBeFocused();
+  expect(confirms).toEqual([{ method_id: "m1", code }]);
+});

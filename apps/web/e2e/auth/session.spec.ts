@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   assertNoClientSecrets,
   json,
@@ -6,11 +6,22 @@ import {
   stubSessionsList,
   watchForLeaks,
 } from "../support/api";
+import { seriousAxe } from "../support/axe";
+import {
+  ABSOLUTE_LIFETIME_MS,
+  SessionStore,
+  UNLOCK_PASSWORD,
+  UNLOCK_STRIKES,
+  attach,
+  openContext,
+} from "../support/contexts";
 import { installWsHarness } from "../support/wsHarness";
 
-// E09-Q02 (#293) session.spec. Covered here: the unauthenticated redirect, cookie-stripped/401
-// handling, the bootstrap session read, SCR-005 idle lock -> unlock (#1640 S2) and SCR-112 sign out
-// everywhere -> SCR-001, with the server's 4401 close honoured (#1640 S3). @electron tagged.
+// E09-Q02 (#293) session.spec, stub level: the API is stubbed at the network layer and the browser clock is
+// `page.clock`; the server half (real cookies, a server clock) is the real lane's. Covered here: the
+// unauthenticated redirect, the bootstrap read, SCR-005 idle lock (a reload into it, the live warning and lock,
+// unlock and its escapes), SCR-112 (rows, revoke, sign out everywhere) and a second context's revocation.
+// The stubbed server is `support/contexts.ts`. @electron tagged tests also run in the Electron lane.
 
 test("E09-TC-C09 unauthenticated deep link redirects to /login preserving next @electron", async ({
   page,
@@ -38,28 +49,8 @@ test("E09-TC-C01 authenticated bootstrap reads /me once and renders the shell @e
   });
   await page.goto("/terminal/last");
   await expect(page).toHaveURL(/\/terminal\/last$/u);
+  await expect(page.getByRole("heading", { name: /R-101/u })).toBeVisible(); // the shell booted on that read
   expect(meCalls).toBe(1);
-});
-
-test("E09-TC-C09 session cookie is never readable by page script (HttpOnly contract)", async ({
-  page,
-  context,
-}) => {
-  await context.addCookies([
-    {
-      name: "cv_session",
-      value: "opaque-test-value",
-      url: "http://127.0.0.1:4173",
-      httpOnly: true,
-      sameSite: "Strict",
-    },
-  ]);
-  await stubSession(page, { role: "owner" });
-  await page.goto("/terminal/last");
-  expect(await page.evaluate(() => document.cookie)).not.toContain("cv_session");
-  const [cookie] = await context.cookies();
-  expect(cookie?.httpOnly).toBe(true);
-  expect(cookie?.sameSite).toBe("Strict");
 });
 
 test("E09-TC-C01 sign-in leaves no password or challenge in storage, URL or DOM (SR-012)", async ({
@@ -79,7 +70,17 @@ test("E09-TC-C01 sign-in leaves no password or challenge in storage, URL or DOM 
   await guard.flush();
 });
 
-test("#1640 a reload into an idle-locked session shows SCR-005, not /login; unlock boots the app", async ({
+test("E09-TC-C01 the leak guard fails on a forbidden value in a response body (helper check)", async ({
+  page,
+}) => {
+  const guard = watchForLeaks(page, ["leaky-value"]);
+  await page.route("**/api/v1/probe", (r) => r.fulfill(json({ note: "leaky-value" })));
+  await page.goto("/login");
+  await page.evaluate(() => fetch("/api/v1/probe").then((res) => res.text()));
+  await expect(guard.flush()).rejects.toThrow("probe leaked a 11-char value");
+});
+
+test("E09-TC-C02 a reload into an idle-locked session shows SCR-005, not /login; unlock boots the app", async ({
   page,
 }) => {
   const guard = watchForLeaks(page, ["pw-lock-1"]);
@@ -149,7 +150,7 @@ test("#1640 a reload into an idle-locked session shows SCR-005, not /login; unlo
 // (sent before the 204, as the hub does) is honoured: the client never re-authenticates on it. A
 // revocation from another device (4401 alone, no in-tab logout) does not reach SCR-001 yet; the WS
 // client stops on it as a fatal close (`connectionRegion.ts`, G12), so that is not asserted here.
-test("#1640 SCR-112 sign out everywhere: logout all, SCR-001, the 4401 close honoured", async ({
+test("E09-TC-D03 SCR-112 sign out everywhere: logout all, SCR-001, the 4401 close honoured", async ({
   page,
 }) => {
   await stubSession(page, { role: "owner" });
@@ -196,4 +197,252 @@ test("#1640 SCR-112 sign out everywhere: logout all, SCR-001, the 4401 close hon
   expect(logouts).toEqual([{ all_sessions: true }]);
   expect(harness.sent.at(-1)).toMatchObject({ t: "bye", p: { code: 4401, reconnect: false } });
   expect(harness.authenticated()).toBe(1); // bye.reconnect false: never re-authenticated
+});
+
+// ---- Live idle (22 "Idle lock"): the SPA times CMP-098 and SCR-005 from `GET /auth/session`, on the
+// stub server's clock. `store.advance` moves that clock and the page's timers the same span; each step passes
+// its limit by a margin, never the boundary.
+const MIN = 60_000;
+const ROUTE = "/admin/users/new";
+const SIGN_IN = "Sign in to CandleViewer";
+const unlocks = (store: SessionStore): unknown[] =>
+  store.calls.filter((call) => call.path === "/auth/unlock").map((call) => call.body);
+
+/**
+ * An owner on SCR-123 with a typed username, on the stub server, a live fake socket and a fake page clock. The
+ * page clock starts at the real time, never a fixed date: the socket lives in a shared worker, which `page.clock`
+ * does not reach, and that worker judges the access token (stamped on the page's clock) by the real one. The
+ * stub server's clock is independent of both: the SPA reads only differences of its times.
+ */
+async function openIdleSession(page: Page): Promise<SessionStore> {
+  const store = new SessionStore();
+  await page.clock.install();
+  const harness = await attach(page, store, store.mint(), { ws: true });
+  await page.route("**/api/v1/users/invites", (r) => r.fulfill(json({ items: [] })));
+  await page.goto(ROUTE);
+  await expect.poll(() => harness?.authenticated()).toBe(1);
+  await page.getByLabel("Username").fill("annie");
+  return store;
+}
+
+/** CMP-098 shows 60 s before the deadline, and SCR-005 follows it. */
+async function idleToLock(page: Page, store: SessionStore): Promise<Locator> {
+  await store.advance(14 * MIN, page);
+  await expect(
+    page.getByRole("alertdialog", { name: "Your session will lock soon" }),
+  ).toBeVisible();
+  await store.advance(MIN + 1_000, page);
+  const lock = page.getByRole("alertdialog", { name: "Session locked" });
+  await expect(lock).toBeVisible();
+  return lock;
+}
+
+test("E09-TC-C02 an idle session warns at 60 s, then locks; unlock returns to the same route with the typed state kept", async ({
+  page,
+}) => {
+  const store = await openIdleSession(page);
+  const warning = page.getByRole("alertdialog", { name: "Your session will lock soon" });
+  await store.advance(14 * MIN, page);
+  await expect(warning).toBeVisible();
+  await expect(warning.getByRole("button", { name: "Stay signed in" })).toBeFocused();
+  expect(await seriousAxe(page)).toEqual([]);
+  await store.advance(MIN + 1_000, page);
+  const lock = page.getByRole("alertdialog", { name: "Session locked" });
+  await expect(lock).toBeVisible();
+  await expect(warning).toHaveCount(0);
+  await expect(lock.getByLabel("Password")).toBeFocused();
+  expect(await seriousAxe(page)).toEqual([]);
+  await page.keyboard.press("Escape"); // Esc does not dismiss SCR-005
+  await expect(lock).toBeVisible();
+  await page.keyboard.type(UNLOCK_PASSWORD);
+  await page.keyboard.press("Enter");
+  await expect(lock).toBeHidden();
+  await expect(page).toHaveURL(/\/admin\/users\/new$/u);
+  await expect(page.getByLabel("Username")).toHaveValue("annie");
+  // not asserted: focus returning to the Username (E09-D06 6). The page clock jumps 15 min while the shared
+  // worker keeps the real one, so the shell's connection UI races that focus; the real lane asserts it.
+  expect(unlocks(store)).toEqual([{ password: UNLOCK_PASSWORD }]); // the password only, once
+});
+
+test("E09-TC-C02 Stay signed in extends the session: it does not lock at the old deadline, and warns again 14 min on", async ({
+  page,
+}) => {
+  const store = await openIdleSession(page);
+  await store.advance(14 * MIN, page);
+  await page.getByRole("button", { name: "Stay signed in" }).click();
+  await expect(page.getByRole("alertdialog", { name: "Your session will lock soon" })).toHaveCount(
+    0,
+  );
+  await store.advance(14 * MIN, page); // past the first deadline, 60 s short of the new one
+  await expect(
+    page.getByRole("alertdialog", { name: "Your session will lock soon" }),
+  ).toBeVisible();
+  await expect(page.getByRole("alertdialog", { name: "Session locked" })).toHaveCount(0);
+  expect(store.calls.filter((call) => call.path === "/auth/session/extend")).toHaveLength(1);
+});
+
+test("E09-TC-C02 SCR-005 Sign out instead: Esc goes back to the lock; Sign out ends only this session at SCR-001", async ({
+  page,
+}) => {
+  const store = await openIdleSession(page);
+  const lock = await idleToLock(page, store);
+  await lock.getByRole("button", { name: "Sign out instead" }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Sign out?" });
+  await expect(confirm.getByRole("button", { name: "Back to unlock" })).toBeFocused();
+  await page.keyboard.press("Escape"); // Esc goes back: a safe no-op
+  await expect(lock).toBeVisible();
+  await lock.getByRole("button", { name: "Sign out instead" }).click();
+  await confirm.getByRole("button", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/login\?next=%2Fadmin%2Fusers%2Fnew$/u);
+  await expect(page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
+  const logouts = store.calls.filter((call) => call.path === "/auth/logout");
+  expect(logouts.map((call) => call.body)).toEqual([null]); // never `all_sessions` from a locked session
+  expect(unlocks(store)).toEqual([]);
+});
+
+test("E09-TC-C03 the lifetime lapsing while locked: unlock shows the expiry card, whose one action is SCR-001", async ({
+  page,
+}) => {
+  const store = await openIdleSession(page);
+  const lock = await idleToLock(page, store);
+  await store.advance(ABSOLUTE_LIFETIME_MS); // the screen sat locked past 12 h: the server's clock only
+  await lock.getByLabel("Password").fill(UNLOCK_PASSWORD);
+  await page.keyboard.press("Enter");
+  const expired = page.getByRole("alertdialog", { name: "Session expired" });
+  await expect(expired).toBeVisible();
+  await expect(lock).toHaveCount(0);
+  await expect(expired.getByRole("button", { name: "Sign in" })).toBeFocused();
+  expect(await seriousAxe(page)).toEqual([]);
+  await page.keyboard.press("Escape"); // Esc does not dismiss it
+  await expect(expired).toBeVisible();
+  await expired.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/login\?next=%2Fadmin%2Fusers%2Fnew$/u);
+  await expect(page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
+});
+
+test("E09-TC-C02 a wrong unlock password keeps SCR-005 with an alert and a cleared, refocused field; the fifth ends the session", async ({
+  page,
+}) => {
+  const store = await openIdleSession(page);
+  const lock = await idleToLock(page, store);
+  const password = lock.getByLabel("Password");
+  await expect(password).toBeFocused();
+  for (let attempt = 1; attempt < UNLOCK_STRIKES; attempt += 1) {
+    await page.keyboard.type(`wrong-pw-${attempt}`);
+    await page.keyboard.press("Enter");
+    await expect.poll(() => unlocks(store)).toHaveLength(attempt);
+    await expect(password).toHaveValue("");
+    await expect(password).toBeFocused();
+    await expect(password).toHaveAttribute("aria-invalid", "true");
+    await expect(lock.getByRole("alert")).not.toBeEmpty();
+  }
+  await page.keyboard.type(`wrong-pw-${UNLOCK_STRIKES}`);
+  await page.keyboard.press("Enter");
+  // the reason is a fixed key on the URL; its line's copy awaits approval, so only its role and focus are asserted
+  await expect(page).toHaveURL(/\/login\?next=%2Fadmin%2Fusers%2Fnew&reason=unlock_attempts$/u);
+  await expect(page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
+  await expect(page.getByRole("alert")).toBeFocused();
+  await expect(page.getByRole("alert")).not.toBeEmpty();
+  expect(unlocks(store)).toHaveLength(UNLOCK_STRIKES);
+});
+
+// ---- SCR-112 (R-201 /settings/profile): the sessions list, revoke, sign out everywhere. Its copy is PROPOSED
+// (`SessionsSection.tsx` table; owner approval pending), so controls are found by role and name and no copy is
+// asserted but `14` SCR-112's own line for revoking this session.
+const SESSIONS = "Signed-in sessions";
+const SETTINGS = "/settings/profile";
+const THIS_SESSION = /\(this session\)/u;
+
+/** The owner's current session and a second one ("Desktop app"), on the profile route. */
+async function openSessions(page: Page): Promise<{ store: SessionStore; table: Locator }> {
+  const store = new SessionStore();
+  await attach(page, store, store.mint());
+  store.mint("Desktop app");
+  await page.goto(SETTINGS);
+  const table = page.getByRole("table", { name: SESSIONS });
+  await expect(table).toBeVisible();
+  return { store, table };
+}
+
+test("E09-TC-D01 SCR-112 lists the sessions as rows, this one marked, with no token anywhere in the page", async ({
+  page,
+}) => {
+  const bearer = page.waitForRequest(
+    (req) => new URL(req.url()).pathname === "/api/v1/auth/sessions",
+  );
+  const { table } = await openSessions(page);
+  await expect(table.getByRole("row")).toHaveCount(3); // the header and two sessions
+  await expect(table.getByRole("rowheader", { name: /This session/u })).toBeVisible();
+  await expect(table.getByRole("rowheader", { name: /Desktop app/u })).toBeVisible();
+  const token = ((await bearer).headers()["authorization"] ?? "").replace(/^Bearer /u, "");
+  expect(token).not.toBe(""); // the list was read with a bearer, and none of it is on the page
+  expect(await page.content()).not.toContain(token);
+  await assertNoClientSecrets(page, [token]);
+});
+
+test("E09-TC-D02 SCR-112 revoke another session: its row goes and this session stays signed in", async ({
+  page,
+}) => {
+  const { store, table } = await openSessions(page);
+  const [mine, other] = store.sessions;
+  await table.getByRole("button", { name: /^Revoke Desktop app/u }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Revoke session?" });
+  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
+  expect(await seriousAxe(page)).toEqual([]);
+  await confirm.getByRole("button", { name: "Revoke", exact: true }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(table.getByRole("row")).toHaveCount(2); // the header and this session
+  await expect(page).toHaveURL(/\/settings\/profile$/u);
+  expect(other?.revoked).toBe(true);
+  expect(mine?.revoked).toBe(false);
+  const deletes = store.calls.filter((call) => call.method === "DELETE").map((call) => call.path);
+  expect(deletes).toEqual([`/me/sessions/${other?.id}`]);
+});
+
+test("E09-TC-D02 SCR-112 revoke this session: the confirm says so, and it signs out to SCR-001", async ({
+  page,
+}) => {
+  const { store, table } = await openSessions(page);
+  await table.getByRole("button", { name: THIS_SESSION }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Revoke session?" });
+  // `14` SCR-112's own line, verbatim
+  await expect(confirm).toHaveAccessibleDescription("This will sign you out on this device.");
+  await confirm.getByRole("button", { name: "Revoke and sign out" }).click();
+  await expect(page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/u);
+  await expect(page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
+  expect(store.sessions.map((s) => s.revoked)).toEqual([true, false]);
+});
+
+// ---- Two contexts, one user (AC3): the other browser is told by the server, not by this tab.
+test("E09-TC-D03 sign out everywhere in context A: B's socket gets bye then 4401, and B's next call lands on SCR-001", async ({
+  browser,
+}) => {
+  const store = new SessionStore();
+  const a = await openContext(browser, store);
+  const b = await openContext(browser, store, "Desktop app");
+  await a.page.goto(SETTINGS);
+  await b.page.goto("/terminal/last");
+  await expect.poll(() => a.harness.authenticated()).toBe(1);
+  await expect.poll(() => b.harness.authenticated()).toBe(1);
+
+  await a.page.getByRole("button", { name: "Sign out everywhere" }).click();
+  const confirm = a.page.getByRole("alertdialog", { name: "Sign out everywhere?" });
+  await confirm.getByRole("button", { name: "Sign out everywhere" }).click();
+  await expect(a.page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/u);
+  expect(store.sessions.map((s) => s.revoked)).toEqual([true, true]);
+
+  // B's socket: the hub's `bye session_revoked` (reconnect false), never re-authenticated
+  await expect
+    .poll(() => b.harness.sent.at(-1))
+    .toMatchObject({
+      t: "bye",
+      p: { code: 4401, reason: "session_revoked", reconnect: false },
+    });
+  expect(b.harness.authenticated()).toBe(1);
+  // B's next REST call is refused, and the SPA routes it to SCR-001
+  await b.page.getByRole("link", { name: "Settings" }).click();
+  await expect(b.page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/u);
+  await expect(b.page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
+  await a.context.close();
+  await b.context.close();
 });

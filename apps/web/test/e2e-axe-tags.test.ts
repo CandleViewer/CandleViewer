@@ -62,6 +62,7 @@ describe("the a11y gate's axe tags (#3700)", () => {
       "e09-auth-a11y.spec.ts",
       "e09-auth-a11y.spec.ts",
       "shell-chrome.spec.ts", // the shell chrome per theme and role (#304)
+      "support/axe.ts", // the one scan the E09-Q02 auth specs call (#293)
       "system-states/break-glass-notice.spec.ts", // SR-023's SCR-153 notice row (#306)
     ]);
   });

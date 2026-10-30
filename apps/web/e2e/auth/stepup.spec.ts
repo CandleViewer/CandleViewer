@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { AXE_GATE_TAGS } from "../a11y/tags";
 import { assertNoClientSecrets, json, stubSession, watchForLeaks } from "../support/api";
+import { seriousAxe } from "../support/axe";
 import { OTP_SEED, totp } from "../support/totp";
 
 // E09-Q02 (#293) stepup.spec, revised for #2725: there is no client-side `/admin` step-up
@@ -161,4 +162,86 @@ test("E09-TC-C05 non-owner is denied (404) rather than offered step-up", async (
   await expect(page.getByRole("heading", { name: "Not found" })).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
+});
+
+// ---- SCR-006's exits and keyboard (E09-D06 5, 6): Esc and Cancel drop the held request unsent, the third
+// refused code does too, and Tab never leaves the dialog.
+const DIALOG = { name: "Confirm with two-factor" };
+const NOT_SENT = (page: Page) => page.getByRole("status").filter({ hasText: /^Not sent$/u });
+const CLOSERS: readonly (readonly [string, (page: Page) => Promise<void>])[] = [
+  ["Cancel", (page) => page.getByRole("button", { name: "Cancel" }).click()],
+  ["Esc", (page) => page.keyboard.press("Escape")],
+];
+
+for (const [name, close] of CLOSERS) {
+  test(`E09-TC-C05 ${name} drops the held invite unsent: Not sent, no step-up sent, focus back on the form`, async ({
+    page,
+  }) => {
+    const wire = await inviteWithChallenge(page, GRANTED);
+    await expect(page.getByRole("alertdialog", DIALOG)).toBeVisible();
+    await close(page);
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    await expect(NOT_SENT(page)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create invitation" })).toBeFocused();
+    expect(wire.stepUps).toEqual([]);
+    expect(wire.creates).toHaveLength(1); // the held invite is never re-sent
+  });
+}
+
+test("E09-TC-C05 the third refused code drops the held invite unsent: three step-ups sent, Not sent, no re-send", async ({
+  page,
+}) => {
+  const wire = await inviteWithChallenge(page, { status: 401, body: { code: "mfa_invalid" } });
+  const password = page.getByLabel("Password", { exact: true });
+  const code = page.getByLabel("Authenticator code");
+  const refused = async (n: number): Promise<void> => {
+    await password.fill(`pw-${n}`);
+    await code.fill("000000");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => wire.stepUps.length).toBe(n);
+  };
+  // each refusal keeps the dialog, shows an alert, clears the fields and refocuses the password
+  await refused(1);
+  await expect(password).toHaveValue("");
+  await refused(2);
+  await expect(password).toHaveValue("");
+  await expect(password).toBeFocused();
+  await expect(page.getByRole("alertdialog", DIALOG)).toBeVisible();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(code).toHaveAttribute("aria-invalid", "true");
+  expect(await seriousAxe(page)).toEqual([]);
+  await refused(3);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(NOT_SENT(page)).toBeVisible();
+  const bodies = wire.stepUps.map((body) => JSON.parse(body) as { challenge_id?: string });
+  expect(bodies.map((body) => body.challenge_id)).toEqual([
+    CHALLENGE_ID,
+    CHALLENGE_ID,
+    CHALLENGE_ID,
+  ]);
+  expect(wire.creates).toHaveLength(1);
+});
+
+test("E09-TC-C05 keyboard-only: Tab and Shift+Tab cycle inside the dialog and never reach the form behind it", async ({
+  page,
+}) => {
+  await inviteWithChallenge(page, GRANTED);
+  const dialog = page.getByRole("alertdialog", DIALOG);
+  const password = dialog.getByLabel("Password", { exact: true });
+  const code = dialog.getByLabel("Authenticator code");
+  const cancel = dialog.getByRole("button", { name: "Cancel" });
+  const confirm = dialog.getByRole("button", { name: "Confirm" });
+  await expect(password).toBeFocused();
+  await page.keyboard.type("pw-trap");
+  await page.keyboard.press("Tab");
+  await expect(code).toBeFocused();
+  await page.keyboard.type("123456"); // a valid code enables Confirm, the last stop
+  for (const next of [cancel, confirm, password, code]) {
+    await page.keyboard.press("Tab");
+    await expect(next).toBeFocused();
+  }
+  await page.keyboard.press("Shift+Tab");
+  await expect(password).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(confirm).toBeFocused();
 });

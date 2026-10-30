@@ -76,17 +76,22 @@ export interface LeakGuard {
   readonly flush: () => Promise<void>;
 }
 
-/** Records response bodies the page receives and fails on any forbidden value. */
+/**
+ * Records the response bodies the page receives and fails on any forbidden value. It reads a body once its request
+ * has finished, never on the `response` event: a request a navigation cancels never finishes and its `text()` never
+ * settles, so `flush` would wait on it until the test timed out.
+ */
 export function watchForLeaks(page: Page, forbidden: readonly string[]): LeakGuard {
   const leaks: string[] = [];
   const pending: Promise<void>[] = [];
-  page.on("response", (res) => {
+  page.on("requestfinished", (request) => {
     pending.push(
-      res
-        .text()
+      request
+        .response()
+        .then((res) => res?.text() ?? "")
         .then((t) => {
           for (const f of forbidden)
-            if (t.includes(f)) leaks.push(`${res.url()} leaked a ${f.length}-char value`);
+            if (t.includes(f)) leaks.push(`${request.url()} leaked a ${f.length}-char value`);
         })
         .catch(() => undefined),
     );
