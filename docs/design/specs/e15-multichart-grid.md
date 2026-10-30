@@ -16,7 +16,7 @@ A user tells a grid from four docked charts by three cues, each a rule; at least
 
 ## 3. Arrangements
 
-- **The five.** 1×2, 2×2, 3×3, 1+3 (the large cell left at 0.6<!--=BUDGET:large--> of the width, three equal rows right) and **Custom: rows × columns**, a 3 × 3 chooser of equal cells from 1 × 2 up to 3 × 3 (2 to 9 cells). A custom grid alone has one resizable divider per axis: a CMP-083 separator with E15-D04's splitter keys. No cell is dragged, and no cell is dragged out.
+- **The five.** 1×2, 2×2, 3×3, 1+3 (the large cell left at 0.6<!--=BUDGET:large--> of the width, three equal rows right) and **Custom: rows × columns**, a 3 × 3 chooser of equal cells: any 1 to 3 rows by 1 to 3 columns holding 2 to 9 cells, so the stacked 2 × 1 and 3 × 1 and the side-by-side 1 × 3 are allowed. The ruled bound is the cell count (2 to 9), not the orientation; stacked rows share one time axis, the common multi-timeframe read; the dock's "3×1" exclusion (`15`:2784) is the dock's preset list, not a grid's custom shape. Only 1 × 1 is refused, as one chart is a chart panel. A custom grid alone has one resizable divider per axis: a CMP-083 separator with E15-D04's splitter keys. No cell is dragged, and no cell is dragged out.
 - **The chooser.** The grid header's "Grid · 2×2 ▾" opens CMP-217 in its `cell` mode: a list of thumbnails whose names are words ("Two by two, four charts"), never the dock's preset gallery, so the two choices never share a list.
 - **Bounds.** At least 2 cells and at most 9; the grid counts as one pane against the layout's 16.
 - **Changing it.** Growing adds empty cells. Shrinking that would remove bound cells asks first in a CMP-044 confirm naming the charts that go, Cancel focused; nothing changes until the user chooses. A shrink that removes only empty cells applies at once.
@@ -44,21 +44,25 @@ A user tells a grid from four docked charts by three cues, each a rule; at least
 
 ## 6. Keyboard, names and announcements
 
-- **Keys.** `Ctrl+Alt+1..9` focuses cell N while the grid or a cell has focus (KB-15, scope `panel`, PROPOSED through the remappable keymap); a number past the arrangement does nothing but say "This grid has 4 charts."; inactive while a text field has focus. On layouts where `Ctrl+Alt+digit` types a character (`AltGr`), the cell menu's "Focus chart ▸ 1 … 9" is the chord-free path. `Ctrl+Alt+←/→` and `Ctrl+\` stop at the grid once, on its active cell, never at each cell. Inside a cell `Tab` runs its row's controls, then the chart surface (the engine's keyboard model unchanged), then the next cell.
+- **Keys.** `Ctrl+Alt+1..9` focuses cell N while the grid or a cell has focus (KB-15, scope `panel`, PROPOSED through the remappable keymap); a number past the arrangement does nothing but say "This grid has 4 charts."; inactive while focus is inside a text input, in `05`'s form for `/` (`05`:47, "Only active when focus is not inside a text input"; PROPOSED, as the shipped keymap has no general text-field guard row). On layouts where `Ctrl+Alt+digit` types a character (`AltGr`), the cell menu's "Focus chart ▸ 1 … 9" is the chord-free path. `Ctrl+Alt+←/→` and `Ctrl+\` stop at the grid once, on its active cell, never at each cell. **One `Tab` stop for the grid** (`05`'s roving tabindex for composite widgets, `05`:95): `Tab` lands on the active cell, the cells' own `tabindex` roving; while a cell itself has focus, the arrow keys move to the neighbouring cell (`Home` / `End` the first and the last), so crossing nine cells costs one `Tab` stop, never one per control. `Enter` goes into the focused cell: `Tab` then runs its row's controls and its chart surface (the engine's keyboard model unchanged, its arrows the chart's), and the next `Tab` leaves the grid; `Shift+Tab` from the row's first control returns to the cell.
 - **Names** (E15-D15 R-5, which the cells inherit). The grid: a `region` named "Chart grid, 2 by 2, Live" (kind, arrangement and the environment word when any cell is order-capable). Each cell: a nested `region` named "Chart, BTCUSDT 4 hours, Live", described "Chart 2 of 4. Sync group A: symbol and crosshair." The sync group is in the description, never the name; the interval is spelled.
 - **Announced, polite.** Cell focus "{name}, focused"; a grid change once through CMP-081's live region; maximise and restore (§7); a cell's sync membership change once through CMP-196's shared region. A remote crosshair moving in a cell is never announced.
 
 ## 7. Maximise and the exact restore
 
 - **How.** The cell menu's "Maximise chart"; `Ctrl+Alt+Enter` toggles it on the active cell (PROPOSED); the grid header's [Restore] while maximised. **`Esc` never restores**: `05` keeps `Esc` as the universal cancel.
-- **What shows.** The maximised cell fills the grid's body under the unchanged grid header, which adds "Showing chart 3 of 4" and [Restore]. The grid frame, the TopBar and the StatusBar stay, so the environment is never hidden.
+- **What shows.** The maximised cell fills the grid's body under the unchanged grid header, which adds "Showing chart 3 of 4" and [Restore]. The grid frame, the TopBar and the StatusBar stay, so the environment is never hidden. The maximised cell's row carries the chart panel's arm control and armed state (§8).
 - **Two levels.** `F11` maximises the grid panel in the dock (E15-D04); the cell maximise works inside it; each restores only its own level.
 - **Exact restore.** The arrangement, the custom divider positions, every cell's binding, sync group, visible time range, price scale and its mode, and the active cell. The other cells stay mounted while hidden, drawing nothing, and unsubscribe after 30 s, as hidden dock panels do, their viewports kept. Maximise is a view state: never stored, never dirtying the layout.
 
 ## 8. The environment and trading in a cell
 
 - Every chart cell carries CMP-075 in its row (environment by kind, E15-D03 D-4), never collapsing, so a cropped, glanced-at or maximised cell names its environment. The crop test runs on one cell.
-- **A cell never arms in R1.** Its arm state reads LOCKED, reason "Maximise this chart to trade.", in the cell menu's status line and the cell's description; the row carries no arm control. A maximised cell is a full chart and arms as a chart panel does. Restoring the grid while armed requests the disarm, shown on the server's answer and announced once. Trading hotkeys never act on a non-maximised cell. The server holds the arm authority; the design only shows it.
+- **A cell never arms in R1.** Its arm state reads LOCKED, reason "Maximise this chart to trade.", in the cell menu's status line and the cell's description; the row carries no arm control. Trading hotkeys never act on a non-maximised cell. The server holds the arm authority; the design only shows it.
+- **Protective actions are never gated** (C-2.6; the arm carve-out, `E30D05`:59, :75). LOCKED covers order entry and arming only: cancel, close, flatten and setting or tightening a stop are never gated, hidden or blocked by the grid or by any cell's state, maximised or not (they live on the positions and orders surfaces, and their own hotkeys keep working in every grid state). A cell in any state still draws its orders, positions and stop lines (E15-D12's never-shed list, §11), and the cell menu never gains or loses an item by the arm state.
+- **The maximised cell arms as a chart panel does.** A maximised cell's row carries CMP-229 ArmToggle (`scope: "chart"`) in a chart panel's place, after the environment badge (`D03`:305): LOCKED, ARMED with its `mm:ss` countdown in CMP-229's attention pill (`D03`:323), or UNKNOWN, which fails closed (`15`:2921). The armed pill never leaves the row at any step; as a chart panel's does, its countdown leaves at step 4 and its word becomes its glyph at step 7, both kept in the name and description (`D03`:305). The row is then 22<!--=BUDGET:nodes.max--> nodes and 5<!--=BUDGET:interactive.max--> interactive elements, inside the budget (§4).
+- **Restore while armed.** [Restore] or `Ctrl+Alt+Enter` returns the grid at once (a view change) and requests the disarm. Until the server answers, the grid header shows "Disarming chart trading…" beside CMP-229's armed pill, which stays visible, and the restored cell's entry stays inert (a non-maximised cell never acts). On the server's answer the pill reads LOCKED and "One-click trading disarmed: chart returned to the grid." is announced once.
+- **If the disarm fails** (the server refuses, or the request times out): the header keeps the pill as the server last stated it (ARMED with its countdown, or UNKNOWN, entry off) and a persistent line "Chart trading is still armed on chart 3. Disarm, or maximise it to trade." with [Disarm] (asks again) and [Maximise chart 3]; announced once, assertive, as an arm change is (`15`:2922). The line stays until the server reports LOCKED or the arm expires; the restored cell's entry stays inert throughout, and protective actions stay as above.
 
 ## 9. Sync and rebinding
 
@@ -72,7 +76,7 @@ A user tells a grid from four docked charts by three cues, each a rule; at least
 Every state lives inside its cell's box; the row (symbol, interval, badges from the stored document) is always real, and one cell's state never blocks another.
 
 - **Empty:** "Add a chart to this grid cell" and [Add chart].
-- **Loading:** a CMP-015 skeleton body with CMP-038's words; the shimmer stops at 5 s; no spinner over the chart.
+- **Loading:** a CMP-015 skeleton body with CMP-038's words; the shimmer stops at 5 s; no spinner over the chart. Under `prefers-reduced-motion: reduce` there is no shimmer: the static two-tone fill from the first frame (E05-D03 row 6's reduce, `E05D03`:74, :90).
 - **Unavailable:** "ETHUSDT data unavailable" and [Retry], isolated to the cell.
 - **Delisted** (US-LAY-002's partial-restore rule): E15-D03's `error-delisted` one level down, the symbol named, [Change symbol…] and [Remove chart]; the other cells draw normally and the restore line counts it in E15-D12's form.
 - **Short history:** the gap drawn as a gap by the engine, a CMP-011 `neutral` chip "History from 12 Mar" (fixture date) and the same words in the description.
@@ -104,38 +108,41 @@ A cell is a rectangle whose geometry changes never resize a neighbour's; the des
 
 ## 14. Copy deck
 
-Each string with its id, surface and level (`visible` drawn, `polite` announced, `none` a name or description only). Rules: E15-D12's (a measurement with its window and target, never a verdict; capabilities, never subsystem words; what still works in every reduced string) and E15-D15 R-5's spelled interval in every name and announcement. Figures are fixtures.
+Each string with its id, surface and level (`visible` drawn, `polite` announced, `assertive` announced at once, as an arm change is, `none` a name or description only). Rules: E15-D12's (a measurement with its window and target, never a verdict; capabilities, never subsystem words; what still works in every reduced string) and E15-D15 R-5's spelled interval in every name and announcement. Figures are fixtures.
 
-| Id    | String                                                                                                                 | Surface                         | Level   |
-| ----- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ------- |
-| CP-01 | Grid · 2×2                                                                                                             | grid header, arrangement button | visible |
-| CP-02 | One by two, two charts                                                                                                 | CMP-217 cell mode               | visible |
-| CP-03 | Two by two, four charts                                                                                                | CMP-217 cell mode               | visible |
-| CP-04 | Three by three, nine charts                                                                                            | CMP-217 cell mode               | visible |
-| CP-05 | One large and three small, four charts                                                                                 | CMP-217 cell mode               | visible |
-| CP-06 | Custom: 2 rows by 3 columns, six charts                                                                                | CMP-217 cell mode               | visible |
-| CP-07 | Each chart follows its own sync group.                                                                                 | grid header `Sync ▾`            | visible |
-| CP-08 | New charts join: Sync group A                                                                                          | grid header `Sync ▾`            | visible |
-| CP-09 | Add a chart to this grid cell                                                                                          | empty cell                      | visible |
-| CP-10 | Loading BTCUSDT 4 hours…                                                                                               | loading cell                    | visible |
-| CP-11 | ETHUSDT data unavailable                                                                                               | unavailable cell                | visible |
-| CP-12 | ABCUSDT is no longer listed. This chart can't load it.                                                                 | delisted cell                   | visible |
-| CP-13 | 1 chart couldn't load: ABCUSDT                                                                                         | grid restore line               | polite  |
-| CP-14 | History from 12 Mar                                                                                                    | short-history chip              | visible |
-| CP-15 | Chart trading: LOCKED. Maximise this chart to trade.                                                                   | cell menu status line           | visible |
-| CP-16 | One-click trading disarmed: chart returned to the grid.                                                                | restore while armed             | polite  |
-| CP-17 | Showing chart 3 of 4                                                                                                   | grid header, maximised          | visible |
-| CP-18 | Chart, BTCUSDT 4 hours maximised.                                                                                      | maximise                        | polite  |
-| CP-19 | Grid restored, 4 charts.                                                                                               | restore                         | polite  |
-| CP-20 | Grid changed to 3 by 3, 9 charts.                                                                                      | arrangement change              | polite  |
-| CP-21 | Chart, BTCUSDT 4 hours, Live, focused                                                                                  | cell focus                      | polite  |
-| CP-22 | This grid has 4 charts.                                                                                                | `Ctrl+Alt+N` past the grid      | polite  |
-| CP-23 | 3×3 to 2×2 removes 5 charts: SOLUSDT 1 hour, ETHUSDT 15 minutes and 3 more.                                            | shrink confirm                  | visible |
-| CP-24 | 3×3 needs about 21.4 ms per frame on this device (estimated); now 12.6 ms per frame (p95, measured). Target 16.6 ms.   | budget confirm                  | visible |
-| CP-25 | 9 charts take 24.1 ms per frame (p95, last minute, measured); target 16.6 ms.                                          | grid header, running            | visible |
-| CP-26 | Reduced                                                                                                                | grid header chip                | visible |
-| CP-27 | Reduced: charts you aren't using update every 200 ms; heatmap depth one tier lower and footprint numbers hidden there. | chip name                       | none    |
-| CP-28 | Every chart still shows its price, your orders and your positions.                                                     | reduced, what still works       | visible |
+| Id    | String                                                                                                                 | Surface                          | Level     |
+| ----- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------- | --------- |
+| CP-01 | Grid · 2×2                                                                                                             | grid header, arrangement button  | visible   |
+| CP-02 | One by two, two charts                                                                                                 | CMP-217 cell mode                | visible   |
+| CP-03 | Two by two, four charts                                                                                                | CMP-217 cell mode                | visible   |
+| CP-04 | Three by three, nine charts                                                                                            | CMP-217 cell mode                | visible   |
+| CP-05 | One large and three small, four charts                                                                                 | CMP-217 cell mode                | visible   |
+| CP-06 | Custom: 2 rows by 3 columns, six charts                                                                                | CMP-217 cell mode                | visible   |
+| CP-07 | Each chart follows its own sync group.                                                                                 | grid header `Sync ▾`             | visible   |
+| CP-08 | New charts join: Sync group A                                                                                          | grid header `Sync ▾`             | visible   |
+| CP-09 | Add a chart to this grid cell                                                                                          | empty cell                       | visible   |
+| CP-10 | Loading BTCUSDT 4 hours…                                                                                               | loading cell                     | visible   |
+| CP-11 | ETHUSDT data unavailable                                                                                               | unavailable cell                 | visible   |
+| CP-12 | ABCUSDT is no longer listed. This chart can't load it.                                                                 | delisted cell                    | visible   |
+| CP-13 | 1 chart couldn't load: ABCUSDT                                                                                         | grid restore line                | polite    |
+| CP-14 | History from 12 Mar                                                                                                    | short-history chip               | visible   |
+| CP-15 | Chart trading: LOCKED. Maximise this chart to trade.                                                                   | cell menu status line            | visible   |
+| CP-16 | One-click trading disarmed: chart returned to the grid.                                                                | restore while armed              | polite    |
+| CP-17 | Showing chart 3 of 4                                                                                                   | grid header, maximised           | visible   |
+| CP-18 | Chart, BTCUSDT 4 hours, Live, maximised.                                                                               | maximise                         | polite    |
+| CP-19 | Grid restored, 4 charts.                                                                                               | restore                          | polite    |
+| CP-20 | Grid changed to 3 by 3, 9 charts.                                                                                      | arrangement change               | polite    |
+| CP-21 | Chart, BTCUSDT 4 hours, Live, focused                                                                                  | cell focus                       | polite    |
+| CP-22 | This grid has 4 charts.                                                                                                | `Ctrl+Alt+N` past the grid       | polite    |
+| CP-23 | 3×3 to 2×2 removes 5 charts: SOLUSDT 1 hour, ETHUSDT 15 minutes and 3 more.                                            | shrink confirm                   | visible   |
+| CP-24 | 3×3 needs about 21.4 ms per frame on this device (estimated); now 12.6 ms per frame (p95, measured). Target 16.6 ms.   | budget confirm                   | visible   |
+| CP-25 | 9 charts take 24.1 ms per frame (p95, last minute, measured); target 16.6 ms.                                          | grid header, running             | visible   |
+| CP-26 | Reduced                                                                                                                | grid header chip                 | visible   |
+| CP-27 | Reduced: charts you aren't using update every 200 ms; heatmap depth one tier lower and footprint numbers hidden there. | chip name                        | none      |
+| CP-28 | Every chart still shows its price, your orders and your positions.                                                     | reduced, what still works        | visible   |
+| CP-29 | Disarming chart trading…                                                                                               | grid header, restore while armed | visible   |
+| CP-30 | Chart trading is still armed on chart 3. Disarm, or maximise it to trade.                                              | grid header, disarm failed       | visible   |
+| CP-31 | Chart trading is still armed on chart 3.                                                                               | disarm failed                    | assertive |
 
 ## 15. Analytics
 
@@ -143,4 +150,4 @@ Analytics, never audit; no sink exists yet (E15-D01 OQ-11). `multichart.grid_cha
 
 ## 16. Buildability checklist
 
-A builder can answer each from this page alone: the three cues (§2); the five arrangements and the shrink confirm (§3); the cell row's order, the four steps, the never-dropped five, the minimum and the switcher (§4); the active-cell marker and the panel frame side by side (§5); the keys, the names and the announcements (§6); maximise, `Esc` and the exact restore (§7); LOCKED and the disarm (§8); the sync rule (§9); the five cell states (§10); the two moments of the budget prompt (§11); the five performance rules (§12); what is stored (§13); the copy (§14). A rebuild of one cell row from this page is the dry run the pack §21 asks the deputy for.
+A builder can answer each from this page alone: the three cues (§2); the five arrangements and the shrink confirm (§3); the cell row's order, the four steps, the never-dropped five, the minimum and the switcher (§4); the active-cell marker and the panel frame side by side (§5); the keys, the names and the announcements (§6); maximise, `Esc` and the exact restore (§7); LOCKED, the protective carve-out, the maximised arm state, the disarm and its failure (§8); the sync rule (§9); the five cell states (§10); the two moments of the budget prompt (§11); the five performance rules (§12); what is stored (§13); the copy (§14). A rebuild of one cell row from this page is the dry run the pack §21 asks the deputy for.

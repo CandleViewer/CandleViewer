@@ -2,9 +2,9 @@
 """E15-D11 (#365) audit: the multi-chart grid pack (SCR-049), its spec and its hand-off.
 
 Stdlib only, offline (`python3 -I -B`). It reads AS TEXT at the pinned base (`git show BASE:<path>`)
-the plan texts, the merged E15 design texts and the token JSON; E15-D13's pack at PR #5055's head
-(D13_SHA, not merged), whose §C rows build the `15` queue base; then the pack (`E15-D11.md`), the
-spec, the hand-off and the pins from the working tree. It imports, never copies, the shared
+the plan texts, the merged E15 design texts (E15-D13's pack among them, merged as #5055, its §C
+applied to `15` by #5073) and the token JSON; then the pack (`E15-D11.md`), the spec, the hand-off
+and the pins from the working tree. It imports, never copies, the shared
 functions: `contrast_check.contrast_ratio()` for every WCAG ratio, the research CVD script's
 `simulate()`, `verify_tokens.merged_set()` / `resolve()` for the theme layering, and E15-D03's
 `line_w()` for the header's text widths (the boards' per-character Inter advances).
@@ -27,8 +27,7 @@ anchored value. The gates, each FAIL led by its code:
   Fails closed when git cannot answer.
 - [G-AROW] §C: rows A-1 ... A-n in order, each with its target file, line, a known op and its
   Old (or anchor) equal to that line, unique in its scope; `14` rows against the base, `15` rows
-  against the queue base (the base with E15-D13's §C at D13_SHA applied); a table row keeps every
-  column's width.
+  against the base too (E15-D13's §C is merged into it); a table row keeps every column's width.
 - [G-LEDGER] §2: dispositions from the vocabulary, the counts, every "Here" reference present.
 - [G-BUDGET] each arrangement's cells from E15-D03's dock areas in both densities, 1280 and 1920
   and the 698 px Scalping column; cells, dividers and frame fill the slot; 1+3's large cell at
@@ -62,6 +61,10 @@ anchored value. The gates, each FAIL led by its code:
 - [G-DEPUTY] the dry run and the blind check are open and the deputy's (lesson 3): the section
   says so, the AC and DoD lines that depend on them stay `[ ]`, the brief stands in the appendix.
 - [G-MUTLIST] §19 lists the tool's mutations, one per gate, by name.
+- [G-ARM] the C-2.6 carve-out sentence stands verbatim in the spec, the pack and the hand-off
+  (LOCKED covers entry and arming only; cancel, close, flatten and a stop change never gated); the
+  maximised cell's arm state, the "Disarming" moment and the disarm-failure path stand in the spec,
+  their strings in the deck and their stories in the hand-off and A-8; the maximised row's budget.
 
 `--a-rows` prints §C as JSON, one record per row with its target file; `--self-test` applies one
 mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory copy and passes only when each
@@ -96,10 +99,8 @@ from types import ModuleType
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "bd19bd08b8"  # `git merge-base HEAD origin/main` at writing (#5057's merge)
+BASE = "31ad848823"  # `git merge-base HEAD origin/main` at the round-1 fold (#5072's merge)
 BQ_BASE = "d7f9ca3557"  # the BQ list's base (#5058's merge); no cited design text moved since
-D13_SHA = "2282c6983c"  # PR #5055's head: E15-D13's pack, PR 1 of 4, not merged
-D13_BASE = "1bb750e725"  # the base E15-D13's §C rows name their lines at
 D13_PACK = "docs/design/E15/E15-D13.md"
 SPEC_REL = "docs/design/specs/e15-multichart-grid.md"
 PACK_REL = "docs/design/E15/E15-D11.md"
@@ -136,11 +137,12 @@ KEYS: dict[str, str] = {
     "D13": D13_PACK,
     "D15": E15 + "D15.md",
     "E11D02": "docs/design/E11/E11-D02.md",
+    "E05D03": "docs/design/E05/E05-D03.md",
+    "E30D05": "docs/design/E30/E30-D05.md",
     "M0": "docs/plan/spikes/E06-M0-report.md",
     "keymap": "apps/web/src/keymap/keymap.json",
     "E15.json": "docs/plan/backlog/E15.json",
 }
-REV = {"D13": D13_SHA}  # every other key is read at BASE
 TOKENS_DIR = "packages/ui/tokens"
 THEMES = ("dark", "light", "high-contrast")
 THEME_KEY = {"dark": "dark", "light": "light", "high-contrast": "hc"}
@@ -187,7 +189,7 @@ def at_base(rel: str) -> str | None:
 
 
 def key_text(key: str) -> str:
-    return at_rev(REV.get(key, BASE), KEYS[key]) or ""
+    return at_rev(BASE, KEYS[key]) or ""
 
 
 def read(rel: str) -> str:
@@ -525,6 +527,9 @@ ANATOMY: tuple[tuple[str, int, int], ...] = (
     ("the cell menu: button, glyph", 2, 1),
 )
 NODE_BUDGET, INTERACTIVE_BUDGET = 24, 7
+# a maximised cell's row adds the chart panel's arm control (A44; E15-D03 row 9)
+ARM_PART = ("the arm state (CMP-229, maximised only): button, glyph, word, countdown", 4, 1)
+ANATOMY_MAX = (*ANATOMY, ARM_PART)
 
 
 # (case, arrangement, slot, density): the hostile cases the pack draws (BQ-07)
@@ -549,6 +554,8 @@ def budget_values() -> dict[str, str]:
         "BUDGET:interactive": str(sum(i for _, _, i in ANATOMY)),
         "BUDGET:node.budget": str(NODE_BUDGET),
         "BUDGET:interactive.budget": str(INTERACTIVE_BUDGET),
+        "BUDGET:nodes.max": str(sum(n for _, n, _ in ANATOMY_MAX)),
+        "BUDGET:interactive.max": str(sum(i for _, _, i in ANATOMY_MAX)),
     }
     for dens in DENSITIES:
         v[f"BUDGET:row.{dens}"] = str(ctl(dens))
@@ -618,6 +625,10 @@ def header_problems() -> list[str]:
         bad.append("the cell header is over its DOM-node budget")
     if sum(i for _, _, i in ANATOMY) > INTERACTIVE_BUDGET:
         bad.append("the cell header is over its interactive-element budget")
+    if sum(n for _, n, _ in ANATOMY_MAX) > NODE_BUDGET:
+        bad.append("the maximised cell's row is over its DOM-node budget")
+    if sum(i for _, _, i in ANATOMY_MAX) > INTERACTIVE_BUDGET:
+        bad.append("the maximised cell's row is over its interactive-element budget")
     for case, arr, name, dens in CASES:
         small = cells(arr, name, dens)[1]
         got = verdict(small, dens)
@@ -860,16 +871,10 @@ def apply_rows(text: str, named: str, rows: list[ARow], file: str) -> str | None
 
 @cache
 def queue_base(file: str) -> str | None:
-    """The text this ticket's rows name: `14` at the base; `15` at the base with E15-D13's §C (its
-    PR 2, queued ahead of this one) applied, each of its rows re-pointed by content."""
-    base = at_base(TARGETS[file])
-    if base is None or file == "14":
-        return base
-    d13 = at_rev(D13_SHA, D13_PACK)
-    d13_named = at_rev(D13_BASE, CAT_REL)
-    if d13 is None or d13_named is None:
-        return None
-    return apply_rows(base, d13_named, a_rows(d13)[0], "15")
+    """The text this ticket's rows name: `14` and `15` at the base (E15-D13's §C merged as #5073,
+    so the queue base is the base itself); kept as a seam so a row ahead in the queue re-points by
+    content at PR 2's open."""
+    return at_base(TARGETS[file])
 
 
 def export(rows: list[ARow]) -> list[dict[str, object]]:
@@ -910,7 +915,7 @@ def arow_problems(rows: list[ARow], parse_bad: list[str]) -> list[str]:
             continue
         named = queue_base(r.file)
         if named is None:
-            bad.append(f"{r.aid}: `{r.file}`'s queue base is unreadable (E15-D13 at {D13_SHA})")
+            bad.append(f"{r.aid}: `{r.file}`'s queue base is unreadable (at {BASE})")
             continue
         bl = lines(named)
         at = bl[r.line - 1] if 1 <= r.line <= len(bl) else ""
@@ -1070,13 +1075,13 @@ def deck(spec: str) -> list[list[str]]:
     return [r for r in table_rows(section(spec, "14.")) if re.fullmatch(r"CP-\d+", r[0])]
 
 
-LEVELS = ("visible", "polite", "none")
+LEVELS = ("visible", "polite", "assertive", "none")
 PRECEDENCE = "Each chart follows its own sync group."
 RULED_STRINGS = (
     PRECEDENCE,
     "Maximise this chart to trade.",
     "One-click trading disarmed: chart returned to the grid.",
-    "Chart, BTCUSDT 4 hours maximised.",
+    "Chart, BTCUSDT 4 hours, Live, maximised.",
     "Grid restored, 4 charts.",
 )
 SUBSYSTEM = re.compile(r"\b(?:WebGL|GPU|context|worker|scissor\w*|React|shader)\b", re.IGNORECASE)
@@ -1197,7 +1202,7 @@ CITE = re.compile(
 )
 CONT = re.compile(r":(\d+)(?:[–-](\d+))?")
 MOVING = ("14", "15")  # files that move under the `15` queue: every cite into them is by content
-# Load-bearing words: each stands on the line its cite names (at BASE; `D13` at D13_SHA).
+# Load-bearing words: each stands on the line its cite names (at BASE).
 CITED: dict[tuple[str, int], str] = {
     ("14", 1141): "- **Type:** Panel hosting 2–9 chart instances",
     ("14", 1151): "one shared WebGL context with scissored viewports",
@@ -1206,13 +1211,16 @@ CITED: dict[tuple[str, int], str] = {
     ("14", 1157): "[ ] maximise-cell and restore",
     ("14", 3201): "SCR-030, SCR-032, SCR-049 and SCR-050 additionally require",
     ("15", 31): "241–242 and 244–247 unassigned",
-    ("15", 898): "### CMP-081 DockGrid / Layout Manager",
-    ("15", 2514): "### CMP-196 MultiChartLinker",
-    ("15", 2766): "### CMP-217 LayoutPresetMenu",
-    ("15", 2775): "### CMP-218 SyncMenu",
-    ("15", 2808): "### CMP-221 ChartToolbar",
-    ("15", 2876): "### CMP-227 EstimatedBadge",
-    ("15", 3084): "**242 — see the E08-D04, E36-D05 and E12-D09 addenda below**",
+    ("15", 902): "### CMP-081 DockGrid / Layout Manager",
+    ("15", 2527): "### CMP-196 MultiChartLinker",
+    ("15", 2782): "### CMP-217 LayoutPresetMenu",
+    ("15", 2784): '("3×1" out)',
+    ("15", 2791): "### CMP-218 SyncMenu",
+    ("15", 2824): "### CMP-221 ChartToolbar",
+    ("15", 2892): "### CMP-227 EstimatedBadge",
+    ("15", 2921): '"Arm state unknown — submit off", fails closed',
+    ("15", 2922): "announces the change assertively",
+    ("15", 3160): "**246 — E08-D04, E36-D05, E12-D09, E15-D13 addenda (below)**",
     ("D02", 150): 'no separate "propagate symbol" toggle',
     ("D02", 532): "its env badge when chart trading can act from it",
     ("D02", 534): "`Esc` never restores",
@@ -1223,6 +1231,8 @@ CITED: dict[tuple[str, int], str] = {
     ("D03", 168): "The kind, symbol, **interval**",
     ("D03", 169): "by kind and never by role",
     ("D03", 176): "Cancel focused",
+    ("D03", 305): "| 9   | Arm state",
+    ("D03", 323): "CMP-229's attention pill",
     ("D04", 227): "`Esc` never restores",
     ("D04", 234): "the arm state (`LOCKED`)",
     ("D06", 557): "E15-D02 D-32 / A-13 removed the toggle",
@@ -1236,6 +1246,15 @@ CITED: dict[tuple[str, int], str] = {
     ("26", 129): "rendering into their own canvases in sequence",
     ("22", 21585): "PaneKind:",
     ("05", 85): "`Esc` (universal cancel)",
+    ("05", 47): "Only active when focus is not inside a text input",
+    ("05", 95): "**Roving tabindex** within composite widgets",
+    ("E05D03", 74): "| 6   | Loading shimmer",
+    ("E05D03", 90): "The static two-tone fill from the first frame",
+    ("E30D05", 59): "cancels, closes and protective stop changes never do",
+    ("E30D05", 75): "**R-4 R5 (arm carve-out",
+    ("keymap", 303): '"dom.cancel_all"',
+    ("keymap", 523): '"positions.close"',
+    ("keymap", 535): '"positions.close_all"',
     ("keymap", 139): '"workspace.fullscreen_panel"',
     ("E11D02", 127): "The E06 spike gate is not met",
     ("E15.json", 470): '"key": "E15-K01"',
@@ -1261,7 +1280,7 @@ def cite_problems(t: Texts) -> list[str]:
         for key, a, b in cites_in(prose):  # §C's meta lines name the queue base (G-AROW's)
             bl = lines(key_text(key))
             if len(bl) < 2:
-                bad.append(f"{name}: `{key}` is unreadable at {REV.get(key, BASE)}")
+                bad.append(f"{name}: `{key}` is unreadable at {BASE}")
                 continue
             for n in sorted({a, b}):
                 seen.add((key, n))
@@ -1282,7 +1301,7 @@ def cite_problems(t: Texts) -> list[str]:
 
 
 SHA_OR_ID = re.compile(r"(?<![\w#/-])([0-9a-f]{10})(?![\w-])")
-KNOWN_SHAS = frozenset({BASE, BQ_BASE, D13_SHA, D13_BASE})
+KNOWN_SHAS = frozenset({BASE, BQ_BASE})
 KNOWN_IDS = frozenset({RULING_ID, LEDGER_ID, BQ_ID, D12_RULING, DELEGATION_ID, D13_RULING})
 
 
@@ -1817,7 +1836,45 @@ GATES: tuple[tuple[str, Callable[[Texts], list[Finding]]], ...] = (
     ("G-ENTRY", lambda t: fails("G-ENTRY", entry_problems(t.pack))),
     ("G-DEPUTY", lambda t: fails("G-DEPUTY", deputy_problems(t.pack))),
     ("G-MUTLIST", lambda t: fails("G-MUTLIST", mutlist_problems(t.pack))),
+    ("G-ARM", lambda t: fails("G-ARM", arm_problems(t))),
 )
+
+
+CARVE_OUT = (
+    "LOCKED covers order entry and arming only: cancel, close, flatten and setting or tightening a "
+    "stop are never gated, hidden or blocked by the grid or by any cell's state, maximised or not "
+    "(they live on the positions and orders surfaces, and their own hotkeys keep working in every "
+    "grid state)."
+)
+ARM_RULES = (
+    "**Protective actions are never gated**",
+    "**The maximised cell arms as a chart panel does.**",
+    "**Restore while armed.**",
+    "**If the disarm fails**",
+)
+ARM_STRINGS = ("Disarming chart trading…", "Chart trading is still armed on chart 3.")
+ARM_STORIES = ("MaximisedArmed", "Disarming", "DisarmFailed")
+
+
+def arm_problems(t: Texts) -> list[str]:
+    bad: list[str] = []
+    for name, text in docs(t):
+        if norm(CARVE_OUT) not in norm(text):
+            bad.append(f"{name}: the C-2.6 carve-out sentence is missing or weakened")
+    if not in_order(t.spec, ARM_RULES):
+        bad.append(
+            "the spec does not state the carve-out, the maximised arm, the restore and the failure"
+        )
+    strings = [r[1] for r in deck(t.spec)]
+    for want in ARM_STRINGS:
+        if not any(want in x for x in strings):
+            bad.append(f"the arm string {want!r} is not in the deck")
+    a8 = t.pack.split("#### A-8 ", 1)[-1].split("#### A-9 ", 1)[0]
+    for name, text in (("hand-off", section(t.hand, "5.")), ("A-8", a8)):
+        for story in ARM_STORIES:
+            if not re.search(rf"\b{story}\b", text):
+                bad.append(f"{name}: the story {story} is missing")
+    return bad
 
 
 def mutation_paragraph() -> str:
@@ -2009,6 +2066,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         _sub("pack", "- [ ] The blind check", "- [x] The blind check"),
     ),
     ("G-MUTLIST", "edit §19's list", _sub("pack", "**G-ANCHOR:** M-1", "**G-ANCHOR:** M-0")),
+    (
+        "G-ARM",
+        "remove the C-2.6 carve-out sentence from the spec",
+        _sub("spec", CARVE_OUT, "LOCKED covers every chart action."),
+    ),
 )
 
 
@@ -2047,6 +2109,19 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ),
     ("G-DEPUTY", "§21 no longer leaves the runs to the deputy", _sub("pack", DEPUTY_LINE, "run")),
     ("G-COPY", "a subsystem word in a deck string", _sub("spec", "this device", "this GPU")),
+    (
+        "G-ARM",
+        "weaken the carve-out in the hand-off",
+        _sub(
+            "hand", "are never gated, hidden or blocked", "are not usually gated, hidden or blocked"
+        ),
+    ),
+    ("G-ARM", "drop the Disarming story from the hand-off", _sub("hand", ", Disarming,", ",")),
+    (
+        "G-ARM",
+        "drop the disarm-failure path from the spec",
+        _sub("spec", "**If the disarm fails**", "**Later**"),
+    ),
     (
         "G-NAME",
         "the sync group in a cell's name",
@@ -2115,7 +2190,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--source", action="append", default=[], help="NAME=FILE, a saved ruling")
     args = ap.parse_args(argv)
     if any(not key_text(k) for k in KEYS):
-        print(f"FAIL [G-CITE] the inputs are unreadable at {BASE} / {D13_SHA} (fetch first)")
+        print(f"FAIL [G-CITE] the inputs are unreadable at {BASE} (fetch first)")
         return 1
     t = load(parse_sources(args.source))
     if args.a_rows:
