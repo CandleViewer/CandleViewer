@@ -3,11 +3,13 @@
  * `searchDeck` (SCR-041's builder wrote it first): the status rule, a remembered symbol gone from Bybit, and No matches
  * (CMP-026 `filtered-empty`; after a check, Check again is T2 `search.check_cooldown` for 60 s, through CMP-026's own
  * `disabledReason`: CMP-079 takes E09-D09's RBAC keys only). The check's line is the host's to place (SCR-102's detail
- * bar, SCR-041's list region). Also shared: the caption line and the focus rule (`useFocusHome`).
+ * bar, SCR-041's list region). Also shared: the caption line, the focus rule (`useFocusHome`), the rest a sentence that
+ * names the query waits for (`useRested`) and the say-again state of the polite region (`useSaidAgain`).
  */
 import {
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -18,6 +20,7 @@ import { COPY, statusText } from "./copy";
 import type { InstrumentIndex } from "./instrumentIndex";
 import type { Instrument, SearchResult } from "./ranking";
 import {
+  REST_MS,
   checkableSymbol,
   createSymbolCheck,
   type CheckSnapshot,
@@ -80,12 +83,14 @@ const block = (title: string, words: string, actions: EmptyStateActions): JSX.El
 
 /**
  * The deck for `unmatched`, the check's snapshot and `query` as typed. Check again keeps its block, and the focus on
- * it, while it runs (A11Y-D-01): only its line is new.
+ * it, while it runs (A11Y-D-01): only its line is new. A no-match sentence names the query, so it is said once the
+ * query has `settled` (`useRested`, §9.2), as the count is, and never once per keystroke (CR-DD-01).
  */
 export function searchDeck(
   query: string,
   unmatched: Unmatched,
   check: CheckSnapshot,
+  settled: boolean,
   on: DeckActions,
 ): Deck {
   const clear = { label: COPY.clear, onClick: on.clear, variant: "secondary" } as const;
@@ -131,7 +136,7 @@ export function searchDeck(
   return {
     node: block(title, lines.join(" "), at === null ? [clear] : [clear, again]),
     checking,
-    said: checking ?? `${title} ${COPY.scope}`,
+    said: checking ?? (settled ? `${title} ${COPY.scope}` : ""),
     heading: title,
     reason: "no_matches",
   };
@@ -148,20 +153,24 @@ const unsubscribed = (): (() => void) => () => undefined;
 const idle = (): CheckSnapshot => IDLE;
 
 /**
- * §6.2's symbol check for one opening of a surface: made in an effect, so StrictMode's rehearsal stops only its own,
- * and asked about `query` whenever it or the list changes (a new listing may answer it); `""` cancels it.
+ * §6.2's symbol check for one opening of a surface: made in an effect while it is `open`, so StrictMode's rehearsal stops
+ * only its own, and asked about `query` whenever it or the list changes (a new listing may answer it); `""` cancels it.
+ * Closing stops it for good, as a surface may outlive its closing (CMP-017's exit fade, SCR-102's mounted host): its rest
+ * is dropped, a lookup in flight aborts at once and a re-read asks nothing of the abandoned query (CR-DD2-01).
  */
 export function useSymbolCheck(
   index: InstrumentIndex,
   query: string,
+  open: boolean,
 ): { readonly check: SymbolCheck | null; readonly checked: CheckSnapshot } {
   const live = useSyncExternalStore(index.subscribe, index.getSnapshot);
   const [check, setCheck] = useState<SymbolCheck | null>(null);
   useEffect(() => {
+    if (!open) return undefined;
     const made = createSymbolCheck(index);
     setCheck(made);
     return () => made.stop();
-  }, [index]);
+  }, [index, open]);
   const checked = useSyncExternalStore(
     check?.subscribe ?? unsubscribed,
     check?.getSnapshot ?? idle,
@@ -182,4 +191,50 @@ export function useFocusHome(home: () => HTMLElement | null | undefined, live: b
     const at = document.activeElement;
     if (live && (at === null || at === document.body)) home()?.focus();
   });
+}
+
+/**
+ * A-D05-6's rest: `true` once `query` has stood for 300 ms, each time it changes: back at an earlier query it rests
+ * afresh. A sentence that names the query waits for it (`searchDeck`'s `settled`), as CMP-160's count does, so a
+ * keystroke is never said on its own (CR-DD2-03).
+ */
+export function useRested(query: string): boolean {
+  const [rested, setRested] = useState<string | null>(query); // the query that has stood its rest, while it stands
+  // A query that has moved on takes its rest with it, reset in the render so that no frame commits the old verdict.
+  if (rested !== null && rested !== query) setRested(null);
+  useEffect(() => {
+    const timer = setTimeout(() => setRested(query), REST_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
+  return rested === query;
+}
+
+/** What a user's own act asks to hear again: its words, and a new `n` each time (CMP-160's `messageKey`). */
+export interface SaidAgain {
+  readonly text: string;
+  readonly n: number;
+}
+
+/**
+ * §9.2's say-again: what the user's own act asks to hear again (`Enter`'s heading, a T2 press's reason, a refresh's
+ * answer) is said over the polite region's `base` words for as long as the `query` and the state (`base`, the block's
+ * `heading`) hold. Once either moves on it is forgotten, and not said when they return (A11Y-C2-04). `say` joins the
+ * moment last drawn, a late answer too.
+ */
+export function useSaidAgain(
+  query: string,
+  base: string | undefined,
+  heading: string | null,
+): { readonly again: SaidAgain | null; readonly say: (text: string) => void } {
+  const moment = JSON.stringify([query, base ?? null, heading]);
+  const [said, setSaid] = useState<(SaidAgain & { readonly moment: string }) | null>(null);
+  const again = said?.moment === moment ? said : null;
+  if (said !== null && again === null) setSaid(null);
+  const now = useRef(moment); // the moment a sentence joins, for a late answer too
+  useLayoutEffect(() => {
+    now.current = moment;
+  });
+  const say = (text: string): void =>
+    setSaid((prev) => ({ moment: now.current, text, n: (prev?.n ?? 0) + 1 }));
+  return { again, say };
 }
