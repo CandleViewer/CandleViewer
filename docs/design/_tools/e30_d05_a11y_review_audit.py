@@ -121,7 +121,7 @@ ARM_REASONS = ("arm.locked", "arm.unknown")
 T2_CHECKS = ("1a–d · 2 · 3 · 4 · 6", "1a–d · 2 · 3 · 4 · 5 · 6")
 DISABLED_TOKENS = ("opacity.disabled", "color.text.disabled")
 POLITENESS = ("polite", "assertive", "off", "never spoken", "none")
-RATE_RE = re.compile(r"once|per |never|≤|marks|on focus|debounced")
+RATE_RE = re.compile(r"once|per |never|≤|marks?|on focus|debounced")
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
 VERDICT_RE = re.compile(
     r"^(?:compliant|at risk|non-compliant|out of scope — .+|not yet decidable — routed to E30-Q05)$"
@@ -592,6 +592,9 @@ def gate_live(ctx: Ctx, r: Result) -> None:
         row = find(event)
         if row[3] != pol or rate not in row[4] or src not in row[6]:
             r.fail("G5-LIVE", f"the {event!r} row is not {pol} / {rate} / {src} as ruled")
+    lr12 = " | ".join(table.get("LR-12", []))
+    if "confirm.timeout.announce" in lr12 or "confirm.countdown.announce10" not in lr12:
+        r.fail("G5-LIVE", "LR-12 must name `confirm.countdown.announce10` only (0:00 is silent)")
     r.numbers["live_rows"] = len(table)
     r.numbers["politeness"] = tally
 
@@ -1083,6 +1086,13 @@ PROBES: tuple[tuple[str, Mut], ...] = (
     (
         "G3-R5",
         regex(r"^(\| AR-13 .*?)never refused for want of the arm", r"\1" + FROZEN),
+    ),
+    (
+        "G5-LIVE",
+        sub(
+            "| `confirm.countdown.announce10` only ",
+            "| `confirm.countdown.announce10` and `confirm.timeout.announce` ",
+        ),
     ),
     ("G10-CITE", pin_sub("|The C-2.6 carve-out binds this", "|The C-2.6 carve-out binds no")),
     ("G11-HYGIENE", sub('"Preset {n}, {qty} {coin}, active"', '"Preset 3, 0.250 BTC, active"')),
