@@ -35,10 +35,12 @@ anchored value. The gates, each FAIL led by its code:
   letter rule on `color.sync.*` and in CMP-218 and CMP-082.
 - [G-LEDGER] §2: dispositions from the vocabulary, the counts, every "Here" row present in §C.
 - [G-TOKEN] §5 (post-2T mode, by content: the ten tokens already ship at the base, so each is
-  asserted present with the pack's alias, the token files may change under G-UNTOUCHED): each addition aliases a primitive that exists at the base and is itself new; no
-  `e15.*` name; each confirmation exists; each retirement is absent from the token source; no
-  document carries a name R19 rejected (the frame's old name, a tab-strip row token); every
-  token named in a §C Tokens line is shipped, added here, or retired with "(Replaces".
+  asserted present with the pack's alias, and the token files may change under G-UNTOUCHED; a
+  token missing from one theme is a FAIL line, never a crash; the hc theme inherits the dark
+  file's sync lines, so its sync lines are asserted equal to dark's through the merged set):
+  each addition aliases a primitive that exists at the base and is itself new; no `e15.*` name;
+  each confirmation exists; each retirement is absent from the token source; no document carries
+  a name R19 rejected (the frame's old name, a tab-strip row token); every token named in a §C Tokens line is shipped, added here, or retired with "(Replaces".
 - [G-CONTRAST] the gated pairs meet their bars in three themes (sync edges on the header and the
   canvas, the drop-zone two-tone over every hosted content, the focus frame, the environment rule
   and word in focused and unfocused chrome), and the reproductions equal E15-D03, E15-D04 and
@@ -251,11 +253,18 @@ def norm(text: str) -> str:
 # ---------------------------------------------------------------------------- tokens and colour
 
 
+HIDE: dict[str, str] = {"color.sync.a": ""}  # the self-test hides a token in one theme
+
+
 @cache
-def theme_set(theme: str) -> dict[str, Any]:
+def _merged(theme: str) -> dict[str, Any]:
     files = [VERIFY.PRIMITIVES, *VERIFY.THEMES[theme]]
     merged: dict[str, Any] = VERIFY.merged_set(files)
     return merged
+
+
+def theme_set(theme: str) -> dict[str, Any]:
+    return {k: v for k, v in _merged(theme).items() if HIDE.get(k) != theme}
 
 
 def token_names() -> frozenset[str]:
@@ -957,13 +966,18 @@ def post_2t_problems() -> list[str]:
     bad: list[str] = []
     dark = theme_set("dark")
     for n, a in ALIAS.items():
-        if dark[n]["$value"] != "{" + a + "}":
-            bad.append(f"{n} is {dark[n]['$value']}, not {{{a}}} (post-2T)")
+        got = dark.get(n, {}).get("$value")
+        if got is None:
+            bad.append(f"{n} is missing in dark (post-2T)")
+        elif got != "{" + a + "}":
+            bad.append(f"{n} is {got}, not {{{a}}} (post-2T)")
     for s, refs in SYNC_REF.items():
-        for th in ("dark", "light"):
-            want = "{" + refs[th] + "}"
-            got = theme_set(th)[f"color.sync.{s}"]["$value"]
-            if got != want:
+        for th in THEMES:  # hc has no lines of its own: the merged set inherits dark's (T-7)
+            want = "{" + refs["light" if th == "light" else "dark"] + "}"
+            got = theme_set(th).get(f"color.sync.{s}", {}).get("$value")
+            if got is None:
+                bad.append(f"color.sync.{s} is missing in {th} (post-2T)")
+            elif got != want:
                 bad.append(f"color.sync.{s} ({th}) is {got}, not {want} (post-2T)")
     return bad
 
@@ -991,7 +1005,7 @@ def token_problems(spec: str, rows: list[ARow], others: tuple[str, ...] = ()) ->
             ref = refs["light" if th == "light" else "dark"]
             if ref not in prims:
                 bad.append(f"color.sync.{s}: {ref} is not a primitive")
-            got = theme_set(th)[SYNC_STANDIN[s]]["$value"]
+            got = theme_set(th).get(SYNC_STANDIN[s], {}).get("$value")
             if got != "{" + ref + "}":
                 bad.append(f"color.sync.{s} ({th}): {ref} is not E15-D06's hue ({got})")
     for n in CONFIRMED:
@@ -2105,6 +2119,11 @@ POST_2T_PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "post-2T: the splitter's alias expected as another primitive",
         _patch(ALIAS, "size.dock.splitter.hit", "size.control.compact"),
     ),
+    (
+        "G-TOKEN",
+        "post-2T: color.sync.a removed from the light theme alone (a FAIL line, no crash)",
+        _patch(HIDE, "color.sync.a", "light"),
+    ),
 )
 
 
@@ -2216,8 +2235,9 @@ def main(argv: list[str]) -> int:
             out += [f"FAIL [self-test] {x}" for x in st]
             out.append(
                 f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations (one per "
-                f"gate) and {len(PROBES)} probes, each one new FAIL from its gate; a re-run "
-                "reproduces the base result; files on disk unchanged"
+                f"gate), {len(PROBES)} probes and {len(POST_2T_PROBES)} post-2T mutations, each "
+                "one new FAIL from its gate; a re-run reproduces the base result; files on "
+                "disk unchanged"
             )
         print("\n".join(out))
     failed = any(f.level == "FAIL" for f in found) or bool(st)
