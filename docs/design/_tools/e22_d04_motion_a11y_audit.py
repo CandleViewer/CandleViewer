@@ -19,12 +19,14 @@ luminance is imported by function. Eleven gates, each FAIL led by its code:
 - [G5-ARITH] the announcement simulation (60 s at 2 000 prints/s, seeded, the A38 throttle:
   at most 12 writes, every one whale-class, none closer than 5 000 ms; and again with a row
   focused over SIM_HOLD: no write inside it, none closer than 5 000 ms), the tier-2 flash
-  classification per theme from D03's resolved values, the burst count, the frame, byte and
-  lateness figures, each recomputed and found in the spec.
+  classification per theme from D03's resolved values (the tier-2 fills, then the accent and
+  the row text), HS-1b's area arithmetic, the burst count, the frame, byte and lateness figures,
+  each recomputed and found in the spec.
 - [G6-RULED] every A37, A38 and A28-applied stamp at every site (SITE_ROWS, SITE_LEADS) in its
   form and with its date, and no stamp elsewhere; the walkthrough line, never written as pending;
   R577's and the ledger rows' words (RULING_PINS), and with `--source NAME=FILE` in that saved
-  copy too; AN-01's, AN-02's and AN-08's Gate cells read A38's suppression (AN_GATES).
+  copy too; AN-01's, AN-02's and AN-08's Gate cells read A38's suppression (AN_GATES); FP-05's and
+  FP-12's Focus cells read the post-Esc ruling (FP_FOCUS) and section 9 cites it (PRECISION).
 - [G7-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base;
   pins and cited spans match both ways, so a cite moved to other lines fails; every cited span
   reads the same at the BQ list's base, bar the files re-read at the base (REREAD).
@@ -32,8 +34,9 @@ luminance is imported by function. Eleven gates, each FAIL led by its code:
   on the lane's public-text list or a host name in the spec or this tool.
 - [G9-FROW] section 11's F rows: severity, owner (a spec and an area), target, `G-T2` only on a
   gated row, a cite in the merged sentence; the heading's counts and marker; the verdicts of
-  sections 10.1 and 10.2 in R-3's vocabulary, each `at risk` with its path or a Major row, each
-  `non-compliant` with a Blocking row; the cross-walk holds every SC in CROSSWALK.
+  sections 10.1 and 10.2 in R-3's vocabulary (`out of scope — ` naming its owner), each `at risk`
+  with its path or a Major row, each `non-compliant` with a Blocking row; the cross-walk holds
+  every SC in CROSSWALK.
 - [G10-ASSERT] every D4, DNA, AN, KR, FP, layer-1 and F row names one assertion id with a
   statement, no id twice; section 14's counts per consumer match.
 - [G11-BOARDS] "BOARDS: none, by A37" stands as section 0's own bold statement and nothing refers
@@ -69,9 +72,11 @@ from typing import Any, NamedTuple
 ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC = ROOT / "docs" / "design" / "E22" / "E22-D04.md"
-BASE = "595be3eff9"  # origin/main; every cite is read here
+BASE = "facc60f766"  # origin/main; every cite is read here
 BQ_BASE = "7e23e4667c"  # where the BQ list (6516622879) read every cite
-REREAD = {"E05-D03"}  # changed by its PR 2 (#5036) after BQ_BASE; cited by id, lines re-read
+# changed after BQ_BASE at or above the cited lines (E05-D03 by #5036; `14` by #5029 and #5034):
+# cited by id, their lines re-read at BASE
+REREAD = {"E05-D03", "14"}
 KEYS = {
     "05": "docs/plan/05-accessibility-standard.md",
     "06": "docs/plan/06-performance-and-load-standard.md",
@@ -111,14 +116,14 @@ CITE_PINS = """\
 05|208|No content flashes more than 3 times per second ¦ 06|25|≤16.6ms/frame (60fps)
 06|91|Coalesce big-trade-bubble/CVD/indicator pane redraws to every 2nd frame
 11|2189|accessible as a live-region-throttled table
-14|1256|opt-in polite announcements for whale prints only ¦ 14|1262|**Motion spec:**
-14|2410|screen-reader verbosity for the tape ¦ 15|1286|### CMP-112 BigTradeBubble
+14|1269|opt-in polite announcements for whale prints only ¦ 14|1275|**Motion spec:**
+14|2423|screen-reader verbosity for the tape ¦ 15|1286|### CMP-112 BigTradeBubble
 15|1290|"Big sell, 42,000 USDT, 65,410, 14:32:01" ¦ 21|3606|st_key_fmt ¦ 22|22233|accessibility:
 22|22243|verbosity: { type: string, enum: [low, normal, high] }
 26|148|bubble clustering (ruling BQ-S5; `06` names bubbles in rung 3)
 26|326|Radius by notional, alpha by age ¦ AGENTS.md|455|(rAF/`bufferTime`) before it touches React
 CONSTITUTION.md|207|**C-2.20 Hot paths are never statecharts.** ¦ D02|70|motion otherwise E22-D04's
-D02|101|Tier 2 ('whale', ≥ 4× ¦ D02|123|**Hard paused** ¦ D02|124|**Resumed**
+D02|91|258 px of text ¦ D02|101|Tier 2 ('whale', ≥ 4× ¦ D02|123|**Hard paused** ¦ D02|124|**Resumed**
 D02|125|**Click-to-locate** ¦ D02|127|**Stale T1** ¦ D02|141|**Paused, buffer full**
 D02|167|so the list never resumes under a focused row ¦ D02|171|live → soft paused
 D02|174|live → scroll paused ¦ D02|175|scroll paused → live ¦ D02|176|any → hard paused
@@ -159,7 +164,8 @@ limits.py|30|VISIBLE_BUBBLES_MAX: Final = 5000 ¦ limits.py|31|BUBBLE_FLASH_MAX_
 memo|89|| F22 | ¦ memo|91|Nothing on the tape may flash ¦ memo|260|at ≤2 Hz
 memo|290|0 ms, in place; no slide, no flash; tier emphasis persistent ¦ memo|291|| Reduced motion
 memo|389|| C16 | ¦ memo|390|"whale-print emphasis pulse"
-model.ts|87|export function shouldAnnounce( ¦ model.ts|93|p.verbosity === "low") return false
+model.ts|87|export function shouldAnnounce( ¦ model.ts|91|p.announce_prices === "off") return false
+model.ts|92|if (update.significant) return true ¦ model.ts|93|p.verbosity === "low") return false
 popover.css|6|it appears at once (no enter fade) ¦ popover.css|67|Out over `fast` / `accelerate`
 popover.css|82|the exit is a cut ¦ types.ts|280|export interface BubbleOptions {
 types.ts|281|minSizeQty: number ¦ types.ts|300|export interface BubbleData {"""
@@ -182,6 +188,16 @@ SITE_ROWS = {
 }
 SITE_LEADS = {"Every cut is ": "A37", "The policy is ": "A38", "The sign-off is ": "A28"}
 WALK = "owner walkthrough: post-Done (#2701)"
+# R577 BQ-12 precision (the orchestrator's lens round 1 on #5043, 6518797116): after `Esc` no row is
+# active; it is cited in section 9, and FP-05's and FP-12's Focus cells read it
+PRECISION = "R577 BQ-12 precision (RULED, orchestrator lens round 1, 6518797116)"
+FP_FOCUS = {
+    "FP-05": (
+        "the grid itself, the one Tab stop: the roving cursor cleared, no row active, "
+        "`aria-activedescendant` unset; never a row, never `body`"
+    ),
+    "FP-12": "the newest row: the roving cursor set there and the row selected",
+}
 # A38's gates, per announcement row's Gate cell (section 7): the suppression may not be weakened
 AN_GATES = {
     "AN-01": "the opt-in on; no tape row focused; `verbosity` not `low`",
@@ -270,14 +286,21 @@ SIM_S, SIM_RATE, SIM_SHARE, SIM_SEED, WINDOW_MS, SIM_MAX = 60, 2000, 0.0016, 577
 SIM_HOLD = (20_000.0, 30_000.0)  # the second run: a row focused (or `verbosity` `low`), ms
 HZ, RUNG_HZ, BYTES, AGED_MS = 60, 30, 4, 60_000
 THEMES = ("dark", "light", "hc")
+# section 5's two tables: `.raised` against each partner (D03 section 8.2's resolved values)
+FILLS = ("`color.buy.subtle`", "`color.sell.subtle`")
+MARKS = ("`color.buy.default`", "`color.sell.default`", "`color.text.primary`")
+# HS-1b's field (WCAG 2.3.1's 10 degrees at 1024 x 768) and the tape row (D02 section 3, compact)
+FIELD_W, FIELD_H, ROW_PX, ACCENT_PX, TEXT_W, TEXT_PX = 341, 256, 24, 2, 258, 11
 FLASH_DL, FLASH_DARK = 0.1, 0.8  # WCAG 2.3.1's general flash, as E05-D03 applies it
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
 VERDICTS = (
     "compliant",
     "at risk",
     "non-compliant",
+    "out of scope — <owner>",
     "not yet decidable — routed to E22-Q04 (#754)",
 )
+OUT_OF_SCOPE = re.compile(r"out of scope — (?!<owner>)\S.*")  # R-3: the owner named
 OWNER_RE = re.compile(r"^E\d\d-D\d\d · area/[a-z-]+$")
 AGENT_RE = re.compile(r"worker|agent|hpe-|session", re.IGNORECASE)
 TARGETS = ("E22-S01 (#714)", "E22-S03 (#716)", "E22-Q04 (#754)", "E22-D05 (#578)")
@@ -587,19 +610,46 @@ def lum(hex6: str) -> float:
     return float(CONTRAST.relative_luminance(rgb))
 
 
-def flash_rows(d03_line: str) -> list[tuple[str, ...]]:
-    """Section 5's table from D03 section 8.2's resolved values (dark / light / hc)."""
+def flash_rows(d03_line: str, partners: tuple[str, ...]) -> list[tuple[str, ...]]:
+    """A section 5 table from D03 section 8.2's resolved values (dark / light / hc): `.raised`, then
+    each partner and its delta L, the darker state and whether any pair is a transition."""
     hexes = {}
-    for name in ("`.raised`", "`color.buy.subtle`", "`color.sell.subtle`"):
+    for name in ("`.raised`", *partners):
         m = re.search(re.escape(name) + r" #(\w{6}) / #(\w{6}) / #(\w{6})", d03_line)
         hexes[name] = m.groups() if m else ("000000",) * 3
     out = []
     for i, theme in enumerate(THEMES):
-        a, b, s = (lum(hexes[n][i]) for n in hexes)
-        moves = [abs(a - x) >= FLASH_DL and min(a, x) < FLASH_DARK for x in (b, s)]
-        cells = (a, b, abs(a - b), s, abs(a - s), min(a, b, s))
+        a, *xs = (lum(hexes[n][i]) for n in hexes)
+        moves = [abs(a - x) >= FLASH_DL and min(a, x) < FLASH_DARK for x in xs]
+        cells = [a, *itertools.chain.from_iterable((x, abs(a - x)) for x in xs), min(a, *xs)]
         out.append((theme, *(f"{x:.4f}" for x in cells), "yes" if any(moves) else "no"))
     return out
+
+
+def tables(block: str) -> list[list[list[str]]]:
+    """Each table in `block`, its rows without the header."""
+    return [rows(t) for t in re.split(r"\n(?!\|)[^\n]*", block) if t.lstrip().startswith("|")]
+
+
+def area_sentence() -> str:
+    """Section 5's HS-1b arithmetic, recomputed."""
+    field = FIELD_W * FIELD_H
+    bound, rows_up = field // 4, math.ceil(FIELD_H / ROW_PX)
+    accent, column = rows_up * ACCENT_PX * ROW_PX, ACCENT_PX * FIELD_H
+    boxes = (rows_up + 1) * TEXT_W * TEXT_PX
+    return (
+        f"HS-1b's rectangle is {FIELD_W} × {FIELD_H} px = {trunc(field, 0)} px², and its bound is "
+        f"25 % of it, {trunc(bound, 0)} px² (`E05-D03`:109). The accent is one {ACCENT_PX} px column "
+        f"of {ROW_PX} px rows: at most {rows_up} rows × {ACCENT_PX * ROW_PX} px² = {trunc(accent, 0)} "
+        f"px² in any rectangle ({FIELD_H} / {ROW_PX} = {FIELD_H / ROW_PX:.2f} rows, rounded up; "
+        f"the {ACCENT_PX} px column caps it at {ACCENT_PX} × {FIELD_H} = {trunc(column, 0)} px²), "
+        f"{trunc(100 * accent / bound, 1)} % of the bound. The text is glyph ink inside its line boxes: "
+        f"39 ch at `type.num.sm` {TEXT_PX} px set {TEXT_W} px a row (`D02`:91), so at most "
+        f"{rows_up + 1} rows' line boxes, {rows_up + 1} × {TEXT_W} × {TEXT_PX} = {trunc(boxes, 0)} "
+        f"px², meet a rectangle; with the accent's {trunc(accent, 0)} px² the bound holds while the "
+        f"ink covers under {trunc(100 * (bound - accent) / boxes, 1)} % of those boxes "
+        f"(({trunc(bound, 0)} − {trunc(accent, 0)}) / {trunc(boxes, 0)})"
+    )
 
 
 def gate_arith(ctx: Ctx, r: Result) -> None:
@@ -641,14 +691,17 @@ def gate_arith(ctx: Ctx, r: Result) -> None:
             "changes at most once, so it makes no flash; a synthetic burst of "
             f"{vs} marks appearing in one frame is {vs} single changes in that frame and 0 flashes"
         ),
+        area_sentence(),
     ]
     text = flat(ctx.spec)
     for s in sentences:
         if flat(s) not in text:
             r.fail("G5-ARITH", f"the spec does not carry the recomputed {s[:70]!r}")
-    want = flash_rows(ctx.base["D03"].splitlines()[314])
-    if [tuple(x) for x in rows(section(ctx.spec, "5"))] != want:
-        r.fail("G5-ARITH", f"section 5's flash table differs from the recomputed {want}")
+    d03 = ctx.base["D03"].splitlines()[314]
+    want, marks = flash_rows(d03, FILLS), flash_rows(d03, MARKS)
+    got5 = [[tuple(x) for x in t] for t in tables(section(ctx.spec, "5"))]
+    if got5 != [want, marks]:
+        r.fail("G5-ARITH", f"section 5's flash tables differ from the recomputed {want}, {marks}")
     cells = ("1", f"≤ {vs}", f"≤ {trunc(vis * BYTES, 0)}", "+0", f"≤ {late} ms")
     got = {x[0]: tuple(x[1:6]) for x in rows(section(ctx.spec, "6"))}
     for rid in ("D4-11", "D4-12"):
@@ -657,6 +710,7 @@ def gate_arith(ctx: Ctx, r: Result) -> None:
     r.numbers["simulation"] = {"prints": prints, "whales": whales, "writes": len(writes)}
     r.numbers["suppressed_run"] = {"dropped": held.dropped, "writes": len(held.writes)}
     r.numbers["flash"] = [x[-1] for x in want]
+    r.numbers["flash_marks"] = [x[-1] for x in marks]
 
 
 # --- G6: stamps and the ruled words -----------------------------------------------------------
@@ -686,6 +740,12 @@ def gate_ruled(ctx: Ctx, r: Result) -> None:
             seen[lead] = seen.get(lead, 0) + 1
     if missing := sorted(k.strip() for k in (*SITE_ROWS, *SITE_LEADS) if k not in seen):
         r.fail("G6-RULED", f"no stamp at {missing}")
+    fp = by_id(section(ctx.spec, "9"), "FP")
+    for rid, focus in FP_FOCUS.items():
+        if len(fp.get(rid, [])) != 8 or fp[rid][3] != focus:
+            r.fail("G6-RULED", f"{rid}'s Focus cell does not read the post-Esc ruling's {focus!r}")
+    if PRECISION not in flat(section(ctx.spec, "9")):
+        r.fail("G6-RULED", f"section 9 does not cite {PRECISION!r}")
     an = by_id(section(ctx.spec, "7"), "AN")
     for rid, gate in AN_GATES.items():
         if len(an.get(rid, [])) != 8 or an[rid][6] != gate:
@@ -811,7 +871,7 @@ def gate_frow(ctx: Ctx, r: Result) -> None:
             verdict, ref, text = row[1], row[3], " ".join(row)
             fids = re.findall(r"\bF-\d\d\b", ref)
             sevs = {table_.get(f, ["", ""])[1] for f in fids}
-            if verdict not in VERDICTS:
+            if verdict not in VERDICTS[:3] + VERDICTS[4:] and not OUT_OF_SCOPE.fullmatch(verdict):
                 r.fail("G9-FROW", f"{sub} {row[0]!r}: verdict {verdict!r}")
             elif verdict == "at risk" and "interim path" not in text and "Major" not in sevs:
                 r.fail("G9-FROW", f"{sub} {row[0]!r}: at risk with no interim path or Major row")
@@ -923,7 +983,10 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G5-ARITH", regex(r"^(\| light +\| 0\.8615 +\| )0\.8492", r"\g<1>0.8491")),
     ("G6-RULED", regex(r"^(\| C-7 .*?)" + re.escape(STAMPS["A37"]), r"\1RULED (orchestrator)")),
     ("G6-RULED", sub("- **Hand-offs.**", "- **Hand-offs.** The owner walkthrough stays pending.")),
-    ("G6-RULED", sub("focus never sits on a moving row", "focus rarely sits on a moving row")),
+    (
+        "G6-RULED",
+        regex(r"focus(\s+)never sits on a moving row", r"focus\1rarely sits on a moving row"),
+    ),
     ("G7-CITE", sub("(`06`:91)", "(`06`:92)")),
     ("G8-HYGIENE", sub("- **Hand-offs.**", "- **Hand-offs.** " + codecs.decode("Yrnx", "rot13"))),
     ("G9-FROW", sub("<!-- audit:f=8/0/0/4/4 -->", "<!-- audit:f=8/0/1/3/4 -->")),
@@ -936,6 +999,7 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G6-RULED", regex(r"^(\| AN-08 .*?); `announce_prices` not read", r"\1")),
     ("G5-ARITH", sub("none inside the focused span", "one inside the focused span")),
     ("G10-ASSERT", regex(r"^(\| AN-08 .*?)Q04-17: ", r"\1")),
+    ("G6-RULED", regex(r"^(\| FP-05 .*?)no row active", r"\1the newest row active")),
 )
 
 
@@ -1000,7 +1064,7 @@ def main(argv: list[str]) -> int:
         out.append(
             f"rows {n.get('rows')} (cuts {n.get('cuts')}); DNA {n.get('dna')}; simulation "
             f"{n.get('simulation')} (suppressed run {n.get('suppressed_run')}); flash "
-            f"{n.get('flash')}; stamps {n.get('stamps')}; cites "
+            f"{n.get('flash')} (accent and text {n.get('flash_marks')}); stamps {n.get('stamps')}; cites "
             f"{n.get('cites')} ({n.get('spans')} spans, {n.get('pins')} pins; BQ base "
             f"{n.get('bq_base')}); ruling pins {n.get('ruling_pins')} (saved copies "
             f"{n.get('sources_checked')}); findings {n.get('findings')}; verdicts "
