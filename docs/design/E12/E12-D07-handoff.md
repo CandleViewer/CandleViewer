@@ -6,21 +6,21 @@ Components: **CMP-049 Table** (the non-time row header, the separator row, the `
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | CMP-049 Table (SCR-045 per mode)                                          | CMP-056 ColumnPicker                                                                                  | CMP-053 Pagination (in a separator row)        |
-| ------------------------ | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Final Penpot link        | [ ] PR 2: boards 01–10                                                    | [ ] PR 2: boards 02, 08                                                                               | [ ] PR 2: board 05                             |
-| Variants × states        | [x] spec §2, §6, §7                                                       | [x] spec §3.1 tiers P / A / E per mode, §4                                                            | [x] spec §7.1 (the lookback row's `Load more`) |
-| Keyboard table           | [x] E11-D04's, unchanged; separator rows are grid rows (spec §7.2, §11)   | [x] E11-D04's, unchanged                                                                              | [x] E11-D04's **Older** control                |
-| Accessible name and role | [x] the row header's name (spec §2.2); a separator row's name is its text | [x] each column by its header word; the auto state named "Auto (shows when the table is wide enough)" | [x] "Older"                                    |
-| Live data                | [x] patches at E11-D04's cadence; the edge announcement once (spec §9.1)  | [x] none                                                                                              | [x] E11-D04's                                  |
-| Motion pair              | [x] none: separator rows appear at once                                   | [x] none                                                                                              | [x] none                                       |
-| Density notes            | [x] compact; fixed 24 px rows (spec §5)                                   | [x] widths per mode (spec §5)                                                                         | [x] compact                                    |
-| Essential exceptions     | [x] none                                                                  | [x] none                                                                                              | [x] none                                       |
-| Tokens used              | [x] spec §14                                                              | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
-| Data contract            | [ ] NO: D07-G1 … D07-G5                                                   | [x] spec §3.1                                                                                         | [x] E11-D04's                                  |
-| Contrast                 | [x] spec §14 (computed)                                                   | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
-| Storybook                | [x] §D                                                                    | [x] §D                                                                                                | [x] §D                                         |
-| Sign-off                 | [ ] owner approval pending                                                | [ ] owner approval pending                                                                            | [ ] owner approval pending                     |
+| Item                     | CMP-049 Table (SCR-045 per mode)                                                                              | CMP-056 ColumnPicker                                                                                  | CMP-053 Pagination (in a separator row)        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Final Penpot link        | [x] page `E12-D07 SCR-045 data table`, page id `cb0c3916-2579-81a4-8008-dd7fc1d05559`: boards 01–10 (spec §0) | [x] the same page: boards 02, 08                                                                      | [x] the same page: board 05                    |
+| Variants × states        | [x] spec §2, §6, §7                                                                                           | [x] spec §3.1 tiers P / A / E per mode, §4                                                            | [x] spec §7.1 (the lookback row's `Load more`) |
+| Keyboard table           | [x] E11-D04's, unchanged; separator rows are grid rows (spec §7.2, §11)                                       | [x] E11-D04's, unchanged                                                                              | [x] E11-D04's **Older** control                |
+| Accessible name and role | [x] the row header's name (spec §2.2); a separator row's name is its text                                     | [x] each column by its header word; the auto state named "Auto (shows when the table is wide enough)" | [x] "Older"                                    |
+| Live data                | [x] patches at E11-D04's cadence; the edge announcement once (spec §9.1)                                      | [x] none                                                                                              | [x] E11-D04's                                  |
+| Motion pair              | [x] none: separator rows appear at once                                                                       | [x] none                                                                                              | [x] none                                       |
+| Density notes            | [x] compact; fixed 24 px rows (spec §5)                                                                       | [x] widths per mode (spec §5)                                                                         | [x] compact                                    |
+| Essential exceptions     | [x] none                                                                                                      | [x] none                                                                                              | [x] none                                       |
+| Tokens used              | [x] spec §14                                                                                                  | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
+| Data contract            | [ ] NO: D07-G1 … D07-G5                                                                                       | [x] spec §3.1                                                                                         | [x] E11-D04's                                  |
+| Contrast                 | [x] spec §14 (computed)                                                                                       | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
+| Storybook                | [x] §D                                                                                                        | [x] §D                                                                                                | [x] §D                                         |
+| Sign-off                 | [ ] owner approval pending                                                                                    | [ ] owner approval pending                                                                            | [ ] owner approval pending                     |
 
 ## §B Who applies what
 
@@ -90,6 +90,8 @@ An item marked (not found) had no pointer when the role ran; its fold is named a
 
 ## §H The board plan for PR 2 (a Penpot lane)
 
+**Drawn (PR 2, 2026-10-30).** All ten boards on page `cb0c3916-2579-81a4-8008-dd7fc1d05559`; board ids, PNGs and the as-built record in spec §0.
+
 The boards of spec §0; frames named `SCR-045/<mode-or-state> · <theme>`. Data (RULED P-6): a seeded synthetic stream (seed 242), not recorded; only the tick size (0.1) and qty step (0.001) come from the recorded instrument fixture (spec §0). **Synthetic boards: all ten, 01–10**, each declaring it on its face. Two-panel frames (RULED P-5): `captions/rebuild-and-cache` and both `separators/time-axis`. Each board's frames:
 
 | Board | Frames                                                                                           |
@@ -107,7 +109,7 @@ The boards of spec §0; frames named `SCR-045/<mode-or-state> · <theme>`. Data 
 
 ## §I Summary for #242
 
-1. Text-first SCR-045 per-mode spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards follow in PR 2 by a Penpot lane (8<!--=COUNT:boards.dark--> dark, 2<!--=COUNT:boards.light--> light twins).
+1. Text-first SCR-045 per-mode spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards drawn in PR 2 (8<!--=COUNT:boards.dark--> dark, 2<!--=COUNT:boards.light--> light twins).
 2. A non-time row leads with its open time to the ms and "bar k of n", keyed `(generation, index)`; the close time and duration are auto columns and always in the row's name.
 3. Each mode's set is mapped field by field to `22`'s `Bar` and `23`'s bars item; derived cells state their formula; nothing the canvas series lacks.
 4. One lowercase `state` list; `stale` and `corrected` are words; "corrected" is live-only and its loss on a REST re-read is stated.
