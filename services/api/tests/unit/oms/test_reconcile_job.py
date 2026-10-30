@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.models import RateHeadroom
 from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice
@@ -58,6 +59,21 @@ async def _locked(job: Job) -> Any:
     await interp.send("RETRY_DUE")
     assert await rest(interp) == "stale_lockout"
     return interp
+
+
+async def test_a_job_built_before_its_wiring_locks_stale_and_reports_nothing() -> None:
+    """Unwired, B19's fetch fails with its window spent, so the job locks in `stale_lockout`
+    rather than report a clean pass that read nothing (PR 2b builds a job only once wired)."""
+    b19.set_ports(None)
+    interp = await started()
+    try:
+        with capture_logs() as logs:
+            await interp.send("STARTUP", pass_id=SWEEP_ID)
+            assert await rest(interp) == "stale_lockout"
+        assert "reconcile_ports_unwired" in {e["event"] for e in logs}
+        assert interp.context.get("outcome") is None  # no report was made
+    finally:
+        await interp.stop()
 
 
 async def test_a_clean_startup_pass_is_reported_and_rests_idle(job: Job) -> None:

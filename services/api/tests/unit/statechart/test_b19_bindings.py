@@ -154,17 +154,34 @@ async def test_each_trigger_arm_records_its_trigger(action: Any, trigger: str) -
     assert context["trigger"] == trigger
 
 
-async def test_unwired_the_services_answer_nothing_and_the_actions_do_nothing(
-    unwired: None,
-) -> None:
+async def test_unwired_the_fetch_fails_spent_and_the_rest_do_nothing(unwired: None) -> None:
+    """A job built before `set_ports` fails its fetch with the stale window spent, so it locks
+    rather than report a clean pass; the other services and the actions do nothing."""
     context: dict[str, Any] = {"account_id": ACCOUNT, "pass_id": SWEEP, "trigger": "periodic"}
     with capture_logs() as logs:
-        for service in b19.SERVICES.values():
-            assert await service(None, context, _Event("x")) == {}
+        with pytest.raises(b19.FetchFailed) as failed:
+            await b19.fetch_exchange_state(None, context, _Event("x"))
+        for name in ("diff_against_local", "apply_remediations"):
+            assert await b19.SERVICES[name](None, context, _Event("x")) == {}
         for _name, action in sorted(b19.ACTIONS.items()):
             await action(None, context, _Event("OPERATOR_RESOLVED"), None)
+    assert (failed.value.kind, failed.value.exhausted) == (b19.UNWIRED, True)
+    assert b19.failures_exhausted(context, _Error("error.platform.fetch", failed.value))
     assert {e["event"] for e in logs} >= {"reconcile_ports_unwired"}
     assert context["unresolved"] == 0 and context["notices"] == []
+
+
+@pytest.mark.parametrize("missing", ["account_id", "pass_id"])
+async def test_a_wired_job_that_cannot_name_its_pass_fails_its_fetch_spent(missing: str) -> None:
+    b19.set_ports(_Reports({}))  # type: ignore[arg-type]  # a port the fetch must never reach
+    try:
+        context: dict[str, Any] = {"account_id": ACCOUNT, "pass_id": SWEEP} | {missing: None}
+        with capture_logs() as logs, pytest.raises(b19.FetchFailed) as failed:
+            await b19.fetch_exchange_state(None, context, _Event("x"))
+        assert (failed.value.kind, failed.value.exhausted) == ("unusable", True)
+        assert [e["event"] for e in logs] == ["reconcile_job_unusable"]
+    finally:
+        b19.set_ports(None)
 
 
 async def test_every_action_is_total_over_a_port_that_raises() -> None:
@@ -194,6 +211,17 @@ async def test_the_failure_actions_record_the_class_never_the_text() -> None:
     assert context["last_failure"] == "ValueError" and "key=abc" not in repr(context)
     await b19.record_diff_error(None, context, _Event("x"), None)
     assert context["last_failure"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("kind", "recorded"), [("RateLimitError", "RateLimitError"), ("k" * 65, "FetchFailed")]
+)
+async def test_a_failed_fetch_is_recorded_by_its_own_kind(kind: str, recorded: str) -> None:
+    """The fetch's own kind (a class or a named check), never the wrapper's, where it fits."""
+    context: dict[str, Any] = {"account_id": ACCOUNT}
+    failure = b19.FetchFailed(kind, failing_since_us=0, failed_at_us=1, window_us=120)
+    await b19.bump_failures(None, context, _Error("error.platform.fetch", failure), None)
+    assert context["last_failure"] == recorded
 
 
 async def test_the_summaries_land_in_plain_context() -> None:

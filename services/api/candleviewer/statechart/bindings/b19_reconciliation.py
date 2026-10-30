@@ -30,8 +30,10 @@ A static restore runs no entry action and resumes no invoke (LC-19): `redrive_af
 what the driver sends so a machine restored mid-pass never hangs (INV-B19-e), and the standing is
 rebuilt from the restored state by the OMS (`oms/reconcile_standing.py`).
 
-Unwired (no port set), the services return empty summaries and the actions do nothing: each logs
-`reconcile_ports_unwired` at ERROR, so a job built before its wiring never acts and never hides.
+Unwired (no port set), the fetch fails with its stale window spent, so a job built before its
+wiring locks in `stale_lockout` rather than report a clean pass that read nothing; the other
+services return empty summaries and the actions do nothing. Each logs `reconcile_ports_unwired` at
+ERROR, so such a job never acts and never hides.
 """
 
 from __future__ import annotations
@@ -68,6 +70,8 @@ REST_STATES: Final = frozenset({"idle", "backing_off", "divergent", "stale_locko
 #: A pass id as `str(UUID)` writes it, the only form the trigger events carry.
 _UUID_TEXT: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _MAX_TEXT: Final = 64
+#: The kind of a fetch a job built before `set_ports` makes: failed, its window spent.
+UNWIRED: Final = "unwired"
 
 
 def window_elapsed(failing_since_us: int, failed_at_us: int, window_us: int) -> bool:
@@ -185,6 +189,15 @@ def _failure_of(event: Any) -> str | None:
     """The class of a service's failure (`ErrorEvent.error`), never its text (C-12.6)."""
     failure = getattr(event, "error", None)
     return None if failure is None else type(failure).__name__
+
+
+def _fetch_failure(event: Any) -> str | None:
+    """A failed fetch's own kind (`FetchFailed.kind`: the cause's class or a named check, never
+    its text), where it names one that fits; else the failure's class (C-12.6)."""
+    failure = getattr(event, "error", None)
+    if isinstance(failure, FetchFailed) and (kind := _text(failure.kind)) is not None:
+        return kind
+    return _failure_of(event)
 
 
 def _text(value: object) -> str | None:
@@ -317,9 +330,10 @@ async def store_exchange_state(_i: Any, context: dict[str, Any], event: Any, _a:
 
 
 async def bump_failures(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """A fetch that failed inside the stale window (24 §8.5's phase table)."""
+    """A fetch that failed inside the stale window (24 §8.5's phase table), recorded by its own
+    kind (`_fetch_failure`)."""
     context["consecutive_failures"] = _count(context.get("consecutive_failures")) + 1
-    context["last_failure"] = _failure_of(event)
+    context["last_failure"] = _fetch_failure(event)
     trigger = _trigger(context)
     _effect("bump_failures", context, lambda p, a: p.fetch_failed(a, trigger=trigger))
 
@@ -467,10 +481,15 @@ async def audit_kill(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None
 
 
 async def fetch_exchange_state(_i: Any, context: dict[str, Any], _e: Any) -> Mapping[str, Any]:
-    """Step 1 (24 §8.5): raises `FetchFailed` for a failed fetch."""
+    """Step 1 (24 §8.5): raises `FetchFailed` for a failed fetch. A job that cannot fetch at all
+    (unwired, or with no account or pass id) fails with its stale window spent, so it locks
+    rather than report a clean pass that read nothing (INV-B19-a)."""
     ports, account, pass_id = _ports("fetch_exchange_state"), _account(context), _pass_id(context)
     if ports is None or account is None or pass_id is None:
-        return {}
+        kind = UNWIRED if ports is None else "unusable"
+        if ports is not None:
+            logger().error("reconcile_job_unusable", account_id=account, pass_id=pass_id)
+        raise FetchFailed(kind, failing_since_us=0, failed_at_us=0, window_us=0)
     return await ports.fetch(account, pass_id=pass_id, trigger=_trigger(context))
 
 
