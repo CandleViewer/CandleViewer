@@ -280,7 +280,13 @@ def test_the_label_never_carries_frame_content() -> None:
     conn = _conn(OWNER)
     for kind in ("x" * 5000, "kill_switch'; DROP", "ünï"):
         conn.push_system({"kind": kind, "message": "free text"})
-    assert set(_counts()) == {"unknown_kind", "invalid_body", "no_principal", "no_role"}
+    assert set(_counts()) == {
+        "unknown_kind",
+        "invalid_body",
+        "no_principal",
+        "no_role",
+        "held_overflow",
+    }
 
 
 def test_the_counter_is_catalogued_as_a_bounded_exported_counter() -> None:

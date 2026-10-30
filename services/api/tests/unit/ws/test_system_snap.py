@@ -201,6 +201,42 @@ async def test_a_socket_with_no_role_at_its_first_auth_gets_the_snap_at_a_reauth
         await rig.close()
 
 
+async def test_the_late_snap_of_a_socket_that_gained_a_role_is_followed_by_the_notices() -> None:
+    """Fable Minor 2 on #5039: the snap a re-auth sends (the first auth had no role) is the
+    socket's first `system` state, so the first-auth notices (the read-only latch, break-glass)
+    follow it, as they follow a first auth's snap."""
+    rig, user = _Rig(notices=[NOTICE]), uuid.uuid4()
+    async with asyncio.timeout(_DEADLINE_S):
+        sock = await rig.connect(_as(user))  # the deny-all principal: no snap, no notice
+        rig.principals[user] = _as(user, "viewer")
+        sock.feed({"t": "auth", "id": "re", "p": {"access_token": str(user)}})
+        assert (await sock.sent.get())["t"] == "auth_ok"
+        assert (await sock.sent.get())["t"] == "snap"
+        assert await _system(sock) == [(2, NOTICE)]
+        await rig.close()
+
+
+def test_a_hold_past_its_bound_keeps_the_newest_and_counts_each_drop() -> None:
+    """Fable Minor 1 on #5039: the hold before the snap is bounded (C-2.18); past it the oldest
+    goes, never silently: each drop is counted as `held_overflow`."""
+    from candleviewer.ws.gateway import SYSTEM_HELD_MAX
+    from candleviewer.ws.metrics import cv_ws_system_frames_withheld_total
+
+    counter = cv_ws_system_frames_withheld_total.labels(reason="held_overflow")
+    before = counter._value.get()
+    conn = _bare(OWNER)
+    bodies = [dict(NOTICE, reason=f"r{i}") for i in range(SYSTEM_HELD_MAX + 3)]
+    for body in bodies:
+        conn.push_system(body)
+    assert counter._value.get() - before == 3
+    conn.push_system(_SNAP_BODY, snap=True)
+    frames = []
+    while not conn.outbound.empty():
+        frames.append(conn.outbound.get_nowait())
+    held = [f["p"]["reason"] for f in frames if f.get("ch") == "system" and f["t"] == "d"]
+    assert held == [b["reason"] for b in bodies[3:]]  # the newest SYSTEM_HELD_MAX, in order
+
+
 async def test_a_frame_broadcast_while_the_snap_is_built_follows_it() -> None:
     """The flag read is the one await between `auth_ok` and the snap: a kill switch broadcast to
     the socket meanwhile (it is authenticated) is held, then queued after the snap as `s` 2."""

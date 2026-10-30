@@ -749,6 +749,7 @@ class _Connection:
         #: the snap queues them after itself, re-cut under the principal then applied.
         self.system_snapped = False
         self.system_held: deque[dict[str, Any]] = deque(maxlen=SYSTEM_HELD_MAX)
+        self.system_held_overflowed = False  # one warning a socket; every drop is counted
         #: §15.9 (E42-T03): the flag keys a Manager or Viewer may learn; `None`, no key.
         self.flag_visible = flag_visible
         self.auth_failures = 0
@@ -989,6 +990,11 @@ class _Connection:
         if snap and self.system_snapped:
             return
         if not snap and not self.system_snapped:  # the snap goes first; this follows it
+            if len(self.system_held) == SYSTEM_HELD_MAX:  # the oldest goes; never silently
+                cv_ws_system_frames_withheld_total.labels(reason="held_overflow").inc()
+                if not self.system_held_overflowed:
+                    self.system_held_overflowed = True
+                    _log().warning("ws system hold overflow", connection_id=self.connection_id)
             self.system_held.append(body)
             return
         views = [("snap" if snap else "d", view)]
@@ -1971,15 +1977,18 @@ def make_ws_router(
             **({} if view is None else {"kill_switch": view}),  # none for a principal with no role
         )
         conn.push(_reply("auth_ok", frame.get("id"), ts=now_ms, p=payload))
-        if not conn.system_snapped:  # §12.1 (#4992): the socket's first `auth_ok` it may see
+        snapped_now = not conn.system_snapped
+        if snapped_now:  # §12.1 (#4992): the socket's first `auth_ok` it may see
             body = await system_snap_body(conn, state, principal.user_id, principal.roles)
             conn.push_system(body, snap=True)
+            snapped_now = conn.system_snapped  # a principal with no role is still unsnapped
         elif flag_snapshot is not None:  # an in-place re-auth: the flag set under its roles
             await push_flag_snapshot(conn, flag_snapshot, principal.user_id, principal.roles)
         # E27-T02: current degraded/read-only state, so a client connecting after the
         # transition still gets the blocking notice (§6 `system`, CMP-092). First auth only:
-        # an in-place re-auth (token refresh) keeps the socket's existing state.
-        if not reauth:
+        # an in-place re-auth (token refresh) keeps the socket's existing state, unless this one is
+        # the socket's first snap (its first auth had no role): then the notices follow it.
+        if not reauth or snapped_now:
             for body in system_notices() if system_notices is not None else ():
                 conn.push_system(body)
         for f in revoked:

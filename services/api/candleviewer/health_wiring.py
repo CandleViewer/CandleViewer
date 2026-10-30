@@ -34,6 +34,7 @@ valid `system` frame (`cv://ws/v1/system.schema.json`):
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import shutil
 from collections.abc import Callable, Mapping, Sequence
@@ -271,8 +272,9 @@ class HealthSystemPublisher:
 
     def latest(self) -> dict[str, object] | None:
         """The last `health` frame handed to the sinks, `None` before the first: the WS gateway's
-        `system` snap baseline (`23-ws-protocol.md` §12.1, #4992). A copy: no reader changes it."""
-        return None if self._latest is None else dict(self._latest)
+        `system` snap baseline (`23-ws-protocol.md` §12.1, #4992). A deep copy: no reader changes
+        it."""
+        return None if self._latest is None else copy.deepcopy(self._latest)
 
     async def __call__(self, snap: HealthSnapshot) -> None:
         guard = self._clock_guard()

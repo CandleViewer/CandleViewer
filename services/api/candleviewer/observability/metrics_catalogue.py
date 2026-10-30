@@ -2745,11 +2745,12 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "kind, no principal or no role (SR-188, #3125, #3864). A deny-all socket counts every "
         "other frame as no_role. A Manager's or Viewer's feature_flags frame left with no key it "
         "may learn is the contract and is not counted, nor is an account_notice naming no "
-        "account it may view.",
-        "unknown_kind or invalid_body > 0 (ticket: producer bug)",
+        "account it may view. held_overflow: a frame dropped from the bounded hold that precedes a "
+        "socket's system snap (#4992).",
+        "unknown_kind or invalid_body > 0 (ticket: producer bug); any held_overflow (#4992)",
         _L,
         "E17",
-        max_series=4,
+        max_series=5,
         exported=True,
     ),
     _s(
