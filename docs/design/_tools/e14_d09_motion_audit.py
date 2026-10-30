@@ -12,19 +12,20 @@ its code, at most one G1 FAIL per table row:
 - [G2-TOKEN] every backticked name in a token group exists in the token JSON at the base or is
   one of R352's two ruled names; no motion token but the seven; each row's timing cell names its
   ruled motion tokens in order (RULED_TIMING; a cut names `motion.duration.instant` only).
-- [G3-PROPERTY] a moving canvas half animates one instance alpha or one scale uniform; a DOM half
+- [G3-PROPERTY] a moving canvas half animates one instance alpha or one per-instance scale; a DOM half
   only `opacity` or `transform`; a moving canvas row costs "+0 draw calls"; every canvas row says
   "the drawings layer only" and every row with a DOM layer "no layout on the chart container".
 - [G4-DNA] DNA-1 to DNA-4 stand byte for byte in `E14.json`:675 at the base; DNA-5 to DNA-8 stand
   with their pinned sentences; each DNA id in DNA_ON is applied on its rows.
 - [G5-ARITH] section 6's frames, instances, bytes and draw calls per moving row, and the HS-1,
   HS-1b and MR-1 figures (starts per window, the re-start gap, the ring's area, the region
-  bound, the line, rectangle and ellipse halos, the bulk-restore split), recomputed from the
-  token JSON and the rules.
+  bound, the line, rectangle and ellipse halos, the per-region start cap, the bulk-restore
+  split), recomputed from the token JSON and the rules.
 - [G6-RULED] A28's stamp (in sections 1 and 8), the walkthrough line, CR-1's cite, the section
-  7.5 title, the BQ-11 sentence, the Partial line and the R352 / R353 / A28 words (RULING_PINS)
-  stand exactly; with `--source NAME=FILE` each pin is also found in that saved copy of the
-  ruling.
+  7.5 title, the BQ-11 sentence, the Partial line and the R352 / R353 / A28 words and the three
+  R353 precisions of the orchestrator lens round 1 (L1; RULING_PINS) stand exactly; with
+  `--source NAME=FILE` each pin is also found in that saved copy of the ruling; D9-09, D9-12 and
+  D9-13 carry their precision's words and none of the words it removed (PRECISION).
 - [G7-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base;
   each pinned cite still carries its words, and pins and cited spans match both ways (every pin
   cited, every in-range cited span pinned), so a cite moved to other lines fails; each cited
@@ -41,7 +42,7 @@ of the spec and passes only when each adds exactly one new FAIL with its gate's 
 the unmutated text reproduces the base result and no file on disk changed.
 
 Usage: python3 -I -B docs/design/_tools/e14_d09_motion_audit.py [--check] [--json] [--self-test]
-       [--source R352=FILE] [--source R353=FILE] [--source A28=FILE]
+       [--source R352=FILE] [--source R353=FILE] [--source A28=FILE] [--source L1=FILE]
 """
 
 from __future__ import annotations
@@ -108,6 +109,12 @@ D02|453|nothing here animates by design;D02|500|"changes not saved" chip
 D02|506|live updates are not undo steps;D02|507|static emphasis for snap, selection and undo
 D02|525|"High 65,400.";D02|535|"Undone: moved trendline.";D02|537|"497 drawings deleted.
 D02|553|dirties the drawings layer only;D03|252|E14-D09 owns any transition
+D02|517|PROPOSED — E14-D10 finalises;05|207|remain functional
+D04|298|the swap cross-fades over `motion.duration.slow`;D04|321|the "Saved" swap instant
+D04|696|the "Saved" fade;E05-D03|167|dark and hc are not
+D07|207|`color.surface.selected` + 1 px;D07|592|a row selection that scrolls the chart
+D07|227|the toast are instant in both modes;handle.ts|10|readonly palette
+handle.ts|11|readonly convention
 D04H|103|dialog recipe (scale + fade);D07|21|never an auto-scroll
 D07|216|one decorative flash from `color.surface.selected`;D07H|104|E14-D09 owns the curve
 E05-D03|60|names only what animates;E05-D03|67|Dialog open / close;E05-D03|69|Value flash
@@ -135,13 +142,14 @@ D02|536|"200 drawings hidden." / "All drawings locked.";D02|723|motion: creation
 D04|299|`save-failed`;D04H|15|the popover's open / close is `16` §7's dialog recipe
 D05H|15|E14-D09 owns motion;D06H|107|(E14-D09 owns motion
 D07|21|| mark + ;D07|227|the restore flash is omitted;D07|313|**never moves the viewport**
-D07|313|the row menu's **;D07|317|with the **"restored"** tag for 10 s
+D07|313|scrolls the virtualised list so the row is in view;D07|317|with the **"restored"** tag for 10 s
 D07H|15|the restore flash `motion.duration.normal`"""
 STAMP = "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A28)"
 WALK = "owner walkthrough: post-Done (#2701)"
 PARTIAL = "Partial: PR 1 of 3"
 # The ruled words, by ruling (R352 = #352 6510321645, R353 = #353 6511761951, A28 = #2701
-# 6511768701); each stands in the spec, and in the saved copy given with --source.
+# 6511768701, L1 = R353's precisions in the orchestrator lens round 1 on #5014, 6512980157);
+# each stands in the spec, and in the saved copy given with --source.
 RULING_PINS: dict[str, tuple[str, ...]] = {
     "R352": (
         "TP-13 `color.drawing.snap`",
@@ -165,6 +173,22 @@ RULING_PINS: dict[str, tuple[str, ...]] = {
         WALK,
     ),
     "A28": (WALK, "No participant, timing or quote is invented."),
+    "L1": (
+        "the coupled tree row comes into view in one frame — a jump, never a smooth scroll",
+        "D9-13 is that cut",
+        "the tree overlay is tinted `color.drawing.selected`",
+        "at peak opacity 0.25 → 0 over `motion.duration.normal`, row 3's easing; never a fill tween",
+        "a cut inside D9-12",
+    ),
+}
+# The precisions per row (L1): words the row must carry, and the words the precision removed.
+PRECISION: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "D9-13": (("in one frame", "never a smooth scroll"), ("auto-scroll", "Q9")),  # BQ-03
+    "D9-09": (  # BQ-08
+        ("tinted `color.drawing.selected`", "overlay 0.25 → 0"),
+        ("`color.surface.selected` overlay", "overlay 1 → 0", "fill tween"),
+    ),
+    "D9-12": (('the "Saved" line swapped in one frame',), ("cross-fade",)),  # BQ-09
 }
 DNA_TEXT = {
     "DNA-5": "No drawing animates into existence or away.",
@@ -190,7 +214,8 @@ D, E = "motion.duration.", "motion.easing."
 RULED_TIMING: dict[str, tuple[str, ...]] = {
     "D9-03": (D + "fast", E + "decelerate"),
     "D9-05": (D + "normal", E + "standard"),
-    "D9-09": (D + "slow", E + "standard", D + "normal", E + "accelerate"),  # tree: E05-D03 row 3
+    # tree: R353 BQ-08 precision (L1): `normal` with row 3's easing (its fade-out curve)
+    "D9-09": (D + "slow", E + "standard", D + "normal", E + "accelerate"),
 }
 MOTION7 = frozenset(
     [D + x for x in ("instant", "fast", "normal", "slow")]
@@ -198,15 +223,15 @@ MOTION7 = frozenset(
 )
 PROPOSED = frozenset({"color.drawing.snap", "color.drawing.handle.active"})  # R352 TP-13, TP-11
 CUT_TIMING = "`motion.duration.instant` · `—`"
-GL_FORMS = ("instance alpha", "scale uniform")
+GL_FORMS = ("instance alpha", "per-instance scale")
 HZ, HS1_GAP_MS, MR1_MAX, HS1_CAP = 60, 500, 3, 20  # HS-1: 500 ms, 20 per frame; MR-1: 3 per 1 s
+HS1B_STARTS = 3  # HS-1b: at most 3 flash starts per region per half-open 1 000 ms window
 REGION, AREA_SHARE, BAND_PX, RING_START_PX, BYTES = (341, 256), 0.25, 4, 14, 4
 DRAG_STOP = ("drag threshold", "to rest")  # DNA-4's stop rule on D9-05 and D9-09
 BULK = 497  # D02's delete-all example ("497 drawings deleted")
 BOARDS = tuple((f"{i:02d}", "dark") for i in range(1, 6)) + (("06", "light"),)  # 06 twins 03
 BANNED_ROT13 = (
-    "yrnx rkcbfrq olcnff rkcybvg nggnpx benpyr erirny haobhaqrq sybbq fgnyy nqivfbel TUFN "
-    "cer-nhgu"
+    "yrnx rkcbfrq olcnff rkcybvg nggnpx benpyr erirny haobhaqrq sybbq fgnyy nqivfbel TUFN cer-nhgu"
 )
 BANNED = codecs.decode(BANNED_ROT13, "rot13").split()
 BANNED_WORD = re.compile(r"\b" + codecs.decode("qbf", "rot13") + r"\b", re.IGNORECASE)
@@ -492,7 +517,18 @@ def expected_figures(ctx: Ctx) -> tuple[dict[str, tuple[str, ...]], list[str]]:
             f"{trunc(length, 1)} px outline: its halo covers {trunc(hb, 1)} px², so {n} fit "
             f"({trunc(n * hb, 1)} px²) and a {n + 1}th does not ({trunc((n + 1) * hb, 1)} px²)."
         )
-    held = max(sel, rst) < HS1_GAP_MS and all(n < fit for n in fits.values())
+    rect_hb = BAND_PX * outlines["rect"]
+    sentences.append(
+        f"has seen fewer than {HS1B_STARTS} halo starts in the current half-open 1 000 ms window;"
+    )
+    sentences.append(
+        f"{HS1B_STARTS} is under the {fit} line, {fits['rect']} rectangle and {fits['ellipse']} "
+        f"ellipse halos the area cap admits, and {HS1B_STARTS} region-sized rectangle halos cover "
+        f"{HS1B_STARTS} × {trunc(rect_hb, 1)} = {trunc(HS1B_STARTS * rect_hb, 1)} px², under "
+        f"{trunc(bound, 0)} px²"
+    )
+    starts_bind = HS1B_STARTS < min(fit, *fits.values()) and HS1B_STARTS * rect_hb <= bound
+    held = max(sel, rst) < HS1_GAP_MS and all(n < fit for n in fits.values()) and starts_bind
     if starts > MR1_MAX or ms[D + "fast"] >= HS1_GAP_MS or fit >= HS1_CAP or not held:
         sentences.append("(the rules no longer hold: a start cap, a settle or the area cap)")
     return cells, sentences
@@ -526,6 +562,12 @@ def gate_ruled(ctx: Ctx, r: Result) -> None:
                 r.fail("G6-RULED", f"{name}'s words {pin[:48]!r}… are not in its saved copy")
     if missing := [n for n in (1, 8) if STAMP not in flat(section(ctx.spec, n))]:
         r.fail("G6-RULED", f"A28's stamp is not in section(s) {missing}")
+    rs = {x.get("d9", ""): " | ".join(x.values()) for x in table(ctx.spec)}
+    for rid, (need, gone) in PRECISION.items():
+        cells = rs.get(rid, "")
+        lacks, holds = [w for w in need if w not in cells], [w for w in gone if w in cells]
+        if lacks or holds:
+            r.fail("G6-RULED", f"{rid}: L1's precision lacks {lacks}, still says {holds}")
     open_walk = r"walkthrough[^.]{0,60}pending|pending[^.]{0,60}walkthrough"
     if re.search(open_walk, text, re.IGNORECASE):
         r.fail("G6-RULED", "the owner walkthrough is written as pending")
@@ -672,10 +714,13 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
 PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G1-TABLE", regex(r"^(\| D9-13 (?:\|[^|]+){6}\| )no ", r"\1yes ")),
     ("G1-TABLE", regex(r"^(\| D9-05 .*?)carries:", r"\1static is not worse:")),
-    ("G2-TOKEN", sub("`color.surface.selected` overlay", "`color.surface.chosen` overlay")),
-    ("G3-PROPERTY", regex(r"^(\| D9-05 .*?)instance alpha", r"\1instance alpha, scale uniform")),
+    ("G2-TOKEN", sub("tokens (`color.drawing.selected`, ", "tokens (`color.drawing.chosen`, ")),
+    (
+        "G3-PROPERTY",
+        regex(r"^(\| D9-05 .*?)instance alpha", r"\1instance alpha, per-instance scale"),
+    ),
     ("G4-DNA", regex(r"^(\| D9-13 .*?\| )DNA-6( +\|)", r"\1MR-3 \2")),
-    ("G4-DNA", sub("HS-1; HS-1b; DNA-1; DNA-4; CR-1", "HS-1; HS-1b; DNA-1; CR-1")),
+    ("G4-DNA", sub("HS-1; HS-1b (C-4); DNA-1; DNA-4; CR-1", "HS-1; HS-1b (C-4); DNA-1; CR-1")),
     (
         "G1-TABLE",
         sub(
@@ -689,6 +734,17 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G7-CITE", sub("`D02`:521-523", "`D02`:100-101")),
     ("G6-RULED", sub(STAMP, "RULED (orchestrator, 2026-10-30)")),
     ("G5-ARITH", sub("so 4 fit", "so 5 fit")),
+    ("G5-ARITH", sub("fewer than 3 halo starts", "fewer than 4 halo starts")),
+    # one probe per L1 precision (M-1 BQ-03, M-2 BQ-08, M-3 BQ-09)
+    ("G6-RULED", regex(r"^(\| D9-13 .*?)never a smooth scroll", r"\1never an auto-scroll")),
+    ("G6-RULED", regex(r"^(\| D9-09 .*?)overlay 0\.25 → 0", r"\1overlay 1 → 0")),
+    (
+        "G6-RULED",
+        regex(
+            r'^(\| D9-12 .*?)the "Saved" line swapped in one frame',
+            r'\1the "Saved" line cross-fades',
+        ),
+    ),
     (
         "G8-HYGIENE",
         sub("- **Hand-offs.**", "- **Hand-offs.** " + codecs.decode("Nggnpx", "rot13") + "."),
