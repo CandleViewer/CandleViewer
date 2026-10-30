@@ -6,8 +6,8 @@ contracts (`docs/design/E42/E42-D05.md` §17, D05:861-870) —
 each gets a block below; the components it only composes get one placement line each and link their own checklists.
 **Shape:** E42-D04's (E30-D03's and E39-D02's): Tables 1–5, the Density table and the Essential-exceptions table
 appear once each with a leading `Component` column instead of once per block. **This file decides nothing:** every row
-cites the spec line that decides it. Prop and story names are Appendix A's text (D05:1024-1042), which lands in `15`
-in a later commit of the boards PR; they are PROPOSED until owner approval (D05:3-13).
+cites the spec line that decides it. Prop and story names are Appendix A's text (D05:1024-1042), applied to `15`
+on `main` `d7f9ca355` (#960); they are PROPOSED until owner approval (D05:3-13).
 
 **Key.** `D05:n` = a line of `docs/design/E42/E42-D05.md` at this branch; `D03` = `docs/design/E42/E42-D03.md`;
 `D04` = `docs/design/E42/E42-D04.md`; `D09` = `docs/design/E09/E09-D09.md`; `Y`, `W`, `M`, `svc/` and `tok` as D05's
@@ -99,7 +99,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
       `scr146-list-download` (BK-4 [38]'s Running row); BK-6 [40], RW-2 [53] and RW-9 [60] are not drawn — the text
       binds (D05:518, 609)
 - [ ] **Variants × States matrix** — open with the stories (Table 1, its boards drawn): `main`'s Default, WithLabel, AllTones, Meter, Unlabelled
-      and Appendix A's Running, Failed, Unknown, InWizard, re-read on `main` in the later commit (§21's C-row (3)); Table 1
+      and Appendix A's Running, Failed, Unknown, InWizard, applied, merged with #4414's text (§21's C-row (3)); Table 1
 - [ ] N/A — **Keyboard table**: the bar takes no focus and binds no key; its host's controls are CMP-001's (Table 2
       states it)
 - [x] **Accessible name / role table** — Table 3: `role="progressbar"` with `aria-valuenow/min/max`; `aria-valuetext`
@@ -202,7 +202,7 @@ place them.
 | CMP-210   | Stale                                           | the feed behind the chips down: "stale since {hh:mm:ss}" (D05:1037)   | [03] not drawn                                  | §21's C-row (4)                               |
 | CMP-210   | Unknown                                         | no state received: "unknown" (D05:1037)                               | [03] not drawn                                  | —                                             |
 | CMP-210   | NonOwner                                        | focusable text, no link (D09:44; D05:866)                             | [03] not drawn                                  | —                                             |
-| CMP-023   | Default, WithLabel, AllTones, Meter, Unlabelled | `main`'s (`15:271-279`)                                               | —                                               | re-read in the later commit (C-row (3))       |
+| CMP-023   | Default, WithLabel, AllTones, Meter, Unlabelled | `main`'s (`15:271-279`)                                               | —                                               | applied, merged (C-row (3))                   |
 | CMP-023   | Running                                         | BK-4's and BK-6's running row "{n} %" (D05:518, 520)                  | [38] → 05; [40] not drawn                       | polite at 25 % steps                          |
 | CMP-023   | Failed                                          | RW-13 the restore failed (D05:613)                                    | [64] not drawn                                  | the word beside the bar                       |
 | CMP-023   | Unknown                                         | a lost job, `404 job_unknown` (RW-10, D05:610)                        | [61] → 07 (1280)                                | the row is read instead                       |

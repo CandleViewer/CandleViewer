@@ -276,11 +276,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-023 Progress Bar
 
 - **Tier**: Atom · **Purpose**: determinate progress (recorder disk usage, replay load, TWAP slice progress).
-- **Props**: `value: number` (0-100) · `label?` (or `aria-labelledby`; one is required) · `valueText?` (`aria-valuetext`, e.g. "page 3 of ~9") · `kind?: "progress"|"meter"` (default `progress`; `meter` for a gauge such as disk usage or a budget share) · `tone: "default"|"success"|"warning"|"danger"`.
+- **Props**: `value: number` (0-100) · `label?` (or `aria-labelledby`; one is required) · `valueText?` (`aria-valuetext`, e.g. "page 3 of ~9") · `kind?: "progress"|"meter"` (default `progress`; `meter` for a gauge such as disk usage or a budget share) · `tone: "default"|"success"|"warning"|"danger"` · `status?: "running"|"succeeded"|"failed"|"cancelled"|"unknown"` (a job's status, a word beside the bar).
 - **States**: determinate only (an unknown total uses CMP-038, never an indeterminate loop); empty, partial and complete; the value text always shown, led by the tone's glyph on warning and danger.
-- **A11y**: `role="progressbar"` `aria-valuenow/min/max`. `role="meter"` when `kind="meter"`; `aria-valuetext` from `valueText`; the value text and the glyph are `aria-hidden`; never a live region: the host announces the start, the completion or a failure once.
+- **A11y**: `role="progressbar"` `aria-valuenow/min/max`. `role="meter"` when `kind="meter"`; `aria-valuetext` from `valueText`, which equals the visible value text ("{n} %" for a job); the value text and the glyph are `aria-hidden`; never a live region: the host announces the start, the completion or a failure once; a failed, cancelled or unknown `status` is a word beside the bar, never colour alone.
 - **Tokens**: track `color.surface.hover`, 8 px from `space.inset.xs` padding, `radius.badge`; fill `color.action.primary.default` (default), `color.status.success.default`, `color.status.warning.strong`, `color.status.danger.default`; label `type.ui.label` and value `type.num.sm`, both `color.text.secondary`; `space.stack.xs`, `space.inset.xs`; a new value moves the fill over `motion.duration.normal` (motion-reduce: a step). (Replaces `color.track`, which is not a shipped token; `color.action.primary` read as `.default`.)
-- **Storybook**: Default, WithLabel, AllTones, Meter, Unlabelled.
+- **Storybook**: Default, WithLabel, AllTones, Meter, Unlabelled, Running, Failed, Unknown, InWizard.
 - **Tests**: unit, visual, axe.
 - **Motion spec**: [E42-D04.md](../design/E42/E42-D04.md) (E42-D04 §13, after E08-D11 M7; `transform: scaleX` per sample over `normal`, steps under reduce; the "{n} %" text carries it — PROPOSED).
 
@@ -741,10 +741,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-066 Stepper (multi-step wizard indicator)
 
 - **Tier**: Molecule · **Purpose**: onboarding/setup wizards (first-run account connect, rule-creation wizard).
-- **Props**: `steps: {label,status}[]` · `currentStep`.
-- **A11y**: `aria-current="step"`, list semantics, status conveyed by icon+text not colour alone.
-- **Tokens**: `color.status.*`.
-- **Storybook**: Default, WithErrors.
+- **Props**: `steps: {id, label, status: "todo"|"current"|"done"|"blocked"|"error", statusText?, until?, href?}[]` · `currentStep` · `navigable?`.
+- **A11y**: a `<nav>` with an `aria-label` holding an ordered list; `aria-current="step"` on the current item; each status a word with one glyph shape (check done, dot current, clock blocked, octagon error), never colour alone; a blocked step states its reason and its until-time in text and never prevents later steps; on a step change focus moves to the step's heading; at 200 % zoom the list collapses to "Step {n} of {m}" with a disclosure.
+- **Tokens**: `color.text.primary`/`secondary`, `color.status.success.strong`, `color.status.warning.strong`, `color.status.danger.strong`, `color.status.info.strong`, `color.neutral.default`, `color.border.selected`, `color.focus.ring`.
+- **Storybook**: Default, WithErrors, Blocked, Resumed, Navigable, Collapsed.
 - **Tests**: unit, visual, axe.
 
 ### CMP-067 FileDrop / Import control
@@ -2204,10 +2204,10 @@ interface ReplayScrubberProps {
 ### CMP-178 SystemHealthTile
 
 - **Tier**: Molecule (owner/admin) · **Purpose**: one metric tile on the admin Health screen or the SCR-120 overview — ingestion lag, WS state, DB status, engine FPS, a slice's counts — each with threshold-based tone and its own loading, error, unavailable and stale state.
-- **Props**: `label` · `value` · `unit` · `state: "loading"|"ready"|"error"|"unavailable"` · `tone: "ok"|"warning"|"danger"|"stale"` · `asOf?` · `lastGoodAt?` · `detail?` · `stopsWorking?` · `onRetry?` · `href` · `env?` · `sparkline?: number[]`.
-- **A11y**: `role="region"` labelled by its heading, which is the link; the state word always rendered with one glyph shape per tone (check, triangle, octagon, clock); "Attention:" prefixes a warning; no number for a field not received; age text never live; the shell announces transitions once (degraded or down assertive, recovery polite).
-- **Tokens**: inherits CMP-050 Card + CMP-024 Sparkline; `color.surface.raised`, `radius.card`, `color.text.primary`/`secondary`/`tertiary`, `color.status.success.strong`, `color.status.warning.strong`, `color.status.danger.strong`, `color.data-confidence.stale.indicator`, `type.num.base`.
-- **Storybook**: Ok, Warning, Danger, Loading, Error, Unavailable, Stale, WithEnvBadge, NotReceived.
+- **Props**: `label` · `value` · `unit` · `stateWord?` (the contract's state, rendered verbatim) · `state: "loading"|"ready"|"error"|"unavailable"` · `tone: "ok"|"warning"|"danger"|"stale"|"neutral"` · `asOf?` · `valueAsOf?` (when the number is older than the word) · `lastGoodAt?` · `detail?` · `stopsWorking?` · `onRetry?` · `href` · `env?` · `sparkline?: number[]` · `history?: {t, value}[]` · `historyUnit?` · `stillSafe?` (renders "Native stops on the exchange are unaffected."; the host decides per component) · `hint?` · `runbookHref?`.
+- **A11y**: `role="region"` labelled by its heading, which is the link; the state word always rendered with one glyph shape per tone (check, triangle, octagon, clock, a ring for `neutral`); "Attention:" prefixes a warning; no number for a field not received; age text never live; the shell announces transitions once (degraded or down assertive, recovery polite); the sparkline keeps CMP-024's `role="img"` with a trend label ("probe latency, last hour: rising, 120 to 210 milliseconds") and a "View as table" disclosure holds a CMP-049 table (time, value, unit) of the same series; every number carries its unit in words in the accessible name ("probe 210 milliseconds"); the remediation hint and its runbook link follow what stops working.
+- **Tokens**: inherits CMP-050 Card + CMP-024 Sparkline; `color.surface.raised`, `radius.card`, `color.text.primary`/`secondary`/`tertiary`, `color.status.success.strong`, `color.status.warning.strong`, `color.status.danger.strong`, `color.data-confidence.stale.indicator`, `color.neutral.default`, `type.num.base`.
+- **Storybook**: Ok, Warning, Danger, Loading, Error, Unavailable, Stale, WithEnvBadge, NotReceived, NotDeployed, WithHistory, HistoryTable, NumberStale, WithHint.
 - **Tests**: unit, visual, axe.
 
 ### CMP-179 FeatureFlagRow (admin feature flags screen)
@@ -2694,10 +2694,10 @@ This band was added during the cross-document traceability reconciliation (see `
 ### CMP-210 HealthChips
 
 - **Tier**: Molecule · **Purpose**: compact cluster of system-health chips (WS, ingestion lag, recorder, exchange rate-limit budget) in the top bar.
-- **Props**: `chips: {id,label,state:"ok"|"warn"|"error",value?:string,tooltip:string}[]`.
-- **A11y**: each chip's accessible name is "`label`: `state`, `value`" — state is always a word, never a colour alone; a chip with `warn`/`error` is focusable and opens the relevant admin screen.
-- **Tokens**: `color.status.*`, `radius.pill`.
-- **Storybook**: AllOk, Warning, Error, Mixed.
+- **Props**: `chips: {id, label, state: "ok"|"warn"|"error"|"stale"|"unknown", value?: string, asOf?: string, description?: string, tooltip?: string, href?: string}[]` (`href` for owner sessions only).
+- **A11y**: each chip's accessible name is "`label`: `state`, `value`" — state is always a word, never a colour alone; `stale` reads "stale since {hh:mm:ss}" and `unknown` "unknown" when the feed behind the chips is down; `description` is in the DOM and `tooltip` only echoes it; for an owner a `warn`, `error` or `stale` chip links to its component on SCR-143; for any other session it is focusable text with no link; ages are never live.
+- **Tokens**: `color.status.*`, `color.data-confidence.stale.indicator`, `color.text.primary`, `radius.pill`.
+- **Storybook**: AllOk, Warning, Error, Mixed, Stale, Unknown, NonOwner.
 - **Tests**: unit, visual, axe.
 - **As built (E10-S01, #304)**: two chips, in the CMP-208 status bar rather than the top bar: "Connection: <word>" and "WS latency: <state>", each glyph + word, never colour alone. They are status text: no admin link and no focus yet, and no ingestion-lag, recorder or rate-limit chip (no source). The value is outside the live region.
 

@@ -465,12 +465,13 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 ```
 
 - **Data:** `GET /api/v1/invites/{inviteToken}`, `GET /api/v1/me/limits`.
-- **States:** invite valid · expired ("This invitation expired on <date>. Ask the owner for a new one.") · already used.
+- **States:** invite valid · link not valid (expired, used and unknown links read the same: `getInvite` answers `404` for all three): "This invite link isn't valid any more. Ask the owner for a new one." · too many attempts (`429`) · unavailable (`503`).
 - **Components:** CMP-001 Button, CMP-040 FormField, CMP-050 Card, CMP-066 Stepper, CMP-097 OnboardingChecklist.
 - **Stories:** US-ONB-006, US-ONB-007, US-ADMIN-013.
 - **A11y:** Wizard is a sequence of `<form>` steps with an `aria-current="step"` progress list; each step has an `<h1>`; nothing depends on the coach-mark overlay (it can be skipped entirely by keyboard).
 - **Performance:** Route transition between steps <=200 ms; no chart/WS subscriptions are opened until the wizard completes.
 - **Analytics/audit:** `onboarding.started`, `onboarding.step_completed`, `onboarding.skipped`, `onboarding.completed` (analytics); `user.first_login` (audit).
+- **Hi-fi (E42-D05):** accept, password (SCR-004), two-factor (SCR-003), the orientation card for a manager and for a viewer, a link no longer valid. See `docs/design/E42/E42-D05.md` §9.3.
 - **Design sign-off acceptance checklist:** [ ] scoped-account explanation drawn for manager and viewer separately [ ] 'what you cannot do' section drawn honestly [ ] mandatory TOTP enrolment step drawn [ ] skip/resume [ ] no step depends on data the invited user cannot read
 - **Hand-off pack:** [E09-D12.md](../design/E09/E09-D12.md) (v1, E09-D12).
 
@@ -1483,8 +1484,9 @@ Drag preview                Drop zones
 - **Audit:** `tradegroup.created|updated|deleted|granted`. **Stories:** US-GRP-011..013.
 - **A11y:** The group list is a table with a row per group (id, symbol, side, accounts, filled/total, aggregate avg price, state); group state is text, not a colour pill alone; expanding a group reveals a nested per-account table; every bulk action button names its scope ('Flatten all 5 legs of group tg_0912').
 - **Performance:** Group state arrives on `trade_groups`; updates are coalesced to 5 Hz; the grid is virtualised and must stay under 4 ms scripting per frame with 50 open groups x 5 legs. Flatten-group issues one backend command that fans out server-side - the UI never loops client-side over legs.
-- **Components:** CMP-041 Menu, CMP-049 Table, CMP-055 FilterBar, CMP-105 AccountMultiSelect, CMP-123 FlattenAllButton, CMP-124 TradeGroupSummaryCard.
+- **Components:** CMP-001 Button, CMP-019 Icon (`lock`), CMP-040 FormField, CMP-041 Menu, CMP-043 Dialog (Modal), CMP-044 ConfirmDialog, CMP-049 Table, CMP-055 FilterBar, CMP-079 RbacGate, CMP-093 AuditActionTrigger, CMP-105 AccountMultiSelect, CMP-123 FlattenAllButton, CMP-124 TradeGroupSummaryCard.
 - **Stories:** US-PROF-007, US-ADMIN-005.
+- **Hi-fi (E42-D05, the admin variant's governance layer):** status, who may use, order and version, drawn as targets until E28's contract carries them. See `docs/design/E42/E42-D05.md` §10.
 - **Design sign-off acceptance checklist:** [ ] group list with expansion to legs drawn [ ] partial-fill and partial-failure group states drawn [ ] flatten-group and cancel-remaining confirmations with the exact leg count restated [ ] per-leg retry [ ] degraded state when one account's private WS is down (the group is marked 'state unknown for sub_002' rather than assumed) [ ] every execution-affecting control confirmed to emit an audit event
 - **UX research (E28-D01):** [e28-risk-policy-fanout.md](../design/research/e28-risk-policy-fanout.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED except what #2701 ruled: edits definitions only, on their own paths, Owner-only (D8 ruled); no "who may use it" and no group arm flag — each member shows its armed state and environment in words (§5 B2, AD-9, C3–C5); the empty-symbol-intersection warning from allow and block lists (IM-16).
 - **Wireframes (E28-D02):** [E28-D02.md](../design/E28/E28-D02.md) §5.5 (text-first, ruled on #821; boards pending on page `E28-D02`) — the definition manager: readiness "N of M ready" from served counts, rows expanding to members in words, "state unknown for sub_002", Owner-only create behind the step-up, edit and delete not yet served (G-6); the execution grid is E34-D03's.
@@ -2888,18 +2890,20 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **A11y:** each subsystem is a labelled row with a text status; no reliance on dot colour.
 - **Audit:** `health.diagnostics_exported`. **Stories:** US-OBS-001..003.
 - **Performance:** Health tiles subscribe to `system` at 1 Hz; the page must stay under 2 ms scripting per frame and must itself remain responsive when the system it is reporting on is degraded (all tiles resolve independently, no tile can block another).
-- **Components:** CMP-024 Sparkline, CMP-049 Table, CMP-076 ConnectionStatus, CMP-087 AdminLayout, CMP-092 DegradedModeBanner, CMP-178 SystemHealthTile, CMP-210 HealthChips.
+- **Components:** CMP-001 Button, CMP-015 Skeleton, CMP-019 Icon (`lock`), CMP-024 Sparkline, CMP-027 ErrorState / InlineError, CMP-028 Callout / Banner, CMP-033 CopyButton, CMP-043 Dialog (Modal), CMP-044 ConfirmDialog, CMP-049 Table, CMP-050 Card, CMP-076 ConnectionStatus, CMP-079 RbacGate, CMP-087 AdminLayout, CMP-088 PageHeader, CMP-092 DegradedModeBanner, CMP-093 AuditActionTrigger, CMP-177 RecorderStatusRow, CMP-178 SystemHealthTile, CMP-207 BuildFooter, CMP-210 HealthChips, CMP-239 FreshnessMarker.
 - **Stories:** US-ADMIN-011, US-OBS-001, US-OBS-002.
+- **Hi-fi (E42-D05):** a tile per health component with its own loading, stale and down states, what stops working, what to do and what is still safe, history with its table, the page when its own read or the backend fails, the diagnostics export. See `docs/design/E42/E42-D05.md` §5.
 - **Design sign-off acceptance checklist:** [ ] tiles for ingestion lag, public WS, private WS per account, REST latency, recorder, DB tiers, rule engine, algo engine and chart-engine FPS reports [ ] each tile shows a number with units plus a state word, never colour alone [ ] degraded and down states drawn per tile with what the user should expect to stop working [ ] historical sparkline per tile with a table alternative [ ] link to the incident log [ ] the page works when the backend is partially down
 
 ### SCR-144 — Admin: incident / connectivity log
 
 - **Type:** Page. Chronological record of WS disconnects, resubscriptions, sequence gaps, exchange 5xx, rate-limit hits (10018), engine restarts and recorder gaps, with duration, impact and what the system did automatically.
-- **Components:** CMP-047 DatePicker / DateRangePicker, CMP-049 Table, CMP-055 FilterBar, CMP-068 CopyableCodeBlock, CMP-087 AdminLayout.
+- **Components:** CMP-001 Button, CMP-015 Skeleton, CMP-019 Icon (`lock`), CMP-026 EmptyState, CMP-027 ErrorState / InlineError, CMP-033 CopyButton, CMP-047 DatePicker / DateRangePicker, CMP-049 Table, CMP-055 FilterBar, CMP-079 RbacGate, CMP-087 AdminLayout, CMP-088 PageHeader, CMP-093 AuditActionTrigger.
 - **Stories:** US-OBS-003, US-OBS-006.
 - **A11y:** A table (time, subsystem, severity, message, duration, resolution) with severity as text; long messages expand into a detail row rather than truncating silently.
 - **Performance:** Cursor-paginated; live incidents append over `system`; 10k rows scroll without exceeding 8 ms scripting per frame.
 - **Analytics/audit:** Incidents are recorded server-side as `incident.opened|updated|resolved`; the screen emits `incident.log_viewed`, `incident.exported`, `incident.acknowledged` (the acknowledgement is **audited**).
+- **Hi-fi (E42-D05):** grouped incidents with status words, the detail row, acknowledge in place, filters and export disabled with their reason until served. See `docs/design/E42/E42-D05.md` §6.
 - **Design sign-off acceptance checklist:** [ ] columns drawn with duration and resolution [ ] filters by subsystem, severity and date [ ] open vs resolved states [ ] correlation with trading impact ('12 orders rejected during this window') where derivable [ ] acknowledge action [ ] export [ ] empty state
 
 ### SCR-145 — Admin: feature flags
@@ -2949,10 +2953,11 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Validation:** restore is blocked while any position is open unless the owner explicitly acknowledges ("You have 2 open positions. A restore does not change anything on Bybit. Continue?"); downloading a backup containing encrypted secrets warns about handling.
 - **A11y:** the wizard is a stepper; progress has text percentages.
 - **Audit:** `backup.run|verified|restore|downloaded|deleted` (restore and download are high severity).
-- **Sign-off:** [ ] restore impact copy reviewed by security [ ] drill record surfaced [ ] failure states designed. **Stories:** US-ADMIN-013..015.
+- **Sign-off:** [ ] restore impact copy reviewed by security [ ] drill record surfaced [ ] failure states designed.
 - **Performance:** Backups run server-side on a schedule; the screen reports job state and never performs the work in the browser. A restore is a long-running job with staged progress and an explicit maintenance-mode requirement.
-- **Components:** CMP-023 Progress Bar, CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-049 Table, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
+- **Components:** CMP-001 Button, CMP-015 Skeleton, CMP-019 Icon (`lock`), CMP-023 Progress Bar, CMP-026 EmptyState, CMP-027 ErrorState / InlineError, CMP-028 Callout / Banner, CMP-040 FormField, CMP-043 Dialog (Modal), CMP-044 ConfirmDialog, CMP-049 Table, CMP-066 Stepper, CMP-079 RbacGate, CMP-087 AdminLayout, CMP-088 PageHeader, CMP-093 AuditActionTrigger.
 - **Stories:** US-ADMIN-011, US-OBS-007.
+- **Hi-fi (E42-D05):** the list with its summary lines; run, verify, download and delete on the ladder; the six-step restore wizard, its impact copy reviewed by security. See `docs/design/E42/E42-D05.md` §7 and §8.
 - **Design sign-off acceptance checklist:** [ ] backup list with timestamp, scope (Postgres OMS / rules / audit / config), size, integrity-check result and retention [ ] 'run backup now' with progress [ ] restore flow with its maintenance-mode gate, typed confirmation and step-up [ ] the explicit statement of what a restore does and does not recover (market history is not restored from these backups) [ ] failed-backup and failed-verification states [ ] last-successful-backup age warning [ ] download/export of a backup is audited and step-up-gated
 
 ### SCR-147 — Admin: exchange connectivity & rate limits
