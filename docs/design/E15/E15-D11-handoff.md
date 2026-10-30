@@ -111,6 +111,6 @@ The cell row at its fullest, counted (the tool's anatomy; BQ-08's budget is 24<!
 | E15-S06 (#559) | the grid; the C-rows routed to it (C-4, C-10, C-11, C-12, C-14); G-1 with the contract's owner; G-3                             |
 | E15-K01 (#371) | the multi-chart reading, the entry condition of the build (A45); the threshold the prompt cites (OQ-3)                          |
 | E11            | the rendering model (C-16); US-CHART-011's overlay and ratio (C-19)                                                             |
-| E15-D13 (#367) | PR 1 (#5055) and PR 2 (#5073) merged, so §C's `15` rows are written against main; PR 2T's tokens bind at PR 3                   |
+| E15-D13 (#367) | PR 1 (#5055), PR 2 (#5073) and PR 2T (#5075, `18d92caf3f`) merged; the dock tokens are in the base; PR 3 binds them             |
 | E15-D12 (#366) | its PR 1 is #5071 (open); its PR 2 lands first; its vocabulary is cited in pack §12, re-pinned by content at this ticket's PR 2 |
 | E15-D14        | the maximise and switcher timings (OQ-4)                                                                                        |

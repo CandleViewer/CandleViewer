@@ -1336,7 +1336,8 @@ def cite_problems(t: Texts) -> list[str]:
 
 
 SHA_OR_ID = re.compile(r"(?<![\w#/-])([0-9a-f]{10})(?![\w-])")
-KNOWN_SHAS = frozenset({BASE, BQ_BASE})
+D13_TOKENS_SHA = "18d92caf3f"  # E15-D13's token PR, merged as #5075 (2026-10-30 14:15Z)
+KNOWN_SHAS = frozenset({BASE, BQ_BASE, D13_TOKENS_SHA})
 KNOWN_IDS = frozenset(
     {RULING_ID, LEDGER_ID, BQ_ID, D12_RULING, DELEGATION_ID, D13_RULING, DRYRUN_ID}
 )
