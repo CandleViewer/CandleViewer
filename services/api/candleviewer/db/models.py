@@ -3031,6 +3031,83 @@ recorded_stops = Table(
     Index("ix_rs_order", "order_id", postgresql_where=text("order_id IS NOT NULL")),
 )
 
+#: C-5.9 / 21 Sec.12 class P1 on `oms_handovers.record` and `payload` (E29-T06 #914): an order or a
+#: fill as the exchange reported it can repeat its money values. Byte-identical to the revision's
+#: COMMENT statements (`alembic check` diffs column comments); no quote, as it sits in SQL text.
+OMS_HANDOVER_COMMENT = (
+    "PII: an order or a fill as the exchange reported it, which can repeat its money values "
+    "(21 Sec.12, class P1); payload redacted before insert; never logged"
+)
+
+#: `oms_handovers` (E29-T06 #914; 21 Sec.3.3.12, its revision in Sec.9.4): what a lookup or
+#: the private stream hands to the next reconciliation pass (24 Sec.8.3 rule 7). The bound per
+#: account and its overflow policy are the store's (`storage.repositories.oms_handovers`); the
+#: revision's tests pin the CHECK bodies, the partial predicates and the guard, which `alembic
+#: check` does not diff.
+oms_handovers = Table(
+    "oms_handovers",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("kind", Text, nullable=False),
+    Column("exchange_order_id", Text, nullable=False),
+    Column("exec_id", Text),
+    Column("source", Text, nullable=False),
+    Column("record", JSONB, nullable=False, comment=OMS_HANDOVER_COMMENT),
+    Column(
+        "payload",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        comment=OMS_HANDOVER_COMMENT,
+    ),
+    Column("empty_reads", SmallInteger, nullable=False, server_default=text("0")),
+    Column("first_empty_read_at", TIMESTAMP(timezone=True)),
+    Column("decided_at", TIMESTAMP(timezone=True)),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("kind IN ('order','execution')", name="oh_kind"),
+    CheckConstraint("(kind = 'execution') = (exec_id IS NOT NULL)", name="oh_exec"),
+    CheckConstraint("source IN ('ws_private','rest','reconcile')", name="oh_source"),
+    CheckConstraint(
+        "char_length(exchange_order_id) BETWEEN 1 AND 64 "
+        "AND (exec_id IS NULL OR char_length(exec_id) BETWEEN 1 AND 64)",
+        name="oh_ids",
+    ),
+    CheckConstraint(
+        "jsonb_typeof(record) = 'object' "
+        "AND record->>'account_id' IS NOT DISTINCT FROM exchange_account_id::text "
+        "AND record->>'exchange_order_id' IS NOT DISTINCT FROM exchange_order_id "
+        "AND (exec_id IS NULL OR record->>'exec_id' IS NOT DISTINCT FROM exec_id)",
+        name="oh_record",
+    ),
+    CheckConstraint("jsonb_typeof(payload) = 'object'", name="oh_payload"),
+    CheckConstraint(
+        "empty_reads >= 0 "
+        "AND (empty_reads = 0) = (first_empty_read_at IS NULL) "
+        "AND (kind = 'execution' OR (empty_reads = 0 AND decided_at IS NULL))",
+        name="oh_reads",
+    ),
+    Index(
+        "ux_oh_order",
+        "exchange_account_id",
+        "exchange_order_id",
+        unique=True,
+        postgresql_where=text("kind = 'order'"),
+    ),
+    Index(
+        "ux_oh_exec",
+        "exchange_account_id",
+        "exec_id",
+        unique=True,
+        postgresql_where=text("kind = 'execution'"),
+    ),
+    Index("ix_oh_account", "exchange_account_id", "kind", "id"),
+)
+
 
 #: `machine_snapshots`, `machine_drain_journal`, `machine_events` (E50-T61, revision
 #: 0033_machine_persistence): 24-internal-schemas.md Sec.17.6, the statechart runtime's persistence.

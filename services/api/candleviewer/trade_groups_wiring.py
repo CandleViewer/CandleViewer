@@ -39,6 +39,9 @@ GATE_REASONS: Final[Mapping[RefusalReason, ReadinessReason]] = {
     "account_disabled_by_policy": "account_disabled",
     "account_unhealthy": "account_unhealthy",
     "maintenance": "trading_disabled",
+    # E29-T06 (#914): a stale account's order entry is closed, as 24 Sec.8.10 reads any reason
+    # with no readiness of its own; it is neither key, account nor health.
+    "account_stale": "trading_disabled",
 }
 
 

@@ -48,8 +48,14 @@ from dataclasses import dataclass
 from typing import ClassVar, Final, Literal, Protocol, final, get_args
 from uuid import UUID
 
+#: `account_stale` (E29-T06 #914): the account's reconciliation has failed to fetch for 2 minutes
+#: and the operator has not resolved it (24 Sec.8.10); no check emits it until E29-T06's wiring.
 RefusalReason = Literal[
-    "maintenance", "account_disabled_by_policy", "no_active_key", "account_unhealthy"
+    "maintenance",
+    "account_disabled_by_policy",
+    "no_active_key",
+    "account_unhealthy",
+    "account_stale",
 ]
 REFUSAL_REASONS: Final[frozenset[str]] = frozenset(get_args(RefusalReason))
 DETAIL_MAX_LEN: Final = 200

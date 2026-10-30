@@ -4,7 +4,9 @@ refused restore of a forged or foreign snapshot, and the named family invariants
 INV-2 and INV-5), on the library. Chart version 5 (#848): a recorded stop's terms step round trips
 and is refused forged, and a golden version-4 snapshot is refused on restore, its order rebuilt
 from its `order_events` (28 B1.8, the snapshot migration). Chart version 6 (#4808) is version 5
-with its exit refusals alone, and a version-5 snapshot is refused on restore."""
+with its exit refusals alone, and a version-5 snapshot is refused on restore. Chart version 7 (#914)
+is version 6 with its `missing_remote` arms alone, and a golden version-6 snapshot is refused on
+restore, its order rebuilt from its `order_events`."""
 
 from __future__ import annotations
 
@@ -53,8 +55,15 @@ TERMINALS = ("filled", "cancelled", "rejected", "expired", "killed")
 V4_HASH = "18d4f519f032b9394245f00f18b0c6fce9145d22969ef2eb3854f2695190c3dc"
 #: Chart version 5's `machine_hash` (28 B1.8): version 6's restore refuses a snapshot sealed at it.
 V5_HASH = "627c93f770bcff5d39dce0bed60d2a666c730860998327c6449b4e9e961ee019"
+#: Chart version 6's `machine_hash` (28 B1.8): version 7's restore refuses a snapshot sealed at it.
+V6_HASH = "e75583007285bcb73dfa511d71ec92bdee74054827864668a41f5f8e638fc15e"
 #: Version 6's arm in each `lifecycle` state for an exit it does not take (INV-B1-r).
 _EXIT_REFUSAL = {"actions": ["audit_operator_command_refused"]}
+#: Version 7's arm in each live state a reconciliation pass finds nowhere (INV-B1-s).
+_MISSING_REMOTE = {"target": "#order.lifecycle.unknown", "actions": ["record_missing_remote"]}
+#: The settled live states that take it, in chart order (24 Sec.8.5 step 3b); a state with a
+#: request in flight takes none.
+_MISSED_LIVE = ("submitted", "triggered", "partially_filled", "quarantined")
 _GOLDEN = Path(__file__).resolve().parent / "golden"
 
 
@@ -223,13 +232,19 @@ def _version_5_hash(envelope: SealedSnapshot) -> SealedSnapshot:
     return dataclasses.replace(envelope, machine_hash=V5_HASH)
 
 
-@pytest.mark.parametrize("defect", [_wrong_hash, _version_5_hash, _bad_hmac, _another_order])
+def _version_6_hash(envelope: SealedSnapshot) -> SealedSnapshot:
+    return dataclasses.replace(envelope, machine_hash=V6_HASH)
+
+
+@pytest.mark.parametrize(
+    "defect", [_wrong_hash, _version_5_hash, _version_6_hash, _bad_hmac, _another_order]
+)
 async def test_b01_a_forged_or_foreign_snapshot_is_refused(
     defect: Callable[[SealedSnapshot], SealedSnapshot],
 ) -> None:
     """CV-C52, CV-C53, MUST-12: a snapshot of a filled order under another machine hash, version
-    5's included, with a total edited after the seal, or sealed for another order, is quarantined
-    and pages P1; it is never loaded."""
+    5's and version 6's included, with a total edited after the seal, or sealed for another order,
+    is quarantined and pages P1; it is never loaded."""
     async with _resting(("partially_filled", "sl_present")) as (_rig, order, interp):
         key, keys, audit, pager = (
             MachineKey("order", str(order.id), "demo"),
@@ -329,10 +344,21 @@ async def test_b01_terms_step_snapshot_forged_or_version_4_refused(
         await rig.facade.stop()
 
 
+def _version_6(chart: Mapping[str, Any]) -> dict[str, Any]:
+    """Chart version 6: version 7 without its `missing_remote` arms (28 B1.8), each the one arm
+    that takes a live row a pass finds nowhere into `unknown` (INV-B1-s)."""
+    out = copy.deepcopy(dict(chart)) | {"version": 6}
+    for node in out["states"]["lifecycle"]["states"].values():
+        on = node.get("on") or {}
+        if on.get("RECON_MISS") == _MISSING_REMOTE:
+            del on["RECON_MISS"]
+    return out
+
+
 def _version_5(chart: Mapping[str, Any]) -> dict[str, Any]:
     """Chart version 5: version 6 without its exit refusals (28 B1.8), each the one arm that
     records an exit its state does not take (INV-B1-r)."""
-    out = copy.deepcopy(dict(chart)) | {"version": 5}
+    out = _version_6(chart) | {"version": 5}
     for node in out["states"]["lifecycle"]["states"].values():
         on = node.get("on") or {}
         for event in ("CANCEL", "AMEND"):
@@ -353,10 +379,27 @@ def test_b01_version_6_is_version_5_with_the_exit_refusals_alone() -> None:
     """28 B1.8 version 6: the chart is version 5 with one refusal arm for each exit a non-final
     state does not take (INV-B1-r), and nothing else. Its hash moved from version 5's, so the
     restore refuses a snapshot sealed at version 5 (MUST-12), and no upcaster carries one: B1
-    recovers from its `order_events`."""
-    assert CHART["version"] == 6 and REGISTRY.hash("order") != V5_HASH
+    recovers from its `order_events`. Version 7 derives it first (`_version_6`)."""
+    assert machine_hash(_version_6(CHART)) == V6_HASH != V5_HASH
     assert machine_hash(_version_5(CHART)) == V5_HASH
     assert not has_upcaster("order", V5_HASH, REGISTRY.hash("order"))
+
+
+def test_b01_version_7_is_version_6_with_the_missing_remote_arms_alone() -> None:
+    """28 B1.8 version 7: the chart is version 6 with one `RECON_MISS` arm into `unknown` in each
+    settled live state a pass finds nowhere (INV-B1-s), and nothing else. Its hash moved from
+    version 6's, so the restore refuses a snapshot sealed at version 6 (MUST-12), and no upcaster
+    carries one: B1 recovers from its `order_events`."""
+    assert CHART["version"] == 7 and REGISTRY.hash("order") != V6_HASH
+    assert machine_hash(_version_6(CHART)) == V6_HASH
+    states = CHART["states"]["lifecycle"]["states"]
+    arms = [
+        s
+        for s, node in states.items()
+        if (node.get("on") or {}).get("RECON_MISS") == _MISSING_REMOTE
+    ]
+    assert arms == list(_MISSED_LIVE)
+    assert not has_upcaster("order", V6_HASH, REGISTRY.hash("order"))
 
 
 async def test_b01_version_4_golden_snapshot_refused_then_rebuilt_from_order_events() -> None:
@@ -383,6 +426,49 @@ async def test_b01_version_4_golden_snapshot_refused_then_rebuilt_from_order_eve
         ["P1"],
     )
     assert not has_upcaster("order", V4_HASH, REGISTRY.hash("order"))
+    rig = build_rig(registry=REGISTRY)
+    try:
+        stop = await _recorded_stop(rig)
+    except BaseException:
+        await rig.facade.stop()  # B1's ports are process-wide: never left wired (C-2.11)
+        raise
+    again = await rig.restart()
+    try:
+        assert str(stop.id) == key.entity_id
+        lifecycle = await again.facade.hydrate(ACCOUNT, stop.id, environment="demo")
+        await again.quiet()
+        assert again.facade.state(stop.id) == (lifecycle, after["protection"])
+        assert lifecycle == after["lifecycle"]
+        held = before["snapshot"]["context"]
+        assert {name: again.context(stop)[name] for name in held} == held
+    finally:
+        await again.facade.stop()
+
+
+async def test_b01_version_6_golden_snapshot_refused_then_rebuilt_from_order_events() -> None:
+    """28 B1.8 version 7, the snapshot migration, on a golden snapshot: a recorded stop's row at
+    rest in `submitted`, a state version 7 gives a `RECON_MISS` arm, sealed at version 6
+    (`golden/order.v6_to_v7.before.json`, its seal genuine under version 6's chart) is refused by
+    version 7's restore for its machine hash, quarantined and paged P1, and never loaded; no
+    upcaster carries it, as B1 recovers from `order_events`: the row's history hydrates to the
+    configuration `.after.json` names and to every context value the snapshot held."""
+    before = json.loads((_GOLDEN / "order.v6_to_v7.before.json").read_text(encoding="utf-8"))
+    after = json.loads((_GOLDEN / "order.v6_to_v7.after.json").read_text(encoding="utf-8"))
+    key, seal = MachineKey(**before["key"]), Seal(**before["seal"])
+    envelope = SealedSnapshot(
+        key, before["version"], before["machine_hash"], before["snapshot"], seal
+    )
+    v6, keys, audit, pager = _version_6(CHART), Keys(), Audit(), Pager()
+    assert machine_hash(v6) == before["machine_hash"] == V6_HASH != REGISTRY.hash("order")
+    open_sealed(keys, v6, envelope, key=key, expected_machine_hash=V6_HASH)  # a genuine seal
+    with pytest.raises(RestoreRefusedError) as refused:
+        await _restorer(keys, audit, pager).restore(key, envelope)
+    assert (refused.value.reason, len(audit.quarantined), pager.pages) == (
+        after["refused"],
+        1,
+        ["P1"],
+    )
+    assert not has_upcaster("order", V6_HASH, REGISTRY.hash("order"))
     rig = build_rig(registry=REGISTRY)
     try:
         stop = await _recorded_stop(rig)

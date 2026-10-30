@@ -163,18 +163,39 @@ def _defining(member: str) -> set[tuple[str, str]]:
     return found
 
 
-def test_no_handover_store_is_the_only_production_order_handovers() -> None:
-    """S2-Q3's deviation, until E29-T06 lands `oms_handovers`: the one class in `candleviewer` that
-    hands an order over is `NoHandoverStore`, which hands none, so a squatted id goes `unknown`.
-    E29-T06 replaces it, and this pin, with its table's writer."""
+def test_no_handover_store_is_the_only_bound_order_handovers() -> None:
+    """S2-Q3's deviation, until E29-T06 binds `oms_handovers`: the classes in `candleviewer` that
+    hand an order over are `NoHandoverStore`, which hands none, so a squatted id goes `unknown`,
+    and E29-T06's table writer `StoreHandovers` (its PR 1), which nothing composes yet (the pin
+    below). E29-T06's wiring binds the writer and drops the stand-in from this pin."""
     handing = _defining("hand_over_order")
-    assert handing == {("oms/ports.py", "OrderHandovers"), ("oms/ports.py", "NoHandoverStore")}
+    assert handing == {
+        ("oms/ports.py", "OrderHandovers"),
+        ("oms/ports.py", "NoHandoverStore"),
+        ("oms/handovers.py", "StoreHandovers"),
+    }
 
 
-def test_no_handover_store_is_the_only_production_execution_handovers() -> None:
+def test_no_handover_store_is_the_only_bound_execution_handovers() -> None:
     """The same for E29-T05's sibling port (24 Sec.8.3 rule 7: `oms_handovers` is a table, never
-    process memory): the one class in `candleviewer` that hands an execution over is
-    `NoHandoverStore`, which hands none, so no stand-in keeps a fill a restart would lose. E29-T06
-    replaces it, and this pin, with its table's writer."""
+    process memory): the classes in `candleviewer` that hand an execution over are
+    `NoHandoverStore`, which hands none, so no stand-in keeps a fill a restart would lose, and
+    E29-T06's table writer `StoreHandovers`, which nothing composes yet (the pin below)."""
     handing = _defining("hand_over_execution")
-    assert handing == {("oms/ports.py", "ExecutionHandovers"), ("oms/ports.py", "NoHandoverStore")}
+    assert handing == {
+        ("oms/ports.py", "ExecutionHandovers"),
+        ("oms/ports.py", "NoHandoverStore"),
+        ("oms/handovers.py", "StoreHandovers"),
+    }
+
+
+def test_the_handover_table_writer_is_composed_nowhere_until_its_wiring() -> None:
+    """E29-T06 PR 1 lands `StoreHandovers` unbound: no module in `candleviewer` but its own names
+    it, so `NoHandoverStore` stays the composed port until E29-T06's wiring (PR2b) binds the
+    writer, re-keys the live refusal and updates the two pins above."""
+    naming = {
+        path.relative_to(PACKAGE).as_posix()
+        for path in sorted(PACKAGE.rglob("*.py"))
+        if "StoreHandovers" in path.read_text(encoding="utf-8")
+    }
+    assert naming == {"oms/handovers.py"}

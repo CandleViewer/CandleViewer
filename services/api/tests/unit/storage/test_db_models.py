@@ -110,6 +110,8 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "recorded_stops",
         # E08-T07 (0055_watchlists)
         "watchlists",
+        # E29-T06 (0058_oms_handovers)
+        "oms_handovers",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected

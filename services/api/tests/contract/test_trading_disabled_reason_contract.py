@@ -14,7 +14,14 @@ _SPEC = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
 _BODY = _SPEC["components"]["responses"]["Forbidden"]["content"]["application/problem+json"]
 _EXAMPLE: dict[str, Any] = _BODY["examples"]["tradingDisabled"]["value"]
-_REASONS = ["maintenance", "account_disabled_by_policy", "no_active_key", "account_unhealthy"]
+#: E29-T06 (#914) adds `account_stale`, the reconciliation standing's refusal (24 8.10).
+_REASONS = [
+    "maintenance",
+    "account_disabled_by_policy",
+    "no_active_key",
+    "account_unhealthy",
+    "account_stale",
+]
 _DOC = OPENAPI_SPEC_PATH.parent / "24-internal-schemas.md"
 
 

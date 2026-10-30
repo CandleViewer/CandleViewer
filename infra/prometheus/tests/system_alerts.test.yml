@@ -1839,6 +1839,75 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: bybit_rows_refused_total{env="live",reason="account"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: BybitRowsRefusedAccount
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: secrets
+        env: live
+      exp_annotations:
+        summary: A trading read returned a row of another exchange account
+        runbook_url: docs/plan/07-release-and-prr.md#alert-bybitrowsrefusedaccount
+- interval: 1m
+  input_series:
+  - series: bybit_rows_refused_total{env="live",reason="account"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10h
+    alertname: BybitRowsRefusedAccount
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: secrets
+        env: live
+      exp_annotations:
+        summary: A trading read returned a row of another exchange account
+        runbook_url: docs/plan/07-release-and-prr.md#alert-bybitrowsrefusedaccount
+- interval: 1m
+  input_series:
+  - series: bybit_rows_refused_total{env="live",reason="account"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 11h
+    alertname: BybitRowsRefusedAccount
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: bybit_rows_refused_total{env="live",reason="account"}
+    values: _x5 1+0x700
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: BybitRowsRefusedAccount
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: secrets
+        env: live
+      exp_annotations:
+        summary: A trading read returned a row of another exchange account
+        runbook_url: docs/plan/07-release-and-prr.md#alert-bybitrowsrefusedaccount
+- interval: 1m
+  input_series:
+  - series: bybit_rows_refused_total{env="live",reason="environment"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: BybitRowsRefusedAccount
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: bybit_rows_refused_total{env="live",reason="account"}
+    values: 3+0x700
+  alert_rule_test:
+  - eval_time: 11h
+    alertname: BybitRowsRefusedAccount
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: cv_key_rotation_notices_total{env="live",state="overdue"}
     values: 0+0x5 1+0x700
   alert_rule_test:

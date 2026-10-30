@@ -1,5 +1,5 @@
 """candleviewer.statechart.bindings.b01_order — MachineLogic for B1 `order`
-(#1650, E50; E29-T03 #847). Chart: `machines/B01.order.machine.json`, version 5.
+(#1650, E50; E29-T03 #847). Chart: `machines/B01.order.machine.json`, version 7.
 
 Guards are pure, total and deny by default (catalogue A6). Statecharts record, synchronous code
 enforces (C-2.21): `VALIDATE` carries the verdicts of the checks run before it (`gates`) and the
@@ -48,6 +48,12 @@ A recorded stop's row follows its order's trigger price and quantity through `TE
 written step (24 Sec.8.3 rule 7, the sixth item; INV-B1-q): the guarded `recorded_terms_changed`
 arm re-enters `submitted`, `triggered` or `partially_filled`, and `audit_terms_refused` records
 any other, never as a `guard_denied` the OMS would answer with `FAULT`.
+
+Reconciliation's two outcomes (chart version 7, #914; 24 Sec.8.5 step 3b, INV-B1-s): a live row a
+pass finds nowhere takes `RECON_MISS` into `unknown` through `record_missing_remote`, which restarts
+its miss count, and the second consecutive miss there ends it `rejected` with the closed
+`reject_code` that miss carries (`set_reject_unresolvable`). Nothing sends either until E29-T06's
+pass is wired.
 """
 
 from __future__ import annotations
@@ -231,6 +237,12 @@ PAIRING: Final = ("exchange_order_id", *FACTS)
 #: two reconciliation passes that found nothing (Sec.8.5).
 NATIVE_STOP_REQUIRED: Final = "NATIVE_STOP_REQUIRED"
 UNRESOLVED_AFTER_RECONCILE: Final = "UNRESOLVED_AFTER_RECONCILE"
+#: Past demo's history retention, a miss proves nothing, so the pass ends an `unknown` row with this
+#: code instead (24 Sec.8.3 rule 6, Sec.8.5 step 3b): the text of
+#: `oms.order_link_resolution.DEMO_RETENTION_EXPIRED`, which this package cannot import (C-3.1).
+DEMO_RETENTION_EXPIRED: Final = "DEMO_RETENTION_EXPIRED"
+#: The closed `reject_code` a `RECON_MISS` may carry (chart version 7); none is the first.
+RECON_REJECT_CODES: Final = (UNRESOLVED_AFTER_RECONCILE, DEMO_RETENTION_EXPIRED)
 #: The command port's answer to a resumed create too old to re-send that no lookup found within
 #: the venue's 24 h history (E29-T04, [LANE-26]; 24 Sec.8.3 rule 6): nothing was sent, so
 #: `submitting`'s last arm ends the order `rejected`, and `map_reject_code` keeps it as the row's
@@ -1183,10 +1195,33 @@ async def bump_recon_misses(_i: Any, context: dict[str, Any], _e: Any, _a: Any) 
     context["recon_misses"] = _misses(context) + 1
 
 
-async def set_reject_unresolvable(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    """24 Sec.8.5: two consecutive passes found nothing, so the order ends `rejected`."""
-    context["reject_code"] = UNRESOLVED_AFTER_RECONCILE
-    logger().warning("b01_unresolved_after_reconcile", order_link_id=context.get("order_link_id"))
+async def set_reject_unresolvable(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """24 Sec.8.5: two consecutive passes found nothing, so the order ends `rejected` with the
+    closed code the second miss carries (`RECON_REJECT_CODES`): `DEMO_RETENTION_EXPIRED` past
+    demo's history retention (Sec.8.3 rule 6), else `UNRESOLVED_AFTER_RECONCILE`, also when it
+    names none. The step writer stores it as the row's `reject_code` (21 Sec.3.3.5)."""
+    code = _fields(event).get("reject_code")
+    context["reject_code"] = code if code in RECON_REJECT_CODES else UNRESOLVED_AFTER_RECONCILE
+    logger().warning(
+        "b01_unresolved_after_reconcile",
+        order_link_id=context.get("order_link_id"),
+        reject_code=context["reject_code"],
+    )
+
+
+async def record_missing_remote(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """24 Sec.8.5 step 3b (chart version 7): a pass found this live row nowhere, in the venue's
+    open orders or its history, so it moves to `unknown` (`missing_remote`), whose entry raises
+    the alert (S1). Its miss count restarts, so only two further consecutive misses there end it
+    (INV-B1-s). Logged at ERROR with the pass and the state the row leaves, its last written one
+    (`persisted_state`)."""
+    context["recon_misses"] = 0
+    logger().error(
+        "b01_missing_remote",
+        order_link_id=context.get("order_link_id"),
+        left=context.get("persisted_state"),
+        pass_id=_id(_fields(event).get("pass_id")),
+    )
 
 
 async def set_cancel_missing_remote(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
@@ -1507,6 +1542,7 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "record_discovered": record_discovered,
     "record_materialised": record_materialised,
     "record_mismatch": record_mismatch,
+    "record_missing_remote": record_missing_remote,
     "record_remote_state": record_remote_state,
     "record_sl_fact_ignored": record_sl_fact_ignored,
     "record_transport_fault": record_transport_fault,
@@ -1655,7 +1691,7 @@ SCHEMAS: Final[dict[str, dict[str, Any]]] = {
     "RECON_FOUND_FILLED": _FOUND,
     "RECON_FOUND_LIVE": _FOUND,
     "RECON_FOUND_PARTIAL": _FOUND,
-    "RECON_MISS": _closed(pass_id=_TEXT),
+    "RECON_MISS": _closed(pass_id=_TEXT, reject_code={"enum": list(RECON_REJECT_CODES)}),
     "REMOTE_CANCELLED": _PUSH,
     "SEND": _closed(),
     "SL_DEADLINE": _closed(),

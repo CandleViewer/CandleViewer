@@ -203,7 +203,8 @@ def test_a_cancel_takes_no_unresolved_order_and_no_recorded_stop_on_an_open_posi
         "answered `403 risk_limit_breached`, while its position is open, or while the position",
         "once the position is flat the row can be cancelled (ruling Q9)",
     )
-    assert "(SR-E29-06 (ii), moved from E29-T04 by #913 slice 4 ruling Q8" in _READERS
+    assert "(SR-E29-06 (ii), moved from E29-T04 to E29-T06 by #913 slice 4 ruling Q8" in _READERS
+    assert "and on to E45-T01 by the orchestrator's ruling of record on #914, BQ-2)" in _READERS
     assert "(SR-E29-06 (ii), E29-T04)" not in _SCHEMA_DOC + _INTERNAL_DOC
     assert "the foreign-stop cancel of SR-E29-06 (ii) is E29-T06's, ruling Q8" in _RULE_6
     assert "so an `unknown` order is cancelled only by a KILL" in _METRIC
@@ -560,7 +561,7 @@ def test_an_account_it_cannot_send_for_and_cancel_alls_counting_are_as_ruled() -
         "`503 store_unavailable` when the scope itself cannot be read, nothing sent",
     )
     threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
-    assert "the OMS cancel service, which E29-T06 builds and E29-T07's route calls" in _words(
+    assert "the OMS cancel service, which E45-T01 builds and E29-T07's route calls" in _words(
         threat.read_text(encoding="utf-8")
     )
 

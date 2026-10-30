@@ -14835,7 +14835,7 @@ paths:
                         machine_kind: order
                         environment: demo
                         state: submitted
-                        machine_hash: "e75583007285bcb73dfa511d71ec92bdee74054827864668a41f5f8e638fc15e"
+                        machine_hash: "f6289b9e6d7738bc6574c8cc5a6985e4e1be98a647deeb1514b4b5421ed13c54"
                         lock_matches: true
                         chain_trips: 1
                         degraded: true
@@ -15317,6 +15317,161 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /admin/reconciliation/{accountId}:
+    parameters: [{ $ref: "#/components/parameters/AccountId" }]
+    post:
+      tags: [admin]
+      operationId: reconcileAccount
+      summary: Run a reconciliation pass on one exchange account now (owner)
+      description: |
+        Owner only (`admin:write`). The on-demand trigger of `24-internal-schemas.md` §8.5: the
+        account's reconciliation job (B19, `28-statechart-catalogue.md`) is sent `SWEEP_DUE`
+        with `trigger: manual`, the same pass the 30 s cadence runs, with the same report, record
+        and notices. The call answers once the pass is taken, never once it has run: the pass's
+        outcome is its `oms.reconcile` record and the job's state, which the Owner reads on
+        `machines.reconciliation:{accountId}.state` (`23-ws-protocol.md` §6.4).
+
+        **One pass at a time.** While a pass is running for the account the call answers that
+        pass's `pass_id` with `joined: true` and starts no second one, so a repeated request
+        never queues passes. A job that waits for the operator after a pass (`divergent`) starts
+        a new pass.
+
+        **Refusals.** Once the request is admitted (authentication, CSRF, session state,
+        validation and RBAC) and the idempotency lookup finds no earlier answer, these refuse it,
+        in this order, and start nothing: `404` for an account that does not exist or that this
+        process's environment does not serve (C-2.11); `503 oms_not_ready` with `Retry-After`
+        while the OMS is not ready; and `409 conflict` with rule `reconciliation_locked` while
+        the account's job is locked stale (`stale_lockout`, which refuses its order entry with
+        `account_stale`), since no pass runs until the operator resolves it
+        (`resolveReconciliation`). Until E29-T06 wires the job the operation answers
+        `501 not_implemented` and starts nothing.
+
+        **Idempotent.** The same `Idempotency-Key` for the same account is answered with the
+        stored `202` and starts nothing again. Only the `202` is stored; a refusal is evaluated
+        afresh on a retry.
+
+        **Audit (C-2.9).** `oms.reconcile` with `stage: requested` is written before the `202`,
+        naming the acting Owner, the account, `trigger: manual`, the `pass_id` and `joined`.
+        When it cannot be written the answer is `503 audit_unavailable` and no pass starts. The
+        pass writes its own `oms.reconcile` record, `stage: finished` with its report
+        (`24-internal-schemas.md` §15.5), when it ends.
+      x-rbac: { permissions: [admin:write], scope: none }
+      x-idempotency: required
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
+      responses:
+        "202":
+          description: The pass is taken, started now or already running (`joined`).
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationPass" }
+              examples:
+                started:
+                  value:
+                    pass_id: "a3000000-0000-4000-8000-000000000001"
+                    exchange_account_id: "0a000000-0000-4000-8000-0000000000a1"
+                    trigger: manual
+                    joined: false
+                joined:
+                  value:
+                    pass_id: "a3000000-0000-4000-8000-000000000002"
+                    exchange_account_id: "0a000000-0000-4000-8000-0000000000a1"
+                    trigger: manual
+                    joined: true
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict` with rule `reconciliation_locked`: the account's reconciliation is locked stale and runs no pass until the operator resolves it (`resolveReconciliation`). `idempotency_key_reuse`: the key was first used for another account. `idempotency_in_flight`: a call with the same key is still running."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /admin/reconciliation/{accountId}/resolve:
+    parameters: [{ $ref: "#/components/parameters/AccountId" }]
+    post:
+      tags: [admin]
+      operationId: resolveReconciliation
+      summary: Resolve an account's stale or divergent reconciliation (owner, step-up `accounts`)
+      description: |
+        Owner only (`admin:write`), with step-up class `accounts`, a fresh code each time
+        (`POST /auth/step-up` defines the step-up rules). The operator's decision of
+        `24-internal-schemas.md` §8.5: the account's reconciliation job (B19,
+        `28-statechart-catalogue.md`) is sent `OPERATOR_RESOLVED`, the one event that leaves
+        `stale_lockout` (INV-B19-b), so the account's order entry, refused with `account_stale`
+        while the job is locked, opens again once the job records the unlock (C-2.21). From
+        `divergent` it ends the wait for the operator. The job returns to `idle`, and the next
+        trigger runs a pass.
+
+        **Refusals.** Once the request is admitted (authentication, CSRF, session state,
+        validation, RBAC and the step-up) and the idempotency lookup finds no earlier answer,
+        these refuse it, in this order, and change nothing: `404` for an account that does not
+        exist or that this process's environment does not serve (C-2.11); `503 oms_not_ready`
+        with `Retry-After` while the OMS is not ready; and `409 conflict` with rule
+        `nothing_to_resolve` while the account's job is neither locked (`stale_lockout`) nor
+        waiting for the operator (`divergent`), as `OPERATOR_RESOLVED` is sent to no other
+        state. Until E29-T06 wires the job the operation answers `501 not_implemented` and
+        changes nothing.
+
+        **Idempotent.** The same `Idempotency-Key` and body are answered with the stored `200`
+        and resolve nothing again. Only the `200` is stored; a refusal is evaluated afresh on a
+        retry.
+
+        **Audit (C-2.9).** `oms.reconcile` with `stage: resolved` is written before the job is
+        told, naming the acting Owner, the account, the state resolved, `reason` and the
+        `challenge_id` of the `accounts` grant it spent. When it cannot be written the answer is
+        `503 audit_unavailable` and nothing changes.
+      x-rbac: { permissions: [admin:write], scope: none }
+      x-idempotency: required
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReconciliationResolveRequest" }
+            examples:
+              resolved:
+                value: { reason: "Exchange reachable again; positions and orders checked by hand." }
+      responses:
+        "200":
+          description: The job recorded the operator's decision and returned to `idle`.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationResolved" }
+              examples:
+                unlocked:
+                  value:
+                    exchange_account_id: "0a000000-0000-4000-8000-0000000000a1"
+                    resolved: stale_lockout
+                    resolved_at: "2026-10-30T09:15:00Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict` with rule `nothing_to_resolve`: the account's reconciliation is neither locked stale nor waiting for the operator. `idempotency_key_reuse`: the key was first used with another body. `idempotency_in_flight`: a call with the same key is still running."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/recorder/compact:
@@ -17399,12 +17554,14 @@ components:
         fe_gpu_memory_mb: { type: number, minimum: 0, maximum: 65536 }
     OrderEntryRefusalReason:
       type: string
-      enum: [maintenance, account_disabled_by_policy, no_active_key, account_unhealthy]
+      enum:
+        [maintenance, account_disabled_by_policy, no_active_key, account_unhealthy, account_stale]
       description: >
         Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The
-        server's set is closed and listed in `24-internal-schemas.md` 8.10. **Open-ended for
-        readers:** clients must tolerate values they do not know, so adding a reason is an
-        additive change (C-6.3).
+        server's set is closed and listed in `24-internal-schemas.md` 8.10. `account_stale`
+        (E29-T06, #914): reconciliation has failed for 2 minutes on the account and no operator
+        has resolved it yet (`resolveReconciliation`). **Open-ended for readers:** clients must
+        tolerate values they do not know, so adding a reason is an additive change (C-6.3).
     TradingDisabledProblem:
       description: >
         The `403 trading_disabled` problem the order-entry gate returns when it refuses a
@@ -17425,6 +17582,47 @@ components:
           properties:
             code: { const: trading_disabled }
             reason: { $ref: "#/components/schemas/OrderEntryRefusalReason" }
+    ReconciliationPass:
+      type: object
+      additionalProperties: false
+      required: [pass_id, exchange_account_id, trigger, joined]
+      description: >
+        `reconcileAccount`'s answer (E29-T06, #914): the pass the request started, or the one
+        already running for the account (`joined`). Its outcome is its `oms.reconcile` record
+        (`24-internal-schemas.md` §15.5), never this answer.
+      properties:
+        pass_id: { type: string, format: uuid }
+        exchange_account_id: { type: string, format: uuid }
+        trigger: { const: manual }
+        joined:
+          type: boolean
+          description: True when a pass already running answered, so no second pass started.
+    ReconciliationResolveRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 280
+          description: >
+            Why the operator resolves it, written to the `oms.reconcile` record; human text that
+            must carry no secret.
+    ReconciliationResolved:
+      type: object
+      additionalProperties: false
+      required: [exchange_account_id, resolved, resolved_at]
+      description: >
+        `resolveReconciliation`'s answer (E29-T06, #914): the job left the state named, and the
+        account's order entry opens again if that state was `stale_lockout`.
+      properties:
+        exchange_account_id: { type: string, format: uuid }
+        resolved:
+          type: string
+          enum: [stale_lockout, divergent]
+          description: The reconciliation job's state the operator's decision left (B19).
+        resolved_at: { type: string, format: date-time }
     Problem:
       type: object
       description: "RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue."

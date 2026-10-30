@@ -743,12 +743,14 @@ partially_filled  killed            KILL                    waiting
 partially_filled  partially_filled  EXEC                    -
 partially_filled  partially_filled  TERMS_CHANGED           -
 partially_filled  quarantined       FAULT                   -
+partially_filled  unknown           RECON_MISS              -
 quarantined       cancelled         RECON_FOUND_CANCELLED   waiting
 quarantined       filled            RECON_FOUND_FILLED      answered
 quarantined       held              MISMATCH                waiting
 quarantined       killed            KILL                    waiting
 quarantined       partially_filled  RECON_FOUND_PARTIAL     answered
 quarantined       submitted         RECON_FOUND_LIVE        answered
+quarantined       unknown           RECON_MISS              -
 submitted         amend_pending     AMEND                   -
 submitted         cancel_pending    CANCEL                  -
 submitted         cancelled         REMOTE_CANCELLED        void
@@ -760,6 +762,7 @@ submitted         partially_filled  EXEC                    -
 submitted         quarantined       FAULT                   -
 submitted         submitted         TERMS_CHANGED           -
 submitted         triggered         TRIGGERED               -
+submitted         unknown           RECON_MISS              -
 submitted         unknown           TRANSPORT_FAULT         -
 submitting        held              done.invoke.place       waiting
 submitting        killed            KILL                    waiting
@@ -774,6 +777,7 @@ triggered         filled            EXEC                    -
 triggered         killed            KILL                    waiting
 triggered         partially_filled  EXEC                    -
 triggered         triggered         TERMS_CHANGED           -
+triggered         unknown           RECON_MISS              -
 unknown           cancelled         RECON_FOUND_CANCELLED   waiting
 unknown           filled            RECON_FOUND_FILLED      answered
 unknown           held              MISMATCH                waiting

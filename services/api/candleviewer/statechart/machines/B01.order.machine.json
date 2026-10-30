@@ -1,6 +1,6 @@
 {
   "id": "order",
-  "version": 6,
+  "version": 7,
   "strictConfig": true,
   "maxIterations": 500,
   "actionErrorPolicy": "rollback",
@@ -266,6 +266,12 @@
                 ]
               }
             ],
+            "RECON_MISS": {
+              "target": "#order.lifecycle.unknown",
+              "actions": [
+                "record_missing_remote"
+              ]
+            },
             "KILL": [
               {
                 "guard": "is_recorded_stop",
@@ -332,6 +338,12 @@
                 ]
               }
             ],
+            "RECON_MISS": {
+              "target": "#order.lifecycle.unknown",
+              "actions": [
+                "record_missing_remote"
+              ]
+            },
             "KILL": [
               {
                 "guard": "is_recorded_stop",
@@ -414,6 +426,12 @@
                 ]
               }
             ],
+            "RECON_MISS": {
+              "target": "#order.lifecycle.unknown",
+              "actions": [
+                "record_missing_remote"
+              ]
+            },
             "KILL": [
               {
                 "guard": "is_recorded_stop",
@@ -723,6 +741,12 @@
               "target": "#order.lifecycle.held",
               "actions": [
                 "record_mismatch"
+              ]
+            },
+            "RECON_MISS": {
+              "target": "#order.lifecycle.unknown",
+              "actions": [
+                "record_missing_remote"
               ]
             },
             "KILL": [

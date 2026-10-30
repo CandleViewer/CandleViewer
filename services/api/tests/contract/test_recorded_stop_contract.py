@@ -29,7 +29,7 @@ _PLAN = OPENAPI_SPEC_PATH.parent
 _DOC = (_PLAN / "21-database-schema.md").read_text(encoding="utf-8")
 _INTERNAL_DOC = (_PLAN / "24-internal-schemas.md").read_text(encoding="utf-8")
 _ARCH = (_PLAN / "20-architecture.md").read_text(encoding="utf-8")
-_SECTION = _DOC.split("#### 3.3.11 `recorded_stops`", 1)[1].split("\n### 3.4 ", 1)[0]
+_SECTION = _DOC.split("#### 3.3.11 `recorded_stops`", 1)[1].split("\n#### 3.3.12 ", 1)[0]
 _TABLE_DDL = _SECTION.split("CREATE TABLE recorded_stops (", 1)[1].split("\n);", 1)[0]
 _GUARD = _SECTION.split("CREATE FUNCTION rs_guard()", 1)[1].split("```", 1)[0]
 _ORDERS = _DOC.split("#### 3.3.4 `orders`", 1)[1].split("#### 3.3.5 ", 1)[0]
@@ -237,7 +237,8 @@ def test_an_unanswered_request_is_resolved_by_a_read_before_the_next_stop_reques
         "request the read did not find filled is answered in one decision and never half voided",
         "no row is ever resolved by a time-based expiry",
         "The writer of its request owns the resolution: E29-T04 for an entry's attach and the "
-        "trading-stop path, E29-T06 for its 24 §8.5 step 5 restore",
+        "trading-stop path, E29-T06 for its 24 §8.5 step 5 Full-mode restore and E45-T01 for its "
+        "Partial-mode one",  # #914 BQ-2: the Partial-mode restore is an E45-T01 carry
     )
     rule = _words(_INTERNAL_DOC.split("6. **The recorded stop (SR-E29-06", 1)[1].split("\n", 1)[0])
     assert (
@@ -279,7 +280,7 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
         "activation price, never by the trigger it moves; while `Position` carries no "
         "activation price, `[O-4]`, a trail request whose position shows a trail by its "
         "distance is held, counted as `held_for_reconciliation` and logged once, until "
-        "E29-T06's pass or until `Position` carries the activation price, E29-K01, and a "
+        "E45-T01's pass or until `Position` carries the activation price, E29-K01, and a "
         "position that shows no stop at all is never held on this rule)",
         "one that shows an order that matches it, open or in that history (a Full-mode stop "
         "that already fired among them, never taken for a foreign order), answers it and "
@@ -310,7 +311,8 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
         'read" row), so its key stays refused, counted as `held_for_reconciliation` '
         "(`20-architecture.md` §12.1) and logged once per key, and paged once per hold when the "
         "read shows its position open with no stop at all, a C-2.6 exposure only that pass "
-        "clears; E29-T06's pass must resolve those rows (24 §8.5)",
+        "clears; E45-T01's pass must resolve those rows (24 §8.5; a carry of E29-T06's under the "
+        "orchestrator's ruling of record on #914, BQ-2)",
         "when a read shows one side, that side goes in force and the other is answered, the "
         "next read answering it should a crash come between the two writes. A filled entry's "
         "sides are each decided as above. An entry partly filled and still resting is decided "
@@ -332,12 +334,12 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
         "older than the venue's 24 h span and whose position is flat or on the other side, or "
         "a demo row past the venue's 7 d less 24 §8.3 rule 6's one-day margin, that no read "
         "shows matched is held, counted as `held_for_reconciliation` and logged once, and "
-        "E29-T06's pass resolves it (24 §8.5); inside the spans a miss decides, and so does a "
+        "E45-T01's pass resolves it (24 §8.5); inside the spans a miss decides, and so does a "
         "live miss past them while the position is open on the row's side, as live keeps "
         "filled orders in its history; a key whose position, open on either side, shows no "
         "stop at all is never held on this rule.",
-        "E29-T06's pass also resolves the rows held through `WAITING_ENTRY`, which no read of "
-        "E29-T04's can decide",
+        "E45-T01's pass also resolves the rows held through `WAITING_ENTRY`, which no read of "
+        "E29-T04's can decide",  # #914 BQ-2: the held rows are an E45-T01 carry
         "and the complete read's (`in_flight_resolved`, and `entry_filled_stop_absent`, whose "
         "record carries `position_state`, `open` (a position on the row's side) or `flat` "
         "(none on its side, the other side's included), so a naked window that a close or a "
@@ -380,7 +382,9 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
         "trail request held while `Position` carries no activation price: this pass must resolve "
         "exactly those rows (a trail request once its own position read carries the activation "
         "price, E29-K01, `[O-4]`, and until then it stays held and visible), from its own reads "
-        "of the entry's fill and the position's stop, as the complete read decides them; until "
+        "of the entry's fill and the position's stop, as the complete read decides them "
+        "(E45-T01's, a carry of E29-T06's under the orchestrator's ruling of record on #914, "
+        "BQ-2); until "
         "it does, each such key stays refused and visible, never released silently. A held row "
         "whose position is open with no stop at all comes first: this pass reconciles it before "
         "anything else, and the protective attach follows that decision in the same pass "
@@ -541,7 +545,8 @@ def test_the_writers_readers_and_audit_link_are_the_ones_the_rulings_name() -> N
         _words(_SECTION),
         "E29-T04 writes an entry's attach (24 §8.8 rule 1) in B1's `VALIDATE` transaction",
         "which rule-engine trails and breakeven (24 §10.7, E32) always go through",
-        "E29-T06 writes 24 §8.5 step 5's restore, only while the row it read is still in force",
+        "E29-T06 writes 24 §8.5 step 5's Full-mode restore, and E45-T01 its Partial-mode one, "
+        "only while the row it read is still in force",
         "E29-T05 materialises a recorded side's triggered order as an `orders` row with "
         "provenance `recorded_stop` (§3.3.4)",
         "the OMS cancel service, which refuses to cancel a recorded stop while its position is "

@@ -1913,9 +1913,9 @@ S→C {"t":"d","ch":"system","s":31,"ts":1789133210000,"e":"j","p":{"kind":"conn
 // a manager granted account a1…01 only: the order is on a1…01, the lockout is on a1…02
 C→S {"t":"sub","id":"c-100","p":{"topics":[{"ch":"machines.order:0a000000-0000-4000-8000-000000000001.state"},{"ch":"machines.risk_lockout:a1000000-0000-4000-8000-000000000002.state"}]}}
 S→C {"t":"sub_ok","id":"c-100","ts":1789134000000,"p":{"results":[{"ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","ok":true,"sub_id":"s_41","snapshot_pending":true,"effective":{"throttle_ms":100,"encoding":"structured","coalesce":true}},{"ch":"machines.risk_lockout:a1000000-0000-4000-8000-000000000002.state","ok":false,"error":{"code":"account_scope_denied","message":"None of the requested accounts are in scope."}}]}}
-S→C {"t":"snap","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","s":1,"ts":1789134000010,"e":"j","meta":{"reason":"initial","source":"live"},"p":{"machine_kind":"order","state":"submitted","regions":{"lifecycle":"submitted","protection":"sl_pending"},"tags":[],"degraded":false,"machine_hash":"e75583007285bcb73dfa511d71ec92bdee74054827864668a41f5f8e638fc15e","environment":"live","updated_at_ms":1789133999990,"context_summary":{"symbol":"BTCUSDT","halted_by_kill":false,"recon_misses":0}}}
+S→C {"t":"snap","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","s":1,"ts":1789134000010,"e":"j","meta":{"reason":"initial","source":"live"},"p":{"machine_kind":"order","state":"submitted","regions":{"lifecycle":"submitted","protection":"sl_pending"},"tags":[],"degraded":false,"machine_hash":"f6289b9e6d7738bc6574c8cc5a6985e4e1be98a647deeb1514b4b5421ed13c54","environment":"live","updated_at_ms":1789133999990,"context_summary":{"symbol":"BTCUSDT","halted_by_kill":false,"recon_misses":0}}}
 // a fill and the exchange-confirmed native SL land inside one 100 ms window: one d, latest state only
-S→C {"t":"d","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","s":2,"ts":1789134000120,"e":"j","p":{"machine_kind":"order","state":"partially_filled","regions":{"lifecycle":"partially_filled","protection":"sl_present"},"tags":["protected"],"degraded":false,"machine_hash":"e75583007285bcb73dfa511d71ec92bdee74054827864668a41f5f8e638fc15e","environment":"live","updated_at_ms":1789134000101,"context_summary":{"symbol":"BTCUSDT","halted_by_kill":false,"recon_misses":0}}}
+S→C {"t":"d","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","s":2,"ts":1789134000120,"e":"j","p":{"machine_kind":"order","state":"partially_filled","regions":{"lifecycle":"partially_filled","protection":"sl_present"},"tags":["protected"],"degraded":false,"machine_hash":"f6289b9e6d7738bc6574c8cc5a6985e4e1be98a647deeb1514b4b5421ed13c54","environment":"live","updated_at_ms":1789134000101,"context_summary":{"symbol":"BTCUSDT","halted_by_kill":false,"recon_misses":0}}}
 // later the owner withdraws the manager's grant on a1…01 (after the §9.5 permission push)
 S→C {"t":"revoked","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","ts":1789134060000,"p":{"reason":"account_scope_changed","message":"Access to one or more accounts was withdrawn.","removed_accounts":["a1000000-0000-4000-8000-000000000001"],"resubscribe_allowed":false,"sub_id":"s_41"}}
 ```
@@ -4530,12 +4530,23 @@ new field are additive (C-6.3): `system.kind` is an open enum (§16.5), so a cli
 A producer gives `exchange_account_ids` as a list of strings, each an account id as its canonical
 lowercase UUID text (`str(UUID)`), never a set and never a `UUID` object, so the Owner's whole frame
 encodes as every other connection's cut does. Each producer maps a `reason` to one `severity` and one
-`message` through a closed table that its code pins, and never builds a `message` from data. E29-T05's
-table (`oms.account_resyncing` is its only reason; E29-T06 adds its own rows here with its code):
+`message` through a closed table that its code pins, and never builds a `message` from data; the
+one exception is `oms.account_desync`, whose severity is chosen by the pass's own finding, as below.
+E29-T05's row is `oms.account_resyncing`. E29-T06's three rows are its contract (#914), and its
+producer's table pins them once its wiring lands:
 
-| Reason                  | Severity  | Message                                                                       |
-| ----------------------- | --------- | ----------------------------------------------------------------------------- |
-| `oms.account_resyncing` | `warning` | "An account is resynchronising; its orders and positions are being verified." |
+| Reason                  | Severity                                                                                         | Message                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `oms.account_resyncing` | `warning`                                                                                        | "An account is resynchronising; its orders and positions are being verified."    |
+| `oms.account_desync`    | `warning`; `critical` for a pass that found an open position with no stop and no record in force | "Reconciliation found a difference on an account and is correcting it."          |
+| `oms.account_stale`     | `critical`                                                                                       | "Order entry on an account is refused: reconciliation has failed for 2 minutes." |
+| `oms.account_synced`    | `info`                                                                                           | "An account is reconciled and live again."                                       |
+
+When E29-T06's rows fire (the orchestrator's ruling of record on #914, BQ-6 and BQ-9; `24-internal-schemas.md` §8.5):
+
+- `oms.account_desync` is sent once per pass that applied at least one correction to tracked state, never once per row. A correction is a step sent to an order, a position corrected, or a stop attached or restored. It is `critical` for a pass that found an open position with no exchange-side stop and no recorded stop in force: that pass pages P1, lists the position in its report, and leaves the attach to E32-T02.
+- `oms.account_stale` is sent once per episode, when the 2-minute window of failed fetches ends and the account's reconciliation job locks (`stale_lockout`), so its order entry is refused with `account_stale`.
+- `oms.account_synced` is sent once, on the first clean pass after a desync or stale episode, never on every clean pass. A clean pass applied no correction and left nothing for the Owner. A stale episode ends only by the operator's decision (`resolveReconciliation`), so its `synced` follows the first clean pass after it.
 
 ### 15.10 `MachineStateUpdate`
 
@@ -4775,6 +4786,14 @@ actor), and E28-S01 (#971) consumes it. This is additive (C-6.3): `reason` is an
 frame's fields and its cut to the connection's grants are unchanged, and no shipped client keeps a
 state per `reason` yet. This is an orchestrator contract decision (2026-10-25); the owner may
 override it.
+
+**Contract change, 2026-10-30 (#914).** §15.9's table gains E29-T06's three `account_notice` rows:
+`oms.account_desync`, `oms.account_stale` and `oms.account_synced`, each with its severity, its one
+message and the rule for when it is sent. The section already named the three reasons. A
+desync's severity is `critical` for a pass that found an open position with no stop and no record
+in force, the one reason whose severity its producer chooses. This is additive (C-6.3): `reason`
+is an open set, the frame's fields and its cut are unchanged, and no producer sends these rows
+until E29-T06's wiring lands. It is the orchestrator's ruling of record on #914 (BQ-6, BQ-9).
 
 ### 16.2 Limits summary
 
