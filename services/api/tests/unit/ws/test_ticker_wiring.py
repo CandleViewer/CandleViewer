@@ -83,6 +83,41 @@ async def test_each_revision_of_its_env_resnaps_the_symbol_and_a_failure_is_cont
     assert seen == ["ETHUSDT", "BTCUSDT"]
 
 
+async def test_the_ws_resnap_on_a_revision_reads_a_catalogue_that_already_carries_it() -> None:
+    """#5118: the real refresh publishes on the bus, and `InstrumentRevisions` re-snaps on it; the
+    catalogue the re-snap reads already serves the revision it was told about."""
+    from tests.unit.ingestion.test_instruments_refresh import make, raw
+
+    tick = {"priceFilter": {"tickSize": "0.50", "minPrice": "0.10", "maxPrice": "999999.00"}}
+    sched, repo, _, _ = make([[raw()], [raw(**tick)]])
+    bus, served, done = Bus(), [], asyncio.Event()
+    upsert = repo.upsert_snapshot
+
+    async def slow_upsert(rows: Any) -> None:  # the real write yields; the re-snap may run then
+        for _ in range(50):
+            await asyncio.sleep(0)
+        await upsert(rows)
+
+    async def publish(event: InstrumentUpdatedEvent) -> None:
+        await bus.publish(_updated("live", event.symbol), event)
+
+    def revise(symbol: str) -> int:
+        inst = sched.snapshot().get(symbol)  # type: ignore[union-attr]  # refreshed first
+        served.append(None if inst is None else inst.metadata_version)
+        done.set()
+        return 1
+
+    sched._publish = publish
+    repo.upsert_snapshot = slow_upsert  # type: ignore[method-assign]  # the yielding write
+    revisions = InstrumentRevisions(bus, "live", revise)
+    revisions.start()
+    await sched.refresh_now()
+    await sched.refresh_now()
+    await asyncio.wait_for(done.wait(), timeout=5)
+    await revisions.stop()
+    assert served == [2]
+
+
 class _Feed:
     def __init__(self, log: list[str], name: str) -> None:
         self.log, self.name = log, name

@@ -198,6 +198,43 @@ async def test_tick_size_change_records_version_and_publishes_event() -> None:
     assert published[0].symbol == "BTCUSDT" and published[0].metadata_version == 2
 
 
+async def test_an_update_is_published_only_once_the_cache_serves_its_revision() -> None:
+    """#5118: the event announces a readable state. At publish time the cache's snapshot (what
+    `GET /instruments` and the WS re-snap read) already carries the event's metadata_version."""
+    changed = raw(priceFilter={"tickSize": "0.50", "minPrice": "0.10", "maxPrice": "999999.00"})
+    sched, _, _, _ = make([[raw(), raw("ETHUSDT")], [changed, raw("ETHUSDT")]])
+    served: list[tuple[str, int, int | None]] = []
+
+    async def publish(event: Any) -> None:
+        inst = sched.snapshot().get(event.symbol)  # type: ignore[union-attr]  # swapped first
+        served.append((event.symbol, event.metadata_version, inst and inst.metadata_version))
+
+    sched._publish = publish
+    await sched.refresh_now()
+    await sched.refresh_now()
+    assert served == [("BTCUSDT", 2, 2)]
+
+
+async def test_a_failed_update_publish_is_logged_and_the_rest_still_go() -> None:
+    """#5118: after the swap a retry would find nothing changed, so one failed publish never
+    stops the others or fails the refresh."""
+    tick = {"priceFilter": {"tickSize": "0.50", "minPrice": "0.10", "maxPrice": "999999.00"}}
+    pages = [[raw(), raw("ETHUSDT")], [raw(**tick), raw("ETHUSDT", **tick)]]
+    sched, _, _, _ = make(pages)
+    sent: list[str] = []
+
+    async def publish(event: Any) -> None:
+        if event.symbol == "BTCUSDT":
+            raise RuntimeError("bus down")
+        sent.append(event.symbol)
+
+    sched._publish = publish
+    await sched.refresh_now()
+    await sched.refresh_now()
+    assert sent == ["ETHUSDT"]
+    assert sched.snapshot().get("BTCUSDT").metadata_version == 2  # type: ignore[union-attr]
+
+
 async def test_unchanged_refresh_is_noop_for_versions() -> None:
     sched, repo, published, _ = make([[raw()], [raw()]])
     await sched.refresh_now()
