@@ -21,6 +21,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
@@ -79,6 +80,7 @@ class _World:
                 revocation_hub=RevocationHub(),
                 allowed_origins=frozenset({ORIGIN}),
                 tick_s=0.005,
+                backpressure=BackpressureConfig(),
             )
         )
         self.client = TestClient(app, headers={"origin": ORIGIN})

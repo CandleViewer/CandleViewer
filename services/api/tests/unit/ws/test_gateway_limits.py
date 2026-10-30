@@ -15,6 +15,7 @@ from starlette.websockets import WebSocketDisconnect
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.ws import limits
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, handle_sub
 from candleviewer.ws.revocation import RevocationHub
@@ -45,6 +46,7 @@ def _client(**kw: Any) -> TestClient:
             registry=reg,
             revocation_hub=RevocationHub(),
             allowed_origins=ALLOWED,
+            backpressure=BackpressureConfig(),
             **kw,
         )
     )
@@ -206,6 +208,7 @@ def test_gateway_evict_hook_sends_slow_consumer_and_closes_4429() -> None:
             registry=reg,
             revocation_hub=RevocationHub(),
             allowed_origins=ALLOWED,
+            backpressure=BackpressureConfig(),
         )
     )
     client = TestClient(app, headers={"origin": ORIGIN})

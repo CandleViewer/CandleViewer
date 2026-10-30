@@ -23,6 +23,7 @@ from starlette.websockets import WebSocketDisconnect
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.context import spawn
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import AuthRefused, GatewayHub, make_ws_router
 from candleviewer.ws.limits import AUTH_CALL_TIMEOUT_S
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
@@ -152,7 +153,7 @@ class Rig:
             clock=lambda: self.now,
             wall_ms=lambda: BASE_MS + int(self.now * 1000),
             tick_s=tick_s,
-            **(options or {}),
+            **({"backpressure": BackpressureConfig()} | (options or {})),
         )
         (route,) = router.routes
         assert isinstance(route, APIWebSocketRoute)

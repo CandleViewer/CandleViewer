@@ -29,6 +29,7 @@ from candleviewer.app import create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.settings import Settings
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.lifecycle import (
     ORIGIN_FORBIDDEN,
@@ -107,6 +108,7 @@ def _app(spy: _Spy, hub: GatewayHub, *, clock: Callable[[], float] = time.monoto
             hub=hub,
             clock=clock,
             tick_s=0.005,
+            backpressure=BackpressureConfig(),
         )
     )
     return app

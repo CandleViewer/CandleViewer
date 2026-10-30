@@ -43,6 +43,18 @@ def _bare(backpressure: BackpressureConfig | None = None) -> _Connection:
     return _Connection(cast(Any, _Wire()), **kw, backpressure=backpressure)
 
 
+def test_the_flag_off_deadline_line_says_the_flush_was_abandoned() -> None:
+    # The bare connection keeps the flag-off flush timer until #2409's removal PR, which deletes
+    # this test with the branch it covers (`_flush_deadline_passed`, `pipeline is None`).
+    conn = _bare()
+    conn.end_writer = lambda: True  # the writer still ran at its deadline
+    with capture_logs() as logs:
+        conn._flush_deadline_passed()
+    (line,) = _lines(logs, "ws close deadline passed")
+    assert (line["log_level"], line["flush_abandoned"]) == ("warning", True)
+    assert line["connection_id"] == conn.connection_id and "trigger" not in line
+
+
 # -- row 1: `ws close` ---------------------------------------------------------------------------
 
 
@@ -97,16 +109,6 @@ async def test_a_step_3_redrop_close_names_its_trigger() -> None:
 # -- row 2: `ws close deadline passed` -----------------------------------------------------------
 
 
-def test_the_flag_off_deadline_line_says_the_flush_was_abandoned() -> None:
-    conn = _bare()
-    conn.end_writer = lambda: True  # the writer still ran at its deadline
-    with capture_logs() as logs:
-        conn._flush_deadline_passed()
-    (line,) = _lines(logs, "ws close deadline passed")
-    assert (line["log_level"], line["flush_abandoned"]) == ("warning", True)
-    assert line["connection_id"] == conn.connection_id and "trigger" not in line
-
-
 async def test_the_flag_on_deadline_line_says_the_flush_was_abandoned_and_its_trigger() -> None:
     """A step 3 close whose flush also expires: the deadline line names step 3's trigger too."""
     rig, sock = _Rig(BackpressureConfig(max_frames=8, close_flush_s=0.01)), _Wire()
@@ -154,9 +156,10 @@ async def test_a_server_close_ends_with_one_line_its_duration_and_class() -> Non
 
 
 @pytest.mark.parametrize("authenticate", [True, False], ids=["authenticated", "unauthenticated"])
-async def test_a_client_disconnect_ends_with_one_line_and_no_class_with_the_flag_off(
+async def test_a_client_disconnect_ends_with_one_line_and_a_class_once_attached(
     authenticate: bool,
 ) -> None:
+    """The class is the pipeline's last: none before the first `auth_ok` attaches it."""
     rig, sock = _Rig(), _Wire()
     with capture_logs() as logs:
         async with asyncio.timeout(_DEADLINE_S):
@@ -180,7 +183,7 @@ async def test_a_client_disconnect_ends_with_one_line_and_no_class_with_the_flag
         "reason": "client_closed",
         "duration_ms": 250,
         "authenticated": authenticate,
-    }
+    } | ({"connection_class": "healthy"} if authenticate else {})
 
 
 async def test_an_unauthenticated_server_close_ends_with_one_line() -> None:

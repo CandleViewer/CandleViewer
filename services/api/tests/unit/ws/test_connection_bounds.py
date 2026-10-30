@@ -1,12 +1,14 @@
-"""A peer that stopped reading is closed, flag off too; registrations are always released (#415).
+"""A peer that stopped reading is closed; registrations are always released (#415).
 
-Flag off, a close whose writer is still parked on a send at `close_flush_s` ends it, and until the
-first `auth_ok` `auth_timeout_s` plus that bound from `accept` does the same, flag on or off, so the
-socket is torn down and its slot freed; the expiry counts as the flag-on path's
-(`cv_ws_overflow_total{reason="close_flush_deadline"}`). A socket that ends in time leaves no
-flush timer and counts nothing. An `auth` undoes only the SR-189 registration it made, one that
-finds its socket closing registers nothing, and teardown releases what was registered. Fake socket
-and clock; the bounds are short loop timers, awaited through the handler (no sleeps)."""
+A close whose writer is still parked on a send at its flush deadline (the pipeline's, §8.4) ends
+it, and until the first `auth_ok` `auth_timeout_s` plus the flush bound from `accept` does the
+same, so the socket is torn down and its slot freed; the expiry counts
+(`cv_ws_overflow_total{reason="close_flush_deadline"}`). The rigs run the budgeted pipeline
+(#2409); the bare connection below keeps the flag-off flush timer. A socket that ends in time
+leaves no flush timer and counts nothing. An `auth` undoes only the SR-189 registration it made,
+one that finds its socket closing registers nothing, and teardown releases what was registered.
+Fake socket and clock; the bounds are short loop timers, awaited through the handler (no
+sleeps)."""
 
 from __future__ import annotations
 
@@ -42,9 +44,9 @@ async def _ended(handler: asyncio.Task[None], within: float = 2.0) -> None:
 
 
 async def test_a_close_whose_peer_stopped_reading_ends_at_its_flush_deadline() -> None:
-    """Flag off: the session is revoked, its sealed `bye` parks on a peer that stopped reading,
-    and at the flush deadline the writer ends and the socket is torn down."""
-    rig, sock = Rig(options={"close_flush_s": BOUND_S}), Sock()
+    """The session is revoked, its sealed `bye` parks on a peer that stopped reading, and at the
+    pipeline's flush deadline the writer ends and the socket is torn down."""
+    rig, sock = Rig(options={"backpressure": BackpressureConfig(close_flush_s=BOUND_S)}), Sock()
     handler = await rig.open(sock)
     assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
     (conn,) = rig.hub._live
@@ -58,22 +60,14 @@ async def test_a_close_whose_peer_stopped_reading_ends_at_its_flush_deadline() -
     assert rig.leftovers() == NOTHING_LEFT
 
 
-@pytest.mark.parametrize(
-    ("flag", "first"),
-    [(False, "hello"), (True, "hello"), (False, "ping")],
-    ids=["flag-off", "flag-on", "a-close-comes-first"],
-)
-async def test_a_socket_whose_writer_never_drains_until_auth_ok_is_closed(
-    flag: bool, first: str
-) -> None:
+@pytest.mark.parametrize("first", ["hello", "ping"], ids=["no-auth", "a-close-comes-first"])
+async def test_a_socket_whose_writer_never_drains_until_auth_ok_is_closed(first: str) -> None:
     """Its `welcome` parks on a peer that stopped reading and no `auth` comes: `auth_timeout_s`
     plus the flush bound after `accept` it is closed `slow_consumer` and its slot freed. A close
     before then (a first frame that is not `hello`) ends it at its own, earlier flush bound."""
     window = BOUND_S if first == "hello" else 10.0  # the earlier bound decides
-    options: dict[str, Any] = {"auth_timeout_s": window, "close_flush_s": BOUND_S}
-    if flag:
-        options["backpressure"] = BackpressureConfig(close_flush_s=BOUND_S)
-    rig, sock = Rig(options=options), Sock()
+    flush = BackpressureConfig(close_flush_s=BOUND_S)
+    rig, sock = Rig(options={"auth_timeout_s": window, "backpressure": flush}), Sock()
     sock.stops_reading = True
     flushes, slow = _expired()
     handler = rig.start(sock)
@@ -88,9 +82,9 @@ async def test_a_socket_whose_writer_never_drains_until_auth_ok_is_closed(
 async def test_a_socket_that_ends_in_time_leaves_no_flush_timer(
     closes: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A socket that hangs up until the first `auth_ok`, or whose close (flag off: a third failed
-    `auth`) flushes in time, leaves no flush timer: each one armed is cancelled, the bound from
-    `accept` as soon as the close's earlier bound replaces it, and none is armed after teardown."""
+    """A socket that hangs up until the first `auth_ok`, or whose close (a third failed `auth`)
+    flushes in time, leaves no flush timer: the bound from `accept` is the one armed (the close's
+    flush is the pipeline's deadline, §8.4), it is cancelled, and none is armed after teardown."""
     rig, sock = Rig(), Sock()
     handler = await rig.open(sock)
     (conn,) = rig.hub._live
@@ -109,7 +103,10 @@ async def test_a_socket_that_ends_in_time_leaves_no_flush_timer(
     if not closes:
         hang_up(sock)
     await _ended(handler)
-    assert conn.flush_timer is None and len(armed) == 1 + closes
+    # One timer: on the pipeline a close's flush is the pipeline's own deadline, not a second
+    # timer (covered by `test_a_close_whose_peer_stopped_reading_ends_at_its_flush_deadline`).
+    assert conn.pipeline is not None
+    assert conn.flush_timer is None and len(armed) == 1
     assert all(timer is not None and timer.cancelled() for timer in armed)
     arm(1.0)
     assert conn.flush_timer is None  # none after teardown
@@ -167,7 +164,8 @@ async def test_a_failed_auth_on_a_closing_socket_leaves_no_registration_behind(h
     """The session is revoked, and an `auth` already on its way fails, refused or past its call
     bound (while the `bye` is parked, so the socket is still being read): it made no
     registration, so it undoes none, and teardown releases the socket's own."""
-    rig, sock = Rig(hangs=hangs, options={"close_flush_s": 5 * BOUND_S} if hangs else None), Sock()
+    flush = {"backpressure": BackpressureConfig(close_flush_s=5 * BOUND_S)}
+    rig, sock = Rig(hangs=hangs, options=flush if hangs else None), Sock()
     handler = await rig.open(sock)
     assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
     assert (len(rig.registry._conns), len(rig.sequencing)) == (1, 1)

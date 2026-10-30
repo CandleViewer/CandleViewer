@@ -111,7 +111,7 @@ def test_series_is_live_catalogued_registered_once_re_exported_and_unlabelled() 
 
 
 def test_fanout_counts_the_weight_for_each_sampled_delta_and_times_it_hub_to_socket() -> None:
-    w = _World()
+    w = _World(backpressure=None)  # #2409: the flag-off writer path, until PR 2
     with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         _sub(ws)
@@ -134,7 +134,7 @@ def test_fanout_counts_the_weight_for_each_sampled_delta_and_times_it_hub_to_soc
 
 
 def test_fanout_observes_a_sampled_snapshot_but_no_control_frame() -> None:
-    w = _World()
+    w = _World(backpressure=None)  # #2409: the flag-off writer path, until PR 2
     with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         _barrier(ws)
@@ -161,7 +161,7 @@ def test_fanout_ignores_a_frame_the_writer_drops_when_the_identity_ends(
 ) -> None:
     # A token an hour out: the fake monotonic clock passes its expiry at 3600 s.
     monkeypatch.setattr(sequencing_socket, "_EXPIRES", datetime.now(UTC) + timedelta(hours=1))
-    w = _World()
+    w = _World(backpressure=None)  # #2409: the flag-off writer path, until PR 2
     with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         _sub(ws)

@@ -305,7 +305,7 @@ def _session(
     `CH`, as it crossed the wire: `welcome`, `auth_ok`, the `system` snap (§12.1, #4992), `sub_ok`,
     the `snap` (`s` 1), the deltas.
     `at_rest` runs once the last one is in, with the connection open and its writer idle."""
-    w = _World()
+    w = _World(backpressure=None)  # #2409: the flag-off writer path, until PR 2
     with w.client, w.client.websocket_connect("/ws", subprotocols=subprotocol) as ws:
         _send(ws, {"t": "hello", "id": "h"})
         wire = [_wire(ws)]  # `welcome`: a control frame

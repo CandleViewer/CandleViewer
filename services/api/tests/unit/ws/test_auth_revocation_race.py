@@ -21,6 +21,7 @@ from fastapi.routing import APIWebSocketRoute
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.metrics import cv_ws_closes_total
 from candleviewer.ws.permissions import ConnectionRegistry
@@ -86,6 +87,7 @@ class _Rig:
             clock=lambda: self.now,
             wall_ms=lambda: BASE_MS + int(self.now * 1000),
             tick_s=0.005,
+            backpressure=BackpressureConfig(),
         )
         (route,) = router.routes
         assert isinstance(route, APIWebSocketRoute)

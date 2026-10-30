@@ -15,6 +15,7 @@ from hypothesis import strategies as st
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.metrics import cv_ws_auth_failures_total
 from candleviewer.ws.permissions import (
@@ -134,7 +135,11 @@ def _gateway(audit: _Audit | None = None) -> tuple[_Store, ConnectionRegistry, T
         return "sess-189", MGR, datetime(2100, 1, 1, tzinfo=UTC)
 
     router = make_ws_router(
-        authenticate=auth, registry=reg, revocation_hub=RevocationHub(), allowed_origins=ORIGINS
+        authenticate=auth,
+        registry=reg,
+        revocation_hub=RevocationHub(),
+        allowed_origins=ORIGINS,
+        backpressure=BackpressureConfig(),
     )
     app = FastAPI()
     app.include_router(router)
