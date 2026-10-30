@@ -40,17 +40,18 @@ reached through them. Sixteen gates, each FAIL led by its code:
 - [G13-UNSTATED] R369 BQ-04's test: R-1 states the precise reading; a PROPOSED destination in
   section 4 is Minor where the trigger survives and Blocking where the operation can remove the
   focused element; an F row whose merged sentence names a removed element is Blocking.
-- [G14-CRITERIA] a section 10.2 row never reads `compliant` while an F row of severity Minor or
-  higher cites that criterion or is listed against it; every cited criterion lists its F row.
+- [G14-CRITERIA] a section 10.1 or 10.2 row never reads `compliant` while an F row of severity
+  Minor or higher cites that `05` clause or WCAG criterion or is listed against it; every cited
+  clause and criterion lists its F row.
 - [G15-XREF] every SR id an FM row names is defined, shares a word with the operation, and holds
   every string the FM row quotes (a ticked key stands in the SR string or a cited parent).
 - [G16-BUDGET] BG-03 states R369 BQ-13's rule ("1 polite summary + any assertive safety row")
   and suppresses only polite rows; the apply scenario of section 13 names it.
 
-`--json` prints the numbers and findings; `--check` exits 1 on any FAIL; `--self-test` applies one
-mutation per gate to an in-memory copy and passes only when each adds exactly one new FAIL with its
-gate's code, a re-run reproduces the base result and no file on disk changed. `--repin-ruled`
-rewrites the pins file from the spec's cites and is the only writer of that file.
+`--json` prints the numbers and findings; `--check` exits 1 on any FAIL; `--self-test` applies at
+least one mutation per gate to an in-memory copy and passes only when each adds exactly one new FAIL
+with its gate's code, a re-run reproduces the base result and no file on disk changed.
+`--repin-ruled` rewrites the pins file from the spec's cites and is the only writer of that file.
 
 Usage: python3 -I -B docs/design/_tools/e15_d15_a11y_review_audit.py [--check] [--json]
        [--self-test] [--repin-ruled]
@@ -75,7 +76,7 @@ ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC = ROOT / "docs" / "design" / "E15" / "E15-D15.md"
 PINS = TOOLS / "e15_d15_ruled_pins.txt"
-BASE = "2d0bd4fd3301d7b7afc14f826b648b1ce2b9ec29"  # origin/main; every cite is read here
+BASE = "7e23e4667ceb97e99943bdde834268809f7719a9"  # origin/main; every cite is read here
 BQ_BASE = "7629519069a7cfeebaf68153fb4d1003cb12b41e"  # where the BQ list read every cite
 MOVED = {"14", "15"}  # the two files that changed between the bases (section 1.5)
 KEYS = {
@@ -154,6 +155,8 @@ COALESCE_RULE = '**"1 polite summary + any assertive safety row"**'
 PROPOSED_FM = re.compile(r"PROPOSED \((F-\d\d)\)")
 REMOVED_RE = re.compile(r"\bremov")
 WCAG_RE = re.compile(r"WCAG (\d\.\d\.\d{1,2})\b")
+CLAUSE_RE = re.compile(r"`05` (§\d+(?:\.\d+)?)(?: (?:item|rule) (\d+))?")  # an F row's clause cite
+CLAUSE_HEAD = re.compile(r"(§\d+(?:\.\d+)?)(?: (?:items?|rules?) ([^—]*))?")  # a section 10.1 head
 SR_RANGE = re.compile(r"SR-(\d\d)\.\.(?:SR-)?(\d\d)")
 SR_ONE = re.compile(r"SR-(\d\d)")
 WORD = re.compile(r"[A-Za-z][A-Za-z\-]{3,}")
@@ -468,8 +471,8 @@ def gate_regions(ctx: Ctx, r: Result) -> None:
     ring = "TopBar → NavRail → the tab strip → the panels in reading order → the minimised tray → RightRail → StatusBar"
     if ring not in body:
         r.fail("G4-REGIONS", "the ring sentence is missing")
-    if "**Name** = `{Kind}, {SYMBOL} {interval}`" not in body:
-        r.fail("G4-REGIONS", "R-5's name form is missing from section 5.2")
+    if "**Name** = `{Kind}, {symbol} {interval spelled}`" not in body:
+        r.fail("G4-REGIONS", "R-5's name form (E15-D03 D-5's) is missing from section 5.2")
     r.numbers["rg_rows"] = len(rg)
 
 
@@ -922,7 +925,28 @@ def gate_unstated(ctx: Ctx, r: Result) -> None:
     r.numbers["fm_proposed"] = proposed
 
 
-# --- G14: findings against the WCAG rows ----------------------------------------------------------
+# --- G14: findings against the `05` clause and WCAG rows ----------------------------------------
+def clause(head: str) -> tuple[str, frozenset[int] | None] | None:
+    """A section 10.1 row head: `§3.4 item 4 — …` → ("§3.4", {4}); `§3.3 items 1–4 — …` →
+    ("§3.3", {1, 2, 3, 4}); `§5 items 1, 2 and 6 — …` → ("§5", {1, 2, 6}); `§6.2 — …` → no items."""
+    m = CLAUSE_HEAD.match(head)
+    if not m:
+        return None
+    sec, items = m.group(1), m.group(2)
+    if not items:
+        return (sec, None)
+    nums: set[int] = set()
+    for a, b in re.findall(r"(\d+)(?:–(\d+))?", items):
+        nums.update(range(int(a), int(b or a) + 1))
+    return (sec, frozenset(nums))
+
+
+def clause_hit(cite: tuple[str, int | None], row: tuple[str, frozenset[int] | None]) -> bool:
+    """A `05` § cite names a row when the sections agree and the cite's item, if any, is in the row's."""
+    sec, item = cite
+    return sec == row[0] and (item is None or (row[1] is not None and item in row[1]))
+
+
 def gate_criteria(ctx: Ctx, r: Result) -> None:
     f_rows = by_id(section(ctx.spec, "11. Findings"), "F")
     graded = {fid for fid, row in f_rows.items() if row[1] in ("Blocking", "Major", "Minor")}
@@ -947,7 +971,38 @@ def gate_criteria(ctx: Ctx, r: Result) -> None:
             r.fail("G14-CRITERIA", f"{number}: {sorted(cites - listed)} cite it and are not listed")
     for number in sorted(set(citing) - seen):
         r.fail("G14-CRITERIA", f"{sorted(citing[number])} cite WCAG {number}, which has no row")
+    # the same check over section 10.1: an F row's merged sentence cites a `05` clause by its label
+    f_clauses: dict[str, set[tuple[str, int | None]]] = {}
+    for fid in graded:
+        for sec, item in CLAUSE_RE.findall(f_rows[fid][2]):
+            f_clauses.setdefault(fid, set()).add((sec, int(item) if item else None))
+    matched: set[str] = set()
+    for row in rows(section(ctx.spec, "10.1 `05` clauses")):
+        parsed = clause(row[0])
+        label = row[0].split(" — ")[0]
+        listed = set(re.findall(r"F-\d\d", row[3])) & graded
+        cites = {
+            fid
+            for fid, cs in f_clauses.items()
+            if parsed is not None and any(clause_hit(c, parsed) for c in cs)
+        }
+        matched |= cites
+        if row[1].startswith("compliant") and (listed or cites):
+            r.fail(
+                "G14-CRITERIA",
+                f"`05` {label}: compliant while {sorted(listed | cites)} stand against it",
+            )
+        elif cites - listed:
+            r.fail(
+                "G14-CRITERIA", f"`05` {label}: {sorted(cites - listed)} cite it and are not listed"
+            )
+    for fid in sorted(set(f_clauses) - matched):
+        r.fail("G14-CRITERIA", f"{fid} cites a `05` clause with no section 10.1 row")
     r.numbers["criteria_cited"] = {k: sorted(v) for k, v in sorted(citing.items())}
+    r.numbers["clauses_cited"] = {
+        fid: sorted(f"{s} item {i}" if i else s for s, i in cs)
+        for fid, cs in sorted(f_clauses.items())
+    }
 
 
 # --- G15: the FM rows' SR ids against the SR rows -------------------------------------------------
@@ -1113,6 +1168,13 @@ MUTATIONS: tuple[tuple[str, Mut], ...] = (
     ),
     ("G14-CRITERIA", regex(r"(\| 2\.4\.3 Focus order\s+\| )non-compliant", r"\1compliant    ")),
     (
+        "G14-CRITERIA",
+        regex(
+            r"(\| §3\.4 item 4 — modals trap, return focus, `Esc` cancels\s+\| )non-compliant",
+            r"\1compliant    ",
+        ),
+    ),
+    (
         "G15-XREF",
         regex(
             r"(\| FM-24 \|[^\n]*?\| )SR-18 \"Renamed to Swing 1D\.\"",
@@ -1190,8 +1252,8 @@ def main(argv: list[str]) -> int:
         if args.self_test:
             out += [f"FAIL {line}" for line in st]
             out.append(
-                f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations (one per "
-                "gate), each one new FAIL; a re-run reproduces the base result; files on disk unchanged"
+                f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations (at least one "
+                "per gate), each one new FAIL; a re-run reproduces the base result; files on disk unchanged"
             )
         print("\n".join(out))
     failed = bool(res.fails or st)

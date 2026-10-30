@@ -84,7 +84,9 @@
 15|2721|- **A11y**: built on CMP-041 Menu; opens from a named "Panel options" bu
 15|2730|- **A11y**: each preset's accessible name describes the arrangement in w
 15|2739|- **A11y**: sync-group membership is conveyed by group **name and letter
-15|2864|- **A11y**: `aria-pressed` switch whose name states the scope and state
+15|2753|- **E08-D05 (A-D05-4)**: A11y: a button (`aria-haspopup="dialog"`), not
+15|2754|- **As built (E08-S09)**: the trigger alone, as B02 draws it (E08-D05 §1
+15|2866|- **A11y**: `aria-pressed` switch whose name states the scope and state
 CAL|13|SPRINT01_START = datetime.date(2026, 9, 25) # Friday
 CAL|14|SPRINT_DAYS = 7
 D01|244|| Cycle regions | `Ctrl+\` (`05` §3.2), with `F6` / `Shift+F6` as an ali
@@ -93,6 +95,7 @@ D01|250|| Resize | focused splitter (CMP-083, `role="separator"`): arrows, `Shif
 D01|252|| Workspaces | tab strip: arrows, then `Enter`; a next/previous chord fr
 D01|425|| OQ-8 | the region key, and whether the desktop app adds `Ctrl+Tab` as
 D02|267|| Apply a preset (SCR-022) | the preset's tree replaces the working copy
+D02|282|**Panels.** One header row each (D-3); the focused panel (AD-7) has a 2
 D02|520|- **Done:** the new workspace opens in a tab; "Imported Scalping (2): 7
 D02|538|One stage list replaces the catalogue's two (§14.2), each stage with its
 D02|542|E15 owns the GPU cause of SCR-153 and US-LAY-008; the other causes (back
@@ -172,11 +175,14 @@ D02|860|| OQ-J | E15-D01 OQ-6 (an armed DOM or ticket), extended here to an arme
 D02|866|| OQ-P | The ticket's event names win; `workspace.restored`, `workspace.
 D02|869|| OQ-S | The move-mode target model: a panel first (arrows by shared edg
 D02|966|| E10, E30 | OQ-A (the collapsed rail's 48 px launcher strip, the drawer
+D03|169|| D-4 | **The environment per kind (BQ-9).** The order-capable kinds are
+D03|170|| D-5 | **The region name (BQ-10).** `role="region"` named by kind, symb
 D03|242|### 3.4 The focus geometry and the reflow proof (AC6)
 D03|317|| focused | the bar fills (§4.1); nothing else | announced "{name}, focu
 D03|323|| armed | CMP-229's attention pill (E30's tokens) | E30's |
 D03|324|| stale / disconnected | E17-D02's header words in a fixed-width status
 D03|325|| reduced | "Reduced" chip (CMP-011 neutral) right of the sync badge, al
+D03|670|| `panel.region.name` | "{Kind}, {symbol} {interval spelled}, {Environme
 D03|715|### 11.2 Contrast (the tool's section "contrast"; `lo` = against the dar
 D03|760|### 11.4 Forced colours, high contrast and zoom
 D03|772|| `Ctrl+\` (desktop alias `F6`, `Shift+F6`) | cycle regions: TopBar → Na
@@ -192,6 +198,7 @@ D03|790|Each panel is `role="region"` named per D-5; the tab strip is a `tablist
 D03|941|| C-4 | `D02`:610 the environment in the region's description | in the n
 D03|951|| C-14 | T:93 "`F6` cycles regions" | `Ctrl+\`, `F6` a desktop alias (A-
 D03|954|| C-17 | `11`:2754 US-LAY-001's NFR "pane focus is keyboard-navigable (C
+D03|969|| A-4 | `14`:520 "("Chart, BTCUSDT 1m")" | → "("Chart, BTCUSDT 1 minute,
 D04|115|| D04-D-14 | **200 % zoom at 1280×800:** the dock is E15-D02's tabbed co
 D04|165|| P10 | `SCR-021/undone` | After Undo: the layout of P1, still dirty if
 D04|169|## 5. Keyboard move mode K1–K6, the directional chooser and the parity a
@@ -342,6 +349,7 @@ D07|140|Per E09-D09 §2.2 and RULED A1: the control keeps its native role (a men
 D07|144|**In the picker** (AC1) the reason is also joined into the option's acce
 D07|152|An item or entry whose reason is a key outside condition 1, or an availa
 D07|154|**Absence** is a third form: an item a build can never offer (Pop out in
+D07|232|**Accessible name and description** (D-5): `role="option"`, `aria-labell
 D07|585|| R-1 | SCR-024 | Order ticket, Trade-group ticket | view-as; `orders:wr
 D07|586|| R-2 | SCR-024 | an entry needing a recorded symbol (Deep Stats, illust
 D07|587|| R-3 | SCR-024 | an owner-only entry (illustrative) | permission held b
