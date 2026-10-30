@@ -52,7 +52,10 @@ export interface SymbolSearchInputProps {
    * (E08-D05 §6.2's Loading opens with an empty one), and again only when it changes.
    */
   readonly message?: string;
-  /** No list in memory: CMP-213's skeleton rows. */
+  /**
+   * No list in memory: CMP-213's skeleton rows. No option is active then, so the arrows and `PageUp` / `PageDown`
+   * move nothing and `Enter` is the host's.
+   */
   readonly loading?: boolean;
   /** Shown in the list's place when nothing is listed (CMP-026 with E08-D05 §6.2's words). */
   readonly emptyMessage?: ReactNode;
@@ -138,7 +141,9 @@ export function SymbolSearchInput(props: SymbolSearchInputProps): JSX.Element {
     [query, recentSymbols, items],
   );
   const rows = useMemo(() => list.map((entry) => entry.row), [list]);
-  const index = list.findIndex((entry) => entry.row.id === activeKey);
+  // While loading only skeleton rows are drawn: no option is active and the keys move nothing, so
+  // `aria-activedescendant` never names a node that is not in the DOM (CR-B2AD-02).
+  const index = loading ? -1 : list.findIndex((entry) => entry.row.id === activeKey);
   const active = list[index];
   const activeId = active?.row.id;
   const expanded = !unavailable && (loading || list.length > 0);
@@ -185,7 +190,7 @@ export function SymbolSearchInput(props: SymbolSearchInputProps): JSX.Element {
     props.onKeyDown?.(event, active?.item);
     if (unavailable || event.defaultPrevented !== prevented) return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return; // chords are the host's
-    const last = list.length - 1;
+    const last = loading ? -1 : list.length - 1;
     const page = Math.max(1, Math.floor(visibleRows));
     if (event.key === "Enter") {
       if (active === undefined) return; // with none active, Enter is the host's

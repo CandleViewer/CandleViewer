@@ -16,6 +16,7 @@ import {
 import { getShellState, resetShellState, setShellState } from "../../src/shell/bootstrap/store.js";
 import { accessToken, REFRESH_PATH, REFRESH_WAIT_MS } from "../../src/lib/auth/accessToken.js";
 import { startShell, toConnectionState } from "../../src/shell/startShell.js";
+import { getSymbolSearchState } from "../../src/features/symbol-search/searchSession.js";
 import { tokenOf, URL } from "../lib/ws/support/connectionHarness";
 import { BOOK } from "../lib/ws/support/engineHarness";
 import { FakePort } from "../lib/ws/support/fakePort";
@@ -73,6 +74,13 @@ describe("startShell", () => {
     await handle.ready;
     expect(fetchImpl).toHaveBeenCalled();
     handle.stop();
+  });
+
+  it("gives SCR-102 its instrument index with the shell and takes it back on stop() (E08-S09)", () => {
+    const { handle } = started();
+    expect(getSymbolSearchState().index).not.toBeNull();
+    handle.stop();
+    expect(getSymbolSearchState().index).toBeNull();
   });
 
   it("routes system updates into the shell store's systemByKind, the moment they arrive", () => {

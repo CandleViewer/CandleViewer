@@ -52,11 +52,6 @@
       "owner": "basiltt"
     },
     {
-      "token": "color.surface.hover",
-      "reason": "Row/control hover-state surface tint; transient, not a resting-state background a contrast pair is measured against.",
-      "owner": "basiltt"
-    },
-    {
       "token": "color.text.disabled",
       "reason": "WCAG 1.4.3/1.4.11 explicitly exempt disabled/inactive UI component text and controls from the contrast requirement.",
       "owner": "basiltt"

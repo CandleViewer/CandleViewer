@@ -15,6 +15,7 @@ import { openWorkerPort } from "../lib/ws/client/workerPort.js";
 import type { PortLike } from "../lib/ws/port/endpoint.js";
 import type { WsState } from "../lib/ws/state/types.js";
 import { bootOwnsOutage } from "../features/system-states/bootOffline.js";
+import { startSymbolSearch } from "../features/symbol-search/searchSession.js";
 import { runBootstrap, type BootstrapDeps } from "./bootstrap/bootstrap.js";
 import { watchGpu } from "./bootstrap/gpuCrash.js";
 import { startLiveness } from "./bootstrap/liveness.js";
@@ -72,10 +73,13 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
   });
   // SCR-159 (#306 slice 9c): the desktop shell's GPU-process crashes, for the in-canvas GPU page
   const unwatchGpu = watchGpu();
+  // E08-S09: SCR-102's instrument index, read once `/me` has answered and a workspace has bound an opener, then hourly
+  const stopSearch = startSymbolSearch();
   const teardown = (): void => {
     liveness.stop();
     unwatchGpu();
     uninstallCrash();
+    stopSearch();
   };
   // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call.
   // `refresh` stops waiting after REFRESH_WAIT_MS (another tab may hold the lock), so the first paint does too.

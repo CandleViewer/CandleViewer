@@ -30,7 +30,7 @@ export function activeContexts(el: Element | null = document.activeElement): Set
 /** SCR-015 toast host: polite, non-modal, never steals focus. */
 export function ToastHost({ messages }: { readonly messages: readonly string[] }): JSX.Element {
   return (
-    <div role="status" aria-live="polite" data-testid="toast-host">
+    <div role="status" aria-live="polite" data-testid="toast-host" data-cv-inert-exempt="">
       {messages.map((m, i) => (
         <p key={`${i}-${m}`}>{m}</p>
       ))}

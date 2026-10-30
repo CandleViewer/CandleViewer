@@ -121,11 +121,12 @@ describe("E10-S01 S2: the top bar's controls", () => {
     const { bar } = await shellAt("/journal", "demo", "owner");
     const sel = "a[href], button:not([disabled]), input:not([disabled]), [tabindex]";
     const stops = [...document.querySelectorAll<HTMLElement>(sel)].filter((e) => e.tabIndex >= 0);
-    const names = stops.slice(0, 7).map((e) => e.getAttribute("aria-label") ?? e.textContent);
+    const names = stops.slice(0, 6).map((e) => e.getAttribute("aria-label") ?? e.textContent);
+    // No Symbol control: SCR-102's trigger is drawn only once a workspace binds a pane (E08-S09).
     expect(names.join(" | ")).toMatch(
-      /^Skip to main content \| Account \| Symbol \| Interval \| Search commands Ctrl\+K \| Connection: [^|]+ \| Sign out$/,
+      /^Skip to main content \| Account \| Interval \| Search commands Ctrl\+K \| Connection: [^|]+ \| Sign out$/,
     );
-    for (const name of ["Account", "Symbol", "Interval"]) {
+    for (const name of ["Account", "Interval"]) {
       const picker = within(bar).getByRole("button", { name });
       expect(picker).toHaveAttribute("aria-disabled", "true");
       expect(picker).toHaveAccessibleDescription("Not available in this build.");

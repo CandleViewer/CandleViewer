@@ -219,6 +219,44 @@ export const PAIRS = [
     bg: "color.status.warning.subtle",
     threshold: THRESHOLD.NON_TEXT,
   },
+
+  // --- Symbol search rows (E08-D05 SCR-102 / SCR-041, spec §9.5; CMP-213, CMP-160) --
+  // The overlay pairs, the selected fill's primary text and the ARMED pill are registered above.
+  // Never registered, as §9.5 rejects it: `color.text.tertiary` on `color.surface.selected` (3.98:1 dark).
+  { fg: "color.text.primary", bg: "color.surface.hover", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.secondary", bg: "color.surface.hover", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.secondary", bg: "color.surface.selected", threshold: THRESHOLD.TEXT },
+  {
+    fg: "color.data-confidence.delisted.text",
+    bg: "color.surface.overlay",
+    threshold: THRESHOLD.TEXT,
+  },
+  {
+    fg: "color.data-confidence.delisted.text",
+    bg: "color.surface.hover",
+    threshold: THRESHOLD.TEXT,
+  },
+  {
+    fg: "color.data-confidence.delisted.text",
+    bg: "color.surface.selected",
+    threshold: THRESHOLD.TEXT,
+  },
+  {
+    fg: "color.data-confidence.delisted.indicator",
+    bg: "color.surface.overlay",
+    threshold: THRESHOLD.NON_TEXT,
+  },
+  {
+    fg: "color.data-confidence.delisted.indicator",
+    bg: "color.surface.hover",
+    threshold: THRESHOLD.NON_TEXT,
+  },
+  {
+    fg: "color.data-confidence.delisted.indicator",
+    bg: "color.surface.selected",
+    threshold: THRESHOLD.NON_TEXT,
+  },
+  { fg: "color.border.selected", bg: "color.surface.selected", threshold: THRESHOLD.NON_TEXT },
 ];
 
 /**

@@ -3,6 +3,8 @@ import { useLocation } from "react-router";
 import type { Me } from "../../shell/bootstrap/store.js";
 import { useShellSelector } from "../../shell/useShellSelector.js";
 import { bindingFor } from "../../keymap/keymap";
+import { SymbolSearchTrigger } from "../symbol-search/SymbolSearch";
+import { useSymbolSearch } from "../symbol-search/searchSession";
 import { sessionApi, SIGN_OUT_FAILED, type SessionApi } from "../session/sessionApi";
 import { announce, forget } from "./announcer";
 import { envBadgeName } from "./TopBarEnvBadge";
@@ -31,6 +33,7 @@ export function TopBarSlot({
     return user?.display_name ?? user?.username ?? null;
   });
   const role = useShellSelector((s) => s.me?.role ?? null);
+  const target = useSymbolSearch((s) => s.opener?.target ?? null);
   const [signOut, setSignOut] = useState({ busy: false, failed: false });
   const { pathname } = useLocation();
   const previous = useRef(pathname);
@@ -56,6 +59,7 @@ export function TopBarSlot({
       env={env}
       user={name === null || role === null ? null : { name, role }}
       connection={connection}
+      {...(target === null ? {} : { symbol: <SymbolSearchTrigger target={target} /> })}
       searchHint={bindingFor("global.palette")}
       onSignOut={onSignOut}
       signingOut={signOut.busy}

@@ -37,6 +37,8 @@ export interface SymbolPickerProps extends Omit<
    * A press (a click, `Enter` or `Space`): the host opens its dialog, SCR-041 from the chart toolbar or SCR-102 from
    * the TopBar (E08-D05 A-D05-4), and moves focus to its input. The type-ahead, the list and `Esc` are the host's.
    * As a CMP-017 Popover's anchor, the Popover's own toggle runs after it: a press on the open trigger closes it.
+   * It fires on every press, also while `expanded`: as a Popover's anchor it can be a no-op; any other host decides
+   * what a press on an open trigger does (SCR-102 closes its dialog, E08-D05 D-11).
    */
   readonly onOpen: () => void;
   /**
@@ -109,8 +111,14 @@ export const SymbolPicker = forwardRef<HTMLButtonElement, SymbolPickerProps>(
         <button
           {...rest}
           ref={ref}
-          // The role is the button's own (A-D05-4), whatever reaches the trigger past its type.
+          // The role, the name and the state are the trigger's own (A-D05-4, WCAG 2.5.3), whatever reaches it past
+          // its type: a host's role, aria-labelledby, aria-disabled, aria-pressed, disabled or style is dropped.
           role={undefined}
+          aria-labelledby={undefined}
+          aria-disabled={undefined}
+          aria-pressed={undefined}
+          disabled={undefined}
+          style={undefined}
           type="button"
           className={cx("cv-control", ring.className, "cv-symbolpicker__trigger")}
           aria-label={said ? `Symbol: ${value}, ${said}` : `Symbol: ${value}`}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
-import { act, useState, type JSX } from "react";
+import { act, Profiler, useState, type JSX } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, fireEvent, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
@@ -293,6 +293,53 @@ describe("FuzzyList windowing (E08-D05 §5; `15`'s 1,000 items)", () => {
     await scrollTo(590); // back in the window: still the same node
     expect(page().getByRole("option", { selected: true })).toBe(active);
     expect(options()).toHaveLength(24);
+  });
+
+  it("a scroll past the active option draws it above the window, first, the overscan row given up (CR-B2AD-01)", async () => {
+    await mount(<Moving items={many(1000)} />);
+    await act(async () => move("S10"));
+    const active = page().getByRole("option", { selected: true });
+    const listbox = page().getByRole("listbox");
+    Object.defineProperty(listbox, "scrollHeight", { value: 24_000, configurable: true });
+    Object.defineProperty(listbox, "scrollTop", { value: 7_200, configurable: true }); // row 300
+    await act(async () => void fireEvent.scroll(listbox));
+    // The window is rows 296 to 319: row 296 goes, the active row 10 comes first, the same node.
+    expect([options().length, options()[0]]).toEqual([24, active]);
+    expect(options()[1]?.textContent).toBe("S297USDT");
+    expect(options()[23]?.textContent).toBe("S319USDT");
+    expect(spacers()).toEqual(
+      ["10", "286", "680"].map((n) => `calc(${n} * var(--size-row-height))`),
+    );
+  });
+
+  it("a scroll within the row the window is at, or of a list that never windows, renders nothing (CR-B2AD-01)", async () => {
+    const renders = vi.fn();
+    const scrollTo = async (listbox: HTMLElement, px: number): Promise<number> => {
+      Object.defineProperty(listbox, "scrollTop", {
+        value: px,
+        configurable: true,
+        writable: true,
+      });
+      await act(async () => void fireEvent.scroll(listbox));
+      return renders.mock.calls.length;
+    };
+    await mount(
+      <Profiler id="list" onRender={renders}>
+        <Moving items={many(1000)} />
+      </Profiler>,
+    );
+    const big = page().getByRole("listbox");
+    Object.defineProperty(big, "scrollHeight", { value: 24_000, configurable: true });
+    const moved = await scrollTo(big, 2_400); // row 100: the window moves
+    // Row 100 still. React may call the list once more to find its state unchanged, then never again.
+    const settled = await scrollTo(big, 2_410);
+    expect(settled - moved).toBeLessThanOrEqual(1);
+    expect(await scrollTo(big, 2_423)).toBe(settled);
+    expect(await scrollTo(big, 2_401)).toBe(settled);
+    await act(async () => swap(many(20))); // 20 rows of 16 visible: it never windows
+    const swapped = renders.mock.calls.length;
+    // Row 2 if the list read a row height it does not window by (24,000 / 20): it reads none.
+    expect(await scrollTo(big, 2_400)).toBe(swapped);
   });
 
   it("a new list at its top writes no scroll offset, so a keystroke forces no layout; a scrolled one goes back to 0", async () => {

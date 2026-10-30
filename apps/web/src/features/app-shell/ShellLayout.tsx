@@ -4,6 +4,7 @@ import { ShellAnnouncer } from "./announcer";
 import { AppShell } from "./AppShell";
 import { NavRailFrame } from "./NavRailFrame";
 import { RIGHT_RAIL_LABEL, RightRail } from "./RightRail";
+import { SymbolSearchHost } from "../symbol-search/SymbolSearch";
 import { InShellProvider } from "./ScreenRoot";
 import {
   ShellBannerSlot,
@@ -44,6 +45,7 @@ export function ShellLayout(): JSX.Element {
         <Outlet />
       </AppShell>
       <ShellAnnouncer />
+      <SymbolSearchHost main={mainRef} />
     </InShellProvider>
   );
 }

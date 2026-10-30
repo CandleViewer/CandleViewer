@@ -115,6 +115,16 @@ describe("SymbolSearchInput (CMP-160)", () => {
     expect(status().firstElementChild).toBe(said);
   });
 
+  it("while loading no option is active: the keys move nothing, so aria-activedescendant never dangles (CR-B2AD-02)", async () => {
+    const onSelect = vi.fn();
+    await mount(<Host loading recentSymbols={[row("ETHUSDT")]} onSelect={onSelect} />);
+    expect(page().queryAllByRole("option")).toEqual([]); // skeleton rows only
+    expect([await press("ArrowDown"), await press("PageDown")]).toEqual([true, true]);
+    expect(input()).not.toHaveAttribute("aria-activedescendant");
+    expect(await press("Enter")).toBe(true); // with none active, Enter is the host's
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("settleMs, placeholder, aria-describedby and listLabel are the host's", async () => {
     vi.useFakeTimers();
     await mount(

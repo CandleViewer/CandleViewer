@@ -1849,6 +1849,72 @@
       "pass": true
     },
     {
+      "kind": "text",
+      "theme": "dark",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.hover",
+      "key": "dark:comfortable:color.text.primary on color.surface.hover",
+      "ratio": 12.22,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.hover",
+      "key": "dark:compact:color.text.primary on color.surface.hover",
+      "ratio": 12.22,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.hover",
+      "key": "dark:comfortable:color.text.secondary on color.surface.hover",
+      "ratio": 7.5,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.hover",
+      "key": "dark:compact:color.text.secondary on color.surface.hover",
+      "ratio": 7.5,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.selected",
+      "key": "dark:comfortable:color.text.secondary on color.surface.selected",
+      "ratio": 6.24,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.selected",
+      "key": "dark:compact:color.text.secondary on color.surface.selected",
+      "ratio": 6.24,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
       "kind": "cvd",
       "cvdKind": "buy-sell",
       "theme": "dark",
@@ -4189,6 +4255,72 @@
       "pass": true
     },
     {
+      "kind": "text",
+      "theme": "light",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.hover",
+      "key": "light:comfortable:color.text.primary on color.surface.hover",
+      "ratio": 14.37,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.hover",
+      "key": "light:compact:color.text.primary on color.surface.hover",
+      "ratio": 14.37,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.hover",
+      "key": "light:comfortable:color.text.secondary on color.surface.hover",
+      "ratio": 8.26,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.hover",
+      "key": "light:compact:color.text.secondary on color.surface.hover",
+      "ratio": 8.26,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.selected",
+      "key": "light:comfortable:color.text.secondary on color.surface.selected",
+      "ratio": 7.37,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.selected",
+      "key": "light:compact:color.text.secondary on color.surface.selected",
+      "ratio": 7.37,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
       "kind": "cvd",
       "cvdKind": "buy-sell",
       "theme": "light",
@@ -6525,6 +6657,72 @@
       "id": "color.text.primary on color.surface.selected",
       "key": "high-contrast:compact:color.text.primary on color.surface.selected",
       "ratio": 11.51,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.hover",
+      "key": "high-contrast:comfortable:color.text.primary on color.surface.hover",
+      "ratio": 13.83,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.hover",
+      "key": "high-contrast:compact:color.text.primary on color.surface.hover",
+      "ratio": 13.83,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.hover",
+      "key": "high-contrast:comfortable:color.text.secondary on color.surface.hover",
+      "ratio": 12.22,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.hover",
+      "key": "high-contrast:compact:color.text.secondary on color.surface.hover",
+      "ratio": 12.22,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.selected",
+      "key": "high-contrast:comfortable:color.text.secondary on color.surface.selected",
+      "ratio": 10.17,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.secondary on color.surface.selected",
+      "key": "high-contrast:compact:color.text.secondary on color.surface.selected",
+      "ratio": 10.17,
       "threshold": 7,
       "pass": true
     },

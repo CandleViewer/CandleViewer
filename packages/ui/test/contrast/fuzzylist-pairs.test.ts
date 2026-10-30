@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 // The pairs fuzzylist.css and symbolsearch.css bind (E08-D05 §9.5): the row's text on the overlay, the hover fill and
 // the active fill; the header; the active bar; the delisted glyph; the ARMED pill. axe skips aria-disabled options, so
-// it never measures a delisted or T2 row: the token values are held here, per theme, until PR C registers the pairs in
-// tools/contrast/pairs.mjs. Plain .mjs tooling loads untyped, as in select-option-reason.
+// it never measures a delisted or T2 row: the token values are held here, per theme, and the pairs are registered in
+// tools/contrast/pairs.mjs (the contrast gate). Plain .mjs tooling loads untyped, as in select-option-reason.
 
 type Theme = Record<string, { $value: unknown } | undefined>;
 const math = (await import(
