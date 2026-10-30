@@ -11,6 +11,7 @@ import {
   type IndexSnapshot,
   type InstrumentIndex,
 } from "./instrumentIndex";
+import { createRevisionReread, type RevisionReread } from "./revisionReread";
 
 /** The pane a commit changes (D-10): the last-focused symbol-bound panel in this window. */
 export interface SymbolTarget {
@@ -71,6 +72,8 @@ const EMPTY: SymbolSearchState = {
   info: null,
 };
 let state = EMPTY;
+/** The live session's read of the list on an `instrument_revision` (E08-S09); `null` outside `startSymbolSearch`'s life. */
+let revisions: RevisionReread | null = null;
 const listeners = new Set<() => void>();
 const set = (patch: Partial<SymbolSearchState>): void => {
   state = { ...state, ...patch };
@@ -87,9 +90,11 @@ export const getSymbolSearchState = (): SymbolSearchState => state;
 export const useSymbolSearch = <T>(select: (current: SymbolSearchState) => T): T =>
   useSyncExternalStore(subscribe, () => select(state));
 
+/** The index once it runs, else `null` (CR-CD-01): one reading of "running" for what shows the list and what re-reads it. */
+const runningIndex = (s: SymbolSearchState): InstrumentIndex | null => (s.running ? s.index : null);
+
 /** The shell's index once it runs, else `null`: what SCR-041's host passes (CR-CD-01). */
-export const useRunningIndex = (): InstrumentIndex | null =>
-  useSymbolSearch((s) => (s.running ? s.index : null));
+export const useRunningIndex = (): InstrumentIndex | null => useSymbolSearch(runningIndex);
 
 /**
  * `startShell`'s: the index reads once `/me` has answered (the route needs the session) and a workspace has bound an
@@ -97,6 +102,8 @@ export const useRunningIndex = (): InstrumentIndex | null =>
  */
 export function startSymbolSearch(index: InstrumentIndex = createInstrumentIndex()): () => void {
   set({ index });
+  const own = createRevisionReread(() => runningIndex(state));
+  revisions = own;
   let started = false;
   const sync = (): void => {
     if (started || getShellState().me === null || state.opener === null) return;
@@ -108,9 +115,19 @@ export function startSymbolSearch(index: InstrumentIndex = createInstrumentIndex
   sync();
   return () => {
     for (const off of unsubscribe) off();
+    own.stop();
+    if (revisions === own) revisions = null;
     index.stop();
     if (state.index === index) set({ index: null, running: false, open: false });
   };
+}
+
+/**
+ * The shell's WS client tells of each snapshot whose reason is `instrument_revision` (23 §7.4), with its topic: the list is
+ * read again, once for a burst of them and only while the index runs (`revisionReread.ts`, E08-D05 §3).
+ */
+export function noteInstrumentRevision(channel: string): void {
+  revisions?.note(channel);
 }
 
 /** SCR-102's way in: the TopBar trigger today, `/` (#305) and the palette's "Search symbols" later. */
@@ -207,6 +224,8 @@ export function setSymbolOpener(opener: SymbolOpener | null): void {
 /** Tests: the empty store. */
 export function resetSymbolSearch(): void {
   state.index?.stop();
+  revisions?.stop();
+  revisions = null; // the stopped handle goes with it: nothing is told to it
   looking.clear();
   set(EMPTY);
 }

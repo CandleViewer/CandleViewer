@@ -13,10 +13,20 @@ import {
   PRIVATE_HANDOVER_MS,
   degradedIssues,
 } from "../../src/features/system-states/degradedIssues.js";
-import { getShellState, resetShellState, setShellState } from "../../src/shell/bootstrap/store.js";
+import {
+  getShellState,
+  resetShellState,
+  setShellState,
+  type Me,
+} from "../../src/shell/bootstrap/store.js";
 import { accessToken, REFRESH_PATH, REFRESH_WAIT_MS } from "../../src/lib/auth/accessToken.js";
 import { startShell, toConnectionState } from "../../src/shell/startShell.js";
-import { getSymbolSearchState } from "../../src/features/symbol-search/searchSession.js";
+import { REVISION_QUIET_MS } from "../../src/features/symbol-search/revisionReread.js";
+import {
+  getSymbolSearchState,
+  resetSymbolSearch,
+  setSymbolOpener,
+} from "../../src/features/symbol-search/searchSession.js";
 import { tokenOf, URL } from "../lib/ws/support/connectionHarness";
 import { BOOK } from "../lib/ws/support/engineHarness";
 import { FakePort } from "../lib/ws/support/fakePort";
@@ -400,6 +410,102 @@ describe("startShell", () => {
     const { port: long, handle: cut } = started();
     expect(long.of("connect")[0]).toMatchObject({ locale: "x".repeat(16) }); // and takes at most 16 characters of it
     cut.stop();
+  });
+});
+
+describe("an instrument_revision snapshot and SCR-102's instrument list (E08-S09, #4703)", () => {
+  const LIST = "/api/v1/instruments?status=Trading&limit=500";
+  // Cast: only the presence of `/me`'s answer is read; the index starts once it has one and an opener is bound.
+  const ME = { role: "owner", permissions: [], user: { username: "robin" } } as unknown as Me;
+  const instrument = (symbol: string) => ({
+    symbol,
+    category: "linear",
+    status: "Trading",
+    tick_size: "0.1",
+    qty_step: "1",
+  });
+  const listed = (): Response =>
+    jsonResponse({
+      items: ["BTCUSDT", "ETHUSDT"].map(instrument),
+      meta: { next_cursor: null, has_more: false, count: 2, cache_age_s: 0, stale_since: null },
+    });
+  /** The list GETs so far: the index's reads. */
+  const reads = (): number => refreshMock.mock.calls.filter(([url]) => url === LIST).length;
+  /** What the worker posts a tab when a consumer's snapshot says its symbol's instrument was revised (23 7.4). */
+  const revised = (id: string) => ({
+    t: "data",
+    id,
+    status: "live",
+    effective: {},
+    source: "live",
+    frames: [
+      {
+        kind: "snap",
+        seq: 1,
+        ts: 1_000,
+        sp: undefined,
+        decodeMs: 0.5,
+        size: 20,
+        meta: { reason: "instrument_revision" },
+        bodies: [{ e: "j", p: {} }],
+      },
+    ],
+  });
+
+  /** The shell with the index running (it has read the list once) and three consumers: c1 BTCUSDT, c2 ETHUSDT, c3 DOGEUSDT. */
+  async function running() {
+    vi.useFakeTimers();
+    refreshMock.mockImplementation(async (url: RequestInfo | URL) =>
+      String(url) === LIST ? listed() : new Response(null, { status: 401 }),
+    );
+    const shell = started();
+    setShellState({ me: ME });
+    setSymbolOpener({ target: null, open: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reads()).toBe(1);
+    const client = getActiveClient();
+    client?.consume({ ch: "book.BTCUSDT.50", paneId: "p1", priority: "focused" });
+    client?.consume({ ch: "bars.ETHUSDT.time.1", paneId: "p1", priority: "other" });
+    client?.consume({ ch: "book.DOGEUSDT.50", paneId: "p2", priority: "other" });
+    return shell;
+  }
+  afterEach(() => {
+    resetSymbolSearch();
+    vi.useRealTimers();
+  });
+
+  it("a burst re-reads the list once, a quiet after its last frame", async () => {
+    const { port, handle } = await running();
+    port.say(revised("c1"));
+    await vi.advanceTimersByTimeAsync(400);
+    port.say(revised("c2"));
+    port.say(revised("c1"));
+    await vi.advanceTimersByTimeAsync(REVISION_QUIET_MS - 1);
+    expect(reads()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reads()).toBe(2);
+    await vi.advanceTimersByTimeAsync(10 * REVISION_QUIET_MS);
+    expect(reads()).toBe(2);
+    handle.stop();
+  });
+
+  it("a frame after that quiet re-reads the list again", async () => {
+    const { port, handle } = await running();
+    port.say(revised("c1"));
+    await vi.advanceTimersByTimeAsync(REVISION_QUIET_MS);
+    expect(reads()).toBe(2);
+    port.say(revised("c2"));
+    await vi.advanceTimersByTimeAsync(REVISION_QUIET_MS);
+    expect(reads()).toBe(3);
+    handle.stop();
+  });
+
+  it("reads nothing for a symbol the list does not hold", async () => {
+    const { port, handle } = await running();
+    port.say(revised("c3")); // book.DOGEUSDT.50
+    await vi.advanceTimersByTimeAsync(10 * REVISION_QUIET_MS);
+    expect(reads()).toBe(1);
+    handle.stop();
   });
 });
 
