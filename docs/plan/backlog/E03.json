@@ -413,8 +413,7 @@
       "type/spike",
       "area/infra-devops",
       "priority/p2-medium",
-      "security",
-      "backlog"
+      "security"
     ],
     "component": "infra",
     "phase": "P0 Foundations",
@@ -437,8 +436,7 @@
     "labels": [
       "type/task",
       "area/infra-devops",
-      "priority/p2-medium",
-      "backlog"
+      "priority/p2-medium"
     ],
     "component": "infra",
     "phase": "P0 Foundations",
