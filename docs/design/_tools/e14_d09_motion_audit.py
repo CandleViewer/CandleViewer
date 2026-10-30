@@ -10,7 +10,7 @@ Ten gates, each FAIL led by its code, at most one G1 FAIL per table row:
   row's AC 1 cell starts "carries:"; only D9-03 runs during a drag; every other moving row cuts
   to rest at the drag threshold (DNA-4).
 - [G2-TOKEN] every backticked name in a token group exists in the token JSON at the base or is
-  one of R352's two ruled names; no motion token but the seven; each row's timing cell names its
+  one of D08's two proposed names; no motion token but the seven; each row's timing cell names its
   ruled motion tokens in order (RULED_TIMING; a cut names `motion.duration.instant` only); a
   moving row whose recomputed verdict is "inconclusive" leads with its minimal form
   (MINIMAL_TIMING, R353 BQ-11).
@@ -31,7 +31,7 @@ Ten gates, each FAIL led by its code, at most one G1 FAIL per table row:
 - [G7-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base;
   each pinned cite still carries its words, and pins and cited spans match both ways (every pin
   cited, every in-range cited span pinned), so a cite moved to other lines fails; each cited
-  file is identical at the BQ list's base and E05-D03 at its merge commit, whenever those
+  file is identical at the BQ list's base (bar ADDED_SINCE_BQ) and E05-D03 at its merge commit, whenever those
   commits are readable; no cite lands in `16` section 7's recipe lines (FORBIDDEN).
 - [G8-HYGIENE] no local path, host, closing keyword, id or open-approval wording in the spec, and
   no word or substring on the lane's public-text list or a host name in the spec or this tool.
@@ -72,8 +72,11 @@ from typing import Any, NamedTuple
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "docs" / "design" / "E14" / "E14-D09.md"
 PROTO = ROOT / "docs" / "design" / "E14" / "E14-D09-proto" / "proto-results.json"
-BASE = "7cb279c542"  # origin/main; every cite is read here
+BASE = "57348a8ea3"  # origin/main; every cite is read here
 BQ_BASE = "3bac78e344"  # where the BQ list (6511707123) read every cite
+# a cited file may differ from its BQ_BASE text only by lines added at a known place: key ->
+# (first added line, count); `26` took E11-T02's shipped-deltas paragraph and its blank line (#5017)
+ADDED_SINCE_BQ: dict[str, tuple[int, int]] = {"26": (350, 2)}
 E05_PIN = "29fe3d5b2e"  # the merge commit of E05-D03 (#4990), cited by row, rule and section id
 KEYS = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -84,6 +87,7 @@ KEYS = {
     "D03": "docs/design/E14/E14-D03.md",
     "D04": "docs/design/E14/E14-D04.md",
     "D07": "docs/design/E14/E14-D07.md",
+    "D08": "docs/design/E14/E14-D08.md",
     "D04H": "docs/design/E14/E14-D04-handoff.md",
     "D05H": "docs/design/E14/E14-D05-handoff.md",
     "D06H": "docs/design/E14/E14-D06-handoff.md",
@@ -113,7 +117,7 @@ CITE_PINS = """\
 05|208|No content flashes more than 3 times per second;14|954|>=58 fps with 200 drawings
 14|1080|SCR-046;16|104|motion.duration.{instant,fast,normal,slow};26|130|Time-based animation
 26|133|Render on demand;26|224|drawing labels a third;26|262|optimistic local writes
-26|682|Drawing interaction: 200 drawings, drag one;D02|283|a count chip "7 selected"
+26|684|Drawing interaction: 200 drawings, drag one;D02|283|a count chip "7 selected"
 D02|291|small travel threshold;D02|326|`aria-pressed` for selected;D02|332|**Nudges never snap.**
 D02|332|a 10 px ring with the value text "High 65,400";D02|428|an undo that restores one focuses it
 D02|453|nothing here animates by design;D02|500|"changes not saved" chip
@@ -148,6 +152,11 @@ E05-D03|121|One-shot rows start only on a state change, a user action
 D02|521|armed, first time in session;D02|522|"Horizontal line tool on."
 D02|523|"Horizontal line tool off.";D02|524|"Anchor 1 of 2 at 13:40, 64,012.5."
 D02|526|"Horizontal line at 64,210.5 created on all BTCUSDT panes. Selected."
+D08|19|the 8 / 10 / 24 px handle numbers and the 12 px magnet radius travel as `EngineTheme.metrics`
+D08|19|the 10 px ring + value text vs the 8 px dot keeps the two apart by shape
+D08|19|band `ChartEngine/DrawingToolOverlay`;D08|129|`color.drawing.handle.active`
+D08|131|`color.drawing.snap`;D08|239|none by design;D08|239|will append here
+D08|297|E14-T04 (#359);D08|307|the E14-T04 comment and the implementer's acknowledgement at pickup
 D02|530|"Selection cleared.";D02|534|"Trendline removed. Undo available."
 D02|536|"200 drawings hidden." / "All drawings locked.";D02|723|motion: creation, selection
 D04|299|`save-failed`;D04H|15|the popover's open / close is `16` §7's dialog recipe
@@ -165,13 +174,7 @@ RULING_PINS: dict[str, tuple[str, ...]] = {
     "R352": (
         "TP-13 `color.drawing.snap`",
         "the 10 px ring + value text vs the 8 px dot keeps the two apart by shape",
-        (
-            "the 8 / 10 / 24 px handle numbers and the 12 px magnet radius travel as "
-            "`EngineTheme.metrics` (routed to E14-T04 #359)"
-        ),
-        "the engine card with the implementer's acknowledgement",
         "band `ChartEngine/DrawingToolOverlay`",
-        "none by design; the pairs are E14-D09's (#353) and will append here",
     ),
     "R353": (
         "E05-D03 row 3, restored-row use (RULED #353 BQ-08)",
@@ -256,7 +259,7 @@ MOTION7 = frozenset(
     [D + x for x in ("instant", "fast", "normal", "slow")]
     + [E + x for x in ("standard", "decelerate", "accelerate")]
 )
-PROPOSED = frozenset({"color.drawing.snap", "color.drawing.handle.active"})  # R352 TP-13, TP-11
+PROPOSED = frozenset({"color.drawing.snap", "color.drawing.handle.active"})  # D08:131, :129
 CUT_TIMING = "`motion.duration.instant` · `—`"
 GL_FORMS = ("instance alpha", "per-instance scale")
 HZ, HS1_GAP_MS, MR1_MAX, HS1_CAP = 60, 500, 3, 20  # HS-1: 500 ms, 20 per frame; MR-1: 3 per 1 s
@@ -336,6 +339,15 @@ def load_ctx(sources: dict[str, str]) -> Ctx:
     e05 = git_show(E05_PIN, KEYS["E05-D03"])
     results = PROTO.read_text(encoding="utf-8") if PROTO.exists() else ""
     return Ctx(SPEC.read_text(encoding="utf-8"), tool, base, tokens, bq, e05, sources, results)
+
+
+def without_added(text: str, key: str) -> str:
+    """`text` less the lines ADDED_SINCE_BQ says were added to the file since the BQ base."""
+    if key not in ADDED_SINCE_BQ:
+        return text
+    first, count = ADDED_SINCE_BQ[key]
+    lines = text.splitlines(keepends=True)
+    return "".join(lines[: first - 1] + lines[first - 1 + count :])
 
 
 def flat(text: str) -> str:
@@ -689,7 +701,7 @@ def gate_cite(ctx: Ctx, r: Result) -> None:
             "G7-CITE",
             f"pins and cites disagree: pinned, not cited {uncited}; cited, not pinned {unpinned}",
         )
-    moved = [k for k, v in ctx.bq_base.items() if v and v != ctx.base[k]]
+    moved = [k for k, v in ctx.bq_base.items() if v and v != without_added(ctx.base[k], k)]
     if moved:
         r.fail("G7-CITE", f"cited files changed between {BQ_BASE} and {BASE}: {moved}")
     if ctx.e05_pin and ctx.e05_pin != ctx.base["E05-D03"]:
@@ -698,7 +710,9 @@ def gate_cite(ctx: Ctx, r: Result) -> None:
     r.numbers["pins"] = len(pins)
     r.numbers["spans"] = len(spans)
     r.numbers["bq_base"] = (
-        f"{BQ_BASE} -> {BASE}: identical" if any(ctx.bq_base.values()) else "not readable"
+        f"{BQ_BASE} -> {BASE}: identical bar {ADDED_SINCE_BQ}"
+        if any(ctx.bq_base.values())
+        else "not readable"
     )
 
 

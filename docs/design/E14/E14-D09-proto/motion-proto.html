@@ -330,14 +330,14 @@
       const CANDLE_FS = `#version 300 es
         precision mediump float; in vec3 v_col; out vec4 o;
         void main() { o = vec4(v_col, 1.0); }`;
-      // kind 0 segment, 1 rectangle outline, 2 the snap ring (scaled by u_ring), 3 a filled handle dot
+      // kind 0 segment, 1 rectangle outline, 2 the snap ring (scaled by its own a_sty.w), 3 a filled handle dot
       const DRAW_VS = `#version 300 es
         layout(location=0) in vec2 a_c; layout(location=1) in vec4 a_geo; layout(location=2) in vec4 a_sty;
         layout(location=3) in vec3 a_col; layout(location=4) in float a_alpha;
-        uniform vec2 u_res; uniform float u_ring;
+        uniform vec2 u_res;
         out vec2 v_p; flat out vec4 v_geo; flat out vec4 v_sty; flat out vec4 v_col;
         void main() {
-          float k = a_sty.x, hw = a_sty.y * 0.5 + 1.0, r = a_sty.z * (k == 2.0 ? u_ring : 1.0);
+          float k = a_sty.x, hw = a_sty.y * 0.5 + 1.0, r = a_sty.z * (k == 2.0 ? a_sty.w : 1.0);
           vec2 p;
           if (k == 0.0) {
             vec2 d = a_geo.zw - a_geo.xy; float l = max(length(d), 0.001); vec2 u = d / l, n = vec2(-u.y, u.x);
@@ -377,7 +377,6 @@
       const U = {
         cRes: gl.getUniformLocation(candleProg, "u_res"),
         dRes: gl.getUniformLocation(drawProg, "u_res"),
-        ring: gl.getUniformLocation(drawProg, "u_ring"),
       };
       function attrib(loc, data, size, divisor, usage) {
         const b = gl.createBuffer();
@@ -430,7 +429,7 @@
         sty.set([3, 0, 4, 0], (HANDLE0 + h) * 4); // the 8 px handle dot
         col.set(C.selected, (HANDLE0 + h) * 3);
       }
-      sty.set([2, 1.5, RING_R, 0], RING * 4);
+      sty.set([2, 1.5, RING_R, 1], RING * 4); // w: the ring's scale, per instance
       col.set(C.snap, RING * 3);
       const drawVao = gl.createVertexArray();
       gl.bindVertexArray(drawVao);
@@ -442,7 +441,7 @@
         alpha: attrib(4, alpha, 1, 1, gl.DYNAMIC_DRAW),
       };
       gl.bindVertexArray(null);
-      // ---- upload accounting: the entry's bytes (instance alpha, the ring's scale uniform) vs the cuts' ------
+      // ---- upload accounting: the entry's bytes (instance alpha, the ring's per-instance scale) vs the cuts' -
       const F = { draws: 0, entryBytes: 0, cutBytes: 0 };
       function put(buf, arr, index, comps, entry) {
         gl.bindBuffer(gl.ARRAY_BUFFER, B[buf]);
@@ -467,9 +466,11 @@
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         gl.useProgram(drawProg);
         gl.uniform2f(U.dRes, W, H);
-        gl.uniform1f(U.ring, ringScale);
-        if (ringScale !== ringSent) F.entryBytes += 4; // the scale uniform: one float
-        ringSent = ringScale;
+        if (ringScale !== ringSent) {
+          sty[RING * 4 + 3] = ringScale;
+          put("sty", sty, RING * 4 + 3, 1, true); // the ring instance's scale: one float
+          ringSent = ringScale;
+        }
         gl.bindVertexArray(drawVao);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, COUNT);
         F.draws++;
@@ -665,6 +666,18 @@
         return { x, y: py(candles[i].h) + 7 * Math.sin(t / 53), i };
       }
       let PTR = null; // a fixed pointer (capture mode)
+      // D08: the marker shows before commit only, so the drag's end cuts the ring and its value text together
+      function cutRing() {
+        const R = S.ring;
+        if (R.shown) {
+          alpha[RING] = 0;
+          put("alpha", alpha, RING, 1);
+        }
+        Object.assign(R, { key: "", shown: false, t0: -1e9 });
+        ringScale = 1;
+        snaptext.style.display = "none";
+        return "ring and text cut";
+      }
       function stepSnap(now, t, frozen) {
         const ptr = PTR || pointerAt(t);
         const k = candles[ptr.i];
@@ -755,8 +768,8 @@
         put("geo", geo, DRAW0 + DRAG, 4);
         snaptext.style.display = "none";
         ringScale = 1;
-        gl.useProgram(drawProg);
-        gl.uniform1f(U.ring, 1); // the ring at rest before the arm starts, outside its byte count
+        sty[RING * 4 + 3] = 1;
+        put("sty", sty, RING * 4 + 3, 1); // the ring at rest before the arm starts, outside its byte count
         ringSent = 1;
         S.animate = animate;
         S.phase = -1;
@@ -931,12 +944,12 @@
         reset(!CFG.reduce);
         const T0 = performance.now(),
           ev = [],
-          P = { frames: 0, parks: 0, pending: false, dragUntil: entry === "snap" ? 3000 : 0 };
+          P = { frames: 0, parks: 0, pending: false, dragging: entry === "snap" };
         const frame = (now) => {
           P.pending = false;
           P.frames++;
           const t = now - T0;
-          const dragging = P.dragUntil > 0 && t < P.dragUntil; // only the snap scenario drags
+          const dragging = P.dragging; // only the snap scenario drags, until "drag ends"
           const ring = dragging ? stepSnap(now, t, false) : false;
           stepHalos(now);
           render();
@@ -963,14 +976,19 @@
         kick();
         const pick = UNDO_PICK,
           pk = drawings[pick];
+        // the scripted press lands inside the entry's canvas duration in both forms, timed from its start
+        // (full: at half of it, up to 150 ms; min: at a quarter), so the drag cut is played in each
+        const pressAt = (t0, e) => t0 + Math.min(150, ENTRY[e].dur / (MIN ? 4 : 2)),
+          sp = pressAt(900, "select"),
+          up = pressAt(2200, "undo");
         const plan = {
-          snap: [[3200, "drag ends", () => ((snaptext.style.display = "none"), "end")]],
+          snap: [[3000, "drag ends", () => ((P.dragging = false), cutRing())]],
           select: [
             [300, "select 2 (three overlap)", (n) => (setSelected(1), startHalo(1, n, "select"))],
             [900, "select 1", (n) => (setSelected(0), startHalo(0, n, "select"))],
-            [1000, "press on the selection", () => pointerDown(640, 360)],
-            [1010, "the press moves 3 px", () => pointerMove(643, 360)],
-            [1020, "the press moves 6 px: past DRAG_THRESHOLD", () => pointerMove(646, 360)],
+            [sp, "press on the selection", () => pointerDown(640, 360)],
+            [sp + 10, "the press moves 3 px", () => pointerMove(643, 360)],
+            [sp + 20, "the press moves 6 px: past DRAG_THRESHOLD", () => pointerMove(646, 360)],
             [1700, "select 3", (n) => (setSelected(2), startHalo(2, n, "select"))],
             [
               1800,
@@ -984,10 +1002,10 @@
             [1000, "Ctrl+Z: restore it", (n) => JSON.stringify(restore([pick], n))],
             [1800, "delete it again (a cut)", () => (setAlive(pick, false), "cut")],
             [2200, "Ctrl+Z: restore it", (n) => JSON.stringify(restore([pick], n))],
-            [2350, "press on the restored object", () => pointerDown(pk.cx, pk.cy)],
-            [2360, "the press moves 3 px", () => pointerMove(pk.cx, pk.cy + 3)],
+            [up, "press on the restored object", () => pointerDown(pk.cx, pk.cy)],
+            [up + 10, "the press moves 3 px", () => pointerMove(pk.cx, pk.cy + 3)],
             [
-              2370,
+              up + 20,
               "the press moves 6 px: past DRAG_THRESHOLD",
               () => pointerMove(pk.cx, pk.cy + 6),
             ],
@@ -1117,7 +1135,7 @@
           x.strokeRect(cw + 0.5, cap + 0.5, zs * Z, zs * Z);
           x.strokeRect(zx - sx + 0.5, zy - sy + cap + 0.5, zs, zs);
           x.fillStyle = "#E8EAED";
-          x.fillText(`3× zoom · ring scale ${ringScale.toFixed(2)}`, cw + 6, cap + ch - 2);
+          x.fillText(`3× zoom · ring scale ${ringScale.toFixed(2)}`, cw + 6, cap + zs * Z + 10);
         } else if (tw) {
           x.fillStyle = "#161B22";
           x.fillRect(cw, cap, tw, ch);

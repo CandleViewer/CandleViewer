@@ -16,80 +16,80 @@
     "snap": {
       "row": "D9-03",
       "without": {
-        "frames": 588,
-        "p50_ms": 13.9,
-        "p95_ms": 18.4,
-        "max_ms": 23.6,
+        "frames": 548,
+        "p50_ms": 14.9,
+        "p95_ms": 19.7,
+        "max_ms": 25.3,
         "active_frames": 0,
         "active_p50_ms": 0,
         "active_p95_ms": 0,
         "window_frames": 117,
-        "window_p50_ms": 14.5,
-        "window_p95_ms": 19.8,
-        "fps": 58.32,
-        "fps_per_rep": [55.04, 59.51, 58.52, 59.01, 59.5],
-        "dropped_ge_33ms": 17,
+        "window_p50_ms": 14.8,
+        "window_p95_ms": 19.3,
+        "fps": 54.53,
+        "fps_per_rep": [57.05, 55, 54.05, 54.5, 52],
+        "dropped_ge_33ms": 55,
         "draw_calls": [2],
         "entry_bytes_max": 0,
         "cut_bytes_max": 36
       },
       "with": {
-        "frames": 586,
-        "p50_ms": 14.1,
-        "p95_ms": 18.3,
-        "max_ms": 24.9,
+        "frames": 554,
+        "p50_ms": 15.2,
+        "p95_ms": 19.4,
+        "max_ms": 23.8,
         "active_frames": 34,
-        "active_p50_ms": 14.7,
-        "active_p95_ms": 18.4,
-        "window_frames": 121,
-        "window_p50_ms": 14.2,
-        "window_p95_ms": 18,
-        "fps": 58.12,
-        "fps_per_rep": [59.01, 59.51, 56.03, 56.53, 59.51],
-        "dropped_ge_33ms": 19,
+        "active_p50_ms": 14.3,
+        "active_p95_ms": 21.1,
+        "window_frames": 118,
+        "window_p50_ms": 15.1,
+        "window_p95_ms": 19.4,
+        "fps": 54.95,
+        "fps_per_rep": [55.54, 52.56, 56.53, 55.05, 55.04],
+        "dropped_ge_33ms": 51,
         "draw_calls": [2],
         "entry_bytes_max": 4,
         "cut_bytes_max": 36
       },
       "latches_last_rep": {
         "settles": 4,
-        "at_rest": 58
+        "at_rest": 56
       }
     },
     "select": {
       "row": "D9-05",
       "without": {
-        "frames": 585,
-        "p50_ms": 14.1,
-        "p95_ms": 18.9,
-        "max_ms": 30.6,
+        "frames": 534,
+        "p50_ms": 15.7,
+        "p95_ms": 21.1,
+        "max_ms": 32.6,
         "active_frames": 0,
         "active_p50_ms": 0,
         "active_p95_ms": 0,
-        "window_frames": 241,
-        "window_p50_ms": 14.1,
-        "window_p95_ms": 19.5,
-        "fps": 58.02,
-        "fps_per_rep": [56.04, 59.51, 58.52, 58.51, 57.53],
-        "dropped_ge_33ms": 20,
+        "window_frames": 224,
+        "window_p50_ms": 15.8,
+        "window_p95_ms": 21.2,
+        "fps": 53.05,
+        "fps_per_rep": [53.56, 55.04, 52.5, 55.04, 49.09],
+        "dropped_ge_33ms": 70,
         "draw_calls": [2],
         "entry_bytes_max": 0,
         "cut_bytes_max": 64
       },
       "with": {
-        "frames": 578,
-        "p50_ms": 14.3,
-        "p95_ms": 19.1,
-        "max_ms": 27.6,
-        "active_frames": 244,
-        "active_p50_ms": 14.1,
-        "active_p95_ms": 19.3,
-        "window_frames": 244,
-        "window_p50_ms": 14.1,
-        "window_p95_ms": 19.3,
-        "fps": 57.42,
-        "fps_per_rep": [58.51, 57.53, 54.05, 57.52, 59.5],
-        "dropped_ge_33ms": 26,
+        "frames": 542,
+        "p50_ms": 15.6,
+        "p95_ms": 20.6,
+        "max_ms": 28.6,
+        "active_frames": 228,
+        "active_p50_ms": 15.6,
+        "active_p95_ms": 20.6,
+        "window_frames": 228,
+        "window_p50_ms": 15.6,
+        "window_p95_ms": 20.6,
+        "fps": 53.75,
+        "fps_per_rep": [53.56, 52.07, 55.05, 55.04, 53.06],
+        "dropped_ge_33ms": 63,
         "draw_calls": [2],
         "entry_bytes_max": 4,
         "cut_bytes_max": 108
@@ -98,40 +98,40 @@
     "undo": {
       "row": "D9-09",
       "without": {
-        "frames": 564,
-        "p50_ms": 14.7,
-        "p95_ms": 19.1,
-        "max_ms": 28.1,
+        "frames": 507,
+        "p50_ms": 16.6,
+        "p95_ms": 22.2,
+        "max_ms": 31.6,
         "active_frames": 0,
         "active_p50_ms": 0,
         "active_p95_ms": 0,
-        "window_frames": 458,
-        "window_p50_ms": 14.7,
-        "window_p95_ms": 19.1,
-        "fps": 56.03,
-        "fps_per_rep": [54.55, 56.03, 57.52, 55.54, 56.5],
-        "dropped_ge_33ms": 40,
+        "window_frames": 406,
+        "window_p50_ms": 16.6,
+        "window_p95_ms": 22.1,
+        "fps": 50.45,
+        "fps_per_rep": [54.5, 51.08, 48, 51.57, 47.11],
+        "dropped_ge_33ms": 96,
         "draw_calls": [2],
         "entry_bytes_max": 0,
         "cut_bytes_max": 160
       },
       "with": {
-        "frames": 550,
-        "p50_ms": 14.9,
-        "p95_ms": 20.7,
-        "max_ms": 29.5,
-        "active_frames": 439,
-        "active_p50_ms": 15.1,
-        "active_p95_ms": 20.7,
-        "window_frames": 439,
-        "window_p50_ms": 15.1,
-        "window_p95_ms": 20.7,
-        "fps": 54.64,
-        "fps_per_rep": [55.05, 56, 48.6, 57.03, 56.53],
-        "dropped_ge_33ms": 53,
+        "frames": 491,
+        "p50_ms": 17.1,
+        "p95_ms": 24.1,
+        "max_ms": 42.8,
+        "active_frames": 393,
+        "active_p50_ms": 17.2,
+        "active_p95_ms": 24.5,
+        "window_frames": 393,
+        "window_p50_ms": 17.2,
+        "window_p95_ms": 24.5,
+        "fps": 48.62,
+        "fps_per_rep": [54.55, 41.8, 46.5, 50.58, 49.68],
+        "dropped_ge_33ms": 113,
         "draw_calls": [2],
-        "entry_bytes_max": 64,
-        "cut_bytes_max": 864
+        "entry_bytes_max": 76,
+        "cut_bytes_max": 996
       },
       "bulk_last_rep": {
         "group": 40,
@@ -148,22 +148,22 @@
       "run": 1,
       "entries": {
         "snap": {
-          "without_p95_ms": 19.8,
-          "with_p95_ms": 18,
-          "with_active_p95_ms": 18.4,
-          "fps": 58.12
+          "without_p95_ms": 19.3,
+          "with_p95_ms": 19.4,
+          "with_active_p95_ms": 21.1,
+          "fps": 54.95
         },
         "select": {
-          "without_p95_ms": 19.5,
-          "with_p95_ms": 19.3,
-          "with_active_p95_ms": 19.3,
-          "fps": 57.42
+          "without_p95_ms": 21.2,
+          "with_p95_ms": 20.6,
+          "with_active_p95_ms": 20.6,
+          "fps": 53.75
         },
         "undo": {
-          "without_p95_ms": 19.1,
-          "with_p95_ms": 20.7,
-          "with_active_p95_ms": 20.7,
-          "fps": 54.64
+          "without_p95_ms": 22.1,
+          "with_p95_ms": 24.5,
+          "with_active_p95_ms": 24.5,
+          "fps": 48.62
         }
       }
     },
@@ -171,22 +171,22 @@
       "run": 2,
       "entries": {
         "snap": {
-          "without_p95_ms": 20,
-          "with_p95_ms": 21.6,
-          "with_active_p95_ms": 25,
-          "fps": 54.24
+          "without_p95_ms": 23.1,
+          "with_p95_ms": 23.2,
+          "with_active_p95_ms": 25.7,
+          "fps": 47.56
         },
         "select": {
-          "without_p95_ms": 20,
-          "with_p95_ms": 20.1,
-          "with_active_p95_ms": 20.1,
-          "fps": 55.34
+          "without_p95_ms": 21.7,
+          "with_p95_ms": 21.2,
+          "with_active_p95_ms": 21.2,
+          "fps": 52.35
         },
         "undo": {
-          "without_p95_ms": 19.5,
-          "with_p95_ms": 20.4,
-          "with_active_p95_ms": 20.4,
-          "fps": 54.02
+          "without_p95_ms": 21.1,
+          "with_p95_ms": 20.9,
+          "with_active_p95_ms": 20.9,
+          "fps": 52.19
         }
       }
     },
@@ -194,22 +194,22 @@
       "run": 3,
       "entries": {
         "snap": {
-          "without_p95_ms": 20.1,
-          "with_p95_ms": 20.8,
-          "with_active_p95_ms": 23.3,
-          "fps": 51.97
+          "without_p95_ms": 24.7,
+          "with_p95_ms": 21,
+          "with_active_p95_ms": 26.1,
+          "fps": 51.08
         },
         "select": {
-          "without_p95_ms": 20.8,
-          "with_p95_ms": 21.7,
-          "with_active_p95_ms": 21.7,
-          "fps": 52.75
+          "without_p95_ms": 21.5,
+          "with_p95_ms": 22.3,
+          "with_active_p95_ms": 22.3,
+          "fps": 50.53
         },
         "undo": {
-          "without_p95_ms": 21,
-          "with_p95_ms": 20.9,
-          "with_active_p95_ms": 20.9,
-          "fps": 52.05
+          "without_p95_ms": 21.3,
+          "with_p95_ms": 22.1,
+          "with_active_p95_ms": 22.1,
+          "fps": 50.56
         }
       }
     }
@@ -222,14 +222,14 @@
       "drawings": 200,
       "events": [
         {
-          "planned_ms": 3200,
-          "applied_ms": 3200.5,
+          "planned_ms": 3000,
+          "applied_ms": 3025.4,
           "what": "drag ends",
-          "result": "end"
+          "result": "ring and text cut"
         }
       ],
-      "frames": 177,
-      "parks": 2,
+      "frames": 172,
+      "parks": 1,
       "starts": 6,
       "max_starts_per_element_per_1s": 2,
       "max_starts_per_region_per_1s": 0,
@@ -244,19 +244,19 @@
       "drawings": 200,
       "events": [
         {
-          "planned_ms": 3200,
-          "applied_ms": 3200.4,
+          "planned_ms": 3000,
+          "applied_ms": 3027.5,
           "what": "drag ends",
-          "result": "end"
+          "result": "ring and text cut"
         }
       ],
-      "frames": 178,
-      "parks": 2,
+      "frames": 169,
+      "parks": 1,
       "starts": 0,
       "max_starts_per_element_per_1s": 0,
       "max_starts_per_region_per_1s": 0,
       "settles": 0,
-      "at_rest": 92,
+      "at_rest": 95,
       "max_starts_per_1s": 0
     },
     {
@@ -523,43 +523,43 @@
       "events": [
         {
           "planned_ms": 300,
-          "applied_ms": 300.6,
+          "applied_ms": 300.3,
           "what": "select 2 (three overlap)",
           "result": "start"
         },
         {
           "planned_ms": 900,
-          "applied_ms": 900.3,
+          "applied_ms": 900.4,
           "what": "select 1",
           "result": "start"
         },
         {
-          "planned_ms": 1000,
-          "applied_ms": 1016,
+          "planned_ms": 925,
+          "applied_ms": 935.2,
           "what": "press on the selection",
           "result": "down"
         },
         {
-          "planned_ms": 1010,
-          "applied_ms": 1016,
+          "planned_ms": 935,
+          "applied_ms": 935.2,
           "what": "the press moves 3 px",
           "result": "held (3.0 px)"
         },
         {
-          "planned_ms": 1020,
-          "applied_ms": 1027.9,
+          "planned_ms": 945,
+          "applied_ms": 951.8,
           "what": "the press moves 6 px: past DRAG_THRESHOLD",
-          "result": "drag (6.0 px): cut 0 to rest"
+          "result": "drag (6.0 px): cut 1 to rest"
         },
         {
           "planned_ms": 1700,
-          "applied_ms": 1700.2,
+          "applied_ms": 1700.3,
           "what": "select 3",
           "result": "start"
         },
         {
           "planned_ms": 1800,
-          "applied_ms": 1831.7,
+          "applied_ms": 1811.7,
           "what": "select 3 again inside 500 ms",
           "result": "gap"
         },
@@ -570,8 +570,8 @@
           "result": "start"
         }
       ],
-      "frames": 32,
-      "parks": 7,
+      "frames": 27,
+      "parks": 5,
       "starts": 4,
       "max_starts_per_element_per_1s": 1,
       "max_starts_per_region_per_1s": 2
@@ -584,13 +584,13 @@
       "events": [
         {
           "planned_ms": 300,
-          "applied_ms": 300.5,
+          "applied_ms": 300.4,
           "what": "delete one trendline (a cut)",
           "result": "cut"
         },
         {
           "planned_ms": 1000,
-          "applied_ms": 1000.2,
+          "applied_ms": 1000.4,
           "what": "Ctrl+Z: restore it",
           "result": "{\"started\":1,\"tagged\":0,\"why\":{}}"
         },
@@ -602,42 +602,42 @@
         },
         {
           "planned_ms": 2200,
-          "applied_ms": 2200.3,
+          "applied_ms": 2200.4,
           "what": "Ctrl+Z: restore it",
           "result": "{\"started\":1,\"tagged\":0,\"why\":{}}"
         },
         {
-          "planned_ms": 2350,
-          "applied_ms": 2356.4,
+          "planned_ms": 2225,
+          "applied_ms": 2246.6,
           "what": "press on the restored object",
           "result": "down"
         },
         {
-          "planned_ms": 2360,
-          "applied_ms": 2376.7,
+          "planned_ms": 2235,
+          "applied_ms": 2246.7,
           "what": "the press moves 3 px",
           "result": "held (3.0 px)"
         },
         {
-          "planned_ms": 2370,
-          "applied_ms": 2376.8,
+          "planned_ms": 2245,
+          "applied_ms": 2246.7,
           "what": "the press moves 6 px: past DRAG_THRESHOLD",
-          "result": "drag (6.0 px): cut 1 to rest"
+          "result": "drag (6.0 px): cut 2 to rest"
         },
         {
           "planned_ms": 3000,
-          "applied_ms": 3000.4,
+          "applied_ms": 3000.5,
           "what": "delete 40 (a cut)",
           "result": "cut"
         },
         {
           "planned_ms": 3600,
-          "applied_ms": 3600.4,
+          "applied_ms": 3600.5,
           "what": "Ctrl+Z: restore 40",
           "result": "{\"started\":16,\"tagged\":24,\"why\":{\"region\":24}}"
         }
       ],
-      "frames": 40,
+      "frames": 30,
       "parks": 7,
       "starts": 18,
       "max_starts_per_element_per_1s": 1,
