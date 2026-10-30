@@ -36,6 +36,13 @@
           "cite": "`D02`:418",
           "text": "Accepted — stop {stop} held by the exchange"
         }
+      ],
+      "params": [
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.accepted.partial": {
@@ -52,10 +59,135 @@
           "cite": "`D02`:417",
           "text": "Partially filled {filled} of {qty} — stop {stop} held by the exchange"
         }
+      ],
+      "announce": {
+        "lr": "LR-17",
+        "politeness": "assertive",
+        "rate": "once per event",
+        "cite": "`D05`:305"
+      },
+      "params": [
+        {
+          "name": "filled",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
+      ]
+    },
+    "ticket.order.arm.announce.armed": {
+      "string": "One-click trading armed, {duration}, {account}, {size} {coin}",
+      "alias": ["arm.announce.armed"],
+      "surface": "order",
+      "owner": "E30-D02 §13",
+      "status": "merged",
+      "kind": "text",
+      "announce": {
+        "lr": "LR-05",
+        "politeness": "assertive",
+        "rate": "once per arming, immediate",
+        "cite": "`D05`:293"
+      },
+      "examples": [
+        {
+          "text": "One-click trading armed, 5 minutes, Main, 0.250 BTC",
+          "params": {
+            "duration": "5 minutes",
+            "account": "Main",
+            "size": "0.250",
+            "coin": "BTC"
+          }
+        }
+      ],
+      "where": ["the shell's assertive region, on arming"],
+      "sources": [
+        {
+          "cite": "`D02`:355",
+          "text": "One-click trading armed, 5 minutes, Main, 0.250 BTC"
+        }
+      ],
+      "params": [
+        {
+          "name": "duration",
+          "type": "duration",
+          "render": "the arm TTL in words (minutes)"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        },
+        {
+          "name": "size",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
+        }
+      ]
+    },
+    "ticket.order.arm.announce.locked": {
+      "string": "…locked — {reason}",
+      "alias": ["arm.announce.locked"],
+      "surface": "order",
+      "owner": "E30-D02 §13",
+      "status": "merged",
+      "kind": "text",
+      "announce": [
+        {
+          "lr": "LR-06",
+          "politeness": "assertive",
+          "rate": "once per press, immediate",
+          "cite": "`D05`:294",
+          "note": "a disarm by the user"
+        },
+        {
+          "lr": "LR-07",
+          "politeness": "assertive",
+          "rate": "once per disarm, with its reason",
+          "cite": "`D05`:295",
+          "note": "an auto-disarm"
+        }
+      ],
+      "examples": [
+        {
+          "text": "…locked — reason",
+          "params": {
+            "reason": "reason"
+          }
+        }
+      ],
+      "compose": "the leading '…' is LR-05's head 'One-click trading' (D02:355)",
+      "note": "Disarming is one press, never a dialog, never gated (AR-11, D05:206).",
+      "where": ["the shell's assertive region, on a disarm"],
+      "sources": [
+        {
+          "cite": "`D02`:355",
+          "text": "…locked — reason"
+        }
+      ],
+      "params": [
+        {
+          "name": "reason",
+          "type": "string",
+          "render": "the disarm's reason: a user's press, or one of the six triggers (D02:263)"
+        }
       ]
     },
     "ticket.order.arm.armed": {
-      "string": "ARMED {mm:ss} · {account} · {size} {coin}",
+      "string": "ARMED {remaining} · {account} · {size} {coin}",
       "alias": ["arm.armed"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -63,9 +195,10 @@
       "kind": "text",
       "announce": {
         "lr": "LR-08",
-        "politeness": "off; polite at 60 s and 10 s",
-        "rate": "two marks per arming",
-        "cite": "`D05`:296"
+        "politeness": "polite",
+        "rate": "only at 60 s and 10 s; two marks per arming",
+        "cite": "`D05`:296",
+        "note": "`aria-live=\"off\"` between the marks"
       },
       "where": ["SCR-060 · arm pill"],
       "sources": [
@@ -73,10 +206,33 @@
           "cite": "`D02`:407",
           "text": "ARMED {mm:ss} · {account} · {size} {coin}"
         }
+      ],
+      "params": [
+        {
+          "name": "remaining",
+          "type": "duration",
+          "render": "m:ss or mm:ss, counting down",
+          "parent": "{mm:ss}"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        },
+        {
+          "name": "size",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
+        }
       ]
     },
     "ticket.order.arm.live_dialog": {
-      "string": "Arm one-click trading — LIVE · {account} · active size {size} {coin} · for {mm:ss}?",
+      "string": "Arm one-click trading — LIVE · {account} · active size {size} {coin} · for {ttl}?",
       "alias": ["arm.live_dialog"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -87,6 +243,30 @@
         {
           "cite": "`D02`:411",
           "text": "Arm one-click trading — LIVE · {account} · active size {size} {coin} · for {mm:ss}?"
+        }
+      ],
+      "note": "LIVE arming only: a DEMO arm is one press and opens no dialog (D02:355). The dialog is CMP-044's `standard` variant and takes CF-01..CF-11 by construction (CF-13, D05:272): focus on Cancel, Confirm only after 400 ms, `Esc` cancels, and CF-06's 20 s countdown (polite at 0:10 and 0:00, auto-cancels, never confirms; D05:265). Its Cancel is `ticket.confirm.cancel`; no parent draws its Confirm label (G-20).",
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        },
+        {
+          "name": "size",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
+        },
+        {
+          "name": "ttl",
+          "type": "duration",
+          "render": "mm:ss",
+          "parent": "{mm:ss}"
         }
       ]
     },
@@ -103,10 +283,27 @@
           "cite": "`D02`:405",
           "text": "LOCKED · {account} · {size} {coin}"
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        },
+        {
+          "name": "size",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
+        }
       ]
     },
     "ticket.order.arm.locked.description": {
-      "string": "one-click off — {arm key} to arm",
+      "string": "one-click off — {arm_key} to arm",
       "alias": ["arm.locked.description"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -117,16 +314,24 @@
         {
           "text": "one-click off — Ctrl+Shift+T to arm",
           "params": {
-            "arm key": "Ctrl+Shift+T"
+            "arm_key": "Ctrl+Shift+T"
           }
         }
       ],
       "where": ["SCR-060 · arm pill"],
-      "note": "{arm key} is read from the current binding through CMP-022, never a literal (F-08)",
+      "note": "{arm_key} is read from the current binding through CMP-022, never a literal (F-08)",
       "sources": [
         {
           "cite": "`D05`:493",
           "text": "{arm key}"
+        }
+      ],
+      "params": [
+        {
+          "name": "arm_key",
+          "type": "string",
+          "render": "the current binding of the arm command, read through CMP-022",
+          "parent": "{arm key}"
         }
       ]
     },
@@ -158,7 +363,12 @@
           "cite": "`D02`:408",
           "text": "hotkeys paused — dialog open"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per focus change",
+        "cite": "`D02`:295"
+      }
     },
     "ticket.order.arm.paused.field": {
       "string": "hotkeys paused — typing in {field}",
@@ -172,6 +382,18 @@
         {
           "cite": "`D02`:408",
           "text": "hotkeys paused — typing in {field}"
+        }
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per focus change",
+        "cite": "`D02`:295"
+      },
+      "params": [
+        {
+          "name": "field",
+          "type": "string",
+          "render": "the focused field's label"
         }
       ]
     },
@@ -194,10 +416,12 @@
           "cite": "`D02`:406",
           "text": "One-click trading is locked"
         }
-      ]
+      ],
+      "note": "A `403 session_not_armed` (a live order mutation without a valid `X-Arm-Token`) lands here at the point of action and the arm falls (E09-D09:132; D03:236; AR-05).",
+      "codes": ["problem:session_not_armed"]
     },
     "ticket.order.arm.returned": {
-      "string": "LOCKED — disconnected {mm:ss}, reconnected",
+      "string": "LOCKED — disconnected {offline_for}, reconnected",
       "alias": ["arm.returned"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -208,6 +432,19 @@
         {
           "cite": "`D02`:410",
           "text": "LOCKED — disconnected {mm:ss}, reconnected"
+        }
+      ],
+      "announce": {
+        "politeness": "assertive",
+        "rate": "once (recovery)",
+        "cite": "`D02`:290"
+      },
+      "params": [
+        {
+          "name": "offline_for",
+          "type": "duration",
+          "render": "mm:ss",
+          "parent": "{mm:ss}"
         }
       ]
     },
@@ -224,10 +461,16 @@
           "cite": "`D02`:409",
           "text": "Arm state unknown — submit off"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "assertive",
+        "rate": "once on change",
+        "cite": "`D02`:294",
+        "note": "no D05 LR row replaces the parent's cell for `unknown`"
+      }
     },
     "ticket.order.banner.detail.bybit_retmsg_verbatim": {
-      "string": "Bybit: {retMsg verbatim} · ret_code {code} · Attempt recorded",
+      "string": "Bybit: {ret_msg} · ret_code {code} · Attempt recorded",
       "alias": ["banner.detail.bybit_retmsg_verbatim"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -238,6 +481,19 @@
         {
           "cite": "`D02`:428",
           "text": "Bybit: {retMsg verbatim} · ret_code {code} · Attempt recorded"
+        }
+      ],
+      "params": [
+        {
+          "name": "ret_msg",
+          "type": "string",
+          "render": "the exchange's `retMsg`, verbatim",
+          "parent": "{retMsg verbatim}"
+        },
+        {
+          "name": "code",
+          "type": "string",
+          "render": "the code as the server or the exchange sends it, verbatim"
         }
       ]
     },
@@ -269,10 +525,22 @@
           "cite": "`D02`:428",
           "text": "code {code} · authority: {authority} · Attempt recorded"
         }
+      ],
+      "params": [
+        {
+          "name": "code",
+          "type": "string",
+          "render": "the code as the server or the exchange sends it, verbatim"
+        },
+        {
+          "name": "authority",
+          "type": "string",
+          "render": "the limit's authority (profile, exchange, owner)"
+        }
       ]
     },
     "ticket.order.banner.detail.code_code_retmsg": {
-      "string": "code {code} · {retMsg verbatim}",
+      "string": "code {code} · {ret_msg}",
       "alias": ["banner.detail.code_code_retmsg"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -283,6 +551,19 @@
         {
           "cite": "`D02`:428",
           "text": "code {code} · {retMsg verbatim}"
+        }
+      ],
+      "params": [
+        {
+          "name": "code",
+          "type": "string",
+          "render": "the code as the server or the exchange sends it, verbatim"
+        },
+        {
+          "name": "ret_msg",
+          "type": "string",
+          "render": "the exchange's `retMsg`, verbatim",
+          "parent": "{retMsg verbatim}"
         }
       ]
     },
@@ -298,6 +579,13 @@
         {
           "cite": "`D02`:428",
           "text": "code {code} · the order is held, not sent; replay only with your confirmation"
+        }
+      ],
+      "params": [
+        {
+          "name": "code",
+          "type": "string",
+          "render": "the code as the server or the exchange sends it, verbatim"
         }
       ]
     },
@@ -317,7 +605,7 @@
       ]
     },
     "ticket.order.banner.detail.detail_detail_verbatim": {
-      "string": "detail: {detail verbatim} · code {code} · reason {reason} · Attempt recorded",
+      "string": "detail: {detail} · code {code} · reason {reason} · Attempt recorded",
       "alias": ["banner.detail.detail_detail_verbatim"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -328,6 +616,24 @@
         {
           "cite": "`D02`:428",
           "text": "detail: {detail verbatim} · code {code} · reason {reason} · Attempt recorded"
+        }
+      ],
+      "params": [
+        {
+          "name": "detail",
+          "type": "string",
+          "render": "the problem's `detail`, verbatim",
+          "parent": "{detail verbatim}"
+        },
+        {
+          "name": "code",
+          "type": "string",
+          "render": "the code as the server or the exchange sends it, verbatim"
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "render": "the `trading_disabled` `reason`, verbatim"
         }
       ]
     },
@@ -344,10 +650,17 @@
           "cite": "`D02`:428",
           "text": "exchange id ends {id}"
         }
+      ],
+      "params": [
+        {
+          "name": "id",
+          "type": "string",
+          "render": "the exchange order id's last characters"
+        }
       ]
     },
     "ticket.order.banner.detail.last_data_mm": {
-      "string": "Last data {mm:ss} ago. Trading is disabled while offline.",
+      "string": "Last data {age} ago. Trading is disabled while offline.",
       "alias": ["banner.detail.last_data_mm"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -359,10 +672,18 @@
           "cite": "`D02`:428",
           "text": "Last data {mm:ss} ago. Trading is disabled while offline."
         }
+      ],
+      "params": [
+        {
+          "name": "age",
+          "type": "duration",
+          "render": "mm:ss",
+          "parent": "{mm:ss}"
+        }
       ]
     },
     "ticket.order.banner.detail.locked_hh_mm": {
-      "string": "locked {hh:mm:ss} · cancel and close still work · the owner can override",
+      "string": "locked {locked_at} · cancel and close still work · the owner can override",
       "alias": ["banner.detail.locked_hh_mm"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -373,6 +694,14 @@
         {
           "cite": "`D02`:428",
           "text": "locked {hh:mm:ss} · cancel and close still work · the owner can override"
+        }
+      ],
+      "params": [
+        {
+          "name": "locked_at",
+          "type": "time",
+          "render": "UTC, hh:mm:ss",
+          "parent": "{hh:mm:ss}"
         }
       ]
     },
@@ -434,6 +763,18 @@
           "cite": "`D02`:428",
           "text": "{rest} still working at {price} — cancelling the rest keeps the filled part protected"
         }
+      ],
+      "params": [
+        {
+          "name": "rest",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.banner.detail.switch_the_workspace": {
@@ -494,6 +835,13 @@
           "cite": "`D02`:428",
           "text": "your equity changed while you typed · press Enter to accept {qty} · Attempt recorded"
         }
+      ],
+      "params": [
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.banner.detail.your_exchange_side": {
@@ -525,6 +873,18 @@
           "cite": "`D02`:426",
           "text": "Blocked by profile: {symbol} is not an allowed symbol on {account} (owner setting)"
         }
+      ],
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.order.bracket.rounded": {
@@ -539,6 +899,13 @@
         {
           "cite": "`D02`:450",
           "text": "(rounded away from entry to the {tick} tick)"
+        }
+      ],
+      "params": [
+        {
+          "name": "tick",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
         }
       ]
     },
@@ -586,7 +953,12 @@
           "cite": "`D02`:423",
           "text": "Trading is disabled while offline. Your exchange-side stop-losses are unaffected."
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "assertive",
+        "rate": "once",
+        "cite": "`D02`:289"
+      }
     },
     "ticket.order.disconnected.divergence": {
       "string": "While you were offline: {orders} order filled, {stops} stop moved by a rule",
@@ -610,10 +982,27 @@
           "cite": "`D02`:423",
           "text": "While you were offline: 1 order filled, 1 stop moved by a rule"
         }
+      ],
+      "announce": {
+        "politeness": "assertive",
+        "rate": "once (recovery)",
+        "cite": "`D02`:290"
+      },
+      "params": [
+        {
+          "name": "orders",
+          "type": "integer",
+          "render": "a count of orders"
+        },
+        {
+          "name": "stops",
+          "type": "integer",
+          "render": "a count of stops"
+        }
       ]
     },
     "ticket.order.env.name": {
-      "string": "Order ticket - {symbol} - {LIVE/DEMO} - {account}",
+      "string": "Order ticket - {symbol} - {environment} - {account}",
       "alias": ["env.name"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -624,6 +1013,24 @@
         {
           "cite": "`D02`:430",
           "text": "Order ticket - {symbol} - {LIVE/DEMO} - {account}"
+        }
+      ],
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "environment",
+          "type": "enum",
+          "render": "LIVE | DEMO (upper case)",
+          "parent": "{LIVE/DEMO}"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
         }
       ]
     },
@@ -643,7 +1050,7 @@
       ]
     },
     "ticket.order.frozen": {
-      "string": "Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work.",
+      "string": "Trading frozen by the owner at {frozen_at} UTC — new orders off. Cancel and close still work.",
       "alias": ["frozen"],
       "surface": "order",
       "owner": "E17-D01 §7 (as D02 §14 carries it)",
@@ -660,6 +1067,14 @@
         {
           "cite": "`D02`:422",
           "text": "Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work."
+        }
+      ],
+      "params": [
+        {
+          "name": "frozen_at",
+          "type": "time",
+          "render": "UTC, hh:mm",
+          "parent": "{hh:mm}"
         }
       ]
     },
@@ -732,6 +1147,18 @@
           "cite": "`D02`:399",
           "text": "Last update {n} s ago"
         }
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per episode",
+        "cite": "`D02`:296"
+      },
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.order.helper.rounded": {
@@ -762,6 +1189,553 @@
           "cite": "`D02`:451",
           "text": "rounded to the {tick} tick"
         }
+      ],
+      "params": [
+        {
+          "name": "tick",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
+      ]
+    },
+    "ticket.order.label.details": {
+      "string": "Details",
+      "alias": ["label.details"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the rejected inline state's [Details] (CMP-001)"],
+      "sources": [
+        {
+          "cite": "`D02`:339",
+          "text": "Details"
+        }
+      ]
+    },
+    "ticket.order.label.field.presets": {
+      "string": "presets",
+      "alias": ["label.field.presets"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the preset ladder (CMP-122)"],
+      "sources": [
+        {
+          "cite": "`D02`:82",
+          "text": "presets"
+        }
+      ]
+    },
+    "ticket.order.label.field.preview": {
+      "string": "Preview",
+      "alias": ["label.field.preview"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the Preview block"],
+      "sources": [
+        {
+          "cite": "`D02`:90",
+          "text": "Preview"
+        }
+      ]
+    },
+    "ticket.order.label.field.price": {
+      "string": "Price",
+      "alias": ["label.field.price"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the price row (CMP-100)"],
+      "sources": [
+        {
+          "cite": "`D02`:78",
+          "text": "Price"
+        }
+      ]
+    },
+    "ticket.order.label.field.stop": {
+      "string": "Stop-loss (required)",
+      "alias": ["label.field.stop"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the stop row (CMP-119)"],
+      "sources": [
+        {
+          "cite": "`D02`:230",
+          "text": "Stop-loss (required)"
+        }
+      ]
+    },
+    "ticket.order.label.field.tif": {
+      "string": "TIF",
+      "alias": ["label.field.tif"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the TIF select (CMP-231)"],
+      "sources": [
+        {
+          "cite": "`D02`:88",
+          "text": "TIF"
+        }
+      ]
+    },
+    "ticket.order.label.field.tp": {
+      "string": "Take-profit",
+      "alias": ["label.field.tp"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the take-profit row (CMP-119)"],
+      "sources": [
+        {
+          "cite": "`D02`:87",
+          "text": "Take-profit"
+        }
+      ]
+    },
+    "ticket.order.label.field.trigger_by": {
+      "string": "trigger",
+      "alias": ["label.field.trigger_by"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the stop's trigger-by select"],
+      "sources": [
+        {
+          "cite": "`D02`:83",
+          "text": "trigger"
+        }
+      ]
+    },
+    "ticket.order.label.flag.close_on_trigger": {
+      "string": "Close on trigger",
+      "alias": ["label.flag.close_on_trigger"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · flag"],
+      "sources": [
+        {
+          "cite": "`D02`:88",
+          "text": "Close on trigger"
+        }
+      ]
+    },
+    "ticket.order.label.flag.post_only": {
+      "string": "Post-only",
+      "alias": ["label.flag.post_only"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · flag"],
+      "sources": [
+        {
+          "cite": "`D02`:88",
+          "text": "Post-only"
+        }
+      ]
+    },
+    "ticket.order.label.flag.reduce_only": {
+      "string": "Reduce-only",
+      "alias": ["label.flag.reduce_only"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · flag"],
+      "sources": [
+        {
+          "cite": "`D02`:88",
+          "text": "Reduce-only"
+        }
+      ]
+    },
+    "ticket.order.label.leg.long": {
+      "string": "Long leg",
+      "alias": ["label.leg.long"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the hedge-mode leg row (CMP-003)"],
+      "sources": [
+        {
+          "cite": "`D02`:248",
+          "text": "Long leg"
+        }
+      ]
+    },
+    "ticket.order.label.leg.short": {
+      "string": "Short leg",
+      "alias": ["label.leg.short"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the hedge-mode leg row (CMP-003)"],
+      "sources": [
+        {
+          "cite": "`D02`:248",
+          "text": "Short leg"
+        }
+      ]
+    },
+    "ticket.order.label.tab.chase": {
+      "string": "Chase",
+      "alias": ["label.tab.chase"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-103 tab (emulated, disabled)"],
+      "sources": [
+        {
+          "cite": "`D02`:244",
+          "text": "Chase"
+        }
+      ]
+    },
+    "ticket.order.label.tab.conditional": {
+      "string": "Conditional",
+      "alias": ["label.tab.conditional"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-103 tab"],
+      "sources": [
+        {
+          "cite": "`D02`:243",
+          "text": "Conditional"
+        }
+      ]
+    },
+    "ticket.order.label.tab.iceberg": {
+      "string": "Iceberg",
+      "alias": ["label.tab.iceberg"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-103 tab (emulated, disabled)"],
+      "sources": [
+        {
+          "cite": "`D02`:244",
+          "text": "Iceberg"
+        }
+      ]
+    },
+    "ticket.order.label.tab.limit": {
+      "string": "Limit",
+      "alias": ["label.tab.limit"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-103 tab"],
+      "sources": [
+        {
+          "cite": "`D02`:242",
+          "text": "Limit"
+        }
+      ]
+    },
+    "ticket.order.label.tab.market": {
+      "string": "Market",
+      "alias": ["label.tab.market"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-103 tab"],
+      "sources": [
+        {
+          "cite": "`D02`:241",
+          "text": "Market"
+        }
+      ]
+    },
+    "ticket.order.label.tab.scaled": {
+      "string": "Scaled",
+      "alias": ["label.tab.scaled"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-103 tab (emulated, disabled)"],
+      "sources": [
+        {
+          "cite": "`D02`:244",
+          "text": "Scaled"
+        }
+      ]
+    },
+    "ticket.order.label.tab.twap": {
+      "string": "TWAP",
+      "alias": ["label.tab.twap"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-103 tab (emulated, disabled)"],
+      "sources": [
+        {
+          "cite": "`D02`:244",
+          "text": "TWAP"
+        }
+      ]
+    },
+    "ticket.order.label.tif.fok": {
+      "string": "FOK",
+      "alias": ["label.tif.fok"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-231 option"],
+      "sources": [
+        {
+          "cite": "`D02`:242",
+          "text": "FOK"
+        }
+      ]
+    },
+    "ticket.order.label.tif.gtc": {
+      "string": "GTC",
+      "alias": ["label.tif.gtc"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-231 option"],
+      "sources": [
+        {
+          "cite": "`D02`:242",
+          "text": "GTC"
+        }
+      ]
+    },
+    "ticket.order.label.tif.ioc": {
+      "string": "IOC",
+      "alias": ["label.tif.ioc"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-231 option"],
+      "sources": [
+        {
+          "cite": "`D02`:242",
+          "text": "IOC"
+        }
+      ]
+    },
+    "ticket.order.label.tif.post_only": {
+      "string": "PostOnly",
+      "alias": ["label.tif.post_only"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · CMP-231 option"],
+      "sources": [
+        {
+          "cite": "`D02`:242",
+          "text": "PostOnly"
+        }
+      ]
+    },
+    "ticket.order.label.trigger_by.index": {
+      "string": "Index",
+      "alias": ["label.trigger_by.index"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the trigger-by select"],
+      "sources": [
+        {
+          "cite": "`D02`:243",
+          "text": "Index"
+        }
+      ]
+    },
+    "ticket.order.label.trigger_by.last": {
+      "string": "Last",
+      "alias": ["label.trigger_by.last"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the trigger-by select"],
+      "sources": [
+        {
+          "cite": "`D02`:243",
+          "text": "Last"
+        }
+      ]
+    },
+    "ticket.order.label.trigger_by.mark": {
+      "string": "Mark",
+      "alias": ["label.trigger_by.mark"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the trigger-by select"],
+      "sources": [
+        {
+          "cite": "`D02`:243",
+          "text": "Mark"
+        }
+      ]
+    },
+    "ticket.order.label.unit.coin": {
+      "string": "{coin}",
+      "alias": ["label.unit.coin"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "examples": [
+        {
+          "text": "BTC",
+          "params": {
+            "coin": "BTC"
+          }
+        }
+      ],
+      "where": ["SCR-060 · the size unit switch (CMP-003): the base coin"],
+      "sources": [
+        {
+          "cite": "`D02`:80",
+          "text": "BTC"
+        }
+      ],
+      "params": [
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
+        }
+      ]
+    },
+    "ticket.order.label.unit.pct": {
+      "string": "%",
+      "alias": ["label.unit.pct"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the stop and take-profit unit switches"],
+      "sources": [
+        {
+          "cite": "`D02`:87",
+          "text": "%"
+        }
+      ]
+    },
+    "ticket.order.label.unit.pct_eq": {
+      "string": "% eq",
+      "alias": ["label.unit.pct_eq"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the size unit switch (CMP-003)"],
+      "sources": [
+        {
+          "cite": "`D02`:80",
+          "text": "% eq"
+        }
+      ]
+    },
+    "ticket.order.label.unit.price": {
+      "string": "price",
+      "alias": ["label.unit.price"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the stop and take-profit unit switches"],
+      "sources": [
+        {
+          "cite": "`D02`:87",
+          "text": "price"
+        }
+      ]
+    },
+    "ticket.order.label.unit.r": {
+      "string": "R",
+      "alias": ["label.unit.r"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the take-profit unit switch"],
+      "sources": [
+        {
+          "cite": "`D02`:87",
+          "text": "R"
+        }
+      ]
+    },
+    "ticket.order.label.unit.risk_pct": {
+      "string": "risk %",
+      "alias": ["label.unit.risk_pct"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the size unit switch (CMP-003)"],
+      "sources": [
+        {
+          "cite": "`D02`:80",
+          "text": "risk %"
+        }
+      ]
+    },
+    "ticket.order.label.unit.ticks": {
+      "string": "ticks",
+      "alias": ["label.unit.ticks"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the stop and take-profit unit switches"],
+      "sources": [
+        {
+          "cite": "`D02`:87",
+          "text": "ticks"
+        }
+      ]
+    },
+    "ticket.order.label.unit.usdt": {
+      "string": "USDT",
+      "alias": ["label.unit.usdt"],
+      "surface": "order",
+      "owner": "E30-D02 (the drawn label)",
+      "status": "by-reference",
+      "kind": "label",
+      "where": ["SCR-060 · the size unit switch (CMP-003)"],
+      "sources": [
+        {
+          "cite": "`D02`:80",
+          "text": "USDT"
+        }
       ]
     },
     "ticket.order.limits.announce": {
@@ -786,6 +1760,18 @@
           "cite": "`D02`:403",
           "text": "Blocked by daily loss cap: 480 of 500 USDT used"
         }
+      ],
+      "params": [
+        {
+          "name": "used",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "cap",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.limits.binding": {
@@ -804,6 +1790,23 @@
         {
           "cite": "`D03`:470",
           "text": "binding: {name} {value} ({authority})"
+        }
+      ],
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "render": "the binding limit's name"
+        },
+        {
+          "name": "value",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "authority",
+          "type": "string",
+          "render": "the limit's authority (profile, exchange, owner)"
         }
       ]
     },
@@ -924,6 +1927,23 @@
           "cite": "`D02`:391",
           "text": "Closes {pos} {side}, opens {new} {side} — stop required for the new side"
         }
+      ],
+      "params": [
+        {
+          "name": "pos",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "side",
+          "type": "enum",
+          "render": "long | short"
+        },
+        {
+          "name": "new",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.opens.opens": {
@@ -938,6 +1958,18 @@
         {
           "cite": "`D02`:391",
           "text": "Opens {qty} {side}"
+        }
+      ],
+      "params": [
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "side",
+          "type": "enum",
+          "render": "long | short"
         }
       ]
     },
@@ -954,10 +1986,32 @@
           "cite": "`D02`:391",
           "text": "Reduces {pos} {side} by {qty} → {rest} {side}"
         }
+      ],
+      "params": [
+        {
+          "name": "pos",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "side",
+          "type": "enum",
+          "render": "long | short"
+        },
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "rest",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.pending_key": {
-      "string": "API key pending — Bybit 48 h restriction, available after {date/time}. Demo trading is available meanwhile.",
+      "string": "API key pending — Bybit 48 h restriction, available after {available_at}. Demo trading is available meanwhile.",
       "alias": ["pending_key"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -976,6 +2030,14 @@
         {
           "cite": "`D02`:424",
           "text": "API key pending — Bybit 48 h restriction, available after {date/time}. Demo trading is available meanwhile."
+        }
+      ],
+      "params": [
+        {
+          "name": "available_at",
+          "type": "datetime",
+          "render": "UTC, YYYY-MM-DD hh:mm",
+          "parent": "{date/time}"
         }
       ]
     },
@@ -1021,6 +2083,13 @@
           "cite": "`D03`:521",
           "text": "min {min}"
         }
+      ],
+      "params": [
+        {
+          "name": "min",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.preset.below_min.name": {
@@ -1039,6 +2108,23 @@
         {
           "cite": "`D03`:521",
           "text": "below the minimum {min} {coin}"
+        }
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per attempt",
+        "cite": "`D03`:338"
+      },
+      "params": [
+        {
+          "name": "min",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
         }
       ]
     },
@@ -1069,6 +2155,13 @@
         {
           "cite": "`D02`:429",
           "text": "slippage ≈ {n} ticks (estimated)"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -1116,7 +2209,13 @@
           "cite": "A50 6528462939",
           "text": "Profile limits unavailable — new orders off."
         }
-      ]
+      ],
+      "announce": {
+        "lr": "LR-10",
+        "politeness": "polite",
+        "rate": "once per press",
+        "cite": "`D05`:298"
+      }
     },
     "ticket.order.rbac.account": {
       "string": "This account isn't assigned to you.",
@@ -1178,6 +2277,66 @@
         }
       ]
     },
+    "ticket.order.rbac.owner_only": {
+      "string": "Only the owner can {verb}.",
+      "alias": ["rbac.owner_only"],
+      "surface": "order",
+      "owner": "E09-D09 §3.1",
+      "status": "by-reference",
+      "kind": "text",
+      "security": true,
+      "announce": {
+        "lr": "LR-10",
+        "politeness": "polite",
+        "rate": "once per press",
+        "cite": "`D05`:298"
+      },
+      "note": "The chooser between the two is data (E09-D09 §3.1): the role lists of `22`.",
+      "where": ["every gated control's reason node (T2); `{verb}` from E09-D09 §3.2's table"],
+      "sources": [
+        {
+          "cite": "`E09-D09`:257",
+          "text": "Only the owner can {verb}."
+        }
+      ],
+      "params": [
+        {
+          "name": "verb",
+          "type": "string",
+          "render": "the permission's verb from E09-D09 §3.2's table"
+        }
+      ]
+    },
+    "ticket.order.rbac.permission": {
+      "string": "Your role can't {verb}.",
+      "alias": ["rbac.permission"],
+      "surface": "order",
+      "owner": "E09-D09 §3.1",
+      "status": "by-reference",
+      "kind": "text",
+      "security": true,
+      "announce": {
+        "lr": "LR-10",
+        "politeness": "polite",
+        "rate": "once per press",
+        "cite": "`D05`:298"
+      },
+      "note": "The chooser between the two is data (E09-D09 §3.1): the role lists of `22`.",
+      "where": ["every gated control's reason node (T2); `{verb}` from E09-D09 §3.2's table"],
+      "sources": [
+        {
+          "cite": "`E09-D09`:256",
+          "text": "Your role can't {verb}."
+        }
+      ],
+      "params": [
+        {
+          "name": "verb",
+          "type": "string",
+          "render": "the permission's verb from E09-D09 §3.2's table"
+        }
+      ]
+    },
     "ticket.order.rbac.view_as": {
       "string": "Read-only while viewing as {user}.",
       "alias": ["rbac.view_as"],
@@ -1191,6 +2350,19 @@
         {
           "cite": "`E09-D09`:262",
           "text": "Read-only while viewing as {user}."
+        }
+      ],
+      "announce": {
+        "lr": "LR-10",
+        "politeness": "polite",
+        "rate": "once per press",
+        "cite": "`D05`:298"
+      },
+      "params": [
+        {
+          "name": "user",
+          "type": "string",
+          "render": "the view-as target's name"
         }
       ]
     },
@@ -1206,6 +2378,23 @@
         {
           "cite": "`D02`:387",
           "text": "reduced from {from} to {to} by {cap}"
+        }
+      ],
+      "params": [
+        {
+          "name": "from",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "to",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "cap",
+          "type": "string",
+          "render": "the binding cap's name"
         }
       ]
     },
@@ -1244,6 +2433,28 @@
           "cite": "`D02`:386",
           "text": "= {notional} USDT · {pct} % eq · risk {risk} USDT ({riskpct} %) · 1 R = {risk}"
         }
+      ],
+      "params": [
+        {
+          "name": "notional",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "pct",
+          "type": "decimal",
+          "render": "a percentage of equity"
+        },
+        {
+          "name": "risk",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "riskpct",
+          "type": "decimal",
+          "render": "a percentage of equity"
+        }
       ]
     },
     "ticket.order.readout.provisional": {
@@ -1274,6 +2485,18 @@
           "cite": "`D02`:390",
           "text": "Size set by server: {qty} {coin}"
         }
+      ],
+      "params": [
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
+        }
       ]
     },
     "ticket.order.refusal.account_locked": {
@@ -1295,10 +2518,22 @@
           "cite": "`D03`:489",
           "text": "Trading locked on {account} until {time}"
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        },
+        {
+          "name": "time",
+          "type": "time",
+          "render": "UTC, hh:mm:ss"
+        }
       ]
     },
     "ticket.order.refusal.cap_breached": {
-      "string": "Blocked by profile cap — {rejection.message}",
+      "string": "Blocked by profile cap — {rejection_message}",
       "alias": ["refusal.cap_breached"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -1315,6 +2550,14 @@
           "cite": "`D03`:489",
           "text": "Blocked by profile cap — {rejection.message}"
         }
+      ],
+      "params": [
+        {
+          "name": "rejection_message",
+          "type": "string",
+          "render": "`legs[].rejection.message`, verbatim",
+          "parent": "{rejection.message}"
+        }
       ]
     },
     "ticket.order.refusal.degraded_data": {
@@ -1330,6 +2573,13 @@
         {
           "cite": "`D02`:447",
           "text": "Not sent — price feed stale {n} s"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -1367,6 +2617,13 @@
         {
           "cite": "`D03`:489",
           "text": "{account}'s API key is invalid"
+        }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
         }
       ]
     },
@@ -1408,6 +2665,18 @@
           "cite": "`D03`:489",
           "text": "Leverage {n}x is not available on {symbol}"
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        },
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        }
       ]
     },
     "ticket.order.refusal.rate_budget_exhausted": {
@@ -1427,6 +2696,13 @@
         {
           "cite": "`D03`:489",
           "text": "Rate budget exhausted — retry allowed at {time}"
+        }
+      ],
+      "params": [
+        {
+          "name": "time",
+          "type": "time",
+          "render": "UTC, hh:mm:ss"
         }
       ]
     },
@@ -1465,6 +2741,18 @@
           "cite": "`D03`:489",
           "text": "{symbol} is not allowed on {account} (owner setting)"
         }
+      ],
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.order.refusal.timeout": {
@@ -1498,6 +2786,13 @@
           "cite": "`D02`:437",
           "text": "Order entry is disabled on {account} by policy"
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.order.refusal.trading_disabled.account_unhealthy": {
@@ -1514,6 +2809,13 @@
         {
           "cite": "`D02`:439",
           "text": "{account}'s health check refuses order entry"
+        }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
         }
       ]
     },
@@ -1548,6 +2850,94 @@
           "cite": "`D02`:438",
           "text": "{account} has no active API key"
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
+      ]
+    },
+    "ticket.order.refusal.unmapped": {
+      "string": "{detail}",
+      "alias": ["refusal.unmapped"],
+      "surface": "order",
+      "owner": "`22` (the server's Problem.detail)",
+      "status": "by-reference",
+      "kind": "refusal",
+      "server_field": "Problem.detail",
+      "announce": {
+        "lr": "LR-18",
+        "politeness": "assertive",
+        "rate": "once per event",
+        "cite": "`D05`:306"
+      },
+      "examples": [
+        {
+          "text": "An exchange account named in the request is not in your scope.",
+          "params": {
+            "detail": "An exchange account named in the request is not in your scope."
+          }
+        }
+      ],
+      "security": true,
+      "note": "RULED row 5: no refusal is silent and no copy is invented; `by_code`'s `*` row names it as the default target of its surface.",
+      "where": [
+        "SCR-060 · the rejected inline banner (the fallback for a code `by_code` does not map)"
+      ],
+      "sources": [
+        {
+          "cite": "`22`:16583",
+          "text": "An exchange account named in the request is not in your scope."
+        }
+      ],
+      "params": [
+        {
+          "name": "detail",
+          "type": "string",
+          "render": "the problem's `detail`, verbatim"
+        }
+      ]
+    },
+    "ticket.order.refusal.view_as_expired": {
+      "string": "{detail}",
+      "alias": ["refusal.view_as_expired"],
+      "surface": "order",
+      "owner": "`22` (`view_as_expired`'s Problem.detail)",
+      "status": "by-reference",
+      "kind": "refusal",
+      "server_field": "Problem.detail",
+      "codes": ["problem:view_as_expired"],
+      "announce": {
+        "lr": "LR-10",
+        "politeness": "polite",
+        "rate": "once per press, at the point of action",
+        "cite": "`D05`:298"
+      },
+      "examples": [
+        {
+          "text": "Viewing as alex ended at 2026-09-14T10:30:00Z.",
+          "params": {
+            "detail": "Viewing as alex ended at 2026-09-14T10:30:00Z."
+          }
+        }
+      ],
+      "security": true,
+      "note": "RULED row 14: the T4 line renders the server's `view_as_expired` detail by reference (`22`:641 the code's title, :16627 the detail); no new string.",
+      "where": ["SCR-060 · the T4 line at the point of action (`SCR-060/view-as-held`)"],
+      "sources": [
+        {
+          "cite": "`22`:16627",
+          "text": "Viewing as alex ended at 2026-09-14T10:30:00Z."
+        }
+      ],
+      "params": [
+        {
+          "name": "detail",
+          "type": "string",
+          "render": "the problem's `detail`, verbatim"
+        }
       ]
     },
     "ticket.order.rejected.class.correctable": {
@@ -1557,12 +2947,7 @@
       "owner": "E30-D02 §14",
       "status": "merged",
       "kind": "refusal",
-      "codes": [
-        "problem:validation_failed",
-        "rule:native_stop_required",
-        "problem:tick_size_violation",
-        "problem:lot_size_violation"
-      ],
+      "codes": ["rule:native_stop_required"],
       "announce": {
         "lr": "LR-18",
         "politeness": "assertive",
@@ -1615,7 +3000,7 @@
       "owner": "E30-D02 §14",
       "status": "merged",
       "kind": "refusal",
-      "codes": ["problem:risk_limit_breached", "problem:insufficient_balance"],
+      "codes": ["problem:risk_limit_breached"],
       "announce": {
         "lr": "LR-18",
         "politeness": "assertive",
@@ -1631,6 +3016,13 @@
         {
           "cite": "`D03`:490",
           "text": "Blocked by profile cap: {cap}"
+        }
+      ],
+      "params": [
+        {
+          "name": "cap",
+          "type": "string",
+          "render": "the binding cap, named with its unit"
         }
       ]
     },
@@ -1658,23 +3050,28 @@
           "cite": "`D03`:490",
           "text": "Not sent — size changed: server {a}, ticket {b}"
         }
+      ],
+      "params": [
+        {
+          "name": "a",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "b",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.rejected.class.transient": {
-      "string": "Not sent — rate limited, retry allowed at {hh:mm:ss} (in {n} s)",
+      "string": "Not sent — rate limited, retry allowed at {retry_at} (in {n} s)",
       "alias": ["rejected.class.transient"],
       "surface": "order",
       "owner": "E30-D02 §14",
       "status": "merged",
       "kind": "refusal",
-      "codes": [
-        "problem:rate_limited",
-        "problem:exchange_rate_limited",
-        "problem:idempotency_in_flight",
-        "problem:exchange_unavailable",
-        "problem:store_unavailable",
-        "problem:audit_unavailable"
-      ],
+      "codes": ["problem:rate_limited", "problem:exchange_rate_limited"],
       "announce": {
         "lr": "LR-18",
         "politeness": "assertive",
@@ -1690,6 +3087,19 @@
         {
           "cite": "`D03`:490",
           "text": "Not sent — rate limited, retry allowed at {hh:mm:ss} (in {n} s)"
+        }
+      ],
+      "params": [
+        {
+          "name": "retry_at",
+          "type": "time",
+          "render": "UTC, hh:mm:ss",
+          "parent": "{hh:mm:ss}"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -1735,6 +3145,18 @@
           "cite": "`D03`:533",
           "text": "Equity not available — wallet data is {n} s old"
         }
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per episode",
+        "cite": "`D02`:297"
+      },
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.order.sl.holder": {
@@ -1772,6 +3194,13 @@
           "cite": "`D03`:471",
           "text": "Every entry carries a native exchange stop: typed here, else your profile's {n} ticks, else the 2 % fallback. It is placed with the order, not after it."
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.order.sl.reduce_only": {
@@ -1788,7 +3217,12 @@
           "cite": "`D02`:395",
           "text": "Reduce-only: cannot open a position — no new stop; the position's stop stays"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once",
+        "cite": "`D02`:299"
+      }
     },
     "ticket.order.sl.source.fallback": {
       "string": "fallback 2 % — ATR warming up",
@@ -1820,6 +3254,13 @@
         {
           "cite": "`D02`:392",
           "text": "from your profile: {n} ticks"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -1882,6 +3323,19 @@
           "cite": "`D02`:427",
           "text": "Order live · protective stop pending — attaching the exchange stop (attempt {n} of {max})"
         }
+      ],
+      "note": "{n} / {max} are B8's `fallback_attempts` over `CV_B8_MAX_FALLBACK`, default 3 (D02:300, :427); the order is pending (1 of {max}) → retrying (2 of {max}) → unrecoverable after {max}; each step replaces the sentence in place.",
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        },
+        {
+          "name": "max",
+          "type": "integer",
+          "render": "B8's CV_B8_MAX_FALLBACK (default 3)"
+        }
       ]
     },
     "ticket.order.stop_pending.reason": {
@@ -1935,6 +3389,19 @@
           "cite": "`D02`:427",
           "text": "Stop not attached — retrying now (attempt {n} of {max})"
         }
+      ],
+      "note": "{n} / {max} are B8's `fallback_attempts` over `CV_B8_MAX_FALLBACK`, default 3 (D02:300, :427); the order is pending (1 of {max}) → retrying (2 of {max}) → unrecoverable after {max}; each step replaces the sentence in place.",
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        },
+        {
+          "name": "max",
+          "type": "integer",
+          "render": "B8's CV_B8_MAX_FALLBACK (default 3)"
+        }
       ]
     },
     "ticket.order.stop_pending.set_stop": {
@@ -1974,6 +3441,14 @@
           "cite": "`D02`:427",
           "text": "Stop could not be attached after {max} attempts — the owner is paged. The position is live without a stop."
         }
+      ],
+      "note": "{n} / {max} are B8's `fallback_attempts` over `CV_B8_MAX_FALLBACK`, default 3 (D02:300, :427); the order is pending (1 of {max}) → retrying (2 of {max}) → unrecoverable after {max}; each step replaces the sentence in place.",
+      "params": [
+        {
+          "name": "max",
+          "type": "integer",
+          "render": "B8's CV_B8_MAX_FALLBACK (default 3)"
+        }
       ]
     },
     "ticket.order.submit.awaiting": {
@@ -1989,7 +3464,12 @@
           "cite": "`D02`:415",
           "text": "Awaiting exchange confirmation — reconciling"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once",
+        "cite": "`D02`:279"
+      }
     },
     "ticket.order.submit.duplicate": {
       "string": "Already submitting",
@@ -2013,7 +3493,7 @@
       ]
     },
     "ticket.order.submit.label.cond": {
-      "string": "… when {Mark} rises to {trigger} · stop {stop}",
+      "string": "… when {trigger_by} {direction} {trigger} · stop {stop}",
       "alias": ["submit.label.cond"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -2029,10 +3509,35 @@
           "cite": "`D03`:458",
           "text": "… when {Mark} rises to {trigger} · stop {stop}"
         }
+      ],
+      "compose": "D02:310: one sentence, words then numbers, built from the server's numbers; {side} is the side toggle's BUY or SELL; a form that starts with '…' continues the limit form's '{side} {qty} {symbol}' head; a conditional's {direction} is derived from the trigger against the mark ('rises to' / 'falls to', editable, D02:243)",
+      "params": [
+        {
+          "name": "trigger_by",
+          "type": "enum",
+          "render": "Mark | Last | Index",
+          "parent": "{Mark}"
+        },
+        {
+          "name": "direction",
+          "type": "enum",
+          "render": "rises to | falls to",
+          "parent": "rises to"
+        },
+        {
+          "name": "trigger",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.submit.label.hedge": {
-      "string": "BUY {qty} {symbol} limit {price} · long leg · stop {stop}",
+      "string": "{side} {qty} {symbol} limit {price} · {leg} · stop {stop}",
       "alias": ["submit.label.hedge"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -2044,10 +3549,45 @@
           "cite": "`D02`:433",
           "text": "BUY {qty} {symbol} limit {price} · long leg · stop {stop}"
         }
+      ],
+      "compose": "D02:310: one sentence, words then numbers, built from the server's numbers; {side} is the side toggle's BUY or SELL; a form that starts with '…' continues the limit form's '{side} {qty} {symbol}' head; a conditional's {direction} is derived from the trigger against the mark ('rises to' / 'falls to', editable, D02:243)",
+      "params": [
+        {
+          "name": "side",
+          "type": "enum",
+          "render": "BUY | SELL",
+          "parent": "BUY"
+        },
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "leg",
+          "type": "enum",
+          "render": "long leg | short leg",
+          "parent": "long leg"
+        },
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.submit.label.limit": {
-      "string": "BUY {qty} {symbol} limit {price} · stop {stop}",
+      "string": "{side} {qty} {symbol} limit {price} · stop {stop}",
       "alias": ["submit.label.limit"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -2062,6 +3602,35 @@
         {
           "cite": "`D03`:458",
           "text": "BUY {qty} {symbol} limit {price} · stop {stop}"
+        }
+      ],
+      "compose": "D02:310: one sentence, words then numbers, built from the server's numbers; {side} is the side toggle's BUY or SELL; a form that starts with '…' continues the limit form's '{side} {qty} {symbol}' head; a conditional's {direction} is derived from the trigger against the mark ('rises to' / 'falls to', editable, D02:243)",
+      "params": [
+        {
+          "name": "side",
+          "type": "enum",
+          "render": "BUY | SELL",
+          "parent": "BUY"
+        },
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
         }
       ]
     },
@@ -2082,10 +3651,18 @@
           "cite": "`D03`:458",
           "text": "… at market · stop {stop}"
         }
+      ],
+      "compose": "D02:310: one sentence, words then numbers, built from the server's numbers; {side} is the side toggle's BUY or SELL; a form that starts with '…' continues the limit form's '{side} {qty} {symbol}' head; a conditional's {direction} is derived from the trigger against the mark ('rises to' / 'falls to', editable, D02:243)",
+      "params": [
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.submit.label.reduce": {
-      "string": "SELL {qty} {symbol} limit {price} · reduce-only",
+      "string": "{side} {qty} {symbol} limit {price} · reduce-only",
       "alias": ["submit.label.reduce"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -2097,10 +3674,34 @@
           "cite": "`D02`:412",
           "text": "SELL {qty} {symbol} limit {price} · reduce-only"
         }
+      ],
+      "compose": "D02:310: one sentence, words then numbers, built from the server's numbers; {side} is the side toggle's BUY or SELL; a form that starts with '…' continues the limit form's '{side} {qty} {symbol}' head; a conditional's {direction} is derived from the trigger against the mark ('rises to' / 'falls to', editable, D02:243)",
+      "params": [
+        {
+          "name": "side",
+          "type": "enum",
+          "render": "BUY | SELL",
+          "parent": "SELL"
+        },
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.submit.name": {
-      "string": "{visible label}, {LIVE/DEMO}, {account}",
+      "string": "{visible_label}, {environment}, {account}",
       "alias": ["submit.name"],
       "surface": "order",
       "owner": "E30-D02 §14",
@@ -2111,18 +3712,37 @@
         {
           "text": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0, LIVE, Main",
           "params": {
-            "visible label": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0",
-            "LIVE/DEMO": "LIVE",
+            "visible_label": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0",
+            "environment": "LIVE",
             "account": "Main"
           }
         }
       ],
       "where": ["SCR-060 · accessible name"],
-      "note": "{visible label} is the submit's rendered `ticket.order.submit.label.*`, as written; the name starts with it and appends the environment and account (SC 2.5.3)",
+      "note": "{visible_label} is the submit's rendered `ticket.order.submit.label.*`, as written; the name starts with it and appends the environment and account (SC 2.5.3)",
       "sources": [
         {
           "cite": "`D05`:498",
           "text": "{visible label}, {LIVE/DEMO}, {account}"
+        }
+      ],
+      "params": [
+        {
+          "name": "visible_label",
+          "type": "string",
+          "render": "the submit's visible full-intent label",
+          "parent": "{visible label}"
+        },
+        {
+          "name": "environment",
+          "type": "enum",
+          "render": "LIVE | DEMO (upper case)",
+          "parent": "{LIVE/DEMO}"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
         }
       ]
     },
@@ -2169,7 +3789,12 @@
           "cite": "`D02`:414",
           "text": "Submitting…"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once",
+        "cite": "`D02`:278"
+      }
     },
     "ticket.order.tif.unavailable.market": {
       "string": "Market orders are always IOC on Bybit",
@@ -2261,6 +3886,30 @@
           "cite": "`D03`:520",
           "text": "Your profile caps leverage at 10x."
         }
+      ],
+      "announce": [
+        {
+          "lr": "LR-25",
+          "politeness": "none",
+          "rate": "on focus, never pushed",
+          "cite": "`D05`:313",
+          "note": "read with the field"
+        },
+        {
+          "lr": "LR-31",
+          "politeness": "polite",
+          "rate": "once per ticket open",
+          "cite": "`D05`:319",
+          "note": "a saved default above a since-narrowed cap, at ticket open (SD-03)"
+        }
+      ],
+      "note": "T2-18's template \"Your profile caps {x} at {y}\" (D05:241) for leverage; at ticket open on a since-narrowed cap it is LR-31's field error (SD-03), never clamped.",
+      "params": [
+        {
+          "name": "cap",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.v.margin": {
@@ -2284,6 +3933,18 @@
         {
           "cite": "`D02`:381",
           "text": "Not enough available margin: need 1 600, have 1 240."
+        }
+      ],
+      "params": [
+        {
+          "name": "needed",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "available",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
         }
       ]
     },
@@ -2312,6 +3973,13 @@
         {
           "cite": "`D02`:446",
           "text": "Order value must be at least 5 USDT."
+        }
+      ],
+      "params": [
+        {
+          "name": "min",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
         }
       ]
     },
@@ -2351,6 +4019,13 @@
           "cite": "`D02`:373",
           "text": "Price must be a multiple of 0.1."
         }
+      ],
+      "params": [
+        {
+          "name": "tick",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.order.v.qty.lot": {
@@ -2374,6 +4049,18 @@
         {
           "cite": "`D02`:374",
           "text": "Minimum 0.001, step 0.001."
+        }
+      ],
+      "params": [
+        {
+          "name": "min",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "step",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
         }
       ]
     },
@@ -2426,7 +4113,8 @@
           "cite": "A50 6528462939",
           "text": "Every position-opening order requires a stop-loss."
         }
-      ]
+      ],
+      "note": "Shows (D02:232) when a position-opening draft's stop field is empty: the field error, a row in the error summary, and the submit `aria-disabled` with the same reason (still pressable, a press shows the summary); a stop on the wrong side shows `v.sl.side.long` / `.short` instead; field messages show on blur (D05 §9 step 6). A reduce-only draft opens nothing and never shows it (D02:233). `sl.note`'s profile and fallback sources fill the field at ticket open, so the message is the state of a field the user cleared."
     },
     "ticket.order.v.sl.side.long": {
       "string": "Stop-loss must be below entry for a long.",
@@ -2475,6 +4163,13 @@
           "cite": "`D02`:385",
           "text": "Fix {n} problems to submit"
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.order.v.summary.heading": {
@@ -2486,15 +4181,23 @@
       "kind": "text",
       "announce": {
         "lr": "LR-24",
-        "politeness": "none (the focus move speaks)",
+        "politeness": "none",
         "rate": "once per press",
-        "cite": "`D05`:312"
+        "cite": "`D05`:312",
+        "note": "the focus move speaks"
       },
       "where": ["SCR-060 · error summary"],
       "sources": [
         {
           "cite": "`D02`:384",
           "text": "Can't submit — {n} problems"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -2565,6 +4268,19 @@
           "cite": "`D03`:528",
           "text": "Group: Core3 · 3 accounts"
         }
+      ],
+      "security": true,
+      "params": [
+        {
+          "name": "group",
+          "type": "string",
+          "render": "the trade group's name"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        }
       ]
     },
     "ticket.group.selector.group_row": {
@@ -2589,6 +4305,24 @@
         {
           "cite": "`D03`:528",
           "text": "Core3 · 3 accounts · 2 of 3 ready"
+        }
+      ],
+      "security": true,
+      "params": [
+        {
+          "name": "group",
+          "type": "string",
+          "render": "the trade group's name"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
         }
       ]
     },
@@ -2620,7 +4354,12 @@
           "cite": "`D03`:529",
           "text": "excluded — not sent"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per press",
+        "cite": "`D03`:372"
+      }
     },
     "ticket.group.selector.leg.include": {
       "string": "Include",
@@ -2673,6 +4412,13 @@
           "cite": "`D03`:529",
           "text": "Legs (3)"
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.group.selector.member_disabled": {
@@ -2713,6 +4459,29 @@
           "cite": "`D03`:528",
           "text": "Target: Group Core3, 3 accounts, 2 ready"
         }
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per choice",
+        "cite": "`D03`:370"
+      },
+      "security": true,
+      "params": [
+        {
+          "name": "group",
+          "type": "string",
+          "render": "the trade group's name"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        }
       ]
     },
     "ticket.group.selector.narrowed": {
@@ -2738,6 +4507,23 @@
         {
           "cite": "`D03`:531",
           "text": "2 of 3 legs — sub_002 not sent"
+        }
+      ],
+      "params": [
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "member",
+          "type": "string",
+          "render": "a member account's label (one the caller holds)"
         }
       ]
     },
@@ -2793,6 +4579,13 @@
           "cite": "`D03`:527",
           "text": "Main"
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.confirm.cancel": {
@@ -2846,7 +4639,7 @@
       ]
     },
     "ticket.confirm.confirm.name": {
-      "string": "{confirm label}, {LIVE/DEMO}, {account}",
+      "string": "{confirm_label}, {environment}, {account}",
       "alias": ["confirm.confirm.name"],
       "surface": "confirm",
       "owner": "E30-D03 §12",
@@ -2857,23 +4650,42 @@
         {
           "text": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0, LIVE, Main",
           "params": {
-            "confirm label": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0",
-            "LIVE/DEMO": "LIVE",
+            "confirm_label": "BUY 0.250 BTCUSDT limit 64,010.0 · stop 63,900.0",
+            "environment": "LIVE",
             "account": "Main"
           }
         }
       ],
       "where": ["SCR-076"],
-      "note": "{confirm label} is the Confirm's visible label as drawn (D02 D3's full-intent label reproduced, `D03`:557); F-14 applies F-13's grammar (`D05`:498)",
+      "note": "{confirm_label} is the Confirm's visible label as drawn (D02 D3's full-intent label reproduced, `D03`:557); F-14 applies F-13's grammar (`D05`:498)",
       "sources": [
         {
           "cite": "`D05`:499",
           "text": "the visible label first, then the environment and account"
         }
+      ],
+      "params": [
+        {
+          "name": "confirm_label",
+          "type": "string",
+          "render": "the Confirm button's visible label",
+          "parent": "{confirm label}"
+        },
+        {
+          "name": "environment",
+          "type": "enum",
+          "render": "LIVE | DEMO (upper case)",
+          "parent": "{LIVE/DEMO}"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.confirm.confirm.name.fanout": {
-      "string": "{confirm label}, each with its native stop, {LIVE/DEMO}, {group}",
+      "string": "{confirm_label}, each with its native stop, {environment}, {group}",
       "alias": ["confirm.confirm.name.fanout"],
       "surface": "confirm",
       "owner": "E30-D03 §12",
@@ -2884,18 +4696,37 @@
         {
           "text": "Send 3 of 4 legs — BUY BTCUSDT limit 64,010.0, each with its native stop, LIVE, Desk4",
           "params": {
-            "confirm label": "Send 3 of 4 legs — BUY BTCUSDT limit 64,010.0",
-            "LIVE/DEMO": "LIVE",
+            "confirm_label": "Send 3 of 4 legs — BUY BTCUSDT limit 64,010.0",
+            "environment": "LIVE",
             "group": "Desk4"
           }
         }
       ],
       "where": ["SCR-076"],
-      "note": "{confirm label} is `ticket.confirm.fanout.confirm` as rendered; the label replaces the merged verb-led paraphrase and the merged clause 'each with its native stop' stays, so no native-stop wording is dropped (BQ-15)",
+      "note": "{confirm_label} is `ticket.confirm.fanout.confirm` as rendered; the label replaces the merged verb-led paraphrase and the merged clause 'each with its native stop' stays, so no native-stop wording is dropped (BQ-15)",
       "sources": [
         {
           "cite": "`D05`:499",
           "text": "the visible label first, then the environment and account"
+        }
+      ],
+      "params": [
+        {
+          "name": "confirm_label",
+          "type": "string",
+          "render": "the Confirm button's visible label",
+          "parent": "{confirm label}"
+        },
+        {
+          "name": "environment",
+          "type": "enum",
+          "render": "LIVE | DEMO (upper case)",
+          "parent": "{LIVE/DEMO}"
+        },
+        {
+          "name": "group",
+          "type": "string",
+          "render": "the trade group's name"
         }
       ]
     },
@@ -2921,6 +4752,18 @@
           "cite": "`D03`:467",
           "text": "Estimated cost — margin 1,600.25 USDT (estimated) · fee 8.80 USDT"
         }
+      ],
+      "params": [
+        {
+          "name": "margin",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "fee",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.confirm.cost.slippage": {
@@ -2944,10 +4787,17 @@
           "cite": "`D03`:467",
           "text": "· est. slippage 0.4 ticks (estimated)"
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.confirm.countdown": {
-      "string": "Cancels in {m:ss}",
+      "string": "Cancels in {remaining}",
       "alias": ["confirm.countdown"],
       "surface": "confirm",
       "owner": "E30-D03 §12",
@@ -2957,7 +4807,7 @@
         {
           "text": "Cancels in 0:20",
           "params": {
-            "m:ss": "0:20"
+            "remaining": "0:20"
           }
         }
       ],
@@ -2966,6 +4816,14 @@
         {
           "cite": "`D03`:472",
           "text": "Cancels in 0:20"
+        }
+      ],
+      "params": [
+        {
+          "name": "remaining",
+          "type": "duration",
+          "render": "m:ss or mm:ss, counting down",
+          "parent": "{m:ss}"
         }
       ]
     },
@@ -2978,9 +4836,10 @@
       "kind": "text",
       "announce": {
         "lr": "LR-12",
-        "politeness": "off; polite at 0:10 only",
-        "rate": "one spoken mark; 0:00 silent (LR-13)",
-        "cite": "`D05`:300"
+        "politeness": "polite",
+        "rate": "only at 0:10 only; one spoken mark; 0:00 silent (LR-13)",
+        "cite": "`D05`:300",
+        "note": "`aria-live=\"off\"` between the marks"
       },
       "fixed": ["10"],
       "where": ["SCR-076"],
@@ -3015,6 +4874,13 @@
         {
           "cite": "`D03`:472",
           "text": "Cancels in 20 seconds unless you act"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -3084,6 +4950,13 @@
           "cite": "`D03`:457",
           "text": "You are about to send a DEMO order on Main."
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.confirm.env.live": {
@@ -3106,6 +4979,13 @@
         {
           "cite": "`D03`:456",
           "text": "You are about to send a LIVE order on Main."
+        }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
         }
       ]
     },
@@ -3156,6 +5036,23 @@
           "cite": "`D03`:456",
           "text": "You are about to send a LIVE order on 2 of 4 accounts (Desk4)."
         }
+      ],
+      "params": [
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "group",
+          "type": "string",
+          "render": "the trade group's name"
+        }
       ]
     },
     "ticket.confirm.exposure": {
@@ -3182,6 +5079,28 @@
         {
           "cite": "`D03`:468",
           "text": "Resulting exposure — 0.250 long · risk 27.50 USDT = 1 R · 0.22 % eq · est. liquidation — (not in the preview yet)"
+        }
+      ],
+      "params": [
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "side",
+          "type": "enum",
+          "render": "long | short"
+        },
+        {
+          "name": "risk",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "pct",
+          "type": "decimal",
+          "render": "a percentage of equity"
         }
       ]
     },
@@ -3253,6 +5172,23 @@
           "cite": "`D03`:485",
           "text": "Send 3 of 4 legs — BUY BTCUSDT limit 64,010.0"
         }
+      ],
+      "params": [
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "intent",
+          "type": "string",
+          "render": "the full-intent label"
+        }
       ]
     },
     "ticket.confirm.fanout.held": {
@@ -3279,6 +5215,28 @@
         {
           "cite": "`D03`:487",
           "text": "2 of 4 legs — sub_002 not sent (held by the rate limit), sub_003 not sent (symbol not allowed)"
+        }
+      ],
+      "params": [
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "member",
+          "type": "string",
+          "render": "a member account's label (one the caller holds)"
+        },
+        {
+          "name": "member2",
+          "type": "string",
+          "render": "a member account's label (one the caller holds)"
         }
       ]
     },
@@ -3325,6 +5283,23 @@
           "cite": "`D03`:486",
           "text": "2 of 3 legs — sub_002 not sent (view only)"
         }
+      ],
+      "params": [
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "member",
+          "type": "string",
+          "render": "a member account's label (one the caller holds)"
+        }
       ]
     },
     "ticket.confirm.fanout.stop": {
@@ -3352,6 +5327,13 @@
         {
           "cite": "`D03`:530",
           "text": "63,900.0 · held by Bybit (exchange)"
+        }
+      ],
+      "params": [
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
         }
       ]
     },
@@ -3382,10 +5364,47 @@
           "cite": "`D03`:483",
           "text": "3 of 4 accounts · 0.460 BTC · 29,444.60 USDT · risk 50.60 USDT · fee 16.19 USDT"
         }
+      ],
+      "params": [
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
+        },
+        {
+          "name": "notional",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "risk",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "fee",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.confirm.limits.row": {
-      "string": "{limit} {value} ({authority}) — {this order}",
+      "string": "{limit} {value} ({authority}) — {this_order}",
       "alias": ["confirm.limits.row"],
       "surface": "confirm",
       "owner": "E30-D03 §12",
@@ -3398,7 +5417,7 @@
             "limit": "max position",
             "value": "17,500 USDT",
             "authority": "profile",
-            "this order": "16,002.50 USDT"
+            "this_order": "16,002.50 USDT"
           }
         },
         {
@@ -3407,7 +5426,7 @@
             "limit": "daily loss",
             "value": "120 of 500 USDT used",
             "authority": "profile",
-            "this order": "+27.50 at the stop"
+            "this_order": "+27.50 at the stop"
           }
         },
         {
@@ -3416,7 +5435,7 @@
             "limit": "leverage",
             "value": "≤ 10x",
             "authority": "profile",
-            "this order": "10x"
+            "this_order": "10x"
           }
         },
         {
@@ -3425,7 +5444,7 @@
             "limit": "min size",
             "value": "0.001 BTC",
             "authority": "exchange",
-            "this order": "0.250"
+            "this_order": "0.250"
           }
         }
       ],
@@ -3451,10 +5470,33 @@
           "cite": "`D03`:469",
           "text": "min size 0.001 BTC (exchange) — 0.250"
         }
+      ],
+      "params": [
+        {
+          "name": "limit",
+          "type": "string",
+          "render": "the limit's name"
+        },
+        {
+          "name": "value",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "authority",
+          "type": "string",
+          "render": "the limit's authority (profile, exchange, owner)"
+        },
+        {
+          "name": "this_order",
+          "type": "decimal",
+          "render": "this order's value against the limit",
+          "parent": "{this order}"
+        }
       ]
     },
     "ticket.confirm.name": {
-      "string": "Confirm order - {symbol} - {LIVE/DEMO} - {account}",
+      "string": "Confirm order - {symbol} - {environment} - {account}",
       "alias": ["confirm.name"],
       "surface": "confirm",
       "owner": "E30-D03 §12",
@@ -3466,10 +5508,28 @@
           "cite": "`D03`:455",
           "text": "Confirm order - {symbol} - {LIVE/DEMO} - {account}"
         }
+      ],
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "environment",
+          "type": "enum",
+          "render": "LIVE | DEMO (upper case)",
+          "parent": "{LIVE/DEMO}"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.confirm.name.fanout": {
-      "string": "Confirm {k} of {m} legs - {symbol} - {LIVE/DEMO} - {group}",
+      "string": "Confirm {k} of {m} legs - {symbol} - {environment} - {group}",
       "alias": ["confirm.name.fanout"],
       "surface": "confirm",
       "owner": "E30-D03 §12",
@@ -3482,7 +5542,7 @@
             "k": "3",
             "m": "4",
             "symbol": "BTCUSDT",
-            "LIVE/DEMO": "LIVE",
+            "environment": "LIVE",
             "group": "Desk4"
           }
         },
@@ -3492,7 +5552,7 @@
             "k": "2",
             "m": "4",
             "symbol": "BTCUSDT",
-            "LIVE/DEMO": "LIVE",
+            "environment": "LIVE",
             "group": "Desk4"
           }
         }
@@ -3506,6 +5566,34 @@
         {
           "cite": "`D03`:455",
           "text": "Confirm 2 of 4 legs - BTCUSDT - LIVE - Desk4"
+        }
+      ],
+      "params": [
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "environment",
+          "type": "enum",
+          "render": "LIVE | DEMO (upper case)",
+          "parent": "{LIVE/DEMO}"
+        },
+        {
+          "name": "group",
+          "type": "string",
+          "render": "the trade group's name"
         }
       ]
     },
@@ -3545,6 +5633,13 @@
           "cite": "`D03`:488",
           "text": "— held 42 s ago, replaying now"
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.confirm.row.leverage": {
@@ -3574,6 +5669,23 @@
           "cite": "`D03`:527",
           "text": "10x · isolated · One-Way"
         }
+      ],
+      "params": [
+        {
+          "name": "lev",
+          "type": "decimal",
+          "render": "leverage (x)"
+        },
+        {
+          "name": "margin_mode",
+          "type": "enum",
+          "render": "isolated | cross"
+        },
+        {
+          "name": "position_mode",
+          "type": "enum",
+          "render": "One-Way | Hedge"
+        }
       ]
     },
     "ticket.confirm.row.price": {
@@ -3597,10 +5709,17 @@
           "cite": "`D03`:463",
           "text": "64,010.0"
         }
+      ],
+      "params": [
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.confirm.row.price.cond": {
-      "string": "when {Mark} rises to {trigger} · limit {price}",
+      "string": "when {trigger_by} {direction} {trigger} · limit {price}",
       "alias": ["confirm.row.price.cond"],
       "surface": "confirm",
       "owner": "E30-D03 §12",
@@ -3610,7 +5729,8 @@
         {
           "text": "when Mark rises to 64,100.0 · limit 64,110.0",
           "params": {
-            "Mark": "Mark",
+            "trigger_by": "Mark",
+            "direction": "rises to",
             "trigger": "64,100.0",
             "price": "64,110.0"
           }
@@ -3622,10 +5742,34 @@
           "cite": "`D03`:463",
           "text": "when Mark rises to 64,100.0 · limit 64,110.0"
         }
+      ],
+      "params": [
+        {
+          "name": "trigger_by",
+          "type": "enum",
+          "render": "Mark | Last | Index",
+          "parent": "{Mark}"
+        },
+        {
+          "name": "direction",
+          "type": "enum",
+          "render": "rises to | falls to",
+          "parent": "rises to"
+        },
+        {
+          "name": "trigger",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.confirm.row.price.market": {
-      "string": "at the ask ≈ {price} (estimated)",
+      "string": "at the {touch} ≈ {price} (estimated)",
       "alias": ["confirm.row.price.market"],
       "surface": "confirm",
       "owner": "E30-D03 §12",
@@ -3635,6 +5779,7 @@
         {
           "text": "at the ask ≈ 64,010.1 (estimated)",
           "params": {
+            "touch": "ask",
             "price": "64,010.1"
           }
         }
@@ -3644,6 +5789,18 @@
         {
           "cite": "`D03`:463",
           "text": "at the ask ≈ 64,010.1 (estimated)"
+        }
+      ],
+      "params": [
+        {
+          "name": "touch",
+          "type": "enum",
+          "render": "ask | bid (the side's opposite touch)"
+        },
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
         }
       ]
     },
@@ -3671,6 +5828,28 @@
           "cite": "`D03`:462",
           "text": "0.250 BTC · 16,002.50 USDT · 128.0 % eq"
         }
+      ],
+      "params": [
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
+        },
+        {
+          "name": "notional",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "pct",
+          "type": "decimal",
+          "render": "a percentage of equity"
+        }
       ]
     },
     "ticket.confirm.row.side.buy": {
@@ -3680,10 +5859,14 @@
       "owner": "E30-D03 §12",
       "status": "merged",
       "kind": "text",
-      "where": ["SCR-076"],
+      "where": ["SCR-076", "SCR-060 · the side toggle (CMP-102)"],
       "sources": [
         {
           "cite": "`D03`:459",
+          "text": "▲ Buy / Long"
+        },
+        {
+          "cite": "`D02`:76",
           "text": "▲ Buy / Long"
         }
       ]
@@ -3695,10 +5878,14 @@
       "owner": "E30-D03 §12",
       "status": "merged",
       "kind": "text",
-      "where": ["SCR-076"],
+      "where": ["SCR-076", "SCR-060 · the side toggle (CMP-102)"],
       "sources": [
         {
           "cite": "`D03`:459",
+          "text": "▼ Sell / Short"
+        },
+        {
+          "cite": "`D02`:76",
           "text": "▼ Sell / Short"
         }
       ]
@@ -3725,6 +5912,18 @@
         {
           "cite": "`D03`:464",
           "text": "63,900.0 · typed · 1,100 ticks · held by Bybit (exchange)"
+        }
+      ],
+      "params": [
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "ticks",
+          "type": "integer",
+          "render": "a count of ticks"
         }
       ]
     },
@@ -3765,6 +5964,13 @@
           "cite": "`D03`:464",
           "text": "· from your profile: 200 ticks ·"
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.confirm.row.symbol": {
@@ -3787,6 +5993,13 @@
         {
           "cite": "`D03`:460",
           "text": "BTCUSDT · USDT perpetual"
+        }
+      ],
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
         }
       ]
     },
@@ -3811,6 +6024,18 @@
         {
           "cite": "`D03`:465",
           "text": "64,300.0 · 2.64 R"
+        }
+      ],
+      "params": [
+        {
+          "name": "tp",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "r",
+          "type": "decimal",
+          "render": "an R multiple"
         }
       ]
     },
@@ -3877,7 +6102,14 @@
           "cite": "`D03`:475",
           "text": "Confirmation cancelled — nothing was sent"
         }
-      ]
+      ],
+      "announce": {
+        "lr": "LR-12",
+        "politeness": "none",
+        "rate": "never",
+        "cite": "`D05`:300",
+        "note": "never spoken: LR-13's string is the one utterance"
+      }
     },
     "ticket.confirm.timeout.status": {
       "string": "Confirmation timed out — nothing was sent. Attempt recorded",
@@ -3958,6 +6190,28 @@
           "cite": "`D03`:502",
           "text": "{class} {used} of {capacity} · reserve {n}"
         }
+      ],
+      "params": [
+        {
+          "name": "class",
+          "type": "string",
+          "render": "the endpoint class"
+        },
+        {
+          "name": "used",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "capacity",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.reject.drawer.budget.title": {
@@ -3981,6 +6235,13 @@
           "cite": "`D03`:502",
           "text": "Request budget — Main (per account)"
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.reject.drawer.code": {
@@ -3995,6 +6256,13 @@
         {
           "cite": "`D03`:493",
           "text": "code {code}"
+        }
+      ],
+      "params": [
+        {
+          "name": "code",
+          "type": "string",
+          "render": "the code as the server or the exchange sends it, verbatim"
         }
       ]
     },
@@ -4011,6 +6279,18 @@
           "cite": "`D03`:493",
           "text": "code {code} · ret_code {n}"
         }
+      ],
+      "params": [
+        {
+          "name": "code",
+          "type": "string",
+          "render": "the code as the server or the exchange sends it, verbatim"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.reject.drawer.copied": {
@@ -4026,7 +6306,12 @@
           "cite": "`D03`:497",
           "text": "Copied"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per press",
+        "cite": "`D03`:235"
+      }
     },
     "ticket.reject.drawer.copy": {
       "string": "Copy correlation id",
@@ -4059,7 +6344,7 @@
       ]
     },
     "ticket.reject.drawer.name": {
-      "string": "Order rejected - {symbol} - {LIVE/DEMO} - {account}",
+      "string": "Order rejected - {symbol} - {environment} - {account}",
       "alias": ["drawer.name"],
       "surface": "reject",
       "owner": "E30-D03 §12",
@@ -4070,6 +6355,24 @@
         {
           "cite": "`D03`:492",
           "text": "Order rejected - {symbol} - {LIVE/DEMO} - {account}"
+        }
+      ],
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "environment",
+          "type": "enum",
+          "render": "LIVE | DEMO (upper case)",
+          "parent": "{LIVE/DEMO}"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
         }
       ]
     },
@@ -4101,7 +6404,12 @@
           "cite": "`D03`:499",
           "text": "Loading the exchange record…"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once",
+        "cite": "`D03`:229"
+      }
     },
     "ticket.reject.drawer.record.quote_name": {
       "string": "Exchange message, verbatim",
@@ -4186,6 +6494,18 @@
           "cite": "`D03`:496",
           "text": "stop 63,900.0 · TP 64,300.0 (sent with the order; not placed — rejected)"
         }
+      ],
+      "params": [
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "tp",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.reject.drawer.sent.title": {
@@ -4246,6 +6566,23 @@
           "cite": "`D03`:246",
           "text": "Not enough available margin on Main: this order needs 1,600.25 USDT, 1,240.00 is available."
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        },
+        {
+          "name": "needed",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "available",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.reject.reason.leverage": {
@@ -4272,6 +6609,23 @@
           "cite": "`D03`:249",
           "text": "Leverage 20x is not available: your profile caps leverage at 10x on Main."
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        },
+        {
+          "name": "cap",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.reject.reason.lot": {
@@ -4297,6 +6651,19 @@
           "cite": "`D03`:248",
           "text": "0.2504 is not a multiple of the 0.001 step."
         }
+      ],
+      "code_surfaces": ["order", "reject"],
+      "params": [
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "step",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.reject.reason.position_mode.hedge": {
@@ -4320,6 +6687,13 @@
         {
           "cite": "`D03`:252",
           "text": "Main is in hedge mode; this order needs a long or short leg."
+        }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
         }
       ]
     },
@@ -4345,10 +6719,17 @@
           "cite": "`D03`:252",
           "text": "Main is in one-way mode; a leg was given."
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.reject.reason.post_only_cross": {
-      "string": "Your buy at {price} is at the ask, so a post-only order would take liquidity instead of resting.",
+      "string": "Your {side} at {price} is at the {touch}, so a post-only order would take liquidity instead of resting.",
       "alias": ["reason.post_only_cross"],
       "surface": "reject",
       "owner": "E30-D03 §5",
@@ -4358,7 +6739,9 @@
         {
           "text": "Your buy at 64,010.1 is at the ask, so a post-only order would take liquidity instead of resting.",
           "params": {
-            "price": "64,010.1"
+            "side": "buy",
+            "price": "64,010.1",
+            "touch": "ask"
           }
         }
       ],
@@ -4367,6 +6750,23 @@
         {
           "cite": "`D03`:253",
           "text": "Your buy at 64,010.1 is at the ask, so a post-only order would take liquidity instead of resting."
+        }
+      ],
+      "params": [
+        {
+          "name": "side",
+          "type": "enum",
+          "render": "buy | sell"
+        },
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "touch",
+          "type": "enum",
+          "render": "ask | bid (the side's opposite touch)"
         }
       ]
     },
@@ -4413,6 +6813,13 @@
           "cite": "`D03`:247",
           "text": "Reduce-only was set but there is no position to reduce on Main."
         }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        }
       ]
     },
     "ticket.reject.reason.risk_tier": {
@@ -4438,6 +6845,18 @@
           "cite": "`D03`:250",
           "text": "Bybit's risk-limit tier for BTCUSDT does not allow this size at 10x."
         }
+      ],
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "lev",
+          "type": "decimal",
+          "render": "leverage (x)"
+        }
       ]
     },
     "ticket.reject.reason.stop_missing": {
@@ -4447,7 +6866,7 @@
       "owner": "E30-D03 §5",
       "status": "merged",
       "kind": "refusal",
-      "codes": ["problem:validation_failed", "rule:native_stop_required"],
+      "codes": ["rule:native_stop_required"],
       "codes_pending": "G-15 (oms:NATIVE_SL_REQUIRED, E32-D07 #927)",
       "native_sl": true,
       "where": ["SCR-077 · translation"],
@@ -4482,6 +6901,24 @@
           "cite": "`D03`:248",
           "text": "64,010.03 is not a multiple of BTCUSDT's 0.1 tick."
         }
+      ],
+      "code_surfaces": ["order", "reject"],
+      "params": [
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "symbol",
+          "type": "string",
+          "render": "the instrument symbol"
+        },
+        {
+          "name": "tick",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.reject.record.never_stored": {
@@ -4497,6 +6934,45 @@
         {
           "cite": "`D03`:500",
           "text": "Headers, signatures and credentials are never stored, so they cannot be shown."
+        }
+      ]
+    },
+    "ticket.reject.refusal.unmapped": {
+      "string": "{detail}",
+      "alias": ["refusal.unmapped"],
+      "surface": "reject",
+      "owner": "`22` (the server's Problem.detail)",
+      "status": "by-reference",
+      "kind": "refusal",
+      "server_field": "Problem.detail",
+      "announce": {
+        "lr": "LR-26",
+        "politeness": "assertive",
+        "rate": "once per opening",
+        "cite": "`D05`:314"
+      },
+      "examples": [
+        {
+          "text": "An exchange account named in the request is not in your scope.",
+          "params": {
+            "detail": "An exchange account named in the request is not in your scope."
+          }
+        }
+      ],
+      "security": true,
+      "note": "RULED row 5: no refusal is silent and no copy is invented; `by_code`'s `*` row names it as the default target of its surface.",
+      "where": ["SCR-077 · the class banner (the fallback for a code `by_code` does not map)"],
+      "sources": [
+        {
+          "cite": "`22`:16583",
+          "text": "An exchange account named in the request is not in your scope."
+        }
+      ],
+      "params": [
+        {
+          "name": "detail",
+          "type": "string",
+          "render": "the problem's `detail`, verbatim"
         }
       ]
     },
@@ -4526,6 +7002,18 @@
         {
           "cite": "`D03`:254",
           "text": "Add the profile stop (200 ticks → 63,990.0)"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        },
+        {
+          "name": "stop",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
         }
       ]
     },
@@ -4583,7 +7071,7 @@
       ]
     },
     "ticket.reject.retry.leg": {
-      "string": "Retry as the long leg",
+      "string": "Retry as the {leg}",
       "alias": ["retry.leg"],
       "surface": "reject",
       "owner": "E30-D03 §12",
@@ -4598,6 +7086,14 @@
         {
           "cite": "`D03`:252",
           "text": "Retry as the long leg"
+        }
+      ],
+      "params": [
+        {
+          "name": "leg",
+          "type": "enum",
+          "render": "long leg | short leg",
+          "parent": "long leg"
         }
       ]
     },
@@ -4625,6 +7121,13 @@
         {
           "cite": "`D03`:249",
           "text": "Retry at 10x"
+        }
+      ],
+      "params": [
+        {
+          "name": "cap",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
         }
       ]
     },
@@ -4691,6 +7194,13 @@
           "cite": "`D03`:253",
           "text": "Reprice to 64,010.0 and keep post-only"
         }
+      ],
+      "params": [
+        {
+          "name": "price",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.reject.retry.tick": {
@@ -4732,10 +7242,17 @@
           "cite": "`D03`:248",
           "text": "Retry with 0.250"
         }
+      ],
+      "params": [
+        {
+          "name": "value",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        }
       ]
     },
     "ticket.ratelimit.announce": {
-      "string": "Rate limited — retry allowed at {hh:mm:ss} (in {n} s)",
+      "string": "Rate limited — retry allowed at {retry_at} (in {n} s)",
       "alias": ["ratelimit.announce"],
       "surface": "ratelimit",
       "owner": "E30-D03 §12",
@@ -4751,7 +7268,7 @@
         {
           "text": "Rate limited — retry allowed at 14:32:10 (in 42 s)",
           "params": {
-            "hh:mm:ss": "14:32:10",
+            "retry_at": "14:32:10",
             "n": "42"
           }
         }
@@ -4761,6 +7278,19 @@
         {
           "cite": "`D03`:506",
           "text": "Rate limited — retry allowed at 14:32:10 (in 42 s)"
+        }
+      ],
+      "params": [
+        {
+          "name": "retry_at",
+          "type": "time",
+          "render": "UTC, hh:mm:ss",
+          "parent": "{hh:mm:ss}"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -4773,9 +7303,10 @@
       "kind": "text",
       "announce": {
         "lr": "LR-14",
-        "politeness": "off; polite at the expiry",
-        "rate": "≤ 1 per 10 s; the expiry once",
-        "cite": "`D05`:302"
+        "politeness": "polite",
+        "rate": "only at the expiry; ≤ 1 per 10 s; the expiry once",
+        "cite": "`D05`:302",
+        "note": "`aria-live=\"off\"` between the marks"
       },
       "where": ["SCR-158"],
       "sources": [
@@ -4828,7 +7359,12 @@
           "cite": "`D03`:505",
           "text": "Discarded — nothing was sent"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per press",
+        "cite": "`D03`:282"
+      }
     },
     "ticket.ratelimit.held.replay": {
       "string": "Replay {intent}",
@@ -4855,10 +7391,17 @@
           "cite": "`D03`:251",
           "text": "Replay BUY 0.250 BTCUSDT limit 64,010.0"
         }
+      ],
+      "params": [
+        {
+          "name": "intent",
+          "type": "string",
+          "render": "the full-intent label"
+        }
       ]
     },
     "ticket.ratelimit.held.row": {
-      "string": "{full intent} · {account} · held {n} s ago",
+      "string": "{full_intent} · {account} · held {n} s ago",
       "alias": ["ratelimit.held.row"],
       "surface": "ratelimit",
       "owner": "E30-D03 §12",
@@ -4869,6 +7412,24 @@
         {
           "cite": "`D03`:505",
           "text": "{full intent} · {account} · held {n} s ago"
+        }
+      ],
+      "params": [
+        {
+          "name": "full_intent",
+          "type": "string",
+          "render": "the full-intent label",
+          "parent": "{full intent}"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -4884,6 +7445,13 @@
         {
           "cite": "`D03`:505",
           "text": "Held orders ({n})"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -4933,6 +7501,45 @@
         }
       ]
     },
+    "ticket.ratelimit.refusal.unmapped": {
+      "string": "{detail}",
+      "alias": ["refusal.unmapped"],
+      "surface": "ratelimit",
+      "owner": "`22` (the server's Problem.detail)",
+      "status": "by-reference",
+      "kind": "refusal",
+      "server_field": "Problem.detail",
+      "announce": {
+        "lr": "LR-22",
+        "politeness": "polite",
+        "rate": "once per event",
+        "cite": "`D05`:310"
+      },
+      "examples": [
+        {
+          "text": "An exchange account named in the request is not in your scope.",
+          "params": {
+            "detail": "An exchange account named in the request is not in your scope."
+          }
+        }
+      ],
+      "security": true,
+      "note": "RULED row 5: no refusal is silent and no copy is invented; `by_code`'s `*` row names it as the default target of its surface.",
+      "where": ["SCR-158 · the banner (the fallback for a code `by_code` does not map)"],
+      "sources": [
+        {
+          "cite": "`22`:16583",
+          "text": "An exchange account named in the request is not in your scope."
+        }
+      ],
+      "params": [
+        {
+          "name": "detail",
+          "type": "string",
+          "render": "the problem's `detail`, verbatim"
+        }
+      ]
+    },
     "ticket.ratelimit.replay_all": {
       "string": "Replay all {n} when the budget allows",
       "alias": ["ratelimit.replay_all"],
@@ -4954,10 +7561,17 @@
           "cite": "`D03`:507",
           "text": "Replay all 3 when the budget allows"
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.ratelimit.scope.backend": {
-      "string": "Rate limited — CandleViewer is holding your request. Retry allowed at {hh:mm:ss} (in {n} s).",
+      "string": "Rate limited — CandleViewer is holding your request. Retry allowed at {retry_at} (in {n} s).",
       "alias": ["ratelimit.scope.backend"],
       "surface": "ratelimit",
       "owner": "E30-D03 §6",
@@ -4968,7 +7582,7 @@
         {
           "text": "Rate limited — CandleViewer is holding your request. Retry allowed at 14:32:10 (in 42 s).",
           "params": {
-            "hh:mm:ss": "14:32:10",
+            "retry_at": "14:32:10",
             "n": "42"
           }
         }
@@ -4979,10 +7593,23 @@
           "cite": "`D03`:264",
           "text": "Rate limited — CandleViewer is holding your request. Retry allowed at 14:32:10 (in 42 s)."
         }
+      ],
+      "params": [
+        {
+          "name": "retry_at",
+          "type": "time",
+          "render": "UTC, hh:mm:ss",
+          "parent": "{hh:mm:ss}"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.ratelimit.scope.exchange": {
-      "string": "Bybit's request budget for {account} is used up — retry allowed at {hh:mm:ss} (in {n} s). Cancel, close and stop changes still go through (reserved budget).",
+      "string": "Bybit's request budget for {account} is used up — retry allowed at {retry_at} (in {n} s). Cancel, close and stop changes still go through (reserved budget).",
       "alias": ["ratelimit.scope.exchange"],
       "surface": "ratelimit",
       "owner": "E30-D03 §6",
@@ -4998,7 +7625,7 @@
           "text": "Bybit's request budget for Main is used up — retry allowed at 14:32:10 (in 42 s). Cancel, close and stop changes still go through (reserved budget).",
           "params": {
             "account": "Main",
-            "hh:mm:ss": "14:32:10",
+            "retry_at": "14:32:10",
             "n": "42"
           }
         }
@@ -5008,6 +7635,24 @@
         {
           "cite": "`D03`:265",
           "text": "Bybit's request budget for Main is used up — retry allowed at 14:32:10 (in 42 s). Cancel, close and stop changes still go through (reserved budget)."
+        }
+      ],
+      "params": [
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
+        },
+        {
+          "name": "retry_at",
+          "type": "time",
+          "render": "UTC, hh:mm:ss",
+          "parent": "{hh:mm:ss}"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -5034,6 +7679,28 @@
         {
           "cite": "`D03`:266",
           "text": "Not sent — the group would exceed the request budget on sub_002. Main and sub_001 could be served now: send those 2 legs now, or replay all 3 when the budget allows — either way through the confirmation."
+        }
+      ],
+      "params": [
+        {
+          "name": "member",
+          "type": "string",
+          "render": "a member account's label (one the caller holds)"
+        },
+        {
+          "name": "served",
+          "type": "string",
+          "render": "the served members' labels, joined"
+        },
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -5064,6 +7731,23 @@
           "cite": "`D03`:507",
           "text": "Send 2 of 4 legs now — BUY BTCUSDT limit 64,010.0…"
         }
+      ],
+      "params": [
+        {
+          "name": "k",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "m",
+          "type": "integer",
+          "render": "a count of legs or accounts"
+        },
+        {
+          "name": "intent",
+          "type": "string",
+          "render": "the full-intent label"
+        }
       ]
     },
     "ticket.ratelimit.served": {
@@ -5087,6 +7771,18 @@
         {
           "cite": "`D03`:507",
           "text": "Main and sub_001 could be served now; sub_002 waits"
+        }
+      ],
+      "params": [
+        {
+          "name": "served",
+          "type": "string",
+          "render": "the served members' labels, joined"
+        },
+        {
+          "name": "waiting",
+          "type": "string",
+          "render": "the waiting members' labels, joined"
         }
       ]
     },
@@ -5118,6 +7814,13 @@
         {
           "cite": "`D03`:518",
           "text": "Confirmation auto-cancel after {n} s (10–60)"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -5333,15 +8036,19 @@
     },
     "ticket.defaults.fieldset.size": {
       "string": "Size",
-      "alias": ["defaults.fieldset.size"],
+      "alias": ["defaults.fieldset.size", "label.field.size"],
       "surface": "defaults",
       "owner": "E30-D03 §12",
       "status": "merged",
       "kind": "text",
-      "where": ["SCR-114"],
+      "where": ["SCR-114", "SCR-060 · the size row (CMP-101)"],
       "sources": [
         {
           "cite": "`D03`:513",
+          "text": "Size"
+        },
+        {
+          "cite": "`D02`:80",
           "text": "Size"
         }
       ]
@@ -5373,6 +8080,13 @@
         {
           "cite": "`D03`:525",
           "text": "Fix {n} problem to save"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -5440,7 +8154,13 @@
           "cite": "`D03`:512",
           "text": "Read-only — your role can't change settings."
         }
-      ]
+      ],
+      "announce": {
+        "lr": "LR-10",
+        "politeness": "polite",
+        "rate": "once per press",
+        "cite": "`D05`:298"
+      }
     },
     "ticket.defaults.oneclick.triggers": {
       "string": "Disarms on: expiry · manual disarm · session end · kill switch · risk-cap breach · feed disconnected, read-only or stale",
@@ -5470,6 +8190,13 @@
         {
           "cite": "`D03`:523",
           "text": "Arm for {n} s (30–3,600)"
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -5737,6 +8464,13 @@
           "cite": "`D03`:519",
           "text": "Your profile caps the stop distance at 200 ticks"
         }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        }
       ]
     },
     "ticket.defaults.stop.kept": {
@@ -5766,6 +8500,13 @@
         {
           "cite": "`D03`:519",
           "text": "Kept at 200 ticks — every order carries a native stop. Change it instead."
+        }
+      ],
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -5798,7 +8539,12 @@
           "cite": "`D03`:519",
           "text": "The stop distance must be greater than zero"
         }
-      ]
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per attempt",
+        "cite": "`D03`:337"
+      }
     },
     "ticket.defaults.title": {
       "string": "Trading defaults",
@@ -5835,6 +8581,18 @@
         {
           "cite": "`D03`:537",
           "text": "Template applied — stop 200 ticks kept"
+        }
+      ],
+      "announce": {
+        "politeness": "polite",
+        "rate": "once per apply",
+        "cite": "`D03`:392"
+      },
+      "params": [
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
         }
       ]
     },
@@ -5960,7 +8718,7 @@
       ]
     },
     "ticket.template.summary": {
-      "string": "BUY · limit · {qty} {coin} · stop {n} ticks · TP {r} R · {account}",
+      "string": "{side} · {order_type} · {qty} {coin} · stop {n} ticks · TP {r} R · {account}",
       "alias": ["template.summary"],
       "surface": "template",
       "owner": "E30-D03 §12",
@@ -5970,6 +8728,8 @@
         {
           "text": "BUY · limit · 0.250 BTC · stop 200 ticks · TP 2 R · Main",
           "params": {
+            "side": "BUY",
+            "order_type": "limit",
             "qty": "0.250",
             "coin": "BTC",
             "n": "200",
@@ -5983,6 +8743,43 @@
         {
           "cite": "`D03`:535",
           "text": "BUY · limit · 0.250 BTC · stop 200 ticks · TP 2 R · Main"
+        }
+      ],
+      "params": [
+        {
+          "name": "side",
+          "type": "enum",
+          "render": "BUY | SELL"
+        },
+        {
+          "name": "order_type",
+          "type": "enum",
+          "render": "limit | market | conditional"
+        },
+        {
+          "name": "qty",
+          "type": "decimal",
+          "render": "mono, the instrument's precision"
+        },
+        {
+          "name": "coin",
+          "type": "string",
+          "render": "the base coin"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "render": "a count"
+        },
+        {
+          "name": "r",
+          "type": "decimal",
+          "render": "an R multiple"
+        },
+        {
+          "name": "account",
+          "type": "string",
+          "render": "the account's label (an account the caller holds)"
         }
       ]
     },
@@ -6240,9 +9037,6 @@
     "preview:symbol_not_allowed": {
       "order": "ticket.order.refusal.symbol_not_allowed"
     },
-    "problem:audit_unavailable": {
-      "order": "ticket.order.rejected.class.transient"
-    },
     "problem:degraded_data": {
       "order": "ticket.order.refusal.degraded_data"
     },
@@ -6254,18 +9048,11 @@
       "ratelimit": "ticket.ratelimit.scope.exchange",
       "reject": "ticket.reject.reason.rate_limit"
     },
-    "problem:exchange_unavailable": {
-      "order": "ticket.order.rejected.class.transient"
-    },
-    "problem:idempotency_in_flight": {
-      "order": "ticket.order.rejected.class.transient"
-    },
     "problem:insufficient_balance": {
-      "order": "ticket.order.rejected.class.limit",
       "reject": "ticket.reject.reason.insufficient_margin"
     },
     "problem:lot_size_violation": {
-      "order": "ticket.order.rejected.class.correctable",
+      "order": "ticket.reject.reason.lot",
       "reject": "ticket.reject.reason.lot"
     },
     "problem:rate_limited": {
@@ -6276,11 +9063,11 @@
     "problem:risk_limit_breached": {
       "order": "ticket.order.rejected.class.limit"
     },
-    "problem:store_unavailable": {
-      "order": "ticket.order.rejected.class.transient"
+    "problem:session_not_armed": {
+      "order": "ticket.order.arm.refused"
     },
     "problem:tick_size_violation": {
-      "order": "ticket.order.rejected.class.correctable",
+      "order": "ticket.reject.reason.tick",
       "reject": "ticket.reject.reason.tick"
     },
     "problem:timeout": {
@@ -6298,9 +9085,8 @@
     "problem:trading_disabled:no_active_key": {
       "order": "ticket.order.refusal.trading_disabled.no_active_key"
     },
-    "problem:validation_failed": {
-      "order": "ticket.order.rejected.class.correctable",
-      "reject": "ticket.reject.reason.stop_missing"
+    "problem:view_as_expired": {
+      "order": "ticket.order.refusal.view_as_expired"
     },
     "rule:native_stop_required": {
       "order": "ticket.order.rejected.class.correctable",
@@ -6311,6 +9097,11 @@
     },
     "sizing:invalid_stop_distance": {
       "order": "ticket.order.refusal.invalid_stop_distance"
+    },
+    "*": {
+      "order": "ticket.order.refusal.unmapped",
+      "ratelimit": "ticket.ratelimit.refusal.unmapped",
+      "reject": "ticket.reject.refusal.unmapped"
     }
   },
   "not_carried": [

@@ -28,7 +28,8 @@
       },
       "twin": "14:ready",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:275"
+      "cite": "`D02`:275",
+      "fixture": "WS `ticker` live, a valid draft, the arm store read (session fixture)"
     },
     {
       "id": "SCR-060/validating",
@@ -48,7 +49,9 @@
       },
       "twin": "14:validating",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:276"
+      "cite": "`D02`:276",
+      "speaks": ["ticket.order.readout.line"],
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-060/invalid-summary",
@@ -71,7 +74,9 @@
       "twin": "14:validating",
       "story": "E30-S01 #1030",
       "cite": "`D02`:277",
-      "announce_parent": "assertive, once"
+      "announce_parent": "assertive, once",
+      "speaks": ["ticket.order.v.summary.heading"],
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-060/submitting",
@@ -86,14 +91,18 @@
       "r5": "submit — arm-gated",
       "event": "order.submitted",
       "class": "audit",
-      "audit_action": "orders.submit",
+      "audit_action": {
+        "order.submitted": "orders.submit"
+      },
       "frame": {
         "page": "E30-D02",
         "board": "02"
       },
       "twin": "14:submitting",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:278"
+      "cite": "`D02`:278",
+      "speaks": ["ticket.order.submit.submitting", "ticket.order.submit.duplicate"],
+      "fixture": "`POST /orders` held unanswered (fake transport)"
     },
     {
       "id": "SCR-060/awaiting-confirmation",
@@ -113,13 +122,15 @@
       },
       "twin": "A-1:awaiting exchange confirmation (2 s)",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:279"
+      "cite": "`D02`:279",
+      "speaks": ["ticket.order.submit.awaiting"],
+      "fixture": "`202` then no terminal WS `orders` frame for 2 s (fake clock)"
     },
     {
       "id": "SCR-060/accepted",
       "screen": "SCR-060",
       "state": "accepted",
-      "trigger": "WS `orders` state `accepted` / `partially_filled` / `filled` with `sl.attached` (`24` §8.8 item 1)",
+      "trigger": "WS `orders` state `accepted` / `partially_filled` / `filled` with `sl.attached` (`24` §8.8 item 1) — selected when the order is `accepted` or `filled` (`ticket.order.accepted`)",
       "exit": "5 s or any input; the toast per SCR-060 is the banner's twin in the notification centre",
       "carrier": "the word \"Accepted\" + check + the stop named",
       "announce": "assertive, once (`05` §6.2)",
@@ -133,13 +144,15 @@
       },
       "twin": "14:accepted",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:280"
+      "cite": "`D02`:280",
+      "speaks": ["ticket.order.accepted"],
+      "fixture": "WS `orders` frame `accepted` with `sl.attached` (recorded)"
     },
     {
       "id": "SCR-060/partially-filled",
       "screen": "SCR-060",
       "state": "partially-filled",
-      "trigger": "WS `orders` state `accepted` / `partially_filled` / `filled` with `sl.attached` (`24` §8.8 item 1)",
+      "trigger": "WS `orders` state `accepted` / `partially_filled` / `filled` with `sl.attached` (`24` §8.8 item 1) — selected when it is `partially_filled` (`ticket.order.accepted.partial`; stays until filled or cancelled)",
       "exit": "5 s or any input; the toast per SCR-060 is the banner's twin in the notification centre",
       "carrier": "the word \"Accepted\" + check + the stop named",
       "announce": "assertive, once (`05` §6.2)",
@@ -153,13 +166,15 @@
       },
       "twin": "14:accepted",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:280"
+      "cite": "`D02`:280",
+      "speaks": ["ticket.order.accepted.partial"],
+      "fixture": "WS `orders` frame `partially_filled` with `sl.attached` (recorded)"
     },
     {
       "id": "SCR-060/rejected-correctable",
       "screen": "SCR-060",
       "state": "rejected-correctable",
-      "trigger": "`validation_failed` incl. `native_stop_required`, `tick_size_violation`, `lot_size_violation` (and, inside its `detail`, the internal `24` §9.3 `LegSizing` reasons `invalid_stop_distance` and `below_min_notional` — no `22` slug of their own), post-only would cross",
+      "trigger": "`validation_failed` incl. `native_stop_required`, `tick_size_violation`, `lot_size_violation` (and, inside its `detail`, the internal `24` §9.3 `LegSizing` reasons `invalid_stop_distance` and `below_min_notional` — no `22` slug of their own), post-only would cross — selected for a correctable code other than the post-only cross; the class line names the field (`by_code`)",
       "exit": "edit → validating; a changed body is a new intent with a new `Idempotency-Key`",
       "carrier": "class line + code + glyph",
       "announce": "assertive, once",
@@ -173,13 +188,15 @@
       },
       "twin": "14:rejected",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:281"
+      "cite": "`D02`:281",
+      "speaks": ["ticket.order.rejected.class.correctable", "ticket.order.rejected.recorded"],
+      "fixture": "`validation_failed` with `errors[].rule` `native_stop_required` (recorded)"
     },
     {
       "id": "SCR-060/rejected-post-only-cross",
       "screen": "SCR-060",
       "state": "rejected-post-only-cross",
-      "trigger": "`validation_failed` incl. `native_stop_required`, `tick_size_violation`, `lot_size_violation` (and, inside its `detail`, the internal `24` §9.3 `LegSizing` reasons `invalid_stop_distance` and `below_min_notional` — no `22` slug of their own), post-only would cross",
+      "trigger": "`validation_failed` incl. `native_stop_required`, `tick_size_violation`, `lot_size_violation` (and, inside its `detail`, the internal `24` §9.3 `LegSizing` reasons `invalid_stop_distance` and `below_min_notional` — no `22` slug of their own), post-only would cross — selected when the exchange refuses a post-only limit that would cross the book (the reprice offer of SCR-077, SC-10; D02 §7)",
       "exit": "edit → validating; a changed body is a new intent with a new `Idempotency-Key`",
       "carrier": "class line + code + glyph",
       "announce": "assertive, once",
@@ -193,7 +210,8 @@
       },
       "twin": "14:rejected",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:281"
+      "cite": "`D02`:281",
+      "fixture": "the exchange's post-only refusal (recorded)"
     },
     {
       "id": "SCR-060/rejected-limit",
@@ -213,7 +231,9 @@
       },
       "twin": "14:rejected",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:282"
+      "cite": "`D02`:282",
+      "speaks": ["ticket.order.rejected.class.limit", "ticket.order.rejected.recorded"],
+      "fixture": "`403` `risk_limit_breached` with its `detail` (recorded)"
     },
     {
       "id": "SCR-060/rejected-transient",
@@ -233,7 +253,9 @@
       },
       "twin": "14:rejected",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:283"
+      "cite": "`D02`:283",
+      "speaks": ["ticket.order.rejected.class.transient"],
+      "fixture": "`429` `rate_limited` with `retry_after_seconds` (recorded)"
     },
     {
       "id": "SCR-060/rejected-exchange",
@@ -253,13 +275,15 @@
       },
       "twin": "14:rejected",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:284"
+      "cite": "`D02`:284",
+      "speaks": ["ticket.order.rejected.class.exchange", "ticket.order.rejected.recorded"],
+      "fixture": "`exchange_error` with `ret_code` / `ret_msg` (recorded)"
     },
     {
       "id": "SCR-060/rejected-one-lot",
       "screen": "SCR-060",
       "state": "rejected-one-lot",
-      "trigger": "the server's `size_leg` differs from the client's by more than one lot (code: E30-S03 contract gap)",
+      "trigger": "the server's `size_leg` differs from the client's by more than one lot (code: E30-S03 contract gap) — selected when the ticket's inputs were current at the press (board 03)",
       "exit": "accept the server's number → ready",
       "carrier": "class line + both numbers",
       "announce": "assertive, once",
@@ -273,13 +297,15 @@
       },
       "twin": "14:rejected",
       "story": "E30-S03 #1087",
-      "cite": "`D02`:285"
+      "cite": "`D02`:285",
+      "speaks": ["ticket.order.rejected.class.one_lot", "ticket.order.rejected.recorded"],
+      "fixture": "a preview `size_leg` more than one lot from the client's (contract gap G-1: a stub)"
     },
     {
       "id": "SCR-060/rejected-one-lot-stale",
       "screen": "SCR-060",
       "state": "rejected-one-lot-stale",
-      "trigger": "the server's `size_leg` differs from the client's by more than one lot (code: E30-S03 contract gap)",
+      "trigger": "the server's `size_leg` differs from the client's by more than one lot (code: E30-S03 contract gap) — selected when the wallet or the preview was stale at the press (board 12, the stale-inputs set)",
       "exit": "accept the server's number → ready",
       "carrier": "class line + both numbers",
       "announce": "assertive, once",
@@ -293,13 +319,15 @@
       },
       "twin": "14:rejected",
       "story": "E30-S03 #1087",
-      "cite": "`D02`:285"
+      "cite": "`D02`:285",
+      "speaks": ["ticket.order.rejected.class.one_lot", "ticket.order.rejected.recorded"],
+      "fixture": "as rejected-one-lot, with a stale wallet snapshot"
     },
     {
       "id": "SCR-060/blocked-by-profile",
       "screen": "SCR-060",
       "state": "blocked-by-profile",
-      "trigger": "symbol not allowed, cap would be exceeded, leverage above the profile cap (pre-submit, from the profile and `/risk/summary`)",
+      "trigger": "symbol not allowed, cap would be exceeded, leverage above the profile cap (pre-submit, from the profile and `/risk/summary`) — selected by the profile check (the field error per field, or the whole-ticket banner)",
       "exit": "profile change (SCR-131) or symbol / account change",
       "carrier": "banner + word \"Blocked\" + authority",
       "announce": "status (polite)",
@@ -315,14 +343,15 @@
       },
       "twin": "14:blocked-by-profile",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:286"
+      "cite": "`D02`:286",
+      "fixture": "a profile that disallows the symbol or caps leverage below the draft (recorded profile)"
     },
     {
       "id": "SCR-060/env-guard-mismatch",
       "screen": "SCR-060",
       "state": "env-guard-mismatch",
-      "trigger": "symbol not allowed, cap would be exceeded, leverage above the profile cap (pre-submit, from the profile and `/risk/summary`)",
-      "exit": "profile change (SCR-131) or symbol / account change",
+      "trigger": "the order's account environment differs from the workspace's (CMP-139: a LIVE account in a DEMO workspace; `ticket.order.guard.mismatch`)",
+      "exit": "the account or the workspace environment changes",
       "carrier": "banner + word \"Blocked\" + authority",
       "announce": "status (polite)",
       "look": "T2",
@@ -337,7 +366,8 @@
       },
       "twin": "14:blocked-by-profile",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:286"
+      "cite": "`D02`:286",
+      "fixture": "a LIVE account selected in a DEMO workspace (session fixture)"
     },
     {
       "id": "SCR-060/blocked-by-lockout",
@@ -360,7 +390,9 @@
       },
       "twin": "14:blocked-by-lockout",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:287"
+      "cite": "`D02`:287",
+      "speaks": ["ticket.order.lockout"],
+      "fixture": "WS `wallet` with `risk_cap_usage.locked_out_until_ms` (recorded)"
     },
     {
       "id": "SCR-060/frozen",
@@ -383,13 +415,15 @@
       },
       "twin": "14:frozen",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:288"
+      "cite": "`D02`:288",
+      "speaks": ["ticket.order.frozen"],
+      "fixture": "`trading_disabled` (kill switch) or the frozen account state (recorded)"
     },
     {
       "id": "SCR-060/disconnected",
       "screen": "SCR-060",
       "state": "disconnected",
-      "trigger": "client WS down (E17-D01 T6)",
+      "trigger": "client WS down (E17-D01 T6) — selected while no reconnect has succeeded (the SCR-152 banner, \"Not connected\")",
       "exit": "reconnect → the return state",
       "carrier": "the words + the shade + last-good time",
       "announce": "assertive, once",
@@ -405,13 +439,15 @@
       },
       "twin": "14:disconnected",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:289"
+      "cite": "`D02`:289",
+      "speaks": ["ticket.order.disconnected.banner"],
+      "fixture": "the client WS closed (fake transport)"
     },
     {
       "id": "SCR-060/reconnecting",
       "screen": "SCR-060",
       "state": "reconnecting",
-      "trigger": "client WS down (E17-D01 T6)",
+      "trigger": "client WS down (E17-D01 T6) — selected while the client's reconnect is in progress (board 05, the middle frame)",
       "exit": "reconnect → the return state",
       "carrier": "the words + the shade + last-good time",
       "announce": "assertive, once",
@@ -427,7 +463,9 @@
       },
       "twin": "14:disconnected",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:289"
+      "cite": "`D02`:289",
+      "speaks": ["ticket.order.disconnected.banner"],
+      "fixture": "the client WS closed, a reconnect pending (fake transport)"
     },
     {
       "id": "SCR-060/returned-locked",
@@ -449,13 +487,15 @@
       },
       "twin": "A-1:the return from a disconnect (locked with reason)",
       "story": "E30-S04 #1088",
-      "cite": "`D02`:290"
+      "cite": "`D02`:290",
+      "speaks": ["ticket.order.arm.returned", "ticket.order.disconnected.divergence"],
+      "fixture": "reconnect, snapshots and reconciliation done (fake transport)"
     },
     {
       "id": "SCR-060/demo",
       "screen": "SCR-060",
       "state": "demo",
-      "trigger": "the account's environment",
+      "trigger": "the account's environment — selected by a DEMO account",
       "exit": "the environment switch (SCR-074; disarms)",
       "carrier": "word + weight + dot shape + accent",
       "announce": "—",
@@ -469,13 +509,14 @@
       },
       "twin": "14:demo/live badge",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:291"
+      "cite": "`D02`:291",
+      "fixture": "a DEMO account (session fixture)"
     },
     {
       "id": "SCR-060/live",
       "screen": "SCR-060",
       "state": "live",
-      "trigger": "the account's environment",
+      "trigger": "the account's environment — selected by a LIVE account",
       "exit": "the environment switch (SCR-074; disarms)",
       "carrier": "word + weight + dot shape + accent",
       "announce": "—",
@@ -489,13 +530,14 @@
       },
       "twin": "14:demo/live badge",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:291"
+      "cite": "`D02`:291",
+      "fixture": "a LIVE account (session fixture)"
     },
     {
       "id": "SCR-060/demo-greyscale",
       "screen": "SCR-060",
       "state": "demo-greyscale",
-      "trigger": "the account's environment",
+      "trigger": "the account's environment — never a runtime state: board 06's greyscale strip, the DEMO frame re-drawn in luma grey to prove colour is never the only signal",
       "exit": "the environment switch (SCR-074; disarms)",
       "carrier": "word + weight + dot shape + accent",
       "announce": "—",
@@ -509,13 +551,14 @@
       },
       "twin": "14:demo/live badge",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:291"
+      "cite": "`D02`:291",
+      "fixture": "none needed (a review rendering)"
     },
     {
       "id": "SCR-060/live-greyscale",
       "screen": "SCR-060",
       "state": "live-greyscale",
-      "trigger": "the account's environment",
+      "trigger": "the account's environment — never a runtime state: board 06's greyscale strip, the LIVE frame re-drawn in luma grey to prove colour is never the only signal",
       "exit": "the environment switch (SCR-074; disarms)",
       "carrier": "word + weight + dot shape + accent",
       "announce": "—",
@@ -529,7 +572,8 @@
       },
       "twin": "14:demo/live badge",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:291"
+      "cite": "`D02`:291",
+      "fixture": "none needed (a review rendering)"
     },
     {
       "id": "SCR-060/pending-key",
@@ -551,7 +595,9 @@
       },
       "twin": "14:pending-key",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:292"
+      "cite": "`D02`:292",
+      "speaks": ["ticket.order.pending_key"],
+      "fixture": "a manager's key inside the 48 h restriction (recorded account)"
     },
     {
       "id": "SCR-060/viewer-read-only",
@@ -573,19 +619,20 @@
       },
       "twin": "A-1:viewer read-only",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:293"
+      "cite": "`D02`:293",
+      "fixture": "a `viewer` session (session fixture)"
     },
     {
       "id": "SCR-060/locked",
       "screen": "SCR-060",
       "state": "locked",
-      "trigger": "the arm store",
+      "trigger": "the arm store — selected when the store reads `locked`",
       "exit": "arm / disarm / resolve",
       "carrier": "word + glyph + pill fill",
-      "announce": "assertive on change",
+      "announce": "LR-06 `ticket.order.arm.announce.locked`, assertive, once per press (a user's disarm); LR-07 the same sentence with its reason, assertive, once per auto-disarm",
       "look": "T2",
       "gated": "the LIVE submit and every requires_arm affordance",
-      "t2": "T2-08",
+      "t2": ["T2-08", "T2-07"],
       "r5": "submit — arm-gated",
       "event": "order.arm_toggled",
       "class": "analytics",
@@ -595,16 +642,19 @@
       },
       "twin": "A-1:locked · armed · unknown (the arm store)",
       "story": "E30-S04 #1088",
-      "cite": "`D02`:294"
+      "cite": "`D02`:294",
+      "announce_parent": "assertive on change",
+      "speaks": ["ticket.order.arm.announce.locked"],
+      "fixture": "the arm store `locked` (session fixture)"
     },
     {
       "id": "SCR-060/armed-demo",
       "screen": "SCR-060",
       "state": "armed-demo",
-      "trigger": "the arm store",
+      "trigger": "the arm store — selected when the store reads `armed` on a DEMO account",
       "exit": "arm / disarm / resolve",
       "carrier": "word + glyph + pill fill",
-      "announce": "assertive on change",
+      "announce": "LR-05 `ticket.order.arm.announce.armed`, assertive, once per arming, immediate",
       "look": "none",
       "r5": "n/a",
       "event": "order.arm_toggled",
@@ -615,16 +665,19 @@
       },
       "twin": "A-1:locked · armed · unknown (the arm store)",
       "story": "E30-S04 #1088",
-      "cite": "`D02`:294"
+      "cite": "`D02`:294",
+      "announce_parent": "assertive on change",
+      "speaks": ["ticket.order.arm.announce.armed"],
+      "fixture": "the arm store `armed` on a DEMO account (session fixture)"
     },
     {
       "id": "SCR-060/armed-live",
       "screen": "SCR-060",
       "state": "armed-live",
-      "trigger": "the arm store",
+      "trigger": "the arm store — selected when the store reads `armed` on a LIVE account",
       "exit": "arm / disarm / resolve",
       "carrier": "word + glyph + pill fill",
-      "announce": "assertive on change",
+      "announce": "LR-05 `ticket.order.arm.announce.armed`, assertive, once per arming, immediate",
       "look": "none",
       "r5": "n/a",
       "event": "order.arm_toggled",
@@ -635,13 +688,16 @@
       },
       "twin": "A-1:locked · armed · unknown (the arm store)",
       "story": "E30-S04 #1088",
-      "cite": "`D02`:294"
+      "cite": "`D02`:294",
+      "announce_parent": "assertive on change",
+      "speaks": ["ticket.order.arm.announce.armed"],
+      "fixture": "the arm store `armed` on a LIVE account (session fixture)"
     },
     {
       "id": "SCR-060/unknown",
       "screen": "SCR-060",
       "state": "unknown",
-      "trigger": "the arm store",
+      "trigger": "the arm store — selected when the store's state cannot be known (`unknown`, e.g. before the first read after a reconnect)",
       "exit": "arm / disarm / resolve",
       "carrier": "word + glyph + pill fill",
       "announce": "assertive on change",
@@ -657,16 +713,18 @@
       },
       "twin": "A-1:locked · armed · unknown (the arm store)",
       "story": "E30-S04 #1088",
-      "cite": "`D02`:294"
+      "cite": "`D02`:294",
+      "speaks": ["ticket.order.arm.unknown"],
+      "fixture": "the arm store unreadable (fake transport)"
     },
     {
       "id": "SCR-060/armed-expiring",
       "screen": "SCR-060",
       "state": "armed-expiring",
-      "trigger": "the arm store",
+      "trigger": "the arm store — selected when `armed` has ≤ 60 s left (the 60 s and 10 s marks; the `0:05` cue, board 07)",
       "exit": "arm / disarm / resolve",
       "carrier": "word + glyph + pill fill",
-      "announce": "assertive on change",
+      "announce": "LR-08 `ticket.order.arm.armed`, polite, only at 60 s and 10 s; LR-07 at the disarm",
       "look": "none",
       "r5": "n/a",
       "event": null,
@@ -677,7 +735,10 @@
       },
       "twin": "A-1:locked · armed · unknown (the arm store)",
       "story": "E30-S04 #1088",
-      "cite": "`D02`:294"
+      "cite": "`D02`:294",
+      "announce_parent": "assertive on change",
+      "speaks": ["ticket.order.arm.armed", "ticket.order.arm.announce.locked"],
+      "fixture": "`armed` with 60 s left (fake clock)"
     },
     {
       "id": "SCR-060/hotkeys-paused",
@@ -697,7 +758,9 @@
       },
       "twin": "A-1:locked · armed · unknown (the arm store)",
       "story": "E30-S05 #1089",
-      "cite": "`D02`:295"
+      "cite": "`D02`:295",
+      "speaks": ["ticket.order.arm.paused.field", "ticket.order.arm.paused.dialog"],
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-060/stale-helpers",
@@ -717,7 +780,9 @@
       },
       "twin": "A-1:stale inputs (helpers / wallet / preview)",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:296"
+      "cite": "`D02`:296",
+      "speaks": ["ticket.order.helper.last_update"],
+      "fixture": "no `ticker` frame for 2 s (fake clock)"
     },
     {
       "id": "SCR-060/stale-wallet",
@@ -739,13 +804,15 @@
       },
       "twin": "A-1:stale inputs (helpers / wallet / preview)",
       "story": "E30-S02 #1031",
-      "cite": "`D02`:297"
+      "cite": "`D02`:297",
+      "speaks": ["ticket.order.size.unit.stale"],
+      "fixture": "`balance_stale: true` after 10 s (recorded, fake clock)"
     },
     {
       "id": "SCR-060/preview-provisional",
       "screen": "SCR-060",
       "state": "preview-provisional",
-      "trigger": "the draft changed, `/trade-groups/preview` not yet answered",
+      "trigger": "the draft changed, `/trade-groups/preview` not yet answered — selected while the preview is unanswered (the `(provisional)` chip and hatch)",
       "exit": "the preview answers (≤100 ms budget) → the highlight if the number changed",
       "carrier": "the hatch + the chip word",
       "announce": "—",
@@ -761,27 +828,32 @@
       },
       "twin": "A-1:stale inputs (helpers / wallet / preview)",
       "story": "E30-S06 #1090",
-      "cite": "`D02`:298"
+      "cite": "`D02`:298",
+      "fixture": "`/trade-groups/preview` held unanswered (fake transport)"
     },
     {
       "id": "SCR-060/preview-block",
       "screen": "SCR-060",
       "state": "preview-block",
-      "trigger": "the draft changed, `/trade-groups/preview` not yet answered",
+      "trigger": "the draft changed, `/trade-groups/preview` not yet answered — selected once the preview has answered: the Preview block's rows (D26, board 09)",
       "exit": "the preview answers (≤100 ms budget) → the highlight if the number changed",
       "carrier": "the hatch + the chip word",
       "announce": "—",
       "look": "none",
       "r5": "n/a",
-      "event": "ticket.sizing_rule_used",
-      "class": "analytics",
+      "event": "ticket.sizing_rule_used / tradegroup.preview",
+      "class": "audit · analytics",
       "frame": {
         "page": "E30-D02",
         "board": "09"
       },
       "twin": "A-1:stale inputs (helpers / wallet / preview)",
       "story": "E30-S06 #1090",
-      "cite": "`D02`:298"
+      "cite": "`D02`:298",
+      "audit_action": {
+        "tradegroup.preview": "trade_group.previewed"
+      },
+      "fixture": "`/trade-groups/preview` answered (recorded)"
     },
     {
       "id": "SCR-060/reduce-only",
@@ -801,13 +873,15 @@
       },
       "twin": "C-12",
       "story": "E30-S03 #1087",
-      "cite": "`D02`:299"
+      "cite": "`D02`:299",
+      "speaks": ["ticket.order.sl.reduce_only"],
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-060/stop-pending-1",
       "screen": "SCR-060",
       "state": "stop-pending-1",
-      "trigger": "entry accepted, `sl.attached` not yet true; `SL_ATTACH_FAILED` (`24` §8.8 items 2–3)",
+      "trigger": "entry accepted, `sl.attached` not yet true; `SL_ATTACH_FAILED` (`24` §8.8 items 2–3) — step 1: B8's first attempt, `ticket.order.stop_pending.pending` (attempt 1 of {max}); steps 2 and 3 replace the sentence in place on this frame: `retrying` (attempt 2 of {max}), then `unrecoverable` after {max} attempts ({max} = `CV_B8_MAX_FALLBACK`, default 3; D02:300, :427)",
       "exit": "`sl.attached` true → accepted banner; flattened → the last step, dismissible",
       "carrier": "the words + the hatch + the glyph; never looks like accepted",
       "announce": "LR-21: assertive, once on entry; sustained, never re-announced",
@@ -825,13 +899,19 @@
       "twin": "A-1:order live, protective stop pending",
       "story": "E30-S03 #1087",
       "cite": "`D02`:300",
-      "announce_parent": "assertive, once per step"
+      "announce_parent": "assertive, once per step",
+      "speaks": [
+        "ticket.order.stop_pending.pending",
+        "ticket.order.stop_pending.retrying",
+        "ticket.order.stop_pending.unrecoverable"
+      ],
+      "fixture": "WS `orders` accepted with `sl.attached` false and `SL_ATTACH_FAILED` (recorded)"
     },
     {
       "id": "SCR-060/stop-pending-4",
       "screen": "SCR-060",
       "state": "stop-pending-4",
-      "trigger": "entry accepted, `sl.attached` not yet true; `SL_ATTACH_FAILED` (`24` §8.8 items 2–3)",
+      "trigger": "entry accepted, `sl.attached` not yet true; `SL_ATTACH_FAILED` (`24` §8.8 items 2–3) — step 4: `POSITION_FLAT` (Flatten now, a policy close or the exchange) → `ticket.order.stop_pending.flattened`; until then the previous step persists (D02:300)",
       "exit": "`sl.attached` true → accepted banner; flattened → the last step, dismissible",
       "carrier": "the words + the hatch + the glyph; never looks like accepted",
       "announce": "LR-21: assertive, once on entry; sustained, never re-announced",
@@ -849,7 +929,9 @@
       "twin": "A-1:order live, protective stop pending",
       "story": "E30-S03 #1087",
       "cite": "`D02`:300",
-      "announce_parent": "assertive, once per step"
+      "announce_parent": "assertive, once per step",
+      "speaks": ["ticket.order.stop_pending.flattened"],
+      "fixture": "as stop-pending-1, then `POSITION_FLAT` (recorded)"
     },
     {
       "id": "SCR-060/accepted-vs-pending",
@@ -869,7 +951,8 @@
       },
       "twin": "14:accepted",
       "story": "E30-S01 #1030",
-      "cite": "`D02`:300"
+      "cite": "`D02`:300",
+      "fixture": "as stop-pending-1 beside an accepted frame (recorded)"
     },
     {
       "id": "SCR-076/live-limit",
@@ -889,7 +972,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:166"
+      "cite": "`D03`:166",
+      "fixture": "a LIVE limit draft with a settled preview (recorded)"
     },
     {
       "id": "SCR-076/live-limit-comfortable",
@@ -909,7 +993,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:167"
+      "cite": "`D03`:167",
+      "fixture": "as live-limit at `data-density=\"comfortable\"`"
     },
     {
       "id": "SCR-076/demo-limit",
@@ -929,7 +1014,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:168"
+      "cite": "`D03`:168",
+      "fixture": "a DEMO limit draft under policy `always` (recorded settings)"
     },
     {
       "id": "SCR-076/live-market",
@@ -949,7 +1035,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:169"
+      "cite": "`D03`:169",
+      "fixture": "a LIVE market draft with a settled preview (recorded)"
     },
     {
       "id": "SCR-076/live-conditional",
@@ -969,7 +1056,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:170"
+      "cite": "`D03`:170",
+      "fixture": "a LIVE conditional draft with a settled preview (recorded)"
     },
     {
       "id": "SCR-076/countdown-10s",
@@ -989,7 +1077,9 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:171"
+      "cite": "`D03`:171",
+      "speaks": ["ticket.confirm.countdown.announce10"],
+      "fixture": "10 s without input (fake clock)"
     },
     {
       "id": "SCR-076/countdown-5s",
@@ -1009,7 +1099,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:172"
+      "cite": "`D03`:172",
+      "fixture": "15 s without input (fake clock)"
     },
     {
       "id": "SCR-076/timed-out",
@@ -1030,7 +1121,9 @@
       "twin": "A-6",
       "story": "E30-S04 #1088",
       "cite": "`D03`:173",
-      "announce_parent": "polite (the 0:00 announcement)"
+      "announce_parent": "polite (the 0:00 announcement)",
+      "speaks": ["ticket.confirm.timeout.status"],
+      "fixture": "20 s without input (fake clock)"
     },
     {
       "id": "SCR-076/cancelled",
@@ -1050,7 +1143,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:174"
+      "cite": "`D03`:174",
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-076/confirmed",
@@ -1062,16 +1156,20 @@
       "announce": "the ticket's region",
       "look": "none",
       "r5": "n/a",
-      "event": "order.submitted",
+      "event": "order.submitted / tradegroup.sent",
       "class": "audit",
-      "audit_action": "orders.submit",
+      "audit_action": {
+        "order.submitted": "orders.submit",
+        "tradegroup.sent": "trade_group.submit"
+      },
       "frame": {
         "page": "E30-D03 Confirmation, rejection, defaults and selector",
         "board": "02"
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:175"
+      "cite": "`D03`:175",
+      "fixture": "a Confirm press ≥ 400 ms after open (fake clock), then `202`"
     },
     {
       "id": "SCR-076/dont-ask-demo",
@@ -1091,7 +1189,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:176"
+      "cite": "`D03`:176",
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-076/dont-ask-live-disabled",
@@ -1113,7 +1212,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:177"
+      "cite": "`D03`:177",
+      "fixture": "a LIVE draft (session fixture)"
     },
     {
       "id": "SCR-076/preview-stale-refused",
@@ -1135,7 +1235,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:178"
+      "cite": "`D03`:178",
+      "fixture": "`/trade-groups/preview` in flight (fake transport)"
     },
     {
       "id": "SCR-076/fanout",
@@ -1147,15 +1248,19 @@
       "announce": "dialog name \"Confirm 3 of 4 legs - BTCUSDT - LIVE - Desk4\"",
       "look": "none",
       "r5": "n/a",
-      "event": "order.confirmation_shown",
-      "class": "analytics",
+      "event": "order.confirmation_shown / tradegroup.sent",
+      "class": "audit · analytics",
       "frame": {
         "page": "E30-D03 Confirmation, rejection, defaults and selector",
         "board": "03"
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:179"
+      "cite": "`D03`:179",
+      "audit_action": {
+        "tradegroup.sent": "trade_group.submit"
+      },
+      "fixture": "a trade-group target with 3 of 4 legs ready (recorded preview)"
     },
     {
       "id": "SCR-076/fanout-all-or-none",
@@ -1175,7 +1280,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:180"
+      "cite": "`D03`:180",
+      "fixture": "a group with `atomicity: all_or_none` (recorded definition)"
     },
     {
       "id": "SCR-076/fanout-narrowed",
@@ -1195,7 +1301,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:181"
+      "cite": "`D03`:181",
+      "fixture": "a group with a read-only member (recorded definition)"
     },
     {
       "id": "SCR-076/replay",
@@ -1215,7 +1322,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:182"
+      "cite": "`D03`:182",
+      "fixture": "a held intent past its retry time, a fresh preview settled (fake clock)"
     },
     {
       "id": "SCR-076/fanout-send-now",
@@ -1235,7 +1343,8 @@
       },
       "twin": "A-6",
       "story": "E30-S04 #1088",
-      "cite": "`D03`:183"
+      "cite": "`D03`:183",
+      "fixture": "a fan-out with served and unserved legs (recorded preview)"
     },
     {
       "id": "SCR-077/open",
@@ -1255,7 +1364,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:219"
+      "cite": "`D03`:219",
+      "fixture": "any rejected inline state, then [Details]"
     },
     {
       "id": "SCR-077/insufficient-margin",
@@ -1275,7 +1385,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:220"
+      "cite": "`D03`:220",
+      "fixture": "`422` `insufficient_balance` or `INSUFFICIENT_MARGIN` (recorded)"
     },
     {
       "id": "SCR-077/reduce-only",
@@ -1295,7 +1406,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:221"
+      "cite": "`D03`:221",
+      "fixture": "`REDUCE_ONLY_VIOLATION` (recorded)"
     },
     {
       "id": "SCR-077/tick-lot",
@@ -1315,7 +1427,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:222"
+      "cite": "`D03`:222",
+      "fixture": "`tick_size_violation` / `lot_size_violation` (recorded)"
     },
     {
       "id": "SCR-077/leverage-limit",
@@ -1335,7 +1448,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:223"
+      "cite": "`D03`:223",
+      "fixture": "`LEVERAGE_ERROR` or preview `leverage_unavailable` (recorded)"
     },
     {
       "id": "SCR-077/risk-limit-tier",
@@ -1355,7 +1469,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:224"
+      "cite": "`D03`:224",
+      "fixture": "`RISK_LIMIT_EXCEEDED` (recorded)"
     },
     {
       "id": "SCR-077/rate-limit",
@@ -1375,7 +1490,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:225"
+      "cite": "`D03`:225",
+      "fixture": "`rate_limited` / `exchange_rate_limited` (recorded)"
     },
     {
       "id": "SCR-077/position-mode",
@@ -1395,7 +1511,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:226"
+      "cite": "`D03`:226",
+      "fixture": "`POSITION_MODE_MISMATCH` (recorded)"
     },
     {
       "id": "SCR-077/post-only-cross",
@@ -1415,7 +1532,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:227"
+      "cite": "`D03`:227",
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-077/stop-missing",
@@ -1435,7 +1553,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:228"
+      "cite": "`D03`:228",
+      "fixture": "`validation_failed` rule `native_stop_required` (recorded)"
     },
     {
       "id": "SCR-077/record-loading",
@@ -1455,7 +1574,9 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:229"
+      "cite": "`D03`:229",
+      "speaks": ["ticket.reject.drawer.record.loading"],
+      "fixture": "an owner session; the diagnostics read held (fake transport)"
     },
     {
       "id": "SCR-077/record-served",
@@ -1467,15 +1588,16 @@
       "announce": "polite (\"Exchange record loaded\")",
       "look": "none",
       "r5": "n/a",
-      "event": "order.rejection_payload_expanded",
-      "class": "analytics",
+      "event": "order.rejection_payload_expanded / order.diagnostics_viewed",
+      "class": "audit · analytics",
       "frame": {
         "page": "E30-D03 Confirmation, rejection, defaults and selector",
         "board": "06"
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:230"
+      "cite": "`D03`:230",
+      "fixture": "an owner session; the diagnostics read answered (recorded)"
     },
     {
       "id": "SCR-077/record-role-unavailable",
@@ -1495,7 +1617,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:231"
+      "cite": "`D03`:231",
+      "fixture": "a non-owner session (session fixture)"
     },
     {
       "id": "SCR-077/audit-link-owner",
@@ -1515,7 +1638,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:232"
+      "cite": "`D03`:232",
+      "fixture": "a session holding `admin:read` (session fixture)"
     },
     {
       "id": "SCR-077/audit-link-manager",
@@ -1535,7 +1659,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:233"
+      "cite": "`D03`:233",
+      "fixture": "a session without `admin:read` (session fixture)"
     },
     {
       "id": "SCR-077/budget-graph",
@@ -1555,7 +1680,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:234"
+      "cite": "`D03`:234",
+      "fixture": "a transient-class rejection (recorded)"
     },
     {
       "id": "SCR-077/copied",
@@ -1575,7 +1701,9 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:235"
+      "cite": "`D03`:235",
+      "speaks": ["ticket.reject.drawer.copied"],
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-077/retry-pressed",
@@ -1595,7 +1723,8 @@
       },
       "twin": "A-9",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:236"
+      "cite": "`D03`:236",
+      "fixture": "any SCR-077 state with a retry-with-fix button"
     },
     {
       "id": "SCR-158/backend-per-user",
@@ -1617,7 +1746,9 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:272"
+      "cite": "`D03`:272",
+      "speaks": ["ticket.ratelimit.announce"],
+      "fixture": "`429` `rate_limited` (recorded)"
     },
     {
       "id": "SCR-158/exchange-per-uid",
@@ -1640,7 +1771,9 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:273"
+      "cite": "`D03`:273",
+      "speaks": ["ticket.ratelimit.announce"],
+      "fixture": "`exchange_rate_limited` / `RATE_BUDGET_EXCEEDED` (recorded)"
     },
     {
       "id": "SCR-158/fanout-budget",
@@ -1663,7 +1796,8 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:274"
+      "cite": "`D03`:274",
+      "fixture": "a fan-out whose pre-send budget check denies (recorded preview)"
     },
     {
       "id": "SCR-158/link-owner",
@@ -1683,7 +1817,8 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:275"
+      "cite": "`D03`:275",
+      "fixture": "a session holding `admin:read` (session fixture)"
     },
     {
       "id": "SCR-158/link-manager",
@@ -1703,7 +1838,8 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:276"
+      "cite": "`D03`:276",
+      "fixture": "a session without `admin:read` (session fixture)"
     },
     {
       "id": "SCR-158/held-queue",
@@ -1725,7 +1861,8 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:277"
+      "cite": "`D03`:277",
+      "fixture": "one held intent (as backend-per-user)"
     },
     {
       "id": "SCR-158/replay-previewing",
@@ -1746,7 +1883,8 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:278"
+      "cite": "`D03`:278",
+      "fixture": "a held intent past its retry time (fake clock)"
     },
     {
       "id": "SCR-158/send-now-previewing",
@@ -1767,7 +1905,8 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:279"
+      "cite": "`D03`:279",
+      "fixture": "a fan-out with served legs (recorded preview)"
     },
     {
       "id": "SCR-158/fanout-served-unserved",
@@ -1787,7 +1926,8 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:280"
+      "cite": "`D03`:280",
+      "fixture": "per-leg `rate_budget_exhausted` (recorded preview)"
     },
     {
       "id": "SCR-158/countdown-expired",
@@ -1807,7 +1947,9 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:281"
+      "cite": "`D03`:281",
+      "speaks": ["ticket.ratelimit.expired"],
+      "fixture": "the retry time passed (fake clock)"
     },
     {
       "id": "SCR-158/discarded",
@@ -1827,7 +1969,9 @@
       },
       "twin": "A-14",
       "story": "E30-T02 #1032",
-      "cite": "`D03`:282"
+      "cite": "`D03`:282",
+      "speaks": ["ticket.ratelimit.held.discarded"],
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-114/default-demo",
@@ -1847,7 +1991,10 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:333"
+      "cite": "`D03`:333",
+      "t2": "T2-24",
+      "gated": "the reverse row's `hold` and `immediate` options (`ticket.defaults.destructive.reverse`)",
+      "fixture": "`getSettings` answered with the deployment defaults (recorded)"
     },
     {
       "id": "SCR-114/live-option-disabled",
@@ -1869,7 +2016,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:334"
+      "cite": "`D03`:334",
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-114/stop-clear-refused",
@@ -1890,7 +2038,9 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:335"
+      "cite": "`D03`:335",
+      "speaks": ["ticket.defaults.stop.kept"],
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-114/above-ceiling",
@@ -1911,7 +2061,9 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:336"
+      "cite": "`D03`:336",
+      "speaks": ["ticket.order.v.leverage.cap"],
+      "fixture": "a profile with a 10x leverage cap (recorded profile)"
     },
     {
       "id": "SCR-114/offset-zero",
@@ -1932,7 +2084,9 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:337"
+      "cite": "`D03`:337",
+      "speaks": ["ticket.defaults.stop.zero"],
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-114/preset-below-min",
@@ -1954,7 +2108,9 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:338"
+      "cite": "`D03`:338",
+      "speaks": ["ticket.order.preset.below_min.name"],
+      "fixture": "the instrument's minimum lot (recorded instrument)"
     },
     {
       "id": "SCR-114/dirty",
@@ -1974,7 +2130,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:339"
+      "cite": "`D03`:339",
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-114/saving",
@@ -1995,7 +2152,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:340"
+      "cite": "`D03`:340",
+      "fixture": "`updateSettings` held unanswered (fake transport)"
     },
     {
       "id": "SCR-114/saved",
@@ -2009,14 +2167,18 @@
       "r5": "n/a",
       "event": "trading_defaults.changed",
       "class": "audit",
-      "audit_action": "settings.change",
+      "audit_action": {
+        "trading_defaults.changed": "settings.change"
+      },
       "frame": {
         "page": "E30-D03 Confirmation, rejection, defaults and selector",
         "board": "10"
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:341"
+      "cite": "`D03`:341",
+      "speaks": ["ticket.defaults.saved"],
+      "fixture": "`updateSettings` `200` (recorded)"
     },
     {
       "id": "SCR-114/reset-confirm",
@@ -2036,7 +2198,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:342"
+      "cite": "`D03`:342",
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-114/manager-no-live",
@@ -2058,7 +2221,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:343"
+      "cite": "`D03`:343",
+      "fixture": "a manager without `live` in `allowed_environments` (session fixture)"
     },
     {
       "id": "SCR-114/viewer-read-only",
@@ -2080,7 +2244,9 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:344"
+      "cite": "`D03`:344",
+      "speaks": ["ticket.defaults.notice.panel_read_only.permission"],
+      "fixture": "a `viewer` session (session fixture)"
     },
     {
       "id": "SCR-114/sounds",
@@ -2100,7 +2266,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:345"
+      "cite": "`D03`:345",
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-061/single",
@@ -2120,7 +2287,8 @@
       },
       "twin": "C-11",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:368"
+      "cite": "`D03`:368",
+      "fixture": "one account in scope (session fixture)"
     },
     {
       "id": "SCR-061/list-open",
@@ -2140,7 +2308,8 @@
       },
       "twin": "C-11",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:369"
+      "cite": "`D03`:369",
+      "fixture": "the caller's accounts and groups (session fixture)"
     },
     {
       "id": "SCR-061/group-chosen",
@@ -2160,7 +2329,9 @@
       },
       "twin": "14:ready",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:370"
+      "cite": "`D03`:370",
+      "speaks": ["ticket.group.selector.name"],
+      "fixture": "a granted group (recorded definition)"
     },
     {
       "id": "SCR-061/group-expanded",
@@ -2180,7 +2351,8 @@
       },
       "twin": "14:previewing",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:371"
+      "cite": "`D03`:371",
+      "fixture": "a granted group (recorded definition)"
     },
     {
       "id": "SCR-061/leg-excluded",
@@ -2200,7 +2372,9 @@
       },
       "twin": "C-11",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:372"
+      "cite": "`D03`:372",
+      "speaks": ["ticket.group.selector.leg.excluded"],
+      "fixture": "a granted group (recorded definition)"
     },
     {
       "id": "SCR-061/leg-override",
@@ -2220,7 +2394,8 @@
       },
       "twin": "14:previewing",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:373"
+      "cite": "`D03`:373",
+      "fixture": "a granted group (recorded definition)"
     },
     {
       "id": "SCR-061/would-be-rejected",
@@ -2232,15 +2407,19 @@
       "announce": "none (the preview answered)",
       "look": "none",
       "r5": "n/a",
-      "event": null,
-      "class": "none",
+      "event": "tradegroup.preview",
+      "class": "audit",
       "frame": {
         "page": "E30-D03 Confirmation, rejection, defaults and selector",
         "board": "12"
       },
       "twin": "14:blocked",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:374"
+      "cite": "`D03`:374",
+      "audit_action": {
+        "tradegroup.preview": "trade_group.previewed"
+      },
+      "fixture": "a preview with `would_submit: false` on a leg (recorded)"
     },
     {
       "id": "SCR-061/narrowed",
@@ -2262,7 +2441,8 @@
       },
       "twin": "C-11",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:375"
+      "cite": "`D03`:375",
+      "fixture": "a group with a read-only member (recorded definition)"
     },
     {
       "id": "SCR-061/member-disabled",
@@ -2282,7 +2462,8 @@
       },
       "twin": "C-11",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:376"
+      "cite": "`D03`:376",
+      "fixture": "a group with an `enabled: false` member (recorded definition)"
     },
     {
       "id": "SCR-061/stale-wallet-leg",
@@ -2302,7 +2483,8 @@
       },
       "twin": "C-11",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:377"
+      "cite": "`D03`:377",
+      "fixture": "a leg's stale wallet snapshot (recorded preview)"
     },
     {
       "id": "SCR-061/no-groups-owner",
@@ -2322,7 +2504,8 @@
       },
       "twin": "C-11",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:378"
+      "cite": "`D03`:378",
+      "fixture": "an owner session with no definitions (session fixture)"
     },
     {
       "id": "SCR-061/no-groups-manager",
@@ -2342,7 +2525,8 @@
       },
       "twin": "C-11",
       "story": "E30-S06 #1090",
-      "cite": "`D03`:379"
+      "cite": "`D03`:379",
+      "fixture": "a manager with no granted group (session fixture)"
     },
     {
       "id": "SCR-114/templates-list",
@@ -2364,7 +2548,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:389"
+      "cite": "`D03`:389",
+      "fixture": "the template list (no contract yet, G-6: a stub)"
     },
     {
       "id": "SCR-114/templates-empty",
@@ -2384,7 +2569,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:390"
+      "cite": "`D03`:390",
+      "fixture": "no templates (G-6: a stub)"
     },
     {
       "id": "SCR-114/template-save-as",
@@ -2396,15 +2582,16 @@
       "announce": "dialog",
       "look": "none",
       "r5": "n/a",
-      "event": null,
-      "class": "none",
+      "event": "template.saved",
+      "class": "analytics",
       "frame": {
         "page": "E30-D03 Confirmation, rejection, defaults and selector",
         "board": "11"
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:391"
+      "cite": "`D03`:391",
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-114/template-apply",
@@ -2416,15 +2603,17 @@
       "announce": "polite",
       "look": "none",
       "r5": "n/a",
-      "event": null,
-      "class": "none",
+      "event": "template.applied",
+      "class": "analytics",
       "frame": {
         "page": "E30-D03 Confirmation, rejection, defaults and selector",
         "board": "11"
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:392"
+      "cite": "`D03`:392",
+      "speaks": ["ticket.template.applied"],
+      "fixture": "a stored template (G-6: a stub)"
     },
     {
       "id": "SCR-114/template-menu",
@@ -2444,7 +2633,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:393"
+      "cite": "`D03`:393",
+      "fixture": "none needed (client input only)"
     },
     {
       "id": "SCR-114/template-disabled",
@@ -2466,7 +2656,8 @@
       },
       "twin": "A-11",
       "story": "E30-S07 #1091",
-      "cite": "`D03`:394"
+      "cite": "`D03`:394",
+      "fixture": "a template invalid for the account or symbol (G-6: a stub)"
     },
     {
       "id": "SCR-060/view-as",
@@ -2487,7 +2678,9 @@
       "twin": "C-13",
       "story": "E30-S01 #1030",
       "lifted": true,
-      "cite": "F-01 (`D05`:486; `D04`:220, :226 as merged by #5100); `22`:299–331"
+      "cite": "F-01 (`D05`:486; `D04`:220, :226 as merged by #5100); `22`:299–331",
+      "speaks": ["ticket.order.rbac.view_as"],
+      "fixture": "an active view-as context (`GET /auth/session/view-as`, session fixture)"
     },
     {
       "id": "SCR-060/view-as-held",
@@ -2496,18 +2689,20 @@
       "trigger": "the view-as context expired or held",
       "exit": "the context is released",
       "carrier": "the T4 line at the point of action",
-      "announce": "the T4 refusal at the point of action (E09-D09 step 2)",
+      "announce": "LR-10 `ticket.order.refusal.view_as_expired` (the server's `view_as_expired` detail), polite, once per press at the point of action (E09-D09 §2.1 step 2)",
       "look": "T4",
       "gated": "every other control (server refusal `view_as_expired`)",
       "r5": "carve-out — never arm-gated",
       "carve_out": "cancels, Close position…, Flatten now and Set stop by hand stay enabled in the viewer's own scope",
-      "event": "positions.flatten / orders.cancel / sl.attached / sl.modified",
+      "event": "positions.flatten / orders.cancel / sl.attached / sl.modified / admin.view_as_refused",
       "class": "audit",
       "frame": "owed (PR 3)",
       "twin": "C-13",
       "story": "E30-S01 #1030",
       "lifted": true,
-      "cite": "F-01; `22`:325, :337–345"
+      "cite": "F-01; `22`:325, :337–345",
+      "speaks": ["ticket.order.refusal.view_as_expired"],
+      "fixture": "`403` `view_as_expired` (`22` example `viewAsExpired`)"
     },
     {
       "id": "SCR-060/defaults-unavailable",
@@ -2525,7 +2720,9 @@
       "twin": "C-13",
       "story": "E30-S07 #1091",
       "lifted": true,
-      "cite": "F-04, SD-02 (`D05`:350)"
+      "cite": "F-04, SD-02 (`D05`:350)",
+      "speaks": ["ticket.order.defaults.unavailable"],
+      "fixture": "`getSettings` `503` (`22` example)"
     },
     {
       "id": "SCR-060/profile-unavailable",
@@ -2544,7 +2741,9 @@
       "twin": "C-13",
       "story": "E30-S07 #1091",
       "lifted": true,
-      "cite": "G-02, SD-02 (`D05`:350)"
+      "cite": "G-02, SD-02 (`D05`:350)",
+      "speaks": ["ticket.order.profile.unavailable"],
+      "fixture": "`getSettings` and the profile read both failing (fake transport)"
     },
     {
       "id": "SCR-060/default-above-cap",
@@ -2552,7 +2751,7 @@
       "state": "default-above-cap",
       "trigger": "a saved default above a since-narrowed cap, at ticket open",
       "exit": "the field corrected",
-      "carrier": "`aria-invalid`, the 2 px danger boundary, the glyph, the words",
+      "carrier": "`aria-invalid`, the `border.thick` danger boundary (`color.status.danger.default`), the glyph, the words: LR-31's field error with the ceiling and the field's name (D05:319), T2-18's template (D05:241) — `ticket.order.v.leverage.cap` for leverage, the same template with its own name for every other capped field (a template, not a frozen key)",
       "announce": "LR-31, polite, once per open",
       "look": "validity",
       "gated": "the submit",
@@ -2564,7 +2763,9 @@
       "twin": "C-13",
       "story": "E30-S07 #1091",
       "lifted": true,
-      "cite": "F-05, SD-03 (`D05`:351)"
+      "cite": "F-05, SD-03 (`D05`:351)",
+      "speaks": ["ticket.order.v.leverage.cap"],
+      "fixture": "a saved default above the profile's current cap (recorded settings and profile)"
     },
     {
       "id": "SCR-114/loading",
@@ -2583,7 +2784,8 @@
       "twin": "A-11",
       "story": "E30-S07 #1091",
       "lifted": true,
-      "cite": "F-03, SD-01 (`D05`:349)"
+      "cite": "F-03, SD-01 (`D05`:349)",
+      "fixture": "`getSettings` held unanswered (fake transport)"
     },
     {
       "id": "SCR-114/load-error",
@@ -2601,7 +2803,9 @@
       "twin": "A-11",
       "story": "E30-S07 #1091",
       "lifted": true,
-      "cite": "F-03, SD-01 (`D05`:349)"
+      "cite": "F-03, SD-01 (`D05`:349)",
+      "speaks": ["ticket.defaults.load_error"],
+      "fixture": "`getSettings` `503` (`22` example)"
     },
     {
       "id": "SCR-114/save-failed",
@@ -2619,7 +2823,9 @@
       "twin": "A-11",
       "story": "E30-S07 #1091",
       "lifted": true,
-      "cite": "F-03, SD-01 (`D05`:349)"
+      "cite": "F-03, SD-01 (`D05`:349)",
+      "speaks": ["ticket.defaults.save_failed"],
+      "fixture": "`updateSettings` `503` (`22` example)"
     },
     {
       "id": "SCR-114/ceiling-unconfirmed",
@@ -2637,7 +2843,8 @@
       "twin": "A-11",
       "story": "E30-S07 #1091",
       "lifted": true,
-      "cite": "F-07, SD-04 (`D05`:352)"
+      "cite": "F-07, SD-04 (`D05`:352)",
+      "fixture": "a profile read that fails while the section is open (fake transport)"
     },
     {
       "id": "SCR-077/placement",
@@ -2655,7 +2862,8 @@
       "twin": "C-14",
       "story": "E30-T02 #1032",
       "lifted": true,
-      "cite": "F-02 (`D05`:487)"
+      "cite": "F-02 (`D05`:487)",
+      "fixture": "a 1280 × 800 viewport at 200 % with the ticket focused"
     },
     {
       "id": "CMP-100:default",
@@ -2967,7 +3175,9 @@
       },
       "twin": "15:CMP-103:emulated-unavailable",
       "story": "E30-S01 #1030",
-      "cite": "`15` CMP-103 States"
+      "cite": "`15` CMP-103 States",
+      "t2": "T2-16",
+      "gated": "an emulated order-type tab"
     },
     {
       "id": "CMP-103:read-only",
@@ -3294,7 +3504,9 @@
       },
       "twin": "15:CMP-107:account_read_only",
       "story": "E30-S01 #1030",
-      "cite": "`15` CMP-107 States"
+      "cite": "`15` CMP-107 States",
+      "t2": "T2-04",
+      "gated": "the whole ticket on a `read`-mode account"
     },
     {
       "id": "CMP-107:live_not_enabled",
@@ -3307,7 +3519,9 @@
       },
       "twin": "15:CMP-107:live_not_enabled",
       "story": "E30-S01 #1030",
-      "cite": "`15` CMP-107 States"
+      "cite": "`15` CMP-107 States",
+      "t2": "T2-05",
+      "gated": "a LIVE submit or arm for a manager without live"
     },
     {
       "id": "CMP-107:live_locked",
@@ -3710,7 +3924,9 @@
       },
       "twin": "15:CMP-139:unseen-account",
       "story": "E30-S01 #1030",
-      "cite": "`15` CMP-139 States"
+      "cite": "`15` CMP-139 States",
+      "t2": "T2-03",
+      "gated": "a write whose account is outside the caller's scope"
     },
     {
       "id": "CMP-158:default only",
@@ -3866,7 +4082,9 @@
       },
       "twin": "15:CMP-231:unavailable-option",
       "story": "E30-S01 #1030",
-      "cite": "`15` CMP-231 States"
+      "cite": "`15` CMP-231 States",
+      "t2": "T2-17",
+      "gated": "an unavailable TIF option"
     },
     {
       "id": "CMP-231:read-only",

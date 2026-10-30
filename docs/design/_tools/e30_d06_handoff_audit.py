@@ -24,15 +24,20 @@ re-derives every anchored value. The gates, each FAIL led by its code:
   source of its line, a core source or R919's words.
 - [G-DECK] the deck's shape; each key the mechanical form of its first merged key; each source
   text read at its cite (or R919 / A50 for an A50 string; every ruled entry cites A50); each
-  example rendering from its template; an `amended` entry cites its D05 F row first and its parent
-  string is `not_carried` with that row as reason; every quoted string of the source rows an entry
-  or a `not_carried` item with a reason.
-- [G-ONCE] AC2: no string under two keys, no merged key with two strings on one surface.
+  example rendering from its template (a renamed slot read back through its `parent`); an
+  `amended` entry cites its D05 F row first and its parent string is `not_carried` with that row as
+  reason; every quoted string of the source rows an entry or a `not_carried` item with a reason;
+  every placeholder a typed, identifier-safe parameter; every announcement's politeness an enum
+  with a rate; no side or direction word outside a parameter; the security set flagged.
+- [G-ONCE] AC2: no string under two keys (a server-field `{detail}` entry excepted), no merged key
+  with two strings on one surface.
 - [G-FIXTURE] no board fixture (account, symbol, decimal, time) outside a parameter; a digit
   outside a parameter only where `fixed` lists it.
 - [G-CODES] every code registered at the base (`22` slug or rule, preview code, `24` OMS code or
   sizing reason), never a retCode; `by_code` equals the recomputed map, one key per code per
-  surface; every refusal string has codes or a `codes_pending` row.
+  surface, and its `*` row names each refusal surface's Problem.detail fallback; every refusal
+  string has codes, a `codes_pending` row or the fallback role; a code's target sentence names no
+  other cause (row 3).
 - [G-NATIVE] S-30: `sl.note` equals D02 and E32-D06's S-6 byte for byte; `v.sl.required` is A50
   item 10; the native-SL set is present and flagged, no string over-claims; no inventory record
   gates a carve-out control; the view-as and FREEZE records keep the carve-out enabled; an
@@ -40,9 +45,10 @@ re-derives every anchored value. The gates, each FAIL led by its code:
   carries C-2.6's own scope, read from CONST.
 - [G-STATES] both directions: every record has a frame (or "owed (PR 3)", lifted only) and a
   twin that resolves; every `14` / `15` States token is a twin or closed; every parent frame is a
-  record.
+  record; every screen record has a fixture handle and no two repeat each other's cells.
 - [G-A11Y] every D05 row id the pack names exists in D05, and D05's AR / T2 / LR / SD sets are
-  the ranges §3.2 states.
+  the ranges §3.2 states; §5's T2 table is T2-01..T2-29, each reason a deck key and each id on a
+  record; every key a record `speaks` carries an announcement.
 - [G-LEDGER] §4.1: L-1..L-26 in order, the rows of O0847, the disposition vocabulary and R919's
   tally; each row lifted into the deck or a record carries D05's replacement there (F-02 verbatim,
   F-08's `{arm key}`, F-13's template, F-14's label-first names, LR-01, LR-09, LR-24).
@@ -52,10 +58,12 @@ re-derives every anchored value. The gates, each FAIL led by its code:
   the pack. Fails closed when git cannot answer.
 - [G-TOKENS] every token named in §8 resolves in `packages/ui/tokens` at the base; a request in
   the exceptions table does not.
-- [G-HEX] no colour literal anywhere; no px value in §8.
+- [G-HEX] no colour literal anywhere; no px value in §8, the deck or the inventory.
 - [G-ICONS] §9 against the registry: every name and description verbatim; every D04 §3.3 name
   listed; a "none" row names a G-row.
-- [G-EVENTS] every audited action is registered; every unregistered event is in the G-ledger.
+- [G-EVENTS] every audited action is registered and its pair named in §10; every unregistered
+  event is in the G-ledger; every event of `14`'s lines and D03 §15 is on a record, in G-17 or in
+  a C-row (completeness).
 - [G-ROWS] C-, G- and Q-rows in order with owners (and due dates); every id referenced exists.
 - [G-WALK] §13.2's needs resolve; §13.3's reader row is pending or recorded (pending FAILs under
   `--strict-walk`).
@@ -470,6 +478,31 @@ def aliases(e: dict[str, Any]) -> list[str]:
     return [str(x) for x in a] if isinstance(a, list) else []
 
 
+def anns(e: dict[str, Any]) -> list[dict[str, Any]]:
+    """An entry's announcements: one LR row, or a list where two rows speak it."""
+    a = e.get("announce")
+    rows = a if isinstance(a, list) else [a] if a is not None else []
+    return [x if isinstance(x, dict) else {} for x in rows]
+
+
+def t2s(r: dict[str, Any]) -> list[str]:
+    t = r.get("t2")
+    return [str(x) for x in t] if isinstance(t, list) else [str(t)] if t else []
+
+
+def params(e: dict[str, Any]) -> list[dict[str, Any]]:
+    p = e.get("params")
+    return [x for x in p if isinstance(x, dict)] if isinstance(p, list) else []
+
+
+def parent_form(text: str, e: dict[str, Any]) -> str:
+    """The text with each renamed or parameterised slot written as its parent wrote it."""
+    for p in params(e):
+        if "parent" in p:
+            text = text.replace("{" + str(p.get("name")) + "}", str(p["parent"]))
+    return text
+
+
 # ---------------------------------------------------------------------------- findings
 
 
@@ -557,7 +590,11 @@ def count_values(t: Texts) -> Values:
         "COUNT:deck.ruled": sum(e.get("status") == "ruled" for e in es.values()),
         "COUNT:deck.byref": sum(e.get("status") == "by-reference" for e in es.values()),
         "COUNT:deck.notcarried": len(deck_data(t).get("not_carried") or []),
-        "COUNT:deck.codes": len(deck_data(t).get("by_code") or {}),
+        "COUNT:deck.codes": len([c for c in deck_data(t).get("by_code") or {} if c != "*"]),
+        "COUNT:deck.labels": sum(e.get("kind") == "label" for e in es.values()),
+        "COUNT:deck.typed": sum(bool(params(e)) for e in es.values()),
+        "COUNT:deck.announced": sum(bool(anns(e)) for e in es.values()),
+        "COUNT:states.speaks": sum(bool(r.get("speaks")) for r in rs),
         "COUNT:deck.native": sum(bool(e.get("native_sl")) for e in es.values()),
         "COUNT:deck.security": sum(bool(e.get("security")) for e in es.values()),
         "COUNT:states.records": len(rs),
@@ -793,6 +830,7 @@ def g_quote(t: Texts) -> list[Finding]:
     pool: list[str] = []
     for e in es.values():
         pool.append(str(e.get("string", "")))
+        pool.append(parent_form(str(e.get("string", "")), e))
         for x in e.get("examples") or []:
             if isinstance(x, dict):
                 pool.append(str(x.get("text", "")))
@@ -849,6 +887,64 @@ def quoted_cells(key: str, n: int, cols: tuple[int, ...]) -> list[str]:
 
 
 F_ROW = re.compile(r"^\| (F-\d\d) \|")
+POLITENESS = ("none", "polite", "assertive")
+PARAM_TYPES = ("string", "decimal", "integer", "enum", "time", "datetime", "duration")
+IDENT = re.compile(r"[a-z][a-z0-9_]*")
+SIDE_WORDS = re.compile(r"\bBUY\b|\bSELL\b|\brises to\b|\bfalls to\b")
+# BQ-23's security-bearing set, by merged key: the whole of §6.4 (SCR-061's count strings named by
+# the round-1 lens; the rest added by the light lens r2, Minor 1), so a dropped flag on any of the
+# set's entries FAILs here, not only through COUNT:deck.security
+SECURITY_ALIASES = (
+    "selector.group",
+    "selector.group_row",
+    "selector.name",
+    "selector.narrowed",
+    "selector.no_groups.manager",
+    "rbac.view_as",
+    "rbac.account",
+    "rbac.account_read_only",
+    "rbac.env",
+    "rbac.permission",
+    "rbac.owner_only",
+    "guard.mismatch",
+    "notice.panel_read_only.account_read_only",
+    "notice.panel_read_only.permission",
+    "drawer.role_unavailable",
+    "record.never_stored",
+    "ratelimit.link.manager",
+    "confirm.fanout.held",
+    "confirm.fanout.skipped",
+    "refusal.account_locked",
+    "refusal.key_invalid",
+    "refusal.symbol_not_allowed",
+    "refusal.trading_disabled.account_disabled_by_policy",
+    "refusal.trading_disabled.account_unhealthy",
+    "refusal.trading_disabled.no_active_key",
+    "refusal.unmapped",
+    "refusal.view_as_expired",
+    "profile.blocked",
+    "profile.unavailable",
+    "pending_key",
+    "pending_key.reason",
+    "glyph.name",
+)
+
+
+def param_problems(k: str, e: dict[str, Any], s: str, exs: list[dict[str, Any]]) -> list[str]:
+    """Row 1: every placeholder a typed, identifier-safe parameter; examples use those names."""
+    names = list(dict.fromkeys(re.findall(r"\{([^{}]*)\}", s)))
+    ps = params(e)
+    bad: list[str] = []
+    if [str(p.get("name")) for p in ps] != names:
+        bad.append(f"{k}: `params` does not type every placeholder, in order")
+    for p in ps:
+        if not IDENT.fullmatch(str(p.get("name"))) or p.get("type") not in PARAM_TYPES:
+            bad.append(f"{k}: the parameter {p.get('name')!r} is not identifier-safe and typed")
+    for x in exs:
+        extra = set(x.get("params") or {}) - set(names)
+        if extra:
+            bad.append(f"{k}: an example names {min(extra)!r}, which is no parameter")
+    return bad
 
 
 def amended_problems(d: dict[str, Any], k: str, e: dict[str, Any]) -> list[str]:
@@ -893,13 +989,25 @@ def deck_problems(t: Texts) -> list[str]:
         if not srcs:
             bad.append(f"{k}: no source")
         exs = [x for x in e.get("examples") or [] if isinstance(x, dict)]
-        renders = {s}
+        renders = {s, parent_form(s, e)}
         for x in exs:
             p = x.get("params")
             if not isinstance(p, dict) or render(s, p) != x.get("text"):
                 bad.append(f"{k}: an example does not render from the template")
             renders.add(str(x.get("text", "")))
+            renders.add(parent_form(render(s, p if isinstance(p, dict) else {}), e))
             known.add(loose(str(x.get("text", ""))))
+        known.add(loose(parent_form(s, e)))
+        bad += param_problems(k, e, s, exs)
+        for ann in anns(e):
+            if ann.get("politeness") not in POLITENESS or not ann.get("rate"):
+                bad.append(f"{k}: an announcement whose politeness is not an enum or has no rate")
+        if SIDE_WORDS.search(re.sub(r"\{[^{}]*\}", "", s)):
+            bad.append(f"{k}: a hard-coded side or direction outside a parameter (row 12)")
+        if any(a in SECURITY_ALIASES for a in al) and not e.get("security"):
+            bad.append(f"{k}: a security-bearing string not flagged `security` (BQ-23)")
+        if e.get("server_field") and (e.get("status") != "by-reference" or s != "{detail}"):
+            bad.append(f"{k}: a server-field entry that is not `{{detail}}` by reference")
         for src in srcs:
             cite, text = str(src.get("cite", "")), str(src.get("text", ""))
             if not source_ok(cite, text):
@@ -939,11 +1047,12 @@ def g_once(t: Texts) -> list[Finding]:
     bad: list[str] = []
     seen: dict[str, str] = {}
     slot: dict[tuple[str, str], str] = {}
-    for k, e in entries(t).items():
+    es = entries(t)
+    for k, e in es.items():
         s = str(e.get("string", ""))
-        if s in seen:
+        if s in seen and not (e.get("server_field") and es[seen[s]].get("server_field")):
             bad.append(f"{k} and {seen[s]} carry the same string {s[:30]!r}")
-        seen[s] = k
+        seen.setdefault(s, k)
         for a in aliases(e):
             pair = (str(e.get("surface")), a)
             if pair in slot and slot[pair] != k:
@@ -995,13 +1104,61 @@ def registered_codes() -> dict[str, frozenset[str]]:
     return {"problem": problem, "preview": preview, "rule": rules, "oms": oms, "sizing": sizing}
 
 
+# Row 3: a cause a target sentence names, and the codes that sentence is true for
+CAUSES: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = tuple(
+    (re.compile(p), frozenset(c.split()))
+    for p, c in (
+        (r"stop is missing|native stop", "native_stop_required"),
+        (r"[Ss]top distance", "invalid_stop_distance"),
+        (
+            r"rate limited|request budget|[Rr]ate budget|budget allows",
+            "rate_limited exchange_rate_limited rate_budget_exhausted RATE_BUDGET_EXCEEDED",
+        ),
+        (r"\bmargin\b", "insufficient_margin INSUFFICIENT_MARGIN insufficient_balance"),
+        (r"\btick\b", "tick_size_violation"),
+        (r"\bstep\b", "lot_size_violation"),
+        (r"[Ll]everage", "leverage_unavailable LEVERAGE_ERROR"),
+        (r"profile cap\b", "risk_limit_breached cap_breached"),
+        (r"risk-limit tier", "RISK_LIMIT_EXCEEDED"),
+        (r"hedge mode|one-way mode", "POSITION_MODE_MISMATCH"),
+        (r"[Rr]educe-only", "REDUCE_ONLY_VIOLATION"),
+        (r"at least", "below_min_notional"),
+        (r"feed stale", "degraded_data"),
+        (r"[Ff]rozen", "kill_switch_engaged"),
+        (r"API key", "key_invalid no_active_key"),
+        (r"not allowed on", "symbol_not_allowed"),
+        (r"\blocked\b", "account_locked session_not_armed"),
+        (r"maintenance", "maintenance"),
+        (r"by policy", "account_disabled_by_policy"),
+        (r"health check", "account_unhealthy"),
+        (r"No answer from the exchange", "timeout"),
+        (r"Rejected by Bybit", "exchange_error"),
+    )
+)
+
+
+def sentence_problems(code: str, key: str, text: str) -> list[str]:
+    """Row 3: a code's target names no other field or cause than the code's own."""
+    segs = set(code.split(":")[1:])
+    return [
+        f"{code} resolves to {key}, whose sentence names another cause ({m.group(0)!r})"
+        for rx, ok in CAUSES
+        if (m := rx.search(text)) and not segs & ok
+    ]
+
+
 def g_codes(t: Texts) -> list[Finding]:
     bad: list[str] = []
     reg = registered_codes()
     want: dict[str, dict[str, str]] = {}
     gids = row_ids(t.spec, GROW_HEAD, "G")
-    for k, e in entries(t).items():
+    es = entries(t)
+    bc = dict(deck_data(t).get("by_code") or {})
+    fallback = bc.pop("*", None)
+    defaults = set(fallback.values()) if isinstance(fallback, dict) else set()
+    for k, e in es.items():
         codes = [str(c) for c in e.get("codes") or []]
+        surfs = [str(x) for x in e.get("code_surfaces") or [e.get("surface")]]
         for c in codes:
             kind, _, rest = c.partition(":")
             slug = rest.split(":")[0]
@@ -1009,21 +1166,31 @@ def g_codes(t: Texts) -> list[Finding]:
                 bad.append(f"{k}: {c} carries a retCode")
             elif slug not in reg.get(kind, frozenset()):
                 bad.append(f"{k}: {c} is not registered at the base")
+            bad += sentence_problems(c, k, str(e.get("string", "")))
             slot = want.setdefault(c, {})
-            surf = str(e.get("surface"))
-            if surf in slot:
-                bad.append(f"{c} resolves to two keys on {surf} ({slot[surf]}, {k})")
-            slot[surf] = k
+            for surf in surfs:
+                if surf in slot:
+                    bad.append(f"{c} resolves to two keys on {surf} ({slot[surf]}, {k})")
+                slot[surf] = k
         pend = str(e.get("codes_pending", ""))
-        if e.get("kind") == "refusal" and not codes and not re.match(r"G-\d+ ", pend):
-            bad.append(f"{k}: a refusal string with no code and no open row")
+        open_row = re.match(r"G-\d+ ", pend)
+        if e.get("kind") == "refusal" and not codes and not open_row and k not in defaults:
+            bad.append(f"{k}: a refusal string with no code, no open row and no fallback role")
         if pend and (m := re.match(r"(G-\d+) ", pend)) and m.group(1) not in gids:
             bad.append(f"{k}: codes_pending names {m.group(1)}, which §12.2 lacks")
         refusal_key = any(a.startswith(("refusal.", "rejected.class.")) for a in aliases(e))
         if refusal_key and e.get("kind") != "refusal":
             bad.append(f"{k}: a refusal key not marked as a refusal")
-    if deck_data(t).get("by_code") != {c: want[c] for c in sorted(want)}:
+    if bc != {c: dict(sorted(want[c].items())) for c in sorted(want)}:
         bad.append("by_code is not the inverse of the entries' codes")
+    surfaces = sorted({s for v in want.values() for s in v})
+    if not isinstance(fallback, dict) or sorted(fallback) != surfaces:
+        bad.append("by_code's `*` row does not name one fallback per refusal surface (row 5)")
+    else:
+        for surf, key in fallback.items():
+            e = es.get(key, {})
+            if e.get("surface") != surf or e.get("server_field") != "Problem.detail":
+                bad.append(f"by_code's `*` row: {key} is not {surf}'s Problem.detail fallback")
     return fails("G-CODES", bad)
 
 
@@ -1231,6 +1398,17 @@ def states_problems(t: Texts) -> list[str]:
     lifted = {str(r.get("id")) for r in rs if r.get("lifted")}
     if lifted != set(LIFTED):
         bad.append("the lifted records are not D05's ten")
+    cells: dict[tuple[str, ...], str] = {}
+    for r in rs:
+        if not r.get("screen"):
+            continue
+        rid = str(r.get("id"))
+        if not str(r.get("fixture", "")).strip():
+            bad.append(f"{rid}: no fixture or precondition handle (row 33)")
+        sig = tuple(str(r.get(f)) for f in ("screen", "trigger", "exit", "carrier", "announce"))
+        if sig in cells:
+            bad.append(f"{rid} repeats {cells[sig]}'s cells: nothing selects it (row 7)")
+        cells.setdefault(sig, rid)
     return bad
 
 
@@ -1252,14 +1430,44 @@ def g_a11y(t: Texts) -> list[Finding]:
     for f in re.findall(r"\bF-\d\d\b", unfence(t.spec)):
         if f not in fids:
             bad.append(f"{f} is no D05 finding")
-    for k, e in entries(t).items():
-        ann = e.get("announce")
-        if isinstance(ann, dict) and ann.get("lr") not in have["LR"]:
-            bad.append(f"{k}: {ann.get('lr')} is no D05 LR row")
-    for r in records(t):
-        if r.get("t2") and r.get("t2") not in have["T2"]:
-            bad.append(f"{r.get('id')}: {r.get('t2')} is no D05 T2 row")
+    es = entries(t)
+    for k, e in es.items():
+        for ann in anns(e):
+            if "lr" in ann and ann.get("lr") not in have["LR"]:
+                bad.append(f"{k}: {ann.get('lr')} is no D05 LR row")
+    rec = by_id(t)
+    for r in rec.values():
+        for x in t2s(r):
+            if x not in have["T2"]:
+                bad.append(f"{r.get('id')}: {x} is no D05 T2 row")
+        for key in r.get("speaks") or []:
+            if not anns(es.get(str(key), {})):
+                bad.append(f"{r.get('id')} speaks {key}, which has no announcement in the deck")
+    bad += t2_table_problems(t, es, rec)
     return fails("G-A11Y", bad)
+
+
+def t2_table_problems(
+    t: Texts, es: dict[str, dict[str, Any]], rec: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Row 10: §5 lifts D05's T2-01..T2-29; every reason a deck key, every id on a record."""
+    rows = [r for r in table_rows(section(t.spec, LOOKS_HEAD)) if re.fullmatch(r"T2-\d\d", r[0])]
+    bad: list[str] = []
+    n = A11Y_RANGES["T2"]
+    if [r[0] for r in rows] != [f"T2-{i:02d}" for i in range(1, n + 1)]:
+        return [f"§5's T2 table is not T2-01..T2-{n:02d} in order"]
+    for r in rows:
+        keys = re.findall(r"`(ticket\.[a-z0-9_.]+)`", r[2] if len(r) > 2 else "")
+        if not keys or any(k not in es for k in keys):
+            bad.append(f"§5 {r[0]}: its reason names no deck key, or one the deck lacks")
+        ids = re.findall(r"`((?:SCR|CMP)-\d{3}[/:][^`]+)`", r[-1])
+        if not ids or any(r[0] not in t2s(rec.get(i, {})) for i in ids):
+            bad.append(f"§5 {r[0]}: its record column names no record carrying {r[0]}")
+    return bad
+
+
+LOCKED_DESC = "ticket.order.arm.locked.description"
+SUBMIT_NAME = "ticket.order.submit.name"
 
 
 def lift_problems(t: Texts) -> list[str]:
@@ -1269,28 +1477,30 @@ def lift_problems(t: Texts) -> list[str]:
 
     def amended(key: str, row: str, head: str) -> bool:
         e = es.get(key, {})
-        return e.get("amended") == f"D05 {row}" and str(e.get("string", "")).startswith(head)
+        text = parent_form(str(e.get("string", "")), e)
+        return e.get("amended") == f"D05 {row}" and text.startswith(head)
 
     def spoken(key: str, lr: str, politeness: str) -> bool:
-        a = es.get(key, {}).get("announce")
-        return isinstance(a, dict) and a.get("lr") == lr and a.get("politeness") == politeness
+        a = anns(es.get(key, {}))
+        return any(x.get("lr") == lr and x.get("politeness") == politeness for x in a)
 
     f02 = quoted_cells("D05", 487, (3,))
     f13 = quoted_cells("D05", 498, (3,))
+    desc, name = es.get(LOCKED_DESC, {}), es.get(SUBMIT_NAME, {})
     place = str(rec.get("SCR-077/placement", {}).get("carrier", ""))
     summary = str(rec.get("SCR-060/invalid-summary", {}).get("announce", ""))
     checks = {
         "L-2": bool(f02) and f02[0] in place,
         "L-2 (cell)": bool(f02) and loose(f02[0]) in loose(cells.get("L-2", "")),
         "L-8": amended("ticket.order.arm.locked.description", "F-08", "")
-        and "{arm key}" in str(es.get("ticket.order.arm.locked.description", {}).get("string")),
+        and "{arm key}" in parent_form(str(desc.get("string")), desc),
         "L-9": summary.startswith("LR-24")
-        and spoken("ticket.order.v.summary.heading", "LR-24", "none (the focus move speaks)"),
+        and spoken("ticket.order.v.summary.heading", "LR-24", "none"),
         "L-10": spoken("ticket.order.arm.refused", "LR-09", "polite"),
         "L-12": spoken("ticket.order.readout.line", "LR-01", "polite"),
         "L-13": bool(f13)
         and amended("ticket.order.submit.name", "F-13", "")
-        and es.get("ticket.order.submit.name", {}).get("string") == f13[0],
+        and parent_form(str(name.get("string")), name) == f13[0],
         "L-14": all(
             amended(k, "F-14", "{confirm label}, ")
             for k in ("ticket.confirm.confirm.name", "ticket.confirm.confirm.name.fanout")
@@ -1580,8 +1790,13 @@ def g_hex(t: Texts) -> list[Finding]:
     for name, text in (("spec", t.spec), ("deck", t.deck), ("inventory", t.states)):
         for m in HEXLIT.finditer(text):
             bad.append(f"{name}: a colour literal at offset {m.start()}")
-    for m in PX.finditer(section(t.spec, REDLINE_HEAD)):
-        bad.append(f"§8: a raw dimension {m.group(0)!r}")
+    for name, text in (
+        ("§8", section(t.spec, REDLINE_HEAD)),
+        ("deck", t.deck),
+        ("inventory", t.states),
+    ):
+        for m in PX.finditer(text):
+            bad.append(f"{name}: a raw dimension {m.group(0)!r} (name its token)")
     return fails("G-HEX", bad)
 
 
@@ -1629,28 +1844,68 @@ def act_names() -> frozenset[str]:
     )
 
 
+# BQ-17's sources: `14`'s Analytics / Audit line of each pack screen, and D03 §15's event column
+EVENT_LINES = (("14", 1440), ("14", 1474), ("14", 1772), ("14", 1783), ("14", 2401), ("14", 3115))
+D03_EVENTS = (611, 619)
+EVENT_NAME = re.compile(r"`([a-z_]+\.[a-z_]+|_[a-z_]+)`")
+CLASSES = ("audit", "analytics", "audit · analytics", "none")
+
+
+def source_events() -> list[str]:
+    cells = [base_line(k, n) for k, n in EVENT_LINES]
+    cells += [split_row(base_line("D03", n))[0] for n in range(D03_EVENTS[0], D03_EVENTS[1] + 1)]
+    out: list[str] = []
+    for cell in cells:
+        last = ""
+        for m in EVENT_NAME.finditer(cell):
+            name = m.group(1)
+            if name.startswith("_"):  # D03's `order.rejection_viewed` / `_payload_expanded`
+                name = last.rsplit("_", 1)[0] + name
+            else:
+                last = name
+            out.append(name)
+    return list(dict.fromkeys(out))
+
+
+def in_g17(name: str, g17: str) -> bool:
+    return f"`{name}`" in g17 or any(
+        f"`{p}*`" in g17 and name.startswith(p) for p in ("order.confirmation_", "order.rejection_")
+    )
+
+
 def g_events(t: Texts) -> list[Finding]:
     bad: list[str] = []
     acts = act_names()
     g17 = " ".join(" ".join(r) for r in table_rows(section(t.spec, GROW_HEAD)) if r[0] == "G-17")
+    crows = " ".join(" ".join(r) for r in table_rows(section(t.spec, CROW_HEAD)))
+    obs = section(t.spec, EVENTS_HEAD)
+    named: set[str] = set()
     for r in records(t):
         if not r.get("screen"):
             continue
         rid, ev, cls = str(r.get("id")), r.get("event"), r.get("class")
-        if cls not in ("audit", "analytics", "none"):
+        if cls not in CLASSES:
             bad.append(f"{rid}: class {cls!r}")
-        if r.get("audit_action") and r.get("audit_action") not in acts:
-            bad.append(f"{rid}: {r.get('audit_action')} is not a registered audit action")
+        pairs = r.get("audit_action") or {}
+        if not isinstance(pairs, dict):
+            bad.append(f"{rid}: audit_action is not a map of event to action")
+            pairs = {}
+        for name, act in pairs.items():
+            if act not in acts:
+                bad.append(f"{rid}: {act} is not a registered audit action")
+            elif f"`{name}` / `{act}`" not in obs:
+                bad.append(f"{rid}: the pair {name} / {act} is not in §10 (C-10)")
         if not ev:
             continue
         for name in str(ev).split(" / "):
-            if name in acts or r.get("audit_action"):
+            named.add(name)
+            if name in acts or name in pairs:
                 continue
-            if f"`{name}`" not in g17 and not any(
-                f"`{p}*`" in g17 and name.startswith(p)
-                for p in ("order.confirmation_", "order.rejection_")
-            ):
+            if not in_g17(name, g17):
                 bad.append(f"{rid}: {name} is neither registered nor in G-17")
+    for name in source_events():
+        if name not in named and not in_g17(name, g17) and f"`{name}`" not in crows:
+            bad.append(f"{name} (`14` / D03 §15) is on no record, in no G-17 and no C-row")
     return fails("G-EVENTS", bad)
 
 
@@ -2061,11 +2316,6 @@ def _pr1_extra(t: Texts) -> Texts:
     return replace(t, changed=(*(t.changed or ()), "docs/plan/16-design-system-brief.md"))
 
 
-def _strict(t: Texts) -> Texts:
-    STRICT_WALK.append(True)
-    return t
-
-
 def _fixed_drop(d: dict[str, Any]) -> None:
     d["strings"]["ticket.order.type.emulated.reason"].pop("fixed")
 
@@ -2081,8 +2331,32 @@ def _a50_dropped(d: dict[str, Any]) -> None:
     e["sources"] = [x for x in e["sources"] if not str(x["cite"]).startswith("A50 ")]
 
 
-def _readout_silent(d: dict[str, Any]) -> None:
-    d["strings"]["ticket.order.readout.line"].pop("announce")
+def _security_moved(d: dict[str, Any]) -> None:
+    # the count stays 35: the flag moves off a non-selector §6.4 entry onto an unflagged one
+    d["strings"]["ticket.reject.record.never_stored"].pop("security")
+    d["strings"]["ticket.defaults.title"]["security"] = True
+
+
+def _readout_loud(d: dict[str, Any]) -> None:
+    d["strings"]["ticket.order.readout.line"]["announce"]["politeness"] = "assertive"
+
+
+def _twin_string(d: dict[str, Any]) -> None:
+    ask, bid = (
+        d["strings"]["ticket.hotkeys.ticket.snap_ask"],
+        d["strings"]["ticket.hotkeys.ticket.snap_bid"],
+    )
+    bid["string"], bid["sources"] = ask["string"], ask["sources"]
+
+
+def _code_twice(d: dict[str, Any]) -> None:
+    d["strings"]["ticket.ratelimit.scope.exchange"]["codes"].append("problem:rate_limited")
+    d["by_code"]["problem:rate_limited"]["ratelimit"] = "ticket.ratelimit.scope.exchange"
+
+
+def _code_untrue(d: dict[str, Any]) -> None:
+    d["strings"]["ticket.order.rejected.class.transient"]["codes"].append("oms:INSUFFICIENT_MARGIN")
+    d["by_code"]["oms:INSUFFICIENT_MARGIN"]["order"] = "ticket.order.rejected.class.transient"
 
 
 def _code_retcode(d: dict[str, Any]) -> None:
@@ -2126,6 +2400,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
             )
         ),
     ),
+    ("G-ONCE", "one string under two keys", _deck(_twin_string)),
     (
         "G-ONCE",
         "one merged key with two strings on a surface",
@@ -2133,8 +2408,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ),
     ("G-DECK", "an amended entry's parent superseded by another key", _deck(_nc_moved)),
     ("G-DECK", "a ruled entry without its A50 cite", _deck(_a50_dropped)),
+    ("G-DECK", "a §6.4 entry outside the selector set unflagged", _deck(_security_moved)),
     ("G-FIXTURE", "a digit outside a parameter with no `fixed`", _deck(_fixed_drop)),
     ("G-CODES", "a retCode as a code", _deck(_code_retcode)),
+    ("G-CODES", "one code resolving to two keys on a surface", _deck(_code_twice)),
+    ("G-CODES", "a code whose target sentence names another cause (row 3)", _deck(_code_untrue)),
     (
         "G-NATIVE",
         "the frozen record gates Flatten now",
@@ -2156,6 +2434,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         _states(_record("SCR-060/partially-filled", "twin", "14:steady")),
     ),
     (
+        "G-STATES",
+        "a `15` States token left without a record",
+        _states(_record("CMP-231:option-focused", "twin", "C-3")),
+    ),
+    (
         "G-A11Y",
         "an LR id D05 lacks",
         _deck(
@@ -2167,7 +2450,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         ),
     ),
     ("G-LEDGER", "a ledger row that is not O0847's", _re("spec", r"^(\| L-22 \| )C-o", r"\1C-q")),
-    ("G-LEDGER", "the read-out line loses LR-01 (L-12)", _deck(_readout_silent)),
+    ("G-LEDGER", "the read-out line loses LR-01's politeness (L-12)", _deck(_readout_loud)),
     (
         "G-LEDGER",
         "SCR-077's placement loses F-02's conditions (L-2)",
@@ -2201,14 +2484,27 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     (
         "G-EVENTS",
         "an audit action the registry lacks",
-        _states(_record("SCR-114/saved", "audit_action", "settings.changed")),
+        _states(
+            _record(
+                "SCR-114/saved", "audit_action", {"trading_defaults.changed": "settings.changed"}
+            )
+        ),
+    ),
+    (
+        "G-EVENTS",
+        "a D03 §15 event dropped from its record (completeness)",
+        _states(_record("SCR-077/record-served", "event", "order.rejection_payload_expanded")),
     ),
     (
         "G-ROWS",
         "a G-row with no due date",
         _re("spec", r"^(\| G-18 \|.*\| )at once(\s*\|)$", r"\1later\2"),
     ),
-    ("G-WALK", "the outside reader still pending under --strict-walk", _strict),
+    (
+        "G-WALK",
+        "the outside reader's record names no comment",
+        _sub("spec", "#919 comment 6532243963", "#919 comment 65"),
+    ),
     (
         "G-RULED",
         "the stamp dropped from §6.2",
