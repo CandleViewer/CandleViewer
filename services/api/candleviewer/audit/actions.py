@@ -198,6 +198,15 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # E29-T05 (#848, 24 Sec.8.12, contract first): the lockout's paging stand-in until E39-T04,
         # an order or fill with no OMS intent, written ahead of its page (system actor, no freeze).
         "oms.no_intent_detected",
+        # E29-T06 (#914 PR 1, 24 Sec.15.5; SR-E29-17: registered before the first emitter): the
+        # reconciliation record, its `stage` the pass's report (`finished`, system actor), an
+        # Owner's on-demand request (`requested`) or the operator's decision (`resolved`), the
+        # exchange account its object.
+        "oms.reconcile",
+        # E29-T06 (#914 PR 1, 24 Sec.15.5, Sec.8.5 step 3c): the pass's own record of an exchange
+        # order no row takes, recorded `untracked` with the venue's identity, written ahead of the
+        # row (system actor). The only adoption v1 has: no human adopt action exists (D6, BQ-17).
+        "order.adopted_untracked",
         # E29-T04 (#913, 24 Sec.15.5, 21 Sec.3.3.11 "Audit"): a stop request the OMS records for a
         # position, written ahead with its row (`sl.attached`; `tp.modified` for a take-profit
         # side), and a void of one (`sl.modified`, `tp.modified`). Keyed (`writer.KEYED_ACTIONS`):
