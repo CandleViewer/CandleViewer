@@ -29,10 +29,14 @@ export async function submitPassword(
   password: string,
 ): Promise<PasswordStep> {
   const answered = page.waitForResponse(API_PATH(LOGIN));
-  await page.getByLabel("Username or email").fill(user.username);
-  await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  const res = await answered;
+  const submit = async (): Promise<void> => {
+    await page.getByLabel("Username or email").fill(user.username);
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Sign in" }).click();
+  };
+  // Awaited together: if the form cannot be submitted, the wait for its answer goes with that
+  // failure. Alone it would stay pending and reject, unhandled, when the page closes.
+  const [res] = await Promise.all([answered, submit()]);
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   const methods = Array.isArray(body["methods"]) ? (body["methods"] as unknown[]) : [];
   return {
@@ -67,7 +71,7 @@ export interface MfaOutcome {
 /** Completes MFA from the page with `code`, then reads `/auth/session` and `/me` with the token. */
 export async function completeMfa(page: Page, mfaToken: string, code: string): Promise<MfaOutcome> {
   const answered = page.waitForResponse(API_PATH(MFA_VERIFY));
-  const facts = await page.evaluate(
+  const read = page.evaluate(
     async ({ verifyPath, token: handle, totp }) => {
       const verify = await fetch(verifyPath, {
         method: "POST",
@@ -118,7 +122,8 @@ export async function completeMfa(page: Page, mfaToken: string, code: string): P
     },
     { verifyPath: MFA_VERIFY, token: mfaToken, totp: code },
   );
-  const res = await answered;
+  // Awaited together, as in `submitPassword`: a throwing `evaluate` must not leave `answered` pending.
+  const [res, facts] = await Promise.all([answered, read]);
   return { ...facts, cookiesSet: setCookieNames(await res.headersArray()) };
 }
 

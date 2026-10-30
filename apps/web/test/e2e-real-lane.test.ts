@@ -2,12 +2,14 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Page } from "@playwright/test";
 import type { UserConfig } from "vite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import stubConfig from "../e2e/playwright.config";
 import realConfig from "../e2e/playwright.real.config";
 import { expires, same, setCookieNames, tamperOneByte } from "../e2e/support/real/cookies";
 import { auditSliceSql } from "../e2e/support/real/failureArtefacts";
+import { completeMfa, submitPassword } from "../e2e/support/real/signIn";
 import { claimFrom, parseUsers } from "../e2e/support/real/stack";
 
 /**
@@ -171,5 +173,60 @@ describe("the audit slice", () => {
     ["an id that is not a UUID", [], ["1; DROP TABLE users"]],
   ])("refuses %s before building any SQL", (_what, users, ids) => {
     expect(() => auditSliceSql(since, users, ids)).toThrow();
+  });
+});
+
+describe("the sign-in helpers' waits for an answer", () => {
+  // A `waitForResponse` nobody awaits rejects, unhandled, when the page closes (the runner sets no
+  // action timeout): that error would bury the failure that left it pending.
+  const unhandled: unknown[] = [];
+  const record = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  beforeEach(() => {
+    unhandled.length = 0;
+    process.on("unhandledRejection", record);
+  });
+  afterEach(() => {
+    process.off("unhandledRejection", record);
+  });
+
+  /** A response wait that settles only when the test closes the "page", as a closing page does. */
+  function pendingWait(): { wait: Promise<never>; closePage: () => void } {
+    let reject: (reason: Error) => void = () => undefined;
+    const wait = new Promise<never>((_resolve, rejectWith) => {
+      reject = rejectWith;
+    });
+    return { wait, closePage: () => reject(new Error("the page closed")) };
+  }
+
+  /** One turn of the event loop: Node reports an unhandled rejection before it ends. */
+  const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+  it("completeMfa fails with the in-page fetch's error and leaves no wait unhandled", async () => {
+    const { wait, closePage } = pendingWait();
+    const page = {
+      waitForResponse: () => wait,
+      evaluate: () => Promise.reject(new Error("the fetch failed")),
+    } as unknown as Page;
+    await expect(completeMfa(page, "handle", "123456")).rejects.toThrow("the fetch failed");
+    closePage();
+    await turn();
+    expect(unhandled).toEqual([]);
+  });
+
+  it("submitPassword fails with the form's error and leaves no wait unhandled", async () => {
+    const { wait, closePage } = pendingWait();
+    const field = { fill: () => Promise.reject(new Error("the field is gone")) };
+    const page = {
+      waitForResponse: () => wait,
+      getByLabel: () => field,
+      getByRole: () => ({ click: () => Promise.resolve() }),
+    } as unknown as Page;
+    const user = { username: "e2e-1a2b3c4d-1", seed: () => "" };
+    await expect(submitPassword(page, user, "a-password")).rejects.toThrow("the field is gone");
+    closePage();
+    await turn();
+    expect(unhandled).toEqual([]);
   });
 });
