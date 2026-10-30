@@ -68,7 +68,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
-from candleviewer.domain.events import Instrument
+from candleviewer.domain.events import Instrument, InstrumentUpdatedEvent
 from candleviewer.exchange.base.instruments import InstrumentsFetcher, RiskLimitsFetcher
 from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.ingestion._logging import get_logger
@@ -195,7 +195,7 @@ class InstrumentRefreshPendingError(IngestionError):
 
 class InstrumentsRefreshScheduler:
     """Owns the instrument catalogue: fetch -> parse -> version-diff ->
-    persist -> publish -> atomic cache swap, on a 12 h TTL schedule plus
+    persist -> atomic cache swap -> publish, on a 12 h TTL schedule plus
     on-demand triggers.
 
     Every dependency is injected (clock, sleep, jitter source, fetcher,
@@ -690,6 +690,7 @@ class InstrumentsRefreshScheduler:
             )
 
         parsed: dict[str, Instrument] = {}
+        updates: list[InstrumentUpdatedEvent] = []
         for item in result.instruments:
             previous = current.get(item.symbol) if current is not None else None
             versioned, changed_fields = next_version(previous, item)
@@ -698,15 +699,15 @@ class InstrumentsRefreshScheduler:
                 await self._repository.record_version(
                     versioned.model_dump(mode="json"), changed_fields=changed_fields
                 )
-                if self._publish is not None:
-                    event = build_updated_event(
+                updates.append(
+                    build_updated_event(
                         event_id=uuid4(),
                         symbol=versioned.symbol,
                         metadata_version=versioned.metadata_version,
                         changed_fields=changed_fields,
                         ts_now_us=fetched_at_us,
                     )
-                    await self._publish(event)
+                )
 
         if not parsed:
             raise InstrumentRefreshError("instrument fetch returned zero parseable rows")
@@ -730,11 +731,29 @@ class InstrumentsRefreshScheduler:
         self._failed.clear()
         instruments_cache_age_seconds.set(0.0)
         instruments_catalogue_size.set(len(parsed))
+        # #5118: announced only once the snapshot carrying the revision is the one served, so a
+        # re-read on the event (a client's, or the WS re-snap's) never gets the older list.
+        await self._publish_updates(updates)
         for listener in self._listeners:
             try:
                 await listener()
             except Exception:  # a consumer fault must not fail the refresh
                 get_logger(__name__).exception("instruments_listener_failed")
+
+    async def _publish_updates(self, updates: list[InstrumentUpdatedEvent]) -> None:
+        """One event per changed instrument, after the swap. A failed publish is logged and
+        the rest still go: the revision is already recorded and served, so a retry of the
+        refresh would find nothing changed and could not announce it again. A cancellation
+        midway loses the rest the same way; the catalogue itself is already served."""
+        if self._publish is None:
+            return
+        for event in updates:
+            try:
+                await self._publish(event)
+            except Exception:
+                get_logger(__name__).exception(
+                    "instruments_update_publish_failed", symbol=event.symbol
+                )
 
     async def _run_periodic(self, *, startup_ok: bool) -> None:
         """The refresh schedule: the TTL (+ up to 5 % jitter) after a successful refresh, and
