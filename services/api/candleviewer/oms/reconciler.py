@@ -47,11 +47,12 @@ and paged instead) before any write that can raise (SR-E27-19). B1's own steps a
 position and no stop order of the OMS's open for it, one bound to an own row or matching its
 recorded stop: a foreign stop never counts, SR-E29-06) gets the record in force attached through
 E29-T04's recorded-stop writer on the `critical` lane (`ProtectiveStops`), counted in
-`naked_position_alerts_total`; with no record in force it is paged P1 once, listed in `errors`
-(`no_record_in_force`, a standing item) and left to E32-T02, and order entry is not held for it
-(BQ-9). A Full-mode stop looser than the record is put back (`sl_restored`; a refusal is
-`sl_restore_refused`); a tighter one stays and pages once (`sl_tighter`). A position whose key
-has a stop request in flight at the copy is skipped this pass.
+`naked_position_alerts_total`; with no record in force it is paged P1 once per episode (a pass
+that reads it protected or flat ends one), listed in `errors` (`no_record_in_force`, a standing
+item) and left to E32-T02, and order entry is not held for it (BQ-9). A Full-mode stop looser
+than the record is put back (`sl_restored`; a refusal is `sl_restore_refused`); a tighter one
+stays and pages once (`sl_tighter`). A position whose key has a stop request in flight at the copy
+is skipped this pass.
 
 **Not here** (E45-T01's named carries, BQ-2): step 6 (the records a flat read ended), the recorded
 stops held for reconciliation, the Partial-mode restore and SR-E29-06 (ii)'s foreign-stop cancel.
@@ -919,7 +920,8 @@ def _covered(
 class Reconciler:
     """The pass's phases (module docstring). One serves every account; B19 runs one pass at a
     time per account, so a pass never overlaps itself. Its helpers read it through its public
-    surface (`ports`, `now_us`, `new_id`, `count_naked`, `page_once`), never a private name."""
+    surface (`ports`, `now_us`, `new_id`, `count_naked`, `page_once`, `alert_once`, `rearm`),
+    never a private name."""
 
     def __init__(
         self,
