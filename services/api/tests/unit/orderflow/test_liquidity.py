@@ -7,18 +7,21 @@ from decimal import Decimal
 import pytest
 
 from candleviewer.book.models import BookPhase
+from candleviewer.exchange.base.models import TradeEvent
+from candleviewer.orderflow.liquidity import LiquidityTracker
 from candleviewer.orderflow.liquidity_models import (
     LiquidityConfig,
     LiquidityConfigInvalid,
     LiquidityPulled,
     LiquidityReload,
+    LiquiditySample,
 )
 from tests.unit.orderflow._liquidity_helpers import FakeBook, book, sample, tracker, trade
 
 D = Decimal
 
 
-def _consumed_then(t, wall_after: str, *, at_ms: int = 100):  # type: ignore[no-untyped-def]
+def _consumed_then(t: LiquidityTracker, wall_after: str, *, at_ms: int = 100) -> LiquiditySample:
     """Baseline 10 at 0 ms, a 6-lot buy print through the wall, the wall at 3 at 50 ms, then
     `wall_after` at `at_ms`; returns the last sample."""
     assert not sample(t, 0, book("10")).events
@@ -57,7 +60,8 @@ def test_reload_flagged_as_estimated() -> None:
 
 def test_reload_refill_count_counts_cycles_inside_the_window() -> None:
     t = tracker()
-    assert _consumed_then(t, "9").events[0].refill_count == 1  # type: ignore[union-attr]
+    (first,) = _consumed_then(t, "9").events
+    assert isinstance(first, LiquidityReload) and first.refill_count == 1
     t.on_trade(trade(140, 1002, "6"))
     assert not sample(t, 150, book("3")).events
     (r,) = sample(t, 200, book("9")).events
@@ -128,7 +132,7 @@ def test_tolerance_edge_separates_consumed_from_pulled(traded: str, consumed: bo
 
 
 def test_prints_through_the_level_count_but_the_wrong_side_or_price_does_not() -> None:
-    def pulled(trades) -> bool:  # type: ignore[no-untyped-def]
+    def pulled(trades: list[TradeEvent]) -> bool:
         t = tracker()
         sample(t, 0, book("10"))
         for tr in trades:
@@ -249,6 +253,22 @@ def test_distance_to_liquidity_cluster_finds_the_wall_and_honours_estimated() ->
     assert t.distance_to_liquidity_cluster("ask") is None  # an estimated sample contributes
 
 
+def test_distance_to_liquidity_cluster_is_none_while_a_gap_sample_is_in_the_window() -> None:
+    """BQ-9 with the mid known: the gap column sits inside the window, then ages out of it."""
+    t = tracker(buckets=64)
+    b = FakeBook(
+        {1000: "1", 999: "1", 998: "1"}, {p: "1" for p in range(1001, 1008)} | {1008: "50"}
+    )
+    for i in range(6):
+        sample(t, i * 100, b)
+    sample(t, 600, b, BookPhase.DESYNCED)
+    sample(t, 700, b)  # live again: the mid is known, the gap column is the previous one
+    assert t.distance_to_liquidity_cluster("ask", window_columns=3) is None
+    for i in range(8, 11):
+        sample(t, i * 100, b)
+    assert t.distance_to_liquidity_cluster("ask", window_columns=3) == 8
+
+
 def test_events_are_deterministic() -> None:
     def run() -> list[object]:
         return [e.model_dump() for e in _consumed_then(tracker(), "9").events]
@@ -270,9 +290,10 @@ def test_config_validation_names_the_field() -> None:
         {"bucket_ticks": 0},
         {"cadence_ms": 0},
         {"max_levels": 0},
+        {"ring_ms": 600_100, "cadence_ms": 100},  # 6,001 columns: past the ring bound
     ):
         with pytest.raises(LiquidityConfigInvalid):
-            LiquidityConfig(**bad).validated()  # type: ignore[arg-type]
+            LiquidityConfig(**bad).validated()
 
 
 def test_late_print_turns_a_pending_pull_into_a_consume() -> None:

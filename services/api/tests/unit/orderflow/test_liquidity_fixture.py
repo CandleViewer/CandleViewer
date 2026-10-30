@@ -1,7 +1,8 @@
-"""A wall consumed and refilled on the recorded depth-200 snapshot (E21-T04, #710).
+"""A wall consumed and refilled on the documented-shape depth-200 snapshot (E21-T04, #710).
 
-The book is the first frame of the recorded `orderbook_BTCUSDT` capture (C-13.5); the wall's
-consume/refill and the tape are scripted on top of it, because the capture holds no such episode."""
+The book is the first frame of `ws/orderbook_BTCUSDT.jsonl` (manifest 2026-10-05). That file is
+not a live recording: it is the documented-shape fixture (exception #1778 A, C-13.5), so the
+wall's consume/refill and the tape are scripted on top of it."""
 
 from __future__ import annotations
 
@@ -46,7 +47,11 @@ def test_recorded_wall_consumed_and_refilled_emits_one_reload() -> None:
     wall = int(Decimal(wall_px) / TICK)
     _set_ask(book, wall_px, "50")
     t.on_sample(0, BookPhase.LIVE, book)
-    t.on_sample(100 * MS, BookPhase.LIVE, book)  # steady: no event from the capture's own levels
+    steady = t.on_sample(100 * MS, BookPhase.LIVE, book)
+    assert not steady.events  # no event from the fixture's own levels
+    assert not steady.estimated and len(steady.bands) == len(t.config.bands_ticks)
+    assert all(b.bid > 0 and b.ask > 0 and b.diff == b.bid - b.ask for b in steady.bands)
+    assert [b.ask for b in steady.bands] == sorted(b.ask for b in steady.bands)  # cumulative
     t.on_trade(trade(150, wall, "30"))
     t.on_trade(trade(160, wall + 1, "10"))  # a sweep through the wall
     _set_ask(book, wall_px, "8")

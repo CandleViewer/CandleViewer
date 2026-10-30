@@ -18,6 +18,7 @@ BookSide = Literal["bid", "ask"]
 BUCKETS_MAX = 256  # BQ-10: hard cap on price buckets; coarsen `bucket_ticks`, never grow
 MAX_LEVELS_MAX = 1000  # per side, per sample: bounds the work on a pathological book
 WINDOW_MS_MAX = 60_000
+SAMPLES_MAX = 6_000  # ring columns (ring_ms / cadence_ms): with BUCKETS_MAX, 12.3 MB (C-2.18)
 
 
 class LiquidityConfigInvalid(OrderflowError, ValueError):
@@ -53,6 +54,7 @@ class LiquidityConfig:
             (0 < self.buckets <= BUCKETS_MAX, "buckets"),
             (self.bucket_ticks > 0, "bucket_ticks"),
             (0 < self.cadence_ms <= self.ring_ms, "cadence_ms"),
+            (self.cadence_ms > 0 and self.ring_ms // self.cadence_ms <= SAMPLES_MAX, "ring_ms"),
             (0 < self.max_levels <= MAX_LEVELS_MAX, "max_levels"),
         )
         for ok, field in checks:

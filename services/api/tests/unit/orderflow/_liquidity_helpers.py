@@ -54,7 +54,7 @@ def trade(
         trade_id=trade_id or f"t{_n}",
         price=p,
         qty=q,
-        side=side,  # type: ignore[arg-type]  # validated Literal at construction
+        side=side,  # type: ignore[arg-type]  # str to the TradeSide Literal; pydantic validates it
         is_block_trade=False,
         price_ticks=tick,
         notional=p * q,
@@ -63,7 +63,7 @@ def trade(
 
 
 def tracker(**cfg: object) -> LiquidityTracker:
-    return LiquidityTracker("BTCUSDT", TICK, STEP, LiquidityConfig(**cfg))  # type: ignore[arg-type]
+    return LiquidityTracker("BTCUSDT", TICK, STEP, LiquidityConfig(**cfg))  # type: ignore[arg-type]  # kwargs are test-chosen config fields
 
 
 def sample(
