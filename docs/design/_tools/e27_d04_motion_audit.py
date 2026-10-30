@@ -16,7 +16,8 @@ its code, at most one G1 FAIL per table row:
 - [G3-QUOTES] Q-1 to Q-5 of section 3 stand byte for byte in `E27.json`:416 at the base (Q-5
   with its one bracketed word restored; the word is kept rot13-encoded here, as is the word list).
 - [G4-DANGER] DZ-1 to DZ-3 stand with their pinned sentences and are applied on M-7, M-3 and M-5;
-  A25 (M-8), A26 (M-1) and A27 are each stamped RULED in the ruled form.
+  A25 (M-8), A25a (M-8, a precision of A25), A26 (M-1) and A27 are each stamped RULED in the ruled form,
+  and A25a's loading-state sentence stands.
 - [G5-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base;
   each pinned cite still carries its words; E05-D03 at the base equals the BQ list's pin
   `bca5f0f1d` whenever that commit is readable (recorded in the numbers either way).
@@ -75,7 +76,10 @@ D02|1208|This can take up to 12 s.;D03|884|Rider to E27-D04;D03|1298|no colour c
 D03|1586|Stale since 10:31:11 UTC;D03|2720|E27-D04 (#817), motion;D03H|33|any motion is E27-D04's
 memo|412|AD-16;E05-D03|67|Dialog open / close;E05-D03|68|Drawer open / close
 E05-D03|69|Value flash;E05-D03|74|Loading shimmer;E05-D03|75|Busy spinner
-E05-D03|93|A mode flip mid-transition;E05-D03|117|MR-3;E27.json|416|Progressive verification"""
+E05-D03|93|A mode flip mid-transition;E05-D03|117|MR-3;E27.json|416|Progressive verification
+D03|177|dark and light;D03|814|Reading what;D03|791|focus on stage 5's heading
+D03|1342|role="alert";D03|1514|loading the consequence summary;D02|813|Reading what
+22|3130|"201":;22|3292|"200":;22|18425|ApiKeyWithVerification:;22|18518|ApiKeyRotation:"""
 DZ_TEXT = {
     "DZ-1": "Nothing else on the screen starts motion in the frame a blocking error or a failed "
     "check appears.",
@@ -83,8 +87,10 @@ DZ_TEXT = {
     "DZ-3": "Balances never tween.",
 }
 DZ_ON = {"DZ-1": "M-7", "DZ-2": "M-3", "DZ-3": "M-5"}
-LEDGER_ON = {"A25": "M-8", "A26": "M-1", "A27": ""}
+LEDGER_ON = {"A25": "M-8", "A25a": "M-8", "A26": "M-1", "A27": ""}
 STAMP = "RULED (orchestrator, 2026-10-29, #2701 ledger addendum A row {row})"
+STAMP_A25A = "#2701 ledger addendum A row A25a (a precision of A25)"  # A25a is cited in this form
+LOADING_TEXT = "A destructive confirmation's loading state is motion-free in both modes."
 CUT_TIMING = "`motion.duration.instant` · `—`"
 INSTANT = "`motion.duration.instant`"
 QUOTE_IDS = ("Q-1", "Q-2", "Q-3", "Q-4", "Q-5")
@@ -298,10 +304,12 @@ def gate_danger(ctx: Ctx, r: Result) -> None:
             r.fail("G4-DANGER", f"{dz} is not applied on {DZ_ON[dz]}")
     flat = " ".join(ctx.spec.split())
     for row, m in LEDGER_ON.items():
-        if STAMP.format(row=row) not in flat:
+        if (STAMP_A25A if row == "A25a" else STAMP.format(row=row)) not in flat:
             r.fail("G4-DANGER", f"{row} is not stamped in the ruled form")
         if m and row not in rs.get(m, {}).get("rules", ""):
             r.fail("G4-DANGER", f"{row} is not applied on {m}")
+    if f"**{LOADING_TEXT}**" not in flat:
+        r.fail("G4-DANGER", "A25a's loading-state sentence is not in the spec")
 
 
 # --- G5: cites --------------------------------------------------------------------------------
@@ -399,6 +407,10 @@ def regex(pattern: str, repl: str) -> Callable[[Ctx], Ctx]:
     )
 
 
+def regex_all(pattern: str, repl: str) -> Callable[[Ctx], Ctx]:
+    return lambda ctx: ctx._replace(spec=re.sub(pattern, repl, ctx.spec, flags=re.MULTILINE))
+
+
 MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G1-TABLE", regex(r"^(\| M-10 +\|[^|]+\|[^|]+\| )row 2b", r"\1row 2c")),
     (
@@ -444,6 +456,9 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G1-TABLE", retarget("M-5", "3")),
     ("G1-TABLE", regex(r"^(\| M-4 +(?:\|[^|]+){6}\| )[^|]+", r"\1— ")),
     ("G2-TOKEN", sub("`type.num.base`", "`typo.num.base`")),
+    ("G4-DANGER", regex_all(r"\(a\s+precision of A25\)", "(a precision of A24)")),
+    ("G4-DANGER", sub("motion-free in both modes.**", "animated in normal mode.**")),
+    ("G5-CITE", sub("`22`:3292-3296", "`22`:3292-9999999")),
     (
         "G6-HYGIENE",
         sub("authorised\n  in advance", "authorised in advance (relay" + ".example" + ".com)"),
