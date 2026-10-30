@@ -64,7 +64,6 @@ OUT_MAX: Final = 1_024
 PUBLISH_TIMEOUT_S: Final = 1.0
 #: The trade subscription (INVALIDATE_ON_FULL: an overflow is a tape gap, never a stall upstream).
 TRADE_QUEUE_MAX: Final = 16_384
-DETAIL: Final = "liquidity"
 #: Quantised sizes remembered per symbol (a size in steps -> its `Decimal`): a sample reads at
 #: most 2 x `PIN_DEPTH` sizes, so 4 096 holds about ten samples' worth, under 1 MB a symbol.
 DECIMALS_MAX: Final = 4_096
@@ -262,7 +261,7 @@ class LiquidityEngine:
                 return None  # the instrument is not known yet: no tracker, no sample
             tick, qty_step = steps
             tracker = LiquidityTracker(symbol, tick, qty_step, self._config)
-            # `DETAIL`, spelt out: the E08 handshake scan reads a literal detail (24 §2.9).
+            # The detail is spelt out: the E08 handshake scan reads a literal detail (24 §2.9).
             topic = Topic(env=self._env, domain="md", symbol=symbol, detail="liquidity")
             sym = self._symbols[symbol] = _Symbol(tracker, qty_step, topic)
             lm.liquidity_tracker_memory_bytes.labels(symbol=sym.label).set(tracker.memory_bytes)
@@ -334,4 +333,4 @@ class LiquidityEngine:
         return len(self._out)
 
 
-__all__ = ["DETAIL", "OUT_MAX", "PIN_DEPTH", "LiquidityEngine", "Pins"]
+__all__ = ["OUT_MAX", "PIN_DEPTH", "LiquidityEngine", "Pins"]

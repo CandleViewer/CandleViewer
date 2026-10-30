@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
+from pydantic_settings import SettingsError
 
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.orderflow import heatmap_metrics as hm
@@ -37,6 +38,15 @@ def test_liquidity_settings_default_to_the_documented_values() -> None:
 def test_pins_within_the_cap_load() -> None:
     s = _settings(liquidity_pinned_symbols=("BTCUSDT", "ETHUSDT"), liquidity_pin_max=2)
     assert s.liquidity_pinned_symbols == ("BTCUSDT", "ETHUSDT")
+
+
+def test_pins_load_from_the_env_as_a_json_array(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The env form is a JSON array (24 §2.11); a comma list is refused at load, never split."""
+    monkeypatch.setenv("CV_LIQUIDITY_PINNED_SYMBOLS", '["BTCUSDT", "ETHUSDT"]')
+    assert _settings().liquidity_pinned_symbols == ("BTCUSDT", "ETHUSDT")
+    monkeypatch.setenv("CV_LIQUIDITY_PINNED_SYMBOLS", "BTCUSDT,ETHUSDT")
+    with pytest.raises(SettingsError, match="liquidity_pinned_symbols"):
+        _settings()
 
 
 def test_pins_over_the_cap_are_a_config_error_never_a_truncation() -> None:
