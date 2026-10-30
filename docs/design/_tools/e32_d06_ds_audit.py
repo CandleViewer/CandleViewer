@@ -14,12 +14,15 @@ imported from the sibling `contrast_check.py` (never copied) and the CVD matrice
 
 Gates (one mutation each in `--self-test`; the pins gate besides):
   (a) G-LEDGER    the A-row ledger re-pinned by content: every row of record's cited line carries
-                  its backticked needle at the base (the cite resolved by content when it moved);
+                  its backticked needle at the base, the cite re-found by content inside its pinned
+                  entry (the heading span) when it moved — a move is a WARN, an edit a FAIL;
                   dispositions from the ruled set; "applied by #N" rows verified against the target
                   file's history and the target line; every A-id a row carries exists in §C.
-  (b) G-AROW      every §C row well-formed, its Old cell equal to its line at the base byte for
-                  byte, its New a bullet, the export applicable to the base with every anchor found
-                  once.
+  (b) G-AROW      every §C row well-formed, its Old cell standing verbatim exactly once inside its
+                  target's entry at the base (the `### CMP-nnn` / `### SCR-nnn` heading span; the
+                  Field cell's line is where it stands — a move inside the entry is a WARN, an edit
+                  or a move into another entry a FAIL; an insert's anchor line re-found by its pin),
+                  its New a bullet, the export applicable to the base with every anchor found once.
   (c) G-TOKEN     every name the §7 table and the §C Tokens cells bind is shipped in `TOK` (a colour
                   resolves to a hex in all three themes); zero proposals; the PROPOSED `PAIRS` row's
                   tokens shipped.
@@ -39,7 +42,8 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
                   covers `15`'s plus D04-A2's two.
       G-ENTRY     every field bullet in a New cell is declared (`15` §0.1 or the two lead-ins); the
                   hand-off carries `16` §11.4's lines in order; its ledger-by-component table equals
-                  the derivation from §2 and §C; §R lists BQ-01 ... BQ-20 as RULED.
+                  the derivation from §2 and §C; §R lists BQ-01 ... BQ-20 as RULED. (G-STRINGS and
+                  G-STORIES read their `15` lines through the same content-resolved cites.)
   (j) G-VERSION   values, never a sha: the calendar's sprint-1 start and length and the five sprint
                   fields at `origin/main` equal the base; each cite's content at the base stands at
                   `origin/main`, re-found inside the cited entry's heading span alone (moved once =
@@ -49,15 +53,19 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
                   ruled wording — scheduled with a 2 s deadline; until the stop lands, or if it never
                   does, the `unprotected` banner shows it — stands in §4, §12 and C-15.
   (i) G-HYGIENE   placeholders filled and re-derived, no `{{` left, every cite in range, non-blank
-                  and content-pinned (a moved cite is a WARN until `--repin-ruled` records it or the
-                  spec re-points it; an edited one a FAIL), the tree against the merge-base: PR 1 may
-                  differ only in the pack's four files; PR 2 (`15` / `14` changed, the spec, the
-                  hand-off and the tool unchanged) must equal the merge-base with §C applied exactly,
+                  and content-pinned (its line re-found inside its pinned entry's heading span: a
+                  moved cite is a WARN until `--repin-ruled` records it or the spec re-points it; an
+                  edited one, or one moved into another entry, a FAIL), the tree against the
+                  merge-base: PR 1 may differ only in the pack's four files; PR 2 (`15` / `14`
+                  changed, the spec, the hand-off and the tool unchanged) must equal the merge-base
+                  with §C applied exactly,
                   and may differ in the pins alone, by recorded cite moves only, the file byte for
-                  byte what `--repin-ruled` writes from the merge-base's units (BQ-03); no closing
-                  keyword, no local path, no agent name, no URL or Penpot host; the §22 list equal to
-                  the tool's.
-  G-RULED-PIN     a default-deny pin set over every unit of the pack and the hand-off
+                  byte what `--repin-ruled` writes from the merge-base's units (BQ-03), its `SHA:`
+                  anchors PR 1's record (`SHA:BASE` an ancestor of the merge-base, the rest not
+                  re-derived); no closing keyword, no local path, no agent name, no URL or Penpot
+                  host; the §22 list equal to the tool's.
+  G-RULED-PIN     a default-deny pin set over every unit of the pack and the hand-off, then every
+                  cite (the hash of its line at the base and the hash of its entry's heading)
                   (`e32_d06_ruled_pins.txt`); `--repin-ruled` is the only writer.
 
 Usage (from the repo root):
@@ -73,6 +81,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import functools
 import hashlib
 import importlib.util
 import json
@@ -153,13 +162,15 @@ BASE_FIELDS = ("Tier", "Purpose", "Props", "Variants", "States", "A11y", "Tokens
                "Tests", "API sketch", "Data contract")  # fmt: skip
 OPTIONAL_FIELDS = ("Forbidden", "Security", "Performance", "Observability")
 LEAD_FIELDS = ("Motion (E32-D06)", "Usage (E32-D06)")
-# the Storybook unions (BQ-15): A-row -> (`15` line at the base, the parent's cite and its lead, rule)
-STORY_ROWS: dict[str, tuple[str, int, tuple[str, int, str] | None, str, tuple[str, ...]]] = {
-    "158": ("A-6", 1893, None, "superset", ("InHeldPosition", "InDraftBuilder")),
-    "119": ("A-15", 1434, ("D03", 332, "| HA-6 "), "superset", ()),
-    "120": ("A-23", 1447, ("D05", 210, "**Storybook (PROPOSED, D05-A1):**"), "equal", ()),
-    "228": ("A-28", 2895, ("D04", 417, "| D04-A2 "), "superset", ()),
+# the Storybook unions (BQ-15): the A-row whose Field cell names the `15` Storybook line (read by
+# content through its cite), the parent's cite and its lead, the rule, the PROPOSED extras
+STORY_ROWS: dict[str, tuple[str, tuple[str, int, str] | None, str, tuple[str, ...]]] = {
+    "158": ("A-6", None, "superset", ("InHeldPosition", "InDraftBuilder")),
+    "119": ("A-15", ("D03", 332, "| HA-6 "), "superset", ()),
+    "120": ("A-23", ("D05", 210, "**Storybook (PROPOSED, D05-A1):**"), "equal", ()),
+    "228": ("A-28", ("D04", 417, "| D04-A2 "), "superset", ()),
 }
+ENTRY_ID = re.compile(r"^(?:CMP|SCR)-\d{3}$")  # a §C Target cell's first word names the entry
 # the sprint values the design-ahead section anchors (key in the backlog JSON -> anchor id)
 SPRINT_KEYS = {
     "E32-D06": "d06",
@@ -535,7 +546,18 @@ def label_of(key: str, a: int, b: int) -> str:
     return f"{key}:{a}" if a == b else f"{key}:{a}–{b}"
 
 
-CitePin = tuple[str, tuple[int, int] | None]  # (hash, the recorded move)
+@dataclass(frozen=True)
+class CitePin:
+    """A cite's pin: the hash of its line(s) at the base, the hash of the heading of the entry it
+    sat in (the span a re-find never leaves), and the move recorded in PR 2, if any."""
+
+    h: str
+    head: str
+    at: tuple[int, int] | None
+
+
+def head_hash(heading: str) -> str:
+    return hashlib.sha256(pin_norm(heading).encode()).hexdigest()[:12]
 
 
 @dataclass(frozen=True)
@@ -550,17 +572,23 @@ class Texts:
     values: dict[str, str]
 
 
+@functools.lru_cache(maxsize=8)
 def cite_pins(pins: str) -> dict[str, CitePin]:
+    """`cite <tab> label <tab> hash <tab> entry-hash [<tab> @n]` lines; a pin written before the
+    entry hash existed carries none (the cited number's heading stands in)."""
     out: dict[str, CitePin] = {}
     for ln in pins.split("\n"):
         parts = ln.split("\t")
         if len(parts) >= 3 and parts[0] == "cite":
-            at = None
-            if len(parts) > 3 and parts[3].startswith("@"):
-                m = re.fullmatch(r"@(\d+)(?:–(\d+))?", parts[3])
-                if m:
-                    at = (int(m[1]), int(m[2]) if m[2] else int(m[1]))
-            out[parts[1]] = (parts[2], at)
+            head, at = "", None
+            for p in parts[3:]:
+                if p.startswith("@"):
+                    m = re.fullmatch(r"@(\d+)(?:–(\d+))?", p)
+                    if m:
+                        at = (int(m[1]), int(m[2]) if m[2] else int(m[1]))
+                elif p:
+                    head = p
+            out[parts[1]] = CitePin(parts[2], head, at)
     return out
 
 
@@ -572,42 +600,61 @@ def heading_before(ls: list[str], n: int) -> str:
     return ""
 
 
-def found_in_entry(env: Env, rev: str, rel: str, h: str, span: int, heading: str) -> list[int]:
+def found_in_entry(env: Env, rev: str, rel: str, h: str, span: int, head: str) -> list[int]:
     """The 1-based lines at `rev` whose content hashes to `h`, kept only inside the entry whose
-    heading is `heading` (a re-find never crosses into another component's entry)."""
+    heading hashes to `head` (a re-find never crosses into another component's entry)."""
     ls = env.lines(rev, rel)
     return [
-        n for n in env.hash_index(rev, rel, span).get(h, []) if heading_before(ls, n) == heading
+        n
+        for n in env.hash_index(rev, rel, span).get(h, [])
+        if head_hash(heading_before(ls, n)) == head
     ]
+
+
+def entry_span(ls: list[str], ident: str) -> tuple[int, int] | None:
+    """The 0-based [start, end) of the `### <ident> …` entry (its heading to the next heading of any
+    level); None unless exactly one heading carries the id."""
+    rx = re.compile(r"^### " + re.escape(ident) + r"(?!\d)")
+    heads = [i for i, ln in enumerate(ls) if rx.match(ln)]
+    if len(heads) != 1:
+        return None
+    end = next((i for i in range(heads[0] + 1, len(ls)) if ls[i].startswith("#")), len(ls))
+    return heads[0], end
 
 
 def resolve_cite(t: Texts, key: str, a: int, b: int) -> tuple[int, int, str]:
     """The effective lines of a cite at the base and its status: `ok` (the pinned content stands at
     its number), `recorded` (moved, the move recorded in the pins), `moved` (found by content once,
-    inside the cited entry's heading span), `gone` (edited, deleted, or standing twice in the entry),
-    `unpinned`, `range` (past the end of the file)."""
+    inside the pinned entry's heading span), `gone` (edited, deleted, moved into another entry, or
+    standing twice in the entry), `unpinned`, `range` (past the end of the file)."""
     ls = t.env.lines(t.env.base, PATHS[key])
     if not (0 < a <= b <= len(ls)):
         return a, b, "range"
-    pinned = cite_pins(t.pins).get(label_of(key, a, b))
+    pin = cite_pins(t.pins).get(label_of(key, a, b))
     here = line_hash(ls[a - 1], ls[b - 1])
-    if pinned is None:
+    if pin is None:
         return a, b, "unpinned"
-    h, at = pinned
-    if h == here:
+    if pin.h == here:
         return a, b, "ok"
-    if at and 0 < at[0] <= at[1] <= len(ls) and line_hash(ls[at[0] - 1], ls[at[1] - 1]) == h:
+    at = pin.at
+    if at and 0 < at[0] <= at[1] <= len(ls) and line_hash(ls[at[0] - 1], ls[at[1] - 1]) == pin.h:
         return at[0], at[1], "recorded"
-    found = found_in_entry(t.env, t.env.base, PATHS[key], h, b - a, heading_before(ls, a))
+    head = pin.head or head_hash(heading_before(ls, a))
+    found = found_in_entry(t.env, t.env.base, PATHS[key], pin.h, b - a, head)
     if len(found) == 1:
         return found[0], found[0] + (b - a), "moved"
     return a, b, "gone"
 
 
-def cite_line(t: Texts, key: str, n: int) -> str:
+def cite_at(t: Texts, key: str, n: int) -> tuple[str, int, str]:
+    """(the cited line at the base, re-found by content; where it stands; the cite's status)."""
     a, _, status = resolve_cite(t, key, n, n)
     ls = t.env.lines(t.env.base, PATHS[key])
-    return ls[a - 1] if status != "range" and 0 < a <= len(ls) else ""
+    return (ls[a - 1] if status != "range" and 0 < a <= len(ls) else ""), a, status
+
+
+def cite_line(t: Texts, key: str, n: int) -> str:
+    return cite_at(t, key, n)[0]
 
 
 def all_cites(t: Texts) -> list[tuple[str, int, int]]:
@@ -639,7 +686,7 @@ def cite_problems(t: Texts) -> tuple[list[str], list[str]]:
         elif status == "gone":
             bad.append(
                 f"cite {label}: the pinned content stands nowhere once inside its entry at the base "
-                "(edited, or ambiguous)"
+                "(edited, moved into another entry, or ambiguous)"
             )
         elif status == "moved":
             warn.append(
@@ -876,7 +923,7 @@ def count_values(t: Texts) -> dict[str, str]:
     vals["COUNT:consumers"] = str(len(consumer_rows(spec)))
     vals["COUNT:tokens"] = str(len(bound_names(spec)))
     vals["COUNT:tokens.proposed"] = str(sum("PROPOSED" in r[0] for r in token_rows(spec)))
-    for cid, (aid, _, _, _, _) in STORY_ROWS.items():
+    for cid, (aid, _, _, _) in STORY_ROWS.items():
         vals[f"COUNT:stories.{cid}"] = str(len(stories_of(new_of(spec, aid))))
     vals["COUNT:mutations"] = str(len(MUTATIONS))
     return vals
@@ -996,12 +1043,15 @@ def all_units(spec: str, hand: str) -> list[Unit]:
 
 
 def fresh_cite_pins(t: Texts) -> dict[str, CitePin]:
-    """Every distinct cite -> the hash of its line(s) at its own number (PR 1's pins)."""
+    """Every distinct cite -> the hash of its line(s) and of its entry's heading at its own number
+    (PR 1's pins)."""
     out: dict[str, CitePin] = {}
     for key, a, b in all_cites(t):
         ls = t.env.lines(t.env.base, PATHS[key])
         if 0 < a <= b <= len(ls):
-            out[label_of(key, a, b)] = (line_hash(ls[a - 1], ls[b - 1]), None)
+            out[label_of(key, a, b)] = CitePin(
+                line_hash(ls[a - 1], ls[b - 1]), head_hash(heading_before(ls, a)), None
+            )
     return out
 
 
@@ -1009,16 +1059,17 @@ def write_pins(us: list[Unit], cites: dict[str, CitePin]) -> str:
     head = (
         "# E32-D06 pins (every unit of the pack and the hand-off): region, location, the exact "
         f"normalised text; {len(us)} units, then {len(cites)} cite pins (`cite`, the cite, a hash "
-        "of the cited line at the base, and `@n` once a move was recorded in PR 2).\n# Written by "
-        "`--repin-ruled` only; `--check` reads it (never hand-edit; see the tool's G-RULED-PIN and "
-        "G-HYGIENE).\n"
+        "of the cited line at the base, a hash of its entry's heading, and `@n` once a move was "
+        "recorded in PR 2).\n# Written by `--repin-ruled` only; `--check` reads it (never "
+        "hand-edit; see the tool's G-RULED-PIN and G-HYGIENE).\n"
     )
     body = "".join("\t".join(u) + "\n" for u in us)
-    for label, (h, at) in cites.items():
+    for label, pin in cites.items():
+        at = pin.at
         tail = (
             "" if at is None else ("\t@" + (str(at[0]) if at[0] == at[1] else f"{at[0]}–{at[1]}"))
         )
-        body += f"cite\t{label}\t{h}{tail}\n"
+        body += f"cite\t{label}\t{pin.h}\t{pin.head}{tail}\n"
     return head + body
 
 
@@ -1080,20 +1131,22 @@ def pins_diff_problems(t: Texts, mb: str) -> list[str]:
     oc, nc = cite_pins(old), cite_pins(t.pins)
     if list(oc) != list(nc):
         bad.append("PR 2 added, dropped or reordered a cite pin")
-    for label, (h, at) in nc.items():
+    for label, pin in nc.items():
         if label not in oc:
             continue
-        if oc[label][0] != h:
+        if oc[label].h != pin.h:
             bad.append(f"PR 2 changed the pinned content of cite {label}")
-        elif at != oc[label][1]:
+        elif oc[label].head != pin.head:
+            bad.append(f"PR 2 changed the pinned entry of cite {label}")
+        elif pin.at != oc[label].at:
+            at = pin.at
             m = re.fullmatch(r"([A-Z0-9]+):(\d+)(?:–(\d+))?", label)
             key = m[1] if m else ""
             ls = t.env.lines(t.env.base, PATHS.get(key, "")) if key in PATHS else []
             ok = (
-                bool(at)
-                and at is not None
+                at is not None
                 and 0 < at[0] <= at[1] <= len(ls)
-                and (line_hash(ls[at[0] - 1], ls[at[1] - 1]) == h)
+                and (line_hash(ls[at[0] - 1], ls[at[1] - 1]) == pin.h)
             )
             if not ok:
                 bad.append(
@@ -1144,10 +1197,13 @@ def anchor_gate(key: str) -> str:
 
 def anchor_problems(t: Texts, gate: str) -> list[str]:
     bad: list[str] = []
+    pr2 = pr2_mode(t)
     for doc, text in (("spec", t.spec), ("hand", t.hand)):
         for value, key, ln in anchored(text):
             if anchor_gate(key) != gate:
                 continue
+            if pr2 and key.startswith("SHA:"):
+                continue  # PR 1's record of its inputs; G-HYGIENE checks `SHA:BASE`'s ancestry
             want = t.values.get(key)
             if want is None:
                 bad.append(f"{doc}:{ln} anchors `{key}`, which the tool does not compute")
@@ -1182,6 +1238,7 @@ def residue_problems(doc: str, text: str, gate: str) -> list[str]:
 
 def g_ledger(t: Texts) -> list[Finding]:
     bad = anchor_problems(t, "G-LEDGER")
+    warn: list[str] = []
     rows = ledger_rows(t.spec)
     ids = [r[0] for r in rows]
     if ids != [f"L-{i}" for i in range(1, len(ids) + 1)]:
@@ -1195,8 +1252,14 @@ def g_ledger(t: Texts) -> list[Finding]:
         if not m or m[2] not in PATHS:
             bad.append(f"{r[0]}: the row of record is not `needle` (KEY:line)")
             continue
-        if m[1] not in cite_line(t, m[2], int(m[3])):
+        line, at, status = cite_at(t, m[2], int(m[3]))
+        if m[1] not in line:
             bad.append(f"{r[0]}: {m[2]}:{m[3]} does not carry `{m[1]}` at the base")
+        elif status == "moved":
+            warn.append(
+                f"{r[0]}: its row of record stands at {m[2]}:{at}, not :{m[3]} (moved inside its "
+                "entry; re-point it)"
+            )
         d = disposition(r[3])
         if not d:
             bad.append(f"{r[0]}: disposition {r[3][:30]!r} is not in the ruled set")
@@ -1211,19 +1274,26 @@ def g_ledger(t: Texts) -> list[Finding]:
             rel = CAT_REL if fm[1] == "15" else SCR_REL
             if f"(#{pm[1]})" not in t.env.log_subjects(rel):
                 bad.append(f"{r[0]}: no merged PR #{pm[1]} in {rel}'s history at {HEAD_REF}")
-            if pm[2] not in cite_line(t, fm[1], int(fm[2])):
+            line, at, status = cite_at(t, fm[1], int(fm[2]))
+            if pm[2] not in line:
                 bad.append(f"{r[0]}: `{fm[1]}`:{fm[2]} does not carry {pm[2]!r} at the base")
+            elif status == "moved":
+                warn.append(
+                    f"{r[0]}: its applied line stands at `{fm[1]}`:{at}, not :{fm[2]} (moved "
+                    "inside its entry; re-point it)"
+                )
         here = a_ids(r[4])
         if r[4] != "—" and not here:
             bad.append(f"{r[0]}: the Here cell is neither — nor A-ids")
         for a in here:
             if a not in have:
                 bad.append(f"{r[0]}: carries {a}, which §C lacks")
-    return one("G-LEDGER", bad)
+    return one("G-LEDGER", bad) + one("G-LEDGER", warn, "WARN")
 
 
 def g_arow(t: Texts) -> list[Finding]:
     bad = anchor_problems(t, "G-AROW")
+    warn: list[str] = []
     rows = c_rows(t.spec)
     if [r[0] for r in rows] != [f"A-{i}" for i in range(1, len(rows) + 1)]:
         bad.append("§C's rows are not A-1 ... A-n in order")
@@ -1235,28 +1305,54 @@ def g_arow(t: Texts) -> list[Finding]:
         if not m:
             bad.append(f"{r[0]}: the Field cell is not `15`:n or `14`:n")
             continue
-        ls = t.env.lines(t.env.base, CAT_REL if m[1] == "15" else SCR_REL)
-        n = int(m[2])
-        line = ls[n - 1] if 0 < n <= len(ls) else None
+        key, n = m[1], int(m[2])
+        ls = t.env.lines(t.env.base, PATHS[key])
+        ident = r[1].split(" ")[0]
+        span = entry_span(ls, ident) if ENTRY_ID.match(ident) else None
+        if span is None:
+            bad.append(f"{r[0]}: `### {ident}` stands nowhere once in `{key}` at the base")
+            continue
         new = new_of(t.spec, r[0])
         if r[3] == "replace":
-            if line is None or unescape(r[4]) != line:
-                bad.append(f"{r[0]}: Old is not `{m[1]}`:{n} at the base, byte for byte")
-            if new == (line or ""):
+            old = unescape(r[4])
+            hits = [i + 1 for i in range(*span) if ls[i] == old]
+            if len(hits) != 1:
+                bad.append(
+                    f"{r[0]}: Old stands {len(hits) or 'nowhere'}{' times' if hits else ''} in "
+                    f"{ident}'s entry at the base, byte for byte (edited, or moved out of it)"
+                )
+            elif hits[0] != n:
+                warn.append(
+                    f"{r[0]}: Old stands at `{key}`:{hits[0]}, not :{n} (moved inside its entry; "
+                    "re-point the Field cell)"
+                )
+            if new == old:
                 bad.append(f"{r[0]}: New equals Old")
         elif r[3] == "insert after":
             if r[4] != "—":
                 bad.append(f"{r[0]}: an insert carries an Old cell")
+            a2, _, status = resolve_cite(t, key, n, n)
+            if status in ("range", "gone"):
+                bad.append(
+                    f"{r[0]}: its anchor `{key}`:{n} stands nowhere once in its entry at the base"
+                )
+            elif not (span[0] <= a2 - 1 < span[1]):
+                bad.append(f"{r[0]}: its anchor `{key}`:{a2} is outside {ident}'s entry")
+            elif status == "moved":
+                warn.append(
+                    f"{r[0]}: its anchor stands at `{key}`:{a2}, not :{n} (moved inside its entry; "
+                    "re-point the Field cell)"
+                )
         else:
             bad.append(f"{r[0]}: op {r[3]!r} is neither replace nor insert after")
         for ln in new.split("<br>"):
             if not ln.startswith("- **"):
                 bad.append(f"{r[0]}: a New line is not an entry bullet")
-    export = a_rows_export(t.spec, t.env.at_base(CAT_REL), t.env.at_base(SCR_REL))
+    export = a_rows_export(t)
     for rel in (CAT_REL, SCR_REL):
         _, probs = apply_rows(t.env.at_base(rel), [x for x in export if x["file"] == rel])
         bad += probs
-    return one("G-AROW", bad)
+    return one("G-AROW", bad) + one("G-AROW", warn, "WARN")
 
 
 def g_token(t: Texts) -> list[Finding]:
@@ -1390,9 +1486,14 @@ def g_strings(t: Texts) -> list[Finding]:
 
 def g_stories(t: Texts) -> list[Finding]:
     bad = anchor_problems(t, "G-STORIES")
-    for cid, (aid, n, parent, rule, extra) in STORY_ROWS.items():
+    for cid, (aid, parent, rule, extra) in STORY_ROWS.items():
         new = stories_of(new_of(t.spec, aid))
-        base = stories_of(cite_line(t, "15", n))
+        row = a_row(t.spec, aid)
+        fm = FIELD.fullmatch(row[2]) if row and len(row) == 7 else None
+        if fm is None:
+            bad.append(f"CMP-{cid}: {aid} has no `15`:n Field cell to read the base's list from")
+            continue
+        base = stories_of(cite_line(t, fm[1], int(fm[2])))
         want = list(extra)
         if parent:
             want += parent_stories(t, *parent)
@@ -1523,8 +1624,10 @@ def g_version(t: Texts) -> list[Finding]:
         label = label_of(key, a0, b0)
         if 0 < a2 <= b2 <= len(hl) and line_hash(hl[a2 - 1], hl[b2 - 1]) == h:
             continue
-        # re-find inside the cited entry alone (A-24's "unit, visual, axe." stands in many entries)
-        at = found_in_entry(env, HEAD_REF, rel, h, b2 - a2, heading_before(ls, a2))
+        # re-find inside the pinned entry alone (A-24's "unit, visual, axe." stands in many entries)
+        pin = cite_pins(t.pins).get(label)
+        hh = pin.head if pin and pin.head else head_hash(heading_before(ls, a2))
+        at = found_in_entry(env, HEAD_REF, rel, h, b2 - a2, hh)
         if len(at) == 1:
             warn.append(
                 f"cite {label} stands at :{at[0]} at {HEAD_REF} (moved; re-pin at the next edit)"
@@ -1580,7 +1683,7 @@ def g_hygiene(t: Texts) -> list[Finding]:
                     )
                 elif p not in OWN_PATHS and p not in (CAT_REL, SCR_REL):
                     bad.append(f"PR 2 changes {p}, outside `15`, `14` and the pins")
-            rows = a_rows_export(t.spec, t.env.at_base(CAT_REL), t.env.at_base(SCR_REL))
+            rows = a_rows_export(t)
             want15, b15 = apply_rows(
                 t.env.at_base(CAT_REL), [r for r in rows if r["file"] == CAT_REL]
             )
@@ -1592,6 +1695,15 @@ def g_hygiene(t: Texts) -> list[Finding]:
                 bad.append("PR 2: `15` is not the base with §C applied exactly (an extra byte)")
             if t.cat14 != want14:
                 bad.append("PR 2: `14` is not the base with §C's `14` rows applied exactly")
+            for value, key, _ in anchored(t.spec):
+                if key == "SHA:BASE" and (
+                    git_raw("merge-base", "--is-ancestor", value, t.env.base) is None
+                ):
+                    bad.append(
+                        f"PR 2: the recorded `SHA:BASE` {value} is no ancestor of the merge-base "
+                        "(the pack was pinned on another line)"
+                    )
+                    break
             if PINS_REL in t.changed:
                 bad += pins_diff_problems(t, t.env.base)
     para = mutation_paragraph(t.spec)
@@ -1661,29 +1773,39 @@ def audit(t: Texts, timings: dict[str, float] | None = None) -> list[Finding]:
 # ---------------------------------------------------------------------------- §C export and PR 2
 
 
-def a_rows_export(spec: str, base15: str, base14: str) -> list[dict[str, object]]:
-    """§C as data for PR 2: anchors dropped, escapes undone; each row carries its file, its entry
-    heading and its anchor line at the base so PR 2 re-points by content."""
+def a_rows_export(t: Texts) -> list[dict[str, object]]:
+    """§C as data for PR 2, re-pointed by content: each row carries its file, its target's entry
+    heading (`### CMP-nnn` / `### SCR-nnn`), its anchor line (a replace: the Old; an insert: the
+    pinned line, re-found by content) and the line where that anchor stands at the base; the
+    Field cell's number is where the row was written, advisory once the line moved."""
     out: list[dict[str, object]] = []
-    for r in c_rows(spec):
+    for r in c_rows(t.spec):
         if len(r) != 7:
             continue
         m = FIELD.fullmatch(r[2])
         if not m:
             continue
-        rel = CAT_REL if m[1] == "15" else SCR_REL
-        lines = lines_of(base15 if rel == CAT_REL else base14)
-        n = int(m[2])
-        anchor = lines[n - 1] if 0 < n <= len(lines) else ""
-        head = next((lines[i] for i in range(min(n, len(lines)) - 1, -1, -1)
-                     if lines[i].startswith("### ")), "")  # fmt: skip
+        key, n = m[1], int(m[2])
+        rel = PATHS[key]
+        ls = t.env.lines(t.env.base, rel)
+        ident = r[1].split(" ")[0]
+        span = entry_span(ls, ident) if ENTRY_ID.match(ident) else None
+        if r[4] != "—":
+            anchor = unescape(r[4])
+            hits = [i + 1 for i in range(*span) if ls[i] == anchor] if span else []
+            line = hits[0] if len(hits) == 1 else n
+        else:
+            line, _, status = resolve_cite(t, key, n, n)
+            if status == "range":
+                line = n
+            anchor = ls[line - 1] if 0 < line <= len(ls) else ""
         out.append(
             {
                 "id": r[0],
                 "target": r[1],
                 "file": rel,
-                "line": n,
-                "entry": head,
+                "line": line,
+                "entry": ls[span[0]] if span else "",
                 "anchor": anchor,
                 "op": r[3],
                 "old": [] if r[4] == "—" else [unescape(r[4])],
@@ -1741,6 +1863,9 @@ class Mutation:
     gate: str
     what: str
     apply: Callable[[Texts], Texts]
+    level: str = "FAIL"  # the finding the mutation must raise from `gate`: FAIL, or WARN (a move)
+    also: tuple[str, ...] = ()  # the other gates that raise it too (a `15` line moved or edited at
+    # the base is G-HYGIENE's cite finding as well as G-AROW's)
 
 
 def flex(old: str) -> re.Pattern[str]:
@@ -1796,7 +1921,7 @@ def head_sprint_days(t: Texts) -> Texts:
 
 
 def pr2_texts(t: Texts, extra15: str = "", extra_changed: tuple[str, ...] = ()) -> Texts:
-    rows = a_rows_export(t.spec, t.env.at_base(CAT_REL), t.env.at_base(SCR_REL))
+    rows = a_rows_export(t)
     c15, _ = apply_rows(t.env.at_base(CAT_REL), [r for r in rows if r["file"] == CAT_REL])
     c14, _ = apply_rows(t.env.at_base(SCR_REL), [r for r in rows if r["file"] == SCR_REL])
     return replace(t, cat15=c15 + extra15, cat14=c14, changed=[CAT_REL, SCR_REL, *extra_changed])
@@ -1821,27 +1946,52 @@ def pr2_moved(
     memo[f"show:{t.env.base}:{PINS_REL}"] = t.pins
     t2 = replace(t2, env=Env(t.env.base, memo))
     cites = cite_pins(t.pins)
-    moved = {}
+    moved: dict[str, CitePin] = {}
     first_d02 = True
-    for label, (h, at) in cites.items():
+    for label, pin in cites.items():
         m = re.fullmatch(r"D02:(\d+)(?:–(\d+))?", label)
         if m:
             a = int(m[1]) + 1
             b = (int(m[2]) if m[2] else int(m[1])) + 1
             if wrong_at and first_d02:
                 a, b, first_d02 = a + 1, b + 1, False
-            moved[label] = (h, (a, b))
+            moved[label] = replace(pin, at=(a, b))
         elif label == hash_edit:
-            moved[label] = (h[::-1] if h[::-1] != h else "0" * len(h), at)
+            moved[label] = replace(pin, h=pin.h[::-1] if pin.h[::-1] != pin.h else "0" * len(pin.h))
         elif label == drop:
             continue
         else:
-            moved[label] = (h, at)
+            moved[label] = pin
     us = parse_pins(t.pins)
     if unit_edit and us:
         us[0] = (us[0][0], us[0][1], us[0][2] + " x")
     pins = write_pins(us, moved) + ("# a stray line\n" if stray else "")
     return replace(pr2_texts(t2, extra_changed=(PINS_REL,)), pins=pins)
+
+
+def cat15_line(t: Texts, aid: str, how: str) -> Texts:
+    """`15` at the base and at origin/main with the Old of `aid` (a replace row) moved one line down
+    inside its entry (`within`: swapped with the next line), edited by one byte (`edited`), or moved
+    out of its entry to just above the entry's heading (`out`)."""
+    r = a_row(t.spec, aid)
+    if r is None or len(r) != 7 or r[3] != "replace":
+        raise SystemExit(f"self-test: §C lacks a replace row {aid}")
+    old, ident = unescape(r[4]), r[1].split(" ")[0]
+    ls = lines_of(t.env.at_base(CAT_REL))
+    span = entry_span(ls, ident)
+    hits = [i for i in range(*span) if ls[i] == old] if span else []
+    if span is None or len(hits) != 1 or hits[0] + 1 >= span[1]:
+        raise SystemExit(f"self-test: {aid}'s Old does not stand once inside {ident}'s entry")
+    i = hits[0]
+    if how == "within":
+        ls[i], ls[i + 1] = ls[i + 1], ls[i]
+    elif how == "edited":
+        ls[i] = old[:-1] + ("x" if old[-1] != "x" else "y")
+    else:
+        del ls[i]
+        ls.insert(span[0], old)
+    text = "\n".join(ls)
+    return with_text(with_text(t, t.env.base, CAT_REL, text), HEAD_REF, CAT_REL, text)
 
 
 M = Mutation
@@ -1853,6 +2003,12 @@ MUTATIONS: tuple[Mutation, ...] = (
       subst("applied by #4198:", "applied by #4199:")),
     M("G-AROW", "misquote A-3's Old cell by one letter",
       subst("no hover, no dismiss, no loading). |", "no hover, no dismis, no loading). |")),
+    M("G-AROW", "move A-21's `15` line one line down inside CMP-120's entry at the base (a move)",
+      lambda t: cat15_line(t, "A-21", "within"), level="WARN", also=("G-HYGIENE",)),
+    M("G-AROW", "edit one byte of A-21's `15` line at the base",
+      lambda t: cat15_line(t, "A-21", "edited"), also=("G-HYGIENE",)),
+    M("G-AROW", "move A-21's `15` line out of CMP-120's entry, above its heading",
+      lambda t: cat15_line(t, "A-21", "out"), also=("G-HYGIENE",)),
     M("G-TOKEN", "bind a §7 row to a token name no theme resolves",
       subst("| `color.status.info.subtle` | the note's fill", "| `color.status.info.subtl` | the note's fill")),
     M("G-CONTRAST", "type a ratio by hand in §11", anchor_edit("CONTRAST:p1.dark", "9.99")),
@@ -1887,6 +2043,8 @@ MUTATIONS: tuple[Mutation, ...] = (
       lambda t: pr2_moved(t, hash_edit="CONST:443–444")),
     M("G-HYGIENE", "simulate PR 2 with one cite pin dropped",
       lambda t: pr2_moved(t, drop="CONST:164–166")),
+    M("G-HYGIENE", "simulate PR 2 with a `SHA:BASE` record that is no ancestor of its base",
+      lambda t: anchor_edit("SHA:BASE", "0000000000")(pr2_texts(t))),
     M("G-CLAIM", "state a time by which the stop is attached ('within 2 s') in §4",
       subst("in which the `trading-stop` write is scheduled with a 2 s deadline; until the stop lands",
             "in which the native stop is attached within 2 s of the order; until the stop lands")),
@@ -1932,13 +2090,21 @@ def selftest() -> tuple[bool, list[str]]:
     for f in base_found:
         out.append(ascii_line(f"  baseline {f.gate}: {f.msg}"))
     for i, m in enumerate(MUTATIONS, 1):
-        fails = [f for f in audit(m.apply(base)) if f.level == "FAIL"]
-        gates = sorted({f.gate for f in fails})
-        good = bool(fails) and gates == [m.gate]
+        found = audit(m.apply(base))
+        fails = sorted({f.gate for f in found if f.level == "FAIL"})
+        want = sorted({m.gate, *m.also})
+        if m.level == "FAIL":
+            good, got = bool(fails) and fails == want, fails
+        else:  # a move: the named gates WARN (beyond the head's own drift) and nothing FAILs
+            warns = sorted(
+                {f.gate for f in found if f.level == "WARN" and (f.gate, f.msg) not in drift}
+            )
+            good, got = not fails and warns == want, fails or warns
         ok &= good
+        tag = m.gate if m.level == "FAIL" else f"{m.gate} (WARN)"
         out.append(
             ascii_line(
-                f"{'ok  ' if good else 'FAIL'} M-{i} {m.gate}: {m.what} -> {', '.join(gates) or 'none'}"
+                f"{'ok  ' if good else 'FAIL'} M-{i} {tag}: {m.what} -> {', '.join(got) or 'none'}"
             )
         )
     for name, scenario in NEGATIVES:
@@ -1989,13 +2155,7 @@ def main(argv: list[str]) -> int:
         return 0 if ok else 1
     t = load()
     if a.a_rows:
-        print(
-            json.dumps(
-                a_rows_export(t.spec, t.env.at_base(CAT_REL), t.env.at_base(SCR_REL)),
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        print(json.dumps(a_rows_export(t), ensure_ascii=False, indent=2))
         return 0
     if a.repin_ruled:
         for doc, text in (("spec", t.spec), ("hand", t.hand)):
@@ -2012,11 +2172,12 @@ def main(argv: list[str]) -> int:
             return 1
         if pr2_mode(t):
             # PR 2: the units stand; record the cite moves found by content (BQ-03)
-            pins = cite_pins(t.pins)
+            pins = dict(cite_pins(t.pins))
             for key, a0, b0 in all_cites(t):
                 a2, b2, status = resolve_cite(t, key, a0, b0)
                 if status == "moved":
-                    pins[label_of(key, a0, b0)] = (pins[label_of(key, a0, b0)][0], (a2, b2))
+                    label = label_of(key, a0, b0)
+                    pins[label] = replace(pins[label], at=(a2, b2))
             write_text(PINS_REL, write_pins(parse_pins(t.pins), pins))
             print(f"wrote {PINS_REL} (PR 2: cite moves recorded, units untouched)")
             return 0
