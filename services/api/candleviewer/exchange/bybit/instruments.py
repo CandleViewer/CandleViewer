@@ -52,7 +52,7 @@ def _decimal(raw: Mapping[str, Any], key: str, *, require_positive: bool = False
 def _int(raw: Mapping[str, Any], key: str, value: Any) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:  # #5040: `int(inf)` overflows
         raise InstrumentParseError(f"field {key!r} is not an integer: {value!r}") from exc
 
 
@@ -82,7 +82,7 @@ def parse_instrument(raw: Mapping[str, Any], *, fetched_at_us: int) -> Instrumen
         launch_time_ms = int(raw["launchTime"])
     except KeyError as exc:
         raise InstrumentParseError(f"missing required field {exc.args[0]!r}") from exc
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise InstrumentParseError(
             f"launchTime is not an integer: {raw.get('launchTime')!r}"
         ) from exc
