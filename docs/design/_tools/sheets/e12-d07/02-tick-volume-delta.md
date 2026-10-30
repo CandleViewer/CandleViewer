@@ -2,7 +2,7 @@
 
 File `E12-D07 boards`, page `E12-D07 SCR-045 data table`; export `docs/design/E12/img/E12-D07-02-tick-volume-delta.png`; sheet `02-tick-volume-delta.json` (validated); theme dark.
 
-Board 02 of ten (§0 L56: the non-time row header (§2.2); tick's `trades`; the volume and delta variants as frames of one board, delta's `buy` and `sell` among them; `close time` and `duration` as auto columns). Grid (6000, 0); 3280 x 2644 px; footer "page E12-D07 SCR-045 data table · board 02 · r1".
+Board 02 of ten (§0 L75: the non-time row header (§2.2); tick's `trades`; the volume and delta variants as frames of one board, delta's `buy` and `sell` among them; `close time` and `duration` as auto columns). Grid (6000, 0); 3280 x 2644 px; footer "page E12-D07 SCR-045 data table · board 02 · r1".
 
 ## Frames
 
@@ -10,17 +10,17 @@ Board 02 of ten (§0 L56: the non-time row header (§2.2); tick's `trades`; the 
 - `SCR-045∕tick∕wide-auto · dark`
 - `SCR-045∕volume∕default · dark`
 - `SCR-045∕delta∕default · dark`
-- tick/default: tick set, RightRail open, P columns only; bar 3 of 5 focused (spec §2.2 L113–116, §3.1 L135)
-- tick/wide-auto: + close time, duration (§3.1 L141–142, §5 L186, §7.4 L257); bar 3 of 5 focused
-- volume/default: volume set + auto columns; bar k of 8 at the sweep (§3.2 L153, §5 L187)
-- delta/default: delta set + buy, sell, close time, duration (§3.1 L136–137, §3.2 L155, §5 L189)
-- Walkthrough (hand-off §E L58): a tick row says when it opened and its position (row header), when it closed and how long it took (row name close clause, §2.2 L116; the wide frame's cells), and its `trades`
-- Copy: W-10 (spec L332), W-11 (L333), W-12 (L334), W-14 (L336); theme dark; export docs/design/E12/img/E12-D07-02-tick-volume-delta.png
+- tick/default: tick set, RightRail open, P columns only; bar 3 of 5 focused (spec §2.2 L134–137, §3.1 L156)
+- tick/wide-auto: + close time, duration (§3.1 L162–163, §5 L207, §7.4 L278); bar 3 of 5 focused
+- volume/default: volume set + auto columns; bar k of 8 at the sweep (§3.2 L174, §5 L208)
+- delta/default: delta set + buy, sell, close time, duration (§3.1 L157–158, §3.2 L176, §5 L210)
+- Walkthrough (hand-off §E L59): a tick row says when it opened and its position (row header), when it closed and how long it took (row name close clause, §2.2 L137; the wide frame's cells), and its `trades`
+- Copy: W-10 (spec L353), W-11 (L354), W-12 (L355), W-14 (L357); theme dark; export docs/design/E12/img/E12-D07-02-tick-volume-delta.png
 
 ## Validator and size
 
-- `02-tick-volume-delta.json: 0 errors, 181 warnings, 94 sections, 244777 bytes` (exit 0)
-- 94 sections, 244777 bytes
+- `02-tick-volume-delta.json: 0 errors, 181 warnings, 100 sections, 353801 bytes` (exit 0)
+- 100 sections, 353801 bytes
 
 ## Live checks (15)
 
@@ -42,9 +42,9 @@ Board 02 of ten (§0 L56: the non-time row header (§2.2); tick's `trades`; the 
 
 ## Spec gaps (5)
 
-- A-1: at 1280 the one panel is 1,168 CSS px and tick's auto set (1,004.4, §5 L186) fits, so tick/default and tick/wide-auto would be one picture; tick/default opens the RightRail (dock 976) so the auto columns stay hidden there
-- A-2: §2.2 L116's example “closed 10:22:14.020 after 0:02.6” cannot hold under its own rule (L114): bars sharing one open time are consecutive, so bars 1–4 of 5 close at 10:22:11.412 after 0:00.0; the data keeps the rule and the example string is not drawn
-- A-8: hand-off §H L92's recorded fixtures cannot build tick / volume / delta bars; seeded synthetic stream, the instrument's tick size and qty step from the fixture
+- A-1: at 1280 the one panel is 1,168 CSS px and tick's auto set (1,004.4, §5 L207) fits, so tick/default and tick/wide-auto would be one picture; tick/default opens the RightRail (dock 976) so the auto columns stay hidden there
+- A-2: §2.2 L137's example “closed 10:22:14.020 after 0:02.6” cannot hold under its own rule (L135): bars sharing one open time are consecutive, so bars 1–4 of 5 close at 10:22:11.412 after 0:00.0; the data keeps the rule and the example string is not drawn
+- A-8: hand-off §H L95's recorded fixtures cannot build tick / volume / delta bars; seeded synthetic stream, the instrument's tick size and qty step from the fixture
 - A-11: the caption's date sits inside the visible-range clause
 - A-12: color.text.buy / color.text.sell unregistered: signed cells use color.buy.default / color.sell.default, the sign carries the meaning
 
@@ -52,12 +52,12 @@ Board 02 of ten (§0 L56: the non-time row header (§2.2); tick's `trades`; the 
 
 ## Copy keys (6)
 
-- W-10 (§13 L332, verbatim)
-- W-11 (§13 L333, PROPOSED, the registry's unit)
-- W-19 (§13 L341, PROPOSED)
-- W-21 (§13 L343, PROPOSED)
-- W-12 (§13 L334, PROPOSED, the registry's unit)
-- W-14 (§13 L336, PROPOSED, the registry's unit)
+- W-10 (§13 L353, verbatim)
+- W-11 (§13 L354, PROPOSED, the registry's unit)
+- W-19 (§13 L362, PROPOSED)
+- W-21 (§13 L364, PROPOSED)
+- W-12 (§13 L355, PROPOSED, the registry's unit)
+- W-14 (§13 L357, PROPOSED, the registry's unit)
 
 ## Copy gaps (0)
 
@@ -68,7 +68,7 @@ Board 02 of ten (§0 L56: the non-time row header (§2.2); tick's `trades`; the 
 
 ## Sources (1)
 
-- spec E12-D07.md md5 93418570 (§0 L56); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 561a7fee (§0 L75); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (32)
 
@@ -76,6 +76,7 @@ Board 02 of ten (§0 L56: the non-time row header (§2.2); tick's `trades`; the 
 - size.icon.sm
 - type.num.sm
 - color.text.primary
+- space.inset.sm
 - color.sell.default
 - color.surface.canvas
 - color.surface.raised
@@ -88,7 +89,6 @@ Board 02 of ten (§0 L56: the non-time row header (§2.2); tick's `trades`; the 
 - color.border.default
 - border.hairline
 - radius.control
-- space.inset.sm
 - space.inset.xs
 - space.stack.xs
 - color.surface.selected

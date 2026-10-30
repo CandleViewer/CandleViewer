@@ -14,8 +14,9 @@ SPEC = "E12-D07"  # cited by spec name + line in the annotations; never a path
 KEYS_100 = ("Alt+T opens the table in place, focus on the cursor bar's row (D04E11:115); ↑ / ↓ move the row, "
             "Esc or Alt+T back (D04E11:129)")
 CLOSING = {"tick": "W-11", "volume": "W-12", "range": "W-13", "delta": "W-14", "renko": "W-15"}
-QTY_LINE = {"tick": "§3.2 L152 (tick: trades in the bar)", "volume": "§3.2 L153 (volume: base-asset volume)",
-            "delta": "§3.2 L155 (delta: net delta, buy and sell beside it)"}
+QTY_LINE = {"tick": f"§3.2 L{k.L('| tick   |')} (tick: trades in the bar)", "volume": f"§3.2 L{k.L('| volume |')} "
+                                                                                      "(volume: base-asset volume)",
+            "delta": f"§3.2 L{k.L('| delta  |')} (delta: net delta, buy and sell beside it)"}
 
 
 def sweep_rows(mode: str, before: int = 3) -> tuple[list[k.Bar], int]:
@@ -43,7 +44,7 @@ def table_frame(fid: str, mode: str, *, rail: str, focus_k: int | None = 3, stat
                 announce: str = "Data table, row k of N (D04E11:115 D2)", full: bool = True,
                 base_cols: tuple[str, ...] = ()) -> tuple[dict[str, Any], tuple[str, list[str]]]:
     """A 1280 x 800 window, one chart panel, the table open in place; rows from 3 bars ahead of the sweep, as many as
-    fit. Auto columns (close time, duration; delta's buy / sell) join when the auto set fits the dock (§5 L193)."""
+    fit. Auto columns (close time, duration; delta's buy / sell) join when the auto set fits the dock (§5 L214)."""
     w = k.dock_w(rail)
     rows_all, i0 = sweep_rows(mode)
     auto_cols = k.shown_columns(mode, auto=True)
@@ -61,9 +62,11 @@ def table_frame(fid: str, mode: str, *, rail: str, focus_k: int | None = 3, stat
     fb = focus or sel[len(sel) // 2]
     fi = sel.index(fb) + 1
     lines = [f"Width: dock {w} (rail {'open' if rail == 'open' else 'strip'}); {mode} {k.set_width(mode, 'P')} / "
-             f"{k.set_width(mode, 'PA')} with auto (§5 L{186 if mode == 'tick' else 187 if mode == 'volume' else 189})"
-             f" → auto columns {'shown' if auto else 'hidden (in the row name, §3.1 L141–142)'}",
-             f"Rows: {len(sel)} of {len(rows_all):,} loaded from {k.row_header(sel[0], mode)}; served order (§2.2 L117)",
+             f"{k.set_width(mode, 'PA')} with auto (§5 L{k.L(f'| {mode:<6} | ', start=k.L('## 5. Widths'))})"
+             " → auto columns "
+             f"{'shown' if auto else f'hidden (in the row name, §3.1 L{k.L('| close time')}–{k.L('| duration')})'}",
+             f"Rows: {len(sel)} of {len(rows_all):,} loaded from {k.row_header(sel[0], mode)}; served order (§2.2 "
+             f"L{k.L('- **Order')})",
              *dash_lines(sel, cols, mode), *extra]
     if not any("“—”" in ln for ln in lines):
         lines.append("“—”: no value cell; `state` “—” = closed, unmarked (§6)")
@@ -74,7 +77,8 @@ def table_frame(fid: str, mode: str, *, rail: str, focus_k: int | None = 3, stat
                            k.columns_line([c for c in cols if c not in base_cols], mode) + " · plus " +
                            ", ".join(c for c in cols if c in base_cols) + " as tick∕default"),
             ("Row header: as tick∕default" if not full and mode == "tick" else
-             f"Row header: {k.row_header(fb, mode)} (§2.2 L113) — name: {k.row_name(fb, mode)} (§2.2 L116)"),
+             f"Row header: {k.row_header(fb, mode)} (§2.2 L{k.L('- **Visible')}) — name: {k.row_name(fb, mode)} (§2.2 "
+             f"L{k.L('- **Accessible')})"),
             f"Keyboard and focus: {keyboard}", f"Announcement: {announce}",
             "Copy: " + " · ".join(f"{c} “{k.COPY[c][0]}” (L{k.COPY[c][1]})" for c in ("W-10", CLOSING[mode]))]
     for c in ("W-10", CLOSING[mode]):

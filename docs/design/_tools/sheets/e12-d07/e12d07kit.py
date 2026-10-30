@@ -1,7 +1,7 @@
 """E12-D07 (#242) board kit: SCR-045, the per-bar-mode data table, PR 2's ten boards as cvsheet JSON sheets.
 
 Offline only. Spec (binding; every string comes from it): docs/design/E12/E12-D07.md and E12-D07-handoff.md as
-origin/main had them at PIN (read with `git show PIN:<path>` from this checkout; md5s pinned in SPEC_MD5). The
+this checkout commits them (read by repo-relative path; md5s pinned in SPEC_MD5: the kit refuses drifted bytes). The
 SCR-045 shell is E11-D04's (consumed, never redrawn differently); the window chrome and the chart panel geometry
 follow the committed E12-D04 board kit (docs/design/_tools/sheets/e12-d04: TopBar 80, NavRail 64, RightRail strip 48,
 StatusBar 48, tab strip 32, panel focus inset 2, compact controls 24).
@@ -45,41 +45,20 @@ VALIDATOR = SHEETS_DIR / "tools" / "validate_sheet.py"
 PACKER = SHEETS_DIR / "tools" / "compact.py"
 COMPONENTS = SHEETS_DIR / "tools" / "components.offline.json"
 TOKENS_FILE = SHEETS_DIR / "tools" / "token-sync.json"
-PIN = "c3119e61e"  # origin/main when the kit was cut: every spec read is `git show PIN:<path>` (needs this checkout)
+REPO = KIT_DIR.parents[4]  # the checkout's root: every spec read is REPO / <repo-relative path>, md5-pinned below
 
 
-class _Pinned:
-    """A repo path read at PIN with `git show` (the Path subset the kit uses: /, name, read_bytes, read_text)."""
-
-    _cache: dict[str, bytes] = {}
-
-    def __init__(self, rel: str = "") -> None:
-        self.rel = rel
-
-    def __truediv__(self, rel: str) -> "_Pinned":
-        return _Pinned(f"{self.rel}/{rel}".strip("/"))
-
-    @property
-    def name(self) -> str:
-        return self.rel.rsplit("/", 1)[-1]
-
-    def read_bytes(self) -> bytes:
-        if self.rel not in _Pinned._cache:
-            _Pinned._cache[self.rel] = subprocess.run(
-                ["git", "-C", str(KIT_DIR), "show", f"{PIN}:{self.rel}"], capture_output=True, check=True,
-                timeout=60).stdout
-        return _Pinned._cache[self.rel]
-
-    def read_text(self, encoding: str = "utf-8") -> str:
-        return self.read_bytes().decode(encoding)
+def _repo(rel: str) -> Path:
+    """A repo-relative path in this checkout (the committed text; SPEC_MD5 refuses drifted bytes)."""
+    return REPO / rel
 
 
-WT = _Pinned()  # the repository at PIN
-SPEC = WT / "docs/design/E12/E12-D07.md"
-HANDOFF = WT / "docs/design/E12/E12-D07-handoff.md"
-SHELL = WT / "docs/design/E11/E11-D04.md"
-SPEC_MD5 = {SPEC.name: "93418570334687314688e1d4c9ef85c1", HANDOFF.name: "319801283c09678731a0e65ee4f39ae6",
-            SHELL.name: "02f3ff690f4c840aebb734889d0a17c6"}
+SPEC = _repo("docs/design/E12/E12-D07.md")
+HANDOFF = _repo("docs/design/E12/E12-D07-handoff.md")
+SHELL = _repo("docs/design/E11/E11-D04.md")
+D06 = _repo("docs/design/E12/E12-D06.md")
+SPEC_MD5 = {SPEC.name: "561a7fee320d3d728e5ab74c1448497e", HANDOFF.name: "5f7f9099d51cd9182539b94221f8b627",
+            SHELL.name: "02f3ff690f4c840aebb734889d0a17c6", D06.name: "b9a9bc5790d48a240c24e915d4d046a6"}
 
 FILE_NAME = "E12-D07 boards"
 PAGE = "E12-D07 SCR-045 data table"
@@ -105,9 +84,12 @@ def _read(p: Path) -> list[str]:
 
 def spec_md5_ok() -> dict[str, bool]:
     """Each pinned doc's md5 against SPEC_MD5 (a drift means line citations and parsed strings must be re-read)."""
-    return {p.name: hashlib.md5(p.read_bytes()).hexdigest() == SPEC_MD5[p.name] for p in (SPEC, HANDOFF, SHELL)}
+    return {p.name: hashlib.md5(p.read_bytes()).hexdigest() == SPEC_MD5[p.name] for p in (SPEC, HANDOFF, SHELL, D06)}
 
 
+_DRIFT = [n for n, ok in spec_md5_ok().items() if not ok]
+if _DRIFT:  # fail loudly: every L<n> cite and every parsed string assumes the pinned bytes
+    raise SystemExit(f"e12d07kit: spec text drifted from SPEC_MD5 ({', '.join(_DRIFT)}): re-check the cites, re-pin")
 SPEC_LINES = _read(SPEC)
 HANDOFF_LINES = _read(HANDOFF)
 
@@ -123,6 +105,16 @@ def find_line(needle: str, lines: list[str] | None = None, start: int = 1) -> in
         if needle in ls[i]:
             return i + 1
     raise LookupError(f"not found: {needle!r}")
+
+
+def L(needle: str, start: int = 1) -> int:
+    """The spec line a board cites (find_line on E12-D07.md): cites are looked up, never typed as numbers."""
+    return find_line(needle, start=start)
+
+
+def HL(needle: str, start: int = 1) -> int:
+    """The hand-off line a board cites (find_line on E12-D07-handoff.md)."""
+    return find_line(needle, HANDOFF_LINES, start)
 
 
 # --- §0: the ten boards (registry parsed from the spec) and §H: their frames (parsed from the hand-off)
@@ -1089,8 +1081,13 @@ def stale_banner(chars: str, w: int) -> Node:
                 w=w, h=32)
 
 
-def _cell_node(name: str, chars: str, w: int, color: str, typo: str = NUM) -> Node:
-    return text(name, chars, typo, color, w=w, align="right" if name in NUMERIC else None)
+def _cell_node(name: str, chars: str, w: int, color: str, typo: str = NUM, *, numeric: bool, inner: str = "value",
+               note: str | None = None) -> Node:
+    """One cell, w = col_px (§5: the text's characters x 6.6 plus 8 px of padding a side, inside the column): an hbox
+    padded INSET_SM a side holding the auto-width text, justified to the end for a numeric column, to the start
+    otherwise (a fixed text width would wrap on the 0.2 px col_px rounds away)."""
+    return hbox(name, [text(inner, chars, typo, color)],
+                {"padX": INSET_SM, "justify": "end" if numeric else "start"}, w=w, h=ROW_H, note=note)
 
 
 def header_row(cols: list[str], mode: str, *, sort: str | None = None, desc: bool = True, equi: bool = False) -> Node:
@@ -1101,9 +1098,10 @@ def header_row(cols: list[str], mode: str, *, sort: str | None = None, desc: boo
         if c == sort:
             kids.append(hbox(f"th · {c}", [text("label", c, CAPTION, TEXT_1),
                                            icon("sort", "arrow-down" if desc else "arrow-up", TEXT_1, ICON_SM)],
-                             {"justify": "end", "gap": INSET_XS}, w=wpx, h=ROW_H, note=f"aria-sort={'descending' if desc else 'ascending'}"))
+                             {"padX": INSET_SM, "justify": "end" if c in NUMERIC else "start", "gap": INSET_XS},
+                             w=wpx, h=ROW_H, note=f"aria-sort={'descending' if desc else 'ascending'}"))
         else:
-            kids.append(_cell_node(f"th · {c}", c, wpx, TEXT_2, CAPTION))
+            kids.append(_cell_node(f"th · {c}", c, wpx, TEXT_2, CAPTION, numeric=c in NUMERIC, inner="label"))
     kids.append(box("actions", [], None, w=24, h=ROW_H))
     return hbox("header row", kids, {"fill": CANVAS}, w=row_width(cols, mode, equi=equi), h=ROW_H)
 
@@ -1131,10 +1129,10 @@ def bar_row(b: Bar, cols: list[str], mode: str, i: int, *, focused: bool = False
             color = BUY_TEXT if v[0] == "+" else SELL_TEXT
             fallback("buy-sell")
         if c == "time":
-            kids.append(node("text", "th · row", chars=v, typo=NUM, color=TEXT_1 if not dim else TEXT_2,
-                             w=col_px(c, mode), note=row_name(b, mode)))
+            kids.append(_cell_node("th · row", v, col_px(c, mode), TEXT_1 if not dim else TEXT_2, numeric=False,
+                                   note=row_name(b, mode)))
         else:
-            kids.append(_cell_node(c, v, col_px(c, mode, equi=equi), color))
+            kids.append(_cell_node(c, v, col_px(c, mode, equi=equi), color, numeric=c in NUMERIC))
     kids.append(hbox("actions", [icon("glyph", "more-horizontal", TEXT_2, ICON_SM)], {"justify": "center"}, w=24, h=ROW_H))
     o: dict[str, Any] = {"fill": SELECTED if selected else (CANVAS if i % 2 else RAISED)}
     if focused:
@@ -1334,7 +1332,8 @@ def frame_tokens(n: Node) -> list[str]:
 # measured root heights (annotation end + 80 after touchTexts + relayout; text_h over-estimates the column).
 DATA_LINE = ("Data: seeded synthetic stream (seed 242), not recorded; only the instrument's tick size (0.1) and qty step "
              "(0.001) come from the recorded fixture.")
-CVD_LINE = "CVD: not among the shown columns at 1280 (§3.1 L143 tiers it E, extended: one click away in CMP-056)."
+CVD_LINE = (f"CVD: not among the shown columns at 1280 (§3.1 L{L('| CVD               |')} tiers it E, extended: one "
+            "click away in CMP-056).")
 MEASURED_H = {1: 2574, 2: 2644, 3: 2587, 4: 2414, 5: 2676, 6: 2520, 7: 2148, 8: 1253, 9: 1609, 10: 1981}
 
 

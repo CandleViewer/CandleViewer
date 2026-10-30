@@ -2,21 +2,21 @@
 
 File `E12-D07 boards`, page `E12-D07 SCR-045 data table`; export `docs/design/E12/img/E12-D07-06-chart-type-cells.png`; sheet `06-chart-type-cells.json` (validated); theme dark.
 
-Board 06 of ten (§0 L60): baseline `vs base`, delta-volume `buy` and `sell`, equi-volume `width capped` (§4). Three 1280 × 800 windows, one chart panel each (RightRail strip, dock 1,168 CSS px), compact density, dark.
+Board 06 of ten (§0 L79): baseline `vs base`, delta-volume `buy` and `sell`, equi-volume `width capped` (§4). Three 1280 × 800 windows, one chart panel each (RightRail strip, dock 1,168 CSS px), compact density, dark.
 
 ## Frames
 
 - `SCR-045∕chart-type∕baseline · dark`
 - `SCR-045∕chart-type∕delta-volume · dark`
 - `SCR-045∕chart-type∕equi-volume · dark`
-- `SCR-045∕chart-type∕baseline · dark`: time, Baseline, B 63,988.2, 20 rows; §4 L172, D06:163
+- `SCR-045∕chart-type∕baseline · dark`: time, Baseline, B 63,988.2, 20 rows; §4 L193, D06:163
 - `SCR-045∕chart-type∕delta-volume · dark`: Vol 50 BTC, Delta-volume, 20 rows + buy, sell; §4, W-10, W-12
 - `SCR-045∕chart-type∕equi-volume · dark`: time, Equi-volume, `state` 12 ch, 10:22 `width capped`; §4, §5, §6
 
 ## Validator and size
 
-- `06-chart-type-cells.json: 0 errors, 136 warnings, 69 sections, 174626 bytes` (exit 0)
-- 69 sections, 174626 bytes
+- `06-chart-type-cells.json: 0 errors, 136 warnings, 74 sections, 250183 bytes` (exit 0)
+- 74 sections, 250183 bytes
 
 ## Live checks (10)
 
@@ -35,7 +35,7 @@ Board 06 of ten (§0 L60): baseline `vs base`, delta-volume `buy` and `sell`, eq
 
 - §4's baseline cell name “above 64,100 by 132” vs D06's summary “above base 64,100 by 132” (D06:353): the cell's name takes §4's form (“above 63,988.2 by 0.6”); the below form (“below … by …”) is not written in either and is not drawn (the focused row is above B)
 - B is not printed in the table (no caption clause in §7.4 names it); it is in the cell names and on the chart's base tag only
-- §6's example “width capped (3.2 × median)” cannot be a capped bar under D06's rule (14 × 3.2 = 44.8 < 48); the frame shows the data's computed N: “width capped (14.5 × median)”
+- §6's name “width capped (N × median)” leaves N to the data (ruling P-3); the frame shows the computed N: “width capped (14.5 × median)”
 - CVD: E11-D04 D3 rejoins CVD at ≥ 708 CSS px but §3.1 tiers it E; the board draws §3.1's set (as board 01)
 - `vs base` width: §3.1 / §5 give none; the kit reserves 9 characters (build notes A-9)
 
@@ -43,8 +43,8 @@ Board 06 of ten (§0 L60): baseline `vs base`, delta-volume `buy` and `sell`, eq
 
 ## Copy keys (2)
 
-- W-10 (§13 L332, verbatim)
-- W-12 (§13 L334, PROPOSED, the registry's unit)
+- W-10 (§13 L353, verbatim)
+- W-12 (§13 L355, PROPOSED, the registry's unit)
 
 ## Copy gaps (0)
 
@@ -55,7 +55,7 @@ Board 06 of ten (§0 L60): baseline `vs base`, delta-volume `buy` and `sell`, eq
 
 ## Sources (1)
 
-- spec E12-D07.md md5 93418570 (§0 L60); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 561a7fee (§0 L79); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (32)
 
@@ -63,6 +63,7 @@ Board 06 of ten (§0 L60): baseline `vs base`, delta-volume `buy` and `sell`, eq
 - size.icon.sm
 - type.num.sm
 - color.text.primary
+- space.inset.sm
 - color.buy.default
 - color.surface.canvas
 - color.surface.raised
@@ -75,7 +76,6 @@ Board 06 of ten (§0 L60): baseline `vs base`, delta-volume `buy` and `sell`, eq
 - color.border.default
 - border.hairline
 - radius.control
-- space.inset.sm
 - space.inset.xs
 - space.stack.xs
 - color.surface.selected

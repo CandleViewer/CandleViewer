@@ -86,12 +86,13 @@ def _table(items: list[tuple[str, Any]], bars: list[Any], mode: str, cols: list[
             rows.append(k.bar_row(b, cols, mode, i, focused=foc, cvd=cvd))
         else:
             rows.append(k.sep_row(it[1], cols, mode, **it[2]))
-    cap = k.caption_text(bars, mode, loaded=loaded, rebuild=rebuild)
+    cap = k.caption_text(bars, mode, loaded=loaded, rebuild=rebuild, durations="duration" in cols)
     return k.table(rows, w=w, h=h, caption_chars=cap, header=k.header_row(cols, mode), footer=footer), cap
 
 
-def room_rows(mode: str, w: int, h: int, bars: list[Any], loaded: int, rebuild: str | None = None) -> int:
-    cap = k.caption_text(bars, mode, loaded=loaded, rebuild=rebuild)
+def room_rows(mode: str, w: int, h: int, bars: list[Any], loaded: int, rebuild: str | None = None,
+              cols: tuple[str, ...] | list[str] = ()) -> int:
+    cap = k.caption_text(bars, mode, loaded=loaded, rebuild=rebuild, durations="duration" in cols)
     return k.max_rows(h=h, caption_lines=k.caption_lines(cap, w))
 
 

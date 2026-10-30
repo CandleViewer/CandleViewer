@@ -142,8 +142,8 @@ def main() -> None:
             f"(“below … by …”) is not written in either and is not drawn (the focused row is above B)",
             "B is not printed in the table (no caption clause in §7.4 names it); it is in the cell names and on the "
             "chart's base tag only",
-            f"§6's example “width capped (3.2 × median)” cannot be a capped bar under D06's rule (14 × 3.2 = 44.8 "
-            f"< 48); the frame shows the data's computed N: “{cap_name}”",
+            f"§6's name “width capped (N × median)” leaves N to the data (ruling P-3); the frame shows the computed "
+            f"N: “{cap_name}”",
             f"CVD: E11-D04 D3 rejoins CVD at ≥ 708 CSS px but §3.1 tiers it E; the board draws §3.1's set (as board 01)",
             f"`vs base` width: §3.1 / §5 give none; the kit reserves 9 characters (build notes A-9)"],
         "deviations": []}

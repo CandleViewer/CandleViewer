@@ -28,7 +28,9 @@ def build() -> Path:
     path = k.write_sheet(NN, frames, ann, notes=notes)
     info = [f"{f["name"]}: {f["w"]} x {f["h"]}" for f in frames]
     info += h.CAPTIONS
-    info.append("sources: as board 05 (spec §7.1 L234–242, L244, §7.2 L248, §7.4 L255, §13; E11-D04 §10 L325); "
+    info.append("sources: as board 05 (spec §7.1 "
+                f"L{k.L('| seam                                |')}–{k.L('| loading')}, L{k.L('Where two')}, §7.2 "
+                f"L{k.L('One `<tr>')}, §7.4 L{k.L('### 7.4 Units')}, §13; E11-D04 §10 L325); "
                 "theme light (light twin of 05, §0)")
     k.write_md(NN, path, frames_info=info)
     k.pack_sheet(path)

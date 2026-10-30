@@ -11,7 +11,7 @@ sys.path.insert(0, str(KIT_DIR))
 import e12d07kit as k  # noqa: E402
 
 SHELL_LINES = k._read(k.SHELL)
-D06_LINES = k._read(k.WT / "docs/design/E12/E12-D06.md")
+D06_LINES = k._read(k.D06)
 
 
 def sl(needle: str, start: int = 1) -> str:

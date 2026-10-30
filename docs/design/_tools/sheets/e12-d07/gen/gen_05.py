@@ -28,8 +28,10 @@ def build(nn: int = NN) -> Path:
     path = k.write_sheet(nn, frames, ann, notes=h.NOTES_05)
     info = [f"{f["name"]}: {f["w"]} x {f["h"]}" for f in frames]
     info += h.CAPTIONS
-    info.append("sources: spec §7.1 L234–242 (nine kinds), L244 (order where two meet), §7.2 L248, §7.3 L250–253, "
-                "§7.4 L255, §13 W-1…W-12, W-18; E11-D04 §10 L325–326 (bands); hand-off §H, §E")
+    info.append(f"sources: spec §7.1 L{k.L('| seam                                |')}–{k.L('| loading')} (nine "
+                f"kinds), L{k.L('Where two')} (order where two meet), §7.2 L{k.L('One `<tr>')}, §7.3 "
+                f"L{k.L('### 7.3 Rebuild')}–{k.L('- **Cache-loading**')}, "
+                f"§7.4 L{k.L('### 7.4 Units')}, §13 W-1…W-12, W-18; E11-D04 §10 L325–326 (bands); hand-off §H, §E")
     k.write_md(nn, path, frames_info=info)
     k.pack_sheet(path)
     return path

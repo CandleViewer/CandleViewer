@@ -25,11 +25,13 @@ def build(nn: int = NN) -> list[Path]:
     twin = f"light twin of board {b.twin:02d}: same construction, same data, the theme switched at export" if b.twin \
         else "light twin: board 09 (states/all-words · light)"
     ann = k.annotations(nn, blocks, board_lines=[
-        f"§0 L{k.BOARDS[4].line} (board 04 draws): every §6 word once, the closed row unmarked (`—`), the stale caption clause (§6.2)",
+        f"§0 L{k.BOARDS[4].line} (board 04 draws): every §6 word once, the closed row unmarked (`—`), the stale "
+        "caption clause (§6.2)",
         twin, "Owner walkthrough (hand-off §E): every `state` word appears once; a closed bar is unmarked"])
     lc = [f"read back the focused row's ring on {k.frame_name(fids[0])}: row 06 (13:29, Est.·POC) stroke 2 px "
           "color.focus.ring, inner",
-          f"read back the `state` cell texts on {k.frame_name(fids[0])} top to bottom: —, POC, —, Est., —, Est.·POC, —, "
+          f"read back the `state` cell texts on {k.frame_name(fids[0])} top to bottom: —, POC, —, Est., —, Est.·POC, "
+          "—, "
           "width capped, —, no range, —, —, —, stale, —, —, —, corrected, forming (19 rows)",
           f"measure the `state` column on {k.frame_name(fids[0])}: 95 px (12 characters, Equi-volume, §5)"]
     if len(fids) > 1:
@@ -39,11 +41,14 @@ def build(nn: int = NN) -> list[Path]:
                f"on {k.frame_name(fids[1])}: every closed row's `state` reads stale and its values bind "
                "color.text.secondary; the last row reads forming"]
     notes = {"live_checks": lc, "spec_gaps": h.SPEC_GAPS,
-             "sources": ["E12-D07 §6 L197-210 (the words and name additions), §6.2 L218-220, §5 (equi-volume state "
-                         "width), §0 L58; E11-D04 :183 (Est.·POC), :254 (forming describedby), :264 (values as of), "
+             "sources": [f"E12-D07 §6 L{k.L('## 6. The')}-{k.L('| `—`            |')} (the words and name additions), "
+                         f"§6.2 L{k.L('### 6.2 Stale')}-{k.L('`stale` sits')}, §5 (equi-volume state "
+                         f"width), §0 L{k.L('| 04  | `E12-D07')}; E11-D04 :183 (Est.·POC), :254 (forming describedby), "
+                         ":264 (values as of), "
                          ":59 (stale chip)"]}
     sheet = k.write_sheet(nn, frames, ann, notes=notes)
-    info = [f"{k.frame_name(f)}: 1280 x 800 window, one chart panel, table open in place (time 1m, 13:24-13:42, 19 rows)"
+    info = [f"{k.frame_name(f)}: 1280 x 800 window, one chart panel, table open in place (time 1m, 13:24-13:42, 19 "
+            "rows)"
             for f in fids]
     md = k.write_md(nn, sheet, frames_info=info)
     packed = k.pack_sheet(sheet)

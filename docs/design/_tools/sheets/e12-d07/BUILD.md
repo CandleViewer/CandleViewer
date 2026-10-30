@@ -16,9 +16,10 @@ Penpot.
 | `build-notes.md`         | The authors' notes: pipeline, file / page / frame naming, layout, data, the rules, the live-check fold.                                                                        |
 | `build/` (not committed) | The raw sheets `NN-<slug>.json` with a copy of each `.md` (the set the render drivers read), and `selftest/`. Listed in `.gitignore`.                                          |
 
-The spec is read with `git show c3119e61e:<path>` (the kit's `PIN`, origin/main when the kit was cut):
-`docs/design/E12/E12-D07.md`, `E12-D07-handoff.md`, `E12-D06.md` and `docs/design/E11/E11-D04.md`. The self-test
-checks the md5 pins of the first two and E11-D04. The validator, packer, components list and tokens are the shared
+The spec is read from this checkout by repo-relative path, as this PR commits it: `docs/design/E12/E12-D07.md`,
+`E12-D07-handoff.md`, `E12-D06.md` and `docs/design/E11/E11-D04.md`. The kit pins the md5 of each (`SPEC_MD5`) and
+refuses to run when one drifts, because every `L<n>` cite on the boards is looked up in that text (`k.L`, `k.HL`):
+after a spec edit, re-check the cites, re-pin and rebuild. The validator, packer, components list and tokens are the shared
 copies in `../tools/`.
 
 ## Rebuild the ten sheets

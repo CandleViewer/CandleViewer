@@ -3,8 +3,9 @@
 Spec (binding; every string comes from it): `docs/design/E12/E12-D07.md` (§0 the ten boards; §2 row header; §3 the
 column sets; §4 chart-type cells; §5 widths; §6 `state` words; §7 separator rows and captions; §9 sync; §13 the copy
 deck W-1..W-22; §14 tokens) and `docs/design/E12/E12-D07-handoff.md` (§H the frames; §E the owner walkthrough), read
-as origin/main had them at `c3119e61e` (the kit's `PIN`, read with `git show`; md5 pins in the kit:
-spec `93418570`, hand-off `31980128`, E11-D04 `02f3ff69`; `selftest` fails on drift). The SCR-045 shell is E11-D04's
+from this checkout by repo-relative path, as this PR commits them (md5 pins in the kit's `SPEC_MD5`: spec `561a7fee`,
+hand-off `5f7f9099`, E11-D04 `02f3ff69`, E12-D06 `b9a9bc57`; the kit refuses to run on drifted bytes, so every
+`L<n>` cite, looked up by `k.L` / `k.HL`, holds against the committed text). The SCR-045 shell is E11-D04's
 (`docs/design/E11/E11-D04.md` §2 anatomy, §5 columns/200 %, §6 rows, §7 banner, §10 table states): consume it, never
 redraw it differently. The window chrome and panel geometry follow the committed E12-D04 board kit
 (`docs/design/_tools/sheets/e12-d04/`): TopBar 80, NavRail 64, RightRail strip 48 (240 open), StatusBar 48, tab strip

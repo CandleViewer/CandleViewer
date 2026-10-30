@@ -2,7 +2,7 @@
 
 File `E12-D07 boards`, page `E12-D07 SCR-045 data table`; export `docs/design/E12/img/E12-D07-05-separator-rows.png`; sheet `05-separator-rows.json` (validated); theme dark.
 
-Board 05 of ten (§0 L59: every separator row of §7.1; the rebuild and cache-loading captions). Grid (24000, 0); 4640 x 2676 px; footer "page E12-D07 SCR-045 data table · board 05 · r1".
+Board 05 of ten (§0 L78: every separator row of §7.1; the rebuild and cache-loading captions). Grid (24000, 0); 4640 x 2676 px; footer "page E12-D07 SCR-045 data table · board 05 · r1".
 
 ## Frames
 
@@ -12,15 +12,15 @@ Board 05 of ten (§0 L59: every separator row of §7.1; the rebuild and cache-lo
 - SCR-045∕separators∕non-time · dark: 1280 x 800
 - SCR-045∕separators∕time-axis · dark: 1280 x 800
 - SCR-045∕captions∕rebuild-and-cache · dark: 1280 x 800
-- SCR-045∕separators∕non-time · dark caption: BTCUSDT Vol 50 BTC — 17 bars visible on the chart (2026-10-19 16:40–09:21 UTC) of 171 loaded · open 63,995.9 · close 63,989.2 (−0.01 %) · high 63,995.9 · low 63,982.7 · volume 850.742 · delta +15.250 · prices in USDT, volume in BTC · Bar order · not time · each bar closes at 50 BTC of volume
+- SCR-045∕separators∕non-time · dark caption: BTCUSDT Vol 50 BTC — 17 bars visible on the chart (2026-10-19 16:40–09:21 UTC) of 171 loaded · open 63,995.9 · close 63,989.2 (−0.01 %) · high 63,995.9 · low 63,982.7 · volume 850.742 · delta +15.250 · prices in USDT, volume in BTC · Bar order · not time · each bar closes at 50 BTC of volume · durations as h:mm:ss
 - SCR-045∕separators∕time-axis · dark caption: top “BTCUSDT 1 m — 4 bars visible on the chart (2026-10-19 16:37–16:40 UTC) of 1,266 loaded · open 64,001.5 · close 63,992.8 (−0.01 %) · high 64,002.3 · low 63,992.7 · volume 122.802 · delta +6.480 · prices in USDT, volume in BTC”; bottom “BTCUSDT 1 m — 5 bars visible on the chart (2026-10-19 16:59–17:03 UTC) of 1,266 loaded · open 63,987.2 · close 63,989.3 (+0.00 %) · high 63,990.4 · low 63,986.2 · volume 111.320 · delta +8.530 · prices in USDT, volume in BTC”
-- SCR-045∕captions∕rebuild-and-cache · dark caption: top “BTCUSDT Vol 50 BTC — 4 bars visible on the chart (2026-10-19 16:40–16:45 UTC) of 171 loaded · open 63,995.9 · close 63,988.6 (−0.01 %) · high 63,995.9 · low 63,988.5 · volume 200.177 · delta +49.655 · prices in USDT, volume in BTC · Bar order · not time · each bar closes at 50 BTC of volume · Showing Volume 50 until ready”; bottom “BTCUSDT 1 m — 4 bars visible on the chart (2026-10-19 17:00–09:16 UTC) of 330 loaded · open 63,989.3 · close 63,987.3 (−0.00 %) · high 63,992.9 · low 63,986.9 · volume 110.696 · delta −6.026 · prices in USDT, volume in BTC · Loading 5m, showing 1m until it arrives”
-- sources: spec §7.1 L234–242 (nine kinds), L244 (order where two meet), §7.2 L248, §7.3 L250–253, §7.4 L255, §13 W-1…W-12, W-18; E11-D04 §10 L325–326 (bands); hand-off §H, §E
+- SCR-045∕captions∕rebuild-and-cache · dark caption: top “BTCUSDT Vol 50 BTC — 4 bars visible on the chart (2026-10-19 16:40–16:45 UTC) of 171 loaded · open 63,995.9 · close 63,988.6 (−0.01 %) · high 63,995.9 · low 63,988.5 · volume 200.177 · delta +49.655 · prices in USDT, volume in BTC · Bar order · not time · each bar closes at 50 BTC of volume · durations as h:mm:ss · Showing Volume 50 until ready”; bottom “BTCUSDT 1 m — 4 bars visible on the chart (2026-10-19 17:00–09:16 UTC) of 330 loaded · open 63,989.3 · close 63,987.3 (−0.00 %) · high 63,992.9 · low 63,986.9 · volume 110.696 · delta −6.026 · prices in USDT, volume in BTC · Loading 5m, showing 1m until it arrives”
+- sources: spec §7.1 L255–263 (nine kinds), L265 (order where two meet), §7.2 L269, §7.3 L271–274, §7.4 L276, §13 W-1…W-12, W-18; E11-D04 §10 L325–326 (bands); hand-off §H, §E
 
 ## Validator and size
 
-- `05-separator-rows.json: 0 errors, 90 warnings, 47 sections, 144949 bytes` (exit 0)
-- 47 sections, 144949 bytes
+- `05-separator-rows.json: 0 errors, 90 warnings, 53 sections, 190410 bytes` (exit 0)
+- 53 sections, 190410 bytes
 
 ## Live checks (10)
 
@@ -50,20 +50,20 @@ Board 05 of ten (§0 L59: every separator row of §7.1; the rebuild and cache-lo
 
 ## Copy keys (14)
 
-- W-7 (§13 L329, verbatim)
-- W-6 (§13 L328, verbatim)
-- W-2 (§13 L324, verbatim)
-- W-1 (§13 L323, verbatim)
-- W-10 (§13 L332, verbatim)
-- W-12 (§13 L334, PROPOSED, the registry's unit)
+- W-7 (§13 L350, verbatim)
+- W-6 (§13 L349, verbatim)
+- W-2 (§13 L345, verbatim)
+- W-1 (§13 L344, verbatim)
+- W-10 (§13 L353, verbatim)
+- W-12 (§13 L355, PROPOSED, the registry's unit)
 - loading-older: E11-D04's band (D04E11:325), unchanged
-- W-5 (§13 L327, verbatim)
-- W-3 (§13 L325, verbatim)
-- W-18 (§13 L340, PROPOSED)
+- W-5 (§13 L348, verbatim)
+- W-3 (§13 L346, verbatim)
+- W-18 (§13 L361, PROPOSED)
 - before-history: E11-D04's band (D04E11:326), unchanged
-- W-8 (§13 L330, verbatim, the rebuild copy's last sentence)
-- W-4 (§13 L326, verbatim)
-- W-9 (§13 L331, verbatim)
+- W-8 (§13 L351, verbatim, the rebuild copy's last sentence)
+- W-4 (§13 L347, verbatim)
+- W-9 (§13 L352, verbatim)
 
 ## Copy gaps (0)
 
@@ -74,7 +74,7 @@ Board 05 of ten (§0 L59: every separator row of §7.1; the rebuild and cache-lo
 
 ## Sources (1)
 
-- spec E12-D07.md md5 93418570 (§0 L59); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
+- spec E12-D07.md md5 561a7fee (§0 L78); hand-off §H; E11-D04 §2, §5, §6, §10 (md5 02f3ff69); E12-D04 board kit (chrome geometry)
 
 ## Tokens (32)
 
