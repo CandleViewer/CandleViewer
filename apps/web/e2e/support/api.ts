@@ -1,4 +1,4 @@
-import type { Page, Route } from "@playwright/test";
+import { expect, type Page, type Request, type Route } from "@playwright/test";
 import type { generated } from "@candleviewer/protocol";
 
 type Schemas = generated.rest.components["schemas"];
@@ -165,29 +165,58 @@ export async function stubSessionsList(page: Page): Promise<void> {
 
 export interface LeakGuard {
   /**
-   * Awaits every pending body check, then fails if any forbidden value was seen (SR-012), or if any body could
-   * not be read (fail closed): only a redirect's, which has none, is passed over.
+   * Waits for the page's `/api/v1/` requests to settle, awaits every pending body check, then fails if any
+   * forbidden value was seen (SR-012), if any body could not be read, or if a request had not settled by the
+   * bound (fail closed): only a redirect's body and a failed request's, which have none, are passed over.
    */
   readonly flush: () => Promise<void>;
 }
 
+/** How long `flush` waits for the page's `/api/v1/` requests to finish or fail before it fails on them. */
+export const SETTLE_MS = 5_000;
+
+const apiCall = (request: Request): string =>
+  `${request.method()} ${new URL(request.url()).pathname}`;
+
 /**
  * Checks the response bodies the page receives, and those only (not request bodies, headers or cookies, not
  * WebSocket frames, not other pages' or workers' requests), and fails on any forbidden value. It reads a body once
- * its request has finished, never on the `response` event: a request a navigation cancels never finishes and its
- * `text()` never settles, so `flush` would wait on it until the test timed out (nothing reached the page, so
- * nothing is checked). It fails closed: a finished request whose body it cannot read fails the flush, so "read
- * nothing" never passes as "found nothing". Playwright reads a body lazily and the page drops it on navigating
- * away, so a test flushes before a navigation of its own.
+ * its request has finished, never on the `response` event.
+ *
+ * `flush` judges only once every `/api/v1/` request the page has started has finished or failed, waiting up to
+ * `settleMs` (a web-first poll):
+ * - a request that failed (aborted, or cancelled by a navigation) delivered no body, so it is not checked;
+ * - a request still unsettled at the bound fails the flush, which names it;
+ * - a finished request whose body cannot be read fails the flush, so "read nothing" never passes as "found
+ *   nothing" (fail closed). Of the finished ones, only a redirect, which has no body, is passed over.
+ *
+ * Other requests (scripts, styles) are checked once finished but not waited for: a shared worker's script never
+ * finishes for the page. A flush sees only the requests started before its wait ends. Playwright reads a body
+ * lazily, a navigation drops the bodies not yet read, and a request it cancels may never settle at all: so a test
+ * flushes before a navigation of its own, once the page has made the requests it means to check, and gives each
+ * navigation a page of its own when the page may start one after the flush (a timer's).
  */
-export function watchForLeaks(page: Page, forbidden: readonly string[]): LeakGuard {
+export function watchForLeaks(
+  page: Page,
+  forbidden: readonly string[],
+  { settleMs = SETTLE_MS }: { readonly settleMs?: number } = {},
+): LeakGuard {
   if (forbidden.some((f) => f === ""))
     throw new Error("an empty forbidden value matches every body");
   const leaks: string[] = [];
   const unread: string[] = [];
   const pending: Promise<void>[] = [];
+  /** The page's `/api/v1/` requests that have started and neither finished nor failed. */
+  const inflight = new Set<Request>();
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/api/v1/")) inflight.add(request);
+  });
+  page.on("requestfailed", (request) => {
+    inflight.delete(request); // no body reached the page
+  });
   page.on("requestfinished", (request) => {
-    const where = `${request.method()} ${new URL(request.url()).pathname}`;
+    inflight.delete(request);
+    const where = apiCall(request);
     // never rejects: whatever stops a read lands in `unread`, which `flush` fails on
     const check = async (): Promise<void> => {
       let status = 0;
@@ -209,6 +238,12 @@ export function watchForLeaks(page: Page, forbidden: readonly string[]): LeakGua
   });
   return {
     flush: async () => {
+      await expect
+        .poll(() => [...inflight].map(apiCall), {
+          message: "requests still unsettled at the flush, so their bodies were not checked",
+          timeout: settleMs,
+        })
+        .toEqual([]);
       await Promise.all(pending);
       if (leaks.length + unread.length > 0) throw new Error([...leaks, ...unread].join("; "));
     },

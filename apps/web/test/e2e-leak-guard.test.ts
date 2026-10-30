@@ -6,22 +6,29 @@ import { watchForLeaks } from "../e2e/support/api";
 /**
  * E09-Q02 (#293), #5061's security look L2: `watchForLeaks` checks response bodies only, and fails
  * closed. A body it cannot read fails the flush (so "read nothing" never passes as "found nothing");
- * a redirect, which has no body, is passed over. A browser cannot make a body unreadable on demand
- * (a routed body is always readable), so this drives the guard with a stand-in page.
+ * a redirect, which has no body, is passed over. Its flush first waits for the page's `/api/v1/`
+ * requests to finish or fail, and fails on one still unsettled at its bound. A browser loses a body,
+ * or a request, only when a navigation lands at the wrong moment, which a test cannot pick, so this
+ * drives the guard with a stand-in page.
  */
-type Finished = (request: unknown) => void;
+type Listener = (request: unknown) => void;
+type PageEvent = "request" | "requestfinished" | "requestfailed";
 
-function fakePage(): { page: Page; finish: (status: number, body: string | Error) => void } {
-  let listener: Finished = () => undefined;
+function fakePage() {
+  const listeners = new Map<string, Listener>();
   const page = {
-    on: (event: string, cb: Finished) => {
-      if (event === "requestfinished") listener = cb;
+    on: (event: string, cb: Listener) => {
+      listeners.set(event, cb);
     },
   } as unknown as Page;
-  const finish = (status: number, body: string | Error): void =>
-    listener({
+  const emit = (event: PageEvent, request: unknown): void => listeners.get(event)?.(request);
+  /** A request the page has started, which `finish` or `fail` settles (one object for all three, as Playwright's). */
+  const start = (path = "/api/v1/probe?x=1") => {
+    let status = 0;
+    let body: string | Error = new Error("no response yet");
+    const request = {
       method: () => "GET",
-      url: () => "http://127.0.0.1:4173/api/v1/probe?x=1",
+      url: () => `http://127.0.0.1:4173${path}`,
       response: async () => ({
         status: () => status,
         text: async () => {
@@ -29,8 +36,20 @@ function fakePage(): { page: Page; finish: (status: number, body: string | Error
           return body;
         },
       }),
-    });
-  return { page, finish };
+    };
+    emit("request", request);
+    return {
+      finish: (answered: number, text: string | Error): void => {
+        status = answered;
+        body = text;
+        emit("requestfinished", request);
+      },
+      fail: (): void => emit("requestfailed", request),
+    };
+  };
+  /** A request that finishes at once. */
+  const finish = (status: number, body: string | Error): void => start().finish(status, body);
+  return { page, start, finish };
 }
 
 describe("watchForLeaks", () => {
@@ -70,5 +89,35 @@ describe("watchForLeaks", () => {
 
   it("refuses an empty forbidden value, which every body contains", () => {
     expect(() => watchForLeaks(fakePage().page, ["x", ""])).toThrow(/empty forbidden value/u);
+  });
+
+  it("waits for an API request still in flight at the flush, then checks its body", async () => {
+    const { page, start } = fakePage();
+    const guard = watchForLeaks(page, ["secret-value"]);
+    const request = start();
+    const flushed = guard.flush();
+    request.finish(200, '{"echo":"secret-value"}');
+    await expect(flushed).rejects.toThrow("leaked a 12-char value");
+  });
+
+  it("passes over a request that failed, which delivered no body", async () => {
+    const { page, start } = fakePage();
+    const guard = watchForLeaks(page, ["secret-value"]);
+    start().fail();
+    await expect(guard.flush()).resolves.toBeUndefined();
+  });
+
+  it("fails closed on an API request still unsettled at the bound, naming it", async () => {
+    const { page, start } = fakePage();
+    const guard = watchForLeaks(page, ["secret-value"], { settleMs: 50 });
+    start("/api/v1/health/live");
+    await expect(guard.flush()).rejects.toThrow("GET /api/v1/health/live");
+  });
+
+  it("does not wait for a request outside /api/v1/, such as a shared worker's script", async () => {
+    const { page, start } = fakePage();
+    const guard = watchForLeaks(page, ["secret-value"], { settleMs: 50 });
+    start("/assets/wsWorker.js");
+    await expect(guard.flush()).resolves.toBeUndefined();
   });
 });
