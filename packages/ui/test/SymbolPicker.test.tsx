@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { composeStories } from "@storybook/react-vite";
-import { act, createRef, type JSX, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  act,
+  createRef,
+  useState,
+  type JSX,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
@@ -8,6 +16,7 @@ import { Popover, SymbolPicker, TextInput, type SymbolPickerProps } from "../src
 import * as moleculeStories from "../src/components/AllMolecules.stories.js";
 import * as stories from "../src/components/SymbolPicker.stories.js";
 import { seriousViolations } from "./axe.js";
+import { find, loadCss } from "./css-contract.js";
 import { mount } from "./theme/mount.js";
 
 const at = (over: Partial<SymbolPickerProps> = {}): SymbolPickerProps => ({
@@ -94,6 +103,32 @@ describe("SymbolPicker (CMP-219, E08-D05 A-D05-4)", () => {
     await mount(<SymbolPicker {...at()} role="combobox" />);
     expect(page().queryByRole("combobox")).toBeNull();
     expect(trigger()).not.toHaveAttribute("role");
+  });
+
+  it("drops a host's aria-labelledby, aria-disabled, aria-pressed, disabled and style at run time (CR-ORCH-5028-4)", async () => {
+    // Left out by type too; a JavaScript or spread caller still reaches the props, and none may land.
+    const passed = { "aria-labelledby": "x", "aria-disabled": true, "aria-pressed": true };
+    const more = { disabled: true, style: { display: "none" } };
+    await mount(<SymbolPicker {...at()} {...(passed as object)} {...(more as object)} />);
+    expect(trigger()).toHaveAccessibleName("Symbol: BTCUSDT"); // WCAG 2.5.3: the drawn value names it
+    for (const name of [...Object.keys(passed), ...Object.keys(more)])
+      expect(trigger()).not.toHaveAttribute(name);
+  });
+
+  it("CMP-039's ring and a control-height target: 24 px compact, 32 comfortable (CR-ORCH-5028-3)", async () => {
+    await mount(<SymbolPicker {...at()} />);
+    expect(trigger()).toHaveClass("cv-control", "cv-focus-ring", "cv-symbolpicker__trigger");
+    // jsdom lays nothing out: `.cv-control` holds the box at the density's control height, 24 or 32 px.
+    const control = find(loadCss("controls.css").normal, ".cv-control", "min-height");
+    expect(control).toContain("min-height: var(--size-control-height)");
+    expect(control).toContain("min-width: var(--size-control-height)");
+    const tokens = JSON.parse(
+      readFileSync(resolve(import.meta.dirname, "../tokens/primitives.tokens.json"), "utf8"),
+    ) as Record<string, { $value: string }>;
+    expect([
+      tokens["size.control.compact"]?.$value,
+      tokens["size.control.comfortable"]?.$value,
+    ]).toEqual(["24", "32"]);
   });
 
   it("forwards its ref to the button, for CMP-221's roving toolbar (a ref object or a callback)", async () => {
@@ -207,6 +242,29 @@ describe("SymbolPicker as a CMP-017 Popover's anchor", () => {
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
+  it("onOpen runs before the Popover's toggle: a controlled host that opens in onOpen still closes on the next press (CR-B2BD-02)", async () => {
+    function Controlled(): JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <Popover
+          heading="Change symbol and interval"
+          open={open}
+          onOpenChange={setOpen}
+          anchor={<SymbolPicker {...at({ onOpen: () => setOpen(true) })} />}
+        >
+          <TextInput aria-label="Search symbols" />
+        </Popover>
+      );
+    }
+    await mount(<Controlled />);
+    await act(async () => userEvent.click(trigger()));
+    const dialog = page().getByRole("dialog", { name: "Change symbol and interval" });
+    expect(dialog.hidden).toBe(false);
+    // onOpen's `true`, then the toggle's `false`: the last write wins, so the press closes it.
+    await act(async () => userEvent.click(trigger()));
+    expect([dialog.hidden, trigger().getAttribute("aria-expanded")]).toEqual([true, "false"]);
+  });
+
   it("the Popover's state wins over a host's expanded; any other host's expanded sets aria-expanded", async () => {
     await mount(
       <>
@@ -218,10 +276,21 @@ describe("SymbolPicker as a CMP-017 Popover's anchor", () => {
           <TextInput aria-label="Search symbols" />
         </Popover>
         <SymbolPicker {...at({ value: "ETHUSDT", expanded: true })} />
+        <Popover
+          heading="Closed"
+          anchor={<SymbolPicker {...at({ value: "SOLUSDT", expanded: true })} />}
+        >
+          <TextInput aria-label="Search" />
+        </Popover>
       </>,
     );
     for (const name of ["Symbol: BTCUSDT", "Symbol: ETHUSDT"])
       expect(page().getByRole("button", { name })).toHaveAttribute("aria-expanded", "true");
+    // Both ways (CR-ORCH-5028-2): a closed Popover's `false` wins over a host's `expanded`.
+    expect(page().getByRole("button", { name: "Symbol: SOLUSDT" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   it("the Expanded story's host passes no expanded: Esc closes it, focus returns, a press reopens it", async () => {
