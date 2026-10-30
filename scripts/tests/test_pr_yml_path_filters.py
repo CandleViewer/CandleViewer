@@ -442,6 +442,34 @@ def test_pr_yml_image_filter_covers_the_audit_lane_key_loader() -> None:
     assert any(_matches(loader, rule) for rule in _filters()["image"]), loader
 
 
+def _api_builds_stage(compose: Path, stage: str) -> bool:
+    """Whether the compose file's `api` service builds `target: <stage>`."""
+    services = yaml.safe_load(compose.read_text(encoding="utf-8")).get("services") or {}
+    build = (services.get("api") or {}).get("build")
+    return isinstance(build, dict) and build.get("target") == stage
+
+
+def test_pr_yml_image_filter_covers_every_overlay_that_runs_the_builder_stage() -> None:
+    # #2893: the trivy job's boot smoke imports the entrypoint in the `builder` stage, which the dev
+    # override and the account-fixture override run as the api. It reads the Dockerfile, not the
+    # overlays, but a PR that changes only an overlay must still run it (the `py` lane's static
+    # guard reads both), so every compose file that builds that stage is in the `image` filter.
+    step = (ROOT / ".github" / "workflows" / "_job-security.yml").read_text(encoding="utf-8")
+    assert "docker build -f infra/images/Dockerfile.api --target builder" in step
+    overlays = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted((ROOT / "infra" / "compose").glob("docker-compose*.yml"))
+        if _api_builds_stage(path, "builder")
+    ]
+    assert {
+        "infra/compose/docker-compose.dev.yml",
+        "infra/compose/docker-compose.account-fixture.yml",
+    } <= set(overlays)
+    rules = _filters()["image"]
+    uncovered = [overlay for overlay in overlays if not any(_matches(overlay, r) for r in rules)]
+    assert uncovered == [], uncovered
+
+
 def test_pr_yml_e2e_filter_covers_every_a11y_input() -> None:
     covered = set(_filters()["e2e"])
     assert set(A11Y_PATHS) <= covered, sorted(set(A11Y_PATHS) - covered)

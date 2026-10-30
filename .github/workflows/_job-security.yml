@@ -593,8 +593,9 @@ jobs:
       # runtime stage smoked above, as `python -m candleviewer.server` from its WORKDIR (/build).
       # Only the runtime stage put its venv on PATH, so there `python` was the base image's, with
       # none of the locked dependencies, and the api exited at import. The stage is in the build
-      # cache from the build above, so this adds a tag, not a build. Offline, no env or secrets,
-      # on the writable root the dev override gives it (`read_only: false`).
+      # cache from the build above: no build step re-runs, and exporting the cached stage adds
+      # seconds (about 20 s measured on a loaded host). Offline, no env or secrets, on the
+      # writable root the dev override gives it (`read_only: false`).
       - name: Boot smoke - the dev stack's builder stage imports the entrypoint
         timeout-minutes: 5
         run: |
