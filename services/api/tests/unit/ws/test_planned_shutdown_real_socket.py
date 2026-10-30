@@ -81,7 +81,8 @@ async def _open(ws: ClientConnection) -> None:
     assert json.loads(await ws.recv())["t"] == "welcome"
     await ws.send(json.dumps({"t": "auth", "id": "a", "p": {"access_token": "tok"}}))
     assert json.loads(await ws.recv())["t"] == "auth_ok"
-    assert json.loads(await ws.recv())["p"]["kind"] == "feature_flags"  # §15.9 (#4517)
+    snap = json.loads(await ws.recv())  # §12.1 (#4992): the `system` snap, flags folded in
+    assert (snap["t"], snap["ch"], snap["s"]) == ("snap", "system", 1)
 
 
 async def _until_closed(ws: ClientConnection) -> tuple[list[dict[str, Any]], int | None]:

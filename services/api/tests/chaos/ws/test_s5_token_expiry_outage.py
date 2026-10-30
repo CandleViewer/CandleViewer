@@ -43,6 +43,8 @@ async def test_s5_token_expiring_in_an_outage_is_refreshed_before_the_reconnect(
     stack.proxy.inject(Fault.HEAL)
     await stack.clock.advance(delay)
     await c.until(lambda: c.sessions == 2 and c.snapped == TOPICS, "resubscribed")
+    # §12.1 (#4992): each connection's `system` stream opens with its own snap, `s` 1
+    assert (c.system_snaps, c.system_d_before_snap) == ([(1, 1), (2, 1)], 0)
     assert stack.book_step() == 1 and stack.private("orders", ACC_A) == 1
     await c.until(lambda: c.seq.get(BOOK) == 2 and c.seq.get("orders") == 2, "post-outage deltas")
 

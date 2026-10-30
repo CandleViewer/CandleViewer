@@ -93,10 +93,11 @@ def send_batch(c: RawClient, entry: Any) -> dict[str, Any]:
 
 
 def snapped(c: RawClient) -> list[str]:
-    """The channel of every `snap` sent so far, once a `pong` shows the queue is drained."""
+    """The channel of every topic `snap` sent so far, once a `pong` shows the queue is drained;
+    not the `system` snap that follows `auth_ok` (§12.1, #4992)."""
     c.send({"t": "ping", "id": "p"})
     c.next_of("pong")
-    return [f["ch"] for f in c.seen if f["t"] == "snap"]
+    return [f["ch"] for f in c.seen if f["t"] == "snap" and f["ch"] != "system"]
 
 
 def still_serves(world: RawWorld, c: RawClient, calls: Calls) -> None:

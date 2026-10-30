@@ -86,6 +86,7 @@ def test_gateway_authenticated_socket_unsub_ok() -> None:
         _hello(ws)
         ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "ok"}})
         assert ws.receive_json()["t"] == "auth_ok"
+        assert ws.receive_json()["t"] == "snap"  # the `system` snap (§12.1, #4992)
         ws.send_json({"t": "unsub", "id": "u", "p": {"topics": ["book.X"]}})
         assert ws.receive_json()["t"] == "unsub_ok"
 
@@ -212,6 +213,7 @@ def test_gateway_evict_hook_sends_slow_consumer_and_closes_4429() -> None:
         _hello(ws)
         ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "ok"}})
         assert ws.receive_json()["t"] == "auth_ok"
+        assert ws.receive_json()["t"] == "snap"  # the `system` snap (§12.1, #4992)
         _, _, evict = reg._conns[USER][0]
         assert client.portal is not None
         client.portal.call(evict)

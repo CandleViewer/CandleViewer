@@ -67,9 +67,9 @@ def test_e29_ac_07_a_manager_granted_a_is_sent_nothing_that_names_or_counts_b(
         drained(cn)
         _broadcast(world, resyncing, stale, MARK)
         got_m, got_n = _system(drained(cm)), _system(drained(cn))
-    assert got_m == [(1, MARK)]  # B's two notices took no `s` here (S3), and the marker is first
+    assert got_m == [(2, MARK)]  # B's two notices took no `s` here (S3); `s` 1 is the snap
     assert naming(cm.seen, ACC_B) == []  # not one frame of M's whole stream, `auth_ok` included
-    assert got_n == [(1, resyncing), (2, stale), (3, MARK)]
+    assert got_n == [(2, resyncing), (3, stale), (4, MARK)]
     assert [p[LIST] for _, p in got_n[:2]] == [[str(ACC_B)]] * 2  # the account is in the list ...
     rest = [{k: v for k, v in p.items() if k != LIST} for _, p in got_n]
     assert naming(rest, ACC_B) == []  # ... and in no other field of any frame
@@ -94,7 +94,7 @@ def test_e29_a_withdrawn_grant_stops_later_account_notices_and_s_has_no_gap(
         mark = len(c.seen)
         _broadcast(world, granted, both, MARK)  # B alone, A and B, then the marker
         later = _system(drained(c))
-    assert first == [(1, granted)]
+    assert first == [(2, granted)]  # `s` 1 is the `system` snap (§12.1, #4992)
     # B's own notice is not sent and takes no `s`; the one naming both is cut to A
-    assert later == [(2, both | {LIST: [str(ACC_A)]}), (3, MARK)]
+    assert later == [(3, both | {LIST: [str(ACC_A)]}), (4, MARK)]
     assert naming(c.seen[mark:], ACC_B) == []

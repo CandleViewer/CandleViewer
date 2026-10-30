@@ -149,9 +149,10 @@ async def test_every_system_frame_of_the_rig_is_queued_by_push_system(
     offered: list[tuple[_Connection, dict[str, Any]]] = []
     push_system = _Connection.push_system
 
-    def spy(conn: _Connection, body: dict[str, Any]) -> None:
-        offered.append((conn, body))
-        push_system(conn, body)
+    def spy(conn: _Connection, body: dict[str, Any], *, snap: bool = False) -> None:
+        if not snap:  # the `system` snap after `auth_ok` (§12.1, #4992) is not a broadcast
+            offered.append((conn, body))
+        push_system(conn, body, snap=snap)
 
     monkeypatch.setattr(_Connection, "push_system", spy)
     rig, sock = _Rig(BackpressureConfig() if flag_on else None), _Wire()
@@ -282,9 +283,10 @@ def test_every_notice_of_the_ladder_rig_is_queued_by_push_system(
     offered: list[tuple[_Connection, dict[str, Any]]] = []
     push_system = _Connection.push_system
 
-    def spy(conn: _Connection, body: dict[str, Any]) -> None:
-        offered.append((conn, body))
-        push_system(conn, body)
+    def spy(conn: _Connection, body: dict[str, Any], *, snap: bool = False) -> None:
+        if not snap:  # the `system` snap after `auth_ok` (§12.1, #4992) is not a broadcast
+            offered.append((conn, body))
+        push_system(conn, body, snap=snap)
 
     monkeypatch.setattr(_Connection, "push_system", spy)
     budget = 8

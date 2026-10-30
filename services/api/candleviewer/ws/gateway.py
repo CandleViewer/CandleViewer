@@ -37,6 +37,10 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   in `cv_ws_revoked_total` as `refuse_disabled` counts it, and its line also names the session.
   The principal must be the token's user's, or the `auth` fails as `user_mismatch` (#415):
   a first `auth` checks it before it registers, `apply_snapshot` every later snapshot.
+- **`system` snap** (§12.1, #4992): a socket's first `auth_ok` its principal may see `system` on
+  is followed by the `system` snap, `s` 1 (`kind` `health`: the latest health frame, the kill switch
+  `auth_ok` gave, the role's flags), then deltas from `s` 2. A `system` frame offered before the
+  snap is held and follows it, so no delta ever precedes it. An in-place re-`auth` sends none.
 - **Connect rate** (§4.3, #2558): a new socket's first successful `auth` is counted per user
   (`GatewayHub.admit_connect`, `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` per sliding minute). Past the
   limit the socket gets `bye client_rate_limited` + `4429` instead of `auth_ok`: it never
@@ -117,6 +121,7 @@ import logging
 import re
 import time
 import uuid
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -247,6 +252,10 @@ WS_PATH = "/ws"
 #: 2.1). The same router is included twice, so it is one gateway, not a second one.
 WS_SERVER_BASE: Final = "/api/v1"
 SYSTEM_TOPIC: Final = "system"
+#: #4992: the `system` frames a socket holds while its snap is not yet queued (the `auth_ok` turn's
+#: one flag read, at most `AUTH_CALL_TIMEOUT_S`); past it the oldest goes and the newest stay
+#: (C-2.18). A socket whose principal holds no role holds nothing: it is cut every frame.
+SYSTEM_HELD_MAX: Final = 256
 OUTBOUND_QUEUE_MAX: Final = 1024
 #: The items `close_with` queues past the `push` bound: `bye`, the close sentinel and its code.
 CLOSE_ITEMS: Final = 3
@@ -296,6 +305,16 @@ class AuthenticatorContractError(RuntimeError):
 #: Writes the record of an `AuthRefused` once the gateway supplies the socket's source address.
 RefusalAudit = Callable[[str | None], Awaitable[None]]
 FlagSnapshot = Callable[[uuid.UUID, frozenset[str]], Awaitable[dict[str, Any] | None]]
+#: §12.1 (#4992): the latest `health` frame for the `system` snap, `None` while there is none yet.
+SystemBaseline = Callable[[], Mapping[str, Any] | None]
+#: The fields of a `health` frame the snap carries (§12.1, §15.9 `health`); `kind` is the snap's.
+SNAP_HEALTH_FIELDS: Final = (
+    "health",
+    "components",
+    "exchange",
+    "clock_offset_ms",
+    "degraded_topics",
+)
 #: §9.6 (#3085): the view-as binding of the session an `auth` presents, `None` when it holds no
 #: context. A read it cannot make raises, and the `auth` fails: never a scope it could not check.
 #: `ViewAsService.evaluate` in production (`view_as_wiring.SessionViewAs`).
@@ -725,6 +744,11 @@ class _Connection:
         self.registered: ConnectionAuthz | None = None
         self.emitter: TopicEmitter | None = None
         self.system_seq = 0
+        #: #4992 (§12.1): set once this socket's `system` snap is queued. Until then a `system`
+        #: frame its principal may see is held here, not queued, so no `d` ever precedes the snap;
+        #: the snap queues them after itself, re-cut under the principal then applied.
+        self.system_snapped = False
+        self.system_held: deque[dict[str, Any]] = deque(maxlen=SYSTEM_HELD_MAX)
         #: §15.9 (E42-T03): the flag keys a Manager or Viewer may learn; `None`, no key.
         self.flag_visible = flag_visible
         self.auth_failures = 0
@@ -948,22 +972,52 @@ class _Connection:
         if self.lifecycle.authenticated:
             self.push(frame)
 
-    def push_system(self, body: dict[str, Any]) -> None:
+    def push_system(self, body: dict[str, Any], *, snap: bool = False) -> None:
         """Queue `body` on `system` as this socket's principal may see it now (SR-188, §15.9):
         whole, its role-neutral fields only, or nothing, and then it takes no `s` (S3). A frame
         left out because of what it is or who the socket is, not its role's cut, is counted by
-        `withheld_reason` (`cv_ws_system_frames_withheld_total`; never its content)."""
+        `withheld_reason` (`cv_ws_system_frames_withheld_total`; never its content).
+
+        #4992 (§12.1): `snap` queues `body` as the socket's `system` snap, once (`s` 1), then the
+        frames held for it as deltas. Until it is queued, a frame the principal may see is held,
+        not queued, so no delta ever precedes the snap. A second snap is ignored; a snap the
+        principal may see none of (no role) leaves the socket unsnapped, so a later `auth_ok`
+        may send it."""
+        view = self._system_view(body)
+        if view is None:
+            return
+        if snap and self.system_snapped:
+            return
+        if not snap and not self.system_snapped:  # the snap goes first; this follows it
+            self.system_held.append(body)
+            return
+        views = [("snap" if snap else "d", view)]
+        if snap:
+            self.system_snapped = True
+            held = list(self.system_held)
+            self.system_held.clear()
+            views += [("d", cut) for item in held if (cut := self._system_view(item)) is not None]
+        for kind, cut in views:
+            self.system_seq += 1  # the snap's is 1: no delta took one before it
+            self.push(
+                {
+                    "t": kind,
+                    "ch": SYSTEM_TOPIC,
+                    "s": self.system_seq,
+                    "ts": self.wall_ms(),
+                    "e": "j",
+                }
+                | {"p": cut}
+            )
+
+    def _system_view(self, body: dict[str, Any]) -> Mapping[str, Any] | None:
+        """The principal's §15.9 view of `body` now, counting a frame withheld for what it is
+        or who the socket is (`withheld_reason`), never for its role's cut."""
         principal = None if self.authz is None else self.authz.principal
         view = system_view(body, principal, flag_visible=self.flag_visible)
-        if view is None:
-            if (reason := withheld_reason(body, principal)) is not None:
-                cv_ws_system_frames_withheld_total.labels(reason=reason).inc()
-            return
-        self.system_seq += 1
-        self.push(
-            {"t": "d", "ch": SYSTEM_TOPIC, "s": self.system_seq, "ts": self.wall_ms(), "e": "j"}
-            | {"p": view}
-        )
+        if view is None and (reason := withheld_reason(body, principal)) is not None:
+            cv_ws_system_frames_withheld_total.labels(reason=reason).inc()
+        return view
 
     def encode_frame(self, frame: dict[str, Any]) -> str | bytes:
         """One frame in the negotiated encoding (§2.2, §3.2): MessagePack bytes on
@@ -1441,6 +1495,9 @@ def make_ws_router(
     # §15.9 (#4517): the full flag set a principal's roles may see, as one `feature_flags` frame
     # (`None`: nothing), sent right after `auth_ok`. Without it no snapshot is sent.
     flag_snapshot: FlagSnapshot | None = None,
+    # §12.1 (#4992): the latest `health` frame (`HealthSystemPublisher.latest`), `None` before the
+    # first, for the `system` snap at `auth_ok`. Without it the snap carries no health fields.
+    system_baseline: SystemBaseline | None = None,
     backpressure: BackpressureConfig | None = None,
     close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
     # §9.6 (#3085): the view-as binding an `auth` reads (`ViewAsRead`). Without it no session is
@@ -1903,7 +1960,8 @@ def make_ws_router(
             conn.authz.on_settle = lambda subs: settle(conn, subs)
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
         principal = conn.authz.principal  # the applied snapshot: the newest, never the stale read
-        view = kill_switch_view(killed(), principal)  # SR-188: as the `system` topic gives it
+        state = killed()  # one read: `auth_ok` and the `system` snap give the same state (#4992)
+        view = kill_switch_view(state, principal)  # SR-188: as the `system` topic gives it
         payload = auth_ok_payload(
             principal,
             user_id=str(user_id),  # §9.6: the session's own user, the target's scope
@@ -1913,7 +1971,10 @@ def make_ws_router(
             **({} if view is None else {"kill_switch": view}),  # none for a principal with no role
         )
         conn.push(_reply("auth_ok", frame.get("id"), ts=now_ms, p=payload))
-        if flag_snapshot is not None:  # §15.9: after the kill-switch view, before the notices
+        if not conn.system_snapped:  # §12.1 (#4992): the socket's first `auth_ok` it may see
+            body = await system_snap_body(conn, state, principal.user_id, principal.roles)
+            conn.push_system(body, snap=True)
+        elif flag_snapshot is not None:  # an in-place re-auth: the flag set under its roles
             await push_flag_snapshot(conn, flag_snapshot, principal.user_id, principal.roles)
         # E27-T02: current degraded/read-only state, so a client connecting after the
         # transition still gets the blocking notice (§6 `system`, CMP-092). First auth only:
@@ -1938,6 +1999,47 @@ def make_ws_router(
             gateway_hub.mark_authenticated(conn)
             gateway_hub.enforce_cap(conn)
 
+    async def system_snap_body(
+        conn: _Connection,
+        state: Mapping[str, Any],
+        user_id: uuid.UUID,
+        roles: frozenset[str],
+    ) -> dict[str, Any]:
+        """§12.1 (#4992): the body of the socket's `system` snap, `kind` `health`: the latest health
+        frame's fields, the kill-switch `state` that `auth_ok` gave, and the flag set the roles may
+        see (§15.9: the topic snapshot carries the full set). A failed read costs its fields, never
+        the snap or the `auth`; with no health frame yet the snap carries none (unknown).
+        `push_system` cuts it per role, as every `system` frame."""
+        body: dict[str, Any] = {"kind": "health"}
+        if flag_snapshot is not None:  # first: the health read then follows with no await
+            flags = await read_flag_snapshot(conn, flag_snapshot, user_id, roles)
+            if flags is not None and isinstance(flags.get("feature_flags"), Mapping):
+                body["feature_flags"] = flags["feature_flags"]
+        body["kill_switch"] = state
+        if system_baseline is not None:
+            try:
+                health = system_baseline()
+            except Exception:
+                _log().exception("ws system baseline failed", connection_id=conn.connection_id)
+                health = None
+            if health is not None:
+                body |= {key: health[key] for key in SNAP_HEALTH_FIELDS if key in health}
+        return body
+
+    async def read_flag_snapshot(
+        conn: _Connection,
+        snapshot: FlagSnapshot,
+        user_id: uuid.UUID,
+        roles: frozenset[str],
+    ) -> dict[str, Any] | None:
+        """The principal's flag snapshot; `None` for none, or for a failed read (logged)."""
+        try:
+            async with _auth_call("flag_snapshot", auth_call_timeout_s):
+                return await snapshot(user_id, roles)
+        except Exception:
+            _log().exception("ws flag snapshot failed", connection_id=conn.connection_id)
+            return None
+
     async def push_flag_snapshot(
         conn: _Connection,
         snapshot: FlagSnapshot,
@@ -1945,12 +2047,7 @@ def make_ws_router(
         roles: frozenset[str],
     ) -> None:
         """Queue the principal's flag snapshot; a failed read costs the frame, never the `auth`."""
-        try:
-            async with _auth_call("flag_snapshot", auth_call_timeout_s):
-                body = await snapshot(user_id, roles)
-        except Exception:
-            _log().exception("ws flag snapshot failed", connection_id=conn.connection_id)
-            return
+        body = await read_flag_snapshot(conn, snapshot, user_id, roles)
         if body is not None:
             conn.push_system(body)
 

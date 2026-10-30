@@ -60,6 +60,8 @@ async def _authenticated(ws: ClientConnection) -> None:
     assert (await _send(ws, {"t": "hello", "id": "h"}))["t"] == "welcome"
     auth = {"t": "auth", "id": "a", "p": {"access_token": "good-1"}}
     assert (await _send(ws, auth))["t"] == "auth_ok"
+    snap = json.loads(await ws.recv())  # §12.1 (#4992): the `system` snap follows `auth_ok`
+    assert (snap["t"], snap["ch"], snap["s"]) == ("snap", "system", 1)
 
 
 async def test_real_socket_handshake_hello_auth_auth_ok() -> None:

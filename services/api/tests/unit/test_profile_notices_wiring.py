@@ -133,8 +133,8 @@ async def test_a_change_reaches_each_socket_that_may_view_its_account_and_no_oth
         cut = [await _system(sock) for sock in (owner, manager, viewer, other, nobody)]
         await notices.stop()
         await rig.close()
-    assert whole == [(1, _notice(ACC_A)), (2, _notice(ACC_B))]
-    assert cut == [[], [(1, _notice(ACC_A))], [(1, _notice(ACC_A))], [(1, _notice(ACC_B))], []]
+    assert whole == [(2, _notice(ACC_A)), (3, _notice(ACC_B))]  # `s` 1: the snap (§12.1, #4992)
+    assert cut == [[], [(2, _notice(ACC_A))], [(2, _notice(ACC_A))], [(2, _notice(ACC_B))], []]
 
 
 async def test_the_propagation_is_one_sample_per_change_offered_timed_from_its_commit() -> None:
@@ -314,7 +314,7 @@ async def test_a_refused_or_idle_write_tells_no_socket_and_a_committed_one_its_a
         first, rest = await _next(owner), await _system(owner)
         await notices.stop()
         await rig.close()
-    assert (first, rest) == ((1, _notice(account)), [])
+    assert (first, rest) == ((2, _notice(account)), [])  # `s` 1: the snap (§12.1, #4992)
 
 
 def test_the_reason_is_one_23_names_and_an_event_sent_at_info() -> None:

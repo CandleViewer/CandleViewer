@@ -92,8 +92,9 @@ def _attached(
         wall_ms=lambda: BASE_MS,
         auth_timeout_s=10.0,
     )
-    # what `run_auth` and the handler give the connection: the principal and the pipeline
-    shell.authz, shell.pipeline = conn.authz, pipe
+    # what `run_auth` and the handler give the connection: the principal and the pipeline; and
+    # past its first `auth_ok`, its `system` snap is sent (§12.1, #4992), so a notice is a delta
+    shell.authz, shell.pipeline, shell.system_snapped = conn.authz, pipe, True
     conn.clock.now = now
     pipe.attach(conn.authz, conn.emitter, shell.push_system)
     conn.emitter.push = pipe.push

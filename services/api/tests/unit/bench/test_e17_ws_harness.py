@@ -764,7 +764,7 @@ async def test_the_backend_serves_the_real_gateway_and_a_client_ends_consistent(
                     if m["t"] == "ping":
                         pong = {"t": "pong", "id": m["id"], "p": {"client_ms": 1}}
                         await ws.send(json.dumps(pong))
-                    if m["t"] not in ("snap", "d"):
+                    if m["t"] not in ("snap", "d") or m["ch"] == "system":  # §12.1 (#4992)
                         continue
                     key = f"{m['t']}:{m['ch'].split('.')[0]}"
                     seen[key] = seen.get(key, 0) + 1
@@ -838,7 +838,7 @@ async def test_the_refresh_double_rotates_a_session_and_the_socket_re_auths_in_p
                 )
             )
             while (m := await recv(ws))["t"] != "auth_ok":
-                assert m["t"] in ("ping",)
+                assert m["t"] in ("ping",) or m.get("ch") == "system"  # the first's snap (#4992)
             assert m["id"] == "c-3"
 
 
@@ -2312,7 +2312,7 @@ async def test_a_window_holds_an_update_that_the_envelope_stamp_cannot_see(tmp_p
             sub = {"topics": [{"ch": "trades.BTCUSDT"}]}
             await ws.send(json.dumps({"t": "sub", "id": "c-3", "p": sub}))
             window_ms = 0.0
-            while (m := await recv(ws))["t"] != "snap":
+            while (m := await recv(ws))["t"] != "snap" or m["ch"] == "system":  # §12.1 (#4992)
                 if m["t"] == "sub_ok":
                     window_ms = m["p"]["results"][0]["effective"]["throttle_ms"]
             source = time.time_ns() // 1_000_000

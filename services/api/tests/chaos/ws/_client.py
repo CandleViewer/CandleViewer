@@ -73,6 +73,10 @@ class Client:
         self.closes: list[int] = []
         self.denied: dict[str, str] = {}
         self.snapped: set[str] = set()
+        #: §12.1 (#4992): per connection (`sessions` at its arrival), the `system` snap's `s`, and
+        #: whether a `system` delta came before it (the client would drop such a delta).
+        self.system_snaps: list[tuple[int, int]] = []
+        self.system_d_before_snap = 0
         self.log: list[tuple[Any, ...]] = []
         self.backoffs: asyncio.Queue[float] = asyncio.Queue()
         self.seq: dict[str, int] = {}  # last `s` per channel on the current connection
@@ -197,7 +201,13 @@ class Client:
             refused = {r["ch"]: r["error"]["code"] for r in p["results"] if not r["ok"]}
             self.denied.update(refused)
             self.topics = [e for e in self.topics if e["ch"] not in refused]  # never retried
+        elif t == "snap" and ch == "system":  # §12.1 (#4992): the baseline, not a topic's
+            self.system_snaps.append((self.sessions, f["s"]))
+            self.seq[ch] = f["s"]
+            self._orders(not p["kill_switch"]["engaged"])  # C12: the snap carries it too
         elif t in {"snap", "d"} and f.get("s") is not None:  # `s: null` = non-final chunk
+            if t == "d" and ch == "system" and len(self.system_snaps) < self.sessions:
+                self.system_d_before_snap += 1
             if t == "snap":
                 self.snapped.add(ch)
             elif ch not in self.seq or f["s"] != self.seq[ch] + 1:

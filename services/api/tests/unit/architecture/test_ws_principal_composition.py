@@ -161,8 +161,9 @@ def _open(ws: Any, actor: str) -> dict[str, Any] | None:
         return None
     ws.send_json({"t": "auth", "id": "a", "p": {"access_token": rbac.token_of(actor)}})
     reply = _recv(ws)
-    if reply["t"] == "auth_ok":  # §15.9 (#4517): the flag snapshot follows the `auth_ok`
-        assert _recv(ws)["p"]["kind"] == "feature_flags"
+    if reply["t"] == "auth_ok":  # §12.1 (#4992): the `system` snap; a re-auth's flag set (§15.9)
+        after = _recv(ws)
+        assert (after["t"], after["p"]["kind"]) in {("snap", "health"), ("d", "feature_flags")}
     return reply
 
 

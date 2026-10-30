@@ -253,6 +253,8 @@ class _Rig:
         assert [f["t"] for f in await sock.next()] == ["welcome"]
         sock.feed({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
         assert [f["t"] for f in await sock.next()] == ["auth_ok"]
+        (snap,) = await sock.next()  # §12.1 (#4992): the `system` snap, `s` 1
+        assert (snap["t"], snap["ch"], snap["s"]) == ("snap", "system", 1)
         (conn,) = [c for c in self.hub.of_user(USER) if c not in others]
         return handler, conn
 
@@ -341,9 +343,11 @@ async def test_flag_off_wire_transcript_is_unchanged(encoding: str) -> None:
 #: in the rebase from 65d480a2: main's #2890, in between, moved `sub_ok`'s `id` after its `p`.
 #: Re-recorded for E09-X02 F-8 (#298): `welcome` no longer carries `git_sha` and `auth_ok` does;
 #: those six frames (three of each) are the transcript's only change.
+#: Re-recorded for #4992 (§12.1): each connection's `system` snap (`s` 1) follows its `auth_ok`, so
+#: the session's `tick` and shutdown notice are `s` 2 and 3; those are the transcript's only change.
 _FLAG_OFF_DIGESTS = {
-    _JSON: "aa4ccea25766a39e2b1442261a273f082001010377baff6b661d1fcde7640546",
-    _MSGPACK: "41fb623bf0d9f1b97ba9c94da80ace8dfabb6f3854ebbdd0aa734aa0c9dd7e99",
+    _JSON: "0e0e56d8bfe4ccf143b8f16fecc720d16e1f47932c5c1b2d898040e9dbf50f84",
+    _MSGPACK: "c154de2a65b88cd211517cc4a71cbebfd80f4978699dea89c5e7841f5b2e0bb5",
 }
 
 

@@ -25,6 +25,7 @@ from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.upstream import UpstreamRefs
+from tests.unit.ws._system_snap import is_system_snap
 
 MGR = uuid.UUID(int=0x51)
 ACC_A = uuid.UUID(int=0xA1)
@@ -38,14 +39,17 @@ _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
 
 
 def _recv(ws: Any) -> dict[str, Any]:
+    """The next frame but the `system` snap after `auth_ok` (§12.1, #4992), not these tests' own."""
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        frame: dict[str, Any] = pool.submit(ws.receive_json).result(timeout=_TIMEOUT_S)
+        while is_system_snap(frame := pool.submit(ws.receive_json).result(timeout=_TIMEOUT_S)):
+            pass
     except FutureTimeout:
         pytest.fail(f"no WS frame within {_TIMEOUT_S}s")
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
-    return frame
+    result: dict[str, Any] = frame
+    return result
 
 
 class _World:

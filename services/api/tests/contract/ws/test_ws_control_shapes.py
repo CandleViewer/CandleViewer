@@ -220,3 +220,5 @@ def test_contract_handshake_and_violation_replies_do_not_echo_a_long_id() -> Non
             c.send({**frame, "id": LONG_ID}, conform=False)
             f = c.recv()
             assert (f["t"] if f["t"] != "err" else f["p"]["code"], "id" in f) == (want, False)
+            if want == "auth_ok":  # §12.1 (#4992): the `system` snap follows it, with no `id`
+                assert (snap := c.recv())["t"] == "snap" and "id" not in snap

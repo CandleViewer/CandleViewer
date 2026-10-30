@@ -783,7 +783,7 @@ async def test_pongs_within_their_budget_never_reach_the_inbound_limiter(
             assert await _fenced(sock, *[_PONG] * _BURST) == []
             assert len(allowed) == 1 + _BURST + 1  # `hello`, each `pong`, the fence
             sock.feed({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
-            assert [f["t"] for f in await sock.next()] == ["auth_ok"]
+            assert [f["t"] for f in await sock.next(2)] == ["auth_ok", "snap"]  # §12.1 (#4992)
             assert await _fenced(sock, *[_PONG] * _BURST) == []
             assert len(allowed) == 1 + _BURST + 1 + 2  # then `auth` and the fence alone
             assert await _fenced(sock, _PONG) == []

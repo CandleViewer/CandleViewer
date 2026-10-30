@@ -81,6 +81,7 @@ def _conn(who: PrincipalSnapshot | None, flag_visible: FlagVisible | None = None
         flag_visible=flag_visible,
     )
     conn.authz = None if who is None else ConnectionAuthz(who)
+    conn.system_snapped = True  # past its first `auth_ok` (§12.1, #4992): a frame is a delta
     return conn
 
 

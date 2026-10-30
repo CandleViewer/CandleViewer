@@ -102,8 +102,8 @@ class _Stack:
             wire = "cv.v1.msgpack" if "cv.v1.msgpack" in offer else "cv.v1.json"
             assert ws.accepted_subprotocol == wire  # §2.2: the row runs on the wire it names
             c = h.Client(ws)
-            c.open()
-            assert c.recv()["p"]["kind"] == "feature_flags"  # §15.9 (#4517): after `auth_ok`
+            c.open()  # §12.1 (#4992): through the `system` snap, the flags folded in
+            assert c.system_snap is not None and "feature_flags" in c.system_snap["p"]
             yield c
 
 

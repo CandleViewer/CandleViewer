@@ -1889,6 +1889,8 @@ def create_app(
             flag_snapshot=lambda user, roles: feature_flags_snapshot(
                 app.state.feature_flags.service, user, roles
             ),
+            # §12.1 (#4992): the `system` snap's health fields, the last frame of the health tick.
+            system_baseline=health_publisher.latest,
             backpressure=ws_backpressure,
             # #4833: one per process; it ticks only while a flag-on RTT probe reads it.
             loop_stall=LoopStall(),

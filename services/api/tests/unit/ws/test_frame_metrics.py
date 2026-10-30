@@ -302,14 +302,15 @@ def _session(
     subprotocol: list[str], deltas: int, at_rest: Callable[[_World], None] | None = None
 ) -> list[str | bytes]:
     """Every message a client gets on `subprotocol` from `hello` to the last of `deltas` deltas on
-    `CH`, as it crossed the wire: `welcome`, `auth_ok`, `sub_ok`, the `snap` (`s` 1), the deltas.
+    `CH`, as it crossed the wire: `welcome`, `auth_ok`, the `system` snap (§12.1, #4992), `sub_ok`,
+    the `snap` (`s` 1), the deltas.
     `at_rest` runs once the last one is in, with the connection open and its writer idle."""
     w = _World()
     with w.client, w.client.websocket_connect("/ws", subprotocols=subprotocol) as ws:
         _send(ws, {"t": "hello", "id": "h"})
         wire = [_wire(ws)]  # `welcome`: a control frame
         _send(ws, {"t": "auth", "id": "a", "p": {"access_token": "good"}})
-        wire.append(_wire(ws))  # `auth_ok`
+        wire += [_wire(ws), _wire(ws)]  # `auth_ok`, then the `system` snap: control lane
         _send(ws, {"t": "sub", "id": "s1", "p": {"topics": [{"ch": CH, "opts": {}}]}})
         wire += [_wire(ws), _wire(ws)]  # `sub_ok`, then the `snap`: `s` 1
         assert w.client.portal is not None
@@ -317,7 +318,8 @@ def _session(
         wire += [_wire(ws) for _ in range(deltas)]
         if at_rest is not None:
             at_rest(w)
-    assert [_decoded(m)["t"] for m in wire[:4]] == ["welcome", "auth_ok", "sub_ok", "snap"]
+    assert [_decoded(m)["t"] for m in wire[:5]] == ["welcome", "auth_ok", "snap", "sub_ok", "snap"]
+    assert _decoded(wire[2])["ch"] == "system"
     return wire
 
 

@@ -19,7 +19,8 @@ def test_a_manager_snapshot_never_names_an_owner_only_flag(wire: str) -> None:
     world = World(flag_snapshot=lambda user, roles: feature_flags_snapshot(service, user, roles))
     assert wire
     with connect(world) as client:
-        frame = client.recv()
+        frame = client.system_snap  # §12.1 (#4992): the flag set is folded into the snap
     assert owner_only  # the catalogue has some, or this test proves nothing
-    assert frame["p"]["kind"] == "feature_flags"
+    assert frame is not None and frame["p"]["kind"] == "health"
+    assert frame["p"]["feature_flags"]  # a Manager sees some flags, or this proves nothing
     assert not owner_only & set(frame["p"]["feature_flags"])

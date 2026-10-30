@@ -14,7 +14,8 @@ skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of
   attribute `TOPIC` is read as `K.TOPIC` or `self.TOPIC`, and so is the `TOPIC` of any other
   object, and a plain `TOPIC`. The key may be a name that holds `"ch"`;
 - `push_system` is named, called or passed on, only by `GatewayHub.broadcast_system`,
-  `GatewayHub.shutdown`, `run_auth` (the notices after the first `auth_ok`),
+  `GatewayHub.shutdown`, `run_auth` (the `system` snap, §12.1 #4992, and the notices after the
+  first `auth_ok`),
   `GatewayHub.system_sessions` (E42-T03: it hands each socket's `push_system` to the flag push) and
   `_send` in `admin/flags/push.py` (E42-T03: `FlagPush.flag_changed` and `notify_maintenance`
   resolve each session's frame, so there is no one body to broadcast; `push_system` still
