@@ -63,12 +63,14 @@ MAX_AUTH_FAILURES: Final = 3
 MAX_UNAUTHENTICATED_FRAMES: Final = 3
 MAX_PROTOCOL_VIOLATIONS: Final = 3
 #: §8.5: the inbound rate, in tokens: a frame takes `limits.inbound_frame_weight` of them, one
-#: plus one per full `limits.INBOUND_WEIGHT_BYTES` (#4924). Sized so that a client reconnecting
-#: (§9.2: no resumption, it re-subscribes from scratch) is never refused: `hello` and `auth` (one
-#: each, 8 KiB at most) and its whole set of `MAX_SUBSCRIPTIONS` in `MAX_TOPICS_PER_SUB`-topic
-#: `sub`s (4), each at most the widest schema-valid `sub`, about 53 KiB, so 2 tokens: 10 tokens
-#: in all, a third of one second's 30, with the 300 of the minute untouched by it. A frame at the
-#: 256 KiB cap takes 9, so a single frame of any size always fits an idle second.
+#: plus its bytes, values (and, for MessagePack, containers) terms (#4924). Sized so that a client
+#: reconnecting (§9.2: no resumption, it re-subscribes from scratch) is never refused: `hello` and
+#: `auth` (one each, 8 KiB at most) and its whole set of `MAX_SUBSCRIPTIONS` in
+#: `MAX_TOPICS_PER_SUB`-topic `sub`s (4), each at most the widest schema-valid `sub` (about 53 KiB
+#: and 10 559 values: 1 + 1 + 2, so 4 tokens): 2 + 4 x 4 = 18 tokens in all, three fifths of one
+#: second's 30, with the 300 of the minute untouched by it. A frame at the 256 KiB cap takes 9 for
+#: its bytes and at most 4 more for its values, so a single frame of any size always fits an idle
+#: second.
 RATE_PER_SECOND: Final = 30
 RATE_PER_MINUTE: Final = 300
 #: §8.5: `pong`s a second that the inbound rate does not count, from the first `auth_ok`: about

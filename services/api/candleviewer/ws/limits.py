@@ -237,7 +237,9 @@ SERVER_CLOSE_DRAIN_TIMEOUT_S = 5.0
 def json_depth_exceeds(text: str, limit: int) -> bool:
     """True if `text` nests `[`/`{` deeper than `limit` (string-aware, O(n)).
 
-    A cheap pre-scan so a hostile frame never reaches the recursive decoder."""
+    A cheap pre-scan so a hostile frame never reaches the recursive decoder. The REST bodies that
+    take JSON still call it before they parse; the WS gateway checks the decoded value instead
+    (`json_nests_deeper`, #4924), and its tests check that one against this."""
     if text.count("[") + text.count("{") <= limit:
         return False  # cannot nest deeper than the number of openers
     depth = 0

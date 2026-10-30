@@ -708,8 +708,9 @@ class _Connection:
         #: authenticated draws on its own rate only.
         self.decode_budget: DecodeBudget | None = None
         #: #4924 (§8.5): the user's decode turn, shared by its sockets: a frame of weight above 1
-        #: is decoded only while its socket holds it, one such frame at a time across the user's
-        #: sockets, each held to the loop turn after it (the reader's `sleep(0)`).
+        #: is handled only while its socket holds it, its whole handling (decode and dispatch),
+        #: one such frame at a time across the user's sockets, each held to the loop turn after
+        #: it (the reader's `sleep(0)`).
         self.decode_turn: asyncio.Lock | None = None
         #: Data frames stop at `OUTBOUND_QUEUE_MAX` (`push`); the `CLOSE_ITEMS` still fit (C-2.18).
         self.outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=OUTBOUND_QUEUE_MAX + CLOSE_ITEMS)
