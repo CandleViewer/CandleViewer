@@ -108,6 +108,16 @@ def test_the_scan_searches_every_secret_the_run_makes_the_totp_seeds_and_the_lan
     assert not re.search(r"\$\{?(" + "|".join(sorted(generated)) + r")\b", scrub)  # names only
 
 
+def test_every_secret_is_masked_the_moment_it_exists() -> None:
+    # the passwords, pepper and keys are masked before they reach $GITHUB_ENV; each TOTP seed
+    # right after its file is written
+    assert 'echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"' in _step("Make this run's")["run"]
+    assert (
+        'echo "::add-mask::$(cat "$RUNNER_TEMP/cv/e2e-$i.totp")"'
+        in _step("Migrate, then seed")["run"]
+    )
+
+
 def test_the_seeds_and_the_lane_key_are_written_where_the_scan_looks() -> None:
     scrub = _step("No secret of this run")["run"]
     globs = re.findall(r'--secret-file "([^"]+)"', scrub)
@@ -117,9 +127,7 @@ def test_the_seeds_and_the_lane_key_are_written_where_the_scan_looks() -> None:
     assert key_path in globs
 
 
-def test_nothing_is_uploaded_unless_the_scan_passed_and_it_runs_directly_before_the_upload() -> (
-    None
-):
+def test_the_upload_waits_for_a_passing_scan_that_runs_just_before_it() -> None:
     steps = _steps()
     order = list(steps)
     keep_log, scrub_label = _label("Keep the API's log"), _label("No secret of this run")
