@@ -1,23 +1,27 @@
 """E29-T13 (#4207): the lane's half of the `orders`, `executions` and `positions` topics
 (`oms/ws_topics.py`): the Sec.15 items each row builds, validated against 23-ws-protocol.md's
 schemas; the step publisher's causal order (an execution before its order, a position after the
-fills of its key, Sec.16.1 S5), its per-account hold and its bounds, each past-the-bound case
-counted, and a frame that cannot be built (its account re-snapshotted, the drain going on); the
-position store's hand-off; and the lane's snapshot reads, scoped to the process's environment
-(C-2.11). Recording doubles, a fake clock and, for the hold's deadline, virtual time
+fills of its key, Sec.16.1 S5), by example and as a seeded property over any interleaving, its
+per-account hold and its bounds, as 23 Sec.6.2.3 states them, each past-the-bound case counted,
+and a frame that cannot be built (its account re-snapshotted, the drain going on); the position
+store's hand-off; and the lane's snapshot reads, scoped to the process's environment (C-2.11).
+Recording doubles, a fake clock and, for the hold's deadline, virtual time
 (`audit_waits.virtual`): no network, no sleeps."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, cast
+from pathlib import Path
+from typing import Any, Final, cast
 from uuid import UUID
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
 from candleviewer.domain.primitives import AccountId
@@ -28,7 +32,7 @@ from candleviewer.oms.ports import PositionKey
 from candleviewer.storage.repositories.executions import ExecutionRow, NewExecution
 from candleviewer.storage.repositories.orders import OrderEventKind, OrderRow, OrderState
 from candleviewer.storage.repositories.positions import PositionRow, PositionState
-from tests.unit.audit.audit_waits import virtual
+from tests.unit.audit.audit_waits import VirtualTimeLoop, virtual
 from tests.unit.ws._seq_support import validate
 
 A = UUID("a1000000-0000-4000-8000-000000000001")
@@ -803,3 +807,205 @@ async def test_an_overtake_counter_that_raises_still_publishes_the_position() ->
         await asyncio.sleep(wt.HOLD_S + 0.01)
     assert rig.topics.sent() == [("positions", str(UUID(int=0xD0)))]
     assert "oms_ws_overtake_uncounted" in [e["event"] for e in logs]
+
+
+# -- the causal order, for any interleaving (Sec.16.1 S5) ---------------------------------------
+
+
+class Counted(Rig):
+    """`Rig`, noting which of the topics' calls each overtake made: the last, as it is counted."""
+
+    def __init__(self, **bounds: Any) -> None:
+        self.overtaken_calls: set[int] = set()
+        super().__init__(**bounds)
+
+    def _overtaken(self) -> None:
+        super()._overtaken()
+        self.overtaken_calls.add(len(self.topics.calls) - 1)
+
+
+class Interleaving:
+    """The property's world: a `Counted` rig with small bounds (3 steps queued, 1 key held), its
+    fill reads blocked until a `gate` lets them go, and each operation made as the lane makes it.
+    What the test knows: the steps each account committed (each its own order, `n` rising), the
+    last that overflowed, each fill's account, key and order once committed, the fills an
+    overflow dropped, and what each position row awaited when it arrived: its key's fills
+    committed and not yet out, and those the facade holds. A fill the facade releases commits at
+    once, as if its write were the release (23 Sec.6.2.3 names the window between them)."""
+
+    SYMBOLS: Final = ("BTCUSDT", "ETHUSDT")
+
+    def __init__(self) -> None:
+        self.rig = Counted(queue_max=3, hold_max=1)
+        self.rig.fills.gate = asyncio.Event()
+        self.n, self.execs, self.rows = 0, 0, 0
+        self.committed: dict[UUID, list[int]] = {A: [], B: []}
+        self.overflowed: dict[UUID, int] = {}
+        self.fills: dict[str, tuple[UUID, PositionKey]] = {}
+        self.order_of: dict[str, int] = {}
+        self.dropped: set[str] = set()
+        self.awaited: dict[str, frozenset[str]] = {}
+
+    def key(self, account: UUID, k: int) -> PositionKey:
+        return PositionKey(AccountId(account), self.SYMBOLS[k], 0)
+
+    def published(self) -> list[tuple[int, tuple[wt.Change, ...]]]:
+        """Each `published` call the topics got, by its index among all their calls."""
+        calls = enumerate(self.rig.topics.calls)
+        return [(i, cs) for i, (kind, _, cs) in calls if kind == "published"]
+
+    def out(self) -> set[int]:
+        """The `n` of each step whose orders frame has gone."""
+        published = self.published()
+        return {UUID(c.key).int for _, cs in published for c in cs if c.family == "orders"}
+
+    def new_exec(self, account: UUID, k: int) -> str:
+        self.execs += 1
+        exec_id = f"e{self.execs}"
+        self.fills[exec_id] = (account, self.key(account, k))
+        return exec_id
+
+    def commit(self, account: UUID, k: int, exec_id: str | None = None) -> None:
+        self.n += 1
+        row = order(self.n, account, symbol=self.SYMBOLS[k])
+        if exec_id is None:
+            committed = step(row, "ack")
+        else:
+            fill = new_fill(exec_id, account, self.n)
+            self.rig.fills.rows[(account, exec_id)] = stored(fill)
+            self.order_of[exec_id] = self.n
+            moved = replace(row, state="partially_filled", cum_exec_qty=fill.exec_qty)
+            committed = step(moved, "partial_fill", "accepted", fill=fill)
+        resyncs = len(self.rig.topics.resyncs())
+        self.committed[account].append(self.n)
+        self.rig.publisher.committed(committed)
+        if (account, wt.FAMILIES) in self.rig.topics.resyncs()[resyncs:]:  # the queue overflowed
+            self.overflowed[account], out = self.n, self.out()
+            mine = (e for e, (a, _) in self.fills.items() if a == account and e in self.order_of)
+            self.dropped |= {e for e in mine if self.order_of[e] not in out}
+
+    def position(self, account: UUID, k: int) -> None:
+        key, out = self.key(account, k), self.out()
+        self.rows += 1
+        row_id = UUID(int=0x10000 + self.rows)
+        pending = {
+            e for e, (a, of) in self.fills.items()
+            if (a, of) == (account, key) and e in self.order_of and e not in self.dropped
+            and self.order_of[e] not in out
+        }  # fmt: skip
+        self.awaited[str(row_id)] = frozenset(pending) | self.rig.held.get(key, frozenset())
+        self.rig.publisher.position(position(account, symbol=key.symbol, id=row_id))
+
+    async def apply(self, op: str, account: UUID, k: int, seconds: float) -> None:
+        key = self.key(account, k)
+        if op == "step":
+            self.commit(account, k)
+        elif op == "fill":
+            self.commit(account, k, self.new_exec(account, k))
+        elif op == "hold":  # an EXEC before its order's bind: the facade holds it
+            self.rig.held[key] = self.rig.held.get(key, frozenset()) | {self.new_exec(account, k)}
+        elif op == "release" and (held := sorted(self.rig.held.get(key, ()))):
+            self.rig.held[key] = frozenset(held[1:])
+            self.commit(account, k, held[0])
+        elif op == "position":
+            self.position(account, k)
+        elif op == "gate":  # the fill reads block, or go again
+            gate, self.rig.fills.gate = self.rig.fills.gate, None
+            if gate is None:
+                self.rig.fills.gate = asyncio.Event()
+            else:
+                gate.set()
+        elif op == "advance":  # the holds' deadlines and the reads' bound pass on virtual time
+            await asyncio.sleep(seconds)
+        await quiet()
+
+    def check(self) -> None:
+        """S5: per account, each orders frame in commit order, an execution right before its
+        order's, none lost but what an overflow dropped (and re-snapshotted); a position after
+        every fill it awaited, unless it is a counted overtake."""
+        published, sent = self.published(), dict[int, int]()
+        for i, cs in published:
+            for j, c in enumerate(cs):
+                if c.family == "orders":
+                    sent[UUID(c.key).int] = i
+                elif c.family == "executions":  # its order's frame right behind it, one call
+                    after = [(x.family, x.key) for x in cs[j + 1 : j + 2]]
+                    assert after == [("orders", c.item["order_id"])]
+        for account, ns in self.committed.items():
+            went = [n for _, n in sorted((sent[n], n) for n in ns if n in sent)]
+            assert went == sorted(went)
+            assert [n for n in ns if n > self.overflowed.get(account, 0) and n not in sent] == []
+        for i, cs in published:
+            if i in self.rig.overtaken_calls:
+                continue
+            for c in (c for c in cs if c.family == "positions"):
+                awaited = [self.order_of.get(e, -1) for e in self.awaited[c.key]]
+                assert all(sent.get(n, i) < i for n in awaited), c.key  # their frames went first
+
+
+async def quiet() -> None:
+    """Until nothing is ready, no virtual second passing (`VirtualTimeLoop.idle`)."""
+    loop = asyncio.get_running_loop()
+    assert isinstance(loop, VirtualTimeLoop)
+    await asyncio.sleep(0)
+    await loop.idle()
+
+
+async def interleaved(ops: list[tuple[str, UUID, int, float]]) -> Interleaving:
+    world = Interleaving()
+    for op in ops:
+        await world.apply(*op)
+    if world.rig.fills.gate is not None:  # every read answers, every bound passes
+        world.rig.fills.gate.set()
+    await quiet()
+    await asyncio.sleep(wt.HOLD_S + wt.FILL_READ_S)
+    await quiet()
+    await world.rig.publisher.aclose()
+    return world
+
+
+#: One operation: its kind (fills and positions the likeliest), its account (A the likelier, so
+#: its queue and hold fill up), which of the account's two keys, and how far `advance` moves
+#: virtual time (each bound's either side).
+_OPS = st.lists(
+    st.tuples(
+        st.sampled_from(
+            ("fill", "fill", "position", "position", "step", "hold", "release", "gate", "advance")
+        ),
+        st.sampled_from((A, A, B)),
+        st.integers(0, 1),
+        st.sampled_from((0.25, 0.5, wt.HOLD_S, 2.5)),
+    ),
+    min_size=8,
+    max_size=40,
+)
+
+
+@settings(max_examples=100, deadline=None, derandomize=True, database=None)
+@given(_OPS)
+def test_s5_holds_for_any_interleaving_of_steps_positions_expiries_and_overflows(
+    ops: list[tuple[str, UUID, int, float]],
+) -> None:
+    """Sec.16.1 S5 for two accounts, any interleaving of steps, fills, the facade's held fills and
+    their release, positions, read stalls, and virtual seconds (the holds' and reads' bounds
+    passing), with a small queue and hold so their overflows happen: per account the frames
+    leave in commit order, and a position never comes before a fill it awaited unless the
+    overtake is counted. Seeded (`derandomize`), so every run tries the same examples."""
+    world = asyncio.run(interleaved(ops), loop_factory=VirtualTimeLoop)
+    world.check()
+
+
+# -- the contract's bounds ----------------------------------------------------------------------
+
+_PROTOCOL = Path(__file__).resolve().parents[5] / "docs" / "plan" / "23-ws-protocol.md"
+
+
+def test_the_contract_states_the_causal_orders_bounds() -> None:
+    """23 Sec.6.2.3 gives the four bounds in prose, so a change to a constant has to change the
+    contract: a fill's read (`FILL_READ_S`), the steps queued behind it (`QUEUE_MAX`), and a
+    position's hold, in time (`HOLD_S`) and in keys (`HOLD_MAX`)."""
+    text = _PROTOCOL.read_text(encoding="utf-8")
+    section = text[text.index("#### 6.2.3 ") : text.index("### 6.3 ")]
+    assert f"waits for its execution's row, {wt.FILL_READ_S:g} s at most." in section
+    assert f"later steps queue behind it, at most {wt.QUEUE_MAX} an account." in section
+    assert f"At {wt.HOLD_S:g} s, or when it finds {wt.HOLD_MAX} positions of its account" in section

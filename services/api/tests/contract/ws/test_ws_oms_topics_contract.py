@@ -3,8 +3,9 @@
 reads. Every frame the client gets is validated against 23-ws-protocol.md Sec.13 to Sec.15 before a
 test sees it (`_harness`), under both subprotocols. The Gherkin scenarios of the wire: a snapshot,
 then deltas in sequence; the server's account scope (C-12.4); one account event in causal order on
-one connection (Sec.16.1 S5); and a slow consumer of `orders`, closed `slow_consumer` (4429) with
-the backpressure flag off and on, never coalesced or dropped (S4, E17-T03's close)."""
+one connection (Sec.16.1 S5); and a slow consumer of `orders` or of `executions`, closed
+`slow_consumer` (4429) with the backpressure flag off and on, never coalesced or dropped (S4,
+E17-T03's close)."""
 
 from __future__ import annotations
 
@@ -114,23 +115,26 @@ def test_one_account_event_reaches_a_connection_in_causal_order(
         assert [c.next_of("d")["ch"] for _ in range(3)] == ["executions", "orders", "positions"]
 
 
+@pytest.mark.parametrize("family", ["orders", "executions"])
 @pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
-def test_a_slow_consumer_of_orders_is_closed_never_coalesced_or_dropped(
-    backpressure: BackpressureConfig | None,
+def test_a_slow_consumer_of_orders_or_executions_is_closed_never_coalesced_or_dropped(
+    backpressure: BackpressureConfig | None, family: str
 ) -> None:
-    """Sec.6.2, Sec.8.4 step 3 (E17-T03): `orders` is never coalesced or dropped, so a client that
-    cannot keep up is closed `bye slow_consumer` / 4429; every `d` it got before is whole and in
-    sequence. Produced in one event-loop turn, so the writer cannot drain."""
+    """Sec.6.2, Sec.8.4 step 3 (E17-T03): `orders` and `executions` ride the priority lane and are
+    never coalesced or dropped, so a client of either that cannot keep up is closed
+    `bye slow_consumer` / 4429; every `d` it got before is whole and in sequence. Produced in one
+    event-loop turn, so the writer cannot drain."""
     world, topics = wired(backpressure=backpressure)
     with connect(world) as c:
-        subscribed(c, "orders")
+        subscribed(c, family)
         snap = c.next_of("snap")
-        flood = [changes(1, stamp=30 + n)[1] for n in range(SPEC_QUEUE_FRAMES + 500)]
+        fills = (changes(1, stamp=30 + n) for n in range(SPEC_QUEUE_FRAMES + 500))
+        flood = [next(change for change in fill if change.family == family) for fill in fills]
         world.call(lambda: [topics.published(ACC_A, [change]) for change in flood])
         s = [snap["s"]]
         while (f := c.recv())["t"] != "bye":
             if f["t"] == "d":
-                assert f["ch"] == "orders" and len(f["p"]["orders"]) == 1  # never merged
+                assert f["ch"] == family and len(f["p"][family]) == 1  # never merged
                 s.append(f["s"])
         assert s == list(range(s[0], s[0] + len(s))) and len(s) - 1 <= SPEC_QUEUE_FRAMES
         assert (f["p"]["reason"], f["p"]["code"]) == ("slow_consumer", 4429)

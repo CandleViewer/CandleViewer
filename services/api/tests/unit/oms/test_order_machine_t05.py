@@ -367,3 +367,18 @@ async def test_held_fills_names_a_fill_the_order_holds_before_its_bind_and_none_
     row = await rig.orders.get(ACCOUNT, order.id)
     assert row is not None and row.cum_exec_qty == Decimal("0.4")
     assert rig.facade.held_fills(_KEY) == frozenset()
+
+
+async def test_held_fills_names_the_fill_a_resyncing_order_holds(rig: Rig) -> None:
+    """The `_resyncing` arm, as `protecting`'s (#4511 code 1): while the facade rebuilds an order
+    (`_resync`), its closed machine, found there alone, still holds the EXEC that came before its
+    bind until the successor takes it over, so `held_fills` names it and a position still waits
+    for it (23 Sec.6.2.3)."""
+    order, gate = await _unbound(rig)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    rig.facade._resyncing[order.id] = rig.facade._orders.pop(order.id)
+    assert rig.facade.held_fills(_KEY) == frozenset({"e1"})
+    rig.facade._orders[order.id] = rig.facade._resyncing.pop(order.id)  # rebuilt; the ack binds it
+    gate.set()
+    await rig.quiet()
+    assert rig.facade.held_fills(_KEY) == frozenset()
