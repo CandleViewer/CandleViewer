@@ -76,6 +76,12 @@ export interface WsClientOptions {
   readonly port: PortLike;
   /** A `system` update, the moment it arrives: the kill switch does not wait for a frame. */
   readonly onSystem?: ((update: SystemUpdate) => void) | undefined;
+  /**
+   * A `snap` whose `meta.reason` is `instrument_revision` reached a consumer of `ch` (23 7.4): the metadata of the symbol it
+   * names changed (live or replay, the revision is the catalogue's). Heard once per message, as it arrives, like `onSystem`:
+   * it may arm a timer and no more.
+   */
+  readonly onInstrumentRevision?: ((ch: string) => void) | undefined;
   /** `fe_ws_decode_ms` (D8): the time the worker spent decoding each frame. */
   readonly telemetry?: { recordDecode(ms: number): void } | undefined;
   /** The age of the newest frame of a rendered batch, once a second at most (budget #3). */
@@ -215,6 +221,7 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
     if (consumer.answer !== undefined) timers.clearTimeout(consumer.answer);
     consumer.answer = undefined;
     let ts: number | undefined;
+    let revised = false;
     for (const frame of message.frames) {
       if (frame.kind !== "reset") {
         try {
@@ -224,6 +231,7 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
         }
         ts = frame.ts;
       }
+      if (frame.kind === "snap" && frame.meta?.reason === "instrument_revision") revised = true;
       enqueue(consumer, frame);
     }
     if (!consumer.waiting || message.status === "revoked") stopAsking(consumer); // a snapshot came, or none will
@@ -231,6 +239,14 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
     // resyncing until the snapshot (the worker may not have heard the `resync` yet), unless it revoked the stream
     const status = consumer.waiting && message.status !== "revoked" ? "resyncing" : message.status;
     scheduler.post(consumer.id, { status, effective, source, ts });
+    if (revised) {
+      // last: the message is applied whatever the app does of it, and a throw is raised on its own
+      try {
+        options.onInstrumentRevision?.(consumer.ch);
+      } catch (error) {
+        raise(error);
+      }
+    }
   }
 
   function answerToken(request: TokenRequestMessage): void {

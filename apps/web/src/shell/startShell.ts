@@ -15,7 +15,10 @@ import { openWorkerPort } from "../lib/ws/client/workerPort.js";
 import type { PortLike } from "../lib/ws/port/endpoint.js";
 import type { WsState } from "../lib/ws/state/types.js";
 import { bootOwnsOutage } from "../features/system-states/bootOffline.js";
-import { startSymbolSearch } from "../features/symbol-search/searchSession.js";
+import {
+  noteInstrumentRevision,
+  startSymbolSearch,
+} from "../features/symbol-search/searchSession.js";
 import { runBootstrap, type BootstrapDeps } from "./bootstrap/bootstrap.js";
 import { watchGpu } from "./bootstrap/gpuCrash.js";
 import { startLiveness } from "./bootstrap/liveness.js";
@@ -113,6 +116,8 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     clientVersion: CLIENT_VERSION,
     port,
     onSystem: (update) => applySystemUpdate(update),
+    // E08-S09: a snapshot that says its symbol's instrument was revised re-reads SCR-102's list, once for a burst
+    onInstrumentRevision: noteInstrumentRevision,
     telemetry: { recordDecode }, // `fe_ws_decode_ms` (D8), into the app's aggregator
     onLatency: (latency) => setShellState({ latency }), // budget #3: the client throttles it to once a second
   });
