@@ -9,6 +9,7 @@ import {
 import { seriousAxe } from "../support/axe";
 import {
   ABSOLUTE_LIFETIME_MS,
+  IDLE_TIMEOUT_S,
   SessionStore,
   UNLOCK_PASSWORD,
   UNLOCK_STRIKES,
@@ -76,7 +77,10 @@ test("E09-TC-C01 the leak guard fails on a forbidden value in a response body (h
   const guard = watchForLeaks(page, ["leaky-value"]);
   await page.route("**/api/v1/probe", (r) => r.fulfill(json({ note: "leaky-value" })));
   await page.goto("/login");
+  // Registered after the guard's own listener, so the guard has queued its body check when this resolves.
+  const finished = page.waitForEvent("requestfinished", (r) => r.url().endsWith("/api/v1/probe"));
   await page.evaluate(() => fetch("/api/v1/probe").then((res) => res.text()));
+  await finished;
   await expect(guard.flush()).rejects.toThrow("probe leaked a 11-char value");
 });
 
@@ -147,9 +151,10 @@ test("E09-TC-C02 a reload into an idle-locked session shows SCR-005, not /login;
 
 // What this proves: the confirm sends `{all_sessions: true}` once, and the tab reaches SCR-001 through
 // `endSession()` on the 204, not through the socket. The server's `bye session_revoked` + 4401 close
-// (sent before the 204, as the hub does) is honoured: the client never re-authenticates on it. A
-// revocation from another device (4401 alone, no in-tab logout) does not reach SCR-001 yet; the WS
-// client stops on it as a fatal close (`connectionRegion.ts`, G12), so that is not asserted here.
+// (sent before the 204, as the hub does) is honoured: the client opens no second socket on it (`connections()`
+// counts every attempt, also one the harness refuses). A revocation from another device (4401 alone, no in-tab
+// logout) does not reach SCR-001 yet; the WS client stops on it as a fatal close (`connectionRegion.ts`, G12),
+// so that is not asserted here.
 test("E09-TC-D03 SCR-112 sign out everywhere: logout all, SCR-001, the 4401 close honoured", async ({
   page,
 }) => {
@@ -195,14 +200,22 @@ test("E09-TC-D03 SCR-112 sign out everywhere: logout all, SCR-001, the 4401 clos
   await expect(page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/u);
   await expect(page.getByRole("heading", { name: "Sign in to CandleViewer" })).toBeVisible();
   expect(logouts).toEqual([{ all_sessions: true }]);
+  // The harness's own output: a precondition that the client was told (`bye.reconnect` false), not evidence.
   expect(harness.sent.at(-1)).toMatchObject({ t: "bye", p: { code: 4401, reconnect: false } });
-  expect(harness.authenticated()).toBe(1); // bye.reconnect false: never re-authenticated
+  // The evidence: no second socket was tried. `authenticated()` could not show it: the revoked session's next
+  // socket is closed before any `auth` frame is answered, so it stays 1 whatever the client does.
+  expect(harness.connections()).toBe(1);
 });
 
 // ---- Live idle (22 "Idle lock"): the SPA times CMP-098 and SCR-005 from `GET /auth/session`, on the
 // stub server's clock. `store.advance` moves that clock and the page's timers the same span; each step passes
-// its limit by a margin, never the boundary.
-const MIN = 60_000;
+// its limit by 1 s, never the boundary (the host warns at `left <= WARN_MS` and locks once the deadline is past).
+/** CMP-098 shows this long before the deadline (`SessionLockHost.tsx` `WARN_MS`; E09-D06 3). */
+const WARN_MS = 60_000;
+/** To 59 s before the deadline: inside the warning, not on its edge. */
+const TO_WARNING_MS = IDLE_TIMEOUT_S * 1_000 - WARN_MS + 1_000;
+/** From there to 1 s past the deadline: the 59 s left, plus the 1 s margin. */
+const TO_LOCK_MS = WARN_MS;
 const ROUTE = "/admin/users/new";
 const SIGN_IN = "Sign in to CandleViewer";
 const unlocks = (store: SessionStore): unknown[] =>
@@ -227,11 +240,11 @@ async function openIdleSession(page: Page): Promise<SessionStore> {
 
 /** CMP-098 shows 60 s before the deadline, and SCR-005 follows it. */
 async function idleToLock(page: Page, store: SessionStore): Promise<Locator> {
-  await store.advance(14 * MIN, page);
+  await store.advance(TO_WARNING_MS, page);
   await expect(
     page.getByRole("alertdialog", { name: "Your session will lock soon" }),
   ).toBeVisible();
-  await store.advance(MIN + 1_000, page);
+  await store.advance(TO_LOCK_MS, page);
   const lock = page.getByRole("alertdialog", { name: "Session locked" });
   await expect(lock).toBeVisible();
   return lock;
@@ -242,11 +255,11 @@ test("E09-TC-C02 an idle session warns at 60 s, then locks; unlock returns to th
 }) => {
   const store = await openIdleSession(page);
   const warning = page.getByRole("alertdialog", { name: "Your session will lock soon" });
-  await store.advance(14 * MIN, page);
+  await store.advance(TO_WARNING_MS, page);
   await expect(warning).toBeVisible();
   await expect(warning.getByRole("button", { name: "Stay signed in" })).toBeFocused();
   expect(await seriousAxe(page)).toEqual([]);
-  await store.advance(MIN + 1_000, page);
+  await store.advance(TO_LOCK_MS, page);
   const lock = page.getByRole("alertdialog", { name: "Session locked" });
   await expect(lock).toBeVisible();
   await expect(warning).toHaveCount(0);
@@ -259,8 +272,8 @@ test("E09-TC-C02 an idle session warns at 60 s, then locks; unlock returns to th
   await expect(lock).toBeHidden();
   await expect(page).toHaveURL(/\/admin\/users\/new$/u);
   await expect(page.getByLabel("Username")).toHaveValue("annie");
-  // not asserted: focus returning to the Username (E09-D06 6). The page clock jumps 15 min while the shared
-  // worker keeps the real one, so the shell's connection UI races that focus; the real lane asserts it.
+  // Not asserted: focus returning to the Username (E09-D06 6, E09-D12 9.2). It failed 1 run in 3 under
+  // `fastForward`; cause not established; PR-3's real lane asserts it.
   expect(unlocks(store)).toEqual([{ password: UNLOCK_PASSWORD }]); // the password only, once
 });
 
@@ -268,12 +281,12 @@ test("E09-TC-C02 Stay signed in extends the session: it does not lock at the old
   page,
 }) => {
   const store = await openIdleSession(page);
-  await store.advance(14 * MIN, page);
+  await store.advance(TO_WARNING_MS, page);
   await page.getByRole("button", { name: "Stay signed in" }).click();
   await expect(page.getByRole("alertdialog", { name: "Your session will lock soon" })).toHaveCount(
     0,
   );
-  await store.advance(14 * MIN, page); // past the first deadline, 60 s short of the new one
+  await store.advance(TO_WARNING_MS, page); // past the first deadline, 59 s short of the new one
   await expect(
     page.getByRole("alertdialog", { name: "Your session will lock soon" }),
   ).toBeVisible();
@@ -291,12 +304,18 @@ test("E09-TC-C02 SCR-005 Sign out instead: Esc goes back to the lock; Sign out e
   await expect(confirm.getByRole("button", { name: "Back to unlock" })).toBeFocused();
   await page.keyboard.press("Escape"); // Esc goes back: a safe no-op
   await expect(lock).toBeVisible();
+  await expect(confirm).toBeHidden();
   await lock.getByRole("button", { name: "Sign out instead" }).click();
   await confirm.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login\?next=%2Fadmin%2Fusers%2Fnew$/u);
   await expect(page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
   const logouts = store.calls.filter((call) => call.path === "/auth/logout");
-  expect(logouts.map((call) => call.body)).toEqual([null]); // never `all_sessions` from a locked session
+  expect(logouts).toHaveLength(1);
+  // never `all_sessions` from a locked session: the plain logout ends only this one
+  const everywhere = logouts.filter(
+    (call) => (call.body as { all_sessions?: unknown } | null)?.all_sessions === true,
+  );
+  expect(everywhere).toEqual([]);
   expect(unlocks(store)).toEqual([]);
 });
 
@@ -312,6 +331,8 @@ test("E09-TC-C03 the lifetime lapsing while locked: unlock shows the expiry card
   await expect(expired).toBeVisible();
   await expect(lock).toHaveCount(0);
   await expect(expired.getByRole("button", { name: "Sign in" })).toBeFocused();
+  await expect(expired.getByRole("button")).toHaveCount(1); // the one action
+  await expect(expired.getByRole("link")).toHaveCount(0);
   expect(await seriousAxe(page)).toEqual([]);
   await page.keyboard.press("Escape"); // Esc does not dismiss it
   await expect(expired).toBeVisible();
@@ -431,18 +452,21 @@ test("E09-TC-D03 sign out everywhere in context A: B's socket gets bye then 4401
   await expect(a.page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/u);
   expect(store.sessions.map((s) => s.revoked)).toEqual([true, true]);
 
-  // B's socket: the hub's `bye session_revoked` (reconnect false), never re-authenticated
+  // B's socket: the hub's `bye session_revoked` (reconnect false). The harness sent it: a precondition that B
+  // was told, not evidence.
   await expect
     .poll(() => b.harness.sent.at(-1))
     .toMatchObject({
       t: "bye",
       p: { code: 4401, reason: "session_revoked", reconnect: false },
     });
-  expect(b.harness.authenticated()).toBe(1);
   // B's next REST call is refused, and the SPA routes it to SCR-001
   await b.page.getByRole("link", { name: "Settings" }).click();
   await expect(b.page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/u);
   await expect(b.page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
+  // The evidence, once B has landed: it never tried a second socket (`connections()` counts a refused attempt too;
+  // `authenticated()` would stay 1 whatever B did, as the revoked session's next socket is closed unanswered).
+  expect(b.harness.connections()).toBe(1);
   await a.context.close();
   await b.context.close();
 });
