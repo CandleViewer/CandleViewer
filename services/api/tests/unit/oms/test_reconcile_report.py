@@ -12,6 +12,7 @@ from prometheus_client import generate_latest
 
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.reconcile_report import (
+    EMPTY_TEXT,
     HANDOVER_UNREADABLE,
     NO_RECORD_IN_FORCE,
     OWNER_FIELDS,
@@ -162,6 +163,20 @@ def test_an_error_names_a_step_a_short_kind_and_an_id_never_a_payload(
 ) -> None:
     with pytest.raises(ValueError):
         PassError(step, kind, subject)  # type: ignore[arg-type]  # the bad step is the point
+
+
+def test_the_draft_lists_what_a_failure_handler_names_and_never_raises() -> None:
+    """BQ-18: the phases list errors inside their failure handlers, so the draft cuts a kind or
+    a subject past the cap to it and names an empty one, where `PassError` refuses both."""
+    draft = ReportDraft(ACCOUNT, SWEEP_ID, "periodic", WINDOW)
+    draft.error("2", "K" * 65, "s" * 65)
+    draft.error("3a", "", "")
+    draft.error("5", "AttributeError")
+    assert draft.errors == [
+        PassError("2", "K" * 64, "s" * 64),
+        PassError("3a", EMPTY_TEXT, EMPTY_TEXT),
+        PassError("5", "AttributeError"),
+    ]
 
 
 def test_a_report_refuses_an_unknown_trigger_and_a_reversed_window() -> None:

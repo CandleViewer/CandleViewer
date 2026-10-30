@@ -1034,31 +1034,38 @@ class Reconciler:
 
     def _plan_stops(self, plan: Plan) -> None:
         """Step 5's tests, from step 1's reads alone, so nothing before them can stop them
-        (C-2.6). A key with a stop request in flight at the copy is left to that request."""
+        (C-2.6), each position on its own (BQ-18): one that cannot be planned is listed by its
+        class and symbol, and every other position still plans."""
+        for p in plan.fetched.positions:
+            try:
+                self._plan_stop(plan, p)
+            except Exception as exc:
+                plan.draft.error("5", type(exc).__name__, p.symbol)
+
+    def _plan_stop(self, plan: Plan, p: Position) -> None:
+        """One position's step 5. A key with a stop request in flight at the copy is left to that
+        request."""
         f, draft = plan.fetched, plan.draft
-        for p in f.positions:
-            if p.qty <= 0 or p.side is None:
-                continue
-            records = [
-                r for r in f.records if (r.symbol, r.position_idx) == (p.symbol, p.position_idx)
-            ]
-            if _raced(records):
-                continue
-            record = _in_force(p, records)
-            stop = p.stop_loss if p.stop_loss is not None and p.stop_loss > 0 else None
-            if stop is None and not _covered(p, f.remote_open, plan.ours, records):
-                if record is None:  # BQ-9: paged, listed, left to E32-T02; entry is not held
-                    plan.actions.append(PageNaked(p))
-                    draft.error("5", NO_RECORD_IN_FORCE, p.symbol)
-                else:
-                    plan.actions.append(AttachStop(p, record))
-            elif stop is not None and record is not None and record.tpsl_mode == "Full":
-                if record.trailing_distance is not None and p.trailing_stop_distance is not None:
-                    continue  # the venue moves a recorded native trail's stop (Sec.10.7)
-                if loosens(record.position_side, record.trigger_price, stop):
-                    plan.actions.append(RestoreStop(p, record))
-                elif loosens(record.position_side, stop, record.trigger_price):
-                    plan.actions.append(PageTighter(p))
+        if p.qty <= 0 or p.side is None:
+            return
+        records = [r for r in f.records if (r.symbol, r.position_idx) == (p.symbol, p.position_idx)]
+        if _raced(records):
+            return
+        record = _in_force(p, records)
+        stop = p.stop_loss if p.stop_loss is not None and p.stop_loss > 0 else None
+        if stop is None and not _covered(p, f.remote_open, plan.ours, records):
+            if record is None:  # BQ-9: paged, listed, left to E32-T02; entry is not held
+                plan.actions.append(PageNaked(p))
+                draft.error("5", NO_RECORD_IN_FORCE, p.symbol)
+            else:
+                plan.actions.append(AttachStop(p, record))
+        elif stop is not None and record is not None and record.tpsl_mode == "Full":
+            if record.trailing_distance is not None and p.trailing_stop_distance is not None:
+                return  # the venue moves a recorded native trail's stop (Sec.10.7)
+            if loosens(record.position_side, record.trigger_price, stop):
+                plan.actions.append(RestoreStop(p, record))
+            elif loosens(record.position_side, stop, record.trigger_price):
+                plan.actions.append(PageTighter(p))
 
     # --- The remediation and the report -----------------------------------------------------------
 

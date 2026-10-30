@@ -39,7 +39,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from .push_mapping import money_text
 
 __all__ = [
-    "CORRECTION_KINDS", "HANDOVER_UNREADABLE", "NO_RECORD_IN_FORCE", "OWNER_FIELDS",
+    "CORRECTION_KINDS", "EMPTY_TEXT", "HANDOVER_UNREADABLE", "NO_RECORD_IN_FORCE", "OWNER_FIELDS",
     "PASS_RESULTS", "REPEATING_FIELDS", "STALE_NOTICE", "STANDING_ITEMS", "STEPS", "TRIGGERS",
     "CorrectionKind", "Notice", "NoticeReason", "NoticeSeverity", "PassError", "PassNotices",
     "PassResult", "PositionDrift", "ReconcileMetrics", "ReconcileReport", "ReportDraft", "Step",
@@ -74,6 +74,14 @@ OWNER_FIELDS: Final = ("anomalies", "unpaired", "held", "sl_restore_refused", "s
 REPEATING_FIELDS: Final = ("anomalies", "unpaired", "sl_tighter", "sl_restore_refused", "errors")
 #: The longest subject an error names: an order link id, an exchange order id or an `exec_id`.
 _MAX_SUBJECT: Final = 64
+#: What `ReportDraft.error` lists for an empty kind or subject: a name, never a value.
+EMPTY_TEXT: Final = "(empty)"
+
+
+def _capped(text: str) -> str:
+    """A kind or a subject cut to the cap, an empty one named (`ReportDraft.error`)."""
+    return text[:_MAX_SUBJECT] or EMPTY_TEXT
+
 
 NoticeReason = Literal["oms.account_desync", "oms.account_stale", "oms.account_synced"]
 NoticeSeverity = Literal["info", "warning", "critical"]
@@ -206,7 +214,11 @@ class ReportDraft:
     errors: list[PassError] = field(default_factory=list)
 
     def error(self, step: Step, kind: str, subject: str | None = None) -> None:
-        self.errors.append(PassError(step, kind, subject))
+        """Lists an error. The phases call it inside their failure handlers, so it never raises
+        over what it names (BQ-18): a kind or a subject past the cap is cut to it, and an empty
+        one is named `EMPTY_TEXT`. `PassError` itself keeps the cap."""
+        named = None if subject is None else _capped(subject)
+        self.errors.append(PassError(step, _capped(kind), named))
 
     def freeze(self, duration_ms: int) -> ReconcileReport:
         lists = {

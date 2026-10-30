@@ -4,14 +4,21 @@ it, and a row of another account fails the fetch with nothing applied."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
+from candleviewer.exchange.base.models import Position
+from candleviewer.oms import reconciler as rc
 from candleviewer.oms.reconciler import FetchError
+from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from tests.unit.oms.reconcile_rig import OTHER, World, fill, position, record, remote, row
+
+type Recorded = RecordedStopRow | None
 
 _HYP = settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 #: The row states a pass meets (persisted), each a different branch of 3a or 3b.
@@ -23,7 +30,7 @@ _FAULTS = st.sampled_from(
     [
         "get_by_exchange_order_id", "get_by_link_id", "command:RECON_MISS",
         "command:RECON_FOUND_LIVE", "push:EXEC", "push:TRIGGERED", "discover", "adopted",
-        "hand_over_execution", "open", "stored", "unfinished_for", "held",
+        "hand_over_execution", "open", "stored", "unfinished_for", "held", "plan_stops",
     ]
 )  # fmt: skip
 
@@ -38,7 +45,21 @@ def _world(states: list[str], remote_open: list[int], fills: list[int]) -> World
         w.venue.seed_execution(fill(f"e{i}", n=n, seq=i))
     w.oms.records = [record()]
     w.venue.seed_position(position(stop_loss=None))  # naked, with a record in force
+    w.venue.seed_position(position(symbol="ETHUSDT"))  # protected: step 5 plans nothing for it
     return w
+
+
+def _planning_fails(w: World) -> Callable[[Position, Sequence[RecordedStopRow]], Recorded]:
+    """`_in_force` that raises the injected `plan_stops` fault, once, for the protected position:
+    one position's planning fails, and the naked one is planned all the same (BQ-18)."""
+    real = rc._in_force
+
+    def in_force(p: Position, records: Sequence[RecordedStopRow]) -> Recorded:
+        if p.symbol == "ETHUSDT":
+            w.oms._maybe_fail("plan_stops")
+        return real(p, records)
+
+    return in_force
 
 
 @_HYP
@@ -48,6 +69,7 @@ def _world(states: list[str], remote_open: list[int], fills: list[int]) -> World
     fills=st.lists(st.integers(1, 8), max_size=4),
     fault=_FAULTS,
 )
+@example(states=[], remote_open=[], fills=[], fault="plan_stops")  # run whatever ci draws
 async def test_one_failure_never_fails_the_pass_and_step_5_always_runs(
     states: list[str], remote_open: list[int], fills: list[int], fault: str
 ) -> None:
@@ -56,7 +78,8 @@ async def test_one_failure_never_fails_the_pass_and_step_5_always_runs(
     attached all the same."""
     w = _world(states, remote_open, fills)
     w.oms.fail[fault] = ConnectionError("down")
-    report = await w.run()
+    with patch.object(rc, "_in_force", _planning_fails(w)):
+        report = await w.run()
     assert w.oms.effects("attach_recorded"), (states, remote_open, fills, fault)
     assert report.sl_repaired == ("BTCUSDT",)
     if fault not in w.oms.fail:  # it fired: listed, never raised

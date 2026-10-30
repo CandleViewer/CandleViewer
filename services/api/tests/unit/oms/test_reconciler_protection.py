@@ -6,14 +6,18 @@ attached from its record or paged with none."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
+from uuid import UUID
 
 import pytest
 
 from candleviewer.domain.order_link import ext_key
-from candleviewer.exchange.base.models import Order
+from candleviewer.exchange.base.models import Order, Position
+from candleviewer.oms import reconciler as rc
 from candleviewer.oms.reconcile_report import REPEATING_FIELDS, PassError
 from candleviewer.oms.reconciler import PositionDriftSeen
+from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from tests.unit.oms.reconcile_rig import LINK, T0, World, position, record, remote, row
 
 #: The only venue calls a pass makes: its reads. Stop writes go through the recorded-stop writer.
@@ -244,6 +248,28 @@ async def test_step5_a_pending_record_the_read_shows_in_force_counts_as_in_force
 
 
 # --- Containment (BQ-18) and step 5 whatever came before it (C-2.6) -----------------------------
+
+
+async def test_step5_a_position_that_cannot_be_planned_is_listed_and_the_rest_still_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BQ-18, C-2.6: a fault planning one position is listed by its class and symbol, and the
+    position after it is still tested and repaired."""
+    w = World()
+    w.oms.records = [record(), record(id=UUID(int=0x5705), symbol="ETHUSDT")]
+    w.venue.seed_position(position(stop_loss=None))
+    w.venue.seed_position(position(symbol="ETHUSDT", stop_loss=None))
+    real = rc._in_force
+
+    def in_force(p: Position, records: Sequence[RecordedStopRow]) -> RecordedStopRow | None:
+        if p.symbol == "BTCUSDT":  # the first position read
+            raise RuntimeError("cannot plan")
+        return real(p, records)
+
+    monkeypatch.setattr(rc, "_in_force", in_force)
+    report = await w.run()
+    assert report.errors == (PassError("5", "RuntimeError", "BTCUSDT"),)
+    assert report.sl_repaired == ("ETHUSDT",)
 
 
 async def test_step5_runs_when_the_order_store_cannot_be_read() -> None:
