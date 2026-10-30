@@ -1101,9 +1101,13 @@ operations:
     permissions: ['positions:write', 'admin:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
+    request:
+      json: {leverage: '10'}
     # Owner-only (04 section 7.2.2 row 18, ruled on #915): a Manager is a capability 403.
+    # E29-T07 #915: the CI app composes no OMS read store, so an Owner's admitted call is 503
+    # `store_unavailable` and the cell reads `allow`; the foreign, absent and read-only-grant
+    # cells are pinned on fakes in tests/unit/api/test_position_leverage_route.py.
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /positions/{positionId}/reverse:
     permissions: ['positions:write']
@@ -1852,9 +1856,12 @@ account_scope:
   PUT /exchange-accounts/{accountId}/profiles/{profileId}: {delegated: E28-X03 (#976)}
   DELETE /exchange-accounts/{accountId}/profiles/{profileId}: {delegated: E28-X03 (#976)}
   PUT /positions/{positionId}/leverage:  # the situation is the account of the position (4.2)
+    # E29-T07 #915: the CI app has no position store (`503 store_unavailable` once admitted), so
+    # each situation's id names no position here; the granted/foreign/absent answers on a seeded
+    # store (200, 404 not_found alike, 404) are pinned in test_position_leverage_route.py.
     step_up: null
     cells:
-      owner: {granted: admitted, foreign: admitted, absent: 404 not_found}
+      owner: {granted: 503 store_unavailable, foreign: 503 store_unavailable, absent: 503 store_unavailable}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
       viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
   WS wallet:

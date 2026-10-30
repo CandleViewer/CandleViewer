@@ -114,6 +114,11 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("POST", "/trade-groups/preview"): (
         "previewTradeGroup: no step-up (04 row 19a); the submit's dry run, it places nothing"
     ),
+    # 04 §7.2.2 row 18 (#915): setting leverage takes no step-up; a live account needs the
+    # session's arm token in either direction (22 `ArmToken`, SR-043).
+    ("PUT", "/positions/{positionId}/leverage"): (
+        "setPositionLeverage: no step-up (04 row 18); live needs the arm token (SR-043)"
+    ),
     # 04 §7.2.2 row 14: cancel-all takes no step-up; like every cancel it is a risk-reducing exit,
     # never gated by the arm token or the switches either (C-2.6).
     ("POST", "/orders/cancel-all"): (

@@ -501,7 +501,7 @@ AuditSeverity = Literal["info", "warning", "error", "critical"]
 AuditObject = Literal["order", "recorded_stop"]
 #: What a request's own record is about: its order, an entry's group, or, for a refusal before
 #: any row exists, the account it named.
-RequestObject = Literal["order", "trade_group", "exchange_account"]
+RequestObject = Literal["order", "trade_group", "exchange_account", "position"]
 
 
 @dataclass(frozen=True, slots=True)

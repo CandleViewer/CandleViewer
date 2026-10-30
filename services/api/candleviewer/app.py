@@ -161,6 +161,7 @@ from candleviewer.api.order_cancel_all import make_cancel_all_router
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import SessionTradingPrincipalResolver
 from candleviewer.api.orders import OrderPrincipals, make_orders_router
+from candleviewer.api.position_leverage import make_position_leverage_router
 from candleviewer.api.preview_limiter import PreviewLimiter
 from candleviewer.api.profile_writes import SaveMeasures, make_profile_writes_router
 from candleviewer.api.profiles import make_profiles_router
@@ -2675,6 +2676,20 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
             auth=ctx.auth,
             versions=order_versions(lambda: oms_runtime_of(app.state)),
+        )
+    )
+    # E29-T07 #915 PR 2: `setPositionLeverage`, its position read in scope on the reads above and
+    # its change on the OMS runtime's lane; `trading.oms_enabled` gates it, as it gates a submit.
+    app.include_router(
+        make_position_leverage_router(
+            order_principals,
+            lambda: oms_runtime_of(app.state),
+            app.state.oms_reads,
+            audit=_LazyAuditEmitter(ctx.audit),
+            records=order_records,
+            oms_enabled=feature_flags.oms_enabled,
+            metrics=metrics_facade,
+            auth=ctx.auth,
         )
     )
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). #2966: the real

@@ -109,6 +109,12 @@ from candleviewer.oms.exits import (
 )
 from candleviewer.oms.fanout.guard import LegGuard, S4SGuard
 from candleviewer.oms.idempotency import AnchorService, Lookup, Replay
+from candleviewer.oms.leverage import (
+    LeverageDeps,
+    LeverageOutcome,
+    LeverageRequest,
+    PositionLeverage,
+)
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator
 from candleviewer.oms.order_machine import (
     MAX_MACHINES,
@@ -1853,6 +1859,9 @@ class _Parts:
     #: When the fencing grace since the lock was taken ends, on the runtime's `monotonic`.
     admit_after: float
     preview: PreviewParts
+    #: E29-T07 #915: `setPositionLeverage`'s service over the pipeline's account, instrument and
+    #: profile reads, the routed port, the switches and the audit writer.
+    leverage: PositionLeverage
     #: E29-T13's snapshot reads on the lane, which the WS topics take once `ready`; None without
     #: the topics.
     topic_reads: TopicReads | None = None
@@ -1984,6 +1993,21 @@ class OnLaneExits:
     ) -> ExitOutcome:
         amend = self.parts.exits.amend(scoped, terms, caller=caller, expected_seq=expected_seq)
         return await _on_lane(self.parts, amend, None)
+
+
+@dataclass(frozen=True, slots=True)
+class OnLaneLeverage:
+    """`OmsRuntime.leverage` from the serving loop (E29-T07 #915): a change, awaited on the order
+    lane, where the trading port and the audit writer run, bounded by the service's own
+    timeouts (its reads, its record and the venue's call), as the exits' cancels are."""
+
+    parts: _Parts
+
+    async def apply(
+        self, request: LeverageRequest, *, actor: SubmitActor, request_id: UUID | None
+    ) -> LeverageOutcome:
+        change = self.parts.leverage.apply(request, actor=actor, request_id=request_id)
+        return await _on_lane(self.parts, change, None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2351,6 +2375,12 @@ class OmsRuntime:
         order store's open-order read, each call hopped to the order lane (`OnLaneCancelAll`);
         `OmsNotReady` before it is composed."""
         return OnLaneCancelAll(self._composed())
+
+    @property
+    def leverage(self) -> OnLaneLeverage:
+        """`setPositionLeverage`'s service (E29-T07 #915), each change awaited on the order lane
+        (`OnLaneLeverage`); `OmsNotReady` before it is composed."""
+        return OnLaneLeverage(self._composed())
 
     def _composed(self) -> _Parts:
         if self._parts is None:
@@ -3076,6 +3106,10 @@ class OmsRuntime:
                 stop_resolver=ports.stop_resolver, risk_gate=ports.risk_gate, validator=validator,
                 switches=submits, oms_enabled=self._oms_enabled, environment=env,
             ))  # fmt: skip
+            leverage = PositionLeverage(LeverageDeps(
+                accounts=accounts, instruments=instruments, profiles=profiles,
+                ports=router.port_for, switches=submits, audit=audit, environment=env,
+            ))  # fmt: skip
             self._phase = "audit_start"
             await writer.start()
             self._phase = "sink_start"
@@ -3103,7 +3137,7 @@ class OmsRuntime:
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
-                stream, admit_after, preview, reads, observed,
+                stream, admit_after, preview, leverage, reads, observed,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping

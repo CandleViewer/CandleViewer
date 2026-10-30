@@ -40,6 +40,7 @@ from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.api.idempotency import IdempotencyCache
 from candleviewer.api.idle_lock import IdleLockMiddleware
 from candleviewer.api.order_cancel_all import CANCEL_ALL_PATH
+from candleviewer.api.position_leverage import LEVERAGE_PATH
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
 from candleviewer.api.step_up import (
@@ -64,6 +65,7 @@ from tests.unit.api import test_order_amend_route as amend
 from tests.unit.api import test_order_cancel_all_route as cancel_all
 from tests.unit.api import test_order_exits_route as exits
 from tests.unit.api import test_orders_route as orders
+from tests.unit.api import test_position_leverage_route as leverage
 from tests.unit.api.test_audit_signing_rotate import OWNER as KEYS_MANAGE
 from tests.unit.api.test_audit_signing_rotate import _deployed, _Rot
 from tests.unit.api.test_invites_create_app_e2e import _login
@@ -196,6 +198,21 @@ async def _cancel_all(w: _World, locks: _Locks, stack: AsyncExitStack, gate: str
 
     def executed() -> int:  # one run per first submission
         return len(world.oms.tasks)
+
+    return _case(w, locks, await _harness(w, stack), send, executed, world.cache.__len__, 200)
+
+
+async def _set_leverage(w: _World, locks: _Locks, stack: AsyncExitStack, gate: str) -> _Case:
+    world = leverage.World()
+    client = await stack.enter_async_context(_client(_gated(w, world.app(), locks)))
+    path = LEVERAGE_PATH.replace("{positionId}", leverage.ON_A)
+    sent = {"json": {"leverage": "12.5"}, "headers": leverage.headers("owner", key=orders.KEY)}
+
+    async def send() -> httpx.Response:
+        return await client.put(path, **sent)
+
+    def executed() -> int:  # one change sent per first submission
+        return len(world.sent())
 
     return _case(w, locks, await _harness(w, stack), send, executed, world.cache.__len__, 200)
 
@@ -373,6 +390,7 @@ _CASES: dict[tuple[str, str], Callable[[_Env, str], Awaitable[_Case]]] = {
     ("PATCH", "/orders/{orderId}"): _router_level(_amend_order),
     ("DELETE", "/orders/{orderId}"): _router_level(_cancel_order),
     ("POST", "/orders/cancel-all"): _router_level(_cancel_all),
+    ("PUT", LEVERAGE_PATH): _router_level(_set_leverage),
     ("PUT", "/rules/{ruleId}/mode"): _router_level(_set_rule_mode),
     ("POST", _ROTATE): _rotate_signing_key,
 }
