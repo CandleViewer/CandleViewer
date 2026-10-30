@@ -37,12 +37,14 @@ its code:
   height of the tool's width ESTIMATE (ADVANCE_EM per character, the spec's CP-1 / CP-2 / CP-4
   strings, wrapped at the frame's canvas width).
 - [G-CONTRAST] every gated pair meets its bar in three themes; the bars in the spec's table are
-  the gate's.
+  the gate's; and each own-fill pair keeps its bar under greyscale and the three dichromacies
+  (E15-D13's shared CVD function, `cvd_simulate.simulate()`), its least ratio stated in §11.
 - [G-NEVERSHED] the spec §6.4 lists exactly the never-shed set; §6.3 sheds exactly three items
   and names none of the never-shed set.
 - [G-COPY] the spec §10: CP-1 ... CP-n in order; no subsystem word, no verdict and no "Trading
   is off" in a string; every degraded row's still-works sentence stands in its string; each kept
-  string stands word for word on its parent's line.
+  string stands word for word on its parent's line, CP-1 opening with E15-D02's words; CP-15 and
+  CP-23 assertive in A30's form, CP-15 once per disarm and never a plural string.
 - [G-AC1] no hex value in the documents; every px or ms value outside a code span, a quoted
   string, an anchor and a fenced block stands in the pack's §9 exception table, and no exception
   value is unused.
@@ -63,11 +65,14 @@ its code:
   `[x]` line reading MET with the record id; the AC trace reads MET with the record id and the
   deputy; the appendix keeps the brief in a text fence.
 - [G-MUTLIST] the pack's §12 lists the tool's mutations, one per gate, by name.
-- [G-PROTECT] the protective actions (C-2.6, the R5 arm carve-out): the spec §4 has a `same` row
-  for cancel, close and the stop; §5 says they are never behind a hidden tab without a route;
+- [G-PROTECT] the protective actions (C-2.6, the R5 arm carve-out): the spec §4 has a `moved` row
+  for cancel, close and the stop, its body scrolling at H3; §5 says they are never behind a hidden
+  tab without a route;
   §5.1 puts a position without its native stop in the error slot and §5.2 lists a protection
   change as account-level; §5 and the hand-off's Table K scope the visible-panel hotkey rule to
-  the order-placing and arming chords and keep the protective chords working.
+  the order-placing and arming chords and give the protective chords their scope; §5 item 5 and
+  CP-14 scroll the positions, orders and ticket bodies under the collapse at every height, and no
+  protective write needs a taller window.
 
 `--a-rows` prints §C as JSON, one record per row with its target file; `--self-test` applies one
 mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory copy and passes only when each
@@ -154,6 +159,8 @@ def _load(path: Path, name: str) -> ModuleType:
 sys.path.insert(0, str(ROOT / TOKENS_DIR / "tests"))
 VERIFY = _load(ROOT / TOKENS_DIR / "tests" / "verify_tokens.py", "verify_tokens")
 CONTRAST = _load(ROOT / "docs" / "design" / "_tools" / "contrast_check.py", "contrast_check")
+# E15-D13's shared CVD function (stdlib): the research script's dichromacy simulation.
+CVD = _load(ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py", "cvd_simulate")
 
 
 # ---------------------------------------------------------------------------- git and text
@@ -279,6 +286,22 @@ def ratio(a: str, b: str) -> float:
     return r
 
 
+def grey(h: str) -> str:
+    r, g, b = rgb(h)
+    y = round(0.299 * r + 0.587 * g + 0.114 * b)
+    return f"#{y:02X}{y:02X}{y:02X}"
+
+
+def sim(h: str, kind: str) -> str:
+    if kind == "greyscale":
+        return grey(h)
+    s: str = CVD.simulate(h, kind)
+    return s.upper()
+
+
+SIMS = ("greyscale", "protanopia", "deuteranopia", "tritanopia")
+
+
 def lum(h: str) -> float:
     r: float = CONTRAST.relative_luminance(rgb(h))
     return r
@@ -332,10 +355,23 @@ def measured() -> list[tuple[str, str, float, float]]:
     return out
 
 
+def cvd_least() -> list[tuple[str, float, float]]:
+    """(key, least ratio, bar) for every own-fill pair, over the three themes and SIMS (BQ-13)."""
+    out: list[tuple[str, float, float]] = []
+    for key, fg, bg, kind in PAIRS:
+        least = min(
+            ratio(sim(hexof(fg, th), s), sim(hexof(bg, th), s)) for th in THEMES for s in SIMS
+        )
+        out.append((key, least, BARS[kind]))
+    return out
+
+
 def colour_values() -> dict[str, str]:
     v: dict[str, str] = {}
     for key, k, r, _ in measured():
         v[f"CR:{key}.{k}"] = f2(r)
+    for key, r, _ in cvd_least():
+        v[f"CR:cvd.{key}"] = f2(r)
     for th in THEMES:
         lo, hi = extremes(th)
         v[f"HOST:lo.{THEME_KEY[th]}"] = f"`{lo}`"
@@ -924,6 +960,10 @@ DEGRADED = ("CP-1", "CP-3", "CP-4", "CP-5", "CP-8", "CP-18", "CP-20")
 MEASURED = ("CP-1", "CP-3", "CP-5", "CP-9")  # the measurement with its window: "p95" or 95th
 KEPT = {"CP-4": ("D02", 545), "CP-6": ("D02", 547), "CP-12": ("D02", 548), "CP-21": ("D03", 460)}
 QUOTE = re.compile(r'"([^"]+)"')
+OPENING = {"CP-1": ("D02", 544, "This device is slow to draw")}  # BQ-16's default, kept verbatim
+# A30's form (A42; `E30D05`:295, :328): the disarm is assertive, once per disarm, never plural.
+ASSERTIVE = {"CP-15": "assertive, once per disarm", "CP-23": "assertive"}
+PLURAL = re.compile(r"\{n\} panels hidden")
 
 
 def copy_rows(spec: str) -> list[list[str]]:
@@ -949,6 +989,15 @@ def copy_problems(spec: str) -> list[str]:
                 bad.append(f"{cid}: no still-works sentence standing in its string")
         if cid in MEASURED and "p95" not in strings and "95th" not in strings:
             bad.append(f"{cid}: the measurement without its percentile")
+        if cid in OPENING:
+            key, n_line, words = OPENING[cid]
+            parent = (lines(at_key(key) or "") + [""] * n_line)[n_line - 1]
+            if not strings.startswith(words) or words not in parent:
+                bad.append(f"{cid}: does not open with `{key}`:{n_line}'s {words!r} verbatim")
+        if cid in ASSERTIVE and (
+            not r[4].startswith(ASSERTIVE[cid]) or PLURAL.search(text) or "polite" in r[4]
+        ):
+            bad.append(f"{cid}: not {ASSERTIVE[cid]!r} in A30's form, or merged into a plural")
         if cid in KEPT:
             key, n_line = KEPT[cid]
             first = QUOTE.findall(text)[:1]
@@ -1190,6 +1239,14 @@ CITED: dict[tuple[str, int], str] = {
     ("KM", 303): '"id": "dom.cancel_all"',
     ("KM", 523): '"id": "positions.close"',
     ("KM", 535): '"id": "positions.close_all"',
+    ("E30D05", 295): "| LR-07 |",
+    ("E30D05", 328): '"Assertive, once, with its reason."',
+    ("D15", 328): "| SR-34 |",
+    ("D15", 359): "| BG-01 |",
+    ("D15", 322): "Restored your layout from 14:02. Not saved.",
+    ("D02", 546): "Full quality on this device, by your choice.",
+    ("D02", 389): "Maximise to trade",
+    ("05", 131): "without loss of content/functionality",
 }
 
 
@@ -1270,6 +1327,11 @@ def g_budget(t: Texts) -> list[Finding]:
 
 def contrast_problems(spec: str) -> list[str]:
     bad = [f"{key} ({k}) {f2(r)} under {b:g}:1" for key, k, r, b in measured() if r < b]
+    bad += [f"{key} (greyscale / CVD) {f2(r)} under {b:g}:1" for key, r, b in cvd_least() if r < b]
+    s11 = section(spec, "11.")
+    for key, _, _ in cvd_least():
+        if f"<!--=CR:cvd.{key}-->" not in s11:
+            bad.append(f"{key}: §11 does not state its greyscale / CVD least ratio (BQ-13)")
     want = {key: f"{BARS[kind]:g}:1" for key, _, _, kind in PAIRS}
     want["focus.twotone"] = f"{BARS['non-text']:g}:1"
     for r in table_rows(section(spec, "11.")):
@@ -1632,6 +1694,15 @@ PROTECT_EVENT = "a protection change"
 PROTECT_SCOPE = '"Trading hotkeys" here are the order-placing and arming chords'
 PROTECT_CHORDS = "**Account-scoped protective chords work from any tab:**"
 PROTECT_KEYROW = "| protective chords"
+PROTECT_STATUS = "moved"  # one tab switch away under the collapse; never the compact view
+PROTECT_NARROW = "the body scrolling at H3"
+PROTECT_SCROLL = (
+    "**Under the collapse at every height** the positions, orders and ticket tabs never show"
+    " E15-D02 D-16's compact view"
+)
+PROTECT_GOVERNS = "governs order entry and arming only, never a protective write"
+PROTECT_TALLER = "needs a taller window"
+PROTECT_CP14 = "so cancel, close and stop changes stay in reach"
 
 
 def protect_problems(t: Texts) -> list[str]:
@@ -1639,8 +1710,8 @@ def protect_problems(t: Texts) -> list[str]:
     rows = [r for r in parity(t.spec) if len(r) == 5]
     for name in PROTECT_ROWS:
         hit = [r for r in rows if r[0].startswith(name)]
-        if len(hit) != 1 or hit[0][3] != "same":
-            bad.append(f"statement 1: no single `same` parity row for {name!r}")
+        if len(hit) != 1 or hit[0][3] != PROTECT_STATUS or PROTECT_NARROW not in hit[0][2]:
+            bad.append(f"statement 1: no single `moved` row, scrolling at H3, for {name!r}")
     s5 = section(t.spec, "5.")
     items = {ln[:2]: ln for ln in lines(s5) if ln[:1].isdigit()}
     if PROTECT_REACH not in s5:
@@ -1654,6 +1725,12 @@ def protect_problems(t: Texts) -> list[str]:
         bad.append("statement 3: §5 does not scope the hotkey rule and keep the protective chords")
     if not any(ln.startswith(PROTECT_KEYROW) for ln in lines(t.hand)):
         bad.append("statement 3: the hand-off's Table K has no protective-chords row")
+    five = items.get("5.", "")
+    cp14 = [r for r in copy_rows(t.spec) if r[0] == "CP-14"]
+    if PROTECT_SCROLL not in five or PROTECT_GOVERNS not in five:
+        bad.append("statement 4: §5 item 5 does not scroll the protective bodies when collapsed")
+    if PROTECT_TALLER in t.spec or not cp14 or PROTECT_CP14 not in cp14[0][2]:
+        bad.append("statement 4: a protective write needs a taller window, or CP-14 is silent")
     return bad
 
 
@@ -1916,6 +1993,30 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-PROTECT",
         "statement 3: the hand-off's protective-chords row dropped",
         _sub("hand", PROTECT_KEYROW, "| panel chords"),
+    ),
+    (
+        "G-PROTECT",
+        "statement 4: a single cancel at H3 needs a taller window again",
+        _sub(
+            "spec",
+            "CP-14 says so, and the Safety cluster",
+            f"A single cancel there {PROTECT_TALLER}; the Safety cluster",
+        ),
+    ),
+    (
+        "G-COPY",
+        "CP-15 polite again, outside A30's form",
+        _sub("spec", "assertive, once per disarm, ahead of CP-12 (A30)", "polite, once"),
+    ),
+    (
+        "G-COPY",
+        "CP-1 without E15-D02's kept opening",
+        _sub("spec", '"This device is slow to draw:', '"That device is slow to draw:'),
+    ),
+    (
+        "G-CONTRAST",
+        "§11 without the chip's greyscale / CVD ratio",
+        _resub("spec", r"[0-9.]+<!--=CR:cvd\.chip\.word-->", "unmeasured"),
     ),
 )
 # A PR 2 that applies §C exactly, with the tool's own pins rewrite: no new FAIL (lesson 1).
