@@ -132,6 +132,26 @@ Rules:
 4. **No allocation in the hot path.** All per-frame structures are pooled; the engine asserts zero GC-triggering allocations in the frame path in a dedicated test (allocation counter via `performance.measureUserAgentSpecificMemory` sampling in benchmarks).
 5. **Render on demand.** With no data and no interaction, the loop parks (no rAF scheduled) — important for battery and for 4-chart layouts.
 
+Scheduler mapping (E11-S01, rulings BQ-S4 and BQ-S5): `06` §4.3's nine stages are the instrumentation, the ticket's millisecond figures are clamps inside them, and `06` §4.4's rungs are the scene nodes' `DeferClass`.
+
+| Scheduler step       | Ticket clamp                                                                                                 | `06` §4.3 stage recorded                                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Input and animations | ≤ 1 ms (measured)                                                                                            | `inputHandling` (≤ 1 ms)                                                                                                          |
+| Mutation drain       | ≤ 4 ms, hard: the clock is read before each mutation                                                         | `dataWindowRecompute` (≤ 2 ms nominal, ~0 on static frames)                                                                       |
+| Layout               | ≤ 2 ms (measured)                                                                                            | `paneRedraw` (≤ 2 ms), shared until PR3 splits layout out, so a step-down notice can name it for layout cost                      |
+| Update and collect   | ≤ 2 ms (measured); once the budget is spent, every rung is shed in-frame (no cadence floor yet: E11-S01 PR3) | `candleGeometry`, until the per-layer collect fills `footprintTextGeometry`, `heatmapUpload`, `overlayRedraw` and `domMirrorSync` |
+| GL submit, present   | none                                                                                                         | `compositePresent` (≤ 1.6 ms)                                                                                                     |
+
+| `06` §4.4 rung                 | `DeferClass`                                                              | The ticket's rung                                              | While shed                                            |
+| ------------------------------ | ------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------- |
+| 1 heatmap cadence              | `HEATMAP_CADENCE`                                                         |                                                                | collected every 250 ms                                |
+| 2 footprint text               | `FOOTPRINT_TEXT`                                                          | bubble clustering (ruling BQ-S5; `06` names bubbles in rung 3) | deferred, flags kept, collected at least every 500 ms |
+| 3 CVD and indicator coalescing | `INDICATOR_COALESCE`                                                      |                                                                | collected every second frame                          |
+| 4 background panes             | `BACKGROUND_PANES`                                                        | non-focused pane redraw                                        | deferred, flags kept, collected at least every 500 ms |
+| never shed                     | `NONE`, a `critical` node (order and position lines, the DOM-mirror sync) | trading-critical overlays                                      | collected every frame                                 |
+
+Three consecutive frames over 16.7 ms shed the next rung and request one LOD level down (`ENGINE_LOD_STEPDOWN`, §11); three consecutive frames under 85 % of budget spanning at least 500 ms (the longest cadence) restore one rung; LOD recovery is E11-S12's policy.
+
 ### 3.3 Data model
 
 Columnar, typed-array based, append-optimised, with stable indices.
@@ -648,7 +668,7 @@ Replay uses exactly the same series and the same frame types — only the subscr
 | Shader compile failure                         | Falls back to a simpler program for that layer; logs the info-log with the program key; never takes down the chart                                                                     |
 | Out-of-memory on texture allocation            | Heatmap drops the coarse ring first, then halves rows; `MemoryGovernor` logs and emits a stats event                                                                                   |
 | Data sequence gap                              | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                        |
-| Frame budget exceeded for 3 consecutive frames | Step down one LOD level; if already at the lowest, reduce DPI of the heatmap layer; log the step                                                                                       |
+| Frame budget exceeded for 3 consecutive frames | Step down one LOD level; if already at the lowest, reduce DPI of the heatmap layer; log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                              |
 | Worker crash                                   | The controller detects the `error`/`close` event, respawns the worker, replays store state from the last snapshot                                                                      |
 
 ---

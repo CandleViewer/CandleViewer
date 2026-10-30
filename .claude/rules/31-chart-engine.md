@@ -13,7 +13,7 @@ Source: `docs/plan/26-chart-engine-design.md`, ADR-0002, CONSTITUTION C-2.16, §
   Enforced by dependency-cruiser + ESLint `no-restricted-globals`.
 
 ## Threading
-- Rendering runs in a Web Worker with `OffscreenCanvas` (`src/workers/`). The main thread only forwards
+- Rendering runs in a Web Worker with `OffscreenCanvas` (`src/worker/`). The main thread only forwards
   input events and receives lightweight notifications.
 - Data crosses threads as transferable `ArrayBuffer`s / typed arrays (struct-of-arrays), never large JSON.
 - The fallback path (no OffscreenCanvas) must reuse the same core code.

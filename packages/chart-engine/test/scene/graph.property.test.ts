@@ -3,7 +3,7 @@
 // failed node keeps exactly its marks; a critical node is never deferred.
 import { describe, expect, it } from "vitest";
 import { mulberry32 } from "../../bench/fixtures/rng.mjs";
-import { DeferClass, Dirty, DIRTY_ALL, LAYER_ORDER } from "../../src/scene/dirty.js";
+import { DeferClass, Dirty, DIRTY_ALL, LAYER_ORDER, shedUpTo } from "../../src/scene/dirty.js";
 import { FrameContext } from "../../src/scene/frame-context.js";
 import { SceneGraph } from "../../src/scene/graph.js";
 import { NullSeries } from "../../src/scene/null-series.js";
@@ -62,7 +62,7 @@ describe("property: dirty flags survive until a successful collect, never longer
         const before = nodes.map((n) => n.collects);
         sink.reset();
         ctx.begin(s * 16, 16.7);
-        graph.frame(ctx, sink, shed);
+        graph.frame(ctx, sink, shedUpTo(shed));
         nodes.forEach((n, i) => {
           const marks = want.get(n) ?? 0;
           const deferred = n.deferClass !== DeferClass.NONE && n.deferClass <= shed;

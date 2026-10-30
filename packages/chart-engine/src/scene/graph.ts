@@ -1,6 +1,6 @@
 // The fixed scene tree (26 §3.1: Chart -> TimeAxis + Pane[] -> PriceAxis + LAYER_ORDER -> content),
 // its dirty propagation, and a flat pre-order walk rebuilt only on LAYOUT (E11-S01). DOM-free.
-import { DeferClass, Dirty, LAYER_ORDER, type LayerName } from "./dirty.js";
+import { Dirty, LAYER_ORDER, type LayerName, SHED_ALL } from "./dirty.js";
 import type { FrameContext } from "./frame-context.js";
 import { ContentNode, type SceneNode, StructuralNode } from "./node.js";
 import type { BatchSink } from "./pool.js";
@@ -91,18 +91,17 @@ export class SceneGraph {
 
   /**
    * One traversal: each dirty, visible node is updated and collected, and its flags clear when the
-   * collect succeeds (BQ-23). A node whose deferClass is in 1..shedUpTo is deferred and keeps its
-   * flags; critical nodes are NONE, so never deferred. A hidden subtree keeps its flags.
-   * `shedUpTo` skips a rung for this frame only: lowering its cadence, the focused-pane rule and
-   * re-scheduling an animating node are the PR2 scheduler's (BQ-26).
+   * collect succeeds (BQ-23). A node whose deferClass bit is set in `shed` is deferred and keeps its
+   * flags; critical nodes are NONE, whose bit is ignored, so never deferred. A hidden subtree keeps
+   * its flags. `shed` skips rungs for this frame only; the scheduler owns the cadences (BQ-35).
    */
-  frame(ctx: FrameContext, sink: BatchSink, shedUpTo: DeferClass = DeferClass.NONE): void {
+  frame(ctx: FrameContext, sink: BatchSink, shed = 0): void {
     const order = this.walk();
     for (let i = 0; i < order.length; i += 1) {
       const node = order[i] as SceneNode; // i < order.length
       if (!node.visible) i = node.end - 1;
       if (!node.visible || node.dirty === Dirty.NONE) continue;
-      if (node.deferClass !== DeferClass.NONE && node.deferClass <= shedUpTo) {
+      if (((shed & SHED_ALL) >> node.deferClass) & 1) {
         ctx.stats.deferred += 1;
         continue;
       }
