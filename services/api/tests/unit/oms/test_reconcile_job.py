@@ -114,19 +114,23 @@ async def test_the_standing_is_set_before_b19_is_told(
 async def test_the_standing_clears_only_after_b19_records_the_unlock(
     job: Job, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    during: list[bool] = []
+    during: list[tuple[bool, bool]] = []
     real = b19.ACTIONS["audit_operator_resolved"]
 
     async def spy(*args: Any) -> None:
-        during.append(job.standing.is_stale(ACCOUNT))
-        await real(*args)
+        before = job.standing.is_stale(ACCOUNT)
+        await real(*args)  # B19's record of the decision
+        during.append((before, job.standing.is_stale(ACCOUNT)))
 
     monkeypatch.setitem(b19.ACTIONS, "audit_operator_resolved", spy)
     interp = await _locked(job)
     try:
         await interp.send("OPERATOR_RESOLVED", decided_by="owner")
         assert await rest(interp) == "idle"
-        assert (during, job.standing.is_stale(ACCOUNT)) == ([True], False)
+        assert during == [
+            (True, True)
+        ]  # set through the record, cleared only by the unlock after it
+        assert not job.standing.is_stale(ACCOUNT)
     finally:
         await interp.stop()
 
