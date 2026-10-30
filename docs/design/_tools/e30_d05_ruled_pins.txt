@@ -1,0 +1,238 @@
+# E30-D05 pins: KEY|line|words that stand on that line at the base (the tool's G10).
+# `--repin` keeps every hand-written pin still cited and adds the line's opening words.
+05|30|1. Every interactive element (buttons, chart drawing tools, DOM ladder c
+05|31|2. A **single global hotkey layer** governs the whole app (confirmed des
+05|32|3. Hotkeys are **user-remappable** (Options → Settings → Shortcuts, mirr
+05|33|4. Destructive/irreversible actions (submit market order, flatten all, c
+05|34|5. 1-click/no-confirm trading is an explicit opt-in toggle (already in s
+05|35|6. No functionality may depend on hover-only or drag-only interaction: e
+05|48|| | Toggle keyboard-hotkey cheat-sheet overlay | `Shift+/` (i.e. `?`) |
+05|49|cancels in-progress order draft
+05|60|Buy market / Sell market | `B` / `S`
+05|61|| | Size preset 1–5 | `1`..`5` | Context-scoped to trading views only (d
+05|65|Toggle 1-click trading | `Ctrl+Shift+1`
+05|83|1. **Precedence order** when a user tries to bind an already-used key: (
+05|85|3. **Reserved, non-remappable keys**: `Esc` (universal cancel) and `Ctrl
+05|86|4. **OS/Electron-reserved combos are blocklisted** (e.g. `Ctrl+W`, `Ctrl
+05|94|1. **Landmark regions**: each major panel (Chart, DOM/Heatmap, Order Tic
+05|96|3. **Focus is never silently stolen**: a live price update, a new fill n
+05|97|4. **Modal dialogs** (order confirm, flatten-all confirm, Demo→Live swit
+05|98|5. **Skip links**: a visually-hidden-until-focused "Skip to order ticket
+05|99|6. **Visible focus indicator**: WCAG 2.2 SC 2.4.11 (Focus Not Obscured,
+05|100|7. **Target size**: WCAG 2.2 SC 2.5.8 (Target Size, Minimum, AA) — all c
+05|102|9. **Consistent help mechanism**: WCAG 2.2 SC 3.2.6 (Consistent Help, A)
+05|103|10. **Redundant entry**: WCAG 2.2 SC 3.3.7/3.3.8 (Redundant Entry / Acce
+05|107|**Rule (non-negotiable, applies everywhere)**: colour is always a _reinf
+05|117|2. **Deuteranopia/protanopia/tritanopia validation**: the design-system
+05|119|4. **Alert/toast severity** (rule triggers, risk breaches, WS disconnect
+05|125|1. **Text contrast (WCAG 1.4.3, AA)**: body text and labels ≥4.5:1 again
+05|126|2. **Non-text/UI component contrast (WCAG 1.4.11, AA)**: buttons, form-f
+05|127|target ≥7:1 text contrast
+05|130|6. **User-adjustable contrast**: a high-contrast theme toggle (`Ctrl+Shi
+05|131|7. **Text resize (WCAG 1.4.4, AA)**: UI must remain usable with 200% bro
+05|146|- **Price/position/order updates** are announced via `aria-live` regions
+05|147|default 1 update / 2s per field
+05|148|discrete, low-frequency, high-importance events only
+05|150|- **Region hygiene**: live regions are pre-rendered empty containers on
+05|204|1. The app respects OS-level `prefers-reduced-motion: reduce` by default
+05|208|3. **No content flashes more than 3 times per second** (WCAG 2.3.1, seiz
+05|209|4. Reduced-motion is a **design-system token/mode**, not a per-component
+05|211|## 8. Screen-reader test protocol
+05|222|| 4 | macOS 14 Sonoma+ | Electron shell (production build) | VoiceOver (
+14|2371|- **Design sign-off acceptance checklist:** [ ] grouped action list with
+14|2373|### SCR-114 — Trading defaults settings
+14|2376|"Your profile caps leverage at 10x"
+14|2387|- **States:** desktop notification permission allowed / blocked by the O
+15|1131|### CMP-104 LeverageSlider
+15|1169|### CMP-106 ProfileBadge (account identity chip)
+15|2839|the level per E30-D05 / E30-D02 O-L
+22|321|A protective write runs as the viewer, is audited with the
+22|323|`x-rbac` allow it; in the hold it runs in the viewer's own scope.
+22|10201|operationId: getSettings
+22|10269|"503": { $ref: "#/components/responses/ServiceUnavailable" }
+22|10272|operationId: updateSettings
+22|10279|parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+22|10295|"503": { $ref: "#/components/responses/ServiceUnavailable" }
+22|11702|Cancels, `closePosition` and `closeAllPositions`
+22|15669|ArmToken:
+22|15688|token issued without the live step-up (see `POST /settings/arm`). Like t
+22|15695|Idempotency in `info.description`). Demo and paper
+22|15696|The C-2.6 carve-out binds this refusal as it binds every synchronous
+22|15697|refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`
+22|15699|tightening a stop or re-arming a protective trigger are never refused
+22|16185|the C-2.6 carve-out binds every synchronous refusal, not just the gate
+24|1674|the arm token (`403 session_not_armed`)
+24|1676|3. Risk checks the sized and rounded order, never the raw intent
+CD|107|* Activations that begin within this many ms of opening are ignored (def
+CD|108|* A smaller or non-finite value is raised to 400 with a dev warning: no
+CD|117|/** The confirm's leg was removed mid-dialog: Confirm takes CMP-001's T2
+CD|118|confirmDisabledReason?: string | undefined;
+CD|135|CONFIRM_DELAY_FLOOR_MS = 400
+CD|150|/** An auto-cancel's thresholds (E30-D03 D3 (6)): polite at 0:10 and 0:0
+CD|154|Confirmation timed out — nothing was sent
+CD|155|: "10 seconds until this confirmation cancels";
+CD|199|* The hold ring (E39-D03 §5): a `progressbar` named "Hold to {effect}",
+CD|202|* silent (no thresholds): the armed name was spoken once, and a lapse is
+CD|537|role={role}
+CD|539|{...(hasRestatement ? { "aria-describedby": restatementId } : {})}
+CD|540|initialFocusRef={cancelRef}
+CD|593|<span role="status" className="cv-visually-hidden">
+CD|597|{assertive.text === "" ? null : <span key={assertive.n}>{assertive.text}
+CONST|164|**C-2.12 Server-side authority.** RBAC, risk caps, per-account profile r
+CONST|166|controls for UX, but the backend must behave identically if the client i
+CONST|775|**C-12.5 Trading-safety controls.** Per-account profiles (leverage, sizi
+CONST|778|owner kill-switch ("FREEZE") revokes a manager's trading ability immedia
+D02|66|one-click disarms on Disconnected, Read-only or Stale
+D02|140|| D15 | **Arm indicator (CMP-229, global scope) beside the submit contro
+D02|141|inserts under the header and takes focus
+D02|143|"Flatten now" / "Set stop by hand" always available
+D02|144|| D19 | **Blocked states are disabled-with-reason, never hidden** (`14`
+D02|259|polite at 60 s and 10 s, assertive at the disarm
+D02|263|One-click trading is off — press Ctrl+Shift+T to arm
+D02|269|## 10. State inventory (one row per state; nothing is left for engineeri
+D02|276|| validating `14` | any input | recompute ≤8 ms, no spinner; the read-ou
+D02|277|CMP-027 `role="alert"` box under the header
+D02|278|| submitting `14` | submit accepted by the client | the button becomes i
+D02|281|| rejected `14` — user-correctable | `validation_failed` incl. `native_s
+D02|284|| rejected — exchange / unknown | `exchange_error` (`exchange.ret_code`
+D02|287|| blocked-by-lockout `14` | `risk_cap_usage.locked_out_until_ms` on `wal
+D02|288|| frozen `14` | kill switch engaged for the account or globally (SCR-072
+D02|300|| order live, protective stop pending (F16) | entry accepted, `sl.attach
+D02|302|Every banner inserts in the slot under the header (§2) and pushes the fo
+D02|310|The accessible name adds the environment and account
+D02|343|## 13. Keyboard, focus and announcements (D23)
+D02|345|**Tab order** (the panel is a labelled landmark reached by `Ctrl+\` and
+D02|349|| Set side | `B` / `S` | ticket region focused, not in a text field | in
+D02|350|| Quantity preset | `1`..`4` | **ticket region focused only** (F20) | no
+D02|355|LIVE: opens the CMP-044 dialog
+D02|356|| Submit | `Ctrl+Enter` | ticket focused | blocking errors: the `aria-di
+D02|357|| Clear ticket | `Esc` |
+D02|359|hold 600 ms
+D02|361|**Focus treatment:** CMP-039 ring 2 px `color.focus.ring` (7.05 / 6.30 /
+D02|363|the read-out line `aria-live="polite"` at ≤1 / 500 ms
+D02|365|**Target sizes and drag:** every control ≥24 × 24 CSS px in compact (the
+D02|367|**WCAG 2.2 AA map (the SCR-060 a11y notes):** 1.3.1 fieldsets and labels
+D02|405|description "one-click off — Ctrl+Shift+T to arm"
+D02|406|assertive, E30-S05
+D02|413|| `submit.name` |
+D02|661|- **Feasibility flags for the E30 engineering lead (owner walkthrough it
+D02|765|- **A-13 keymap Ticket and Chart rows:** Ticket "Quantity preset 1-4 … v
+D02|789|E30-S04 and E30-D01 SC-2 make it assertive
+D03|108|| D1 | **SCR-076 is one CMP-044 `standard` dialog with a restatement bod
+D03|110|announced politely at 0:10 and at 0:00
+D03|113|| D6 | **The nine translations are keyed on codes, never on HTTP status
+D03|117|| D10 | **The selector is the ticket's header account control grown into
+D03|118|| D11 | **Templates** (BQ-6, RULED): a list on SCR-114 and a disclosure
+D03|120|| D13 | **Every default and template respects the owner's ceiling**: a t
+D03|152|**Dimensions and tokens.** Width 560 px compact / 640 comfortable (D02's
+D03|156|**The gates (D3; R2), exact and testable.** (1) Focus opens on **Cancel*
+D03|200|420 px compact / 480 comfortable, `modal: false`
+D03|236|| `SCR-077/retry-pressed` | a retry-with-fix button | the drawer closes;
+D03|268|**What is still permitted** is the `critical` lane of `24` §8.7 (:2040–:
+D03|286|## 7. SCR-114 — trading defaults (D9, D13; R9)
+D03|288|CMP-086's settings layout at comfortable (the settings default, `15` §0.
+D03|294|| 3 | Stop and target | **default stop offset — required**, unit `ticks
+D03|296|the confirm auto-cancel seconds (20, range 10–60)
+D03|297|| 6 | One-click | arm TTL `arm_timeout_seconds` (30–3,600 s, default 300
+D03|302|| Order type | `always` — "Every order opens the confirmation." | `live
+D03|308|The ticket's and `14`'s "LIVE market orders" is the narrower text; SC-3
+D03|310|**The default stop hard-lock (E32-D01 Arm A).** The field has no clear a
+D03|331|| State (frame) | Trigger | What shows | Carrier | Region | Exit | Board
+D03|334|| `SCR-114/live-option-disabled` | focus on the LIVE set's `never when a
+D03|341|| `SCR-114/saved` | `200` | "Saved · audited" on `status.success.subtle`
+D03|343|| `SCR-114/manager-no-live` | a manager without live | the LIVE set as a
+D03|344|| `SCR-114/viewer-read-only` | a viewer (R-206 opens to V, A9; `settings
+D03|345|| `SCR-114/sounds` | fieldset 7 | the four toggles, fill on; "Sounds are
+D03|418|## 11. Keyboard, focus and announcements
+D03|423|| SCR-076 | `Tab` / `Shift+Tab` | Cancel → Confirm → `×` → don't-ask (DE
+D03|425|| SCR-076 | `Enter` / `Space` (Confirm: ≥400 ms after open) | activates
+D03|426|| SCR-076 | `Esc` | cancels (CMP-043 default, never disabled here) | the
+D03|428|| every T2 control | `Enter` / `Space` / pointer — the LIVE don't-ask bo
+D03|429|| SCR-077 | open ([Details] / `Enter`) | the drawer opens (`role="dialog
+D03|430|non-modal: then the ticket
+D03|431|| SCR-077 | `Esc` | closes the drawer | [Details] | none |
+D03|432|the banner link →
+D03|434|re-runs the preview for the served legs
+D03|442|| SCR-061 | `Alt+↓` / `Enter` on the control | opens the list (combobox)
+D03|446|| SCR-061 | `Shift+F10` on the read-only member's row | the leg menu wit
+D03|448|No key is invented: the dialog uses the APG dialog keys, the drawer CMP-
+D03|473|"Confirmation cancelled — nothing was sent"
+D03|477|| `confirm.confirm.name` |
+D03|688|| C3 | `22` `Settings.trading.confirm_market_orders` is a boolean; SC-3
+D03|693|| C8 | the ticket's and `14`'s "LIVE market orders" (SCR-076 :1652, SCR-
+D03|696|| C11 | `14` SCR-114 Analytics `trading_defaults.live_confirmation_disab
+D03|733|E30-D05 confirms the a11y argument
+D04|82|Fifteen trading-ticket components specified once — props, variants, stat
+D04|199|"Flatten now" / "Set stop by hand" always available
+D04|216|### 2.5 The two disabled looks, written once (D02 D3 + LANE-55; E09-D09
+D04|218|**The validity look (RULED, LANE-55 2026-10-23 02:13Z).** A control disa
+D04|226|every write control of the ticket (first leg)
+D04|227|| the whole ticket (one panel notice; every control points at it) | role
+D04|228|| a write control whose target account is outside `account_scope` (third
+D04|229|| the whole ticket on a `read`-mode account (SCR-060; E09-D09 §2.4 :63)
+D04|230|| a LIVE-targeting submit / arm for a manager without live | `rbac.env`
+D04|231|| the submit under CMP-139 on an environment mismatch | `guard.mismatch`
+D04|232|| every `requires_arm` affordance while the arm store is `locked` / `unk
+D04|233|reduce-only ones included
+D04|234|:14069–:14073
+D04|235|| the submit with ≥ 1 blocking error | `v.submit.reason` "Fix {n} proble
+D04|236|| the submit while a preview is in flight | `aria-busy`, the label `conf
+D04|237|| a preset below the instrument minimum | `preset.below_min` | validity
+D04|238|| the `% eq` / `risk %` units on a stale wallet | `size.unit.stale` (a d
+D04|239|| an emulated order-type tab until E33 | `type.emulated` "(emulated)" ·
+D04|240|| an unavailable TIF option | `tif.unavailable.market` "Market orders ar
+D04|241|| the submit on a per-field profile-cap excess | the field error (`aria-
+D04|242|| the submit on a whole-ticket profile block (symbol not allowed, a cap
+D04|243|| the submit while the account's key is pending | `pending_key` (D02 §14
+D04|244|| every new-entry submit while a protective stop is pending | `stop_pend
+D04|553|## 19. The motion spec table (E09-D08 §3's columns; every duration PROPO
+D04|560|| M4 | hold-to-confirm (CMP-211 — no control in the fifteen) | a pointer
+D04|609|## 23. Themes and densities: the measured matrix, CVD and greyscale (the
+D04|684|At 200 % zoom and at the in-app text scale (`Ctrl+=`, `05` §5 item 7), 1
+D04|1047|| C7 | E11-D06 D15 (:244) "every state element … appears, changes and di
+D04|1058|| C18 | the `15` CMP-229 A11y \"a name stating scope and state\" read wi
+D04|1059|| C19 | D02's own strings on two gated states predate the T2 gate: the v
+D04|1060|says a key on a T2 control is announced once, politely
+D04|1062|| C22 | D02 D18 (:143) and §10 (:300) disable "the submit" while the pro
+D04|1063|| C23 | the LIVE-locked submit T2 (§2.5, PROPOSED to E30-S04; `22` `ArmT
+D04|1065|| C25 | `15` CMP-229 Tests (:2679) name the E2E "no order can be placed
+DS|15|orchestrator's round. A **G-T2 miss is a Major** in the pre-lens; a **Re
+DS|17|## G-T2 — the controls E09-D09 §2.1 routes to T2 are specified as T2
+DS|61|covers those surfaces.
+DS|65|- **R1 Text resize** (`05` §5 item 7, WCAG 1.4.4): for every dialog, dra
+DS|66|reflows at 200 % zoom and the in-app text scale, at the design lanes' 12
+DS|67|- **R2 Forced colours** (this file): name the `forced-colors` rendering
+DS|68|it to the hi-fi spec in the hand-off section.
+DS|74|**R5 Live accounts**
+DS|77|never refused for want of it (C-2.6)
+DS|78|is still T2 on that leg
+E09-D09|40|(a) the session is viewing-as (every write; the C-2.6 carve-out excepted)
+E09-D09|228|| T2 for an RBAC, grant, environment or session reason (§3.1) | `aria-di
+E09-D09|231|| loading | `aria-busy="true"` | yes | CMP-001 |
+E09-D09|243|| `Enter` / `Space` / the bound hotkey (`Ctrl+Enter`, `Alt+…`) | nothing
+E17-D01|223|| One-click auto-disarm (D12) | polite | once per disarm |
+E29-D05|64|- **R-1 Severity.** **Blocking:** a clause or a WCAG 2.2 A / AA criterio
+E29-D05|66|- **R-3 Verdicts.** `compliant` · `at risk` · `non-compliant` · `out of
+E29-D05|68|- **R-5 Never colour alone.** Every colour-carrying signal has a word, g
+E30.json|473|"risk": "R5 Scope",
+E30.json|481|"body": "## Context\n`05-accessibility-standard.md` and `02-definition-o
+E39-D03|222|never per tick (`aria-valuenow` only)
+E39-D03|417|800 ms
+KM|219|"label": "Place limit order at price (arm-gated)",
+KM|232|"validWhen": "chart trading armed",
+KM|289|"validWhen": "DOM armed",
+KM|299|"validWhen": "DOM armed",
+KM|303|"id": "dom.cancel_all",
+KM|310|destructive needs a modifier
+KM|355|"id": "dom.arm",
+KM|358|"defaultBinding": "Ctrl+Shift+T",
+KM|373|"id": "ticket.side_buy",
+KM|376|"defaultBinding": "B",
+KM|413|"id": "ticket.submit",
+KM|419|"visibleControl": true,
+KM|485|"id": "ticket.arm",
+KM|488|"defaultBinding": "Ctrl+Shift+T",
+PREF|14|readonly announce_prices: AnnouncePrices;
+PREF|15|readonly verbosity: Verbosity;
+PREF|86|/** Live-region throttle used by E47-S01/S02: should this price update b
+PREF|94|return update.cadenceElapsed;
