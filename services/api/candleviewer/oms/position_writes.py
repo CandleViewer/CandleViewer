@@ -46,6 +46,7 @@ from candleviewer.accounts.errors import AccountNotFoundError, ProfileUnavailabl
 from candleviewer.domain.primitives import AccountId, Environment, Side, Symbol
 from candleviewer.exchange.base.errors import ExchangeError, TransportError
 from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, OrderAck, Position
+from candleviewer.observability import spawn
 from candleviewer.oms.errors import (
     RULE_NATIVE_STOP_REQUIRED,
     EnvironmentMismatch,
@@ -289,7 +290,7 @@ class PositionWrites:
             _log().warning("oms_close_sweep_full", position_id=str(row.id))
             return False
         job = _Sweep(row, order_id, actor, request_id)
-        task = asyncio.get_running_loop().create_task(self._sweep(job), name="oms-close-sweep")
+        task = spawn(self._sweep(job), name="oms-close-sweep")  # the request's context carried
         self._sweeps.add(task)
         task.add_done_callback(self._swept)
         return True
