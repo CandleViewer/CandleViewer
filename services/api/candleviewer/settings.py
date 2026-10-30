@@ -145,6 +145,10 @@ AUTH_LOGIN_VERIFY_CONCURRENCY_MIN: Final = 1
 #: of hashing threads.
 AUTH_LOGIN_VERIFY_CONCURRENCY_MAX: Final = 32
 
+#: E28-T05 (#909, SR-E28-22): `CV_TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND`, the trade-group
+#: preview's per-user token bucket, its rate and its burst alike (22 `previewTradeGroup`).
+TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND: Final = 20
+
 
 class Environment(StrEnum):
     """The three structural exchange environments (P9, `20-architecture.md` Sec.7.1).
@@ -844,6 +848,11 @@ class Settings(BaseSettings):
     # after the gateway's, which `_refuse_unfittable_stop_budget` counts.
     oms_drain_s: float = Field(
         default=10.0, ge=1.0, le=TEARDOWN_BUDGET_S - OMS_STOP_RESERVE_S, allow_inf_nan=False
+    )
+    # E28-T05 (#909): previews a user may make a second, and in one burst (`api/preview_limiter`).
+    # A field check, so a value outside 1-100 refuses startup; no value switches the limit off.
+    tradegroups_preview_rate_per_user_per_second: int = Field(
+        default=TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND, ge=1, le=100
     )
     # #913 S4-S: the band (22 `placeOrder`, 24 Sec.8.4 step 3a); no off value (C-4.14).
     oms_price_band_pct: Decimal = Field(

@@ -14,13 +14,16 @@ then failed), is refused, never clamped; every leg is planned before `GroupRefus
 each offending one (D6). Otherwise a leg is `blocked` by the first of its sizer's failure, a
 missing native stop (C-2.6), the comparator, its readiness and the guard (`guard.LegGuard`, handed
 the leg's profile with ADR-0040's cap rows 29 to 36 at `min(B, A)`; one that raises fails closed);
-else `ready`, or `warn` when its stop fell back. Logs carry ids and codes only (C-12.6).
+else `ready`, or `warn` when its stop fell back. Logs carry ids and codes only (C-12.6). R7's
+account-state counts, once known (#881), only block their leg: the request moves none (R1C-04).
+Each leg it plans runs inside its caller's `leg_span` (the preview's `oms.preview_leg`, #909).
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, fields, replace
 from decimal import Context, Decimal, localcontext
 from types import MappingProxyType
@@ -58,6 +61,8 @@ _HELD: Final = frozenset({"enabled", "trading_enabled", "min_leg_notional", "qty
 _CAPS: Final = ("max_position_notional", "max_position_pct_equity", "max_daily_loss",
                 "max_daily_loss_pct", "max_open_positions", "max_concurrent_orders",
                 "max_leverage_cap", "max_orders_per_minute")  # fmt: skip
+#: R7's account-state rows, the `*_after` counts: a cap the request does not move (22 preview).
+_STATE: Final = frozenset({"max_open_positions", "max_concurrent_orders", "max_orders_per_minute"})
 
 
 def _log() -> Any:
@@ -198,6 +203,7 @@ def plan_group(
     guard: LegGuard,
     stops: ports.StopResolver,
     observer: SizerMetrics,
+    leg_span: Callable[[AccountId], AbstractContextManager[object]] = nullcontext,
 ) -> GroupPlan | GroupRefused:
     """Every leg in request order (module docstring); a refusal names every offending leg. A
     repeated account is 22's `duplicate_account`; a leg with no resolved profiles is a 404."""
@@ -212,7 +218,8 @@ def plan_group(
         if not leg.skip:
             if (chosen := profiles.get(leg.account_id)) is None:
                 raise comparator.ProfileNotFound
-            plan, violations = _plan_leg(request, leg, chosen, snapshot, guard, stops, observer)
+            with leg_span(leg.account_id):
+                plan, violations = _plan_leg(request, leg, chosen, snapshot, guard, stops, observer)
             if violations:
                 refused.append(RefusedLeg(index, chosen.bound, chosen.alternate, violations))
         _log().debug(
@@ -306,7 +313,8 @@ def _plan_leg(
     wanted = (*named, intent.sizing.max_notional_usd, tp, terms.time_in_force, terms.position_idx)
     if found:  # what the request or _A_ asked refuses the request; _B_'s own leg is only blocked
         widened = any(value is not None for value in wanted)
-        return replace(plan, reason="cap_breached"), tuple(found) if widened else ()
+        whole = tuple(v for v in found if not (v.rule == "R7" and v.field in _STATE))
+        return replace(plan, reason="cap_breached"), whole if widened else ()
     differ = tuple(f for f in comparator.OVERRIDE_CLASS if f in _HELD and alternate is not None
                    and getattr(alternate, f) != getattr(bound, f))  # fmt: skip
     admitted = comparator.Admitted(judged.model_copy(update={"stop_qty": qty}), differ)

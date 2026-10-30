@@ -242,8 +242,12 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_gc_pause_seconds"].labels("2").observe(0.06)
     r["cv_sizer_outcomes_total"].labels("ok", "none").inc()
     r["cv_sizer_clamped_total"].labels("max_order_qty").inc()
+    r["cv_tradegroup_preview_total"].labels("rate_limited").inc()
+    r["cv_tradegroup_legs_skipped_total"].labels("symbol_not_allowed").inc()
+    r["cv_override_refused_total"].labels("max_leverage_cap").inc()
     r["ticker_bulk_cache_refresh_total"].labels("ok").inc()
     r["scanner_evaluations_total"].labels("ok").inc()
+    r["cv_tradegroup_ws_frames_total"].labels("delta").inc()
     text = generate_latest(m.registry).decode()
     families = {f.name: f for f in text_string_to_metric_families(text)}
     for spec in registered_specs():
@@ -792,17 +796,37 @@ def test_indicator_preset_metrics_are_bounded_and_never_per_user() -> None:
     }
 
 
-def test_override_refused_counter_is_planned_and_bounded_by_the_decision_table() -> None:
+def test_override_refused_counter_is_live_and_bounded_by_the_decision_table() -> None:
     """#2635 (F-01; ADR-0040 (proposed, #4461) Decision 1): one count per refused field, its label
-    a field of the override table, never an account, a profile or a value (SR-125). Planned until
-    E28-T05 (#909) and E34-S01 (#999) wire the comparator into a route."""
+    a field of the override table, never an account, a profile or a value (SR-125). Live since
+    E28-T05 (#909) counts the preview's widening refusals; E34-S01 (#999) counts the submit's."""
     from candleviewer.accounts.override_comparator import OVERRIDE_CLASS
 
     (spec,) = [s for s in CATALOGUE if s.name == "cv_override_refused_total"]
     assert (spec.kind, spec.labels, spec.status, spec.owner_epic) == (
         "counter",
         ("cap",),
-        "planned",
+        "live",
         "E28",
     )
     assert spec.max_series == len(OVERRIDE_CLASS) == 42
+
+
+def test_the_preview_series_are_live_and_bounded_by_their_closed_sets() -> None:
+    """E28-T05 (#909): the preview's outcomes (an answer's status, a cross-environment leg its
+    own) and the skipped legs' reasons (the request's own skip and the sizer's), each child bound
+    once from the route's closed set; the round trip's edges hold SCR-061's 300 ms p95."""
+    from candleviewer.api.trade_group_preview import OUTCOMES, SKIP_REASONS
+
+    named = ("cv_tradegroup_preview_total", "cv_tradegroup_preview_seconds")
+    specs = {s.name: s for s in CATALOGUE if s.name in (*named, "cv_tradegroup_legs_skipped_total")}
+    assert {n: (s.kind, s.labels, s.max_series, s.status) for n, s in specs.items()} == {
+        "cv_tradegroup_preview_total": ("counter", ("outcome",), len(OUTCOMES), "live"),
+        "cv_tradegroup_preview_seconds": ("histogram", (), 1, "live"),
+        "cv_tradegroup_legs_skipped_total": ("counter", ("reason",), len(SKIP_REASONS), "live"),
+    }
+    assert OUTCOMES == ("ok", "refused", "rate_limited", "invalid", "environment_mismatch", "error")
+    assert SKIP_REASONS == (
+        "skipped", "profile_disabled", "symbol_not_allowed", "symbol_denied", "below_min_notional",
+    )  # fmt: skip
+    assert 0.3 in (specs["cv_tradegroup_preview_seconds"].buckets or ())

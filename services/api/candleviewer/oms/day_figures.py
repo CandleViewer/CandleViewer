@@ -36,6 +36,12 @@ Each answer is kept `FIGURES_TTL_S` on the injected monotonic clock. `invalidate
 account's wallet, day's loss and book and bumps their generation, so a read in flight across it
 answers its value but keeps none of it: the next read is the venue's. Overlapping reads on one
 account are not serialised here; 24 Sec.9.3.6's overlap rule is the size step's (S4-S-b2).
+
+`peek` (E28-T05 #909, the trade-group preview's) answers what `read` would from what is kept: the
+wallet, the day's loss, the book and each symbol's fee, every one younger than `FIGURES_TTL_S`,
+with the tiers read in place. Anything else, another environment's account included, is None, so
+the preview's leg is `figure_unknown`. It is synchronous, asks for no port and starts nothing: it
+never reads the venue (SR-E28-22, F-09), and it keeps and drops nothing.
 """
 
 from __future__ import annotations
@@ -132,6 +138,11 @@ def _rate(value: Decimal | None) -> Decimal | None:
     return value if value is not None and value.is_finite() and 0 <= value < 1 else None
 
 
+def _taker(fee: FeeRate | None) -> Decimal | None:
+    """The venue's taker rate, unless estimated or outside `[0, 1)`."""
+    return None if fee is None or fee.estimated else _rate(fee.taker)
+
+
 @dataclass(frozen=True, slots=True)
 class _Kept[T]:
     value: T
@@ -142,6 +153,12 @@ class _Kept[T]:
 class _Book:
     positions: Sequence[Position]
     orders: Sequence[Order]
+
+
+def _fresh[K, T](kept: dict[K, _Kept[T]], key: K, now: float) -> T | None:
+    """The value kept under `key` while younger than `FIGURES_TTL_S`, else None."""
+    held = kept.get(key)
+    return held.value if held is not None and now - held.at < FIGURES_TTL_S else None
 
 
 class DayRiskFigures(Interim):
@@ -211,6 +228,26 @@ class DayRiskFigures(Interim):
             dict(zip(unique, (fee.result() for fee in fees), strict=True)),
         )  # fmt: skip
 
+    def peek(
+        self,
+        account: AccountRef,
+        symbols: Sequence[Symbol],
+        *,
+        fallback_sl_offset_pct: Decimal | None,
+    ) -> FiguresReading | None:
+        if account.environment != self._environment:  # nothing of another venue's is kept
+            return None
+        key, now = account.account_id, self._monotonic()
+        wallet, lost = _fresh(self._wallets, key, now), _fresh(self._losses, key, now)
+        book = _fresh(self._books, key, now)
+        fees = {symbol: _fresh(self._fees, (key, symbol), now) for symbol in dict.fromkeys(symbols)}
+        if wallet is None or lost is None or book is None or None in fees.values():
+            return None
+        rates = {
+            symbol: SymbolRates(self._margin(symbol), _taker(fee)) for symbol, fee in fees.items()
+        }
+        return self._reading(wallet, lost, book, fallback_sl_offset_pct, rates)
+
     def invalidate(self, account_id: AccountId) -> None:
         stores: dict[str, dict[AccountId, Any]] = {
             "wallet": self._wallets, "day_loss": self._losses, "book": self._books
@@ -247,17 +284,20 @@ class DayRiskFigures(Interim):
     async def _rates(
         self, port: TradingPort, account: AccountRef, symbol: Symbol, deadline: float
     ) -> SymbolRates:
-        try:
-            margin = _rate(lowest_tier_rate(self._tiers(symbol)))
-        except Exception as exc:  # an unreadable catalogue: unknown, never a guessed rate
-            _log().warning("oms_figures_read_failed", figure="tiers", error=type(exc).__name__)
-            margin = None
+        margin = self._margin(symbol)
         fee = await self._kept(
             self._fees, (account.account_id, symbol), "fee", deadline,
             lambda: port.fee_rate(account, symbol),
         )  # fmt: skip
-        taker = None if fee is None or fee.estimated else _rate(fee.taker)
-        return SymbolRates(maintenance_margin_rate=margin, taker_fee_rate=taker)
+        return SymbolRates(maintenance_margin_rate=margin, taker_fee_rate=_taker(fee))
+
+    def _margin(self, symbol: Symbol) -> Decimal | None:
+        """The symbol's lowest tier's rate, read in place from the catalogue."""
+        try:
+            return _rate(lowest_tier_rate(self._tiers(symbol)))
+        except Exception as exc:  # an unreadable catalogue: unknown, never a guessed rate
+            _log().warning("oms_figures_read_failed", figure="tiers", error=type(exc).__name__)
+            return None
 
     async def _kept[K, T](
         self,
@@ -270,12 +310,9 @@ class DayRiskFigures(Interim):
         """The figure kept under `key` while younger than `FIGURES_TTL_S`, else read again within
         `FIGURES_READ_TIMEOUT_S` and the read's `deadline`. A read that fails is None and keeps
         nothing; one that `invalidate` crossed answers its value and keeps nothing either."""
-        held, now = (
-            kept.get(key),
-            self._monotonic(),
-        )  # the stamp is the read's START: slow re-reads sooner
-        if held is not None and now - held.at < FIGURES_TTL_S:
-            return held.value
+        now = self._monotonic()  # the stamp is the read's START: slow re-reads sooner
+        if (held := _fresh(kept, key, now)) is not None:
+            return held
         kept.pop(key, None)
         generation = self._generations.get((figure, key), 0)
         loop = asyncio.get_running_loop()

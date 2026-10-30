@@ -834,6 +834,109 @@ def trading() -> Board:
         "old or marked stale. timeout is a start-up fetch given up; throttled is an unknown-symbol "
         "lookup refused a refresh inside its cool-down, so none ran.",
     )
+    # #909 (E28-T05): the trade-group preview's answers by outcome, its p95 against SCR-061's
+    # 300 ms (a dashed line), its skipped legs by reason and the widenings refused by cap; then
+    # the leg sizer's four series, which E28-T03 (#907) left to this ticket; then the
+    # `trade_groups` topic's frames by kind and its failed seeds. Per outcome, reason, cap or
+    # kind, never per account, profile or principal.
+    b.row("Trade groups")
+    b.ts(
+        "Trade-group previews/s by outcome",
+        rate("cv_tradegroup_preview_total", "outcome"),
+        "ops",
+        legend="{{outcome}}",
+    )
+    _describe(
+        b,
+        "Every preview answer by its status: ok, refused (401, 403, 404), rate_limited (429), "
+        "invalid (400, 422), error (5xx) and environment_mismatch, a leg on another "
+        "environment's account. A rising rate_limited or environment_mismatch is a client "
+        "probing the preview.",
+    )
+    b.ts(
+        "Trade-group preview p95 (budget 300 ms)",
+        q("cv_tradegroup_preview_seconds"),
+        "s",
+        None,
+        0.3,
+    )
+    _describe(
+        b,
+        "A preview's round trip in the router, from the handler's entry to its answer, every "
+        "answer but a 429. The dashed line is SCR-061's 300 ms at five accounts. Fast refusals "
+        "sit beside sized plans here, so this p95 reads low; the py-perf job's test measures the "
+        "budget itself.",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "Skipped trade-group legs/s by reason",
+        rate("cv_tradegroup_legs_skipped_total", "reason"),
+        "ops",
+        legend="{{reason}}",
+    )
+    b.ts(
+        "Refused widenings/s by cap",
+        rate("cv_override_refused_total", "cap"),
+        "ops",
+        legend="{{cap}}",
+    )
+    _describe(
+        b,
+        "Trade-group requests refused because a leg would go past its bound profile's caps, one "
+        "count per distinct refused field of the override table, counted once the refusal's "
+        "record landed.",
+    )
+    b.ts("Leg sizing p95 (budget 1 ms)", q("cv_sizer_duration_seconds"), "s", None, 0.001)
+    _describe(
+        b,
+        "One leg's sizing, whatever its outcome: a single order's and each trade-group leg's. "
+        "The dashed line is the 1 ms per-leg budget.",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "Sized legs/s by outcome and reason",
+        rate("cv_sizer_outcomes_total", "outcome, reason"),
+        "ops",
+        legend="{{outcome}} {{reason}}",
+    )
+    b.ts(
+        "Sizer clamps/s by cap",
+        rate("cv_sizer_clamped_total", "cap"),
+        "ops",
+        legend="{{cap}}",
+    )
+    b.ts(
+        "Stop fallbacks/s (no warm ATR reading)",
+        f"sum(rate(cv_sizer_stop_fallback_total{{{E}}}[{RI}]))",
+        "ops",
+    )
+    _describe(
+        b,
+        "Legs whose ATR stop fell back to the profile's fallback offset. A steady rate means the "
+        "ATR feed is not reaching the sizer.",
+    )
+    b.ts(
+        "Trade-group topic frames/s by kind",
+        rate("cv_tradegroup_ws_frames_total", "kind"),
+        "ops",
+        legend="{{kind}}",
+    )
+    _describe(
+        b,
+        "Frames the trade_groups topic sent: snapshot, a body built for one subscription, or "
+        "delta, one subscription a publish reached.",
+    )
+    b.ts(
+        "Failed trade-group seeds/s (topic unseeded until restart)",
+        f"sum(rate(cv_tradegroup_ws_seed_failures_total{{{E}}}[{RI}]))",
+        "ops",
+    )
+    _describe(
+        b,
+        "OMS startups whose trade_groups seed failed every read before ready. Any non-zero rate "
+        "is a start whose topic stays unseeded, its subscriptions waiting for a snapshot, until "
+        "the next restart; the start logged oms_trade_groups_unseeded at critical.",
+    )
     b.flush()
     return b
 

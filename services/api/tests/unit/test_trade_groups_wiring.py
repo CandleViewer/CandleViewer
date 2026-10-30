@@ -1,22 +1,29 @@
 """E28-T05 S2a (#909): `GateReadiness`, trade-group readiness over the order-entry gate, the kill
-switch, the live gate and the account row, the first reason winning. The ports are faked."""
+switch, the live gate and the account row, the first reason winning. The ports are faked. S4b: the
+composition root's `trade_groups` topic, served, fed and counted."""
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from prometheus_client import generate_latest
 from structlog.testing import capture_logs
 
 from candleviewer import app as appmod
-from candleviewer import trade_groups_wiring
+from candleviewer import oms_wiring, trade_groups_wiring
 from candleviewer.accounts.trade_group_readiness import ReadinessMember, ReadinessReason, readiness
+from candleviewer.api.trade_group_preview import PREVIEW_PATH
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.domain.order_entry import REFUSAL_REASONS, OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
 from candleviewer.oms_wiring import InterimKillSwitch
@@ -25,8 +32,11 @@ from candleviewer.settings import Settings
 from candleviewer.trade_groups_wiring import GATE_REASONS, GateReadiness, NoLockouts
 from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 from tests.unit.accounts._fakes import ACC
+from tests.unit.accounts.test_trade_group_topic import _stored
+from tests.unit.api import test_trade_group_routes as groups
 from tests.unit.api.test_trade_group_definition_create import PATH, caller, payload
 from tests.unit.api.test_trade_group_definition_reads import CORE3, World
+from tests.unit.ws._seq_support import Conn, Source
 
 NOT_A_BOOL = cast(bool, 1)  # truthy, and not the bool the type promises
 
@@ -42,7 +52,7 @@ def _only(answer: Any) -> Callable[[UUID], Any]:
 
 
 def _source(
-    gate: Any = None, lockouts: Any = None, env: Environment = "live", **world: Any
+    gate: Any = None, lockouts: Any = None, env: Environment = "demo", **world: Any
 ) -> GateReadiness:
     """`world`: the kill switch's answer (`kill`: a refusal, none) and the live gate's `setting` and
     `flag` (on). The flag is read for a live account alone, as the OMS reads it."""
@@ -151,8 +161,8 @@ def test_the_root_wires_the_definition_reads_and_announces_the_interim_lockouts_
     assert source._live_enabled is False  # the setting's default
     assert source._live_flag is app.state.feature_flags.live_enabled  # the OMS's view of the flag
     assert isinstance(getattr(source._kill_switch, "__self__", None), InterimKillSwitch)
-    gate = app.state.trade_groups_gate  # S2c: over the flag's view; the preview's not ready (S3c)
-    assert (gate._enabled, gate._preview_ready) == (app.state.feature_flags.trade_groups, False)
+    gate = app.state.trade_groups_gate  # over the flag's view, the preview ready (S3c, ruling 6)
+    assert (gate._enabled, gate._preview_ready) == (app.state.feature_flags.trade_groups, True)
     # a router given no store or no readiness answers 503, not this
     got = TestClient(app, client=("127.0.0.1", 50000)).get(f"/trade-group-definitions/{CORE3}")
     assert got.status_code == 200 and got.json()["readiness"]["total"] == 3
@@ -183,3 +193,100 @@ def test_the_root_mounts_the_definition_create_over_the_composed_writes(
 
     monkeypatch.setattr(appmod, "wire_profiles", wired)
     assert answer() == (403, "trading_disabled")
+
+
+def _writes(routes: Any, prefix: str = "") -> Iterator[tuple[str, APIRoute]]:
+    """Each definition write served, walked as `deny_by_default.served_operations` walks them."""
+    for route in routes:
+        if (inner := getattr(route, "original_router", None)) is not None:
+            context = getattr(getattr(route, "include_context", None), "prefix", "") or ""
+            yield from _writes(inner.routes, prefix + context)
+        elif isinstance(route, APIRoute) and route.path.startswith(PATH):
+            for method in sorted((route.methods or set()) & {"POST", "PUT", "DELETE"}):
+                yield f"{method} {prefix}{route.path}", route
+
+
+def test_the_root_gates_each_definition_write_with_the_risk_caps_step_up() -> None:
+    """SR-E28-02, PF-S02: each mounted write demands its step-up through the root's `elevation`,
+    of class `risk_caps` as the registry declares, read off the closures as `test_suite_meta.py`
+    reads a guard's permission (no route test sees the class: each injects its own)."""
+    classes = {}
+    for key, route in _writes(appmod.create_app(principal_resolver=World()).routes):
+        elevation = inspect.getclosurevars(route.endpoint).nonlocals["elevation"]
+        classes[key] = inspect.getclosurevars(elevation).nonlocals["action_class"]
+    one = f"{PATH}/{{definitionId}}"
+    assert classes == dict.fromkeys([f"POST {PATH}", f"PUT {one}", f"DELETE {one}"], "risk_caps")
+
+
+def test_the_root_mounts_the_group_reads_over_a_pool_of_their_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E28-T05 S2f: the scoped group read on a pool of its own at the OMS stores' cap, none on the
+    fake backend (503); the root mounts both routes over a reader of it, with no flag."""
+    assert oms_wiring.group_reads(Settings(storage_backend="fake")) is None
+    real = Settings(storage_backend="real", oms_statement_timeout_ms=3000)  # not the 2000 default
+    store = oms_wiring.group_reads(real)
+    assert store is not None and cast(Any, store)._timeout == "3000"
+    world = groups.World()  # the routes' store, and an owner who may read
+    monkeypatch.setattr(appmod, "group_reads", lambda _settings: world.store)
+    client = TestClient(appmod.create_app(principal_resolver=world), client=("127.0.0.1", 50000))
+    got = client.get(f"/trade-groups/{groups.PAIR.group.id}")
+    assert got.status_code == 200 and got.json()["id"] == str(groups.PAIR.group.id)
+    assert [i["id"] for i in client.get("/trade-groups").json()["items"]] == groups.ids_of(
+        *groups.NEWEST_FIRST
+    )
+
+
+def test_the_root_mounts_the_preview_behind_the_flag_now_that_its_gate_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E28-T05 S3c (#909): the root mounts the preview over the OMS runtime, the profile wiring and
+    the gate it builds `preview_ready`: with the flag's view unread, so off, an Owner's preview is
+    `403 trading_disabled` with no `reason`, recorded; once the view reads the demo seed, on, the
+    preview passes the gate to the body's 422. The wiring's pool is lazy: nothing connects."""
+    world, recorded = World(), list[str]()
+    world.principal = PrincipalSnapshot(UUID(int=7), frozenset({"owner"}), frozenset(Permission))
+    real = Settings(storage_backend="real")
+
+    def wired(_settings: Settings, metrics: Any, bus: Any = None) -> Any:
+        return wire_profiles(real, metrics, bus)
+
+    async def emit(action: str, **_fields: Any) -> None:
+        recorded.append(action)
+
+    monkeypatch.setattr(appmod, "wire_profiles", wired)
+    runtime = SimpleNamespace(readiness="ok")  # never started here, never asked past the gate
+    monkeypatch.setattr(appmod, "build_oms_runtime", lambda *_args, **_kwargs: runtime)
+    app = appmod.create_app(principal_resolver=world)
+    app.state.app_context.audit._writer = SimpleNamespace(emit=emit)
+    wire_fake_sessions(app, "owner")  # SR-041: a state-changing request needs a bearer
+    client = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
+    off = client.post(PREVIEW_PATH, json={}, headers={"Authorization": "Bearer owner"})
+    assert (off.status_code, off.json()["code"], "reason" in off.json()) == (
+        403, "trading_disabled", False,
+    )  # fmt: skip
+    asyncio.run(app.state.feature_flags.trade_groups.refresh())  # the demo seed: on
+    on = client.post(PREVIEW_PATH, json={}, headers={"Authorization": "Bearer owner"})
+    assert (on.status_code, recorded) == (422, ["trade_group.previewed"] * 2)
+
+
+def test_the_root_hands_the_oms_runtime_the_topic_it_serves_and_counts_its_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S4b's R1C-02: the `trade_groups` topic the snapshot router serves is the one the OMS runtime
+    is handed to seed and feed; it publishes on the app's hub and counts on the app's facade."""
+    build = Mock(return_value=None)  # the fake backend's runtime: none
+    monkeypatch.setattr(appmod, "build_oms_runtime", build)
+    app = appmod.create_app(Settings())
+    services, facade = app.state.ws_registry.services, app.state.metrics_facade
+    topic = services.snapshots._sources["trade_groups"]
+    assert build.call_args.kwargs["trade_groups"] is topic
+    conn = Conn(cast(Source, services.snapshots), ACC)  # a Manager granted ACC, on the app's hub
+    services.sequencing.register(conn.authz, conn.emitter)
+    conn.sub({"ch": "trade_groups", "opts": {"exchange_account_ids": [str(ACC)]}})
+    topic.seed([])
+    topic.created(_stored(1, ACC))
+    assert [frame["t"] for frame in conn.take()] == ["snap", "d"]
+    text = generate_latest(facade.registry).decode()
+    for kind in ("snapshot", "delta"):
+        assert f'cv_tradegroup_ws_frames_total{{env="{facade.env}",kind="{kind}"}} 1.0' in text

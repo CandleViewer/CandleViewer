@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.admin.flags import FLAGS
+from candleviewer.flags_wiring import StorageFlagStore
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.flags_sqlalchemy import (
     FlagChange,
@@ -137,6 +138,28 @@ async def test_ensure_inserts_every_flag_once_at_its_default(
     await repo.ensure([FlagSeed(_KEY, "boolean", "x", False, False)])
     assert {key: _row(pg_dsn, key) for key in first} == first  # nothing re-written
     assert len(await repo.load()) == len(FLAGS) + 2
+
+
+async def test_the_demo_seed_of_trade_groups_lands_on_a_fresh_database_alone(
+    pg_dsn: str, relational: SqlAlchemyRelationalRepository
+) -> None:
+    """E28-T05 S3c (#909; S2b-flag's R1C-02): a demo process seeds `trading.trade_groups` on in a
+    fresh database; one that ran an earlier release, which inserted the flag at its default, holds
+    `false` through this release's `ensure` until an Owner writes it, and the write sticks."""
+    key, demo = (
+        "trading.trade_groups",
+        StorageFlagStore(_repository(relational), bound_s=3.0, environment="demo"),
+    )
+    await demo.ensure(FLAGS)
+    assert _row(pg_dsn, key)[1] is True
+    with _sync(pg_dsn) as c:
+        c.execute("DELETE FROM feature_flags")
+    await _repository(relational).ensure(_SEEDS)  # the earlier release: every flag its default
+    await demo.ensure(FLAGS)
+    assert _row(pg_dsn, key)[1] is False
+    await _repository(relational).write(key, _to(True, {}, _user(pg_dsn)))  # the Owner's write
+    await demo.ensure(FLAGS)  # a restart
+    assert _row(pg_dsn, key)[1] is True
 
 
 async def test_load_keeps_every_override_and_an_unreadable_value(

@@ -48,6 +48,7 @@ from candleviewer.ws.lifecycle import bye_frame
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import SnapshotBody
 from candleviewer.ws.topics import FAMILIES
+from candleviewer.ws_wiring import trade_group_frame_visible
 from tests.contract.ws import _harness
 from tests.contract.ws._harness import WIRE_SUBPROTOCOL, Client, World, current_offer, current_wire
 from tests.contract.ws._support import SAMPLES, recv_json
@@ -316,23 +317,28 @@ def strike_out(
     assert attempts == [(reason, n, user is not None, SOURCE) for n in (1, 2, 3)]
 
 
-def delta_naming(family: str, account: uuid.UUID) -> dict[str, Any]:
+def delta_naming(family: str, account: uuid.UUID, *also: uuid.UUID) -> dict[str, Any]:
     """The contract suite's sample delta of an account-scoped `family`, its rows renamed to
-    `account` (a trade group's sample names none, so it gets a leg; a rule's rows never do): schema-
-    valid, and the account's id is in the data the owning module would publish for it."""
+    `account` (a trade group's sample names none, so it gets a leg there, and one on each of
+    `also`; a rule's rows never do): schema-valid, and the account's id is in the data the owning
+    module would publish for it."""
     stock = SAMPLES["orders"][1]["orders"][0]["exchange_account_id"]  # the account the samples name
     body: dict[str, Any] = json.loads(json.dumps(SAMPLES[family][1]).replace(stock, str(account)))
     if family == "trade_groups":
-        leg = {"id": body["trade_groups"][0]["id"], "exchange_account_id": str(account)}
-        body["trade_groups"][0]["legs"] = [leg | {"status": "open"}]
+        leg = {"id": body["trade_groups"][0]["id"]}
+        legs = [leg | {"exchange_account_id": str(a), "status": "open"} for a in (account, *also)]
+        body["trade_groups"][0]["legs"] = legs
     return body
 
 
-def publish(world: RawWorld, family: str, account: uuid.UUID) -> int:
-    """One delta of `family` naming `account`, through the real hub on the app's loop: the number of
-    subscriptions it reached."""
-    body = delta_naming(family, account)
+def publish(world: RawWorld, family: str, account: uuid.UUID, *also: uuid.UUID) -> int:
+    """One delta of `family` naming `account` (a trade group with a leg on each of `also` too),
+    through the real hub on the app's loop: the number of subscriptions it reached. A trade group's
+    is judged as production judges it, on every leg's account (SR-E28-21)."""
+    body = delta_naming(family, account, *also)
     viewer = (lambda _p: True) if family == "rules" else None  # #3488: judged in test_ws_rules_*
+    if family == "trade_groups":  # production's viewer, on every leg's account
+        viewer = partial(trade_group_frame_visible, frozenset({account, *also}))
     return int(world.call(lambda: world.hub.publish(family, body, account=account, viewer=viewer)))
 
 

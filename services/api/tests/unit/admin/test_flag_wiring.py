@@ -29,7 +29,7 @@ from candleviewer.admin.flags import (
     Visibility,
     default_registry,
 )
-from candleviewer.admin.flags.catalogue import TRADING_OMS_ENABLED
+from candleviewer.admin.flags.catalogue import TRADING_OMS_ENABLED, TRADING_TRADE_GROUPS
 from candleviewer.admin.flags.maintenance import MaintenanceController
 from candleviewer.admin.flags.policy import StepUpClass
 from candleviewer.admin.flags.store import FlagWrite, StoreUnavailableError
@@ -377,14 +377,16 @@ async def test_a_view_warns_when_it_turns_unread_and_logs_at_debug_while_it_stay
 
 
 async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_every_view_polls() -> None:
-    """Q3: a restart's `ensure` leaves the Owner's `false`; `start()` reads the three views (the
-    OMS's two and E28-T05's) and `stop()` cancels their polls."""
+    """Q3 and E28-T05 S3c (#909): a fresh demo store holds both seeds on, and a restart's `ensure`
+    leaves the Owner's `false`; `start()` reads the three views (the OMS's two and E28-T05's) and
+    `stop()` cancels their polls."""
     runtime = _runtime()
-    row = await runtime.service.stored(runtime.registry[_OMS])
-    assert row is not None and row.value is True
-    await runtime.writer.set(
-        _OMS, _OWNER, value=False, reason="hold", expected_updated_at=row.updated_at
-    )
+    for key in (_OMS, TRADING_TRADE_GROUPS):
+        row = await runtime.service.stored(runtime.registry[key])
+        assert row is not None and row.value is True
+        await runtime.writer.set(
+            key, _OWNER, value=False, reason="hold", expected_updated_at=row.updated_at
+        )
     await runtime.start()
     polls = runtime._view_polls
     try:
@@ -394,12 +396,15 @@ async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_every_vi
     finally:
         await runtime.stop()
     assert len(polls) == 3 and all(poll.done() for poll in polls) and runtime._view_polls == []
+    assert sorted(poll.get_name() for poll in polls) == sorted(
+        f"feature-flag-view-{view.key}" for view in views
+    )
 
 
 async def test_a_write_to_the_trade_groups_flag_reaches_its_view_before_it_returns() -> None:
     """E28-T05 (#909), as SEC-S3A-03 for the OMS flag: the writer's hook covers this view too, so
     an Owner's write is read by the process that made it, on or off, with no wait for a poll."""
-    runtime, key, seen = _runtime(), "trading.trade_groups", list[bool]()  # demo: no seed
+    runtime, key, seen = _runtime(), TRADING_TRADE_GROUPS, list[bool]()  # unread: off
     row = await runtime.service.stored(runtime.registry[key])
     assert row is not None and runtime.trade_groups() is False
     for value in (True, False):
@@ -418,7 +423,8 @@ def test_every_step_up_class_a_flag_write_demands_is_registered() -> None:
 async def test_the_fake_backend_reads_every_flag_at_its_demo_seed_from_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """At its default, but `trading.oms_enabled` on: `Settings()` is a demo process (Q3)."""
+    """At its default, but `trading.oms_enabled` and `trading.trade_groups` on: `Settings()` is a
+    demo process (Q3; E28-T05 S3c)."""
     monkeypatch.setattr(wiring, "SqlAlchemyFlagRepository", None)  # never Postgres here
     runtime = wiring.build_feature_flags(
         Settings(storage_backend="fake"), audit=FakeAudit(), step_up=FakeStepUp(),
@@ -428,7 +434,7 @@ async def test_the_fake_backend_reads_every_flag_at_its_demo_seed_from_memory(
     assert listed.resolution.value == "stored"
     assert {f.spec.key: f.value for f in listed.items} == {
         k: s.default for k, s in runtime.registry.items()
-    } | {TRADING_OMS_ENABLED: True}
+    } | {TRADING_OMS_ENABLED: True, TRADING_TRADE_GROUPS: True}
     assert all(f.stored is not None and f.stored.updated_at for f in listed.items)
 
 

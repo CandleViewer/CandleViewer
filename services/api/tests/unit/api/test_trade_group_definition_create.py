@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -41,6 +41,7 @@ A, B, C, L, D, PAIR = reads.A, reads.B, reads.C, UUID(int=11), UUID(int=12), rea
 OWNER, NEW = reads.OWNER_ID, UUID("e28f0000-0000-4000-8000-0000000000c3")
 LABELS = {A: "E28-A", B: "E28-B", C: "E28-C", L: "E28-LIVE-MAIN"}  # D: soft-deleted
 PATH, MIXED = "/trade-group-definitions", "A trade group cannot mix Demo and Live accounts."
+_READ = Permission.ACCOUNTS_READ
 
 
 def caller(role: str, user: UUID = OWNER) -> PrincipalSnapshot:
@@ -213,6 +214,36 @@ def test_a_taken_name_is_409_in_any_letter_case(world: World) -> None:
     assert (got.status_code, got.json()["code"], world.audited) == (409, "conflict", [])
 
 
+def test_a_create_replays_its_201_and_refuses_the_key_for_another_body(world: World) -> None:
+    """SR-E28-17, PF-I05 (S2d): the kept 201 to the same request, after RBAC, before the flag (21
+    Sec.10.7) and behind the step-up; another body under the key is 409, and another Owner's same
+    request runs afresh (409: the name is taken); a key that is no UUID is 422."""
+    key = {"idempotency-key": str(uuid4())}
+    first = world.client.post(PATH, json=payload(), headers=key)
+    world.flag = False
+    again = world.client.post(PATH, json=payload(), headers=key)
+    assert (again.status_code, again.content, again.headers["etag"]) == (
+        201, first.content, first.headers["etag"]
+    )  # fmt: skip
+    assert (again.headers["idempotency-replayed"], len(world.audited)) == ("true", 1)
+    answers = [world.client.post(PATH, json=payload(A, C, name="Other"), headers=key)]
+    world.elevated = False
+    answers.append(world.client.post(PATH, json=payload(), headers=key))
+    world.flag, world.elevated = True, True
+    world.principal = PrincipalSnapshot(OWNER, frozenset({"manager"}), frozenset({_READ}))
+    answers.append(world.client.post(PATH, json=payload(), headers=key))  # no longer an Owner
+    world.principal = caller("owner", uuid4())
+    answers.append(world.client.post(PATH, json=payload(), headers=key))
+    assert [(r.status_code, r.json()["code"]) for r in answers] == [
+        (409, "idempotency_key_reuse"), (403, "step_up_required"), (403, "forbidden"),
+        (409, "conflict"),
+    ]  # fmt: skip
+    bad = world.client.post(PATH, json=payload(), headers={"idempotency-key": "not-a-uuid"})
+    assert [(e["field"], e["rule"]) for e in bad.json()["errors"]] == [
+        ("Idempotency-Key", "uuid_parsing")
+    ]
+
+
 def test_without_a_risk_caps_step_up_nothing_is_written(world: World) -> None:
     """PF-S02: the challenge restates the environment and the member count, never the name."""
     world.elevated = False
@@ -292,14 +323,15 @@ def test_no_resolver_is_501_and_a_body_past_its_cap_422(world: World) -> None:
 async def test_the_hook_names_created_updated_and_deleted_with_their_states(world: World) -> None:
     """S2d's replace and delete hand the store this hook. Its one f-string names the three actions,
     which the literal-action guard cannot see: each is registered, and carries the states as the
-    store read them and the change, a delete's `after` the change alone."""
-    was = reads.record(reads.CORE3, "Core3", A, B, C, paused=C)
-    now = reads.record(reads.CORE3, "Core3", A, C, L)
+    store read them and the change, a delete's `after` the change alone; the record's environment
+    is the definition's (24 Sec.15.5), here a live one."""
+    was = reads.record(reads.CORE3, "Core3", A, B, C, paused=C, env="live")
+    now = reads.record(reads.CORE3, "Core3", A, C, L, env="live")
     hook = writes.audit_definition_write(world, OWNER, None, None)
     for pair in ((None, now), (was, now), (was, None)):
         await hook(*pair)
-    old = state_of((A, True), (B, True), (C, False))
-    new = state_of((A, True), (C, True), (L, True))
+    old = state_of((A, True), (B, True), (C, False)) | {"environment": "live"}
+    new = state_of((A, True), (C, True), (L, True)) | {"environment": "live"}
     created = {"added": [str(A), str(C), str(L)], "removed": [], "toggled": []}
     updated = {"added": [str(L)], "removed": [str(B)], "toggled": [str(C)]}
     deleted = {"added": [], "removed": [str(A), str(B), str(C)], "toggled": []}
@@ -309,7 +341,7 @@ async def test_the_hook_names_created_updated_and_deleted_with_their_states(worl
         ("trade_group_definition.updated", old, new | {"membership_change": updated}),
         ("trade_group_definition.deleted", old, {"membership_change": deleted}),
     ]
-    who = (OWNER, "demo", "trade_group_definition", str(reads.CORE3), "success")
+    who = (OWNER, "live", "trade_group_definition", str(reads.CORE3), "success")
     keys = ("actor_user_id", "env", "object_kind", "object_id", "outcome")
     assert {tuple(r[k] for k in keys) for r in rows} == {who}
 

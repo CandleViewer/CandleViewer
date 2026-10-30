@@ -215,6 +215,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # leg would exceed its bound profile's caps or risk budget, written ahead of the `403
         # risk_limit_breached` with every violated field (`accounts.override_comparator`).
         "trade_group.override_refused",
+        # E28-T05 (#909, ruling 2): one row per answered trade-group preview, 200 or a refusal,
+        # with the request's ids, symbol and side, the actor's role and the legs' outcome counts,
+        # never a figure; the preview route writes it ahead (`previewed_entry`).
+        "trade_group.previewed",
         "positions.flatten",
         "risk.freeze_manager",
         "risk.unfreeze_manager",

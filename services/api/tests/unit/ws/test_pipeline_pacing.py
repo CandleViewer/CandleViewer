@@ -9,6 +9,7 @@ import copy
 import json
 from collections.abc import Callable
 from dataclasses import replace
+from decimal import Decimal
 from functools import partial
 from typing import Any
 
@@ -27,8 +28,10 @@ from candleviewer.ws.pacing import Pacer
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.pipeline import ConnectionPipeline
 from candleviewer.ws.sequencing import PRIVATE_CAUSAL_ORDER, SequencingHub, SnapshotBody
+from candleviewer.ws_wiring import TradeGroupFrameCounts, trade_groups_topic
 from tests.contract.ws._harness import SCHEMAS, validate_frame
 from tests.contract.ws._support import SAMPLES
+from tests.unit.accounts.test_trade_group_topic import _leg, _stored
 from tests.unit.ws._seq_support import ACC_A, USER, Book, Conn, Source
 from tests.unit.ws.test_pacing import _COLUMN, _bid, _private
 from tests.unit.ws.test_pacing import _conn as _paced
@@ -157,13 +160,15 @@ def test_s5_private_windows_closing_together_leave_in_causal_order() -> None:
         _, sub = conn.authz.admit({"ch": family, "opts": {"exchange_account_ids": [str(ACC_A)]}})
         assert sub is not None
         sub.snapshot_pending = False
-    group = {"id": "g", "status": "open", "updated_at_ms": 1}
-    event = [("trade_groups", {"trade_groups": [group]}), ("orders", {"orders": []})]
+    groups = {"trade_groups": [{"id": "g", "status": "open", "updated_at_ms": 1}]}
+    event: list[tuple[str, Any]] = [("orders", {"orders": []})]  # `trade_groups` follows apart
     event += [("positions", {"positions": [_row(ACC_A)]}), ("executions", {"executions": []})]
     hub.publish_private(ACC_A, event)  # each leaves at once
+    hub.publish("trade_groups", groups, account=ACC_A, viewer=_anyone)
     _queued(pipe)
     conn.clock.now = 0.01
     hub.publish_private(ACC_A, event)  # two windows, both closing at 0.1
+    hub.publish("trade_groups", groups, account=ACC_A, viewer=_anyone)
     pipe.service(0.1)
     assert [f["ch"] for f in _queued(pipe)] == ["executions", "orders", "positions", "trade_groups"]
 
@@ -204,6 +209,20 @@ def _event(at: int, *families: str) -> list[tuple[str, dict[str, Any]]]:
     return [(family, _body(family, at)) for family in families or _PRIVATE]
 
 
+def _anyone(_principal: object) -> bool:
+    return True
+
+
+def _account_event(hub: SequencingHub, at: int, *families: str) -> None:
+    """`_event` as its producers publish it: `publish_private` puts its frames in causal order,
+    and its `trade_groups` frame, which names its viewer (23 §15.5), follows through `publish`."""
+    event = _event(at, *families)
+    hub.publish_private(ACC_A, [(ch, body) for ch, body in event if ch != "trade_groups"])
+    for ch, body in event:
+        if ch == "trade_groups":
+            hub.publish(ch, body, account=ACC_A, viewer=_anyone)
+
+
 def _tags(frames: list[dict[str, Any]]) -> list[tuple[str, int]]:
     """Each `positions` or `trade_groups` frame's channel and the `at` of its row."""
     return [(f["ch"], f["p"][f["ch"]][0]["updated_at_ms"]) for f in frames]
@@ -231,10 +250,10 @@ def test_s5_trade_groups_waits_for_the_open_positions_window(cause: str) -> None
     setup, at, close, rows = _SETUPS[cause]
     for now, families in setup:
         conn.clock.now = now
-        hub.publish_private(ACC_A, _event(1, *families))
+        _account_event(hub, 1, *families)
     _queued(pipe)
     conn.clock.now = at
-    hub.publish_private(ACC_A, _event(2))
+    _account_event(hub, 2)
     assert [f["ch"] for f in _queued(pipe)] == ["executions", "orders"]
     pipe.service(close - 0.001)
     assert _queued(pipe) == []
@@ -249,13 +268,13 @@ def test_s5_a_due_positions_window_leaves_before_an_inline_trade_groups_flush() 
     it at once, as without the hold, and `trade_groups` leaves after it at the writer's turn."""
     hub = SequencingHub()
     pipe, conn = _private_rig(hub)
-    hub.publish_private(ACC_A, _event(1))  # everything leaves at once
+    _account_event(hub, 1)  # everything leaves at once
     _queued(pipe)
     conn.clock.now = 0.05
-    hub.publish_private(ACC_A, _event(2))  # both windows close at 0.1
+    _account_event(hub, 2)  # both windows close at 0.1
     assert [f["ch"] for f in _queued(pipe)] == ["executions", "orders"]
     conn.clock.now = 0.11  # the writer's turn due at 0.1 has not run
-    hub.publish_private(ACC_A, _event(3, "trade_groups"))
+    _account_event(hub, 3, "trade_groups")
     assert _queued(pipe) == []
     conn.clock.now = 0.12
     hub.publish_private(ACC_A, _event(4, "positions"))
@@ -272,10 +291,10 @@ def test_s5_a_class_change_keeps_positions_first() -> None:
     pipe, conn = _private_rig(hub, 200)
     hub.publish_private(ACC_A, _event(1, "positions"))
     conn.clock.now = 0.1
-    hub.publish_private(ACC_A, _event(2, "trade_groups"))
+    _account_event(hub, 2, "trade_groups")
     _queued(pipe)
     conn.clock.now = 0.15
-    hub.publish_private(ACC_A, _event(3))  # both windows close at 0.2
+    _account_event(hub, 3)  # both windows close at 0.2
     assert [f["ch"] for f in _queued(pipe)] == ["executions", "orders"]
     _pacer(pipe).classify(30.0, list(conn.authz.by_id.values()), now=0.16)  # lagging
     pipe.service(0.1 + 0.2)  # `trade_groups`' own close now
@@ -292,11 +311,11 @@ def test_s5_a_class_change_holds_only_a_window_that_waited() -> None:
     pipe, conn = _private_rig(hub, 200)
     for now, at, families in ((0.0, 1, ("positions",)), (0.1, 2, ("trade_groups",)), (0.15, 3, ())):
         conn.clock.now = now
-        hub.publish_private(ACC_A, _event(at, *families))
+        _account_event(hub, at, *families)
     pipe.service(0.2)  # event 3's windows, `trade_groups` held for `positions`
     _queued(pipe)
     conn.clock.now = 0.25
-    hub.publish_private(ACC_A, _event(4, "trade_groups"))  # a window closing at 0.3
+    _account_event(hub, 4, "trade_groups")  # a window closing at 0.3
     conn.clock.now = 0.26
     hub.publish_private(ACC_A, _event(5, "positions"))  # a window closing at 0.4
     _pacer(pipe).classify(30.0, list(conn.authz.by_id.values()), now=0.27)  # lagging
@@ -343,7 +362,7 @@ def test_s5_an_ended_positions_window_holds_nothing_back() -> None:
     assert positions is not None and conn.authz.on_drop is not None
     conn.authz.on_drop([positions])
     _queued(pipe)
-    hub.publish_private(ACC_A, _event(3, "trade_groups"))
+    _account_event(hub, 3, "trade_groups")
     assert _tags(_queued(pipe)) == [("trade_groups", 3)]
 
 
@@ -371,6 +390,23 @@ def test_s5_positions_is_just_ahead_of_trade_groups_in_causal_order() -> None:
     assert PRIVATE_CAUSAL_ORDER[2:] == ("positions", "trade_groups")
 
 
+def test_trade_groups_wait_for_positions() -> None:
+    """§16.1 S5 / D18 through the pacer (E28-T05 S4b): the topic's frame for a leg, published
+    while the account's `positions` window is open, leaves after that window, at its close."""
+    hub = SequencingHub()
+    topic = trade_groups_topic(hub, TradeGroupFrameCounts())
+    topic.seed([_stored(1, ACC_A)])  # before the rig, which marks its subscriptions snapped
+    pipe, conn = _private_rig(hub)
+    hub.publish_private(ACC_A, _event(1, "positions"))  # leaves at once
+    conn.clock.now = 0.05
+    hub.publish_private(ACC_A, _event(2, "positions"))  # a window closing at 0.1
+    _queued(pipe)
+    topic.leg_changed(_leg(1, 0, ACC_A, filled_qty=Decimal("0.004")))  # a cold lane: held
+    assert _queued(pipe) == []
+    pipe.service(0.1)
+    assert [f["ch"] for f in _queued(pipe)] == ["positions", "trade_groups"]
+
+
 def test_s5_a_held_trade_groups_window_counts_and_is_shed_like_any_other() -> None:
     """§8.4: a `trade_groups` window held behind a `positions` one counts against the budget from
     its first update and keeps one heap entry (C-2.18); step 1 drops it like any window, marked
@@ -384,7 +420,7 @@ def test_s5_a_held_trade_groups_window_counts_and_is_shed_like_any_other() -> No
     hub.publish_private(ACC_A, _event(2, "positions"))  # a window closing at 0.1
     _queued(pipe)
     for at in range(3, 60):  # a cold lane, held: every update waits in its window
-        hub.publish_private(ACC_A, _event(at, "trade_groups"))
+        _account_event(hub, at, "trade_groups")
     groups, positions = conn.authz.find("trade_groups"), conn.authz.find("positions")
     assert groups is not None and groups.pending_reason == "backpressure"
     assert positions is not None and not positions.snapshot_pending

@@ -32,7 +32,7 @@ DESKTOP_BACKEND_CONNECTION = "desktop.backend_connection"
 #: principal (`flags_wiring.FlagView`).
 TRADING_OMS_ENABLED = "trading.oms_enabled"
 #: E28-T05 (#909): the definition writes and the preview, never a read; read as the OMS flag is.
-#: No process seeds it (`ENVIRONMENT_SEEDS`) before the preview's refusals ship (S3c).
+#: Seeded on in demo (`ENVIRONMENT_SEEDS`) with the preview's audited refusals (S3c, ruling 6).
 TRADING_TRADE_GROUPS = "trading.trade_groups"
 #: Ruling Q3: the value the insert-only `ensure` gives a flag with no row in a process of an
 #: environment, where it is not the flag's default (21 10.7), so an Owner's later write sticks.
@@ -40,7 +40,10 @@ TRADING_TRADE_GROUPS = "trading.trade_groups"
 #: `test_flag_catalogue.py` holds the table. Read-only at both levels, so nothing edits it at
 #: run time.
 ENVIRONMENT_SEEDS: Final[Mapping[str, Mapping[str, FlagValue]]] = MappingProxyType(
-    {TRADING_OMS_ENABLED: MappingProxyType({"demo": True})}
+    {
+        TRADING_OMS_ENABLED: MappingProxyType({"demo": True}),
+        TRADING_TRADE_GROUPS: MappingProxyType({"demo": True}),
+    }
 )
 
 FLAGS: tuple[FlagSpec, ...] = (

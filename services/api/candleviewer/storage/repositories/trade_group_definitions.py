@@ -131,7 +131,9 @@ class DefinitionStore(Protocol):
 class DefinitionReads(Protocol):
     """The live definitions the scope sees; an empty `GrantScope` runs no SQL. `get` answers one,
     else `None`; `page` up to `limit`, in `ux_tgd_name`'s order (`lower(name)`, then the id), from
-    past `after`, a stored name and an id."""
+    past `after`, a stored name and an id. Each reads one snapshot, so a definition deleted while
+    it reads is read whole or not at all, and a page holds fewer than `limit` only at the end of
+    the listing or where it skips one stored with no member, as `get` does, logging its id."""
 
     async def get(self, scope: AccountScope, definition_id: UUID) -> DefinitionRecord | None: ...
 

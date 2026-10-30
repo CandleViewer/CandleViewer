@@ -24,9 +24,10 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
-from dataclasses import dataclass, fields
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterable, Mapping, Sequence
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Protocol
@@ -34,9 +35,21 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.accounts.trade_group_repository import TradeGroupReader, TradeGroupRepository
-from candleviewer.accounts.trade_groups import ScopedTradeGroup
+from candleviewer.accounts.trade_groups import (
+    GroupReplay,
+    GroupUpdate,
+    LegDraft,
+    LegUpdate,
+    ScopedTradeGroup,
+    TradeGroup,
+    TradeGroupDraft,
+    TradeGroupLeg,
+    TradeGroupWithLegs,
+    record_from_rows,
+)
 from candleviewer.accounts.verification import Refusal
 from candleviewer.admin.wiring import (
     LaneSigningBinder,
@@ -76,6 +89,7 @@ from candleviewer.oms.day_figures import DayRiskFigures, Tiers
 from candleviewer.oms.errors import (
     AccountScopeDenied,
     AuditNotDurable,
+    OmsError,
     OmsNotReady,
     OrderEntryRefused,
     OrderHistoryRefused,
@@ -93,6 +107,7 @@ from candleviewer.oms.exits import (
     InFlightGuard,
     OrderExits,
 )
+from candleviewer.oms.fanout.guard import LegGuard, S4SGuard
 from candleviewer.oms.idempotency import AnchorService, Lookup, Replay
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator
 from candleviewer.oms.order_machine import (
@@ -110,21 +125,25 @@ from candleviewer.oms.ports import (
     NO_TIER_REQUESTS,
     ArmRecords,
     ClockHealth,
+    Instruments,
     Interim,
     KeyedRecord,
     MarketReading,
     NoDayFigures,
     NoHandoverStore,
+    OrderFigures,
     Profiles,
     RequestRecord,
     RuntimePortName,
     SubmissionPorts,
     SubmitActor,
     TierRequests,
+    TradingAccounts,
     TradingSwitches,
     announce_interim_port,
     announce_interim_ports,
 )
+from candleviewer.oms.ports import StopResolver as StopPort
 from candleviewer.oms.repository import (
     ExecutionRepository,
     IdempotencyAnchorRepository,
@@ -137,6 +156,7 @@ from candleviewer.oms.repository import (
     WriteTimer,
 )
 from candleviewer.oms.routing import RoutedPort, TradingRouter
+from candleviewer.oms.sizing import with_rates
 from candleviewer.oms.stop_gate import ResolvingStopGate, StopVoidAudit
 from candleviewer.oms.stop_resolution import CompleteRead, StopResolver, store_timeout_for
 from candleviewer.oms.stream_consumer import StreamEvidence
@@ -197,6 +217,8 @@ from candleviewer.storage.repositories.idempotency_anchors_sqlalchemy import (
     SqlAlchemyIdempotencyAnchorStore,
 )
 from candleviewer.storage.repositories.orders import (
+    NewOrder,
+    NewOrderEvent,
     OrderEventStore,
     OrderRow,
     OrderStore,
@@ -220,9 +242,20 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 from candleviewer.storage.repositories.session_lock_sqlalchemy import SqlAlchemySessionLock
 from candleviewer.storage.repositories.statechart_sqlalchemy import SqlAlchemyEventStore
-from candleviewer.storage.repositories.submissions import SubmissionStore
+from candleviewer.storage.repositories.submissions import (
+    FirstPersist,
+    FirstPersisted,
+    SubmissionStore,
+)
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
-from candleviewer.storage.repositories.trade_groups import TradeGroupReads, TradeGroupStore
+from candleviewer.storage.repositories.trade_groups import (
+    GroupWriteAhead,
+    LegStatus,
+    TradeGroupReads,
+    TradeGroupRecord,
+    TradeGroupStatus,
+    TradeGroupStore,
+)
 from candleviewer.storage.repositories.trade_groups_sqlalchemy import SqlAlchemyTradeGroupStore
 from candleviewer.storage.repositories.trading_accounts import (
     TradingAccountReads,
@@ -1191,6 +1224,110 @@ class ServedTierRequests:
             _log().error("oms_tier_request_failed", error=type(exc).__name__)
 
 
+class GroupTopic(Protocol):
+    """The `trade_groups` topic (`accounts.trade_group_topic`) as the lane's writes reach it, each
+    call on the serving loop (E28-T05)."""
+
+    def seed(self, groups: Iterable[TradeGroupWithLegs]) -> None: ...
+    def created(self, record: TradeGroupWithLegs) -> None: ...
+    def leg_changed(self, leg: TradeGroupLeg) -> None: ...
+    def group_changed(self, group: TradeGroup) -> None: ...
+
+
+class ObservedGroups(TradeGroupRepository):
+    """The pipeline's trade-group facade, observed (E28-T05 #909 S4b): each write it commits goes,
+    as stored, to the `trade_groups` topic on the serving loop by a `Serving.notify` notice, never
+    awaited (C-2.18, C-2.20), bounded as every notice is and counted there when lost or failed
+    (`oms_lane_notices_failed_total`). A replay, a key reuse or a write that raises hands over
+    nothing. A group leaving `draft` (`expected_status="draft"`) is read and handed over whole,
+    as the topic holds no draft; a writer that leaves `draft` otherwise is E34's to hand over."""
+
+    def __init__(self, store: TradeGroupStore, topic: GroupTopic, serving: Serving) -> None:
+        super().__init__(store)
+        self._topic, self._serving = topic, serving
+
+    async def create(
+        self, group: TradeGroupDraft, legs: Sequence[LegDraft], *, write_ahead: GroupWriteAhead
+    ) -> TradeGroupWithLegs | GroupReplay:
+        stored = await super().create(group, legs, write_ahead=write_ahead)
+        if not isinstance(stored, GroupReplay):
+            self._serving.notify(self._topic.created, stored)
+        return stored
+
+    async def update_leg(
+        self,
+        group_id: GroupId,
+        leg_id: UUID,
+        update: LegUpdate,
+        *,
+        expected_status: LegStatus | None = None,
+    ) -> TradeGroupLeg:
+        leg = await super().update_leg(group_id, leg_id, update, expected_status=expected_status)
+        self._serving.notify(self._topic.leg_changed, leg)
+        return leg
+
+    async def update_group(
+        self,
+        group_id: GroupId,
+        update: GroupUpdate,
+        *,
+        expected_status: TradeGroupStatus | None = None,
+    ) -> TradeGroup:
+        group = await super().update_group(group_id, update, expected_status=expected_status)
+        if expected_status == "draft" and group.status != "draft":
+            await self._left_draft(group_id)
+        else:
+            self._serving.notify(self._topic.group_changed, group)
+        return group
+
+    async def _left_draft(self, group_id: GroupId) -> None:
+        """One read on the lane; one that fails hands over nothing, logged by its error's type."""
+        try:
+            whole = await self.get(group_id)
+        except Exception as exc:
+            _log().error(
+                "oms_trade_group_handover_failed",
+                trade_group_id=str(group_id),
+                error=type(exc).__name__,
+            )
+            return
+        self._serving.notify(self._topic.created, whole)
+
+    def persisted(self, record: TradeGroupRecord) -> None:
+        """A first persist's group, as its rows: adapted on the serving loop (`_created`)."""
+        self._serving.notify(_created, self._topic, record)
+
+    async def seed(self, environment: str) -> int:
+        """The topic's seed: this environment's active groups (C-2.11), read on the lane; answers
+        how many it handed over."""
+        held = await self.open_groups()
+        own = tuple(record for record in held if record.group.environment == environment)
+        self._serving.notify(self._topic.seed, own)
+        return len(own)
+
+
+def _created(topic: GroupTopic, record: TradeGroupRecord) -> None:
+    """On the serving loop; a row the adapter refuses is a notice `Serving` counts as failed."""
+    topic.created(record_from_rows(record))
+
+
+class ObservedSubmissions(SubmissionRepository):
+    """The first persist (24 Sec.8.4 step 5), observed: `placeOrder` stores an entry's group with
+    its order, not through `TradeGroupRepository.create`, so it is handed over here."""
+
+    def __init__(self, store: SubmissionStore, timer: WriteTimer, groups: ObservedGroups) -> None:
+        super().__init__(store, timer)
+        self._groups = groups
+
+    async def create_first(
+        self, first: FirstPersist, order: NewOrder, event: NewOrderEvent
+    ) -> FirstPersisted:
+        persisted = await super().create_first(first, order, event)
+        if persisted.group is not None:
+            self._groups.persisted(persisted.group)
+        return persisted
+
+
 # --- part 3: the runtime (#913 slice 3E) ---
 
 #: The runtime's state, as `/readyz`'s `oms` check gives it (20 Sec.6.2).
@@ -1219,6 +1356,11 @@ _RETRIED: Final = (StorageError, OrderStoreError, AuditNotDurable, StoreUnavaila
 #: in silence for ever; and no order is skipped on an error no refusal names, which a defect
 #: could raise for every one of them (C-2.21).
 SWEEP_MAX_FAILURES: Final = 5
+#: E28-T05: the `trade_groups` seed's reads before `ready`, a failed one tried again after the
+#: sweep's first backoff, all of them within one sweep call's bound (`_seeded`).
+SEED_ATTEMPTS: Final = 3
+#: The startups whose seed failed every read (`_seeded`).
+SEED_FAILURES: Final = "cv_tradegroup_ws_seed_failures_total"
 #: Step 4's KILL reason (24 Sec.8.4): an order recorded, never sent, and left with no owner.
 STARTUP_UNSENT: Final = "startup_unsent"
 #: What the sweep counts and skips, its order left as its last step left it (20 Sec.6.2 step 3,
@@ -1552,6 +1694,17 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
     )
 
 
+def group_reads(settings: Settings) -> TradeGroupReads | None:
+    """The principal-scoped group reads of the REST routes (E28-T05 S2f), on a pool of their own on
+    the serving loop, not the order lane's, at the OMS stores' statement cap; `None` on the fake
+    backend (503). The adapter is built here, where the architecture test lets it be named, and
+    typed as the scoped read alone: a route that holds it cannot reach the system port (C-12.4)."""
+    if settings.storage_backend != "real":
+        return None
+    pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "group-reads")
+    return SqlAlchemyTradeGroupStore(pool, statement_timeout_ms=settings.oms_statement_timeout_ms)
+
+
 class StandaloneSink(Interim):
     """No persistence bundle is composed, so no HMAC'd journal stands beside B1's `machine_events`
     (20 Sec.6.2, CV-C53): the startup announces it as it does an interim port,
@@ -1631,6 +1784,53 @@ class OrderRoute:
     versions: OrderVersions
 
 
+class PeekedFigures(Protocol):
+    """The leg accounts' cached figures for the trade-group preview (E28-T05 S3c, #909)."""
+
+    async def peeked(
+        self, symbol: Symbol, fallbacks: Mapping[UUID, Decimal | None]
+    ) -> dict[UUID, AccountFigures | None]: ...
+
+
+class PreviewFigures:
+    """`PeekedFigures` over the order path's own account binding and figures, on the order lane
+    (SR-E28-22): each account resolved as an order's is, so the preview never holds a key ref, its
+    kept reading peeked at its bound profile's fallback and its symbol's rates merged as the size
+    step merges them (`with_rates`). No venue read and no tiers asked: an account it cannot resolve
+    (deleted, of another environment or keyless since the route's scope check, or unread), or with
+    nothing fresh kept, has none, and its leg is `figure_unknown`."""
+
+    def __init__(self, accounts: TradingAccounts, figures: OrderFigures) -> None:
+        self._accounts, self._figures = accounts, figures
+
+    async def peeked(
+        self, symbol: Symbol, fallbacks: Mapping[UUID, Decimal | None]
+    ) -> dict[UUID, AccountFigures | None]:
+        known: dict[UUID, AccountFigures | None] = dict.fromkeys(fallbacks)
+        for account_id, fallback in fallbacks.items():
+            try:
+                ref = await self._accounts.trading_account(AccountId(account_id))
+            except OmsError:
+                continue
+            reading = self._figures.peek(ref, (symbol,), fallback_sl_offset_pct=fallback)
+            known[account_id] = None if reading is None else with_rates(reading, symbol)
+        return known
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewParts:
+    """What the trade-group preview reads of the composed OMS (E28-T05 S3c), the order path's own
+    and never a write (the read-only guarantee): the leg guard over its risk gate and switches, its
+    stop resolver, the listing and the ticker stream (with no demand, so no venue call), each read
+    in place as the order route reads its switches, and the legs' figures, peeked on the lane."""
+
+    guard: LegGuard
+    stops: StopPort
+    instruments: Instruments
+    prices: ReferencePricesBinding
+    figures: PeekedFigures
+
+
 @dataclass(frozen=True, slots=True)
 class _Parts:
     """What `start()` composed; `stop()` runs the `closers` after its drain, in their order."""
@@ -1652,9 +1852,12 @@ class _Parts:
     stream: StreamWiring
     #: When the fencing grace since the lock was taken ends, on the runtime's `monotonic`.
     admit_after: float
+    preview: PreviewParts
     #: E29-T13's snapshot reads on the lane, which the WS topics take once `ready`; None without
     #: the topics.
     topic_reads: TopicReads | None = None
+    #: The observed group facade, when a `trade_groups` topic is wired (E28-T05).
+    groups: ObservedGroups | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1709,6 +1912,18 @@ class OnLaneGroups:
 
     async def get(self, scope: AccountScope, group_id: GroupId) -> ScopedTradeGroup:
         return await _on_lane(self.parts, self.parts.route.groups.get(scope, group_id))
+
+
+@dataclass(frozen=True, slots=True)
+class OnLanePreview:
+    """`PreviewParts.figures` from the serving loop: peeked on the lane, where they are kept."""
+
+    parts: _Parts
+
+    async def peeked(
+        self, symbol: Symbol, fallbacks: Mapping[UUID, Decimal | None]
+    ) -> dict[UUID, AccountFigures | None]:
+        return await _on_lane(self.parts, self.parts.preview.figures.peeked(symbol, fallbacks))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1985,8 +2200,10 @@ class OmsRuntime:
         fencing: Callable[[float], Awaitable[None]] = asyncio.sleep,
         watch: Callable[[float], Awaitable[None]] = asyncio.sleep,
         serving_tick: Callable[[], ServingTick] = ServingTick,
+        trade_groups: GroupTopic | None = None,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
+        self._trade_groups = trade_groups  # E28-T05: seeded, and handed each group write
         #: The wait of the fencing grace (SEC-S3L2-01), apart from `sleep`'s retries, and the
         #: serving loop's between its watch's reads of the lane's state (SEC-S3L2-04).
         self._heartbeat, self._fencing, self._watch = heartbeat, fencing, watch
@@ -2113,6 +2330,13 @@ class OmsRuntime:
         return OrderRoute(
             lane, raw.arm_records, raw.switches, lane, groups, raw.environment, raw.versions
         )
+
+    @property
+    def preview(self) -> PreviewParts:
+        """The trade-group preview's reads (`PreviewParts`), its figures peeked on the order lane
+        (`OnLanePreview`); `OmsNotReady` before it is composed."""
+        parts = self._composed()
+        return replace(parts.preview, figures=OnLanePreview(parts))
 
     @property
     def exits(self) -> OnLaneExits:
@@ -2422,6 +2646,8 @@ class OmsRuntime:
                 await self._sleep(delay)
                 delay = min(2 * delay, ceiling)
                 continue
+            if swept and not self._stopping:
+                await self._seeded(parts)  # before `ready`, so before any group write (E28-T05)
             if swept and not self._stopping:  # a stop that began meanwhile clears `ready` for good
                 self._ready.set()
                 _log().info("oms_ready")
@@ -2491,6 +2717,38 @@ class OmsRuntime:
             skipped=skipped, abandoned=abandoned, elapsed_s=round(self._monotonic() - began, 3),
         )  # fmt: skip
         return True
+
+    async def _seeded(self, parts: _Parts) -> None:
+        """E28-T05 S4b: the topic's seed, read before `ready`. Only a submit writes a group, and
+        one is admitted once ready, so the read and its notice precede every write's. Its reads
+        (`SEED_ATTEMPTS`) share one sweep call's bound, so the seed delays `ready` by at most 17 s
+        (15 s plus 2 s). Its count is logged. A seed that fails every read is counted
+        (`SEED_FAILURES`) and logged at critical by its error's type, and the topic stays unseeded
+        (its subscriptions pending) until restart; the OMS gets ready all the same."""
+        if parts.groups is None:
+            return
+        try:
+            count = await self._bounded(self._seed_reads(parts.lane, parts.groups))
+        except Exception as exc:
+            spec = next(spec for spec in CATALOGUE if spec.name == SEED_FAILURES)
+            failures = self._metrics.counter(spec.name, spec.help, max_series=spec.max_series)
+            failures.child().inc()
+            _log().critical("oms_trade_groups_unseeded", error=type(exc).__name__)
+            return
+        _log().info("oms_trade_groups_seeded", count=count)
+
+    async def _seed_reads(self, lane: Lane, groups: ObservedGroups) -> int:
+        """The seed, read again after the sweep's first backoff when a read fails, until the
+        `SEED_ATTEMPTS`th failure, which is raised; a cancellation never waits for a retry."""
+        attempt = 1
+        while True:
+            try:
+                return await lane.call(groups.seed(self._env))
+            except Exception:
+                if attempt == SEED_ATTEMPTS:
+                    raise
+            attempt += 1
+            await self._sleep(SWEEP_RETRY_S[0])
 
     async def _bounded[T](self, call: Awaitable[T]) -> T:
         """A sweep read or write within its statement cap and `SWEEP_CALL_SLACK_S`, else
@@ -2698,11 +2956,17 @@ class OmsRuntime:
                 self._topics, serving.notify, fills, environment=env, clock=lane_clock,
                 overtaken=_counter(metrics, OVERTAKES).child().inc,
             )  # fmt: skip
+            # E28-T05 S4b: each committed group write goes to the topic, the first persist's too
+            topic, observed = self._trade_groups, None
+            submissions = SubmissionRepository(stores.submissions, timer)
+            if topic is not None:
+                observed = ObservedGroups(stores.groups, topic, serving)
+                submissions = ObservedSubmissions(stores.submissions, timer, observed)
             steps = OrderStepWriter(
                 orders,
                 fills,
                 clock=self._now,
-                submissions=SubmissionRepository(stores.submissions, timer),
+                submissions=submissions,
                 on_commit=None if published is None else published.committed,
             )
             # the lane's own, at one path whether or not a bundle holds the serving loop's
@@ -2764,6 +3028,11 @@ class OmsRuntime:
                 # after the commands
                 closers.insert(3, ("ticker_demand", lambda: serving.call(demand.close())))
             instruments = InstrumentsBinding(ingestion.instruments)
+            # E28-T05 S3c: the preview's reads, the order path's own; its prices ask no demand
+            preview = PreviewParts(
+                S4SGuard(ports.risk_gate, submits), ports.stop_resolver, instruments,
+                ReferencePricesBinding(tickers), PreviewFigures(accounts, figures),
+            )  # fmt: skip
             validator = Validator(read_only_gate=self._read_only)
             # the profile cache is the serving loop's: the pipeline and the exits share one bridge
             profiles = ServedProfiles(self.profiles, serving)
@@ -2785,7 +3054,7 @@ class OmsRuntime:
                 switches=submits,
                 gate=gate,
                 audit=audit,
-                groups=TradeGroupRepository(stores.groups),
+                groups=TradeGroupRepository(stores.groups) if observed is None else observed,
                 figures=figures,
                 tier_requests=tiers,
             )
@@ -2834,7 +3103,7 @@ class OmsRuntime:
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
-                stream, admit_after, reads,
+                stream, admit_after, preview, reads, observed,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping
@@ -2889,6 +3158,7 @@ def build_oms_runtime(
     hub: SystemBroadcast,
     lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
     topics: AttachedTopics | None = None,
+    trade_groups: GroupTopic | None = None,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
     `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order
@@ -2897,7 +3167,8 @@ def build_oms_runtime(
     production (#913 L1d). `health` (the account health runtime) and `hub` (the gateway's) are
     what its private-stream consumer takes (E29-T05 S8b); `topics`, the gateway's `orders`,
     `executions` and `positions` topics, what its committed steps and position rows feed and its
-    lane's snapshot reads serve (E29-T13)."""
+    lane's snapshot reads serve (E29-T13); `trade_groups`, the topic it seeds and hands each
+    committed group write to (E28-T05)."""
     if settings.storage_backend != "real":
         return None
     return OmsRuntime(
@@ -2906,4 +3177,5 @@ def build_oms_runtime(
         standings=standings, oms_enabled=oms_enabled, live_enabled=live_enabled,
         profiles=profiles, persistence=persistence, feed=feed, lane_signing=lane_signing,
         health=health, hub=hub, lane_transport=lane_transport, topics=topics,
+        trade_groups=trade_groups,
     )  # fmt: skip

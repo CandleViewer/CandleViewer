@@ -40,6 +40,7 @@ from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.accounts.service import AccountsService
 from candleviewer.accounts.status import AccountStatusReader
+from candleviewer.accounts.trade_group_repository import TradeGroupReader
 from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.flags import default_registry
@@ -160,6 +161,7 @@ from candleviewer.api.order_cancel_all import make_cancel_all_router
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import SessionTradingPrincipalResolver
 from candleviewer.api.orders import OrderPrincipals, make_orders_router
+from candleviewer.api.preview_limiter import PreviewLimiter
 from candleviewer.api.profile_writes import SaveMeasures, make_profile_writes_router
 from candleviewer.api.profiles import make_profiles_router
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
@@ -195,6 +197,8 @@ from candleviewer.api.trade_group_definition_writes import (
     make_trade_group_definition_writes_router,
 )
 from candleviewer.api.trade_group_definitions import make_trade_group_definitions_router
+from candleviewer.api.trade_group_preview import PreviewReads, make_trade_group_preview_router
+from candleviewer.api.trade_groups import make_trade_groups_router
 from candleviewer.api.trade_groups_gate import TradeGroupsGate
 from candleviewer.api.users import (
     AccountAccessStore,
@@ -335,7 +339,13 @@ from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySi
 from candleviewer.oms.service import OmsService
 from candleviewer.oms.ws_topics import FAMILIES as OMS_FAMILIES
 from candleviewer.oms_reads_wiring import oms_reads, order_versions
-from candleviewer.oms_wiring import InterimKillSwitch, OmsAudit, OmsRuntime, build_oms_runtime
+from candleviewer.oms_wiring import (
+    InterimKillSwitch,
+    OmsAudit,
+    OmsRuntime,
+    build_oms_runtime,
+    group_reads,
+)
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.heatmap_metrics import export_heatmap_metrics
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
@@ -529,6 +539,7 @@ from candleviewer.ws_wiring import (
     KillSwitchView,
     MachineRevocationAudit,
     StorePrincipalLoader,
+    TradeGroupFrameCounts,
     WsEvents,
     WsRuntime,
     alerts_topic,
@@ -541,6 +552,7 @@ from candleviewer.ws_wiring import (
     recorder_topic,
     series_stale,
     ticker_topic,
+    trade_groups_topic,
     trades_topic,
     wallet_topic,
 )
@@ -1816,6 +1828,11 @@ def create_app(
     ws_revisions = InstrumentRevisions(
         ctx.bus.bus, resolved.environment.value, ws_sequencing.instrument_revision
     )
+    # E28-T05 (#909): the accounts module's `trade_groups` topic; the OMS runtime below seeds it
+    # and hands it each committed group write, and its frame counts bind to the metrics facade.
+    ws_trade_group_frames = TradeGroupFrameCounts()
+    ws_trade_groups = trade_groups_topic(ws_sequencing, ws_trade_group_frames)
+    snapshot_adapters["trade_groups"] = ws_trade_groups
     # E17-T08: `sub` is authorised and snapped from `machine_states`, built above with the feed.
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
@@ -2528,19 +2545,33 @@ def create_app(
             definitions, readiness, _LazyAuditEmitter(ctx.audit), profiles_resolver, auth=ctx.auth
         )
     )
-    # E28-T05 S2c (#909): the definition create, behind `trading.trade_groups` (the preview stays
-    # refused until S3c builds the gate `preview_ready`), over this environment's catalogue.
-    app.state.trade_groups_gate = TradeGroupsGate(feature_flags.trade_groups)
+    # E28-T05 S2c, S2d (#909): the definition writes (create, replace, delete), behind
+    # `trading.trade_groups`, over this environment's catalogue. S3c builds the gate
+    # `preview_ready`, here alone, with the preview's audited refusals before planning (ruling 6):
+    # the flag then gates the preview too.
+    app.state.trade_groups_gate = TradeGroupsGate(feature_flags.trade_groups, preview_ready=True)
     app.include_router(make_trade_group_definition_writes_router(
         definition_writes(profiles, definitions, readiness, ctx),
         app.state.trade_groups_gate, _LazyAuditEmitter(ctx.audit), profiles_resolver,
         auth=ctx.auth, elevation=request_elevation(ctx.auth, "risk_caps"),
     ))  # fmt: skip
+    # E28-T05 S2f (#909): `listTradeGroups` and `getTradeGroup`, in the caller's grants, over the
+    # scoped read alone (never the system port) on a pool of its own (real backend only; else 503).
+    # No rollout flag gates a read (22).
+    group_store = group_reads(resolved)
+    app.include_router(
+        make_trade_groups_router(
+            None if group_store is None else TradeGroupReader(group_store),
+            _LazyAuditEmitter(ctx.audit), profiles_resolver, auth=ctx.auth,
+        )
+    )  # fmt: skip
     # #913 slice 3E (20 Sec.6.2): the OMS runtime over that gate, the shared profile cache above
     # and the persistence bundle's latch when there is one; its audit writer and sink are its order
     # lane's own (#913 L2). The lifespan starts it after the account health runtime and stops it
     # right after the gateway. None on the fake backend. Its private-stream consumer (E29-T05 S8b)
     # takes account health (its feed, its tracked accounts and its boot window) and the hub.
+    # E28-T05: it seeds the `trade_groups` topic and hands it each committed group write.
+    ws_trade_group_frames.bind(metrics_facade)
     app.state.oms_runtime = build_oms_runtime(
         ctx,
         resolved,
@@ -2559,6 +2590,7 @@ def create_app(
         health=account_health,
         hub=ws_hub,
         topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
+        trade_groups=ws_trade_groups,
     )
     # #913 slice 3F (24 Sec.8.4): `placeOrder` over that runtime, mounted whatever
     # `trading.oms_enabled` says (it gates admission). The principal is the session's with its
@@ -2584,6 +2616,20 @@ def create_app(
             auth=ctx.auth,
         )
     )
+    # E28-T05 S3c (#909): `previewTradeGroup`, the submit's dry run, over the same principals and
+    # runtime (its figures, guard and listing), the profile wiring's accounts and cache, readiness
+    # and the flag's gate; rate-bounded per user. No runtime or no wiring (the fake backend): none.
+    preview_reads = None if profiles is None or oms_runtime_of(app.state) is None else PreviewReads(
+        profiles.accounts, profiles.effective, readiness, resolved.environment.value
+    )  # fmt: skip
+    app.include_router(make_trade_group_preview_router(
+        order_principals, lambda: oms_runtime_of(app.state), reads=preview_reads,
+        gate=app.state.trade_groups_gate, audit=_LazyAuditEmitter(ctx.audit),
+        limiter=PreviewLimiter(
+            resolved.tradegroups_preview_rate_per_user_per_second, clock=time.monotonic
+        ),
+        metrics=metrics_facade, auth=ctx.auth,
+    ))  # fmt: skip
     # #913 slice 4 S4-E (24 Sec.8.4, the exit routes): `cancelAllOrders`' own router over the same
     # runtime, principals and records, included ahead of the exit routes' router (the 19:43Z
     # ruling; pinned with the exit routes' below). `trading.oms_enabled` never gates it: a cancel is

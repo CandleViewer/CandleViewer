@@ -106,7 +106,8 @@ rules:
       # cap (E13-T02, #426, indicator_cap_rejected_total): the refusing cap, {user, symbol,
       #   process} (SR-E13-03) or {window, recompute} (SR-E13-04); max_series=5.
       # cap, also (#2635, cv_override_refused_total): closed set: the override table's fields
-      #   (OVERRIDE_CLASS, 42); max_series=42; no identifiers.
+      #   (OVERRIDE_CLASS, 42); max_series=42; no identifiers. Live since E28-T05 (#909): each
+      #   child bound once (`api/trade_group_preview.PreviewMeasures`).
       # bucket, also (E13-T02, indicator_subscriptions): users by server instances held {1, 2-4,
       #   5-7, 8}; max_series=4. reason, also (indicator_recompute_total): {amended,
       #   param_change, backfill}; max_series=3.
@@ -140,6 +141,13 @@ rules:
       #   print, {renko, volume} (`bars/metrics.PRINT_REJECT_REASONS`); max_series=2.
       # stream, also (#2294, parquet_hot_cold_parity_mismatch_total): a `storage.models.StreamKind`
       #   value (13, a closed enum), never a symbol or a path; max_series=13.
+      # outcome, also (E28-T05 #909, cv_tradegroup_preview_total): {ok, refused, rate_limited,
+      #   invalid, environment_mismatch, error} (`api/trade_group_preview.OUTCOMES`), each child
+      #   bound once; max_series=6.
+      # reason, also (E28-T05 #909, cv_tradegroup_legs_skipped_total): {skipped} and the sizer's
+      #   SkipReason (`api/trade_group_preview.SKIP_REASONS`), each child bound once; max_series=5.
+      # kind, also (E28-T05 #909, cv_tradegroup_ws_frames_total): {snapshot, delta}, bound once in
+      #   `ws_wiring.TradeGroupFrameCounts`; never an account or a user; max_series=2.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|builtin|cap|cause|class|code|depth|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger_mode|version|where|wire)$).*$"

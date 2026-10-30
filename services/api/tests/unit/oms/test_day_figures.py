@@ -7,7 +7,8 @@ the profile's fallback distance) and the taker fee from the venue, concurrently,
 `FIGURES_TTL_S` on a fake monotonic clock and bounded by `FIGURES_READ_TIMEOUT_S` and
 `FIGURES_BUDGET_S`; a read that fails or times out is None for its figures only and is logged by
 figure and error type alone. `invalidate` drops the account's book, day's loss and wallet, and a
-read in flight across it keeps nothing.
+read in flight across it keeps nothing. `peek` (E28-T05 S3b, #909) answers only what is kept,
+reading nothing (SR-E28-22).
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from candleviewer.oms.ports import (
     INTERIM_PORT_LABELS,
     UNKNOWN_FIGURES,
     FiguresReading,
+    NoDayFigures,
     OrderFigures,
     SymbolRates,
     announce_interim_port,
@@ -276,6 +278,60 @@ async def test_day_figures_invalidate_during_read_keeps_nothing() -> None:
     reading = await _read(figures)
     assert sorted(venue.calls) == ["closed_pnl", "open_orders", "positions", "wallet"]
     assert reading.account.equity == Decimal(700)  # the venue's, not the pre-send answer
+
+
+def _peek(figures: OrderFigures, ref: AccountRef = REF, symbol: Symbol = "BTCUSDT") -> Any:
+    return figures.peek(ref, [symbol], fallback_sl_offset_pct=FALLBACK)
+
+
+async def test_peek_never_reads_the_venue() -> None:
+    """SR-E28-22, F-09: `peek` is synchronous and starts nothing, a reading kept or none: no port
+    is asked for, so no venue read follows; the live stand-in keeps nothing to answer."""
+    venue, asked = Venue(), list[Environment]()
+
+    def port_for(environment: Environment) -> TradingPort:
+        asked.append(environment)
+        return cast(TradingPort, venue)
+
+    figures = DayRiskFigures(
+        "demo", port_for=port_for, tiers=lambda _s: None, now=lambda: NOW, monotonic=Clock()
+    )
+    assert not inspect.iscoroutinefunction(DayRiskFigures.peek)
+    assert _peek(figures) is None and _peek(NoDayFigures()) is None
+    await asyncio.sleep(0)  # a read the peek started would have asked for its port by now
+    assert (asked, venue.calls) == ([], [])
+    await _read(figures)
+    asked.clear()
+    venue.calls.clear()
+    assert _peek(figures) is not None
+    await asyncio.sleep(0)
+    assert (asked, venue.calls) == ([], [])
+
+
+async def test_peek_answers_only_a_kept_reading() -> None:
+    """What `read` answered, the committed risk at the asked fallback, while every figure kept is
+    younger than `FIGURES_TTL_S`; else None: nothing kept, a stale or dropped figure, one a failed
+    read never kept, a symbol never read, an account of another environment (C-2.11)."""
+    venue, clock = Venue(), Clock()
+    figures = _figures(venue, clock)
+    assert _peek(figures) is None
+    reading = await _read(figures)
+    clock.t += FIGURES_TTL_S - 0.001
+    assert _peek(figures) == reading
+    wider = figures.peek(REF, ["BTCUSDT"], fallback_sl_offset_pct=Decimal("0.05"))
+    assert wider is not None and wider.account.committed_risk == Decimal(30)  # 10 + 200 x 0.05 x 2
+    assert _peek(figures, symbol="ETHUSDT") is None
+    assert _peek(figures, REF.model_copy(update={"environment": "testnet"})) is None
+    clock.t += 0.001
+    assert _peek(figures) is None  # stale at `FIGURES_TTL_S`: the next answer is the venue's
+    await _read(figures)
+    figures.invalidate(ACCOUNT)
+    assert _peek(figures) is None
+    for failing in ("positions", "wallet", "closed_pnl"):  # a figure its read never kept
+        figures.invalidate(ACCOUNT)
+        venue.fail = {failing}
+        await _read(figures)
+        assert _peek(figures) is None
 
 
 def test_committed_risk_order_without_stop_uses_fallback_distance() -> None:

@@ -41,6 +41,9 @@ ORDER_PATH_SPANS: Final[tuple[str, ...]] = (
 REPLAY_SPANS: Final[tuple[str, ...]] = ("replay.session_start",)
 #: E27-T02: one span per credential borrow (on the order path, inside `exchange.place_order`).
 CREDENTIAL_SPANS: Final[tuple[str, ...]] = ("secrets.credential_borrow",)
+#: E28-T05 (#909): a trade-group preview, the fan-out's dry run on the order path (20 §12.3): one
+#: span per preview, and under it one per leg its planner plans.
+PREVIEW_SPANS: Final[tuple[str, ...]] = ("oms.preview", "oms.preview_leg")
 #: Attribute keys any sanctioned span may carry (ids / bounded enums only, never values).
 SPAN_ATTRIBUTE_ALLOWLIST: Final[frozenset[str]] = frozenset(
     {
@@ -60,7 +63,7 @@ SPAN_ATTRIBUTE_ALLOWLIST: Final[frozenset[str]] = frozenset(
     }
 )
 SANCTIONED_SPANS: Final[frozenset[str]] = frozenset(
-    ORDER_PATH_SPANS + REPLAY_SPANS + CREDENTIAL_SPANS
+    ORDER_PATH_SPANS + PREVIEW_SPANS + REPLAY_SPANS + CREDENTIAL_SPANS
 )
 _ORDER_LINK_ID: Final = "order_link_id"
 #: A status description a span keeps: an exception's class name, never a message (`_GuardedSpan`).

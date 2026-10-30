@@ -69,6 +69,7 @@ from candleviewer.storage.repositories.trade_groups import (
     TradeGroupStoreRuleError,
     TradeGroupStoreScopeDeniedError,
     TradeGroupStoreStaleError,
+    check_page,
     render_json,
 )
 
@@ -811,6 +812,12 @@ async def test_list_groups_is_bounded_and_aware_before_any_sql_and_an_empty_scop
     assert await _store(rel).list_groups(empty, limit=1, **_FILTERS) == ()
     assert await _store(rel).leg_order_ids(empty, [_LEG_A]) == {}
     assert await _store(rel).leg_order_ids(_OWNER, []) == {} and rel.calls == [] and rel.caps == []
+
+
+def test_the_top_page_is_22s_limit_and_the_look_ahead_row_and_is_accepted() -> None:
+    """RC-02: `listTradeGroups` asks for `limit + 1` of at most 500, so `check_page` takes 501."""
+    check_page(MAX_GROUP_PAGE, None, None, None)  # a `ValueError` past it
+    assert MAX_GROUP_PAGE == 501
 
 
 async def test_leg_order_ids_reads_the_scoped_statement_and_groups_the_orders_by_leg() -> None:

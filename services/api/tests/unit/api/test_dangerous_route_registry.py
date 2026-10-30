@@ -110,6 +110,10 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ),
     ("DELETE", "/rules/{ruleId}"): "deleteRule: refused while the rule is `armed`",
     ("PUT", "/rules/{ruleId}/active-version"): "setActiveRuleVersion: `Problem` says no step-up",
+    # 04 §7.2.2 row 19a (E28-T05 S3c): previewing a fan-out takes no step-up; it places nothing.
+    ("POST", "/trade-groups/preview"): (
+        "previewTradeGroup: no step-up (04 row 19a); the submit's dry run, it places nothing"
+    ),
     # 04 §7.2.2 row 14: cancel-all takes no step-up; like every cancel it is a risk-reducing exit,
     # never gated by the arm token or the switches either (C-2.6).
     ("POST", "/orders/cancel-all"): (
@@ -726,9 +730,6 @@ _PENDING_HANDLER_GATES = {
     # E27-S04 (#898): B3a registered the class; B3b2 mounted the patch and the closing B3 PR the
     # delete and the revoke, each with its handler test (`tests/contract/
     # test_{update_exchange_account,delete_exchange_account,revoke_api_key}_provider.py`).
-    # E28-T05 (#909): S2d mounts the definition's replace and delete, with its handler test.
-    ("PUT", "/trade-group-definitions/{definitionId}"),
-    ("DELETE", "/trade-group-definitions/{definitionId}"),
 }
 
 
@@ -1079,12 +1080,13 @@ def test_the_sweep_catches_a_mounted_profile_write_whose_row_is_dropped(
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "DELETE"])
 def test_a_definition_write_is_handler_gated_with_risk_caps(method: str) -> None:
-    """#909 (SR-E28-02): after RBAC, the flag and the body; replace and delete pending (S2d)."""
+    """#909 (SR-E28-02): after RBAC, the flag and the body; all three mounted with their handler
+    tests (S2c's create, S2d's `test_update_and_delete_need_the_step_up`), none pending."""
     path = "/trade-group-definitions" + ("" if method == "POST" else "/{definitionId}")
     assert DANGEROUS_PATH_PATTERN.match(path) and not _ungated(method, path)
     assert dangerous_action_class(method, _concrete(path)) is None  # a handler's gate, no path row
     assert _registered_classes(method, path) == {"risk_caps"}
-    assert ((method, path) in _PENDING_HANDLER_GATES) is (method != "POST")
+    assert (method, path) not in _PENDING_HANDLER_GATES
 
 
 def test_no_mounted_route_is_path_gated() -> None:

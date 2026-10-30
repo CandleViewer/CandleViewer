@@ -274,16 +274,21 @@ def test_s5_private_frames_for_one_account_event_arrive_in_causal_order() -> Non
     with connect(w) as c:
         all_private(c, "trade_groups", "positions", "orders", "executions")
         scrambled = [
-            ("trade_groups", delta_body("trade_groups")),
             ("positions", delta_body("positions")),
             ("orders", delta_body("orders")),
             ("executions", delta_body("executions")),
-        ]
-        sent = w.call(w.hub.publish_private, ACC_A, scrambled)
+        ]  # `trade_groups`, a viewed family that an event cannot name, follows (23 §15.5)
+        groups = delta_body("trade_groups")
+
+        def viewed() -> int:
+            return w.hub.publish("trade_groups", groups, account=ACC_A, viewer=lambda _p: True)
+
+        sent = w.call(w.hub.publish_private, ACC_A, scrambled) + w.call(viewed)
         assert sent == 4
         assert [c.recv()["ch"] for _ in range(4)] == PRIVATE_ORDER
         # a second event keeps the order, and sequence numbers stay per topic
         w.call(w.hub.publish_private, ACC_A, list(reversed(scrambled)))
+        w.call(viewed)
         second = c.drain(4)
         assert [f["ch"] for f in second] == PRIVATE_ORDER and {f["s"] for f in second} == {3}
 

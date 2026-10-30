@@ -923,12 +923,12 @@ def test_private_frames_follow_causal_order_and_account_scope() -> None:
     sent = hub.publish_private(
         ACC_A,
         [
-            ("trade_groups", {"trade_groups": []}),
             ("positions", {"positions": []}),
             ("orders", {"orders": []}),
             ("executions", {"executions": []}),
         ],
-    )
+    )  # then `trade_groups`, a viewed family that an account event cannot name (23 §15.5)
+    sent += hub.publish("trade_groups", {"trade_groups": []}, account=ACC_A, viewer=lambda _: True)
     assert sent == 4
     assert [f["ch"] for f in conn_a.take()] == ["executions", "orders", "positions", "trade_groups"]
     assert conn_b.take() == []  # other account's subscriptions never see it

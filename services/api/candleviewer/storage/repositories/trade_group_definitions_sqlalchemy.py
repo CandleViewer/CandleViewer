@@ -9,7 +9,9 @@ soft-deleted one is not found, a racing write waits for the commit. A create or 
 its members' accounts `FOR SHARE` in id order and refuses one not live, as the fired-group store
 does for legs. `replace` binds `env`, which `trg_tgd_write_once` refuses to change; the touch
 trigger moves `updated_at`. A read, and its members statement, carries `group_visible` with
-`DEFINITION_VISIBLE`: a grant reads a definition with all its members or not at all.
+`DEFINITION_VISIBLE`: a grant reads a definition with all its members or not at all. A read's
+statements share one snapshot (`READ_SNAPSHOT`), and it skips a definition that holds no member,
+logging its id alone; a write stays at READ COMMITTED, so its row lock sees the last commit.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from typing import Any, Final
 from uuid import UUID
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from candleviewer.db.models import trade_group_definition_members, trade_group_definitions
@@ -63,6 +66,10 @@ _ACCOUNTS: Final = (
 _REFUSALS: Final = dict.fromkeys(port.DEFINITION_RULES, port.DefinitionRuleError) | dict.fromkeys(
     port.DEFINITION_CONFLICTS, port.DefinitionConflictError
 )
+#: A read's first statement, before any query would fix its snapshot: the definitions and their
+#: members are read in one, so one deleted between the two statements is still read whole and a
+#: page is short of its limit only at the listing's end.
+READ_SNAPSHOT: Final = sa.text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
 
 
 def definition_statement(scope: AccountScope, definition_id: UUID) -> sa.Select[Any]:
@@ -97,6 +104,18 @@ def members_statement(scope: AccountScope, *definition_ids: UUID) -> sa.Select[A
         _D.id.in_(definition_ids), _D.deleted_at.is_(None), visible
     )
     return stmt.order_by(_M.definition_id, _M.exchange_account_id)
+
+
+def _readable(found: tuple[port.DefinitionRecord, ...]) -> tuple[port.DefinitionRecord, ...]:
+    """Those that read a member; in one snapshot, one that reads none was stored with none, and
+    is skipped, logged by its id alone (C-12.6)."""
+    for record in found:
+        if not record.members:  # the logger per call: a module-level one pins its chain (#2008)
+            key = str(record.definition.id)
+            structlog.get_logger(__name__).warning(
+                "trade_group_definition.read_skipped", definition_id=key
+            )
+    return tuple(record for record in found if record.members)
 
 
 def lock_statement(definition_id: UUID) -> sa.Select[Any]:
@@ -143,6 +162,8 @@ class SqlAlchemyDefinitionStore:
             raise port.DefinitionScopeDeniedError
         with groups.constraints(_REFUSALS):
             async with self._relational.unit_of_work() as uow:
+                if not write:  # before the cap, a query, after which the level cannot be set
+                    await uow.session.execute(READ_SNAPSHOT)
                 await uow.session.execute(groups.SET_TIMEOUT, {"timeout": self._timeout})
                 if isinstance(scope, OwnerScope):
                     caller = {"caller": str(scope.user_id)}
@@ -256,16 +277,16 @@ class SqlAlchemyDefinitionStore:
         if isinstance(scope, GrantScope) and not scope.account_ids:
             return None  # an empty grant sees nothing and runs no SQL
         async with self._unit_of_work(scope) as uow:
-            found = await self._scoped_record(uow, scope, definition_id)
-        return found[0] if found and found[0].members else None  # as `page`
+            found = _readable(await self._scoped_record(uow, scope, definition_id))
+        return found[0] if found else None  # as `page`
 
     async def page(
         self, scope: AccountScope, *, after: tuple[str, UUID] | None, limit: int
     ) -> tuple[port.DefinitionRecord, ...]:
-        """One that read no member is left out, for every scope: a grant lost the accounts, or a
-        soft delete came between the two statements. The page is then short; a re-list reads it."""
+        """One that read no member is skipped, for every scope (`_readable`): in one snapshot, a
+        grant that sees a definition sees its every member, so only one stored with none is."""
         if isinstance(scope, GrantScope) and not scope.account_ids:
             return ()  # as `get`
         async with self._unit_of_work(scope) as uow:
             rows = await uow.session.execute(page_statement(scope, after, limit))
-            return tuple(r for r in await self._with_members(uow, scope, rows) if r.members)
+            return _readable(await self._with_members(uow, scope, rows))

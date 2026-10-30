@@ -19,7 +19,10 @@ import pytest
 from candleviewer.storage.repositories import trade_group_definitions as port
 from candleviewer.storage.repositories import trade_group_definitions_sqlalchemy as pg
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
-from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
+    SqlAlchemyUnitOfWork,
+)
 from tests.integration.storage import test_trade_groups_store_pg as tg
 from tests.integration.storage.test_trade_groups_store_pg import pg_dsn as bootstrapped
 from tests.integration.storage.test_trade_groups_store_pg import rel
@@ -326,3 +329,28 @@ async def test_a_page_is_keyset_by_name_then_id(store: Store, pg_dsn: str) -> No
     )
     owned = [r.definition.id for p in await _pages(store, ME) for r in p]
     assert owned == [row[0] for row in tg._sql(pg_dsn, live + " ORDER BY lower(name), id")]
+
+
+async def test_a_page_stays_whole_when_a_listed_definition_is_deleted_between_its_statements(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RC-01: a page reads its definitions and then their members in one snapshot. Another
+    connection soft-deletes a listed one between the two statements, and the page is still whole,
+    not short of its limit (a short page reads as the listing's end); a read after sees it gone."""
+    hook, past = _Hook(), ("snap", UUID(int=0))  # the three names below sort alone past it
+    made = [await store.create(ME, _new(f"Snap {n}", A), write_ahead=hook) for n in (1, 2, 3)]
+    middle, members = made[1].definition.id, store._with_members
+
+    async def deleted_meanwhile(
+        uow: SqlAlchemyUnitOfWork, scope: Any, rows: Any
+    ) -> tuple[port.DefinitionRecord, ...]:
+        await store.soft_delete(ME, middle, write_ahead=hook)  # on another pooled connection
+        return await members(uow, scope, rows)
+
+    monkeypatch.setattr(store, "_with_members", deleted_meanwhile)
+    assert await store.page(ME, after=past, limit=3) == tuple(made)
+    monkeypatch.undo()
+    names = [r.definition.name for r in await store.page(ME, after=past, limit=2)]
+    assert await store.get(ME, middle) is None and names == ["Snap 1", "Snap 3"]
+    for kept in (made[0], made[2]):  # the module's database stays as the other tests expect
+        await store.soft_delete(ME, kept.definition.id, write_ahead=hook)
