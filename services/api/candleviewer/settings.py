@@ -40,7 +40,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-#: A Bybit linear symbol, as `domain.primitives.Symbol` (M1 may not import `domain`).
+#: A linear-perpetual symbol, as `domain.primitives.Symbol` (M1 may not import `domain`).
 _PinnedSymbol = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9]{4,20}$")]
 _QUESTDB_DEV_PASSWORD = "quest"  # noqa: S105 - the QuestDB OSS default, refused on live
 _REDACT_NAME_RE = re.compile(r"(key|secret|token|password|dsn)", re.IGNORECASE)
