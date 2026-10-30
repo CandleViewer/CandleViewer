@@ -91,7 +91,30 @@ async def test_reverse_position_mutant_the_entry_is_never_sent_before_the_fill_i
     world, log = World(), list[str]()
     world.pipeline.log = world.positions.log = log
     assert (await reverse(world)).status_code == 202
-    assert log == ["close", "fill:filled", "entry"]
+    assert log == ["close", "fill:filled", "venue:flat", "entry"]
+
+
+@pytest.mark.parametrize(
+    ("venue", "reason"), [("open", "open_exposure"), ("unread", "exchange_unavailable")]
+)
+async def test_reverse_position_size_left_on_the_venue_after_the_fill_sends_no_entry(
+    venue: Any, reason: str
+) -> None:
+    """Fable M2 (22: never an entry against a still-open position): B1 says the close filled,
+    but the venue still shows size on the key, or cannot be read: no entry is sent, and the
+    answer is `entry_refused` with an `x-error-codes` reason."""
+    world, log = World(), list[str]()
+    world.pipeline.log = world.positions.log = log
+    world.positions.venue = venue
+    answer = await reverse(world)
+    assert answer.status_code == 202
+    body = answer.json()
+    _REVERSE.validate(body)
+    assert (body["outcome"], body["reason"], body["open"]) == ("entry_refused", reason, None)
+    assert log == ["close", "fill:filled", f"venue:{venue}"]  # no entry
+    assert [r.reduce_only for r in world.submitted()] == [True]
+    [record] = world.positions.records
+    assert (record.reason, record.detail["reason"]) == ("entry_refused", reason)
 
 
 async def test_reverse_position_the_wait_is_measured_from_the_request_on_the_injected_clock() -> (

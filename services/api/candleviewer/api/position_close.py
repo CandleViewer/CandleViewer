@@ -120,6 +120,7 @@ from candleviewer.oms.position_writes import (
     FLATTEN_ACTION,
     CloseFill,
     CloseTerms,
+    VenuePosition,
     close_request,
     is_full_close,
 )
@@ -215,6 +216,7 @@ class _Positions(Protocol):
     async def await_fill(
         self, account_id: uuid.UUID, order_id: uuid.UUID, *, wait_s: float
     ) -> CloseFill: ...
+    async def venue_position(self, row: PositionRow) -> VenuePosition: ...
     async def record(self, record: RequestRecord) -> bool: ...
     async def sweep_after_close(
         self, row: PositionRow, order_id: uuid.UUID, *, actor: SubmitActor,

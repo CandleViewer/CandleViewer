@@ -150,7 +150,12 @@ from candleviewer.oms.ports import (
     announce_interim_ports,
 )
 from candleviewer.oms.ports import StopResolver as StopPort
-from candleviewer.oms.position_writes import CloseFill, PositionWrites, PositionWritesDeps
+from candleviewer.oms.position_writes import (
+    CloseFill,
+    PositionWrites,
+    PositionWritesDeps,
+    VenuePosition,
+)
 from candleviewer.oms.repository import (
     ExecutionRepository,
     IdempotencyAnchorRepository,
@@ -2046,6 +2051,9 @@ class OnLanePositions:
         deadline = positions.monotonic() + max(wait_s, 0.0)
         fill = positions.await_fill(account_id, order_id, deadline=deadline)
         return await _on_lane(self.parts, fill, None)
+
+    async def venue_position(self, row: PositionRow) -> VenuePosition:
+        return await _on_lane(self.parts, self.parts.positions.venue_position(row), None)
 
     async def record(self, record: RequestRecord) -> bool:
         return await _on_lane(self.parts, self.parts.positions.record(record), None)

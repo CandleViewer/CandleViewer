@@ -22,11 +22,14 @@ before the next:
     account whose profile cannot give the entry a stop is 422 `validation_failed`
     (`native_stop_required`), nothing sent;
 13. the reversal, as a task the runtime tracks, shielded from the client's disconnect: the
-    reduce-only market close of the whole position; then the wait, on the injected clock, for
-    B1 to confirm it filled, at most `REVERSE_WAIT_S` from the request's arrival; then, only once
-    it filled, the profile-sized entry with its native stop. A close the exchange rejects is its
-    `502`, no entry sent; one not filled, or partly, at the deadline ends the reversal with no
-    entry; an entry refused by a check or the exchange is `entry_refused` with its code.
+    reduce-only market close of the whole position; then the wait, on the injected clock, for B1 to
+    confirm it filled, at most `REVERSE_WAIT_S` from the request's arrival; then the venue's own
+    read of the position's key (`venue_position`): any size left is `entry_refused` with reason
+    `open_exposure`, a failed read `exchange_unavailable`, no entry sent; then, only once it filled
+    and the venue reads it flat, the profile-sized entry with its native stop. A close the exchange
+    rejects is its `502`, no entry sent; one not filled, or partly, at the deadline ends the
+    reversal with no entry; an entry refused by a check or the exchange is `entry_refused` with its
+    code.
 
 Each order keeps its own write-ahead submit record (the pipeline's, C-2.9); one
 `position.reversed` record correlates the pair and the outcome before the answer returns. Every
@@ -123,6 +126,14 @@ _HUNDRED: Final = Decimal(100)
 
 type Body = dict[str, object]
 Outcome = Literal["reversed", "close_unfilled", "close_partially_filled", "entry_refused"]
+#: `entry_refused`'s `reason` when the venue does not read the position flat after its close
+#: filled, each an `x-error-codes` code (22 `ReverseAcceptance.reason`): size left on the key is
+#: `open_exposure` (the account holds an open position the request does not resolve); a read
+#: that fails is `exchange_unavailable`.
+_VENUE_REFUSAL: Final[Mapping[str, str]] = {
+    "open": "open_exposure",
+    "unread": "exchange_unavailable",
+}
 
 
 def _log() -> Any:
@@ -313,6 +324,15 @@ def make_position_reverse_router(
             await correlate(adm, outcome, None, close_id, None)
             return answered(adm, {"close": close_body, "open": None, "outcome": outcome,
                                   "reason": None}, replayed=False)  # fmt: skip
+        # B1 says filled; the venue must say flat too before the entry goes (22, C-2.6): size left
+        # on the key, or a read that fails, sends no entry.
+        venue = await oms.positions.venue_position(row)
+        if venue != "flat":
+            reason = _VENUE_REFUSAL[venue]
+            await correlate(adm, "entry_refused", reason, close_id, None)
+            return answered(adm, {"close": close_body, "open": None,
+                                  "outcome": "entry_refused", "reason": reason},
+                            replayed=False)  # fmt: skip
         entry_context = replace(context, anchor_ref=open_ref)
         try:
             opened = await oms.submission.submit(

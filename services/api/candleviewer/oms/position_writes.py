@@ -18,7 +18,8 @@ module holds what the pipeline does not:
 * **The fill wait** (`await_fill`): a reversal's close is confirmed filled by B1's own state, set
   from the execution, read on the plain view (`OrderMachines.settled`, never an interpreter,
   C-2.20), up to a deadline on the injected monotonic clock. A close still unfilled or partly
-  filled at the deadline ends the reversal with no entry sent.
+  filled at the deadline ends the reversal with no entry sent; so does a filled one the venue still
+  shows size for, or cannot be read for (`venue_position`).
 * **The Partial-mode sweep** (`sweep_after_close`, 22 `closePosition` at 100 %): the venue's
   flatten ends the position's own Full-mode stop; the closed size's Partial-mode conditionals are
   cancelled here, and only once the close is filled and the venue reads the position flat (C-2.6:
@@ -73,7 +74,7 @@ from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 __all__ = [
     "CLOSE_ACTION", "FLATTEN_ACTION", "MAX_SWEEPS", "REVERSE_ACTION", "REVERSE_WAIT_S",
     "SWEEP_WAIT_S", "CloseFill", "CloseTerms", "PositionWrites", "PositionWritesDeps",
-    "close_request", "entry_request", "is_full_close", "reversal_refs",
+    "VenuePosition", "close_request", "entry_request", "is_full_close", "reversal_refs",
 ]  # fmt: skip
 
 #: 24 Sec.15.5 (ruling BQ-5): a close's record, a reversal's, and a close-all's per account.
@@ -96,6 +97,8 @@ _OTHER_IDX: Final[Mapping[int, Literal[0, 1, 2]]] = {0: 0, 1: 2, 2: 1}
 _NO_STOP: Final = "The account's profile cannot give the entry a native stop, so nothing was sent."
 
 CloseFill = Literal["filled", "partially_filled", "unfilled"]
+#: The venue's read of a position's key (`PositionWrites.venue_position`).
+VenuePosition = Literal["flat", "open", "unread"]
 
 
 def _log() -> Any:
@@ -350,16 +353,34 @@ class PositionWrites:
             _log().warning("oms_close_sweep_stops_unread", failure=type(exc).__name__)
             return None
 
+    async def venue_position(self, row: PositionRow) -> VenuePosition:
+        """The venue's own read of the position's key (the read the sweep makes): `flat` when it
+        shows no size, `open` when any remains, `unread` when the account or the venue cannot be
+        read in time. A reversal sends its entry only on `flat` (22: never against a position
+        still open)."""
+        try:
+            account = await self._account(AccountId(row.exchange_account_id))
+        except Exception as exc:  # the account unread, or another environment's: never flat
+            _log().warning("oms_venue_position_unread", failure=type(exc).__name__)
+            return "unread"
+        return await self._venue_state(self._deps.ports(account.environment), account, row)
+
     async def _flat(self, port: SweepPort, account: AccountRef, row: PositionRow) -> bool:
         """The venue's own read shows no size on the position's key; unread is not flat."""
+        return await self._venue_state(port, account, row) == "flat"
+
+    async def _venue_state(
+        self, port: SweepPort, account: AccountRef, row: PositionRow
+    ) -> VenuePosition:
         try:
             async with asyncio.timeout(self._call_timeout_s):
                 read = await port.positions(account)
         except (TimeoutError, ExchangeError, TransportError) as exc:
             _log().warning("oms_close_sweep_unread", failure=type(exc).__name__)
-            return False
+            return "unread"
         key = (row.symbol, row.position_idx)
-        return not any((p.symbol, p.position_idx) == key and p.qty > 0 for p in read)
+        held = any((p.symbol, p.position_idx) == key and p.qty > 0 for p in read)
+        return "open" if held else "flat"
 
     async def _cancel(
         self, port: SweepPort, account: AccountRef, job: _Sweep, stop: RecordedStopRow,

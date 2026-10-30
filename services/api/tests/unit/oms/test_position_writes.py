@@ -424,6 +424,24 @@ async def test_sweep_another_environments_account_is_never_swept() -> None:
     assert rig.port.cancels == []
 
 
+async def test_venue_position_reads_the_key_flat_open_or_unread() -> None:
+    """Fable M2: the read a reversal makes before its entry, the sweep's own."""
+    rig = Rig()
+    assert await rig.service().venue_position(row()) == "flat"
+    rig.port.held = [cr.position(ACCOUNT, qty="0.1", position_idx=1)]  # another key
+    assert await rig.service().venue_position(row()) == "flat"
+    rig.port.held = [cr.position(ACCOUNT, qty="0.001")]
+    assert await rig.service().venue_position(row()) == "open"
+    rig.port.unread = True
+    assert await rig.service().venue_position(row()) == "unread"
+
+
+async def test_venue_position_an_account_of_another_environment_is_unread() -> None:
+    rig = Rig()
+    rig.accounts.environment = "live"
+    assert await rig.service().venue_position(row()) == "unread"
+
+
 def test_the_service_refuses_unbounded_settings() -> None:
     with pytest.raises(ValueError, match="above zero"):
         Rig().service(sweep_wait_s=0)

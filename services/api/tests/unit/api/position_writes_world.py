@@ -40,7 +40,7 @@ from candleviewer.oms.errors import (
 )
 from candleviewer.oms.idempotency import Fresh, Lookup, Replay
 from candleviewer.oms.ports import FAILED, PASSED, ArmToken, RequestRecord, SubmitActor, Verdict
-from candleviewer.oms.position_writes import CloseFill
+from candleviewer.oms.position_writes import CloseFill, VenuePosition
 from candleviewer.oms.reads import OmsReads
 from candleviewer.oms.submit import (
     OrderRequest,
@@ -258,6 +258,7 @@ class Positions:
 
     fill: CloseFill = "filled"
     fill_error: OmsError | None = None
+    venue: VenuePosition = "flat"
     stop_refusal: OmsError | None = None
     log: list[str] | None = None
     records: list[RequestRecord] = field(default_factory=list)
@@ -277,6 +278,11 @@ class Positions:
         if self.log is not None:
             self.log.append(f"fill:{self.fill}")
         return self.fill
+
+    async def venue_position(self, row: PositionRow) -> VenuePosition:
+        if self.log is not None:
+            self.log.append(f"venue:{self.venue}")
+        return self.venue
 
     async def record(self, record: RequestRecord) -> bool:
         self.records.append(record)
