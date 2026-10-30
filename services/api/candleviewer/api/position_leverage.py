@@ -224,7 +224,9 @@ def make_position_leverage_router(
         except (AuditError, RuntimeError) as exc:  # RuntimeError: the writer is not started
             _log().warning("oms_leverage_denial_unaudited", error=type(exc).__name__)
 
-    async def refused(error: OmsError, row: PositionRow, actor: SubmitActor, step: str) -> Response:
+    async def audit_refusal(
+        error: OmsError, row: PositionRow, actor: SubmitActor, step: str
+    ) -> Response:
         """A refusal from step 7 on: recorded before it is answered (C-2.9), else 503."""
         code = problem_for(error).code
         record = RequestRecord(
@@ -371,7 +373,7 @@ def make_position_leverage_router(
         except OmsNotReady:
             return not_ready()
         except OmsError as exc:
-            return await refused(exc, row, actor, step)
+            return await audit_refusal(exc, row, actor, step)
         running.add(held)
         try:
             task = oms.run(change(oms, row, leverage, actor, held, digest))

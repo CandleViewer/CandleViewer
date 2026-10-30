@@ -350,7 +350,9 @@ def make_position_close_router(
         rejected.labels(PROBLEMS[OmsNotReady].code).inc()
         return order_problem(OmsNotReady(), pager=paging)
 
-    async def refused(error: OmsError, caller: PositionCaller[CloseTerms], step: str) -> Response:
+    async def audit_refusal(
+        error: OmsError, caller: PositionCaller[CloseTerms], step: str
+    ) -> Response:
         """A refusal from step 8 on: recorded before it is answered (C-2.9), else 503."""
         if isinstance(error, OmsNotReady):
             return not_ready()
@@ -472,7 +474,7 @@ def make_position_close_router(
         except OmsError as exc:
             if step == "key":
                 return order_problem(exc)  # 400: no key to bind, unaudited as the body is
-            return await refused(exc, caller, step)
+            return await audit_refusal(exc, caller, step)
         context = SubmitContext(caller.actor, key, digest, caller.request_id,
                                 operation=_OPERATION, protective=True)  # fmt: skip
         order, full = close_request(row, terms), is_full_close(row, terms)
@@ -487,7 +489,7 @@ def make_position_close_router(
 
     # --- closeAllPositions ----------------------------------------------------------------------
 
-    async def scope_denied(snapshot: PrincipalSnapshot, actor: SubmitActor,
+    async def audit_scope_denied(snapshot: PrincipalSnapshot, actor: SubmitActor,
                            named: tuple[uuid.UUID, ...]) -> Response:  # fmt: skip
         """SR-E29-13's refusal: counted and audited `rbac.denied`, a 403 even unrecorded."""
         count_authz_denial(POSITIONS_WRITE, snapshot.roles, route=_ALL_OPERATION)
@@ -617,7 +619,7 @@ def make_position_close_router(
             query = PositionQuery(accounts=accounts.ids, symbol=symbol, open_only=True)
             rows = await reads.positions(scope, query) if accounts.ids else ()
         except AccountScopeDenied:
-            return await scope_denied(snapshot, actor, named)
+            return await audit_scope_denied(snapshot, actor, named)
         except OmsNotReady:
             return not_ready()
         except OmsError as exc:

@@ -213,7 +213,9 @@ def make_position_reverse_router(
         rejected.labels(PROBLEMS[OmsNotReady].code).inc()
         return order_problem(OmsNotReady(), pager=paging)
 
-    async def refused(error: OmsError, caller: PositionCaller[EntryTerms], step: str) -> Response:
+    async def audit_refusal(
+        error: OmsError, caller: PositionCaller[EntryTerms], step: str
+    ) -> Response:
         """A refusal from step 7 on: recorded before it is answered (C-2.9), else 503."""
         if isinstance(error, OmsNotReady):
             return not_ready()
@@ -441,7 +443,7 @@ def make_position_reverse_router(
             step = "stop"
             await oms.positions.entry_stop_ready(account)
         except OmsError as exc:
-            return await refused(exc, caller, step)
+            return await audit_refusal(exc, caller, step)
         except ValueError:  # SEC-S3F2-03: a group other than its outcome's, so fail closed
             return order_problem(OmsError("a replay read a group other than its outcome's"))
         running.add(held)

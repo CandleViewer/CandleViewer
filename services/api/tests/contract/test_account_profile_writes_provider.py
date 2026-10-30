@@ -1200,8 +1200,19 @@ def test_no_rule_names_a_profile_yet() -> None:
 
 
 #: The order path's own profile id and its resolve (22 `PlaceOrderRequest.profile_id`); the size
-#: step names the resolved profile's id for the comparator and resolves none (#913 S4-S).
-_ORDER_PATH = {"oms/exits.py", "oms/ports.py", "oms/sizing.py", "oms/submit.py"}
+#: step names the resolved profile's id for the comparator and resolves none (#913 S4-S). #915
+#: adds the position writes' reads of the account's default profile: the leverage cap
+#: (`oms/leverage.py`, C-12.5) and the reversal entry's native stop (`oms/position_writes.py`,
+#: C-2.6). Both read it like an order does and never name a profile in a rule, so ruling B6's
+#: delete guard is unchanged.
+_ORDER_PATH = {
+    "oms/exits.py",
+    "oms/leverage.py",
+    "oms/ports.py",
+    "oms/position_writes.py",
+    "oms/sizing.py",
+    "oms/submit.py",
+}
 
 
 def _named(node: ast.AST) -> str:
