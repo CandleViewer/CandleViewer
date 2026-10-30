@@ -17,7 +17,7 @@ heatmap). See `docs/plan/26-chart-engine-design.md` and ADR-0002.
 - **Theme as a token object.** The engine never imports the design system: the host resolves
   tokens into `ThemeTokens` (`colors["color.chart.background"]` and friends) and passes them to
   `createChart` / `setTheme`.
-- **No DOM globals.** `src/core` and `src/layers` touch no DOM at all; the one DOM adapter is
+- **No DOM globals.** `src/core`, `src/layers`, `src/scene` touch no DOM; the one DOM adapter is
   `src/host/`, which reaches the document through `container.ownerDocument`.
 
 Enforcement, each failure naming C-2.16: `eslint.config.mjs` (`no-restricted-imports` for
@@ -26,7 +26,7 @@ WebSocket / DOM globals, `no-restricted-syntax` for a `/bybit/i` symbol name and
 `globalThis.fetch`-style access) and `.dependency-cruiser.js` (`chart-engine-no-react`,
 `chart-engine-no-exchange`, `packages-not-to-apps`). `tsc` enforces the DOM split too:
 `tsconfig.json` is solution-style and references `tsconfig.core.json` (no DOM lib: core, layers,
-gl, text, worker, plugins, bench, test) and `tsconfig.dom.json` (`src/index.ts`, `src/api`,
+scene, gl, text, worker, plugins, bench, test) and `tsconfig.dom.json` (`src/index.ts`, `src/api`,
 `src/host`, `test/api`); `pnpm typecheck` runs both, and ESLint's project service resolves each
 file, including unsaved editor text, to the program that owns it.
 `test/guards/c216-boundary.test.ts` proves every one against the real configs without committing a
@@ -123,6 +123,25 @@ shipped in each case.
 | BQ-17 | Browser-only criteria        | The repo has no real-browser harness for the engine yet, so "a 2 s main-thread block keeps panning" and the heap-snapshot check are covered by the `bench/matrix` worker run (B7, `storm-worker.mjs`) and the unit transfer proof; the Playwright / Electron run is E11-Q01 / E11-T06. The a11y throttle (≤ 2 announcements/s) is the live-region layer's (E11-S13); the `Performance.mark()` transport slice for SCR-046 is E11-T07. Per-frame allocation is not yet zero: each `input` batch is a fresh `Float32Array` (the transfer detaches it; a pool fed by returned buffers needs a reply message), `captureInput` builds a row per event, the crosshair summary is a new string and `frame` a new object; the zero-allocation frame test of 26 §3.2 rule 4 is E11-S02's with the GL path.                                                                                                                                                                    |
 | BQ-18 | Bench mode and the LOD trace | The switch is `ChartHostOptions.bench` (`src/worker/host.ts`, internal): it makes the runtime post `frame` every frame, which is the C-Q02-1 LOD trace hook, and the parity test drives it. §8's `ChartOptions` has no internal or test option, so `createChart` always passes `false`; exposing it to the bench harness is E11-T06's.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | BQ-19 | §6 payloads                  | `ready` carries `{ runMode, renderProfile }`: the selected `RenderProfile` is the whole capability report until E11-T05 owns detection. `frame` adds `renderProfile` and `runMode` (the ticket's observability). `pick` has no `cell`: there is no footprint hit index before E11-S08 / E12, so the field is left out rather than always empty. Every message carries the chart `id` (`null` on a worker-wide `error`), because one worker serves every chart on the page.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+
+## Scene graph (E11-S01)
+
+`src/scene/` (internal) is `26` §3.1's fixed tree walked as a flat array rebuilt only on `LAYOUT`;
+nodes carry `dirty` flags, `critical` and an `06` §4.4 `deferClass`, and never issue GL calls. A
+collect's output is a patch set over retained batches, not the draw list; the PR3 `BatchBuilder`
+owns the retained list and resolves visibility. The scheduler and `LayoutEngine` follow in PR2/PR3.
+
+## Design deltas (E11-S01; from BQ-20, as BQ-10 to BQ-19 are E11-T02's)
+
+| BQ    | Where                   | `26` / the ticket                                              | Shipped                                                                                                                                                                                                                                                               |
+| ----- | ----------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BQ-20 | `zIndex` ties           | Silent.                                                        | Stable by insertion: a node lands after every sibling with an equal or lower `zIndex`.                                                                                                                                                                                |
+| BQ-21 | Property test           | fast-check, 10 000 cases.                                      | fast-check is not in the lockfile and no dependency is added: a seeded `mulberry32` loop (`bench/fixtures/rng.mjs`) runs the same 10 000 cases.                                                                                                                       |
+| BQ-22 | Which nodes a mark hits | Viewport: "all series"; data: "the affected series".           | Viewport and theme mark every drawable node (content in any layer and both axes), not the containers; data marks one content node by id (the store-to-series mapping is E11-T03's); a one-pane resize marks that pane and the time axis, so PR3 resizes siblings too. |
+| BQ-23 | A "successful collect"  | Flags clear after a successful collect; no failure path.       | `collect(sink)` returns `true` on success; `false` keeps the flags for the next frame. A hidden node is not collected and keeps its flags too.                                                                                                                        |
+| BQ-24 | The `scene-graph` bench | A `bench/` scenario.                                           | A TypeScript module driven by Vitest (the counted half in `unit`, the timed half in `perf`, which engine-bench runs): Node 20 runs no `.ts`, so there is no `run-scene-*.mjs` CLI for it.                                                                             |
+| BQ-25 | Internal shapes         | §8 `PickResult`, `Viewport`; a mutable `zIndex`.               | `PickSlot` and `FrameContext.viewport` are internal placeholders, not the §8 types (E11-T02 / E11-S03 own those). `zIndex` is `readonly`, read at attach; PR3 adds `setZIndex` with a re-sort. `NullSeries` sits in `src/scene/` for the bench and is never exported. |
+| BQ-26 | Shedding and animation  | `06` §4.4: lower cadence, focus-only rung 4; `26` §3.2 rule 2. | `frame(…, shedUpTo)` skips a rung for that frame only; the PR2 scheduler owns the cadence (heatmap 250 ms, indicators every second frame), rung 4's focused-pane predicate (critical nodes stay live) and a re-mark path for an animating node.                       |
 
 ## Scripts
 

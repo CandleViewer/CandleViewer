@@ -126,8 +126,8 @@ module.exports = {
       name: "chart-engine-core-no-dom-host",
       severity: "error",
       comment:
-        "C-2.16: src/core and src/layers stay DOM-free; DOM glue lives only in the host adapter.",
-      from: { path: "^packages/chart-engine/src/(core|layers)" },
+        "C-2.16: src/core|layers|scene stay DOM-free; DOM glue lives only in the host adapter.",
+      from: { path: "^packages/chart-engine/src/(core|layers|scene)" },
       to: { path: "^packages/chart-engine/src/host" },
     },
     {
