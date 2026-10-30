@@ -1,11 +1,12 @@
-"""#3100: the token-expiry and heartbeat closes run on a timer the connection owns, flag off and on.
+"""#3100: the token-expiry and heartbeat closes run on a timer the connection owns (the budgeted
+pipeline: #2409 runs this suite with the flag on only).
 
 From the first `auth_ok` the connection arms one loop timer at its next deadline (`close_in`): the
 token expiry on either clock, the heartbeat deadline and a view-as context's expiry (§9.6), read
 again at least every `CLOSE_RECHECK_TICKS` ticks. It runs the writer's own check
 (`_Connection.watch`), so the close is queued at the deadline on the injected clock even while the
-writer is parked in a send. Flag on, its flush deadline starts then (`23-ws-protocol.md` §8.4); flag
-off, the reader's next frame starts the flush (§4.4). The first close wins (§8.6). Teardown cancels
+writer is parked in a send, and its flush deadline starts then (`23-ws-protocol.md` §8.4). The
+first close wins (§8.6). Teardown cancels
 the timer (C-2.18, TG5).
 
 The real router runs on the test's own loop behind `_Wire`, whose `hold()` parks the writer's send:
@@ -33,7 +34,6 @@ from candleviewer.ws.lifecycle import bye_frame
 from tests.unit.ws.test_lifecycle_socket import BASE_MS, _Clock
 from tests.unit.ws.test_pipeline_outbound import _DEADLINE_S, _JSON, _closes, _Rig, _rows, _Wire
 
-_FLAG = pytest.mark.parametrize("flag_on", [False, True], ids=["flag_off", "flag_on"])
 #: Each deadline's close, its code and when it falls: a token expiring at 30 s (before the heartbeat
 #: deadline at 45 s), else a token that outlives every test.
 _DEADLINES = pytest.mark.parametrize(
@@ -49,12 +49,10 @@ def _at(s: float) -> datetime:
     return datetime.fromtimestamp((BASE_MS + s * 1000) / 1000, tz=UTC)
 
 
-async def _parked(
-    flag_on: bool, expires_s: float, **cfg: Any
-) -> tuple[_Rig, _Wire, asyncio.Task[None], _Conn]:
+async def _parked(expires_s: float, **cfg: Any) -> tuple[_Rig, _Wire, asyncio.Task[None], _Conn]:
     """`auth_ok` at 0 s for a token expiring at `expires_s`, then the writer parked in the send of
-    one `system` frame, as for a peer that stopped reading."""
-    rig, sock = _Rig(BackpressureConfig(**cfg) if flag_on else None), _Wire()
+    one `system` frame, as for a peer that stopped reading (the budgeted pipeline, #2409)."""
+    rig, sock = _Rig(BackpressureConfig(**cfg)), _Wire()
     rig.expires_at = _at(expires_s)
     handler, conn = await rig.open(sock)
     sock.hold()
@@ -193,49 +191,44 @@ async def _quiet_then_closed(
     return seen[0]
 
 
-@_FLAG
 @_DEADLINES
 async def test_a_parked_writer_is_closed_at_the_deadline_and_its_flush_starts_then(
-    flag_on: bool, reason: str, code: int, at: float, monkeypatch: pytest.MonkeyPatch
+    reason: str, code: int, at: float, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The close is queued at the deadline while the send it would wait for never returns: a token
-    expiry seals it (nothing queued is kept), a heartbeat lapse keeps what any close keeps. Flag on,
-    its flush deadline starts then and abandons the send; flag off, the reader's next frame starts
-    the flush (§4.4), which does. The audit row reads the deadline's reason."""
+    expiry seals it (nothing queued is kept), a heartbeat lapse keeps what any close keeps. Its
+    flush deadline starts then and abandons the send. The audit row reads the deadline's reason."""
     monkeypatch.setattr(gateway, "CLOSE_FLUSH_TIMEOUT_S", _FLUSH_S)
     before = _closes(reason)
     async with asyncio.timeout(_DEADLINE_S):
         expires = at if reason == "token_expired" else _FAR
-        rig, sock, handler, conn = await _parked(flag_on, expires, close_flush_s=_FLUSH_S)
+        rig, sock, handler, conn = await _parked(expires, close_flush_s=_FLUSH_S)
         for n in (1, 2):
             rig.hub.broadcast_system({"kind": "tick", "n": n})  # queued behind the parked send
         called, seen = _spy_closes(conn, sock, monkeypatch)
         sent, moved = len(sock.raw), asyncio.get_running_loop().time()
         rig.clock.now = at
         await called.wait()
-        if not flag_on:
-            sock.feed({"t": "ping", "id": "late"})  # the reader returns, closing: the flush starts
         await handler
     close = seen[0]
     assert (close["reason"], close["now"], close["sent"]) == (reason, at, sent)  # still parked
     kept = {"token_expired": 0, "heartbeat_timeout": 2}[reason]  # the two `system` frames
-    assert close["queued"] == kept + (0 if flag_on else 3)  # flag off: `bye`, marker, code
+    assert close["queued"] == kept
     assert conn.sealed is (reason == "token_expired") and conn.bye_frame is not None
     assert (conn.bye_frame["p"]["reason"], conn.bye_frame["p"]["code"]) == (reason, code)
-    if flag_on:  # the deadline started at the expiry, while the send was still parked
-        assert close["deadline"] is not None and moved + _FLUSH_S <= close["deadline"]
-        after = {"trigger": "flush_deadline", "flush_abandoned": True}
-        assert rig.audit.records[0]["after_state"] == after
+    # The deadline started at the expiry, while the send was still parked.
+    assert close["deadline"] is not None and moved + _FLUSH_S <= close["deadline"]
+    after = {"trigger": "flush_deadline", "flush_abandoned": True}
+    assert rig.audit.records[0]["after_state"] == after
     assert len(sock.raw) == sent and sock.closed_with is None  # the send never returned
     assert _rows(rig) == [("ws.connection.closed", reason, Severity.INFO)]
     assert _closes(reason) == before + 1
 
 
-@_FLAG
 @_DEADLINES
 @pytest.mark.parametrize("first", ["deadline", "shutdown"])
 async def test_the_first_close_wins_and_is_counted_and_audited_once(
-    flag_on: bool, reason: str, code: int, at: float, first: str, monkeypatch: pytest.MonkeyPatch
+    reason: str, code: int, at: float, first: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """§8.6, the first close wins. The timer's close is counted and audited once, though the
     writer's own check finds the same deadline once its send returns. After another close the
@@ -246,15 +239,16 @@ async def test_the_first_close_wins_and_is_counted_and_audited_once(
     with capture_logs() as logs:
         async with asyncio.timeout(_DEADLINE_S):
             expires = at if reason == "token_expired" else _FAR
-            rig, sock, handler, conn = await _parked(flag_on, expires)
+            rig, sock, handler, conn = await _parked(expires)
+            assert conn.pipeline is not None
             if first == "shutdown":
                 conn.close_with("shutdown")
-            deadline = None if conn.pipeline is None else conn.pipeline.deadline
+            deadline = conn.pipeline.deadline
             called, seen = _spy_closes(conn, sock, monkeypatch)
             rig.clock.now = at
             await called.wait()  # the timer's close, or its call that changes nothing
             assert seen[0]["reason"] == reason and seen[0]["now"] == at
-            if first == "shutdown" and conn.pipeline is not None:
+            if first == "shutdown":
                 assert conn.pipeline.deadline == deadline  # never a second window
             sock.release()
             frames = await sock.next(2)  # the frame the send held, then the `bye`
@@ -271,12 +265,11 @@ async def test_the_first_close_wins_and_is_counted_and_audited_once(
     assert [row[:2] for row in _rows(rig)] == [("ws.connection.closed", winner)]
 
 
-@_FLAG
 async def test_a_reauth_moves_the_expiry_the_timer_closes_at(
-    flag_on: bool, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A re-`auth` at 10 s moves the expiry from 30 s to 50 s (the heartbeat deadline to 55 s)."""
-    rig, sock = _Rig(BackpressureConfig() if flag_on else None), _Wire()
+    rig, sock = _Rig(BackpressureConfig()), _Wire()
     rig.expires_at = _at(30.0)
     async with asyncio.timeout(_DEADLINE_S):
         handler, conn = await rig.open(sock)
@@ -289,13 +282,12 @@ async def test_a_reauth_moves_the_expiry_the_timer_closes_at(
     assert close["reason"] == "token_expired"
 
 
-@_FLAG
 async def test_inbound_traffic_moves_the_heartbeat_deadline_the_timer_closes_at(
-    flag_on: bool, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The writer still queues the idle `ping` after 20 s of outbound silence (§9.1; its own check,
     kept). A frame read at 21 s moves the heartbeat deadline from 45 s to 66 s."""
-    rig, sock, pings = _Rig(BackpressureConfig() if flag_on else None), _Wire(), _Pings()
+    rig, sock, pings = _Rig(BackpressureConfig()), _Wire(), _Pings()
     sock.pings, rig.expires_at = pings, _at(_FAR)
     async with asyncio.timeout(_DEADLINE_S):
         handler, conn = await rig.open(sock)
@@ -312,7 +304,7 @@ async def test_inbound_traffic_moves_the_heartbeat_deadline_the_timer_closes_at(
 async def test_a_deadline_crossed_in_the_writers_turn_holds_back_the_frame_it_popped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Flag on, the writer's check after its pop (kept): a deadline crossed inside its own turn,
+    """The writer's check after its pop (kept): a deadline crossed inside its own turn,
     here while `service` runs, holds back the frame it popped; the `bye` is next."""
     rig, sock = _Rig(BackpressureConfig()), _Wire()
     rig.expires_at = _at(30.0)
@@ -333,10 +325,9 @@ async def test_a_deadline_crossed_in_the_writers_turn_holds_back_the_frame_it_po
     assert (bye["t"], bye["p"]["reason"], sock.closed_with) == ("bye", "token_expired", 4401)
 
 
-@_FLAG
 @pytest.mark.parametrize("failure", ["check", "log", "close", "cancel", "halt"])
 async def test_a_check_that_raises_on_the_timer_fails_closed_and_never_spins(
-    flag_on: bool, failure: str, monkeypatch: pytest.MonkeyPatch
+    failure: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A check that raises on the timer (`check`, a `KeyError`) fails closed with `internal_error`,
     and a log sink that fails too (`log`, a `TypeError`) skips no close. Nothing reaches the loop's
@@ -354,7 +345,7 @@ async def test_a_check_that_raises_on_the_timer_fails_closed_and_never_spins(
     try:
         with capture_logs() as logs:
             async with asyncio.timeout(_DEADLINE_S):
-                rig, sock, handler, conn = await _parked(flag_on, _FAR, close_flush_s=_FLUSH_S)
+                rig, sock, handler, conn = await _parked(_FAR, close_flush_s=_FLUSH_S)
                 ran = asyncio.Event()
 
                 def failing() -> bool:
@@ -375,8 +366,6 @@ async def test_a_check_that_raises_on_the_timer_fails_closed_and_never_spins(
                     sock.release()  # the handler's own `bye` and `1011` go out
                 elif not closed:
                     sock.inbound.put_nowait({"type": "websocket.disconnect", "code": 1000})
-                elif not flag_on:
-                    sock.feed({"t": "ping", "id": "late"})  # the reader returns: the flush starts
                 await handler
     finally:
         loop.set_exception_handler(was)
@@ -394,30 +383,12 @@ async def test_a_check_that_raises_on_the_timer_fails_closed_and_never_spins(
         ]
 
 
-@pytest.mark.parametrize(
-    ("flag_on", "site"),
-    [
-        (False, "bye"),
-        (True, "bye"),
-        (True, "clear"),
-        (False, "cancel"),
-        (True, "cancel"),
-        (True, "clear_cancel"),
-    ],
-    ids=[
-        "flag_off-bye",
-        "flag_on-bye",
-        "flag_on-clear",
-        "flag_off-cancel",
-        "flag_on-cancel",
-        "flag_on-clear_cancel",
-    ],
-)
+@pytest.mark.parametrize("site", ["bye", "clear", "cancel", "clear_cancel"])
 async def test_a_fault_inside_the_timers_close_ends_the_socket_as_a_writer_fault(
-    flag_on: bool, site: str, monkeypatch: pytest.MonkeyPatch
+    site: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Round 2: the deadline's own close faults inside the real `close_with`, once it has begun:
-    building its `bye` (`bye`), or with the flag on clearing the lanes (`clear`, so no flush
+    building its `bye` (`bye`), or clearing the lanes (`clear`, so no flush
     deadline starts). No close took, so the socket ends as on a writer fault: the writer is
     cancelled, the handler sends `bye internal_error` + `1011`, and the row reads
     `internal_error`. A cancellation raised while building the `bye` (`cancel`) or clearing the
@@ -430,7 +401,7 @@ async def test_a_fault_inside_the_timers_close_ends_the_socket_as_a_writer_fault
     order: list[tuple[str, bool]] = []  # each join, and each frame sent from here: writer done?
     with _loop_escapes() as escaped, capture_logs() as logs:
         async with asyncio.timeout(_DEADLINE_S):
-            rig, sock, handler, conn = await _parked(flag_on, _FAR)
+            rig, sock, handler, conn = await _parked(_FAR)
             name = f"{conn.connection_id}-writer"
             (writer,) = [t for t in asyncio.all_tasks() if t.get_name() == name]
             join, send = gateway._join_writer, conn.send_frame
@@ -479,17 +450,13 @@ async def test_a_fault_inside_the_timers_close_ends_the_socket_as_a_writer_fault
     assert fault["exc_info"] is error
 
 
-@pytest.mark.parametrize(
-    ("flag_on", "site"),
-    [(False, "bye"), (True, "bye"), (True, "clear")],
-    ids=["flag_off-bye", "flag_on-bye", "flag_on-clear"],
-)
+@pytest.mark.parametrize("site", ["bye", "clear"])
 async def test_a_cancelled_fail_closed_close_still_ends_the_socket_then_reaches_the_loop(
-    flag_on: bool, site: str, monkeypatch: pytest.MonkeyPatch
+    site: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#3516: a check that raises on the timer (`watch`, a `KeyError`) fails closed, and that close
-    is cancelled inside `close_with`, once it has begun: building its `bye` (`bye`), or with the
-    flag on clearing the lanes, so no flush deadline starts (`clear`). The guard on that close
+    is cancelled inside `close_with`, once it has begun: building its `bye` (`bye`), or clearing
+    the lanes, so no flush deadline starts (`clear`). The guard on that close
     takes an `Exception`, not a cancellation, but no close took either way, so the socket ends as
     on a writer fault: the writer is cancelled, the handler sends `bye internal_error` + `1011`,
     the row reads `internal_error`, and `timer_fault` is the check's error. The log line is
@@ -497,7 +464,7 @@ async def test_a_cancelled_fail_closed_close_still_ends_the_socket_then_reaches_
     check, cancel = KeyError("down"), asyncio.CancelledError()
     with _loop_escapes() as escaped, capture_logs() as logs:
         async with asyncio.timeout(_DEADLINE_S):
-            rig, sock, handler, conn = await _parked(flag_on, _FAR)
+            rig, sock, handler, conn = await _parked(_FAR)
             writer = _writer_of(conn)
             _check_fails_once(conn, check, monkeypatch)
             if site == "bye":
@@ -532,12 +499,11 @@ async def test_a_cancelled_fail_closed_close_still_ends_the_socket_then_reaches_
     assert (failed["connection_id"], failed["error"]) == (conn.connection_id, "KeyError")
 
 
-@_FLAG
 @pytest.mark.parametrize("fault", ["cancel", "oserror"])
 async def test_a_fault_after_the_fail_closed_close_took_leaves_that_close_standing(
-    flag_on: bool, fault: str, monkeypatch: pytest.MonkeyPatch
+    fault: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#3516: the fail-closed close took (its `bye` is queued, and with the flag on its flush
+    """#3516: the fail-closed close took (its `bye` is queued, and its flush
     deadline runs), and then a cancellation (`cancel`) or an `OSError` (`oserror`) is raised after
     it. Nothing is folded for either: the writer is left to send `bye internal_error` + `1011`,
     `timer_fault` stays unset and the log line is written. Only the cancellation reaches the loop's
@@ -546,7 +512,7 @@ async def test_a_fault_after_the_fail_closed_close_took_leaves_that_close_standi
     error: BaseException = asyncio.CancelledError() if fault == "cancel" else OSError(fault)
     with _loop_escapes() as escaped, capture_logs() as logs:
         async with asyncio.timeout(_DEADLINE_S):
-            rig, sock, handler, conn = await _parked(flag_on, _FAR)
+            rig, sock, handler, conn = await _parked(_FAR)
             writer, close_with, took = _writer_of(conn), conn.close_with, asyncio.Event()
 
             def close_then_fail(reason: str, **kw: Any) -> None:
@@ -594,13 +560,12 @@ async def test_a_reauth_rearms_the_timer_and_cancels_the_one_it_replaces() -> No
         await asyncio.wait({handler})
 
 
-@_FLAG
 async def test_teardown_cancels_the_timer_and_none_is_armed_after_it(
-    flag_on: bool, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Teardown stops the timer first, before its first await (`_join_writer`), so no deadline
     can close a connection that is ending; none is armed after it."""
-    rig, sock = _Rig(BackpressureConfig() if flag_on else None, tick_s=3600.0), _Wire()
+    rig, sock = _Rig(BackpressureConfig(), tick_s=3600.0), _Wire()
     async with asyncio.timeout(_DEADLINE_S):
         handler, conn = await rig.open(sock)
         timer, join = conn.close_timer, gateway._join_writer
@@ -686,9 +651,8 @@ async def test_the_timer_is_armed_at_the_next_deadline_on_either_clock(
     assert floored.cancelled() and conn.close_timer is None
 
 
-@_FLAG
 async def test_view_as_expiry_closes_socket_without_rest(
-    flag_on: bool, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """§9.6 (#3085): a socket bound to a view-as context closes `view_as_expired` (4403, sealed)
     at the context's `expires_at` on its own timer, with no REST call to end it first."""
@@ -699,7 +663,7 @@ async def test_view_as_expiry_closes_socket_without_rest(
     async def view_as(session_id: str) -> ViewAsBinding:
         return binding
 
-    rig, sock = _Rig(BackpressureConfig() if flag_on else None, view_as=view_as), _Wire()
+    rig, sock = _Rig(BackpressureConfig(), view_as=view_as), _Wire()
     async with asyncio.timeout(_DEADLINE_S):
         handler, conn = await rig.open(sock)
         assert conn.view_as_context_id == str(binding.context_id)

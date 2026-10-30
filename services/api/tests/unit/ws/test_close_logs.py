@@ -58,12 +58,11 @@ def test_the_flag_off_deadline_line_says_the_flush_was_abandoned() -> None:
 # -- row 1: `ws close` ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag_off", "flag_on"])
 @pytest.mark.parametrize("reason", sorted(WARNING_CLOSES) + list(_INFO_CLOSES))
-async def test_ws_close_is_logged_at_its_audit_rows_severity(reason: str, flag: bool) -> None:
+async def test_ws_close_is_logged_at_its_audit_rows_severity(reason: str) -> None:
     """`warning` for `WARNING_CLOSES`, `info` otherwise; no `trigger` outside step 3 (a plain
     `slow_consumer` close, an eviction or a flush deadline, names none). The fields stay."""
-    conn = _bare(BackpressureConfig() if flag else None)
+    conn = _bare(BackpressureConfig())
     with capture_logs() as logs:
         conn.close_with(reason)
     (line,) = _lines(logs, "ws close")

@@ -1,13 +1,13 @@
-"""E17-T03 (#412, S2a-i): the budgeted outbound pipeline and its close path, flag on and off.
+"""E17-T03 (#412, S2a-i): the budgeted outbound pipeline and its close path (the flag-on path).
 
 With `CV_WS_BACKPRESSURE_ENABLED` on, `_Connection.push` hands every frame to
 `ws.pipeline.ConnectionPipeline`: it is encoded once in the negotiated subprotocol, queued on the
 `OutboundQueue` lanes inside the 8 MiB / 2 000-frame budget, and sent as is by the writer. A close
 takes the terminal slot and flushes under one deadline (`23-ws-protocol.md` §4.4, §8.4); a frame
 that cannot be encoded fails closed (§10.1). The one encode at push is where a frame the hub
-stamped feeds #2921's frame cost series, once. With the flag off nothing of this exists, and the
-wire is byte-for-byte what it was: `test_flag_off_wire_transcript_is_unchanged` pins a transcript
-recorded on the commit before this slice.
+stamped feeds #2921's frame cost series, once. #2409 runs this suite with the flag on only: the
+flag-off wire transcript left with the flag-off rigs (its scenarios are pinned on the pipeline by
+the shutdown, revocation and fail-closed encode tests below).
 
 The real router runs on the test's own loop behind a fake socket (`_Wire`): no threads, no
 sleeps, every wait bounded. Frames are queued in one synchronous turn when a test needs the writer
@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import inspect
 import json
 import struct
@@ -276,83 +275,6 @@ class _Rig:
         body = {"symbol": "BTCUSDT", "depth": 50, "bids": [[f"{100 + i}.0", "1.000"]], "asks": []}
         self.clock.now += 0.05 if self.paced else 0.0
         return self.sequencing.publish(_BOOK, body | extra)
-
-
-# -- flag off: the wire is unchanged ----------------------------------------------------------
-
-
-async def _flag_off_session(encoding: str) -> list[Any]:
-    """Three connections on the flag-off path: a session ending in a planned shutdown (welcome,
-    auth, a book snapshot, 32 deltas including a sampled one and a non-finite number, a pong, a
-    `system` notice), a backlog cut by a revocation (sealed), and a frame the writer cannot
-    serialise (the fault path). Returns every send, raw, with the close code and audit row."""
-    transcript: list[Any] = []
-    for scenario in ("session", "sealed", "fault"):
-        rig, sock = _Rig(backpressure=None), _Wire(encoding)
-        async with asyncio.timeout(_DEADLINE_S):
-            handler, conn = await rig.open(sock)
-            assert getattr(conn, "pipeline", None) is None
-            await rig.sub(sock)
-            if scenario == "session":
-                for i in range(31):
-                    rig.book_delta(i)
-                rig.book_delta(31, x=float("nan"))  # flag off: written as `NaN`, not refused
-                await sock.next(32)
-                sock.feed({"t": "ping", "id": "p", "p": {"client_ms": BASE_MS - 5}})
-                await sock.next()
-                rig.hub.broadcast_system({"kind": "tick"})
-                await sock.next()
-                await rig.hub.shutdown(grace_ms=0, sleep=_no_sleep)
-            elif scenario == "sealed":
-                for i in range(5):
-                    rig.book_delta(i)
-                    rig.hub.broadcast_system({"kind": "tick", "n": i})
-                await rig.revocation.revoke(SESSION)
-            else:
-                rig.book_delta(0, bad={1, 2})  # neither codec serialises a set
-            await handler
-        sends = [[kind, _normalised(p, conn.connection_id)] for kind, p in sock.raw]
-        rows = [(r["action"], r["reason"], str(r["severity"])) for r in rig.audit.records]
-        transcript.append([scenario, sends, sock.closed_with, rows])
-    return transcript
-
-
-def _normalised(payload: str | bytes, connection_id: str) -> str:
-    """The payload with the random connection id replaced (same length, so msgpack stays valid);
-    bytes as hex."""
-    if isinstance(payload, str):
-        return payload.replace(connection_id, "ws_" + "0" * 12)
-    return payload.replace(connection_id.encode(), b"ws_" + b"0" * 12).hex()
-
-
-@_ENCODINGS
-async def test_flag_off_wire_transcript_is_unchanged(encoding: str) -> None:
-    """Flag off is byte-for-byte the gateway before #412 S2a: the transcript's digest was recorded
-    on 731f4820f, before S2a touched the gateway. Its `system` frames (the `tick`, the shutdown
-    notice) are framed by `_Connection.push_system`, so a change of production's framing of them
-    moves the digest too (#3198)."""
-    transcript = await _flag_off_session(encoding)
-    digest = hashlib.sha256(json.dumps(transcript, sort_keys=True).encode()).hexdigest()
-    kinds = {kind for _, sends, _, _ in transcript for kind, _ in sends}
-    assert kinds == {"bytes" if encoding == _MSGPACK else "text"}
-    assert [(name, code) for name, _, code, _ in transcript] == [
-        ("session", 1001),
-        ("sealed", 4401),
-        ("fault", 1011),
-    ]
-    assert digest == _FLAG_OFF_DIGESTS[encoding], json.dumps(transcript)[:4000]
-
-
-#: Recorded with `_flag_off_session` on 731f4820f (the S1 head, before S2a-i touched the gateway),
-#: in the rebase from 65d480a2: main's #2890, in between, moved `sub_ok`'s `id` after its `p`.
-#: Re-recorded for E09-X02 F-8 (#298): `welcome` no longer carries `git_sha` and `auth_ok` does;
-#: those six frames (three of each) are the transcript's only change.
-#: Re-recorded for #4992 (§12.1): each connection's `system` snap (`s` 1) follows its `auth_ok`, so
-#: the session's `tick` and shutdown notice are `s` 2 and 3; those are the transcript's only change.
-_FLAG_OFF_DIGESTS = {
-    _JSON: "0e0e56d8bfe4ccf143b8f16fecc720d16e1f47932c5c1b2d898040e9dbf50f84",
-    _MSGPACK: "c154de2a65b88cd211517cc4a71cbebfd80f4978699dea89c5e7841f5b2e0bb5",
-}
 
 
 # -- flag on: the pipeline alone -----------------------------------------------------------------
@@ -1352,16 +1274,13 @@ class _TurnWire(_Wire):
         await super()._send(kind, payload)
 
 
-@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag-off", "flag-on"])
-async def test_the_writer_gives_the_loop_a_turn_while_it_drains_a_backlog(
-    backpressure: BackpressureConfig | None,
-) -> None:
+async def test_the_writer_gives_the_loop_a_turn_while_it_drains_a_backlog() -> None:
     """#571: a send to a writable socket never suspends, so a writer that suspends only on an
     empty queue writes its whole backlog (up to 2 000 frames) in one loop turn, and every other
     connection, the loop's timers and the `/metrics` listener on the same loop wait for all of it.
     Each writer yields after at most `WRITER_SLICE_FRAMES` sends in a row: no run of sends at one
     loop-turn count is longer."""
-    rig, sock = _Rig(backpressure), _TurnWire()
+    rig, sock = _Rig(), _TurnWire()
     n = 4 * gateway.WRITER_SLICE_FRAMES + 5
     async with asyncio.timeout(_DEADLINE_S):
         handler, _conn = await rig.open(sock)

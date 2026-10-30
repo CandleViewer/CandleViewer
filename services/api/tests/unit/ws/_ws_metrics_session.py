@@ -2,9 +2,9 @@
 
 Five connections on the real `/ws` router, on the caller's loop behind `_Wire` (the rig of
 `tests/unit/ws/test_pipeline_outbound.py`): no thread, no sleep, a fake clock, every wait bounded.
-Connection 1 runs with the backpressure flag on (one connection per step that needs its own queue,
-below); the last is a flag-off pass on MessagePack with a binary book, for the series only that
-wiring moves.
+Every connection runs with the backpressure flag on (one connection per step that needs its own
+queue, below); the last is a pass on MessagePack with a binary book, for the series only that codec
+moves (#2409: it was the flag-off wiring's pass).
 
 What a scrape sees is what the tests read: `export_ws_metrics` and `export_cvwb_metrics` on a
 fresh registry (the ones `create_app` serves), rendered by `generate_latest` and parsed back from
@@ -198,17 +198,20 @@ async def _failed_auth_connection() -> None:
     assert (failed["t"], failed["p"]["code"]) == ("err", "auth_failed")
 
 
-async def _flag_off_connection() -> None:
-    """The flag-off wiring, on `cv.v1.msgpack`: the writer (not the pipeline) encodes and observes
-    the stamped frames; a binary book snapshot feeds the CVWB series."""
-    rig, sock = _Rig(None), _Wire(_MSGPACK)
+async def _msgpack_connection() -> None:
+    """Connection 5, on `cv.v1.msgpack`: the pipeline encodes and observes its stamped frame on
+    that codec; a binary book snapshot feeds the CVWB series. Each delta is published 250 ms after
+    the last, past its book window, so it leaves alone; no classification is due in the session
+    (the interval is a minute), so it adds no probe and no depth sample."""
+    rig, sock = _Rig(BackpressureConfig(classify_interval_ms=60_000)), _Wire(_MSGPACK)
     async with asyncio.timeout(_DEADLINE_S):
         handler, _ = await rig.open(sock)
         sock.feed({"t": "sub", "id": "s", "p": {"topics": [{"ch": _BOOK, "opts": {}}]}})
         await sock.next(2)
         for i in range(SAMPLE_EVERY):
+            rig.clock.now += 0.25
             rig.sequencing.publish(_BOOK, _delta_of(i))
-        await sock.next(SAMPLE_EVERY)
+            await sock.next()
         await rig.hub.shutdown(grace_ms=0, sleep=_no_sleep)
         await handler
     assert sock.raw and all(kind == "bytes" for kind, _ in sock.raw)
@@ -223,7 +226,7 @@ async def run_session() -> Run:
     await _slow_consumer_connection()
     await _withdrawn_connection()
     await _failed_auth_connection()
-    await _flag_off_connection()
+    await _msgpack_connection()
     return Run(before, mid, scrape())
 
 

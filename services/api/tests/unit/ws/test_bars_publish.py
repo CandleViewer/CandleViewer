@@ -532,7 +532,6 @@ async def test_each_symbol_goes_to_its_own_channel_and_an_unnamed_spec_nowhere()
 
 #: A snapshot each encoding renders as its own: no bars, so one empty kind-4 frame beside `EMPTY`.
 _BOTH: Final = SnapshotBody(EMPTY, (Frame(BARS),))
-_FLAG = pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
 
 
 def _resyncs(reason: str) -> float:
@@ -543,14 +542,12 @@ def _never_closed(reason: str, *, bye: dict[str, Any] | None = None) -> None:
     raise AssertionError(f"the pipeline closed the connection: {reason}")
 
 
-def _received(hub: SequencingHub, conn: Conn, flag: bool) -> Callable[[], list[dict[str, Any]]]:
-    """What `conn` is sent from now on, each frame validated against the §13 schemas. With the
-    flag on (`CV_WS_BACKPRESSURE_ENABLED`) the hub's sink for it is a `ConnectionPipeline` (JSON,
-    default config), attached as the gateway attaches one, and its frames are read off its queue.
+def _received(hub: SequencingHub, conn: Conn) -> Callable[[], list[dict[str, Any]]]:
+    """What `conn` is sent from now on, each frame validated against the §13 schemas. The hub's
+    sink for it is a `ConnectionPipeline` (JSON, default config; the flag-on path, #2409),
+    attached as the gateway attaches one, and its frames are read off its queue.
     Built here, not with `test_pipeline_outbound`'s helpers: that module's imports reach this one
     (through `test_span_id`), so importing it from here would be a cycle."""
-    if not flag:
-        return conn.take
     pipe = ConnectionPipeline(
         encoding="cv.v1.json", config=BackpressureConfig(), close=_never_closed,
         wall_ms=lambda: 1_789_132_262_000, connection_id="ws_test",
@@ -569,20 +566,17 @@ def _received(hub: SequencingHub, conn: Conn, flag: bool) -> Callable[[], list[d
     return take
 
 
-@_FLAG
-async def test_a_history_repair_re_snapshots_each_settled_subscriber_and_sends_no_d(
-    flag: bool,
-) -> None:
+async def test_a_history_repair_re_snapshots_each_settled_subscriber_and_sends_no_d() -> None:
     """§7.4: each live, snapshotted, unpaused subscriber of the series, in both encodings and
-    both `include_delta` groups, gets one `snap` under `history_repair` and no `d`, flag on or
-    off. `cv_ws_resync_total` counts each and `ws resync` logs each at `info`, so the publisher
-    needs no counter of its own. The series never emitted: a repair needs no baseline, and
+    both `include_delta` groups, gets one `snap` under `history_repair` and no `d`.
+    `cv_ws_resync_total` counts each and `ws resync` logs each at `info`, so the publisher needs no
+    counter of its own. The series never emitted: a repair needs no baseline, and
     `history_repair` itself adds no series or seed (the snapshot source seeds, as for every bars
     `snap`, and this fake one does not)."""
     src = Source()
     hub, pub, subs = _world(*GROUPS, src=src)
     src.bodies["bars"] = _BOTH
-    reads = [_received(hub, conn, flag) for conn, _ in subs]
+    reads = [_received(hub, conn) for conn, _ in subs]
     before = _resyncs(REPAIR)
     with capture_logs() as logs:
         assert pub.history_repair("BTCUSDT", SPEC, 1) == 4

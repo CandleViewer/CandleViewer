@@ -1081,24 +1081,18 @@ def test_a_window_of_whole_heatmap_frames_never_regresses_a_complete_bucket() ->
     assert [f["p"]["columns"] for f in conn.take()] == [[_COLUMN]]
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag_off", "flag_on"])
-def test_a_throttled_publish_without_a_body_is_refused_before_the_fanout(flag: bool) -> None:
+def test_a_throttled_publish_without_a_body_is_refused_before_the_fanout() -> None:
     """§8.2 (#3268): a window merges structured bodies, so a paced family's update carries one, a
     CVWB `part` beside it. A `book` publish with a part alone is a producer bug, refused before the
-    fan-out whatever the flag: neither a binary nor a structured connection queues anything, and
+    fan-out: neither a binary nor a structured connection queues anything, and
     no counter moves. `orders` never enters a window, so a publish of it is not refused here."""
     hub = SequencingHub()
     queued: list[Callable[[], list[dict[str, Any]]]] = []
     pacers: list[Pacer] = []
     for encoding in ("binary", "structured"):
-        if flag:
-            pipe, _, conn = _routed(hub)
-            queued.append(partial(_queued, pipe))
-            pacers.append(_pacer(pipe))
-        else:
-            conn = _paced()[0]
-            hub.register(conn.authz, conn.emitter)
-            queued.append(conn.take)
+        pipe, _, conn = _routed(hub)
+        queued.append(partial(_queued, pipe))
+        pacers.append(_pacer(pipe))
         conn.sub({"ch": _BOOK, "opts": {"encoding": encoding}})
     assert [len(take()) for take in queued] == [1, 1]  # each its snapshot
     malformed = _counter(cv_ws_malformed_updates_total, topic="book")
@@ -1107,7 +1101,7 @@ def test_a_throttled_publish_without_a_body_is_refused_before_the_fanout(flag: b
         hub.publish(_BOOK, None, part=part)
     assert hub.publish("orders", None, account=ACC_A) == 0  # refused nowhere: nobody reads it
     assert [take() for take in queued] == [[], []]
-    assert all(not p.lanes and not p.resnapshot_required for p in pacers)
+    assert len(pacers) == 2 and all(not p.lanes and not p.resnapshot_required for p in pacers)
     assert _counter(cv_ws_malformed_updates_total, topic="book") == malformed
 
 

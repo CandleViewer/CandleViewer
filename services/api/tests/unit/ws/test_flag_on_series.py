@@ -10,9 +10,9 @@ process (ruling D6; `20-architecture.md` section 12.1). With `CV_WS_BACKPRESSURE
 - each classification observes the depth it read in `cv_ws_queue_bytes` and `cv_ws_queue_frames`:
   depth and class are read when the connection's writer runs, so a parked writer takes no sample.
 
-With the flag off none of them moves. Each read is one collect of the default registry (a scrape's
-view) that names the series rather than importing them, so on the source before this slice every
-test fails on an assertion, none on an import.
+#2409 runs this suite on the flag-on path only. Each read is one collect of the default registry
+(a scrape's view) that names the series rather than importing them, so on the source before this
+slice every test fails on an assertion, none on an import.
 """
 
 from __future__ import annotations
@@ -402,33 +402,31 @@ def test_each_probe_sample_is_one_rtt_observation_in_seconds() -> None:
     assert (after["10.0"] - buckets["10.0"], after["+Inf"] - buckets["+Inf"]) == (2, 3)
 
 
-# -- the real router, flag on and off -------------------------------------------------------------
+# -- the real router ------------------------------------------------------------------------------
 
 
 @_ENCODINGS
-@pytest.mark.parametrize("flag", [False, True], ids=["flag_off", "flag_on"])
-async def test_a_session_moves_the_series_only_with_the_flag_on(flag: bool, encoding: str) -> None:
+async def test_a_session_moves_the_series(encoding: str) -> None:
     """The real `/ws` router on a fake clock: `auth_ok`, a book `sub`, three deltas published at
     once with a producer's own `coalesced_count` 7, the writer's turn at 1.0 (the window closes;
     the first classification sends the probe), its `pong` at 1.25, the teardown. Flag on: the
     connection counts as `healthy` while open, not after; the pacer carries the producer's count
     (#3268), so the first update leaves with 7 and the window of the second and third with 14, yet
     the series count the queue's own merge, 1 conflated; an RTT of 0.25 s; one depth sample of
-    each kind. Flag off: the frames say 7 and nothing moves. No label value is ever added."""
-    rig, sock = _Rig(BackpressureConfig() if flag else None), _Wire(encoding)
+    each kind. No label value is ever added."""
+    rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
     sock.answer = False  # the probe's `pong` is fed below, 250 ms late
     before = _read()
     assert (CONFLATED, "book") in before  # served: an empty move below is not vacuous
     async with _connected(rig, sock):
-        assert _of(CLASS, before) == ({"healthy": 1} if flag else {})
+        assert _of(CLASS, before) == {"healthy": 1}
         await rig.sub(sock)
         for price in ("101", "102", "103"):
             rig.sequencing.publish(_BOOK, _bid(price), coalesced_count=7)
         frames = await _at(rig, sock, 1.0)
-        assert [f["p"].get("coalesced_count", 1) for f in frames] == ([7, 14] if flag else [7] * 3)
-        assert len(sock.pings) == flag
-        if flag:
-            await _at(rig, sock, 1.25, {"t": "pong", "id": sock.pings[0]["id"]})
+        assert [f["p"].get("coalesced_count", 1) for f in frames] == [7, 14]
+        assert len(sock.pings) == 1
+        await _at(rig, sock, 1.25, {"t": "pong", "id": sock.pings[0]["id"]})
     moved = _moved(before)
     depth = moved.pop((f"{QUEUE_BYTES}_sum", ""), 0.0), moved.pop((f"{QUEUE_FRAMES}_sum", ""), 0.0)
     expected = {
@@ -440,7 +438,7 @@ async def test_a_session_moves_the_series_only_with_the_flag_on(flag: bool, enco
         (f"{QUEUE_BYTES}_count", ""): 1,
         (f"{QUEUE_FRAMES}_count", ""): 1,
     }
-    assert moved == pytest.approx(expected if flag else {})
-    assert (depth[0] > 0) is flag
+    assert moved == pytest.approx(expected)
+    assert depth[0] > 0
     for name, (label, values) in CLOSED.items():
         assert {s.labels[label] for f in _families() for s in f.samples if s.name == name} == values
