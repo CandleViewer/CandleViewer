@@ -71,6 +71,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "replay_budget_waiters",  # a gauge of waiting lanes, named by the #2668 plan
         "book_subscriptions_active",  # named by the E21-T01 ruling (BQ-6, #604)
         "heatmap_subscriptions_active",  # named by the E21-T02 ticket's Observability (#605)
+        "heatmap_pinned_symbols",  # named by the E21-T04 PR 2 ruling (#710, LANE-116)
     }
 )
 
@@ -462,6 +463,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.observability.audit_query_metrics import EXPORTED_NAMES as AUDIT_NAMES
     from candleviewer.orderflow.heatmap_metrics import EXPORTED_NAMES as HEATMAP_NAMES
     from candleviewer.orderflow.indicators.metrics import EXPORTED_NAMES as INDICATOR_NAMES
+    from candleviewer.orderflow.liquidity_metrics import EXPORTED_NAMES as LIQUIDITY_NAMES
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
     from candleviewer.replay.metrics import EXPORTED_NAMES as REPLAY_NAMES
     from candleviewer.secrets.metrics import EXPORTED_NAMES as SECRETS_NAMES
@@ -486,6 +488,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     others |= INDICATOR_NAMES
     others |= BOOK_NAMES
     others |= HEATMAP_NAMES
+    others |= LIQUIDITY_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")

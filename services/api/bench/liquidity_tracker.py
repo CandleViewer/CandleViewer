@@ -5,12 +5,15 @@ a print every sample; no network. Run:
 
     uv run python bench/liquidity_tracker.py [--samples 6000] [--budget-ms 2.0]
 
-Two cases, both gated on the p99: the steady book above, and a burst (about 5 000 prints in the
-5 s window, 40 levels dropping in one sample). The timed call includes the `islice` list copies
-of both sides (up to `max_levels` each) that `on_sample` allocates, and this file's fake book
-sorts its levels inside `walk`, which the real `BookState.walk` does not.
+Three cases, all gated on the p99: the steady book above, a burst (about 5 000 prints in the
+5 s window, 40 levels dropping in one sample), and the wired path (PR 2): the same steady book as
+the heatmap's instantaneous float levels through `LiquidityEngine.on_deadline` (quantise to
+`qty_step`, sample, the event cap, the outbound queue, the metrics), on the 100 ms grid. The
+timed call includes the `islice` list copies of both sides (up to `max_levels` each) that
+`on_sample` allocates, and this file's fake book sorts its levels inside `walk`, which the real
+`BookState.walk` does not.
 
-Exit status 1 when either p99 exceeds the budget."""
+Exit status 1 when any p99 exceeds the budget."""
 
 from __future__ import annotations
 
@@ -28,9 +31,12 @@ from typing import Literal
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from candleviewer.book.models import BookPhase
+from candleviewer.bus import Bus
 from candleviewer.domain.primitives import EventId
 from candleviewer.exchange.base.models import TradeEvent
+from candleviewer.orderflow.heatmap import Sampler
 from candleviewer.orderflow.liquidity import LiquidityTracker
+from candleviewer.orderflow.liquidity_engine import LiquidityEngine
 
 DEPTH = 200
 TICK, STEP = Decimal("0.1"), Decimal("0.001")
@@ -125,6 +131,41 @@ def measure_burst(rounds: int = 300, seed: int = 11) -> list[float]:
     return out[60:]  # the first 30 rounds fill the window
 
 
+class _Pins:
+    def set_sampler(self, sampler: Sampler | None) -> None: ...
+    def pin_native(self, symbol: str, depth: int) -> None: ...
+    def unpin_native(self, symbol: str) -> None: ...
+
+
+class _Levels:
+    def __init__(self, bids: dict[int, float], asks: dict[int, float]) -> None:
+        self.bids, self.asks = bids, asks
+
+
+def measure_wired(samples: int, seed: int = 7) -> list[float]:
+    """`on_deadline` with float levels (best first, as the heatmap reads them), 20 levels a side
+    churned and one print a sample; the timed call is the whole wired sample."""
+    rng = random.Random(seed)  # noqa: S311 - reproducible synthetic data, not crypto
+    mid, t0 = 600_000, 1_700_000_000_000
+    bids = {mid - i: rng.randint(10, 900) / 100 for i in range(DEPTH)}
+    asks = {mid + 1 + i: rng.randint(10, 900) / 100 for i in range(DEPTH)}
+    engine = LiquidityEngine(
+        Bus(), "live", pins=_Pins(), steps=lambda s: (TICK, STEP), symbols=("BTCUSDT",)
+    )
+    out: list[float] = []
+    for i in range(samples):
+        for side in (bids, asks):
+            for tick in rng.sample(sorted(side), 20):
+                side[tick] = rng.randint(0, 900) / 100 or 0.5
+        t_ms = t0 + i * 100
+        engine._offer(_print(i, t_ms * 1000, mid, "buy"))
+        levels = _Levels(dict(bids), dict(asks))
+        t1 = time.perf_counter_ns()
+        engine.on_deadline("BTCUSDT", t_ms, levels)
+        out.append((time.perf_counter_ns() - t1) / 1e6)
+    return out
+
+
 def _report(name: str, ms: list[float]) -> float:
     ms = sorted(ms)
     p50, p99 = statistics.median(ms), ms[int(len(ms) * 0.99) - 1]
@@ -139,7 +180,8 @@ def main() -> int:
     args = ap.parse_args()
     steady = _report("on_sample", measure(args.samples))
     burst = _report("on_sample burst(5000 prints, 40 drops)", measure_burst())
-    return 0 if max(steady, burst) <= args.budget_ms else 1
+    wired = _report("on_deadline wired(quantise+sample+emit)", measure_wired(args.samples))
+    return 0 if max(steady, burst, wired) <= args.budget_ms else 1
 
 
 if __name__ == "__main__":

@@ -352,6 +352,7 @@ from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
 from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.limits import min_size_floor, notional_size
+from candleviewer.orderflow.liquidity_metrics import export_liquidity_metrics
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.profile_notices_wiring import ProfileNotices
@@ -547,6 +548,7 @@ from candleviewer.ws_wiring import (
     default_snapshot_router,
     heatmap_topic,
     ingestion_streams,
+    liquidity_engine,
     loop_call_later,
     oms_topics,
     recorder_topic,
@@ -1825,6 +1827,8 @@ def create_app(
         store=_build_heatmap_store(resolved),
     )
     snapshot_adapters["heatmap"] = ws_heatmap
+    # E21-T04 (#710): the liquidity tracker of the pinned symbols, on the heatmap's native sampler.
+    ws_liquidity = liquidity_engine(ctx, ws_heatmap)
     ws_revisions = InstrumentRevisions(
         ctx.bus.bus, resolved.environment.value, ws_sequencing.instrument_revision
     )
@@ -1879,7 +1883,7 @@ def create_app(
         ws_upstream,
         resolved,
         machines=machine_states,
-        feeds=(ws_ticker, ws_revisions, ws_trades, ws_book, ws_heatmap),
+        feeds=(ws_ticker, ws_revisions, ws_trades, ws_book, ws_heatmap, ws_liquidity),
     )
     # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, on by default since #4883 (the
     # owner ruling of 2026-10-29). Without a config the gateway keeps its 1 024-frame push
@@ -2265,6 +2269,10 @@ def create_app(
     app.state.bars_metrics = export_bars_metrics(ctx.metrics, env=resolved.environment.value)
     # E21-T02: the heatmap engine's series (missed columns, emitted, latency, leases).
     app.state.heatmap_metrics = export_heatmap_metrics(ctx.metrics, env=resolved.environment.value)
+    # E21-T04: the liquidity tracker's series (events, overflow, ring bytes, sample work).
+    app.state.liquidity_metrics = export_liquidity_metrics(
+        ctx.metrics, env=resolved.environment.value
+    )
     # E13-T02: the indicator engine's series (instances, recomputes, caps).
     app.state.indicator_metrics = export_indicator_metrics(
         ctx.metrics, env=resolved.environment.value
