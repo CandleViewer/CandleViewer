@@ -11,9 +11,18 @@ highlight composite;
 (3) CVD dE76 rows; (4) the flash audit; (5) the motion-table, one-treatment, disabled-look,
 view-as, RULED-stamp, structure and CMP-158 string gates (section 15 and 28.12 quote each
 variant's sentence once, verbatim from E30-D02 section 14 / E36-D02 section 2 — C21);
-(6) hygiene. E30-D02 section 15.1's pairs are reproduced exactly.
+(6) hygiene; (7) G-CARVEOUT: F-01's fix (E30-D06 PR 0, #919; R-F01 in section 33) stays: the
+view-as leg greys every write control except the C-2.6 carve-out at section 1.5's D5, section 2.5
+item (6) and the decision table's first row, and no "every write control" sentence drops the
+exception in section 1.5 or 2.5 (the scan's scope: the D04 sections F-01 amended; R-F01's Source
+cite on D5 is pinned too). E30-D02 section 15.1's pairs are reproduced exactly.
 
-Usage: python3 -I -X utf8 docs/design/_tools/e30_d04_ds_motion_audit.py [--json] [--spec <path>]
+Usage: python3 -I -X utf8 docs/design/_tools/e30_d04_ds_motion_audit.py [--check] [--json]
+       [--spec <path>]
+       python3 -I -X utf8 docs/design/_tools/e30_d04_ds_motion_audit.py --self-test
+(Every run is gated; `--check` names that run for the READY line and changes nothing else. An
+unknown flag exits 2. `--self-test` mutates the spec once per G-CARVEOUT clause and wants each
+mutation caught, an out-of-scope "every write control" left alone and the unmutated spec clean.)
 (`-X utf8`: `--json` writes non-ASCII with `ensure_ascii=False`; a cp1252 console needs it)
 Exit 1 only on a gated FAIL.
 """
@@ -417,6 +426,79 @@ def string_gate(spec: str) -> dict[str, int]:
     return out
 
 
+CARVE = "except the C-2.6 carve-out"
+CARVE_NEEDS = (  # (section start, section end, the sentence F-01's fix puts there)
+    ("### 1.5", "## 2.", "the view-as leg first on every write control " + CARVE),
+    ("### 2.5", "## 3.", "**The view-as leg comes first** on every write control " + CARVE),
+    (
+        "### 2.5",
+        "## 3.",
+        (
+            "except the protective writes of the C-2.6 carve-out, which it passes to their "
+            "handlers (`22`:315–331; `E09-D09`:40 step 3a; F-01)"
+        ),
+    ),
+    ("### 2.5", "## 3.", "| every write control of the ticket " + CARVE + " (first leg) "),
+    (
+        "### 2.5",
+        "## 3.",
+        (
+            "'Set stop by hand', a cancel and a close are never refused on the view-as leg; "
+            "under view-as the write runs as the viewer and is audited so, and the permission "
+            "and account-scope legs still apply to it as to every control (`22`:323–325)"
+        ),
+    ),
+    ("### 1.5", "## 2.", "D02's set as merged; F-01 (E30-D05 #918) at the view-as leg, R-F01 |"),
+    ("## 33.", "## 34.", "**R-F01** (2026-10-30, E30-D06 PR 0, #919): F-01 (E30-D05 #918)"),
+)
+
+
+CARVE_SCAN = (("### 1.5", "## 2."), ("### 2.5", "## 3."))
+CARVE_RE = r"every write control (?!(?:of the ticket )?except the C-2\.6)"
+
+
+def carveout_gate(spec: str) -> list[str]:
+    """G-CARVEOUT (F-01, C-2.6): view-as never greys the carve-out; the fix's sentences stay."""
+    bad = [
+        f"G-CARVEOUT: {a} lost {s[:48]!r}"
+        for a, b, s in CARVE_NEEDS
+        if s not in section(spec, a, b)
+    ]
+    for a, b in CARVE_SCAN:  # F-01's reach only: no new authoring rule elsewhere in D04
+        for m in re.finditer(CARVE_RE, section(spec, a, b)):
+            bad.append(
+                f"G-CARVEOUT: {a} 'every write control' without the carve-out at {m.start()}"
+            )
+    return bad
+
+
+def self_test(spec: str) -> int:
+    """One mutation per G-CARVEOUT clause; each must be caught, the unmutated spec must pass."""
+    muts = [(s, "") for _, _, s in CARVE_NEEDS]  # each sentence dropped
+    muts.append(("on every write control " + CARVE + ",", "on every write control,"))
+    muts.append(  # the scan alone: a new unexcepted sentence in section 1.5
+        ("a decision table assigns every ticket control;", "every write control is T2 here;")
+    )
+    caught = 0
+    for old, new in muts:
+        got = carveout_gate(spec.replace(old, new, 1)) if old in spec else []
+        caught += bool(got)
+        print(("caught  " if got else "SURVIVED") + f" {old[:60]!r}")
+    clean = carveout_gate(spec)
+    # out of scope (section 34): the scan must not turn into a D04-wide authoring rule
+    outside = spec.replace("\n## 34.", "\nevery write control is T2.\n\n## 34.", 1)
+    scoped = "\n## 34." in spec and not carveout_gate(outside)
+    print(
+        ("left    " if scoped else "FLAGGED ")
+        + " an out-of-scope 'every write control' (section 34)"
+    )
+    print(
+        f"self-test: {caught}/{len(muts)} mutations caught; out-of-scope left: {scoped}; "
+        f"unmutated spec FAIL {len(clean)}"
+    )
+    return 0 if caught == len(muts) and scoped and not clean else 1
+
+
 def hygiene(texts: dict[str, str]) -> None:
     for name, txt in texts.items():
         if ("/" + "home/") in txt:
@@ -437,6 +519,12 @@ def hygiene(texts: dict[str, str]) -> None:
 
 def main() -> int:
     args = sys.argv[1:]
+    flags = {"--check", "--json", "--self-test", "--spec"}
+    spec_arg = {args[args.index("--spec") + 1]} if "--spec" in args[:-1] else set()
+    unknown = [a for a in args if a not in flags and a not in spec_arg]
+    if unknown or ("--spec" in args and not spec_arg):
+        print(f"usage: unknown or incomplete argument(s) {unknown or ['--spec']}", file=sys.stderr)
+        return 2
     spec_path = Path(args[args.index("--spec") + 1]) if "--spec" in args else E30 / "E30-D04.md"
     out: list[str] = []
     p = out.append
@@ -552,6 +640,9 @@ def main() -> int:
     worst = max(int(x.split("|")[1]) for x in FLASH)
     p(f"\nflash: {len(FLASH)} candidates, worst {worst} / s, no loop")
     spec = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
+    if "--self-test" in args:
+        return self_test(spec)
+    FAILS.extend(carveout_gate(spec))
     hand_path = E30 / "E30-D04-handoff.md"
     hand = hand_path.read_text(encoding="utf-8") if hand_path.exists() else ""
     if not spec:
@@ -562,6 +653,7 @@ def main() -> int:
     p(f"\n## 6. Gates\n\ntokens: {tok}; treatments (references): {treat}")
     p(f"structure: {json.dumps(st)}")
     p(f"strings (CMP-158, one per variant, verbatim from the source): {strings}")
+    p(f"G-CARVEOUT (F-01, R-F01): {len(CARVE_NEEDS)} sentences + the 'every write control' scan")
     p(
         "hygiene OK"
         if not any(f.startswith(("spec:", "handoff:", "tool:")) for f in FAILS)
