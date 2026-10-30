@@ -189,6 +189,16 @@ export function useHeldSnapshot(live: IndexSnapshot, query: string): IndexSnapsh
   );
 }
 
+/**
+ * When the snapshot `live` arrived (ms): the waits and ages it names count from here, so no sentence ticks while the
+ * user types. A surface passes it to `waitS` and to `searchView`.
+ */
+export function useArrival(live: IndexSnapshot): number {
+  const [arrival, setArrival] = useState(() => ({ snapshot: live, at: Date.now() }));
+  if (arrival.snapshot !== live) setArrival({ snapshot: live, at: Date.now() });
+  return arrival.at;
+}
+
 /** A workspace registers or replaces its opener; `null` withdraws it and closes SCR-102. */
 export function setSymbolOpener(opener: SymbolOpener | null): void {
   set(opener === null ? { opener, open: false } : { opener });

@@ -12,6 +12,7 @@ import { commitSentence } from "./copy";
 import type { IndexSnapshot, InstrumentIndex } from "./instrumentIndex";
 import { normaliseQuery, rankSymbols, type SearchResult, type Tier } from "./ranking";
 import { getSymbolSearchState, rememberSymbol, type SymbolTarget } from "./searchSession";
+import { REST_MS } from "./symbolCheck";
 
 export type SearchSurface = "scr-102" | "scr-041";
 /** §12.1's `empty_state_shown` reasons. */
@@ -21,9 +22,6 @@ export type EmptyReason =
 const report = (detail: Readonly<Record<string, unknown>>): void => {
   window.dispatchEvent(new CustomEvent(THEME_ANALYTICS_EVENT, { detail }));
 };
-
-/** §12.1's rest before `symbol.searched`: CMP-160's count's (A-D05-6). */
-const REST_MS = 300;
 
 /**
  * `symbol.searched`, after the 300 ms rest; `catalogue_state` is the index's phase or `stale` (PROPOSED values; owner:
@@ -65,15 +63,17 @@ export const reportOpened = (surface: SearchSurface, opened: Opened): void =>
 /**
  * §12.1 for one opening of a surface: `symbol.searched` once its query has rested 300 ms, once per query as normalised
  * (a trailing space is the same query), and `empty_state_shown` once per entry into a state (`shown`; StrictMode's
- * rehearsal says nothing twice).
+ * rehearsal says nothing twice). Both only while `open`: a surface may outlive its closing (CMP-017's exit fade, SCR-102's
+ * mounted host), and a query abandoned inside its rest is never reported (CR-DD2-02).
  */
 export function useSearchReports(
   surface: SearchSurface,
   index: InstrumentIndex,
   query: string,
+  open: boolean,
   shown: EmptyReason | null,
 ): void {
-  const searched = normaliseQuery(query);
+  const searched = open ? normaliseQuery(query) : "";
   useEffect(() => {
     if (searched === "") return undefined;
     const timer = setTimeout(() => {
@@ -83,12 +83,13 @@ export function useSearchReports(
     }, REST_MS);
     return () => clearTimeout(timer);
   }, [surface, index, searched]);
+  const entered = open ? shown : null;
   const reported = useRef<EmptyReason | null>(null);
   useEffect(() => {
-    if (shown !== null && reported.current !== shown)
-      report({ name: "empty_state_shown", surface, reason: shown });
-    reported.current = shown;
-  }, [surface, shown]);
+    if (entered !== null && reported.current !== entered)
+      report({ name: "empty_state_shown", surface, reason: entered });
+    reported.current = entered;
+  }, [surface, entered]);
 }
 
 /**

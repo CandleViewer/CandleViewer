@@ -35,7 +35,8 @@ export interface SessionCaches {
   readonly unchecked: readonly string[];
 }
 
-const waitS = (at: number | null, now: number): number =>
+/** The whole seconds to `at` (a 503's next try), at least 1, counted from `now`: a snapshot's arrival, so none ticks. */
+export const waitS = (at: number | null, now: number): number =>
   Math.max(1, Math.round(((at ?? now) - now) / 1000));
 /** The base / quote column ("ETH / USDT"). */
 export const hint = (i: Instrument): string =>

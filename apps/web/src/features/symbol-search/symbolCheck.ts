@@ -7,7 +7,11 @@
 import { SYSTEM_CLOCK, lookupSymbol, type Clock, type Lookup } from "./instrumentIndex";
 import { normaliseQuery, rankSymbols, type Instrument, type RankContext } from "./ranking";
 
-const REST_MS = 300;
+/**
+ * E08-D05 A-D05-6's rest, one for the surfaces: the check's, §12.1's `symbol.searched` and a no-match sentence's (the
+ * count's is CMP-160's own).
+ */
+export const REST_MS = 300;
 /** "Check again" is T2 (`search.check_cooldown`) this long after a check. */
 const COOLDOWN_MS = 60_000;
 /** `22`'s `Symbol` and the shipped 4–20 rule, with 3–16 characters before `USDT` (within both). */

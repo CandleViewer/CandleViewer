@@ -8,7 +8,6 @@
 import {
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -41,7 +40,14 @@ import { COLUMNS, COPY, SEARCH_TITLE, keyHints, refreshAnswered, targetWords } f
 import { requestRefresh, type InstrumentIndex, type RefreshAnswer } from "./instrumentIndex";
 import { stopKeys } from "./keys";
 import { RESULT_CAP } from "./ranking";
-import { LINE, searchDeck, useFocusHome, useSymbolCheck } from "./searchDeck";
+import {
+  LINE,
+  searchDeck,
+  useFocusHome,
+  useRested,
+  useSaidAgain,
+  useSymbolCheck,
+} from "./searchDeck";
 import {
   reportOpened,
   sayCommit,
@@ -53,6 +59,7 @@ import {
   closeSymbolSearch,
   forgetSymbol,
   openSymbolSearch,
+  useArrival,
   useHeldSnapshot,
   useSessionLookups,
   useSymbolSearch,
@@ -136,9 +143,7 @@ function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.
   const info = useSymbolSearch((s) => s.info);
   const lost = useDisconnected();
   const [query, setQuery] = useState("");
-  // The waits and ages a snapshot names count from its arrival, so no sentence ticks while typing.
-  const [arrival, setArrival] = useState(() => ({ snapshot: live, at: Date.now() }));
-  if (arrival.snapshot !== live) setArrival({ snapshot: live, at: Date.now() });
+  const arrival = useArrival(live); // the waits and ages a snapshot names count from here
   const snapshot = useHeldSnapshot(live, query);
   const rows = useMemo(() => {
     const density = document.documentElement.getAttribute("data-density");
@@ -149,10 +154,15 @@ function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.
   const words = targetWords(target);
   const remembered = target === null ? recent : [...recent, target.symbol];
   useSessionLookups(index, live, open ? remembered : []);
-  const view = searchView(query, snapshot, recent, arrival.at, { remembered, unchecked });
+  const view = searchView(query, snapshot, recent, arrival, { remembered, unchecked });
 
-  // A settled query that ranks nothing is checked, but not a remembered one the session found gone.
-  const { check, checked } = useSymbolCheck(index, view.unmatched?.kind === "gone" ? "" : query);
+  // A settled query that ranks nothing is checked, but not a remembered one the session found gone; closed, none is.
+  const { check, checked } = useSymbolCheck(
+    index,
+    view.unmatched?.kind === "gone" ? "" : query,
+    open,
+  );
+  const settled = useRested(query); // a no-match names the query, so it is said once the query rests (CR-DD-01)
   // §9.2: closing returns focus to the trigger, else the target panel, else the shell's `main`, never to the page.
   // Read when the dialog closes or unmounts, so a pane unbound or a workspace gone while it is open is seen.
   const fallback = useMemo<RefObject<HTMLElement | null>>(
@@ -187,7 +197,7 @@ function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.
   const deck =
     view.unmatched === null
       ? null
-      : searchDeck(query, view.unmatched, checked, {
+      : searchDeck(query, view.unmatched, checked, settled, {
           clear: () => setQuery(""),
           checkAgain: () => check?.checkAgain(),
           info: info === null ? undefined : viewInfo,
@@ -202,23 +212,9 @@ function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.
         ? COPY.firstRun[0]
         : (deck?.heading ?? null);
   // §9.2's one polite region (CMP-160's): the state's own sentence, or what the user's last act has it say again
-  // (`Enter`'s heading, a T2 press's reason, a refresh's answer), for as long as the query and the state hold. Once
-  // either moves on, that is forgotten: never said again unprompted (A11Y-C2-04).
+  // (`Enter`'s heading, a T2 press's reason, a refresh's answer: `useSaidAgain`).
   const base = deck?.said ?? view.message;
-  const moment = JSON.stringify([query, base ?? null, heading]);
-  const [said, setSaid] = useState<{
-    readonly moment: string;
-    readonly text: string;
-    readonly n: number;
-  } | null>(null);
-  const again = said?.moment === moment ? said : null;
-  if (said !== null && again === null) setSaid(null);
-  const now = useRef(moment); // the moment a sentence joins, for a late answer too
-  useLayoutEffect(() => {
-    now.current = moment;
-  });
-  const say = (text: string): void =>
-    setSaid((prev) => ({ moment: now.current, text, n: (prev?.n ?? 0) + 1 }));
+  const { again, say } = useSaidAgain(query, base, heading);
   const message = again?.text ?? base;
 
   // §6.2's Refresh from Bybit, the Owner's (`instruments:write` in the session's permissions, never a role name; the
@@ -257,18 +253,13 @@ function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.
     ...(owner ? {} : { disabledReason: ownerOnly }),
   };
 
-  // §12.1: what was searched, each state entered (while open), each option opened, and how the last act came in.
+  // §12.1: what was searched and each state entered (while open), each option opened, and how the last act came in.
   useSearchReports(
     "scr-102",
     index,
     query,
-    !open
-      ? null
-      : view.loading
-        ? "catalogue_loading"
-        : failed
-          ? "catalogue_load_failed"
-          : (deck?.reason ?? null),
+    open,
+    view.loading ? "catalogue_loading" : failed ? "catalogue_load_failed" : (deck?.reason ?? null),
   );
   const via = useRef<Opened["input"]>("key");
   const opened = (symbol: string, action: Opened["action"]): void =>
@@ -336,7 +327,7 @@ function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.
 
   // §6.2's footer notices: they take the key hints' row, which stays the input's description.
   const age = Math.floor(
-    ((live.cacheAgeS ?? 0) * 1000 + arrival.at - (live.loadedAt ?? arrival.at)) / HOUR_MS,
+    ((live.cacheAgeS ?? 0) * 1000 + arrival - (live.loadedAt ?? arrival)) / HOUR_MS,
   );
   const notices = [
     lost && live.loadedAt !== null ? (
