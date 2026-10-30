@@ -37,6 +37,9 @@ export function startWorker(scope: WorkerScope): void {
       else setTimeout(cb, 16);
     },
     now: () => performance.now(),
+    setTimer: (cb, ms) => {
+      setTimeout(cb, ms);
+    },
     probe: () => probeWorker(scope),
   });
   scope.onmessage = (ev) => runtime.handle(ev.data);

@@ -198,7 +198,7 @@ The profile rule (E11-S02, package README BQ-50); each `reduced` limit adds one 
 
 | Concern       | Decision                                                                                                                                                    |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Context loss  | `webglcontextlost` handled: stop the loop, mark all GPU resources invalid, rebuild from `DataModel` on restore; user sees a 1-frame flash, no data loss     |
+| Context loss  | `webglcontextlost` handled: stop the loop, invalidate GPU resources, rebuild from `DataModel`; 3 tries (1/2/4 s), then `degraded-2d` (README BQ-49)         |
 | Programs      | Compiled lazily, cached by key; all uniforms resolved once into typed setters                                                                               |
 | Buffers       | One VAO per series; ring buffers with sub-range uploads; orphaning avoided by explicit ring management                                                      |
 | Instancing    | Candles, footprint quads, bubbles and glyphs all use instanced draws (one quad, per-instance attributes)                                                    |
@@ -373,7 +373,7 @@ Worker → main:
 | `pick`     | `{ objectId, kind, bar, price, cell? }` (edge-triggered)                                      |
 | `viewport` | `{ timeStart, timeEnd, priceLow, priceHigh, barSpacing }` (on change, ≤ 1/frame)              |
 | `a11y`     | `{ cursorSummary }` — the text the live region should announce                                |
-| `error`    | `{ code, message, recoverable }`                                                              |
+| `error`    | `{ code, message, recoverable, details? }` (`details` on `ENGINE_CONTEXT_LOST` only, BQ-64)   |
 
 Shipped by E11-T02 (package README "Design deltas" BQ-10 to BQ-19): worker → main also sends `ack { id, store }` per `data` (the host keeps ≤ 2 unacknowledged per store) and `exported { id, reqId, blob }` (the `export` reply); main → worker `command { release }` deregisters a chart; `frame` carries `runMode` and `renderProfile`. Every message carries the chart `id` (`null` on a worker-wide `error`); `ready` carries `capabilities` (profile, reasons, caps; E11-S02 BQ-50, probe owned by S02 per BQ-57) beside `renderProfile`; `pick` has no `cell` before E11-S08 / E12. One dedicated worker serves every chart on the page.
 
@@ -553,7 +553,12 @@ export interface ChartEvents {
   viewportChanged: { timeStart: number; timeEnd: number; barSpacing: number };
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
-  error: { code: string; message: string; recoverable: boolean };
+  error: {
+    code: string;
+    message: string;
+    recoverable: boolean;
+    details?: { attempt: number; maxAttempts: number; nextTryMs: number }; // CONTEXT_LOST only, BQ-64
+  };
 }
 
 export interface FrameStats {
@@ -669,16 +674,16 @@ Replay uses exactly the same series and the same frame types — only the subscr
 
 ## 11. Error handling and degradation
 
-| Condition                                      | Engine behaviour                                                                                                                                                                       |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WebGL2 unavailable                             | `RenderProfile = degraded-2d`: Canvas 2D candles, axes, lines, crosshair, drawings; footprint limited to coloured cells without text; heatmap disabled with an explanatory placeholder |
-| Context lost                                   | Loop stops, resources invalidated, rebuilt from `DataModel` on restore; a `error{recoverable:true}` event lets the UI show a one-line toast                                            |
-| Shader compile failure                         | `ENGINE_SHADER_COMPILE_FAILED` with program, renderer and info log; the whole chart goes `degraded-2d` (README BQ-52)                                                                  |
-| Out-of-memory on texture allocation            | Heatmap drops the coarse ring first, then halves rows; `MemoryGovernor` logs and emits a stats event                                                                                   |
-| Data sequence gap                              | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                        |
-| Frame budget exceeded for 3 consecutive frames | Step down one LOD level; if already at the lowest, reduce DPI of the heatmap layer; log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                              |
-| Frame budget exceeded (first frame of a run)   | Log the per-stage timings once per over-budget run; code `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational; package README BQ-44)                                             |
-| Worker crash                                   | The controller detects the `error`/`close` event, respawns the worker, replays store state from the last snapshot                                                                      |
+| Condition                                      | Engine behaviour                                                                                                                                                                                                                                                     |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WebGL2 unavailable                             | `RenderProfile = degraded-2d`: Canvas 2D candles, axes, lines, crosshair, drawings; footprint limited to coloured cells without text; heatmap disabled with an explanatory placeholder                                                                               |
+| Context lost                                   | Loop parked, GPU state invalidated, rebuilt from `DataModel`; `ENGINE_CONTEXT_LOST` + `details` per try (1/2/4 s), `ENGINE_CONTEXT_RESTORED` (informational) on the first frame after a rebuild, else `ENGINE_CONTEXT_RESTORE_FAILED`, `degraded-2d` (BQ-49, 53, 64) |
+| Shader compile failure                         | `ENGINE_SHADER_COMPILE_FAILED` with program, renderer and info log; the whole chart goes `degraded-2d` on a new canvas, not a simpler program (README BQ-54)                                                                                                         |
+| Out-of-memory on texture allocation            | Heatmap drops the coarse ring first, then halves rows; `MemoryGovernor` logs and emits a stats event                                                                                                                                                                 |
+| Data sequence gap                              | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                                                                                                      |
+| Frame budget exceeded for 3 consecutive frames | Step down one LOD level; if already at the lowest, reduce DPI of the heatmap layer; log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                                                                                                            |
+| Frame budget exceeded (first frame of a run)   | Log the per-stage timings once per over-budget run; code `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational; package README BQ-44)                                                                                                                           |
+| Worker crash                                   | The controller detects the `error`/`close` event, respawns the worker, replays store state from the last snapshot                                                                                                                                                    |
 
 ---
 

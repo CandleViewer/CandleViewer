@@ -31,7 +31,8 @@ export class DrawSubmitBench {
   private readonly ctx = new FrameContext();
   private readonly sink = new PooledBatchSink(32);
 
-  constructor(gl: GL2Like, panes = 3) {
+  /** `bars`: the candles ring's slots (context-restore rebuilds 100 000). */
+  constructor(gl: GL2Like, panes = 3, bars = 1024) {
     this.backend = new GLBackend(gl, "fake renderer");
     this.builder = new BatchBuilder(this.graph, this.backend);
     this.backend.textures.define(1, 256, 256, null);
@@ -40,7 +41,7 @@ export class DrawSubmitBench {
       for (const [name, layer, program, texture, count] of PANE) {
         const node = Object.assign(new NullSeries(`p${p}/${name}`), { program, texture, count });
         this.graph.addNode(`p${p}`, layer, node);
-        const data = new Float32Array(1024 * STRIDE);
+        const data = new Float32Array((name === "candles" ? bars : 1024) * STRIDE);
         this.backend.buffers.attach(node.id, { data, head: 0, stride: STRIDE });
         this.nodes.push(node);
       }

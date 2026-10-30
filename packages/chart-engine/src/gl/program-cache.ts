@@ -19,6 +19,13 @@ export interface ProgramSource {
   readonly uniforms: readonly string[];
 }
 
+/** A null object or a false status on a lost context: the loss path, never a compile failure. */
+export class ContextLostError extends Error {
+  constructor() {
+    super("chart-engine: the WebGL2 context is lost");
+  }
+}
+
 /** A batch's `program` number indexes this table: the state-sort key of 26 §3.1. */
 export const PROGRAMS: readonly ProgramSource[] = [LINE, QUAD, SDF_TEXT, BAR_CELL];
 export const PROGRAM = { line: 0, quad: 1, sdfText: 2, barCell: 3 } as const;
@@ -56,6 +63,18 @@ export class ProgramCache {
     return (this.linked[id] ??= this.compile(id));
   }
 
+  /** Forgets every linked program (its handle freed) and returns their ids, to relink on restore. */
+  forget(): number[] {
+    const ids: number[] = [];
+    this.linked.forEach((p, id) => {
+      if (p === undefined) return;
+      this.registry.release(p.handle);
+      ids.push(id);
+    });
+    this.linked.length = 0;
+    return ids;
+  }
+
   /** Makes `id` the current program. */
   bind(id: number): void {
     this.gl.useProgram(this.registry.get(this.use(id).handle));
@@ -67,26 +86,29 @@ export class ProgramCache {
     const start = this.now();
     const handle = this.registry.create("program");
     const shaders: GLObject[] = [];
+    // m2: a lost context answers null and false everywhere; that is the loss path (BQ-49).
+    const fail = (log: string): Error =>
+      this.gl.isContextLost() ? new ContextLostError() : new ProgramCompileError(src.name, log);
     try {
       const program = this.registry.get(handle);
-      if (program === null) throw new ProgramCompileError(src.name, "no program object");
+      if (program === null) throw fail("no program object");
       for (const [type, text] of [
         [GL.VERTEX_SHADER, src.vertex],
         [GL.FRAGMENT_SHADER, src.fragment],
       ] as const) {
         const shader = this.gl.createShader(type);
-        if (shader === null) throw new ProgramCompileError(src.name, "no shader object");
+        if (shader === null) throw fail("no shader object");
         shaders.push(shader);
         this.gl.shaderSource(shader, text);
         this.gl.compileShader(shader);
         if (this.gl.getShaderParameter(shader, GL.COMPILE_STATUS) !== true) {
-          throw new ProgramCompileError(src.name, this.gl.getShaderInfoLog(shader) ?? "");
+          throw fail(this.gl.getShaderInfoLog(shader) ?? "");
         }
         this.gl.attachShader(program, shader);
       }
       this.gl.linkProgram(program);
       if (this.gl.getProgramParameter(program, GL.LINK_STATUS) !== true) {
-        throw new ProgramCompileError(src.name, this.gl.getProgramInfoLog(program) ?? "");
+        throw fail(this.gl.getProgramInfoLog(program) ?? "");
       }
       const uniforms: Record<string, unknown> = {};
       for (const name of src.uniforms) uniforms[name] = this.gl.getUniformLocation(program, name);

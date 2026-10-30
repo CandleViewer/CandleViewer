@@ -36,6 +36,8 @@ export class FakeGl implements GL2Like {
   lost = false;
   /** 1-based call number that throws (a driver fault), or 0 for none. */
   failAt = 0;
+  /** 1-based call number at which the context is lost (before the call runs), or 0 for none. */
+  loseAt = 0;
   private calls = 0;
   private seq = 0;
 
@@ -53,6 +55,7 @@ export class FakeGl implements GL2Like {
   private call(name: string): boolean {
     this.calls += 1;
     this.log.push(name);
+    if (this.calls === this.loseAt) this.loseContext();
     if (this.calls === this.failAt) throw new Error(`fake GL fault at call ${this.calls}: ${name}`);
     return !this.lost;
   }

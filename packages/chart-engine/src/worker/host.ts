@@ -10,6 +10,9 @@ import {
   INPUT,
   INPUT_MAX_ROWS,
   INPUT_STRIDE,
+  ENGINE_CONTEXT_RESTORE_FAILED,
+  ENGINE_SHADER_COMPILE_FAILED,
+  RESTART_BACKOFF_MS,
   type BufferLayout,
   type CapabilityReport,
   type ChartId,
@@ -43,8 +46,7 @@ export interface HostEnv {
   correlationId(): string;
 }
 
-/** Backoff before each restart of a lost worker (E11-T02: at most three, 1 / 2 / 4 s). */
-export const RESTART_BACKOFF_MS = [1000, 2000, 4000] as const;
+export { RESTART_BACKOFF_MS };
 /** Unacknowledged `data` batches allowed in flight per store before conflation starts. */
 export const MAX_UNACKED = 2;
 /** Batches held back per store; beyond it the oldest is dropped (`messages_dropped`). */
@@ -101,6 +103,7 @@ function inlineLink(env: HostEnv, unlink: () => void): Link {
     },
     requestFrame: (cb) => env.requestFrame(cb),
     now: () => env.now(),
+    setTimer: (cb, ms) => env.setTimer(cb, ms),
     probe: () => env.probe(),
   });
   return {
@@ -304,6 +307,11 @@ export interface ChartHost {
 }
 
 const KINDS: readonly InputKind[] = ["pointer", "wheel", "key", "touch"];
+/** Codes after which a canvas that held WebGL2 must be swapped to draw in 2D (BQ-53, BQ-54). */
+const HANDOFF: ReadonlySet<string> = new Set([
+  ENGINE_SHADER_COMPILE_FAILED,
+  ENGINE_CONTEXT_RESTORE_FAILED,
+]);
 
 /** The link for `mode`, or the inline one when a worker cannot even be created (CSP, quota). */
 function linkOrInline(realm: object, mode: RunMode, env: HostEnv): Link {
@@ -356,18 +364,21 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   const resyncAsked = new Set<StoreId>();
   const exports = new Map<number, (blob: unknown) => void>();
   let exportSeq = 0;
+  /** Set once by the degraded-2d handoff and kept across worker restarts (BQ-53). */
+  let forced = false;
 
   const init = (): void => {
     const canvas = o.canvas();
     const dpr = size?.dpr ?? o.dpr;
     const config = { bench: o.bench, syncGroup: o.syncGroup };
+    const profile = forced ? { profile: "degraded-2d" as const } : {};
     if (link.runMode === "worker") {
       const off = canvas.transferControlToOffscreen();
-      link.post({ t: "init", id, canvas: off, dpr, theme, config }, [
+      link.post({ t: "init", id, canvas: off, dpr, theme, config, ...profile }, [
         off as unknown as Transferable,
       ]);
     } else {
-      link.post({ t: "init", id, canvas, dpr, theme, config }, []);
+      link.post({ t: "init", id, canvas, dpr, theme, config, ...profile }, []);
     }
     if (size !== null) {
       styleCanvas(canvas, size);
@@ -403,6 +414,13 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
         return;
       }
       o.listener.deliver(msg);
+      if (msg.t === "error" && !forced && HANDOFF.has(msg.code)) {
+        // A canvas that held WebGL2 never yields 2D: a fresh one, re-inited 2D (BQ-53, BQ-58).
+        forced = true;
+        o.replaceCanvas();
+        init();
+        return;
+      }
       if (msg.t === "ready" && restoring) {
         restoring = false;
         o.listener.restored();

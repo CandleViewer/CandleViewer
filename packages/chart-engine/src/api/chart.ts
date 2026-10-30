@@ -138,7 +138,12 @@ export function createChart(opts: ChartOptions): Chart {
         });
         return;
       case "error":
-        emit("error", { code: msg.code, message: msg.message, recoverable: msg.recoverable });
+        emit("error", {
+          code: msg.code,
+          message: msg.message,
+          recoverable: msg.recoverable,
+          ...(msg.details && { details: { ...msg.details } }),
+        });
         return;
       default:
       // pick and a11y are the hit-test and live-region layers' (E11-S08 / E11-S13).

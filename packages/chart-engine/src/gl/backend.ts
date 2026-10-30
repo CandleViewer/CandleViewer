@@ -1,11 +1,13 @@
 // The WebGL2 backend (E11-S02, 26 §3.4): `GLBackend` behind `RenderBackend`, owning the registry,
 // the program cache, buffers, textures and submission. The runtime passes it to the batch builder
 // as the `UploadSink` and submits each frame. A program that fails to compile stops GL drawing and
-// leaves a `failure` asking for `degraded-2d` (BQ-52); the canvas swap is the host's, in PR3.
+// leaves a `failure` asking for `degraded-2d` (BQ-52); the host swaps the canvas (BQ-53). A loss
+// drops every GL object and `restore()` rebuilds them from CPU state (BQ-49).
 import type { RetainedBatch, UploadSink } from "../scene/batch-builder.js";
 import { GlBuffers } from "./buffers.js";
 import { GL, type GL2Like } from "./gl-types.js";
 import {
+  ContextLostError,
   ENGINE_SHADER_COMPILE_FAILED,
   INFO_LOG_MAX,
   ProgramCache,
@@ -70,6 +72,7 @@ export class GLBackend implements RenderBackend {
       submitDrawList(this.gl, list, count, this);
       return null;
     } catch (e) {
+      if (e instanceof ContextLostError) return null; // `webglcontextlost` follows (BQ-49)
       if (!(e instanceof ProgramCompileError)) throw e;
       this.trace.begin(); // a partial frame is not counted; later frames skip submission
       const on = this.renderer ?? "renderer masked";
@@ -92,7 +95,34 @@ export class GLBackend implements RenderBackend {
     for (let i = 0; i < 3; i += 1) this.rgb[i] = ((n >> (16 - 8 * i)) & 255) / 255;
   }
 
-  /** Deletes every GL object this backend made; losing the context itself is PR3's. */
+  /** On `webglcontextlost`: every GL object is gone; the CPU mirrors stay. */
+  invalidate(): void {
+    this.registry.invalidateAll();
+    this.buffers.invalidate();
+  }
+
+  /**
+   * On `webglcontextrestored`: programs, then textures (LUTs, atlas), then every node's buffer,
+   * from CPU state. False when the context was lost again. A program that now fails to compile
+   * stays unlinked, so the next frame reports it the usual way (BQ-52).
+   */
+  restore(): boolean {
+    const ids = this.programs.forget();
+    if (this.registry.recreateAll() > 0) return false;
+    for (const id of ids) {
+      try {
+        this.programs.use(id);
+      } catch (e) {
+        if (e instanceof ContextLostError) return false;
+        if (!(e instanceof ProgramCompileError)) throw e;
+      }
+    }
+    this.textures.restore();
+    this.buffers.restore();
+    return !this.gl.isContextLost();
+  }
+
+  /** Deletes every GL object this backend made (chart release; a lost context deletes none). */
   dispose(): void {
     this.registry.releaseAll();
   }

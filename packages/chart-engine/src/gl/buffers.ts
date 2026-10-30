@@ -55,23 +55,40 @@ export class GlBuffers implements UploadSink {
     return n;
   }
 
+  /** On a context loss: the GPU copies are gone, so each node's next upload is a full one. */
+  invalidate(): void {
+    for (const slot of this.slots.values()) slot.uploaded = null;
+    this.bytes = 0;
+  }
+
+  /** After a restore: every node's ring again, in full, from its store (the CPU truth). */
+  restore(): void {
+    for (const slot of this.slots.values()) this.full(slot);
+  }
+
   uploadSubRange(batch: RetainedBatch, from: number, to: number): void {
     const slot = this.slots.get(batch.nodeId);
     if (slot === undefined) return;
     const { data, head, stride } = slot.source;
-    this.gl.bindBuffer(GL.ARRAY_BUFFER, this.registry.get(slot.buffer));
     if (slot.uploaded !== data) {
-      this.gl.bufferData(GL.ARRAY_BUFFER, data, GL.DYNAMIC_DRAW);
-      this.bytes += data.byteLength - (slot.uploaded?.byteLength ?? 0);
-      this.uploaded += data.byteLength;
-      slot.uploaded = data;
+      this.full(slot);
       return;
     }
+    this.gl.bindBuffer(GL.ARRAY_BUFFER, this.registry.get(slot.buffer));
     const capacity = data.length / stride;
     const at = (head + from) % capacity;
     const first = Math.min(to - from, capacity - at);
     this.put(at, first, stride, data);
     if (first < to - from) this.put(0, to - from - first, stride, data);
+  }
+
+  private full(slot: Slot): void {
+    const { data } = slot.source;
+    this.gl.bindBuffer(GL.ARRAY_BUFFER, this.registry.get(slot.buffer));
+    this.gl.bufferData(GL.ARRAY_BUFFER, data, GL.DYNAMIC_DRAW);
+    this.bytes += data.byteLength - (slot.uploaded?.byteLength ?? 0);
+    this.uploaded += data.byteLength;
+    slot.uploaded = data;
   }
 
   private put(at: number, n: number, stride: number, data: Float32Array): void {
