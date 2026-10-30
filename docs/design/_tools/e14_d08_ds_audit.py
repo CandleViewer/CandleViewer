@@ -25,7 +25,8 @@ Gates (at least one mutation each in `--self-test`; the pins gate besides):
                   §4.3 union (`--pairs`): this pack's rows and the parents' (D03 §9.1's gated
                   rows, D04 CR-2, D05 CR-4's rows of §10.1, D06 §13's PROPOSED rows, D07 §10.4),
                   read at their lines and de-duplicated by {fg, bg}, every gated row passing its
-                  bar in three themes; the reported rows travel as `exemptions.json` candidates.
+                  bar in three themes, the rows read per source asserted (15 / 24 / 20 / 11 / 15 / 10);
+                  the reported rows travel as `exemptions.json` candidates.
   (d) G-CVD       the V-rows via `docs/design/_tools/cvd_sim.py`'s swatch math (Rec. 601 grey,
                   the Machado matrices in sRGB), the matrices asserted equal to the script's.
   (e) G-HANDLE    the handle arithmetic of §6 and the forbidden-treatments sentence.
@@ -39,7 +40,7 @@ Gates (at least one mutation each in `--self-test`; the pins gate besides):
                   table equals the derivation from §2 and §C.
   (h) G-HYGIENE   placeholders filled and re-derived, no `{{` left anywhere (code spans included),
                   every §C Old cell equal to its line at the base (a code line after stripping),
-                  every cite in range, non-blank and content-pinned at the base (the pins file
+                  every cite (bare or backtick-wrapped key) in range, non-blank and content-pinned at the base (the pins file
                   hashes every cited line; a rebase that moves or edits one fails `--check` until
                   the cite is verified by content and `--repin-ruled` re-pins it), `git diff` against the merge-base
                   empty outside the pack (PR 1) or equal to `15` + the `14` line with §C applied
@@ -190,7 +191,7 @@ TOKEN_NAME = re.compile(
     r"\.[a-z0-9.\-]+$"
 )
 CITE = re.compile(
-    r"(?:`([0-9]{2})`|\b(D0[2-7]H?|E1[13]D0[35]|E37D03|E12D09|PAIRS|RGBA|CVD))"
+    r"(?:`([0-9]{2})`|\b(D0[2-7]H?|E1[13]D0[35]|E37D03|E12D09|PAIRS|RGBA|CVD)`?)"
     r":(\d+)(?:[–-](\d+))?"
 )
 CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
@@ -781,6 +782,18 @@ def expand_rows(text: str) -> set[int]:
     return out
 
 
+# the rows each source contributes at the base (a parse miss must not shrink the union silently)
+PARENT_ROWS = {"E14-D08": 15, "D03": 24, "D04": 20, "D05": 11, "D06": 15, "D07": 10}
+
+
+def parent_counts(rows: list[PairSrc]) -> dict[str, int]:
+    out = dict.fromkeys(PARENT_ROWS, 0)
+    for r in rows:
+        k = r[3].split(" ")[0].split(":")[0]
+        out[k] = out.get(k, 0) + 1
+    return out
+
+
 def parent_pairs(env: Env, spec: str) -> list[PairSrc]:
     """Every proposed `pairs.mjs` row of this pack and the five parents, at their lines."""
     rows = literal_pairs(sec(spec, "### 4.3"), "E14-D08 §4.3")
@@ -839,6 +852,11 @@ def pairs_union(env: Env, spec: str) -> list[UnionRow]:
 def union_problems(env: Env, spec: str) -> list[str]:
     bad: list[str] = []
     rows = pairs_union(env, spec)
+    for k, n in parent_counts(parent_pairs(env, spec)).items():
+        if n != PARENT_ROWS.get(k):
+            bad.append(
+                f"the union reads {n} rows from {k}; the parent carries {PARENT_ROWS.get(k)}"
+            )
     if not literal_pairs(sec(spec, "### 4.3"), ""):
         bad.append("§4.3 carries no `{ fg, bg, THRESHOLD }` row of this pack's own")
     for r in rows:
@@ -896,6 +914,12 @@ def pairs_export(env: Env, spec: str) -> str:
         if pending:
             tail += f"; after the token PR lands {', '.join(f'`{n}`' for n in pending)}"
         out.append(f'  {{ fg: "{r.fg}", bg: "{r.bg}", threshold: THRESHOLD.{r.bar} }},{tail}')
+    cnt = parent_counts(parent_pairs(env, spec))
+    out.append(
+        "// rows read per source: "
+        + ", ".join(f"{k} {n}" for k, n in cnt.items())
+        + f" = {sum(cnt.values())} ({sum(cnt.values()) - len(rows)} duplicates)"
+    )
     out.append("// already registered at the base:")
     for r in gated:
         if r.registered:
@@ -1422,15 +1446,18 @@ def g_handle(t: Texts) -> list[Finding]:
     return one("G-HANDLE", bad)
 
 
-def base_stories(t: Texts, line: int) -> list[str]:
-    return stories_of(lines_of(t.env.at_base(CAT_REL))[line - 1])
+def base_stories(t: Texts, aid: str) -> list[str]:
+    """The stories of `15`'s Storybook line at the base, taken from the A-row's Old cell (which
+    G-HYGIENE holds equal to that line), so a line that moves cannot break this gate."""
+    row = a_row(t.spec, aid)
+    return stories_of(unescape(row[4])) if row else []
 
 
 def g_stories(t: Texts) -> list[Finding]:
     bad = anchor_problems(t, "G-STORIES")
     a10, a17 = new_of(t.spec, "A-10"), new_of(t.spec, "A-17")
     s191 = stories_of(a10)
-    want = set(base_stories(t, 2427))
+    want = set(base_stories(t, "A-10"))
     d05 = lines_of(t.env.at_base(PATHS["D05"]))[431]
     want |= {x.strip("`") for x in re.findall(r"`(\w+)`", d05)}
     want |= {"PositionTool"} | set(ADDED_191) | set(TOOL_STORIES_191)
@@ -1455,7 +1482,7 @@ def g_stories(t: Texts) -> list[Finding]:
         bad.append(
             f"A-17's list is not D03 §11's eighteen in order ({len(ruled)} ruled, {len(s223)} listed)"
         )
-    if not set(base_stories(t, 2770)) <= set(s223):
+    if not set(base_stories(t, "A-17")) <= set(s223):
         bad.append("A-17 drops one of `15`'s four stories")
     if BAND_223 not in a17:
         bad.append(f"A-17 does not name the band {BAND_223}")
@@ -1585,9 +1612,8 @@ def g_hygiene(t: Texts) -> list[Finding]:
     if t.changed is None:
         bad.append("cannot list the changed paths (`git diff` / `git status` failed)")
     else:
-        own = [p for p in t.changed if p in OWN_PATHS]
         other = [p for p in t.changed if p not in OWN_PATHS]
-        if own or not other:
+        if not {CAT_REL, SCR_REL} & set(t.changed):
             for p in other:
                 bad.append(f"PR 1 changes {p}, outside the pack's four files")
         else:
@@ -1605,7 +1631,7 @@ def g_hygiene(t: Texts) -> list[Finding]:
                 bad.append("PR 2: `14` is not the base with A-37 applied exactly")
             for p in other:
                 if p not in (CAT_REL, SCR_REL):
-                    bad.append(f"PR 2 changes {p}, outside `15` and `14`")
+                    bad.append(f"PR 2 changes {p}, outside `15`, `14` and the pack's four files")
     # the mutation list
     para = mutation_paragraph(t.spec)
     gates_named = re.findall(r"\*\*(G-[A-Z-]+)\*\*", para)
@@ -1761,6 +1787,17 @@ def anchor_edit(key: str, new_value: str) -> Callable[[Texts], Texts]:
     return f
 
 
+def with_memo(t: Texts, key: str, old: str, new: str) -> Texts:
+    """`t` with a parent's text at the base altered, in a copy of the env (never the shared one)."""
+    rel = PATHS[key]
+    text = t.env.at_base(rel)
+    if old not in text:
+        raise SystemExit(f"self-test: {rel} lacks {old[:40]!r}")
+    memo = dict(t.env.memo)
+    memo[f"show:{t.env.base}:{rel}"] = text.replace(old, new, 1)
+    return replace(t, env=Env(t.env.base, memo))
+
+
 M = Mutation
 # grouped by gate, in the tool's order; §16 lists them under the same numbers
 MUTATIONS: tuple[Mutation, ...] = (
@@ -1775,6 +1812,8 @@ MUTATIONS: tuple[Mutation, ...] = (
             "| stroke | engine | the drawing's colour: `color.text.primary` or TP-1 … TP-8")),
     M("G-CONTRAST", "type a ratio by hand in §8", anchor_edit("CONTRAST:p9.dark", "8.51")),
     M("G-CONTRAST", "type the §4.3 union's count by hand", anchor_edit("COUNT:pairs.union", "999")),
+    M("G-CONTRAST", "break one row index of D05 §10.1 so the union reads 10 of CR-4's 11",
+      lambda t: with_memo(t, "D05", "\n| 8   | anchor marker ring", "\n| 8x  | anchor marker ring")),
     M("G-CVD", "alter a simulated value in §8's V-table", anchor_edit("CVD:v1.grey.dark", "9.99")),
     M("G-HANDLE", "alter the 8 px glyph's row coverage in §6", anchor_edit("HANDLE:g8.c12", "0.68")),
     M("G-STORIES", "drop D05's MeasurePinned from A-10", subst("MeasurePinned, MeasureAcrossGap, DensityComposite, HighContrast, ForcedColors, ReducedMotion, Greyscale, PositionTool", "MeasureAcrossGap, DensityComposite, HighContrast, ForcedColors, ReducedMotion, Greyscale, PositionTool")),
@@ -1789,6 +1828,8 @@ MUTATIONS: tuple[Mutation, ...] = (
       subst("base drawing-tools primitive kit (per digest 10", "base drawing-tool primitive kit (per digest 10")),
     M("G-HYGIENE", "re-point a `22` cite one line off its pinned content (a rebase's drift)",
       subst("`22`:21697–21742 (`DrawingTool`)", "`22`:21698–21742 (`DrawingTool`)")),
+    M("G-HYGIENE", "re-point a backtick-wrapped `PAIRS` cite one line off its pinned content",
+      subst("`PAIRS`:70–74", "`PAIRS`:70–75")),
     M("G-RULED-PIN", "re-word one pinned sentence of §5",
       subst("Until the field exists, D04's client rule stands as the fallback", "Until the field exists, D04's client rule is the fallback")),
 )  # fmt: skip
@@ -1806,7 +1847,7 @@ def ascii_line(s: str) -> str:
 
 
 def selftest() -> tuple[bool, list[str]]:
-    base = load()
+    base = replace(load(), changed=[SPEC_REL])  # the PR-1 view; N-1 below plants the PR-2 one
     disk = [hashlib.sha256(read_raw(r).encode()).hexdigest() for r in OWN_PATHS]
     before = digest(base)
     base_found = [f for f in audit(base) if f.level == "FAIL"]
