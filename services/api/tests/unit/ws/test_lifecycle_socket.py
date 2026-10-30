@@ -149,8 +149,8 @@ def _send(ws: Any, frame: dict[str, Any]) -> None:
 def _recv(ws: Any) -> dict[str, Any]:
     """The next frame but the `system` snap after `auth_ok` (§12.1, #4992), which these tests are
     not about (`test_system_snap.py` pins it)."""
-    while is_system_snap(frame := _recv_any(ws)):
-        pass
+    if is_system_snap(frame := _recv_any(ws)):  # at most one: a second snap is a defect
+        frame = _recv_any(ws)
     return frame
 
 

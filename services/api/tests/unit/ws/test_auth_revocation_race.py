@@ -103,8 +103,8 @@ class _Rig:
         """Send one `auth` and return the next frame, past the `system` snap a first `auth_ok`
         queued (§12.1, #4992), which these tests are not about."""
         sock.feed({"t": "auth", "id": fid, "p": {"access_token": token}})
-        while is_system_snap(frame := await sock.sent.get()):
-            pass
+        if is_system_snap(frame := await sock.sent.get()):  # at most one snap
+            frame = await sock.sent.get()
         return frame
 
     def revoke_on(self, session_id: str, reason: str = "session_revoked") -> tuple[Hook, list[int]]:

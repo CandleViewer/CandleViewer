@@ -525,7 +525,9 @@ series are bound at zero at import and carry no identifier.
 A `system` frame left out for its kind or its socket (`cv_ws_system_frames_withheld_total`) is a producer or
 session fault, not a user action, so it writes no audit row: one per socket and frame would grow with both.
 `unknown_kind` or `invalid_body` above zero is a producer bug; a deny-all socket (the fake backend, or after a
-failed principal load) counts every other frame under `no_role` (`23-ws-protocol.md` §15.9).
+failed principal load) counts every other frame under `no_role` (`23-ws-protocol.md` §15.9). A frame dropped
+from the bounded hold (256) that precedes a socket's `system` snap counts as `held_overflow` (#4992), and any
+is alerted on.
 
 A close that fails when a session is revoked or a user is disabled (SR-029: the revocation hub's per-session closes
 and `ConnectionRegistry.user_disabled`'s per-user close; #3497, #3635) writes no audit row of its own. The counter and

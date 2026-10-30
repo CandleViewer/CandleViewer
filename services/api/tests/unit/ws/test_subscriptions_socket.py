@@ -42,8 +42,9 @@ def _recv(ws: Any) -> dict[str, Any]:
     """The next frame but the `system` snap after `auth_ok` (§12.1, #4992), not these tests' own."""
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        while is_system_snap(frame := pool.submit(ws.receive_json).result(timeout=_TIMEOUT_S)):
-            pass
+        frame = pool.submit(ws.receive_json).result(timeout=_TIMEOUT_S)
+        if is_system_snap(frame):  # at most one snap
+            frame = pool.submit(ws.receive_json).result(timeout=_TIMEOUT_S)
     except FutureTimeout:
         pytest.fail(f"no WS frame within {_TIMEOUT_S}s")
     finally:

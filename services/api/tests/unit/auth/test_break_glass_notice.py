@@ -177,7 +177,8 @@ def _queued(ws: Any) -> list[dict[str, Any]]:
     frames = []
     while (frame := ws.receive_json())["t"] != "pong":
         kind = frame.get("p", {}).get("kind")
-        if frame["t"] not in {"ping", "snap"} and kind != "feature_flags":
+        system_snap = frame["t"] == "snap" and frame.get("ch") == "system"
+        if frame["t"] != "ping" and not system_snap and kind != "feature_flags":
             frames.append(frame)
     return frames
 
