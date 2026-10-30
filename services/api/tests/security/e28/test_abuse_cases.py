@@ -243,9 +243,11 @@ def test_ac08_a_crafted_suffix_pattern_never_admits_what_is_not_a_listed_usdt_pe
     )
     assert not scope.admits(crafted)
     listed = {"quote_coin": "USDT", "settle_coin": "USDT", "status": "trading"}
+    assert scope.admits(instrument(symbol=prefix + suffix, **listed))  # the control: it matches
     assert not scope.admits(instrument(symbol=suffix, **listed))  # never the whole symbol
     inside = f"{suffix}{prefix}"  # the suffix inside a symbol that does not end with it
-    assert inside.endswith(suffix) or not scope.admits(instrument(symbol=inside, **listed))
+    if not inside.endswith(suffix):
+        assert not scope.admits(instrument(symbol=inside, **listed))
 
 
 @pytest.mark.parametrize("pattern", ["*", "*USD", "*BTC-26DEC", "BTC*"])

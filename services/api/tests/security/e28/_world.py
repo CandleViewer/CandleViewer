@@ -128,34 +128,43 @@ class E28World:
         self.definitions.deleted.clear()
 
 
-def state(value: Any, *, skip: frozenset[str] = frozenset(), depth: int = 0) -> Any:
+def state(
+    value: Any,
+    *,
+    skip: frozenset[str] = frozenset(),
+    depth: int = 0,
+    path: frozenset[int] = frozenset(),
+) -> Any:
     """A comparable copy of `value`, walked whole: a write anywhere in it changes the copy. A
     value object (a dataclass, a model, a scalar) is kept by its `repr`; a callable, a framework
-    object or a field named in `skip` is left out."""
-    if depth > 8:
-        return "<deep>"
+    object or a field named in `skip` is left out. A container met again on its own path (the
+    preview's `runtime` refers to itself) is a cycle, marked once and not walked again, so no
+    depth cap hides what lies under it."""
+    if depth > 64:  # never hit once cycles are cut: a store this deep would hide a write
+        raise AssertionError("state() walked past depth 64; name the store")
     if value is None or isinstance(value, str | int | float | uuid.UUID | Decimal | datetime):
         return value
     if isinstance(value, Enum | bytes) or dataclasses.is_dataclass(value):
         return repr(value)
     if hasattr(value, "model_dump"):  # a pydantic model
         return repr(value)
+    if id(value) in path:
+        return "<cycle>"
+    inner = path | {id(value)}
+
+    def walk(v: Any) -> Any:
+        return state(v, skip=skip, depth=depth + 1, path=inner)
+
     if isinstance(value, Mapping):
-        return sorted(
-            (repr(k), state(v, skip=skip, depth=depth + 1))
-            for k, v in value.items()
-            if k not in skip
-        )
+        return sorted((repr(k), walk(v)) for k, v in value.items() if k not in skip)
     if isinstance(value, list | tuple):
-        return [state(v, skip=skip, depth=depth + 1) for v in value]
+        return [walk(v) for v in value]
     if isinstance(value, set | frozenset):
-        return sorted(repr(state(v, skip=skip, depth=depth + 1)) for v in value)
+        return sorted(repr(walk(v)) for v in value)
     if callable(value) or type(value).__module__.split(".")[0] in _OPAQUE:
         return None
     fields = getattr(value, "__dict__", {})
-    return sorted(
-        (k, state(v, skip=skip, depth=depth + 1)) for k, v in fields.items() if k not in skip
-    )
+    return sorted((k, walk(v)) for k, v in fields.items() if k not in skip)
 
 
 def request_id(cell: str) -> str:

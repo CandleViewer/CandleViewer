@@ -103,7 +103,9 @@ def _ungranted(actor: str) -> set[str]:
 def test_every_e28_cell_is_answered_as_the_matrix_and_the_scope_rule_say(
     world: E28World, cell: cells.Cell
 ) -> None:
-    skip = READ_LOGS if cell.expect.startswith("404") else frozenset[str]()
+    # a refused read logs what it read, in the caller's scope; a refused write skips nothing
+    reads = cell.expect.startswith("404") and cell.key.startswith("GET ")
+    skip = READ_LOGS if reads else frozenset[str]()
     before, logged = state(world.stores(), skip=skip), len(world.records)
     resp = _send(world, cell)
     after, written = state(world.stores(), skip=skip), world.by_request.get(request_id(cell.id), [])

@@ -40,7 +40,7 @@ from tests.contract.rbac import rbac_harness as rbac
 from tests.contract.test_account_profile_writes_provider import _ALT, _RISK
 from tests.integration import _refused
 from tests.security.e28 import _cells as cells
-from tests.security.e28._guard import live_target_refusal
+from tests.security.e28.conftest import live_target_refusal
 from tests.unit.api.test_trade_group_definition_create import payload
 from tests.unit.api.test_trade_group_preview_route import body
 

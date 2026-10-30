@@ -87,6 +87,10 @@ def test_every_mounted_write_has_its_forbidden_role_and_cross_account_cells() ->
         assert any(c.actor == "viewer" and c.expect.startswith("403") for c in mine), key
         idor = [c for c in mine if c.actor == "manager_with_grant" and c.at in ("foreign", "mixed")]
         assert idor and all(c.denied for c in idor), key
+        if any(not c.denied for c in mine if c.actor == "manager_with_grant"):
+            # the role may write here, so its foreign cell is a scope refusal, not a role one
+            scoped = ("404 not_found", "403 account_scope_denied")
+            assert any(c.expect in scoped for c in idor), key
 
 
 def test_the_ws_topic_row_names_every_actor() -> None:
