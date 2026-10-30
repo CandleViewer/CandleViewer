@@ -62,8 +62,10 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
                   differ only in the pack's three files; PR 2 (`15` changed, the spec and the tool
                   unchanged) must equal the merge-base with §C applied exactly, every Old found by
                   content inside its entry (so PR 2 cannot open over a line a later PR edited), and
-                  may differ in the pins alone, by recorded cite moves only (BQ-03); the §M list
-                  equal to the tool's.
+                  may differ in the pins alone, by recorded cite moves only (BQ-03), its `SHA:`
+                  anchors PR 1's record (`SHA:BASE` an ancestor of the merge-base, the rest not
+                  re-derived: PR 2's merge-base can never equal PR 1's); the §M list equal to the
+                  tool's.
   G-RULED-PIN     a default-deny pin set over every unit of the pack (`e15_d14_ruled_pins.txt`);
                   `--repin-ruled` is the only writer.
 
@@ -301,15 +303,22 @@ class Env:
         return v if isinstance(v, str) else ""
 
     def pr_sha(self, number: int) -> str:
-        """The abbreviated sha of the commit that merged PR `number` on the base's history (its
-        subject ends with `(#number)`), or zeros when none does."""
+        """The abbreviated sha of the squash merge of PR `number` on the base's history: the
+        earliest commit whose SUBJECT ends with `(#number)` — `--grep` alone also matches a later
+        PR's body that names the number (#5071's names #5073) — or zeros when none does."""
         key = f"prsha:{number}"
         if key not in self.memo:
             out = git_raw(
-                "log", "-1", "--format=%h", "--abbrev=10", "--fixed-strings", f"--grep=(#{number})",
-                self.base,
+                "log", "--reverse", "--format=%h%x09%s", "--abbrev=10", "--fixed-strings",
+                f"--grep=(#{number})", self.base,
             )  # fmt: skip
-            self.memo[key] = out.strip() if out and out.strip() else "0000000000"
+            sha = "0000000000"
+            for ln in (out or "").split("\n"):
+                h, _, subject = ln.partition("\t")
+                if subject.rstrip().endswith(f"(#{number})"):
+                    sha = h
+                    break
+            self.memo[key] = sha
         v = self.memo[key]
         return v if isinstance(v, str) else "0000000000"
 
@@ -1055,9 +1064,12 @@ def anchor_gate(key: str) -> str:
 
 def anchor_problems(t: Texts, gate: str) -> list[str]:
     bad: list[str] = []
+    pr2 = pr2_mode(t)
     for value, key, ln in anchored(t.spec):
         if anchor_gate(key) != gate:
             continue
+        if pr2 and key.startswith("SHA:"):
+            continue  # PR 1's record of its inputs; G-HYGIENE checks `SHA:BASE`'s ancestry
         want = t.values.get(key)
         if want is None:
             bad.append(f"spec:{ln} anchors `{key}`, which the tool does not compute")
@@ -1538,6 +1550,15 @@ def g_hygiene(t: Texts) -> list[Finding]:
                 bad.append(
                     "PR 2: `15` is not the merge-base with §C applied exactly (an extra byte)"
                 )
+            for value, key, _ in anchored(t.spec):
+                if key == "SHA:BASE" and (
+                    git_raw("merge-base", "--is-ancestor", value, t.env.base) is None
+                ):
+                    bad.append(
+                        f"PR 2: the recorded `SHA:BASE` {value} is no ancestor of the merge-base "
+                        "(the pack was pinned on another line)"
+                    )
+                    break
             if PINS_REL in t.changed:
                 bad += pins_diff_problems(t, t.env.base)
     para = mutation_paragraph(t.spec)
@@ -1836,7 +1857,7 @@ MUTATIONS: tuple[Mutation, ...] = (
       subst("the timings are E15-D14's — PROPOSED): enter and leave as an `opacity` fade over `motion.duration.fast`, the move itself a cut;",
             "the timings are E15-D14's — PROPOSED): enter and leave as an `opacity` fade over `motion.duration.fast`, the move itself a cutt;")),
     M("G-AROW", "point a new-line row at a bullet that is not its entry's last",
-      subst("| `15`:2780 | insert after |", "| `15`:2779 | insert after |")),
+      subst("| `15`:2787 | insert after |", "| `15`:2786 | insert after |")),
     M("G-AROW", "drop PROPOSED from a New line",
       subst("a menu that takes focus on opening is a cut, `16` §7.2 — PROPOSED): none; open and close",
             "a menu that takes focus on opening is a cut, `16` §7.2): none; open and close")),
@@ -1872,6 +1893,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("G-SAFETY", "name the arm state in I-12's carrier cell without frame 0",
       subst("the header — heading, badge, arm state — and focus at frame 0, outside the fading layer; SR-11",
             "the header — heading, badge, arm state — and focus, with the body; SR-11")),
+    M("G-HYGIENE", "simulate PR 2 with a `SHA:BASE` record that is no ancestor of its base",
+      lambda t: anchor_edit("SHA:BASE", "0000000000")(pr2_texts(t))),
 )  # fmt: skip
 
 NEGATIVES: tuple[tuple[str, Callable[[Texts], Texts]], ...] = (
