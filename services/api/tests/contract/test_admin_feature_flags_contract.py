@@ -76,8 +76,10 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "more than the 2 s push bound; an out-of-range configured value refuses startup). Every "
         "flag then resolves to its fail-closed value: the restrictive one for the safety-relevant "
         "flags (`maintenance.mode` and `killswitch.order_entry` engaged, so an unknown state "
-        "refuses new orders through the shared order-entry gate; `trading.live_enabled` off) and "
-        "the registry default for every other flag. `killswitch.ingestion` is outside that "
+        "refuses new orders through the shared order-entry gate; `rules.enabled` off, its engaged "
+        "value, so an unknown state blocks every rule action (`24-internal-schemas.md` 16.2); "
+        "`trading.live_enabled` off) and the registry default for every other flag. "
+        "`killswitch.ingestion` is outside that "
         "restrictive set: it fails closed to its default, so an unreachable store never stops "
         "ingestion. The answer is still `200`, with `resolution: fail_closed`, and every flag "
         "omits `default_value`, `overrides`, `updated_at` and `updated_by`, so the console can "
@@ -123,10 +125,11 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "elevation, chosen by key and by the stored value read under the row lock that "
         "`expected_updated_at` is checked against, never the cached value. An unreadable row "
         "counts as its fail-closed value (engaged for a kill-switch-class flag, off for "
-        "`trading.live_enabled`): releasing a kill-switch-class flag (`true` to `false`) needs "
-        "`killswitch`, writing `true` to `trading.live_enabled` needs `live_enablement` whatever "
-        "is stored (both no-grace, single use), and every other write needs `flags` (5-minute "
-        "grace). So repairing an `unreadable` kill-switch-class flag to `false` is a release "
+        "`trading.live_enabled`): releasing a kill-switch-class flag (a write from its engaged "
+        "value, which is its fail-closed value, to the other) needs `killswitch`, writing `true` "
+        "to `trading.live_enabled` needs `live_enablement` whatever is stored (both no-grace, "
+        "single use), and every other write needs `flags` (5-minute grace). So repairing an "
+        "`unreadable` kill-switch-class flag away from its engaged value is a release "
         "(`killswitch`). Without that elevation the call is `403 step_up_required`. This console "
         "is not the emergency control: engaging a kill switch here needs only `flags`, and the "
         "code-free emergency engage stays `POST /trading/kill-switch`.",
@@ -371,11 +374,16 @@ def test_put_answers_step_up_classes_conflict_and_additive_request() -> None:
     assert codes <= {entry["code"] for entry in _SPEC["x-error-codes"]}
     assert "flags.change" in AUDIT_ACTIONS  # `maintenance.*` are the registry slice's
     step_up = re.compile(
-        r"(releasing a kill-switch-class flag \(`true` to `false`\)"
+        r"(releasing a kill-switch-class flag \(a write from its engaged value, which is its "
+        r"fail-closed value, to the other\)"
         r"|writing `true` to `trading\.live_enabled`|every other write) needs `(\w+)`"
     )
+    released = (
+        "releasing a kill-switch-class flag (a write from its engaged value, which is its "
+        "fail-closed value, to the other)"
+    )
     assert dict((m[1], m[2]) for m in step_up.finditer(_TEXT["put"])) == {
-        "releasing a kill-switch-class flag (`true` to `false`)": "killswitch",
+        released: "killswitch",
         "writing `true` to `trading.live_enabled`": "live_enablement",
         "every other write": "flags",
     }

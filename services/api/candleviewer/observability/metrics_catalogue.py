@@ -3678,7 +3678,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E35",
     ),
     # E35-S03 (#863; 24 Sec.11.5, Sec.11.9): the action executor's series. Closed label sets: the
-    # 25 action types, the 5 ActionResult outcomes and the 16 blocked_by values; never an account,
+    # 25 action types, the 6 ActionResult outcomes and the 16 blocked_by values; never an account,
     # a rule, a user or a value.
     _s(
         "rule_actions_total",
@@ -3689,7 +3689,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "dashboard only",
         _P,
         "E35",
-        max_series=125,
+        max_series=150,
     ),
     _s(
         "rule_action_duration_seconds",
