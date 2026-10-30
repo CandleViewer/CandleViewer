@@ -35,7 +35,8 @@ anchored value. The gates, each FAIL led by its code:
   letter rule on `color.sync.*` and in CMP-218 and CMP-082.
 - [G-LEDGER] §2: dispositions from the vocabulary, the counts, every "Here" row present in §C.
 - [G-TOKEN] §5: each addition aliases a primitive that exists at the base and is itself new; no
-  `e15.*` name; each confirmation exists; each retirement is absent from the token source; every
+  `e15.*` name; each confirmation exists; each retirement is absent from the token source; no
+  document carries a name R19 rejected (the frame's old name, a tab-strip row token); every
   token named in a §C Tokens line is shipped, added here, or retired with "(Replaces".
 - [G-CONTRAST] the gated pairs meet their bars in three themes (sync edges on the header and the
   canvas, the drop-zone two-tone over every hosted content, the focus frame, the environment rule
@@ -43,12 +44,13 @@ anchored value. The gates, each FAIL led by its code:
   E15-D06 to the hundredth.
 - [G-DENSITY] the allowance and ceiling recomputed from the new tokens equal E15-D03 §3's budget;
   the four-panel 1280x800 compact case fits every column's framed minimum; the `16` §3 table in §C
-  equals the computed rows.
+  equals the computed rows, the tab strip's row carrying R19's derivation rule (DERIVATION).
 - [G-AC1] the token audit over the merged E15 texts: every hex anywhere and every px or ms value in
   a token, treatment or redline column (or under a token or redline heading) is anchored by its
   parent's tool, names a token in its clause, or stands in §9's exception table; no exception row
   is stale.
-- [G-RULED] the stamps in their exact forms at their sites, and the ruled words (RULING_PINS); with
+- [G-RULED] the stamps in their exact forms at their sites, the ruled words (RULING_PINS) and the
+  ruled sweep's note in both CMP-039's and CMP-080's rows (SWEEP_SITES); with
   `--source NAME=FILE` each pin also stands in that saved copy of the ruling.
 - [G-RULED-PIN] a default-deny pin set over every unit of the three documents (each heading, table
   row by its lead cell, prose sentence and fenced block) in `e15_d13_ruled_pins.txt`, anchored
@@ -56,7 +58,7 @@ anchored value. The gates, each FAIL led by its code:
   finding prints as a NOTE; the exit status stays 1.
 - [G-PUBLIC] no word on the public-text list (matched by pattern), no local path, host, uuid, URL
   or closing keyword.
-- [G-CROWS] §10's C-rows C-1 ... C-15 in order, each with a reading and an owner.
+- [G-CROWS] §10's C-rows C-1 ... C-16 in order, each with a reading and an owner.
 - [G-ENTRY] the four new entries carry every §0.1 field plus Forbidden, Performance, Motion spec and
   "Why a new entry, not a variant", and a Storybook tree `Organisms/Dock/<Name>`.
 - [G-MUTLIST] §12 lists the tool's mutations, one per gate, by name.
@@ -341,6 +343,7 @@ SURFACES = (
 FOOTPRINT = ("color.footprint.bid", "color.footprint.ask", "color.footprint.imbalance")
 HOSTED = SURFACES + FOOTPRINT
 CHROME = {"header": "color.surface.raised", "canvas": "color.surface.canvas"}  # the badge's hosts
+SELECTED = "color.surface.selected"  # the focused panel bar: the badge's host, reported only
 WINDOW = {"focused": "color.surface.raised", "unfocused": "color.surface.app"}  # CMP-215's chrome
 BARS = {"text": 4.5, "non-text": 3.0}
 
@@ -372,6 +375,7 @@ def colour_values() -> dict[str, str]:
             h = sync_hex(s, th)
             for where, bg in CHROME.items():
                 v[f"CR:sync.{s}.{where}.{k}"] = f2(ratio(h, hexof(bg, th)))
+            v[f"CR:sync.{s}.selected.{k}"] = f2(ratio(h, hexof(SELECTED, th)))
             v[f"CR:sync.{s}.lo.{k}"] = f2(ratio(h, hexof(lo, th)))
             v[f"CR:sync.{s}.hi.{k}"] = f2(ratio(h, hexof(hi, th)))
         ring, halo = hexof("color.focus.ring", th), hexof("color.surface.canvas", th)
@@ -453,7 +457,7 @@ def budget_values() -> dict[str, str]:
     c, f = px("size.control.compact"), px("size.control.comfortable")
     s1, hl, th, fo = px("space.1"), px("border.hairline"), px("border.thick"), px("border.focus")
     hit = px("size.target.min")
-    tabs = (c + 2 * px("space.inset.xs"), f + 2 * px("space.inset.xs"))
+    tabs = (c + 2 * s1, f + 2 * s1)  # DERIVATION (R19): no token holds the tab strip's row
     v = {
         "BUDGET:gutter": str(s1),
         "BUDGET:header.compact": str(c),
@@ -537,7 +541,7 @@ def density_table() -> list[list[str]]:
             "Workspace tab strip, MoveModeBar",
             g("BUDGET:tabs.compact"),
             g("BUDGET:tabs.comfortable"),
-            "`space.workspacetabs.height.*` (composite)",
+            DERIVATION,
         ],
         [
             "Minimised tray",
@@ -562,7 +566,7 @@ def density_table() -> list[list[str]]:
             "Focus frame / header bar",
             f"{g('BUDGET:frame')} / {g('BUDGET:bar')}",
             f"{g('BUDGET:frame')} / {g('BUDGET:bar')}",
-            "`border.focus.panel` / `border.thick` + `border.hairline`",
+            "`border.panel.focus` / `border.thick` + `border.hairline`",
         ],
     ]
 
@@ -901,12 +905,15 @@ ADDED = (
     "space.dock.tray.height.compact",
     "space.dock.tray.height.comfortable",
     "size.dock.splitter.hit",
-    "border.focus.panel",
+    "border.panel.focus",
     "color.sync.a",
     "color.sync.b",
     "color.sync.c",
 )
-COMPOSITES = ("space.workspacetabs.height.compact", "space.workspacetabs.height.comfortable")
+# R19: the tab strip's row is a derivation rule stated once in `16` §3 (A-76), never a token; the
+# frame's token is a child of a new `border.panel` group (a shipped value never becomes a group).
+DERIVATION = "control height + 2 × `space.1`"
+REJECTED = ("border." + "focus.panel", "space." + "workspacetabs")
 ALIAS = {
     "space.dockgrid.gutter": "space.1",
     "space.panelheader.height.compact": "size.control.compact",
@@ -914,7 +921,7 @@ ALIAS = {
     "space.dock.tray.height.compact": "size.control.compact",
     "space.dock.tray.height.comfortable": "size.control.comfortable",
     "size.dock.splitter.hit": "size.target.min",
-    "border.focus.panel": "border.focus",
+    "border.panel.focus": "border.focus",
 }
 CONFIRMED = (
     "color.border.default",
@@ -936,10 +943,14 @@ TOKEN_RE = re.compile(
 )
 
 
-def token_problems(spec: str, rows: list[ARow]) -> list[str]:
+def token_problems(spec: str, rows: list[ARow], others: tuple[str, ...] = ()) -> list[str]:
     bad: list[str] = []
+    for k, text in enumerate((spec, *others)):
+        for name in REJECTED:
+            if name in text:
+                bad.append(f"document {k}: the rejected name {name} (R19)")
     names, prims = token_names(), primitive_names()
-    for n in ADDED + COMPOSITES:
+    for n in ADDED:
         if n in names:
             bad.append(f"{n} already exists at the base (not an addition)")
         if n.startswith("e15.") or ".e15." in n:
@@ -962,7 +973,7 @@ def token_problems(spec: str, rows: list[ARow]) -> list[str]:
         if n in names:
             bad.append(f"retired {n} is shipped (a retirement is a name never shipped)")
     t5 = section(spec, "5.")
-    for n in ADDED + COMPOSITES + CONFIRMED + RETIRED:
+    for n in ADDED + CONFIRMED + RETIRED:
         if f"`{n}`" not in t5 and f"`{n.rsplit('.', 1)[0]}." not in t5:
             bad.append(f"{n} is not in §5")
     for r in rows:
@@ -970,11 +981,9 @@ def token_problems(spec: str, rows: list[ARow]) -> list[str]:
             if "**Tokens**" not in ln and r.fld != "the new section":
                 continue
             for tok in TOKEN_RE.findall(ln):
-                if tok in names or tok in ADDED or tok in COMPOSITES:
+                if tok in names or tok in ADDED:
                     continue
-                if tok.endswith(".*") and any(
-                    x.startswith(tok[:-1]) for x in (*names, *ADDED, *COMPOSITES)
-                ):
+                if tok.endswith(".*") and any(x.startswith(tok[:-1]) for x in (*names, *ADDED)):
                     continue
                 if tok in RETIRED and ("(Replaces" in ln or "etired" in ln):
                     continue
@@ -1244,6 +1253,7 @@ CONT = re.compile(r":(\d+)(?:[–-](\d+))?")
 # Load-bearing words: each stands on the line its cite names at the base.
 CITED: dict[tuple[str, int], str] = {
     ("15", 31): "241–242 and 244–247 unassigned",
+    ("15", 459): "`inset` drawing the ring inside the element",
     ("15", 892): "`Ctrl+Shift+Arrow` moves/swaps dock position",
     ("15", 893): "`color.border.panel`",
     ("15", 2704): "`color.accent.subtle`, `motion.fast`",
@@ -1339,7 +1349,7 @@ def g_ledger(t: Texts) -> list[Finding]:
 
 
 def g_token(t: Texts) -> list[Finding]:
-    return fails("G-TOKEN", token_problems(t.spec, a_rows(t.spec)[0]))
+    return fails("G-TOKEN", token_problems(t.spec, a_rows(t.spec)[0], (t.hand, t.rules)))
 
 
 REPRO = (  # (my key, parent, parent's anchor): equal to the hundredth
@@ -1350,13 +1360,16 @@ REPRO = (  # (my key, parent, parent's anchor): equal to the hundredth
     ("CR:focus.lo.hc", "D03", "CR:focus-fill:hc:lo"),
     ("CR:focus.hi.hc", "D03", "CR:focus-fill:hc:hi"),
 )
-D06_EDGES = {  # `D06`:440–445: the measured edges E15-D13 re-runs
+D06_EDGES = {  # `D06`:440–448: the measured edges E15-D13 re-runs (446–448 reported only)
     440: ("a", "header"),
     441: ("b", "header"),
     442: ("c", "header"),
     443: ("a", "canvas"),
     444: ("b", "canvas"),
     445: ("c", "canvas"),
+    446: ("a", "selected"),
+    447: ("b", "selected"),
+    448: ("c", "selected"),
 }
 D04_RING_ALONE = {"dark": "2.16:1 there in dark", "light": "2.66:1 in light"}  # `D04`:105
 
@@ -1412,12 +1425,14 @@ def g_ac1(t: Texts) -> list[Finding]:
 STAMP_A39 = "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A39)"
 STAMP_A40 = "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row A40)"
 STAMP_R367 = f"RULED (orchestrator, 2026-10-30, #367 ruling of record — {RULING_ID})"
+STAMP_R19 = "RULED (orchestrator, 2026-10-30, #367 lane ruling, R19)"
 # Every stamp site: a line of the pack opening with these words carries that stamp.
 STAMP_SITES: dict[str, str] = {
     "- **BQ-04 (A39)": STAMP_A39,
     "- **BQ-09 (A40)": STAMP_A40,
     "- **BQ-06 (reading)": STAMP_R367,
     "- **BQ-19 (reading)": STAMP_R367,
+    "- **R19 (lane ruling)": STAMP_R19,
 }
 STAMP_ANY = re.compile(r"RULED \(orchestrator[^)]*\)")
 # The ruled words, by source (R367 = the ruling of record 6519042539; A3940 = #2701 ledger
@@ -1433,6 +1448,7 @@ RULING_PINS: dict[str, tuple[str, ...]] = {
         "CMP-215's rows HELD for E15-D10 (#364) except the environment rule",
         "a composed organism, not a Tabs variant",
         "the `.c` / `color.chart.line` shared primitive a C row (accepted — the edge sits on chrome)",
+        "CMP-039 `inset` vs the panel frame — different responsibility, a note in both",
     ),
     "A3940": (
         "241–242 and 244–247 stay unused",
@@ -1441,6 +1457,11 @@ RULING_PINS: dict[str, tuple[str, ...]] = {
         "no second tablist implementation",
     ),
 }
+
+
+# The ruled sweep (BQ-12 / BQ-13): CMP-039 `inset` vs the panel frame, "a note in both".
+SWEEP_NOTE = "a different responsibility"
+SWEEP_SITES = (("CMP-039", ""), ("CMP-080", "A11y"))
 
 
 def ruled_problems(t: Texts) -> list[str]:
@@ -1453,11 +1474,16 @@ def ruled_problems(t: Texts) -> list[str]:
                 if stamp not in ln:
                     bad.append(f"{lead.strip('- *')}: the stamp is not {stamp!r}")
         for m in STAMP_ANY.finditer(ln):
-            if m.group(0) not in (STAMP_A39, STAMP_A40, STAMP_R367):
+            if m.group(0) not in (STAMP_A39, STAMP_A40, STAMP_R367, STAMP_R19):
                 bad.append(f"a stamp in no ruled form: {m.group(0)!r}")
     for lead in STAMP_SITES:
         if seen.get(lead) != 1:
             bad.append(f"{lead.strip('- *')}: {seen.get(lead, 0)} sites (want 1)")
+    rows = a_rows(t.spec)[0]
+    for entry, fld in SWEEP_SITES:
+        hits = [r for r in rows if r.entry == entry and (not fld or r.fld == fld)]
+        if not any(SWEEP_NOTE in r.new for r in hits):
+            bad.append(f"the sweep's note ({SWEEP_NOTE!r}) is not in {entry} {fld}".rstrip())
     src = dict(t.sources)
     flat = norm(t.spec)
     for name, pins in RULING_PINS.items():
@@ -1647,8 +1673,8 @@ def crows(spec: str) -> list[list[str]]:
 def g_crows(t: Texts) -> list[Finding]:
     bad: list[str] = []
     rows = crows(t.spec)
-    if len(rows) != 15:
-        bad.append(f"{len(rows)} C-rows (BQ-20's twelve, the ruling's two and C-15)")
+    if len(rows) != 16:
+        bad.append(f"{len(rows)} C-rows (BQ-20's twelve, the ruling's two, C-15 and C-16)")
     for n, r in enumerate(rows, 1):
         if r[0] != f"C-{n}" or len(r) != 4 or not r[2].strip() or not r[3].strip():
             bad.append(f"{r[0]}: out of order, or no reading or owner")
@@ -1907,8 +1933,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "drop CMP-251's Motion spec field name",
         _sub(
             "spec",
-            "- **Motion spec**: none; a tab switch is a cut",
-            "- Motion: none; a tab switch is a cut",
+            "- **Motion spec**: [E15-D04.md](../design/E15/E15-D04.md) (E15-D04 §16 item 6, which",
+            "- Motion: [E15-D04.md](../design/E15/E15-D04.md) (E15-D04 §16 item 6, which",
         ),
     ),
     (
@@ -1943,6 +1969,29 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-PUBLIC", "a closing keyword in §13", _sub("spec", "## 13.", f"## 13. ({_CLOSE})")),
     ("G-ANCHOR", "an unfilled placeholder in §7", _sub("spec", "## 7.", "## 7. {{COUNT:arows}}")),
     ("G-RULED", "a saved copy of A39 / A40 lacking one ruled phrase", _source_short),
+    (
+        "G-TOKEN",
+        "the frame's rejected token name (R19) back in the hand-off",
+        _sub("hand", "`border.panel.focus`", "`border." + "focus.panel`"),
+    ),
+    (
+        "G-DENSITY",
+        "the tab strip's derivation rule dropped from `16` §3's table (A-76)",
+        _sub(
+            "spec",
+            "| 32      | 40          | control height + 2 × `space.1`",
+            "| 32      | 40          | (a token)",
+        ),
+    ),
+    (
+        "G-RULED",
+        "drop the sweep's note from CMP-039's row (A-80)",
+        _sub(
+            "spec",
+            "inside a constant box; `16` §8 rule 5) — a different",
+            "inside a constant box; `16` §8 rule 5) — another",
+        ),
+    ),
     (
         "G-AROW",
         "the band row's id cell wider than its column",
