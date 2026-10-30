@@ -1672,7 +1672,11 @@
       "E08-Q01",
       "E08-S03",
       "E08-D03",
-      "E08-D07"
+      "E08-D07",
+      "E08-S08",
+      "E08-S09",
+      "E08-S10",
+      "E08-S11"
     ],
     "fields_done": true,
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6Dus",
@@ -1782,36 +1786,78 @@
     "subissue_done": true
   },
   "E08-S08": {
-    "blockedby_done": [],
-    "fields_done": false,
-    "item_id": null,
+    "blockedby_done": [
+      "E08-D07",
+      "E08-D04",
+      "E08-D11",
+      "E08-S01",
+      "E08-S03",
+      "E08-S09",
+      "E08-T07",
+      "E08-T08",
+      "E05-S02",
+      "E05-S03",
+      "E10-S01",
+      "E10-S04"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhD0qRI",
     "node_id": "I_kwDOUZDkl88AAAABaOYX9A",
     "number": 4702,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E08-S09": {
-    "blockedby_done": [],
-    "fields_done": false,
-    "item_id": null,
+    "blockedby_done": [
+      "E08-D05",
+      "E08-D04",
+      "E08-S01",
+      "E08-S03",
+      "E05-S02",
+      "E05-S03",
+      "E10-S01",
+      "E10-S02"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhD0qUY",
     "node_id": "I_kwDOUZDkl88AAAABaOYZXQ",
     "number": 4703,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E08-S10": {
-    "blockedby_done": [],
-    "fields_done": false,
-    "item_id": null,
+    "blockedby_done": [
+      "E08-D06",
+      "E08-D04",
+      "E08-S01",
+      "E08-S02",
+      "E08-S03",
+      "E05-S02",
+      "E05-S03",
+      "E10-S01"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhD0qXU",
     "node_id": "I_kwDOUZDkl88AAAABaOYa-w",
     "number": 4704,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E08-S11": {
-    "blockedby_done": [],
-    "fields_done": false,
-    "item_id": null,
+    "blockedby_done": [
+      "E08-D08",
+      "E08-D07",
+      "E08-D04",
+      "E08-S01",
+      "E08-S03",
+      "E08-S08",
+      "E08-T09",
+      "E05-S02",
+      "E05-S03",
+      "E10-S01"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhD0qbM",
     "node_id": "I_kwDOUZDkl88AAAABaOYcmg",
     "number": 4705,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E08-T01": {
     "blockedby_done": [
@@ -1895,28 +1941,37 @@
     "subissue_done": true
   },
   "E08-T07": {
-    "blockedby_done": [],
-    "fields_done": false,
-    "item_id": null,
+    "blockedby_done": [
+      "E08-S01",
+      "E08-D07"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhD0qgU",
     "node_id": "I_kwDOUZDkl88AAAABaOYeAw",
     "number": 4706,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E08-T08": {
-    "blockedby_done": [],
-    "fields_done": false,
-    "item_id": null,
+    "blockedby_done": [
+      "E08-S03",
+      "E08-S01"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhD0qj0",
     "node_id": "I_kwDOUZDkl88AAAABaOYfMg",
     "number": 4707,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E08-T09": {
-    "blockedby_done": [],
-    "fields_done": false,
-    "item_id": null,
+    "blockedby_done": [
+      "E08-S01",
+      "E08-S03"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhD0qnw",
     "node_id": "I_kwDOUZDkl88AAAABaOYhaA",
     "number": 4708,
-    "subissue_done": false
+    "subissue_done": true
   },
   "E08-X01": {
     "blockedby_done": [
@@ -3302,7 +3357,13 @@
       "E12-S01",
       "E12-S02",
       "E12-S03",
-      "E12-S05"
+      "E12-S05",
+      "E12-S07",
+      "E12-D04",
+      "E12-D09",
+      "E11-T01",
+      "E11-S14",
+      "E11-T07"
     ],
     "fields_done": true,
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6Ygk",
@@ -3351,7 +3412,14 @@
       "E12-S02",
       "E12-S04",
       "E12-S05",
-      "E12-D06"
+      "E12-D06",
+      "E12-S07",
+      "E12-S12",
+      "E12-S11",
+      "E11-S14",
+      "E11-S11",
+      "E11-S04",
+      "E11-S06"
     ],
     "fields_done": true,
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6Ya4",
@@ -5203,7 +5271,10 @@
   "E16-S02": {
     "blockedby_done": [
       "E16-S01",
-      "E16-D05"
+      "E16-D05",
+      "E08-S08",
+      "E08-S09",
+      "E08-S10"
     ],
     "fields_done": true,
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB67C0",
@@ -12267,7 +12338,9 @@
     "blockedby_done": [
       "E35-S06",
       "E35-S07",
-      "E35-D05"
+      "E35-D05",
+      "E36-S03",
+      "E36-S06"
     ],
     "fields_done": true,
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6inc",
@@ -13678,6 +13751,16 @@
     "number": 4208,
     "subissue_done": true
   },
+  "E39-T05": {
+    "blockedby_done": [
+      "E39-S03"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhExR64",
+    "node_id": "I_kwDOUZDkl88AAAABbL-Wew",
+    "number": 5069,
+    "subissue_done": true
+  },
   "E39-X01": {
     "blockedby_done": [
       "E27-K01",
@@ -14514,7 +14597,10 @@
     "blockedby_done": [
       "E50-T60",
       "E50-T01",
-      "E42-T01"
+      "E42-T01",
+      "E50-T61",
+      "E50-T62",
+      "E50-T63"
     ],
     "fields_done": true,
     "item_id": "PVTI_lADOFI4N5c4BnyHXzhB6mG4",
