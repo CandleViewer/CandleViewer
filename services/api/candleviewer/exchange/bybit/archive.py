@@ -31,7 +31,7 @@ import time
 import zlib
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any, cast
 
 import httpx
@@ -48,6 +48,7 @@ from candleviewer.domain.archive import (
     ArchiveTooLarge,
     ArchiveTrade,
 )
+from candleviewer.exchange.base.frame_guard import MAX_TS_MS
 
 ALLOWED_ARCHIVE_HOSTS: frozenset[str] = frozenset({"public.bybit.com"})
 DEFAULT_ARCHIVE_BASE = "https://public.bybit.com"
@@ -60,6 +61,8 @@ _COLUMNS = frozenset(
 )  # fmt: skip
 _SIDES = {"Buy": "buy", "Sell": "sell"}
 _US_PER_S = Decimal(1_000_000)
+#: The event-time bound in seconds, so a row's `timestamp` is bounded before it is scaled (#5040).
+_MAX_TS_S = Decimal(MAX_TS_MS) / 1000
 _DAY_US = 86_400_000_000
 _CHUNK = 64 * 1024
 #: Longest accepted CSV line (a real row is < 200 bytes); bounds the line accumulator.
@@ -307,12 +310,14 @@ class BybitTradeArchive:
             ts = Decimal(str(rec["timestamp"]))
             price = Decimal(str(rec["price"]))
             size = Decimal(str(rec["size"]))
-        except (InvalidOperation, KeyError) as exc:
+        except (ArithmeticError, KeyError) as exc:  # InvalidOperation, or decimal Overflow (#5040)
             raise ArchiveParseFailed("non-numeric timestamp, price or size") from exc
         if not (ts.is_finite() and price.is_finite() and size.is_finite()):
             raise ArchiveParseFailed("non-finite value")
         if price <= 0 or size <= 0:
             raise ArchiveParseFailed("non-positive price or size")
+        if not 0 < ts <= _MAX_TS_S:  # #5040: bounded before the multiply below
+            raise ArchiveParseFailed("timestamp out of bounds")
         tick = rec.get("tickDirection")
         return ArchiveTrade(
             ts_us=int(ts * _US_PER_S),

@@ -607,7 +607,10 @@ class BybitRestClient:
             # to 0 previously, which failed open on a 4xx with an unusual
             # body (review finding). HTTP status is now load-bearing.
             has_ret_code = "retCode" in data
-            ret_code = int(data["retCode"]) if has_ret_code else -1
+            try:
+                ret_code = int(data["retCode"]) if has_ret_code else -1
+            except (TypeError, ValueError, OverflowError):  # #5040: unusable, so none at all
+                has_ret_code, ret_code = False, -1
             if not has_ret_code or (is_http_error and ret_code == 0):
                 bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
                 exchange_errors_total.labels(**{"class": UnknownStateError.code.value}).inc()
@@ -882,7 +885,10 @@ async def paginate_klines(
         if not page:
             break
         all_rows.extend(page)
-        oldest_ts = min(int(row["start"]) for row in page if "start" in row)
+        try:
+            oldest_ts = min(int(row["start"]) for row in page if "start" in row)
+        except (TypeError, ValueError, OverflowError) as exc:  # #5040: a malformed row's `start`
+            raise ValueError("kline page row has a non-integer start") from exc
         if oldest_ts <= start_ms or len(page) < limit:
             break
         window_end = oldest_ts - 1
