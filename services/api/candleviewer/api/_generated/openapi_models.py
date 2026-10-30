@@ -5175,7 +5175,10 @@ class HotkeyBinding(BaseModel):
     ]
     scope: Literal["global", "chart", "dom", "tape", "orders", "positions"]
     requires_arm: Annotated[
-        StrictBool, Field(description="Forced true for order-sending actions.")
+        StrictBool,
+        Field(
+            description="Forced true for actions that open or increase exposure (the mutations `ArmToken` names); never forced for the C-2.6 carve-out's actions (`position.flatten`, a close, a cancel, engaging the kill switch)."
+        ),
     ] = True
     confirm: StrictBool = False
     params: dict[str, Any] | None = None
@@ -7369,7 +7372,7 @@ class ReverseAcceptance(BaseModel):
     outcome: Annotated[
         Literal["reversed", "close_unfilled", "close_partially_filled", "entry_refused"],
         Field(
-            description="`reversed`: the close filled and the entry was accepted; while `open.reconciling` is true the entry is not yet known to rest or fill, and reconciliation settles the symbol's exposure. `close_unfilled`: the close had not filled at the deadline, so no entry was sent and the position is as it was. `close_partially_filled`: the close had partly filled at the deadline, so no entry was sent and the position is smaller. `entry_refused`: the close filled but no entry rests: a check refused it (risk cap, rate reserve, kill switch, the deadline) or the exchange rejected it, so the account is flat on this symbol. The last three are outcomes, not failures to hide: a client shows them as they are.\n"
+            description="`reversed`: the close filled and the entry was accepted or, for a reversal decided from its anchors after a crash, the entry as it ended (`open` names it, `rejected` or `cancelled` included), never an assumed success; while `open.reconciling` is true the entry is not yet known to rest or fill, and reconciliation settles the symbol's exposure. `close_unfilled`: the close had not filled at the deadline, so no entry was sent and the position is as it was. `close_partially_filled`: the close had partly filled at the deadline, so no entry was sent and the position is smaller. `entry_refused`: the close filled but no entry rests: a check refused it (risk cap, rate reserve, kill switch, the deadline) or the exchange rejected it, so the account is flat on this symbol. The last three are outcomes, not failures to hide: a client shows them as they are.\n"
         ),
     ]
     reason: Annotated[

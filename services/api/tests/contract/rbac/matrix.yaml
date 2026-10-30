@@ -1096,12 +1096,13 @@ operations:
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   PUT /positions/{positionId}/leverage:
-    permissions: ['positions:write']
+    permissions: ['positions:write', 'admin:write']
     scope: granted_accounts
     public: false
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    # Owner-only (04 section 7.2.2 row 18, ruled on #915): a Manager is a capability 403.
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /positions/{positionId}/reverse:
     permissions: ['positions:write']
     scope: granted_accounts
@@ -1857,7 +1858,7 @@ account_scope:
     step_up: null
     cells:
       owner: {granted: admitted, foreign: admitted, absent: 404 not_found}
-      manager: {granted: admitted, foreign: 404 not_found, absent: 404 not_found}
+      manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
       viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
   WS wallet:
     cells:

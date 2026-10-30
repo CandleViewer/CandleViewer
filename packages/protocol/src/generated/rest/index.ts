@@ -4647,7 +4647,7 @@ export interface paths {
     get?: never;
     /**
      * Set leverage for the position's symbol on its account
-     * @description Maps to `POST /v5/position/set-leverage` (10 req/s). Bybit applies leverage per symbol per account, not per position; the change therefore affects future orders on that symbol too.
+     * @description Maps to `POST /v5/position/set-leverage` (10 req/s). Bybit applies leverage per symbol per account, not per position; the change therefore affects future orders on that symbol too. It is the Owner's alone (`admin:write`, 04-security-program.md section 7.2.2 row 18; ruled on #915, 2026-10-30, as D7 was for diagnostics): leverage multiplies the risk of every later entry, so a Manager or Viewer is a capability `403` before any position is read, whatever the id. The `position.leverage_changed` audit record names the actor.
      */
     put: operations["setPositionLeverage"];
     post?: never;
@@ -4696,8 +4696,12 @@ export interface paths {
      *     replayed verbatim (`Idempotency-Replayed: true`). A repeat while the first request is
      *     still running, or within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of an anchor a crash left
      *     undecided, is `409 idempotency_in_flight` with `Retry-After: 1`. Later, an undecided
-     *     reversal is decided, never resumed, and no repeat sends an order; an entry already
-     *     persisted is B1's to resume (24-internal-schemas.md section 8.2, Recovery). When the
+     *     reversal is decided, never resumed, and no repeat sends an order. A reversal is
+     *     undecided while either of its anchors is; deciding writes `202` on each by
+     *     compare-and-set from NULL, the close's row first. An entry already persisted is B1's: a
+     *     `submitting` one is resumed under its `orderLinkId` after a restart (24-internal-schemas.md
+     *     section 8.2, Recovery), and a `validated` one never sent is ended by the startup sweep
+     *     (section 8.3 rule 1). When the
      *     entry's anchor exists, the answer is `reversed` with `open` the entry in its reconciled
      *     state (`open.reconciling` true while unresolved), never `entry_refused`. When it does
      *     not, the deadline has long passed, so no entry is sent and the answer follows the
@@ -5834,9 +5838,12 @@ export interface paths {
      * Create a hotkey profile
      * @description Conflict detection runs server-side: "two bindings sharing the same `keys` within an"
      *     overlapping `scope` are rejected with `conflict` and the offending pair named. Bindings
-     *     whose action can send an order must set `requires_arm: "true` — the server rewrites"
-     *     `false` to `true` and returns a warning header rather than silently accepting an unsafe
-     *     binding.
+     *     whose action opens or increases exposure (the mutations `ArmToken` names: an order
+     *     entry, `position.reverse`, a leverage change) must set `requires_arm: true`: the server
+     *     rewrites `false` to `true` and returns a warning header rather than silently accepting
+     *     an unsafe binding. The C-2.6 carve-out's actions (`position.flatten`, a close, a cancel,
+     *     engaging the kill switch) are never forced and may be `false`, as a flatten is never
+     *     refused for want of the arm (#915).
      */
     post: operations["createHotkeyProfile"];
     delete?: never;
@@ -8388,7 +8395,7 @@ export interface components {
         [key: string]: unknown;
       };
       /**
-       * @description Forced true for order-sending actions.
+       * @description Forced true for actions that open or increase exposure (the mutations `ArmToken` names); never forced for the C-2.6 carve-out's actions (`position.flatten`, a close, a cancel, engaging the kill switch).
        * @default true
        */
       requires_arm: boolean;
@@ -10194,7 +10201,7 @@ export interface components {
       /** @description The entry, or null when none was sent (`outcome` other than `reversed`). */
       open: components["schemas"]["OrderAcceptance"] | null;
       /**
-       * @description `reversed`: the close filled and the entry was accepted; while `open.reconciling` is true the entry is not yet known to rest or fill, and reconciliation settles the symbol's exposure. `close_unfilled`: the close had not filled at the deadline, so no entry was sent and the position is as it was. `close_partially_filled`: the close had partly filled at the deadline, so no entry was sent and the position is smaller. `entry_refused`: the close filled but no entry rests: a check refused it (risk cap, rate reserve, kill switch, the deadline) or the exchange rejected it, so the account is flat on this symbol. The last three are outcomes, not failures to hide: a client shows them as they are.
+       * @description `reversed`: the close filled and the entry was accepted or, for a reversal decided from its anchors after a crash, the entry as it ended (`open` names it, `rejected` or `cancelled` included), never an assumed success; while `open.reconciling` is true the entry is not yet known to rest or fill, and reconciliation settles the symbol's exposure. `close_unfilled`: the close had not filled at the deadline, so no entry was sent and the position is as it was. `close_partially_filled`: the close had partly filled at the deadline, so no entry was sent and the position is smaller. `entry_refused`: the close filled but no entry rests: a check refused it (risk cap, rate reserve, kill switch, the deadline) or the exchange rejected it, so the account is flat on this symbol. The last three are outcomes, not failures to hide: a client shows them as they are.
        * @enum {string}
        */
       outcome: "reversed" | "close_unfilled" | "close_partially_filled" | "entry_refused";

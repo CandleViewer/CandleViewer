@@ -6100,7 +6100,8 @@
       "put": {
         "x-rbac": {
           "permissions": [
-            "positions:write"
+            "positions:write",
+            "admin:write"
           ],
           "scope": "granted_accounts"
         }
