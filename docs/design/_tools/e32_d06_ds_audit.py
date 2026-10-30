@@ -204,9 +204,10 @@ FULL_STOP = re.compile(r"(?<=[.!?])\s+(?=[*`\"(A-Z0-9§])")
 # G-CLAIM: a time bound on the stop's attach ("within 2 s", "2 s after", "up to 2 s" and kin); the
 # ruled wording states a deadline and the banner, never a time by which the stop is attached
 TIME_BOUND = re.compile(
-    r"\b(?:within|up to|inside|in under|no later than|before|after)\s+(?:an?\s+|the\s+)?"
-    r"\d+(?:\.\d+)?\s?(?:ms|s|sec|seconds?)\b"
-    r"|\b\d+(?:\.\d+)?\s?(?:ms|s|sec|seconds?)\s+(?:after|later|at (?:the )?most)\b",
+    r"\b(?:within|up to|inside|in under|in|by|no later than|before|after)\s+(?:an?\s+|the\s+)?"
+    r"(?:\d+(?:\.\d+)?|one|two|three|five|ten)[\s-]?(?:ms|s|sec|seconds?)\b"
+    r"|\b(?:\d+(?:\.\d+)?|one|two|three|five|ten)[\s-]?(?:ms|s|sec|seconds?)\s+"
+    r"(?:after|later|at (?:the )?most)\b",
     re.IGNORECASE,
 )
 RULED_CLAIM = (
