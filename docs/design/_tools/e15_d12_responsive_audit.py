@@ -2,7 +2,7 @@
 """E15-D12 (#366) audit: the responsive and reduced-capability layout pack.
 
 Stdlib only, offline (`python3 -I -B`). It reads AS TEXT at the pinned base (`git show BASE:<path>`)
-the plan texts and the merged E15 design texts, E15-D13's pack at PR #5055's head (D13_SHA), and
+the plan texts and the merged E15 design texts (E15-D13's pack included, merged as 85006431bf), and
 the token JSON; then the pack (`E15-D12.md`), its hand-off, the spec
 (`docs/design/specs/e15-responsive-and-degraded.md`) and the pins from the working tree. It
 imports, never copies, `contrast_check.contrast_ratio()` for every WCAG ratio and
@@ -16,7 +16,7 @@ its code:
 
 - [G-ANCHOR] every anchored value equals the tool's; no placeholder left unfilled.
 - [G-CITE] every `KEY`:line cite (each end of a range) resolves to a non-blank line at the base
-  (`D13` at D13_SHA), and each load-bearing cite (CITED) holds its words on that line: cites are
+  (`D13` too), and each load-bearing cite (CITED) holds its words on that line: cites are
   pinned by their content, not by a number alone.
 - [G-UNTOUCHED] PR 1: only the pack's five files differ from `git merge-base HEAD origin/main`.
   PR 2 (no pack document and not the tool differs): only `14`, `15` and `16` differ, each equal to
@@ -24,7 +24,7 @@ its code:
   only as the tool's own byte-exact rewrite; no other byte. Fails closed when git cannot answer.
 - [G-AROW] §C: rows A-1 ... A-n in order, each with its target (`14`, `15`, `16`), a known op and
   its Old equal to (or, for a fragment or a span, once in) its line at the base and unique in its
-  scope; a row that DEPENDS on E15-D13's PR 2 finds its Old in E15-D13's CMP-251 text at D13_SHA,
+  scope; a row that DEPENDS on E15-D13's PR 2 finds its Old in E15-D13's CMP-251 text at the base,
   and in the merge-base `15` once that holds the entry (re-pinned by content).
 - [G-LEDGER] §2: rows L-1 ... L-n in order, dispositions from the vocabulary, every A-n named in
   "Here" present in §C.
@@ -33,7 +33,9 @@ its code:
   every E15-D04 operation and every E15-D07 panel-menu item (each re-read at the base) has a row.
 - [G-BUDGET] the sweep recomputed from the tokens and E15-D03's budget: the reproductions equal
   E15-D03's anchors; the bands and the layout typed in the spec's table equal the computed ones;
-  every collapse frame keeps a positive plot with every row that never yields.
+  every frame keeps a positive plot with every row that never yields, the E15 SCR-153 row at the
+  height of the tool's width ESTIMATE (ADVANCE_EM per character, the spec's CP-1 / CP-2 / CP-4
+  strings, wrapped at the frame's canvas width).
 - [G-CONTRAST] every gated pair meets its bar in three themes; the bars in the spec's table are
   the gate's.
 - [G-NEVERSHED] the spec §6.4 lists exactly the never-shed set; §6.3 sheds exactly three items
@@ -58,6 +60,11 @@ its code:
   result, the pack's DoD line for it is open, the AC trace names the deputy, and the appendix
   keeps the brief in a text fence.
 - [G-MUTLIST] the pack's §12 lists the tool's mutations, one per gate, by name.
+- [G-PROTECT] the protective actions (C-2.6, the R5 arm carve-out): the spec §4 has a `same` row
+  for cancel, close and the stop; §5 says they are never behind a hidden tab without a route;
+  §5.1 puts a position without its native stop in the error slot and §5.2 lists a protection
+  change as account-level; §5 and the hand-off's Table K scope the visible-panel hotkey rule to
+  the order-placing and arming chords and keep the protective chords working.
 
 `--a-rows` prints §C as JSON, one record per row with its target file; `--self-test` applies one
 mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory copy and passes only when each
@@ -80,6 +87,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import re
 import subprocess
 import sys
@@ -91,8 +99,7 @@ from types import ModuleType
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "d7f9ca3557"  # `git merge-base HEAD origin/main` at writing (#5058's merge)
-D13_SHA = "2282c6983c"  # E15-D13's pack at PR #5055's head (approved, not merged)
+BASE = "31ad848823"  # `git merge-base HEAD origin/main` at the lens-1 fold (#5072's merge)
 PACK_REL = "docs/design/E15/E15-D12.md"
 HAND_REL = "docs/design/E15/E15-D12-handoff.md"
 SPEC_REL = "docs/design/specs/e15-responsive-and-degraded.md"
@@ -121,8 +128,11 @@ KEYS: dict[str, str] = {
     "D07": E15 + "D07.md",
     "D13": E15 + "D13.md",
     "D15": E15 + "D15.md",
+    "E30D02": "docs/design/E30/E30-D02.md",
+    "E30D05": "docs/design/E30/E30-D05.md",
+    "E39D03": "docs/design/E39/E39-D03.md",
+    "KM": "apps/web/src/keymap/keymap.json",
 }
-SHA_OF = {"D13": D13_SHA}  # every other key is read at BASE
 TOKENS_DIR = "packages/ui/tokens"
 THEMES = ("dark", "light", "high-contrast")
 THEME_KEY = {"dark": "dark", "light": "light", "high-contrast": "hc"}
@@ -164,7 +174,7 @@ def at_sha(sha: str, rel: str) -> str | None:
 
 
 def at_key(key: str) -> str | None:
-    return at_sha(SHA_OF.get(key, BASE), KEYS[key])
+    return at_sha(BASE, KEYS[key])
 
 
 def read(rel: str) -> str:
@@ -389,22 +399,74 @@ PARENT_CHROME = {
 }
 
 
-def frame(w: int, h: int) -> dict[str, int | str]:
+# The E15 SCR-153 row's width model: an ESTIMATE, never a measurement (the spec §2). Each
+# character advances ADVANCE_EM of its font size, wider than Inter's usual prose, so the model
+# over-counts lines; the builder's measured wrap replaces it.
+ADVANCE_EM = 0.6
+
+
+def banner_strings(spec: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The two E15 rows as (message, actions): CP-1 with CP-2, and CP-4 with its own action."""
+    got = {r[0]: QUOTE.findall(r[2]) for r in copy_rows(spec)}
+    cp1, cp2, cp4 = got.get("CP-1", []), got.get("CP-2", []), got.get("CP-4", [])
+    return ((cp1[0] if cp1 else "", tuple(cp2)), (cp4[0] if cp4 else "", tuple(cp4[1:])))
+
+
+def _advance(s: str, size: float) -> float:
+    return len(s) * size * ADVANCE_EM
+
+
+def _wrapped(s: str, size: float, width: float) -> int:
+    n, cur, gap = 1, 0.0, _advance(" ", size)
+    for word in s.split(" "):
+        w = _advance(word, size)
+        if cur == 0.0:
+            cur = w
+        elif cur + gap + w <= width:
+            cur += gap + w
+        else:
+            n, cur = n + 1, w
+    return n
+
+
+def banner(cw: int, spec: str) -> tuple[int, int]:
+    """(lines, height px) of the taller E15 row, compact, on a canvas `cw` wide."""
+    body, label = value("type.ui.body"), value("type.ui.label")
+    size, lsize, lh = float(body["fontSize"]), float(label["fontSize"]), float(body["lineHeight"])
+    pad, glyph = px("space.inset.sm"), px("size.icon.md")
+    s1, c = px("space.1"), px("size.control.compact")
+    avail = cw - 2 * pad - glyph - pad
+    best = (0, 0)
+    for msg, acts in banner_strings(spec):
+        aw = sum(_advance(a, lsize) + 2 * pad for a in acts) + pad * max(len(acts) - 1, 0)
+        if _advance(msg, size) + pad + aw <= avail:
+            got = (1, c + 2 * s1)
+        else:
+            n = _wrapped(msg, size, avail)
+            al = 1 if aw <= avail else len(acts)
+            got = (n + al, 2 * s1 + math.ceil(n * size * lh) + s1 + al * c + (al - 1) * s1)
+        best = max(best, got, key=lambda x: x[1])
+    return best
+
+
+def frame(w: int, h: int, spec: str) -> dict[str, int | str]:
     ch = chrome()
     cw, cht = w - ch["navrail"] - ch["rightrail"], h - ch["topbar"] - ch["statusbar"]
     out: dict[str, int | str] = {"canvas": f"{cw}×{cht}"}
     for d in ("c", "f"):
         box = cht - ch[f"tabstrip.{d}"] - (ch[f"tabgroup.{d}"] if w < COLLAPSE_BELOW else 0)
         out[f"plot.{d}"] = box - 3 * ch[f"row.{d}"] - ch["focus.axis"]
-    keep = ch["banner.c"] + (ch["restore.c"] + ch["tray.c"] if h >= 800 else 0)
+    out["banner.lines"], out["banner"] = banner(cw, spec)
+    keep = int(out["banner"]) + (ch["restore.c"] + ch["tray.c"] if h >= 800 else 0)
     out["worst"] = int(out["plot.c"]) - keep
     return out
 
 
-def budget_values() -> dict[str, str]:
+@cache
+def budget_values(spec: str) -> dict[str, str]:
     v = {f"BUDGET:{k}": str(n) for k, n in chrome().items()}
     for w, h in FRAMES:
-        for k, n in frame(w, h).items():
+        for k, n in frame(w, h, spec).items():
             v[f"BUDGET:f.{w}x{h}.{k}"] = str(n)
     return v
 
@@ -447,7 +509,7 @@ def budget_problems(spec: str, values: dict[str, str]) -> list[str]:
         seen.append((w, h))
         if len(r) < 3 or r[1] != band(w, h) or r[2] != layout(w):
             bad.append(f"{r[0]}: typed {r[1:3]}, computed [{band(w, h)!r}, {layout(w)!r}]")
-        if w < COLLAPSE_BELOW and int(frame(w, h)["worst"]) <= 0:
+        if int(values.get(f"BUDGET:f.{w}x{h}.worst", "0")) <= 0:
             bad.append(f"{r[0]}: no plot left with every row that never yields")
     if tuple(seen) != FRAMES:
         bad.append(f"the spec's sweep is {seen}, not the tool's frames")
@@ -614,7 +676,7 @@ def export(rows: list[ARow]) -> list[dict[str, object]]:
 
 
 def d13_entry() -> list[str]:
-    """CMP-251's lines as E15-D13's A-3 writes them (D13_SHA)."""
+    """CMP-251's lines as E15-D13's A-3 writes them (merged; read at BASE)."""
     ls = lines(at_key("D13") or "")
     if CMP251_HEAD not in ls:
         return []
@@ -638,7 +700,7 @@ def arow_problems(rows: list[ARow], parse_bad: list[str], mbase15: str) -> list[
         if r.depends:
             entry = d13_entry()
             if r.file != "15" or r.line or locate(entry, CMP251_HEAD, r) is None:
-                bad.append(f"{r.aid}: the Old is not once in E15-D13's CMP-251 at {D13_SHA}")
+                bad.append(f"{r.aid}: the Old is not once in E15-D13's CMP-251 at {BASE}")
             mb = lines(mbase15)
             if CMP251_HEAD in mb and locate(mb, CMP251_HEAD, r) is None:
                 bad.append(f"{r.aid}: the Old is not once in the merge-base's CMP-251 (re-pin)")
@@ -992,14 +1054,14 @@ def count_values(t: Texts) -> dict[str, str]:
 
 
 @cache
-def fixed_values() -> tuple[tuple[str, str], ...]:
+def fixed_values(spec: str) -> tuple[tuple[str, str], ...]:
     v = colour_values()
-    v.update(budget_values())
+    v.update(budget_values(spec))
     return tuple(sorted(v.items()))
 
 
 def compute(t: Texts) -> dict[str, str]:
-    v = dict(fixed_values())
+    v = dict(fixed_values(t.spec))
     v.update(count_values(t))
     return v
 
@@ -1074,9 +1136,9 @@ CITE = re.compile(
     + r")`:(\d+)(?:[–-](\d+))?((?:, :\d+(?:[–-]\d+)?)*)"
 )
 CONT = re.compile(r":(\d+)(?:[–-](\d+))?")
-# Load-bearing cites: the words stand on the line the cite names (BASE; `D13` at D13_SHA).
+# Load-bearing cites: the words stand on the line the cite names (all at BASE).
 CITED: dict[tuple[str, int], str] = {
-    ("16", 241): "increase window size",
+    ("16", 269): "increase window size",
     ("D03", 684): "inputs, not chrome values",
     ("D02", 632): "1024×640 CSS px",
     ("D02", 544): "This device is slow to draw",
@@ -1103,13 +1165,26 @@ CITED: dict[tuple[str, int], str] = {
     ("11", 2885): "panels collapse into a tabbed arrangement",
     ("11", 2893): "measured frame time, not on user-agent strings",
     ("23", 1491): "private (`orders`, `positions`, `executions`, `wallet`)",
-    ("14", 2435): "known-issue list",
-    ("14", 2996): "a cancel/reload option after 15 s",
-    ("14", 3046): "CMP-227 EstimatedBadge",
-    ("15", 1004): "reappears while the condition persists",
+    ("14", 2437): "known-issue list",
+    ("14", 3001): "a cancel/reload option after 15 s",
+    ("14", 3051): "CMP-227 EstimatedBadge",
+    ("15", 1017): "reappears while the condition persists",
     ("06", 89): "toward 250ms",
     ("D04", 195): "| Operation",
     ("D07", 269): "### 5.1 The fixed order",
+    ("D13", 423): "the tablist is one `Tab` stop on the active tab",
+    ("D03", 786): "then the splitter that follows the panel",
+    ("D03", 798): "unsubscribes its visual topics after 30 s",
+    ("D03", 627): "the restore notice's Revert to saved… and Dismiss",
+    ("05", 96): "Focus is never silently stolen",
+    ("D02", 175): "FLATTEN ALL…, CANCEL ALL… and FREEZE…",
+    ("D02", 134): "| D-16 |",
+    ("E30D02", 143): '"Flatten now" / "Set stop by hand" always available',
+    ("E30D05", 75): "a cancel, a close, a quantity-reducing amend",
+    ("E39D03", 131): "opens SCR-072, never engages",
+    ("KM", 303): '"id": "dom.cancel_all"',
+    ("KM", 523): '"id": "positions.close"',
+    ("KM", 535): '"id": "positions.close_all"',
 }
 
 
@@ -1185,7 +1260,7 @@ def g_parity(t: Texts) -> list[Finding]:
 
 
 def g_budget(t: Texts) -> list[Finding]:
-    return fails("G-BUDGET", budget_problems(t.spec, budget_values()))
+    return fails("G-BUDGET", budget_problems(t.spec, budget_values(t.spec)))
 
 
 def contrast_problems(spec: str) -> list[str]:
@@ -1521,6 +1596,46 @@ def g_mutlist(t: Texts) -> list[Finding]:
     return fails("G-MUTLIST", [] if ok else ["§12 is not the tool's mutation list (run --fill)"])
 
 
+# ---------------------------------------------------------------------------- protection (C-2.6)
+
+PROTECT_ROWS = ("Cancel an order", "Close a position", "Set, tighten or attach a stop")
+PROTECT_REACH = "never behind a hidden tab without a route"
+PROTECT_COND = (
+    "A position without its native stop (missing, failed to attach) is an error and comes first"
+)
+PROTECT_EVENT = "a protection change"
+PROTECT_SCOPE = '"Trading hotkeys" here are the order-placing and arming chords'
+PROTECT_CHORDS = "**Account-scoped protective chords work from any tab:**"
+PROTECT_KEYROW = "| protective chords"
+
+
+def protect_problems(t: Texts) -> list[str]:
+    bad: list[str] = []
+    rows = [r for r in parity(t.spec) if len(r) == 5]
+    for name in PROTECT_ROWS:
+        hit = [r for r in rows if r[0].startswith(name)]
+        if len(hit) != 1 or hit[0][3] != "same":
+            bad.append(f"statement 1: no single `same` parity row for {name!r}")
+    s5 = section(t.spec, "5.")
+    items = {ln[:2]: ln for ln in lines(s5) if ln[:1].isdigit()}
+    if PROTECT_REACH not in s5:
+        bad.append("statement 1: §5 does not keep the protective actions out of a hidden tab")
+    one, two = items.get("1.", ""), items.get("2.", "")
+    if PROTECT_COND not in one:
+        bad.append("statement 2: §5.1 does not put a missing native stop in the error slot")
+    if PROTECT_EVENT not in two:
+        bad.append("statement 2: §5.2 does not list a protection change as account-level")
+    if PROTECT_SCOPE not in s5 or PROTECT_CHORDS not in s5:
+        bad.append("statement 3: §5 does not scope the hotkey rule and keep the protective chords")
+    if not any(ln.startswith(PROTECT_KEYROW) for ln in lines(t.hand)):
+        bad.append("statement 3: the hand-off's Table K has no protective-chords row")
+    return bad
+
+
+def g_protect(t: Texts) -> list[Finding]:
+    return fails("G-PROTECT", protect_problems(t))
+
+
 # ---------------------------------------------------------------------------- the run
 
 GATES: tuple[tuple[str, Callable[[Texts], list[Finding]]], ...] = (
@@ -1541,6 +1656,7 @@ GATES: tuple[tuple[str, Callable[[Texts], list[Finding]]], ...] = (
     ("G-CROWS", g_crows),
     ("G-DRYRUN", g_dryrun),
     ("G-MUTLIST", g_mutlist),
+    ("G-PROTECT", g_protect),
 )
 
 
@@ -1701,6 +1817,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "edit §12's list",
         _sub("pack", "**G-CROWS:** M-15 renumber C-15", "**G-CROWS:** M-15 renumber C-12"),
     ),
+    (
+        "G-PROTECT",
+        "let a hidden tab hold the protective actions without a route",
+        _sub("spec", PROTECT_REACH, "behind a hidden tab only where the panel is"),
+    ),
 )
 
 
@@ -1747,6 +1868,16 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         ),
     ),
     ("G-BUDGET", "a sweep frame dropped", _resub("spec", r"^\| 1280 × 640 .*\n", "")),
+    (
+        "G-PROTECT",
+        "statement 2: a missing native stop dropped from §5.1's error slot",
+        _sub("spec", PROTECT_COND, "A position's protection is shown in its panel"),
+    ),
+    (
+        "G-PROTECT",
+        "statement 3: the hand-off's protective-chords row dropped",
+        _sub("hand", PROTECT_KEYROW, "| panel chords"),
+    ),
 )
 # A PR 2 that applies §C exactly, with the tool's own pins rewrite: no new FAIL (lesson 1).
 CLEAN: tuple[tuple[str, Callable[[Texts], Texts]], ...] = (
@@ -1815,7 +1946,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--source", action="append", default=[], help="NAME=FILE, a saved ruling")
     args = ap.parse_args(argv)
     if any(at_key(k) is None for k in KEYS):
-        print(f"FAIL [G-CITE] the inputs are unreadable at {BASE} / {D13_SHA} (fetch first)")
+        print(f"FAIL [G-CITE] the inputs are unreadable at {BASE} (fetch first)")
         return 1
     t = load(parse_sources(args.source))
     if args.a_rows:
