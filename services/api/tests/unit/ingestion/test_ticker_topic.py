@@ -523,3 +523,62 @@ def test_an_item_that_is_no_ticker_event_is_ignored(item: object) -> None:
     topic = rig.topic()
     topic.offer(item)
     assert topic.tick() == 0 and rig.hub.resyncs == []
+
+
+async def test_a_publisher_running_behind_yields_to_the_event_loop_every_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #4929's sibling (C-2.18): a turn whose window is already due awaits nothing else, so it must
+    # yield once, or the publisher keeps the loop it shares with the OMS while it runs late.
+    rig = Rig()
+    topic = rig.topic()
+    topic.open()
+    topic._changed.add("BTCUSDT")  # a change pending since a flush long past: every turn is late
+    turns: list[int] = []
+    other = 0
+
+    def tick() -> None:
+        turns.append(other)
+        if len(turns) == 5:
+            topic._sub = None  # stop the loop after five late turns
+
+    monkeypatch.setattr(topic, "pump", lambda: None)
+    monkeypatch.setattr(topic, "tick", tick)
+
+    async def neighbour() -> None:
+        nonlocal other
+        while len(turns) < 5:
+            other += 1
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(asyncio.gather(topic._run(), neighbour()), timeout=5)
+    assert turns == [1, 2, 3, 4, 5]  # the neighbour ran once between each of the publisher's turns
+
+
+async def test_a_fault_that_persists_waits_a_window_each_turn_and_never_spins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #4929's sibling (C-2.18): a `pump` that raises every turn resyncs, then waits one window
+    # before the next turn, so a persistent fault costs one resync per window, never a tight loop.
+    waits: list[float] = []
+    topic: TickerTopic[dict[str, Any]]
+
+    async def sleep(s: float) -> None:
+        waits.append(s)
+        if len(waits) == 3:
+            topic._sub = None  # stop the loop after three faulted turns
+        await asyncio.sleep(0)
+
+    rig = Rig()
+    topic = rig.topic(sleep=sleep)
+    topic.open()
+    resyncs: list[None] = []
+    monkeypatch.setattr(topic, "_resync", lambda: resyncs.append(None))
+
+    def pump() -> None:
+        raise RuntimeError("persistent")
+
+    monkeypatch.setattr(topic, "pump", pump)
+    topic._changed.add("BTCUSDT")
+    await asyncio.wait_for(topic._run(), timeout=5)
+    assert waits == [WINDOW_S] * 3 and len(resyncs) == 3
