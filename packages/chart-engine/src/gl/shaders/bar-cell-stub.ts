@@ -9,11 +9,14 @@ export const BAR_CELL = {
 in vec2 a_corner;
 in ivec2 a_cell;
 in vec2 a_size;
+in vec4 a_color;
 uniform vec2 u_viewport;
 uniform int u_indexBase;
 uniform int u_tickBase;
 uniform vec4 u_k;
+out vec4 v_color;
 void main() {
+  v_color = a_color;
   vec2 rel = vec2(a_cell - ivec2(u_indexBase, u_tickBase));
   float x = (rel.x + 0.5 - u_k.w + (a_corner.x - 0.5) * a_size.x) * u_k.x;
   float y = (rel.y + a_corner.y * a_size.y) * u_k.y + u_k.z;
@@ -21,6 +24,7 @@ void main() {
 }`,
   fragment: `#version 300 es
 precision mediump float;
+in vec4 v_color;
 out vec4 o_color;
-void main() { o_color = vec4(1.0); }`,
+void main() { o_color = v_color; }`,
 } as const;

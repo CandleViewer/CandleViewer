@@ -16,8 +16,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const PKG = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO = join(PKG, "..", "..");
 const C216_RULES = ["no-restricted-imports", "no-restricted-globals", "no-restricted-syntax"];
-// E11-S02: the WebGL2 backend, and E11-S03: the shared transform, join every DOM-free list below.
-const GL = ["src/gl/probe.ts", "src/viewport/probe.ts"];
+// E11-S02: the WebGL2 backend, E11-S03: the shared transform, and E11-T05: the Canvas 2D backend
+// join every DOM-free list below.
+const GL = ["src/gl/probe.ts", "src/viewport/probe.ts", "src/canvas2d/probe.ts"];
 // Generous per-test budget for the loops, the tsc programs and the project-service lint: they
 // pass in ~2 s alone but share the runner with the whole unit project under load (C-9.3).
 const SLOW = 20_000;
@@ -145,7 +146,7 @@ describe("Scenario: The framework-free boundary is enforced, not just documented
         const out = await lint(path, code);
         expect(out, name).toEqual([
           `no-restricted-globals: Unexpected use of '${name}'. C-2.16: no DOM globals in ` +
-            "src/core|layers|scene|model|gl (DOM glue is the host adapter's).",
+            "src/core|layers|scene|model|gl|canvas2d (DOM glue is the host's).",
         ]);
       }
     },
@@ -308,6 +309,9 @@ describe("Scenario: The framework-free boundary is enforced (dependency-cruiser)
     write("packages/chart-engine/src/viewport/uses-host.ts", 'import "../host/mount";\n');
     write("packages/chart-engine/src/gl/uses-worker.ts", 'import "../worker/protocol";\n');
     write("packages/chart-engine/src/worker/protocol.ts", "export const p = 1;\n");
+    write("packages/chart-engine/src/canvas2d/backend.ts", "export const b = 1;\n");
+    write("packages/chart-engine/src/scene/uses-2d.ts", 'import "../canvas2d/backend";\n');
+    write("packages/chart-engine/src/canvas2d/uses-worker.ts", 'import "../worker/protocol";\n');
     const require = createRequire(import.meta.url);
     const config = require(join(REPO, ".dependency-cruiser.js")) as IConfiguration;
     const out = await cruise(
@@ -365,6 +369,18 @@ describe("Scenario: The framework-free boundary is enforced (dependency-cruiser)
   it.each(["scene", "viewport"])("src/%s importing src/gl fails chart-engine-core-no-gl", (dir) => {
     expect(violations(`packages/chart-engine/src/${dir}/uses-gl.ts`)).toEqual([
       "chart-engine-core-no-gl -> packages/chart-engine/src/gl/registry.ts",
+    ]);
+  });
+
+  it("src/scene importing src/canvas2d fails chart-engine-core-no-gl (E11-T05)", () => {
+    expect(violations("packages/chart-engine/src/scene/uses-2d.ts")).toEqual([
+      "chart-engine-core-no-gl -> packages/chart-engine/src/canvas2d/backend.ts",
+    ]);
+  });
+
+  it("src/canvas2d importing the worker glue fails chart-engine-gl-no-host (E11-T05)", () => {
+    expect(violations("packages/chart-engine/src/canvas2d/uses-worker.ts")).toEqual([
+      "chart-engine-gl-no-host -> packages/chart-engine/src/worker/protocol.ts",
     ]);
   });
 

@@ -61,6 +61,14 @@ describe("draw submission: teardown and unattached nodes", () => {
     bench.graph.addNode("p0", "series", orphan); // never attached: no VAO
     bench.step();
     expect(bench.backend.trace.draws).toBe(18);
+    // E11-T05 BQ-85: the seam's attach and loss hooks reach the same buffers and context.
+    bench.backend.attach(orphan.id, { data: new Float32Array(72), head: 0, stride: 8 });
+    bench.step();
+    expect(bench.backend.trace.draws).toBe(19);
+    expect([bench.backend.loss === bench.backend, bench.backend.loss.isContextLost()]).toEqual([
+      true,
+      false,
+    ]);
     expect(bench.backend.registry.counts().live).toBeGreaterThan(0);
     bench.backend.dispose();
     expect(bench.backend.registry.counts().live).toBe(0);

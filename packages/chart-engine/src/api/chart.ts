@@ -10,7 +10,12 @@ import {
   selectRunMode,
   type HostEnv,
 } from "../worker/host.js";
-import { ENGINE_WORKER_LOST, type FromWorker, type RunMode } from "../worker/protocol.js";
+import {
+  type DegradeDetails,
+  ENGINE_WORKER_LOST,
+  type FromWorker,
+  type RunMode,
+} from "../worker/protocol.js";
 import { createPane, type PaneInternal } from "./pane.js";
 import { createTimeScale } from "./scales.js";
 import type {
@@ -51,6 +56,14 @@ let envOverride: ((doc: Document) => HostEnv) | null = null;
 export function setHostEnvFactory(factory: ((doc: Document) => HostEnv) | null): void {
   envOverride = factory;
 }
+
+type ErrorDetails = NonNullable<ChartEvents["error"]["details"]>;
+
+/** A copy per event, so a listener cannot mutate the engine's own lists (BQ-64, BQ-90). */
+const copyDetails = (d: ErrorDetails | DegradeDetails): ErrorDetails =>
+  "reducedCapabilities" in d
+    ? { reducedCapabilities: [...d.reducedCapabilities], reason: d.reason }
+    : { ...d };
 
 type Listener<E extends keyof ChartEvents> = (p: ChartEvents[E]) => void;
 
@@ -147,7 +160,7 @@ export function createChart(opts: ChartOptions): Chart {
           code: msg.code,
           message: msg.message,
           recoverable: msg.recoverable,
-          ...(msg.details && { details: { ...msg.details } }),
+          ...(msg.details && { details: copyDetails(msg.details) }),
         });
         return;
       default:
@@ -250,6 +263,8 @@ export function createChart(opts: ChartOptions): Chart {
     },
     async takeScreenshot(): Promise<Blob> {
       if (disposed) throw new Error("chart-engine: the chart was disposed");
+      // Parked, mid-loss or failed: `ExportUnavailableError` (code ENGINE_EXPORT_UNAVAILABLE and a
+      // reason), never a blank or stale image (F-13, BQ-92).
       const blob = await host.exportPng();
       if (blob === null) throw new Error("chart-engine: the canvas could not be encoded");
       return blob as Blob;

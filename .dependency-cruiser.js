@@ -136,17 +136,17 @@ module.exports = {
       severity: "error",
       comment:
         "C-2.16 / 26 §3.1: src/core|layers|scene|model|viewport never reach GL; nodes append to " +
-        "batches and only the WebGL2 backend (src/gl) issues GL calls (E11-S02).",
+        "batches and only the backends (src/gl, E11-S02; src/canvas2d, E11-T05) draw.",
       from: { path: "^packages/chart-engine/src/(core|layers|scene|model|viewport)" },
-      to: { path: "^packages/chart-engine/src/gl" },
+      to: { path: "^packages/chart-engine/src/(gl|canvas2d)" },
     },
     {
       name: "chart-engine-gl-no-host",
       severity: "error",
       comment:
-        "C-2.16: src/gl is DOM-free and sits below the host adapter, the facade and the worker " +
-        "glue, which import it, never the reverse (E11-S02).",
-      from: { path: "^packages/chart-engine/src/gl" },
+        "C-2.16: src/gl and src/canvas2d are DOM-free and sit below the host adapter, the facade " +
+        "and the worker glue, which import them, never the reverse (E11-S02, E11-T05).",
+      from: { path: "^packages/chart-engine/src/(gl|canvas2d)" },
       to: { path: "^packages/chart-engine/src/(host|api|worker)" },
     },
     {

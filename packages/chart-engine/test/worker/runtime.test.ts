@@ -14,27 +14,15 @@ import {
   type FromWorker,
   type ToWorker,
 } from "../../src/worker/protocol.js";
+import { FakeCtx2D } from "../canvas2d/fake-ctx2d.js";
 import { FakeGl, FULL, ROOMY } from "../gl/fake-gl.js";
 
-interface Ctx {
-  fillStyle: unknown;
-  fills: string[];
-  clearRect(): void;
-  fillRect(): void;
-}
-
+/** A canvas with no WebGL2: its one context is a fake 2D one (E11-T05's backend draws on it). */
 function canvas(
   width = 200,
   height = 100,
-): { width: number; height: number; ctx: Ctx; getContext(): Ctx } {
-  const ctx: Ctx = {
-    fillStyle: "",
-    fills: [],
-    clearRect: () => undefined,
-    fillRect(): void {
-      this.fills.push(String(this.fillStyle));
-    },
-  };
+): { width: number; height: number; ctx: FakeCtx2D; getContext(): FakeCtx2D } {
+  const ctx = new FakeCtx2D();
   return { width, height, ctx, getContext: () => ctx };
 }
 

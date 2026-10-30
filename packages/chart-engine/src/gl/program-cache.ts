@@ -1,6 +1,7 @@
 // The program cache (E11-S02, 26 §3.4): each program compiles and links lazily, on the first batch
 // that draws with it (B9: cold init is dominated by compilation), and its uniform locations are
 // resolved once then. A compile or link failure is a typed error the backend reports (BQ-52).
+import { PROGRAM } from "../scene/instance-layout.js";
 import type { PaneUniforms } from "../viewport/transform.js";
 import { GL, type GL2Like, type GLObject } from "./gl-types.js";
 import type { GlRegistry, Handle } from "./registry.js";
@@ -27,9 +28,9 @@ export class ContextLostError extends Error {
   }
 }
 
-/** A batch's `program` number indexes this table: the state-sort key of 26 §3.1. */
+/** A batch's `program` number (shared with the 2D backend, BQ-87) indexes this table. */
 export const PROGRAMS: readonly ProgramSource[] = [LINE, QUAD, SDF_TEXT, BAR_CELL];
-export const PROGRAM = { line: 0, quad: 1, sdfText: 2, barCell: 3 } as const;
+export { PROGRAM };
 
 /** A compile or link failure; `log` is the driver's info log (trimmed in the backend's message). */
 export class ProgramCompileError extends Error {

@@ -2,10 +2,34 @@
 // both directions, the worker-boundary validation and the pure helpers both sides share. No DOM,
 // no I/O, no exchange knowledge (C-2.16): this file compiles under tsconfig.core.json, so the
 // canvas is typed structurally (an OffscreenCanvas in worker mode, the HTMLCanvasElement inline).
-import type { CapabilityReport, RenderProfile } from "../gl/capability.js";
+import type {
+  CapabilityReport,
+  DegradeReason,
+  ReducedCapability,
+  RenderProfile,
+} from "../gl/capability.js";
 import type { LossDetails } from "../gl/context-loss.js";
 
-export type { CapabilityReport, RenderProfile };
+export type { CapabilityReport, DegradeReason, ReducedCapability, RenderProfile };
+
+/** `ENGINE_NO_WEBGL2`'s optional details (E11-T05, README BQ-90): codes, never prose. */
+export interface DegradeDetails {
+  readonly reducedCapabilities: readonly ReducedCapability[];
+  readonly reason: DegradeReason;
+}
+
+/** Why an export was refused (README BQ-92, F-13): no pixels can be trusted, so none are sent. */
+export type ExportRejectReason = "context-lost" | "backend-failed";
+export const ENGINE_EXPORT_UNAVAILABLE = "ENGINE_EXPORT_UNAVAILABLE";
+
+/** `takeScreenshot`'s distinct rejection while the chart is parked (mid-loss) or failed (BQ-92). */
+export class ExportUnavailableError extends Error {
+  readonly code = ENGINE_EXPORT_UNAVAILABLE;
+  constructor(readonly reason: ExportRejectReason) {
+    super(`chart-engine: the chart cannot be exported now (${reason})`);
+    this.name = "ExportUnavailableError";
+  }
+}
 
 /** The token the renderer clears the canvas with (§5 rule 1: colour comes from tokens only). */
 export const BACKGROUND_TOKEN = "color.chart.background";
@@ -159,8 +183,8 @@ export type FromWorker =
       readonly code: string;
       readonly message: string;
       readonly recoverable: boolean;
-      /** Only on `ENGINE_CONTEXT_LOST` (BQ-64). */
-      readonly details?: LossDetails;
+      /** On `ENGINE_CONTEXT_LOST` (BQ-64) and `ENGINE_NO_WEBGL2` (BQ-90) only. */
+      readonly details?: LossDetails | DegradeDetails;
     }
   // README BQ-10: §6 has no acknowledgement, which the host's backpressure needs, and no reply to
   // the `export` command; both are added in their narrowest form.
@@ -170,6 +194,8 @@ export type FromWorker =
       readonly id: ChartId;
       readonly reqId: number;
       readonly blob: unknown;
+      /** Set, with a null `blob`, when the export was refused (BQ-92). */
+      readonly reason?: ExportRejectReason;
     };
 
 // ---- input packing ---------------------------------------------------------------------------

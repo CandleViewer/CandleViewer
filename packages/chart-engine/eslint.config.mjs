@@ -18,7 +18,7 @@ const NETWORK_GLOBALS = [
   },
 ];
 
-// C-2.16 DOM ban for src/core|layers|scene|model|gl: every browser global (`globals.browser`) that is
+// C-2.16 DOM ban for src/core|layers|scene|model|gl|canvas2d: every browser global (`globals.browser`) that is
 // neither an ES built-in nor a Node global, plus `navigator`, which Node also defines. The
 // package tsconfig.core.json carries no DOM lib either (only tsconfig.dom.json, for src/api and
 // src/host, does), so a DOM type there fails `tsc` as well (E11-T01).
@@ -30,7 +30,7 @@ const DOM_GLOBALS = [
 ].map((name) => ({
   name,
   message:
-    "C-2.16: no DOM globals in src/core|layers|scene|model|gl (DOM glue is the host adapter's).",
+    "C-2.16: no DOM globals in src/core|layers|scene|model|gl|canvas2d (DOM glue is the host's).",
 }));
 
 // C-2.16 exchange-knowledge ban on symbol names and string literals (E11-T01), and the network
@@ -208,8 +208,9 @@ export default tseslint.config(
     // C-2.16: core, layers and the scene graph touch no DOM at all, not just `document` /
     // `window` (E11-T01, E11-S01, E11-T03: requestAnimationFrame is bound in the worker or host only).
     // E11-S02: the WebGL2 backend (src/gl) too; its GL type is the hand-written GL2Like.
-    // E11-S03: and the shared transform (src/viewport).
-    files: ["src/{core,layers,scene,model,gl,viewport}/**/*.ts"],
+    // E11-S03: and the shared transform (src/viewport). E11-T05: and the Canvas 2D backend
+    // (src/canvas2d), whose context type is the hand-written Ctx2DLike (no Path2D, BQ-84).
+    files: ["src/{core,layers,scene,model,gl,viewport,canvas2d}/**/*.ts"],
     rules: {
       "no-restricted-globals": ["error", ...NETWORK_GLOBALS, ...DOM_GLOBALS],
     },

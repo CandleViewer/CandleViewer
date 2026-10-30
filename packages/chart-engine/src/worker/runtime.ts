@@ -4,11 +4,12 @@
 // One runtime drives every chart registered with it from one frame callback, in registration
 // order (§3.2 rule 1), each through its own `FrameScheduler` (E11-S01), and parks when nothing
 // is dirty (§3.2 rule 5). No DOM types here (C-2.16): the canvas is reached structurally, as an
-// OffscreenCanvas and an HTMLCanvasElement both fit.
-import { GLBackend } from "../gl/backend.js";
-import { NO_WEBGL2_REASON } from "../gl/capability.js";
-import { acquireContext } from "../gl/context.js";
+// OffscreenCanvas and an HTMLCanvasElement both fit. The runtime holds only the `RenderBackend`
+// seam (E11-T05, README BQ-85): `openBackend` picks WebGL2 or Canvas 2D, and the loss wiring asks
+// for the optional `LossCapable` hooks, so no line here branches on which backend draws (S3).
+import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
+import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
 import * as scene from "../scene/index.js";
 import {
   ChartViewport,
@@ -31,6 +32,8 @@ import {
   type CapabilityReport,
   type ChartId,
   type Command,
+  type DegradeDetails,
+  type ExportRejectReason,
   type FromWorker,
   type LodLevels,
   type RunMode,
@@ -38,13 +41,6 @@ import {
   type ThemeLut,
   type ToWorker,
 } from "./protocol.js";
-
-/** The 2D context calls the `degraded-2d` stub makes (E11-T05 draws the real 2D path). */
-interface Context2DLike {
-  fillStyle: unknown;
-  clearRect(x: number, y: number, w: number, h: number): void;
-  fillRect(x: number, y: number, w: number, h: number): void;
-}
 
 /** The canvas members the runtime touches, common to OffscreenCanvas and HTMLCanvasElement. */
 interface CanvasLike {
@@ -95,8 +91,8 @@ interface Instance {
   readonly layout: scene.LayoutEngine;
   readonly scheduler: scene.FrameScheduler;
   readonly builder: scene.BatchBuilder;
-  /** The GL backend: undefined until the first frame decides, null on the 2D path. */
-  readonly gpu: { backend: GLBackend | null | undefined; readonly forced: boolean };
+  /** The backend: undefined until the first frame opens it (WebGL2 or Canvas 2D, BQ-85). */
+  readonly gpu: { backend: RenderBackend | undefined; readonly forced: boolean };
   /** True while the context is lost: frames stay requested but do not run (BQ-49). */
   parked: boolean;
   loss: ContextLoss | null;
@@ -144,7 +140,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     gpu: Instance["gpu"],
     canvas: () => CanvasLike,
     render: () => void,
-    opened: (backend: GLBackend | null) => void,
+    opened: (o: OpenedBackend) => void,
     viewport: ChartViewport,
   ) {
     const graph = new scene.SceneGraph();
@@ -172,11 +168,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     });
     function open(): void {
       if (gpu.backend !== undefined) return;
-      const caps = (report ??= deps.probe());
-      const acquired =
-        gpu.forced || caps.profile === "degraded-2d" ? null : acquireContext(canvas());
-      gpu.backend = acquired && new GLBackend(acquired.gl, caps.caps?.renderer ?? null, deps.now);
-      opened(gpu.backend);
+      const o = openBackend(canvas(), (report ??= deps.probe()), gpu.forced, deps.now);
+      gpu.backend = o.backend;
+      opened(o);
     }
     return { graph, layout, scheduler, builder };
   }
@@ -190,27 +184,28 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
   }
 
-  /** The first frame chose the backend: watch it for loss, or say why there is no WebGL2. */
-  function opened(inst: Instance, backend: GLBackend | null): void {
-    const post = (code: string, message: string, recoverable: boolean, d?: LossDetails): void =>
+  /** The first frame chose the backend: say why it is not WebGL2, and watch a lossy one. */
+  function opened(inst: Instance, { backend, degraded }: OpenedBackend): void {
+    type Details = LossDetails | DegradeDetails;
+    const post = (code: string, message: string, recoverable: boolean, d?: Details): void =>
       deps.post({ t: "error", id: inst.id, code, message, recoverable, ...(d && { details: d }) });
-    if (backend === null) {
-      const why = report?.profile === "degraded-2d" ? report.reasons.join(" ") : NO_WEBGL2_REASON;
-      if (!inst.gpu.forced) post(ENGINE_NO_WEBGL2, why, true);
-      return;
-    }
     backend.setPaneUniforms(() => inst.uniforms); // one pane until E11-S09 (BQ-45)
+    if (degraded !== null) {
+      const { reason, message, reducedCapabilities } = degraded;
+      post(ENGINE_NO_WEBGL2, message, true, { reducedCapabilities, reason }); // BQ-90
+    }
+    const lossy = backend.loss;
     const c = inst.canvas;
-    if (typeof c.addEventListener !== "function") return;
+    if (lossy === null || typeof c.addEventListener !== "function") return;
     const loss = new ContextLoss({
       backoffMs: RESTART_BACKOFF_MS,
       now: () => deps.now(),
       setTimer: (cb, ms) => deps.setTimer(cb, ms),
       park: () => {
         inst.parked = true;
-        backend.invalidate();
+        lossy.invalidate();
       },
-      rebuild: () => backend.restore(),
+      rebuild: () => lossy.restore(),
       resume: () => {
         inst.parked = false;
         inst.graph.markAllData(); // the GPU mirrors are rebuilt; the scene graph is untouched
@@ -278,10 +273,24 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
   }
 
+  /** F-13 (BQ-92): no export while the pixels cannot be trusted; the reason, never a stale PNG. */
+  function exportRefusal(inst: Instance): ExportRejectReason | null {
+    const phase = inst.loss?.phase ?? "live";
+    if (inst.gpu.backend?.failure || phase === "failed") return "backend-failed";
+    // The driver's truth too: a context lost before its event is dispatched would encode blank.
+    if (inst.gpu.backend?.loss?.isContextLost() === true) return "context-lost";
+    return phase !== "live" || inst.parked ? "context-lost" : null; // parked: mid-loss
+  }
+
   function exportPng(inst: Instance, reqId: number): void {
     const c = inst.canvas;
+    const reason = exportRefusal(inst);
+    if (reason !== null) {
+      deps.post({ t: "exported", id: inst.id, reqId, blob: null, reason });
+      return;
+    }
     // WebGL2 clears its drawing buffer after presentation: draw now, in the encoding task.
-    if (inst.gpu.backend?.failure === null && !inst.parked) render(inst);
+    if (inst.gpu.backend !== undefined) render(inst);
     const done = (blob: unknown): void => deps.post({ t: "exported", id: inst.id, reqId, blob });
     if (typeof c.convertToBlob === "function") {
       c.convertToBlob({ type: "image/png" }).then(done, () => done(null));
@@ -348,7 +357,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       const old = charts.get(msg.id);
       if (old !== undefined) retire(old);
       const slot: Instance["slot"] = { frame: null };
-      const gpu: Instance["gpu"] = { backend: undefined, forced: msg.profile === "degraded-2d" };
+      // `profile` validates as the one forced value (BQ-53; the BQ-94 test hook rides it too).
+      const gpu: Instance["gpu"] = { backend: undefined, forced: msg.profile !== undefined };
       const c = msg.canvas as CanvasLike;
       const viewport = new ChartViewport();
       viewport.setSize(c.width / msg.dpr, c.height / msg.dpr, msg.dpr);
@@ -423,8 +433,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     const start = deps.now();
     const capabilities = (report ??= deps.probe());
     const backend = inst.gpu.backend ?? null;
-    // A failed WebGL2 acquire, or a failed compile, is degraded-2d whatever the probe said (BQ-50).
-    let renderProfile = backend === null || backend.failure ? "degraded-2d" : capabilities.profile;
+    // A 2D backend, or a failed compile, is degraded-2d whatever the probe said (BQ-50, BQ-85).
+    const in2d = backend === null || backend.drawsIn2d || backend.failure !== null;
+    let renderProfile = in2d ? "degraded-2d" : capabilities.profile;
     if (!inst.ready) {
       inst.ready = true;
       deps.post({ t: "ready", id: inst.id, runMode: deps.runMode, renderProfile, capabilities });
@@ -435,21 +446,16 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       backend.setBackground(inst.theme[BACKGROUND_TOKEN]);
       const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
       // The R1 budget closes on the first complete frame after a restore (BQ-49).
-      if (f === null && inst.loss?.phase === "restoring" && !backend.gl.isContextLost()) {
+      if (
+        f === null &&
+        inst.loss?.phase === "restoring" &&
+        backend.loss?.isContextLost() === false
+      ) {
         inst.loss.framed();
       }
       if (f !== null) {
         renderProfile = "degraded-2d";
         deps.post({ t: "error", id: inst.id, code: f.code, message: f.message, recoverable: true });
-      }
-    }
-    const ctx = backend === null ? (inst.canvas.getContext("2d") as Context2DLike | null) : null;
-    if (ctx !== null) {
-      ctx.clearRect(0, 0, inst.canvas.width, inst.canvas.height);
-      const color = inst.theme[BACKGROUND_TOKEN];
-      if (color !== undefined && color !== "") {
-        ctx.fillStyle = color;
-        ctx.fillRect(0, 0, inst.canvas.width, inst.canvas.height);
       }
     }
     if (inst.viewportDirty) {
