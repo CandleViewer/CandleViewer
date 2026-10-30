@@ -820,6 +820,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: inherits CMP-048.
 - **Storybook**: Default, Empty(first-run), ManyWorkspaces, Dirty, ViewAs, FromTabOverflow (every story in dark / light × compact / comfortable).
 - **Tests**: unit, visual, axe, interaction (Delete… opens the typed confirm; the writes T2 for a session that cannot save; the overflow opens it with focus on its first entry), performance (search over `searchThreshold` entries without a dropped frame).
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §6.3 — PROPOSED): a workspace switch is a cut in both modes — the tab's or the tree item's state flips and the incoming tree paints in frame 0, lazily mounted panels as skeleton frames; the rail's expand / collapse is E10-D04's surface and takes its bound pair (E10-D04 T-01 / T-02: `motion.duration.fast` · `motion.easing.decelerate` in, `motion.duration.fast` · `motion.easing.accelerate` out), cited here; the carrier is `aria-selected` or `aria-current` and the polite announcement.
 
 ### CMP-074 EnvBanner (Demo/Live)
 
@@ -897,7 +898,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tests**: unit, visual, axe, interaction (move mode from the panel menu; focus by `Ctrl+\` or `F6` leaves the content box unchanged, asserted as geometry), performance (mount ≤150ms budget per `14-screens-catalogue.md` §0.5.7; a focus change costs no layout).
 - **Forbidden**: focus shown by an elevation step, a weight, an inset or a size change (it resizes a WebGL canvas, E15-D03 N-1); focus by hue alone; two panels drawn focused; the retired name `color.border.panel`.
 - **Performance**: static chrome: no per-frame repaint; mount ≤ 150 ms; a focus change is paint only (E15-D03 §3.4).
-- **Motion spec**: the frame and the bar change in one frame (a cut) in both modes; mount as E05-D03's panel recipe; under reduce none, the end state at frame 0; the carrier is the frame's thickness and the bar's presence (the timings are E15-D14's — PROPOSED).
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §3 B-3, §4 N-1 — PROPOSED): the frame and the bar change in one frame (a cut) in both modes; mount as E05-D03 row 1 (`opacity` 0 → 1 and `translateY(8px)` → 0 over `motion.duration.fast` · `motion.easing.decelerate`) on the body layer alone (a skeleton at mount), the header — the heading, the environment badge, the arm state — at frame 0 outside the fading layer; under reduce none, the end state at frame 0; the carrier is the frame's thickness and the bar's presence.
 
 ### CMP-081 DockGrid / Layout Manager
 
@@ -909,7 +910,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tests**: unit (the tree within `LayoutGridSpec`'s limits), visual, axe, keyboard preset-switch test, interaction (one announcement per mutation; DOM order follows the reading order by moving the persistent per-pane hosts), performance (route/layout transition ≤200ms budget; ≥ 55 fps with four order-flow panes).
 - **Forbidden**: a binary-only split model (`16-design-system-brief.md` §8 rule 1); a remount to restore DOM order (move the persistent per-pane hosts, E15-D02 §8); an announcement per pointer move.
 - **Performance**: layout transition ≤ 200 ms; ≥ 55 fps with four order-flow panes; static chrome: no per-frame repaint.
-- **Motion spec**: a layout change is a cut (no tween of panel boxes) in both modes; the carrier is the one polite summary (the timings are E15-D14's — PROPOSED).
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §2, §6.1 — PROPOSED): a layout change — a drop, a preset apply, a layout switch — is a cut (no tween of panel boxes) in both modes, every affected content box changing once in frame 0; no transition on this surface is longer than `motion.duration.fast` and none touches a box; the carrier is the one polite summary.
 
 ### CMP-082 PanelHeader
 
@@ -2743,7 +2744,8 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tokens**: `space.4`, `elevation.3`, `motion.duration.fast` (replaces `motion.toast`, a retired name).
 - **Storybook**: Single, Stacked, Overflow, ErrorAndInfoMixed.
 - **Tests**: unit, visual, axe (dual live-region separation), interaction (dismiss, pause-on-hover).
-- **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner approval pending)**: `max` is 3, SCR-015's three slots (AM-9, X-8; it was 4): from the fourth item the slot farthest from the anchor becomes the counted toast ("4 more alerts — Open Notifications"). Placement (D-20): never over a registered order-entry panel, an armed order ticket, SCR-063, the ticket's cancel and close controls, the top-bar Safety cluster, an open dialog's footer or the element with keyboard focus; bottom-right left of the open RightRail, else top-right, else the one-line counted pill ("3 alerts — Open Notifications"); each app window keeps its own three slots. `motion.toast` is not a token: enter `translateY` 8 px and opacity over `motion.duration.fast` with `motion.easing.decelerate`, exit opacity and `translateX` 8 px with `.accelerate`, fade only under motion-reduce (X-9, X-20). AM-8's "Toasts" landmark name rides DF-19; the built `ToastRegion` `label` stands until then.
+- **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner approval pending)**: `max` is 3, SCR-015's three slots (AM-9, X-8; it was 4): from the fourth item the slot farthest from the anchor becomes the counted toast ("4 more alerts — Open Notifications"). Placement (D-20): never over a registered order-entry panel, an armed order ticket, SCR-063, the ticket's cancel and close controls, the top-bar Safety cluster, an open dialog's footer or the element with keyboard focus; bottom-right left of the open RightRail, else top-right, else the one-line counted pill ("3 alerts — Open Notifications"); each app window keeps its own three slots. `motion.toast` is not a token: enter `translateY` 8 px and opacity over `motion.duration.fast` with `motion.easing.decelerate`, exit opacity and `translateX` 8 px with `.accelerate`, none under motion-reduce — the end state at frame 0 (E05-D03 §2 row 4a, `16` §7 "reduce → instant"; E15-D14 §5 C-e). AM-8's "Toasts" landmark name rides DF-19; the built `ToastRegion` `label` stands until then.
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §3 B-5 — PROPOSED): the Undo toast follows E05-D03 row 4a — enter `motion.duration.fast` · `motion.easing.decelerate`, exit `motion.duration.fast` · `motion.easing.accelerate`; under reduce none, the end state at frame 0 (the E40-D02 line above reads row 4a's reduce as #2701's ledger row A47 rules it — E15-D14 C-e, A-15); the carrier is the sentence in the polite region.
 
 ### CMP-213 FuzzyList
 
@@ -2766,7 +2768,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tests**: unit (the zone geometry), visual, axe, interaction (keyboard move path; a refusal names its constraint), performance (transform and opacity only; no layout per pointer move).
 - **Forbidden**: a single-tone carrier over panel content; `color.accent.subtle`; a layout operation with no keyboard path; an announcement per pointer move.
 - **Performance**: transform and opacity only, no layout per pointer move; ≥ 55 fps with four order-flow panes.
-- **Motion spec**: the zone lights as a cut; the ghost fades over `motion.duration.fast`; under reduce none, the end state at frame 0; the carrier is the outline and the bar's or the pill's words (the timings are E15-D14's — PROPOSED).
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §3 B-1 / B-2 — PROPOSED): the zone lights as a cut; the ghost appears over `motion.duration.fast` · `motion.easing.decelerate` and leaves over `motion.duration.fast` · `motion.easing.accelerate` (`opacity` only; E05-D03's enter and exit pairs, pending its dock-overlay row) and follows the pointer with `transform` and no clock; under reduce none, the end state at frame 0; the carrier is the outline and the bar's or the pill's words.
 
 ### CMP-215 FloatingWindowFrame
 
@@ -2785,6 +2787,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tokens**: inherits CMP-041.
 - **Storybook**: `Organisms/Dock/PanelMenu` — Default · WithSyncGroup · ViewerRestricted (identical, no lock) · BrowserBuild (no Pop out, footnote) · NoSettings · UndoAvailable · CollapsedOwnActions · LimitT2 (Duplicate at 16; Move to ▸ outcomes) · ResetConfirm · EdgeFlip (four corners) · Clamped (200 %) (every story in dark / light × compact / comfortable).
 - **Tests**: unit, visual, axe, interaction (keyboard open, roving focus; the opening item by the frame's order; Reset settings… confirms, Close never), performance (opens without a dropped frame over four order-flow panes).
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §6.2; a menu that takes focus on opening is a cut, `16` §7.2 — PROPOSED): none; open and close are cuts in both modes, 0 ms of SCR-028's 80 ms budget; the carrier is the focused item and the menu's name.
 
 ### CMP-217 LayoutPresetMenu
 
@@ -2794,6 +2797,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tokens**: inherits CMP-041 (the menu); the thumbnail `radius.card` with `space.inset.md` around it. (Replaces `radius.md` and `space.3`, which are primitives.)
 - **Storybook**: Default, ActiveLayout, WithSavedLayouts, Overflow, SavesGated (every story in dark / light × compact / comfortable).
 - **Tests**: unit, visual, axe.
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §6.2 — PROPOSED): none; the menu's open and close are cuts in both modes (it takes focus on opening); the gallery it opens is E05-D03 row 2a, the scrim over `motion.duration.normal` and the card a cut; the carrier is the focused item and the active preset's check.
 
 ### CMP-218 SyncMenu
 
@@ -2803,6 +2807,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tokens**: `color.sync.a` / `.b` / `.c` on the tile edge only (palette references with the letter rule, `16-design-system-brief.md` §2.1b; a group colour is never used without the group letter; the hue only repeats the letter), `radius.pill`; hosted by CMP-017 Popover at `space.inset.md` (E15-D06 C-16).
 - **Storybook**: Unsynced, GroupA, AllAxesOn, PartialAxes, Conflict, ScaleLinkRefused, Modal200 (every story in dark / light × compact / comfortable).
 - **Tests**: unit, visual (the greyscale strip: the letter carries), axe, interaction (each axis an independently labelled switch), performance (opens without a dropped frame).
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §6.2 — PROPOSED): none; the popover's open and close are cuts in both modes (focus enters on open); the carrier is the focused control and the popover's name.
 
 ### CMP-219 SymbolPicker
 
@@ -3104,7 +3109,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tests**: unit (the stage and reason to its lines), visual, axe, interaction (`Esc` at every step restores the exact layout; the mode's keys never reach a trading binding; one announcement per step, the latest under key repeat), performance (no layout outside its row).
 - **Forbidden**: a mode without a visible "Esc: cancel" (E15-D04 D04-D-8); a truncated instruction; a step announced twice or once per repeated key; `Esc` gated, locked or confirmed (E15-D04 A3).
 - **Performance**: static chrome: no per-frame repaint; it paints on a state change only.
-- **Motion spec**: [E15-D04.md](../design/E15/E15-D04.md) (E15-D04 §16 item 6; the timings are E15-D14's — PROPOSED): enter and leave as an `opacity` fade over `motion.duration.fast`, the move itself a cut; under reduce none, the end state at frame 0; the carrier is the instruction line's words and the `status` text.
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §3 B-1 / B-2, binding E15-D04 §16 item 6 — PROPOSED): enter and leave as an `opacity` fade — enter `motion.duration.fast` · `motion.easing.decelerate`, leave `motion.duration.fast` · `motion.easing.accelerate` (E05-D03's enter and exit pairs, pending its dock-overlay row) — the move itself a cut; under reduce none, the end state at frame 0; the carrier is the instruction line's words and the `status` text.
 - **Why a new entry, not a variant**: CMP-028 Callout is inline content and CMP-092 a banner that never takes a row's place; the bar owns a mode, its keys and a `status` contract that neither carries. **Design**: `docs/design/E15/E15-D13.md` §4; `docs/design/E15/E15-D04.md` D04-D-8, §5.
 
 ### CMP-250 MinimisedPanelTray (E15-D04 §7)
@@ -3119,7 +3124,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tests**: unit (absent with no minimised panel), visual, axe, interaction (`Enter` restores to the remembered place; one announcement per event), performance (no layout outside its row).
 - **Forbidden**: a tray drawn while no panel is minimised; an order-capable panel's tab without its environment word (`14-screens-catalogue.md` §0.5.1); a restore chord shipped without its keymap row.
 - **Performance**: static chrome: no per-frame repaint; it paints on a state change only.
-- **Motion spec**: [E15-D04.md](../design/E15/E15-D04.md) (E15-D04 §16 item 6; the timings are E15-D14's — PROPOSED): appear and leave as an `opacity` fade over `motion.duration.fast`; under reduce none, the end state at frame 0; the carrier is the tabs' words and the polite announcement.
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §2 I-18, §4 N-2; E15-D04 §16 item 6's fade not bound, the tab carries the environment badge — E15-D14 C-r — PROPOSED): none; appear and leave are cuts in both modes, the tabs and their words at frame 0 in the frame of the minimise or the restore; the carrier is the tabs' words and the polite announcement.
 - **Why a new entry, not a variant**: CMP-042 Tabs switches views inside one panel and CMP-071 NavRail navigates routes; the tray's tabs restore removed leaves to the dock tree from their own row, a contract neither carries. **Design**: `docs/design/E15/E15-D13.md` §4; `docs/design/E15/E15-D04.md` §7.
 
 ### CMP-251 DockTabGroup (E15-D04 P6)
@@ -3134,7 +3139,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tests**: unit (the active tab follows focus), visual, axe, interaction (arrows, `Home`, `End`; a drag from a tab, and `Shift+F10` › Move panel, start a move outside `collapsed`; under `collapsed` no tab is a move origin and `Shift+F10` › Move panel is an availability row, "Widen the window to arrange panels." (E15-D12 §4); each tab's `aria-controls` names its panel's region), performance (no remount of a panel on a tab switch).
 - **Forbidden**: a second tablist implementation (it composes CMP-042); a tab that cannot start a move by keyboard, outside `collapsed` (under it no tab is a move origin, as the Variants line says; E15-D12 §3); a panel remounted on a tab switch.
 - **Performance**: static chrome: no per-frame repaint; it paints on a state change only.
-- **Motion spec**: [E15-D04.md](../design/E15/E15-D04.md) (E15-D04 §16 item 6, which lists no tab-switch transition): none; a tab switch is a cut in both modes; the carrier is `aria-selected` and the selected tab's rule.
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §6.3, confirming E15-D04 §16 item 6, which lists no tab-switch transition — PROPOSED): none; a tab switch is a cut in both modes; the carrier is `aria-selected` and the selected tab's rule.
 - **Why a new entry, not a variant**: CMP-042 Tabs switches sections inside one panel; a dock tab is a panel that moves, closes and is announced as a panel, so the entry composes CMP-042 with automatic activation rather than putting dock props on every Tabs. **Design**: `docs/design/E15/E15-D13.md` §4; `docs/design/E15/E15-D04.md` P6.
 
 ### CMP-252 WorkspaceTabStrip (E15-D03 CR-6)
@@ -3149,7 +3154,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tests**: unit (activation never moves a sibling: the width is laid out at the semibold weight), visual, axe, interaction (manual activation; `F2` rename, its `aria-invalid` and `aria-describedby` on an invalid name; close by the × and by the tab's menu, never a prompt; overflow opens CMP-073 with focus on its first entry; the tooltip on a long name), performance (no layout outside its row on activation).
 - **Forbidden**: hue as the only mark of the active tab; the `*` as the only dirty signal; a restored copy drawn as saved (E15-D03 D-8); a write hidden from a session that cannot save (it is T2, never removed).
 - **Performance**: static chrome: no per-frame repaint; it paints on a state change only.
-- **Motion spec**: [E15-D03.md](../design/E15/E15-D03.md) (E15-D03 §4.4 and its hand-offs; the timings are E15-D14's — PROPOSED): none; activation and close are cuts in both modes; the rename input's entry is E15-D14's transition, none under reduce, the end state at frame 0; the carrier is `aria-selected`, the weight and the underline.
+- **Motion spec**: [E15-D14.md](../design/E15/E15-D14.md) (E15-D14 §6.3, after E15-D03 §4.4 and its hand-offs — PROPOSED): none; activation and close are cuts in both modes; the rename input's entry is a cut — focus enters the input at frame 0 with the value selected, never inside a fade; under reduce none, the end state at frame 0; the carrier is `aria-selected`, the weight and the underline.
 - **Why a new entry, not a variant**: CMP-042 Tabs is panel-local; the strip adds workspace semantics (dirty, restored, rename, overflow into CMP-073, the toolbar slot and its T2 writes) around CMP-042's tablist with manual activation: a composed organism, not a Tabs variant. **Design**: `docs/design/E15/E15-D13.md` §4; `docs/design/E15/E15-D03.md` §4.4.
 
 ---
