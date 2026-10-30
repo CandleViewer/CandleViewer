@@ -115,11 +115,16 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: Writes that must keep working in the downgrade (ending the session).
 _WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up"})
 #: Exempt by method and path, so a later handler on the same path inherits no exemption. Extend
-#: (#2300 D1) acts on no data and is the only activity a live session has; `DELETE
-#: /auth/session/view-as` (#3085, Q5): leaving view-as is one call that nothing refuses, and
-#: a read-only session can end view-as but never start it (#4810).
+#: (#2300 D1) acts on no data and is the only activity a live session has; lock (#4743) acts on
+#: no data either and only reduces risk; `DELETE /auth/session/view-as` (#3085, Q5): leaving
+#: view-as is one call that nothing refuses, and a read-only session can end view-as but never
+#: start it (#4810).
 _WRITE_EXEMPT_ROUTES = frozenset(
-    {("POST", "/auth/session/extend"), ("DELETE", "/auth/session/view-as")}
+    {
+        ("POST", "/auth/session/extend"),
+        ("POST", "/auth/lock"),
+        ("DELETE", "/auth/session/view-as"),
+    }
 )
 
 

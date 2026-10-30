@@ -323,8 +323,7 @@ operations:
     permissions: []
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the E09-S03-F1 (#4743) implementation PR mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /auth/login:
     permissions: []

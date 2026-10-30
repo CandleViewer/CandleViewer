@@ -60,6 +60,25 @@ Each control was disabled on a scratch worktree or in place, the named case fail
 | `git_sha` back in `_build_info` alone, which the model refuses (F-8)   | AC-INFO-01's probe cases and `test_app.py`: the probes answer 500                      |
 | `git_sha` back in `_build_info` and `BuildInfo` (F-8, the probes)      | AC-INFO-01's `/healthz` and `/readyz` cases, ready and degraded; `test_app.py`         |
 | the sha, or its 7-character prefix, appended to the probes' `version`  | AC-INFO-01's probe cases (the sha or its prefix in the body text); `test_app.py`       |
+| `is_idle_locked` ignores `locked_at` (#4743)                           | AC-LOCK-07 (`[lock_now]` sweep); `test_is_idle_locked_is_true_once_locked_at_...`      |
+| lock writes `auth.session_locked` after the lock commits (#4743)       | `test_lock_writes_its_record_before_the_row_and_sends_b16_nothing` + the 503 case      |
+| the lock's unit updates its row before its write-ahead hook (#4743)    | `test_lock_session_locks_the_live_row_writes_ahead_then_updates_in_one_unit`           |
+| the lock's already-locked check dropped (#4743)                        | AC-LOCK-08 (`..._writes_no_second_record`, both cases) + the service's two             |
+| `FOR NO KEY UPDATE` dropped from the lock's read (#4743)               | AC-LOCK-08 on Postgres (ten units, one record); the `_LOCK_ROW_SQL` clause pin         |
+| the in-memory store's lock unit without its row lock (#4743)           | `test_concurrent_locks_of_one_session_call_the_write_ahead_once`                       |
+| `lift_idle_lock` keeps `locked_at` (#4743)                             | the lift's Postgres case and its offline pin                                           |
+| refresh stops carrying `locked_at` to the successor (#4743)            | AC-LOCK-07 (the carry: its unit case and the Postgres race)                            |
+| extend's write without `locked_at IS NULL` (#4743)                     | AC-LOCK-07 (extend's write: its offline pin and its Postgres case)                     |
+| `LOCKED_OK_OPERATIONS` without `POST /auth/lock` (#4743)               | `test_the_gate_serves_exactly_the_operations_the_contract_allows_...`; deployed relock |
+| lock's `_identify` call reads the `cv_refresh` cookie again (#4743)    | AC-LOCK-06 (router: `test_lock_with_only_the_refresh_cookie_is_refused_...`, both)     |
+| `/auth/lock` back in the CSRF guard's cookie-identified paths (#4743)  | AC-LOCK-06 (the guard's `POST /auth/lock` case; deployed, the cookie alone)            |
+| the lock's update moves `last_seen_at` back (#4743, BQ-5)              | the `_SET_LOCKED_SQL` clause pin; `test_lock_session_sets_locked_at_...` (Postgres)    |
+| the in-memory lock moves `last_seen_at` back (#4743, BQ-5)             | `test_lock_never_moves_...`; the deployed contract-wide activity sweep                 |
+| `grant_ended` ignores `unlocked_at` (#4743)                            | `test_a_link_ends_at_any_unlock_of_its_session_chain` (all four cases)                 |
+| `lift_idle_lock` does not stamp `unlocked_at` (#4743)                  | the lift's offline pin and its Postgres case                                           |
+| `grant_ended`'s bound made strict (#4743)                              | `test_an_unlock_ends_a_link_issued_at_or_before_it[same_instant]`                      |
+| B16's `auth.idle_locked` takes its read time as the moment (#4743)     | `test_b16s_next_read_records_the_lock_at_its_own_moment` (both); router; deployed      |
+| B16's `auth.idle_locked` takes the deadline for a lock by request      | `test_b16s_next_read_records_the_lock_at_its_own_moment[request]`                      |
 
 AC-AUD-01/02 attack the real `cv_app`, so their controls are the shipped files that give it its
 rights. Each was changed on a scratch copy of `0003_audit_log` or `pg_bootstrap.sql`, except the last
@@ -144,6 +163,9 @@ race. The 3 unit cases, in `tests/unit/auth/test_mfa_service_edges.py`, are
 | AC-LOCK-03    | U1 SR-016         | Locked terminal; guesses the password               | Five wrong unlock passwords, then the right one                                                       | The fifth wrong password revokes the session (`unlock_attempts_exceeded`, published: its sockets close with 4401); the right password then answers `session_revoked`         | 401 `unlock_invalid` x4, then 401 `session_revoked`; revoked, published and counted; right password refused                   | DEFENDED (router level; see the evidence note)                            |
 | AC-LOCK-04    | U27 SR-016        | Locked terminal of a legitimate user                | Wrong unlock passwords to lock the account out: U27 from the lock screen, not the login form          | A wrong unlock password counts toward the SR-016 lockout as a wrong login does; the one that locks the account writes `auth.account_locked`; time-bounded (AC-CRED-05)       | Counted on the account; `auth.account_locked` written; while locked, the right password fails like a wrong one                | DESIGN-DECISION (lockout shared with login; see the evidence note)        |
 | AC-LOCK-05    | U2 SR-025         | Unattended unlocked terminal; a tab keeps polling   | Reads every 10 s (`GET /auth/session`, `/me`, `/auth/sessions`) across the idle deadline, no Extend   | Reads are not activity (#2300): the session locks at `last_seen_at + idle_timeout_s`; only extend and unlock move the deadline                                               | `/me` 401 `session_idle_locked` at the deadline; `GET /auth/session` `locked: true`                                           | DEFENDED (deployed app; see the evidence note)                            |
+| AC-LOCK-06    | TB-4 SR-041       | Cross-site page; the victim's cookie only           | `POST /auth/lock` with the `cv_refresh` cookie alone, or a bearer with another session's SR-041 token | 403 `csrf_token_invalid` from the CSRF guard before any route: lock takes the access token only, so the cookie alone binds the token to no session and a bearer's to its own | 403; nothing locked, while the access token lives and after it ended; another session's token: 403, its refusal audited       | DEFENDED (deployed app and the CSRF guard; see the evidence note)         |
+| AC-LOCK-07    | U51 C-2.21        | Session locked by `POST /auth/lock`; its tab held   | A refresh that read the session before the lock and claims after it; an API restart; Extend; all else | The lock is on the row: the refresh's successor is locked, a new process refuses the session, extend is refused; only `POST /auth/unlock` with the password lifts it         | Successor locked; refused after a restart; extend and every contract operation 401 `session_idle_locked`; password unlocks    | DEFENDED (unit, deployed app and Postgres; see the evidence note)         |
+| AC-LOCK-08    | U51 C-2.9 SR-015  | A held bearer of a live session                     | `POST /auth/lock` in a burst; lock, unlock and lock again in a loop                                   | One `auth.session_locked` per lock: a locked session's lock answers 200 and writes nothing; the next record needs an unlock, password and per-IP throttle (AC-LOCK-01)       | Concurrent locks: one record, all 200; a lock of a locked session: 200, nothing written                                       | DEFENDED (router level and Postgres; see the evidence note)               |
 | AC-INV-01..04 | U12 SR-027        | Guessing, expired, reused, owner role               | invite service                                                                                        | Uniform reject; owner not invitable                                                                                                                                          | As expected                                                                                                                   | DEFENDED (fake repo)                                                      |
 | AC-INV-05     | U12 SR-027        | Owner session, stepped up                           | `POST /users` with role `manager`, then `owner`                                                       | 422, audited, nothing created                                                                                                                                                | 422 x2; 2 `users.invite_refused` rows; no invite. Before #2316: 500, no row (F-3)                                             | DEFENDED                                                                  |
 | AC-INV-06     | SR-027 (#2109)    | Legacy invite row stored as `manager`               | Redeem over HTTP                                                                                      | Viewer only; downgrade audited                                                                                                                                               | Viewer; `users.invite_role_downgraded`, `users.invite_redeemed`. Before #2316: 500 (F-3)                                      | DEFENDED                                                                  |
@@ -226,6 +248,37 @@ refused before any password check when its CSRF token belongs to another session
   `test_a_locked_account_fails_like_a_wrong_password`. The password check is step-up's, on login's
   path (`StepUpService.verify_password`), so a lockout it applies also counts on
   `auth_lockouts_total`, which the `AuthLockouts` alert reads (U27's owner alert).
+
+Evidence for AC-LOCK-06..08 (#4743, `POST /auth/lock`, CMP-098 "Lock now"): router-level tests in
+`services/api/tests/unit/api/idle_lock/test_lock.py`, the deployed app's in
+`services/api/tests/security/auth/test_idle_lock_http.py` and the Postgres ones in
+`services/api/tests/integration/auth/test_session_lock_pg.py`, unless another file is named.
+
+- AC-LOCK-06: lock takes the access token only (22 `authLock`), so the CSRF guard binds every
+  lock's SR-041 token itself, as for any write. Through the deployed guards,
+  `test_the_cookie_alone_never_locks_a_session_through_the_csrf_guard` and
+  `test_a_live_access_token_locks_its_own_session_whatever_the_cookie`; the guard's own
+  `test_a_bearer_lock_is_bound_here_to_the_bearers_own_session` and the `POST /auth/lock` case of
+  `test_only_a_post_to_the_exact_logout_or_unlock_path_is_deferred_to_the_route`
+  (`tests/unit/api/test_csrf_middleware.py`); the route reads no cookie:
+  `test_lock_with_only_the_refresh_cookie_is_refused_and_locks_nothing`.
+- AC-LOCK-07: `test_the_successor_carries_a_lock_that_landed_before_the_claim`
+  (`tests/unit/auth/test_session_lock.py`) and, on Postgres,
+  `test_a_lock_racing_a_refresh_claim_is_carried_to_the_successor`;
+  `test_the_lock_survives_a_new_session_service_and_chart_over_the_same_store` and, on Postgres,
+  `test_a_lock_survives_a_new_engine_and_service`; `test_touch_never_restamps_a_session_locked_by_request`
+  and, on Postgres, `test_touch_last_seen_never_restamps_a_row_locked_by_request`;
+  `test_every_later_request_of_a_session_locked_by_request_is_session_idle_locked`,
+  `test_every_contract_operation_but_the_allowed_ones_refuses_a_locked_session[lock_now]` and
+  `test_a_session_locked_by_request_reads_itself_relocks_and_unlocks_with_the_password_only`.
+  Download links end at any unlock of the session chain:
+  `test_a_link_ends_at_any_unlock_of_its_session_chain` and
+  `test_an_unlock_ends_a_link_issued_at_or_before_it` (`tests/unit/admin/test_backup_fetch.py`).
+- AC-LOCK-08: `test_lock_of_an_already_locked_session_is_200_and_writes_no_second_record`,
+  `test_a_lock_racing_another_lock_locks_once_writes_one_record_and_both_answer_200` and, on
+  Postgres, `test_concurrent_locks_of_one_session_write_one_record_and_lock_once` (ten units on ten
+  connections); the unlock's throttle is AC-LOCK-01's
+  `test_unlock_is_throttled_per_source_ip_and_a_throttled_attempt_checks_no_password`.
 
 ## NOT RUN (no observed result; env-only, tracked in #2105)
 

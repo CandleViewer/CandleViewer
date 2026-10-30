@@ -41,6 +41,7 @@ class _State:
     idle_timeout_s: int
     absolute_left_us: int
     revoked: bool
+    locked_by_request: bool = False  # `locked_at` set (#4743), whatever the idle deadline says
 
 
 async def _session_in(wanted: _State) -> tuple[SessionService, SessionRecord, str]:
@@ -55,6 +56,7 @@ async def _session_in(wanted: _State) -> tuple[SessionService, SessionRecord, st
             "expires_at": _NOW + wanted.absolute_left_us * _US,
             "revoked_at": _NOW if wanted.revoked else None,
             "revoked_reason": "logout" if wanted.revoked else None,
+            "locked_at": _NOW - _SEC * _US if wanted.locked_by_request else None,
         }
     )
     repository.sessions[str(record.id)] = record
@@ -101,6 +103,28 @@ def test_is_live_session_holds_exactly_when_the_strict_path_accepts(
     state = _State(age_us, idle_gap_us, idle_timeout_s, absolute_left_us, revoked)
     asyncio.run(_agree(state, extend=False))
     asyncio.run(_agree(state, extend=True))
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    age_us=st.integers(min_value=0, max_value=_TTL + 120 * _SEC),
+    idle_gap_us=st.integers(min_value=0, max_value=2 * _IDLE),
+    idle_timeout_s=st.sampled_from([300, 900, 3600]),
+    absolute_left_us=st.one_of(
+        st.integers(min_value=-120 * _SEC, max_value=120 * _SEC), st.just(_FAR)
+    ),
+    revoked=st.booleans(),
+)
+def test_a_session_locked_by_request_is_never_live_and_the_strict_path_agrees(
+    age_us: int, idle_gap_us: int, idle_timeout_s: int, absolute_left_us: int, revoked: bool
+) -> None:
+    """#4743: a lock by request makes no session live, whatever its deadlines, and the strict
+    path and extend's refuse exactly what the predicate calls not live (#2264)."""
+    state = _State(age_us, idle_gap_us, idle_timeout_s, absolute_left_us, revoked, True)
+    asyncio.run(_agree(state, extend=False))
+    asyncio.run(_agree(state, extend=True))
+    _, record, _ = asyncio.run(_session_in(state))
+    assert not is_live_session(record, now=_NOW)
 
 
 async def test_allow_locked_path_accepts_an_idle_locked_session_the_predicate_rejects() -> None:

@@ -48,6 +48,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.session_unlocked",
         "auth.unlock_failed",
         "auth.session_extended",
+        # #4743 (E09-S03-F1): written write-ahead by `POST /auth/lock`, under the session row's
+        # lock, so of concurrent locks exactly one writes it. The writer's, never the lane's.
+        "auth.session_locked",
         "auth.refresh_reuse_detected",
         # #3009 (ADR-0037 decision 13, Q9): a rotated refresh token presented again after this
         # process contained its family; the first containment keeps `auth.refresh_reuse_detected`.

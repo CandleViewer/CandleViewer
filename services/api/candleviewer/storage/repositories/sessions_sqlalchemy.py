@@ -21,6 +21,10 @@ insert also writes the step-up strikes and read-only window a refresh carries fr
 claim's row (#4051): a new row, from a revoked source row whose step-up columns no writer
 can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`). A signed-in insert (MFA satisfied)
 resolves its user's critical `auth`/`owner_bootstrapped` event in the same transaction (#4479).
+Every record read also carries the row's lock by request and its last unlock (#4743,
+`0056_sessions_lock_state`): the insert writes the lock a refresh carries, extend's write refuses a
+row that holds one, and an unlock clears it and stamps `unlocked_at` in its one write. The lock
+itself is one unit of work that locks the row first (`lock_session`), as the view-as start's.
 """
 
 from __future__ import annotations
@@ -55,7 +59,7 @@ _COLUMNS = (
     "step_up_failures, readonly_until, view_as_context_id::text AS view_as_context_id, "
     "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
     "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
-    "view_as_end_reason"
+    "view_as_end_reason, locked_at, unlocked_at"
 )
 
 # #2911: the user row's status, read `FOR SHARE` in the insert's own transaction. It conflicts
@@ -67,21 +71,22 @@ _LOCK_USER_SQL = sa.text(
     "AND deleted_at IS NULL FOR SHARE"
 )
 # #3085: a record's view-as context goes in with it (eight NULLs when it holds none), so the
-# successor a refresh mints carries the context as the claim returned it (SR-013).
+# successor a refresh mints carries the context as the claim returned it (SR-013). #4743: so does
+# its lock by request (`locked_at`); a new row has no unlock (`unlocked_at` stays NULL).
 _INSERT_SQL = sa.text("""
     INSERT INTO sessions (id, user_id, refresh_token_hash, access_token_jti, issued_at,
         last_seen_at, expires_at, revoked_at, revoked_reason, ip, user_agent, device_label,
         is_electron, mfa_satisfied_at, idle_timeout_s, view_as_context_id,
         view_as_target_user_id, view_as_started_at, view_as_expires_at, view_as_ended_at,
         view_as_end_recorded_at, view_as_cleared_at, view_as_end_reason, step_up_failures,
-        readonly_until)
+        readonly_until, locked_at)
     VALUES (CAST(:id AS uuid), CAST(:user_id AS uuid), :refresh_token_hash,
         CAST(:access_token_jti AS uuid), :issued_at, :last_seen_at, :expires_at, NULL, NULL,
         CAST(:ip AS inet), :user_agent, :device_label, :is_electron, :mfa_satisfied_at,
         :idle_timeout_s, CAST(:view_as_context_id AS uuid),
         CAST(:view_as_target_user_id AS uuid), :view_as_started_at, :view_as_expires_at,
         :view_as_ended_at, :view_as_end_recorded_at, :view_as_cleared_at, :view_as_end_reason,
-        :step_up_failures, :readonly_until)
+        :step_up_failures, :readonly_until, :locked_at)
     """)
 
 
@@ -106,15 +111,33 @@ _LIVE_BY_USER_SQL = _sql(
     "AND revoked_at IS NULL ORDER BY issued_at DESC"
 )
 #: Activity never lifts a lock (#2300): the row must still be unlocked at `:now`
-#: (`SessionRecord.is_idle_locked` is `last_seen_at + idle_timeout_s <= now`).
+#: (`SessionRecord.is_idle_locked`: `locked_at` is set, #4743, or `last_seen_at + idle_timeout_s
+#: <= now`).
 _TOUCH_SQL = _sql(
     "UPDATE sessions SET last_seen_at = :now WHERE id = CAST(:id AS uuid) "
-    "AND revoked_at IS NULL AND last_seen_at + make_interval(secs => idle_timeout_s) > :now "
+    "AND revoked_at IS NULL AND locked_at IS NULL "
+    "AND last_seen_at + make_interval(secs => idle_timeout_s) > :now "
     "RETURNING @COLS@"
 )
+#: An unlock (#2301, B16.7) lifts both locks in one write: the deadline (re-stamped) and a lock by
+#: request (`locked_at`, #4743); it records itself in `unlocked_at`, which nothing clears.
 _LIFT_IDLE_LOCK_SQL = _sql(
-    "UPDATE sessions SET last_seen_at = :now, step_up_elevations = '{}'::jsonb "
+    "UPDATE sessions SET last_seen_at = :now, step_up_elevations = '{}'::jsonb, "
+    "locked_at = NULL, unlocked_at = :now "
     "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
+)
+# #4743, `POST /auth/lock`'s unit of work (`lock_session`): the row, locked as an UPDATE of non-key
+# columns locks it, so of concurrent locks exactly one writes; a revoked or absolute-expired row is
+# not read, as a lock must not write it. With the user's status, as `find_by_id` reads it (#2911),
+# so the record the lock answers with is a whole one. Then, after the record written ahead (C-2.9),
+# the lock itself: `last_seen_at` never moves.
+_LOCK_ROW_SQL = _sql(
+    "SELECT @COLS@, @STATUS@ FROM sessions WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
+    "AND expires_at > :now FOR NO KEY UPDATE"
+)
+_SET_LOCKED_SQL = _sql(
+    "UPDATE sessions SET locked_at = :now WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
+    "RETURNING @COLS@, @STATUS@"
 )
 _REVOKE_SQL = _sql(
     "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason "
@@ -327,7 +350,9 @@ def _violates(exc: sa.exc.IntegrityError, constraint: str) -> bool:
 
 
 def row_to_fields(row: Any) -> dict[str, Any]:
-    """Map a result row (see `_COLUMNS`) to `SessionRecord` constructor kwargs."""
+    """Map a result row (see `_COLUMNS`) to `SessionRecord` constructor kwargs. The lock columns
+    (#4743) are read by key, as the view-as ones are: a read that missed one raises, never
+    reporting an unlocked session."""
     m = row._mapping
     return dict(
         id=uuid.UUID(m["id"]),
@@ -350,6 +375,8 @@ def row_to_fields(row: Any) -> dict[str, Any]:
         readonly_until=m["readonly_until"],
         user_status=m.get("user_status"),
         view_as=_view_as(m),
+        locked_at=m["locked_at"],
+        unlocked_at=m["unlocked_at"],
     )
 
 
@@ -400,6 +427,8 @@ class SqlAlchemySessionRepository:
                     # the record's, never the columns' defaults.
                     "step_up_failures": session.step_up_failures,
                     "readonly_until": session.readonly_until,
+                    # #4743: a refresh carries a lock by request to the successor.
+                    "locked_at": session.locked_at,
                     **_view_as_params(session.view_as),
                 },
             )
@@ -435,6 +464,31 @@ class SqlAlchemySessionRepository:
 
     async def lift_idle_lock(self, session_id: str, *, now: datetime) -> Any:
         return await self._one(_LIFT_IDLE_LOCK_SQL, {"id": session_id, "now": now})
+
+    async def lock_session(
+        self,
+        session_id: str,
+        *,
+        now: datetime,
+        unlocked: Callable[[Any], bool],
+        write_ahead: Callable[[Any], Awaitable[None]],
+        audit_timeout_s: float,
+    ) -> tuple[Any, bool] | None:
+        """See `SessionRepository.lock_session` (#4743): one transaction under the row's lock."""
+        async with self._relational.unit_of_work() as uow:
+            s, params = uow.session, {"id": session_id, "now": now}
+            row = (await s.execute(_LOCK_ROW_SQL, params)).first()
+            if row is None:
+                return None
+            record = self._make(**row_to_fields(row))
+            if not unlocked(record):
+                return record, False  # rolled back: nothing was written, the row lock goes
+            await bounded_write_ahead(write_ahead(record), audit_timeout_s)
+            locked = (await s.execute(_SET_LOCKED_SQL, params)).first()
+            if locked is None:  # the lock holds the row as read: only a driver fault lands here
+                raise RuntimeError("the locked session row refused its lock")
+            await uow.commit()
+        return self._make(**row_to_fields(locked)), True
 
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> Any:
         return await self._one(_REVOKE_SQL, {"id": session_id, "reason": reason, "now": now})

@@ -287,6 +287,14 @@ class SessionRecord(BaseModel):
     #: every read of a session row must select the view-as columns (S2a's read path does): a read
     #: that left them out would turn a viewing session into a normal one, failing open.
     view_as: ViewAsState | None = None
+    #: #4743 (`0056_sessions_lock_state`): set by `POST /auth/lock` (CMP-098 "Lock now") and
+    #: cleared only by an unlock. While set, the session is idle-locked whatever its deadline says.
+    #: `None` reads as "not locked by request", so every read of a session row must select it, as
+    #: for `view_as`: a read that left it out would unlock the session, failing open.
+    locked_at: datetime | None = None
+    #: #4743: the last successful unlock, never cleared. Download links end at any unlock of the
+    #: session chain (`admin/backups/downloads.grant_ended`), so every read selects it too.
+    unlocked_at: datetime | None = None
 
     @model_validator(mode="after")
     def _never_views_as_itself(self) -> Self:
@@ -303,7 +311,9 @@ class SessionRecord(BaseModel):
         return self.last_seen_at + timedelta(seconds=self.idle_timeout_s)
 
     def is_idle_locked(self, *, now: datetime) -> bool:
-        return not self.is_revoked and self.idle_deadline() <= now
+        """Not revoked, and locked by request (`locked_at`: any value locks, no clock decides it,
+        so it fails closed) or past the idle deadline, which a lock by request never moves."""
+        return not self.is_revoked and (self.locked_at is not None or self.idle_deadline() <= now)
 
     def is_absolute_expired(self, *, now: datetime) -> bool:
         return self.expires_at <= now

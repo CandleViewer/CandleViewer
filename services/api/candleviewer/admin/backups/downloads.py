@@ -210,13 +210,11 @@ def grant_ended(link: DownloadLink, family: Sequence[SessionRecord], now: dateti
     None (SR-BK10A-02 (a)), from the rows of its family: the issuing session and the successors
     its rotations made (`issued_at` from its own on), as a rotation does not end the link. The
     user disabled or gone; none of those sessions live (logged out, revoked other than by a
-    rotation, expired); a live one past its lifetime or idle-locked; or one with `readonly_until`
+    rotation, expired); a live one past its lifetime or idle-locked; one with `readonly_until`
     set: the step-up that minted the grant cleared it, a successor starts without, and a
-    downgrade keeps it set after its window until a write lifts it. Two events can leave the rows
-    clean (delta: the issue's touch to its mint, seconds): a read-only turn begun within delta
-    and lifted by a write after its `READONLY_WINDOW`, and an idle lock, which needs
-    `MIN_IDLE_TIMEOUT_S` of idleness after the touch, begun and unlocked in the link's last delta
-    (both at least `LINK_TTL`)."""
+    downgrade keeps it set after its window until a write lifts it; or one unlocked at or after
+    the link's issue (`unlocked_at`, #4743): download links end at any unlock of the session
+    chain."""
     issuing = next((row for row in family if row.id == link.session_id), None)
     if issuing is None:
         return "session_ended"
@@ -225,6 +223,8 @@ def grant_ended(link: DownloadLink, family: Sequence[SessionRecord], now: dateti
     chain = [row for row in family if row.issued_at >= issuing.issued_at]
     live = [row for row in chain if not row.is_revoked]
     if not live or any(row.readonly_until is not None for row in chain):
+        return "session_ended"
+    if any(row.unlocked_at is not None and row.unlocked_at >= link.issued_at for row in chain):
         return "session_ended"
     if any(row.is_absolute_expired(now=now) or row.is_idle_locked(now=now) for row in live):
         return "session_ended"

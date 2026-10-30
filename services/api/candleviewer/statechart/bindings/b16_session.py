@@ -85,7 +85,8 @@ async def _emit(
     audit query's `subject_type`/`subject_id` filter reads only the object;
     one with no session id keeps the object above, never a kind with no id.
     The record names the request the event happened in when its payload
-    carries one (`request_id`, a UUID string: #3990)."""
+    carries one (`request_id`, a UUID string: #3990), and the moment a lock
+    took effect when it carries that (`idle_locked_at_us`, #4743)."""
     payload = _payload(event)
     if payload.get("replay"):
         return
@@ -98,6 +99,9 @@ async def _emit(
     request_id = payload.get("request_id")
     if isinstance(bound, str):
         after["bound_request_sha256"] = bound
+    locked_at_us = payload.get("idle_locked_at_us")
+    if isinstance(locked_at_us, int):
+        after["idle_locked_at_us"] = locked_at_us
     kind, obj = ("step_up_challenge", challenge) if isinstance(challenge, str) else (None, None)
     if session_object and sid is not None:
         kind, obj = "session", sid
@@ -467,6 +471,9 @@ async def disarm_one_click(
 async def audit_idle_locked(
     _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
 ) -> None:
+    """The lock's record. Its moment is the one `SessionChart` read from the row
+    (`idle_locked_at_us`: a lock by request's `locked_at`, else the idle
+    deadline, #4743), never the time the chart recorded it."""
     await _emit(context, event, "auth.idle_locked")
 
 

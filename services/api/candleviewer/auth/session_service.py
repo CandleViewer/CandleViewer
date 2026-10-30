@@ -15,6 +15,8 @@ Every Gherkin scenario in the ticket maps to a method here:
   the OMS/WS path must run before honouring a session id.
 - `unlock()` — "Unlock restores context": password-only re-auth while
   still within the absolute lifetime.
+- `lock()` — CMP-098 "Lock now" (#4743): the session locks at once, its lock a fact
+  on its row (`locked_at`) that every check above reads; only `unlock()` lifts it.
 - `revoke()` / `revoke_all()` — single-session revoke and sign-out-
   everywhere (SCR-112).
 - `classify_session()` — #2295: the enrolment-only class of a resolved
@@ -79,7 +81,7 @@ from candleviewer.auth.models import (
     UserRecord,
     UserStatus,
 )
-from candleviewer.auth.session_repository import SessionRepository
+from candleviewer.auth.session_repository import LockWriteAhead, SessionRepository
 from candleviewer.auth.view_as import ViewAsState
 from candleviewer.observability.context import spawn
 
@@ -377,6 +379,7 @@ class SessionService:
         last_seen_at: datetime | None = None,
         step_up_failures: int = 0,
         readonly_until: datetime | None = None,
+        locked_at: datetime | None = None,
     ) -> MintedSession:
         """Issue a brand-new session — session fixation is prevented by
         always minting a fresh `session_id`/refresh token here, never
@@ -401,6 +404,9 @@ class SessionService:
         *step_up_failures* and *readonly_until* are the step-up penalty `refresh()`
         carries to the successor (#4051, SR-025): a rotation never lifts the read-only
         downgrade or forgets a strike. Grants are never carried. A sign-in starts clean.
+
+        *locked_at* is the lock by request `refresh()` carries to the successor (#4743): a
+        rotation never lifts a lock. A sign-in never passes it.
 
         Raises `UserDisabled` when the user is `disabled` or gone (#2911):
         the repository reads `users.status` under the user-row lock in the
@@ -434,6 +440,7 @@ class SessionService:
             view_as=view_as,
             step_up_failures=step_up_failures,
             readonly_until=readonly_until,
+            locked_at=locked_at,
         )
         created = await self._repository.create_session(session)
         if created is None:
@@ -599,6 +606,9 @@ class SessionService:
             # (as `last_seen_at` is), so a strike recorded after `presented` was read counts.
             step_up_failures=claimed.step_up_failures,
             readonly_until=claimed.readonly_until,
+            # #4743: a lock by request that landed after `presented` was read, before the claim,
+            # is on the claim's row: the successor is locked too, so a rotation never lifts it.
+            locked_at=claimed.locked_at,
         )
         await self._repository.link_rotation(
             prev_session_id=str(presented.id), next_session_id=str(minted.session_id)
@@ -804,6 +814,35 @@ class SessionService:
             raise SessionNotFound("session disappeared between check and touch")
         return touched
 
+    # -- lock (#4743) ----------------------------------------------------------
+
+    async def lock(
+        self, session_id: str, *, write_ahead: LockWriteAhead, audit_timeout_s: float
+    ) -> tuple[SessionRecord, bool]:
+        """`POST /auth/lock` (22 `authLock`, CMP-098 "Lock now"): lock the session at once, as if
+        its idle deadline fell due, without moving it (`last_seen_at` stays: BQ-5). One unit of
+        work under the row's lock (`SessionRepository.lock_session`). A session that is already
+        idle-locked, by its deadline or by request, comes back as it is with `False`, and
+        *write_ahead* is never awaited: one record per lock. Otherwise *write_ahead* (C-2.9) is
+        awaited with the row, `locked_at` is set, and the locked row comes back with `True`.
+
+        A session revoked, past its absolute lifetime or gone raises what `require_active`
+        raises for it (an expired one is revoked as `expired` and published), else
+        `SessionNotFound` (fail closed). A failing hook raises its error, and one past
+        *audit_timeout_s* `WriteAheadTimeout`, with nothing changed."""
+        now = self._clock()
+        outcome = await self._repository.lock_session(
+            session_id,
+            now=now,
+            unlocked=lambda row: not row.is_idle_locked(now=now),
+            write_ahead=write_ahead,
+            audit_timeout_s=audit_timeout_s,
+        )
+        if outcome is None:
+            await self.require_active(session_id, allow_locked=True)
+            raise SessionNotFound("session ended before its lock")
+        return outcome
+
     # -- unlock -------------------------------------------------------------
 
     async def unlock(
@@ -876,7 +915,8 @@ class SessionService:
         # B16.7 (C-2.12, C-2.21; PR #2290 ruling rule 4d): lifting the lock drops every
         # step-up elevation in the same write that re-stamps `last_seen_at`, so a
         # password-only unlock never inherits a grace window, a one-shot grant or a
-        # pending challenge taken before it.
+        # pending challenge taken before it. The write also clears a lock by request and
+        # stamps `unlocked_at` (#4743).
         touched = await self._repository.lift_idle_lock(session_id, now=now)
         if touched is None:
             raise SessionNotFound("session disappeared during unlock")

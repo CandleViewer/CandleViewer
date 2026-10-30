@@ -72,6 +72,10 @@ _LIVE: dict[str, Any] = {
 }
 _TZ = "timestamp with time zone"
 _TYPES = list(zip(_LIVE, ("uuid", "uuid", _TZ, _TZ, _TZ, _TZ, _TZ, "text"), strict=True))
+#: The columns later revisions add to `sessions` (`0056_sessions_lock_state`, #4743): the
+#: downgrade to `_PREV` drops them too, so the catalogs are compared by column name, never by
+#: position.
+_LATER_COLUMNS = frozenset({"locked_at", "unlocked_at"})
 _WRITE = sql.SQL("UPDATE sessions SET ({}) = ({}) WHERE id = %(id)s").format(
     sql.SQL(", ").join(map(sql.Identifier, _LIVE)), sql.SQL(", ").join(map(sql.Placeholder, _LIVE))
 )
@@ -196,20 +200,23 @@ async def _find(dsn: str) -> SessionRecord:
 def test_round_trip_removes_only_what_the_revision_added(pg_dsn: str, seed: bool) -> None:
     """C-5.2, C-5.5: upgrade, downgrade and upgrade again each succeed; the downgrade drops the
     eight columns, the two CHECKs, the FK and the three partial indexes and nothing else (every
-    other column, constraint, index and row is as it was); the second upgrade restores the head,
-    the indexes with their predicates (the sweeper's due read, the contexts naming a target and
-    the rows of one context)."""
+    other column, constraint, index and row is as it was, but the columns later revisions add,
+    which go with them); the second upgrade restores the head, the indexes with their predicates
+    (the sweeper's due read, the contexts naming a target and the rows of one context)."""
     dsn = _fresh(pg_dsn, seeded=seed)
     with _conn(dsn) as c:
         head, rows = _catalog(c), c.execute(_ROWS).fetchall()
-    assert head[0][-8:] == [(name, kind, False) for name, kind in _TYPES]  # nullable, appended
+    view_as = {name for name, _ in _TYPES}
+    assert [col for col in head[0] if col[0] in view_as] == [
+        (name, kind, False) for name, kind in _TYPES
+    ]  # nullable, in the revision's order
     added = {_SHAPE, _REASON, _FK}
     assert added <= {name for name, _ in head[1]} and set(_INDEXES) <= {i for i, _ in head[2]}
     assert _alembic(dsn, "downgrade", _PREV).returncode == 0
     with _conn(dsn) as c:
         columns, constraints, indexes = _catalog(c)
         kept = c.execute(_ROWS).fetchall()
-    assert columns == head[0][:-8]
+    assert columns == [col for col in head[0] if col[0] not in view_as | _LATER_COLUMNS]
     assert constraints == [k for k in head[1] if k[0] not in added]
     assert indexes == [i for i in head[2] if i[0] not in _INDEXES]
     assert kept == rows and len(kept) == (2 if seed else 0)

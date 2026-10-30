@@ -58,6 +58,22 @@ ways, both in code:
 - the next correct-password login after expiry resets the counter (`record_login_success` in
   `auth/repository.py`).
 
+**"Lock now" (`POST /auth/lock`, CMP-098, #4743) locks a session, never an account.** It sets
+`sessions.locked_at` on the calling session's row, which every check of the row reads, so on every
+API process and after a restart the session answers `401 session_idle_locked` to everything but
+the four operations allowed while locked; its `idle_deadline` and `last_seen_at` do not move. Only
+`POST /auth/unlock` with the password lifts it, clearing `locked_at` and stamping `unlocked_at`; a
+refresh carries the lock to the new session, and extend is refused. Each lock writes one
+`auth.session_locked` row ahead of the lock, its time the lock moment (query it as in step 1 below,
+with `action=auth.session_locked`); a call on a session that is already locked writes nothing. A
+`503` from the lock means its record could not be written, and the session is not locked. The lock
+sends the session's B16 chart nothing: B16 writes its own `auth.idle_locked` when it next reads the
+row (an unlock does), with the lock moment (`idle_locked_at_us`, from `locked_at`) in its state, so
+that row's own time can be later than the lock. Backup download links end at any unlock of the
+session chain. Only the session's own access token locks it: a request with only the `cv_refresh`
+cookie answers `403 csrf_token_invalid` and locks nothing. Nobody can lock another user's session
+with this route: to end one, revoke it.
+
 Preconditions: you know the user. Do not ask the user to retry during the lock window: a locked
 account refuses even a correct password, at login, at a step-up and at the idle-lock unlock, where
 each refusal also counts toward the five failed unlocks that revoke the session.

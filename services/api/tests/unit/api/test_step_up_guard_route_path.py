@@ -64,12 +64,13 @@ async def test_guard_under_root_path_admits_the_session_once_elevated() -> None:
     assert rc.post(f"{_ROOT}/orders", headers=_H).status_code == 200  # ordinary write
 
 
-@pytest.mark.parametrize("exempt", ["/auth/logout", "/auth/session/extend"])
+@pytest.mark.parametrize("exempt", ["/auth/logout", "/auth/session/extend", "/auth/lock"])
 async def test_guard_under_root_path_keeps_logout_and_extend_open_in_read_only_downgrade(
     exempt: str,
 ) -> None:
-    """Ending the session, and Extend (#2300 D1: it acts on no data, so a downgraded session can
-    still record activity), pass the read-only guard; every other write is refused."""
+    """Ending the session, Extend (#2300 D1: it acts on no data, so a downgraded session can
+    still record activity) and Lock (#4743: it acts on no data either and only reduces risk)
+    pass the read-only guard; every other write is refused."""
     c, *_ = await _build()
 
     @cast(FastAPI, c.app).post(exempt)
@@ -84,12 +85,16 @@ async def test_guard_under_root_path_keeps_logout_and_extend_open_in_read_only_d
     assert rc.post(f"{_ROOT}{exempt}", headers=_H).status_code == 200  # exempt
 
 
-async def test_guard_exempts_extend_for_post_only_in_read_only_downgrade() -> None:
-    """#2300 fold (review Low #3): the extend exemption is `POST` only. A later non-`POST`
-    handler on the same path is an ordinary write and inherits no read-only exemption."""
+@pytest.mark.parametrize("path", ["/auth/session/extend", "/auth/lock"])
+async def test_guard_exempts_extend_and_lock_for_post_only_in_read_only_downgrade(
+    path: str,
+) -> None:
+    """#2300 fold (review Low #3): the extend exemption is `POST` only, and so is lock's
+    (#4743). A later non-`POST` handler on the same path is an ordinary write and inherits no
+    read-only exemption."""
     c, *_ = await _build()
 
-    @cast(FastAPI, c.app).put("/auth/session/extend")
+    @cast(FastAPI, c.app).put(path)
     async def other() -> dict[str, bool]:
         return {"ok": True}
 
@@ -97,7 +102,7 @@ async def test_guard_exempts_extend_for_post_only_in_read_only_downgrade() -> No
     bad = {"code": "000000", "password": _PW, "action_class": "keys"}
     tries = [rc.post(f"{_ROOT}/auth/step-up", headers=_H, json=bad) for _ in range(3)]
     assert [t.status_code for t in tries] == [401, 401, 403]
-    refused = rc.put(f"{_ROOT}/auth/session/extend", headers=_H)
+    refused = rc.put(f"{_ROOT}{path}", headers=_H)
     assert refused.status_code == 403 and refused.json()["code"] == "session_read_only"
 
 

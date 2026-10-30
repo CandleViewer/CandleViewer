@@ -177,12 +177,16 @@ class SessionChart:
     async def _observed(self, record: SessionRecord, now: datetime) -> Any:
         """The session's interpreter, built and hydrated from *record* if needed, with
         an idle lock the row shows but the chart has not seen yet recorded first
-        (INV-B16-e, #2301): `IDLE_DEADLINE`, and no other event."""
+        (INV-B16-e, #2301): `IDLE_DEADLINE`, and no other event. The event carries the lock's
+        own moment from the row (`idle_locked_at_us`, #4743), never the time of this read: a
+        lock by request's `locked_at` (`POST /auth/lock` sends the chart nothing), else the
+        idle deadline that fell due; `auth.idle_locked` records it."""
         interp = await self._get(record, now)
         sid = str(record.id)
         if record.is_idle_locked(now=now) and self.in_state(sid, "active"):
             before = b16_session.elevation_view(dict(interp.context))
-            await self._send(sid, "IDLE_DEADLINE", before=before)
+            moment = record.locked_at if record.locked_at is not None else record.idle_deadline()
+            await self._send(sid, "IDLE_DEADLINE", before=before, idle_locked_at_us=to_us(moment))
         return interp
 
     async def observe(self, record: SessionRecord, now: datetime) -> None:

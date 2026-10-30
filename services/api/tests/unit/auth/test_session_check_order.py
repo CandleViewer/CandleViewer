@@ -100,14 +100,18 @@ def _condition(
     revoked_as: str | None = None,
     revoked_without_reason: bool = False,
     idle: bool = False,
+    locked: bool = False,
 ) -> None:
     """Set the given conditions on the row of *sid*. `revoked_without_reason` is a revoked row
-    with no stored `revoked_reason`."""
+    with no stored `revoked_reason`; `locked` a lock by request (`locked_at`, #4743) on a row its
+    deadline leaves unlocked."""
     row: dict[str, Any] = {}
     if expired:
         row["expires_at"] = _NOW - timedelta(seconds=1)
     if idle:
         row["last_seen_at"] = _NOW - timedelta(hours=1)
+    if locked:
+        row["locked_at"] = _NOW - timedelta(minutes=1)
     if revoked_as is not None or revoked_without_reason:
         row.update(revoked_at=_NOW - timedelta(minutes=1), revoked_reason=revoked_as)
     repo.sessions[sid] = repo.sessions[sid].model_copy(update=row)
@@ -121,6 +125,7 @@ async def _require_active(
     revoked_without_reason: bool = False,
     disabled: bool = False,
     idle: bool = False,
+    locked: bool = False,
 ) -> _Effects:
     """Mint a live session, set the given conditions on its row (`_condition`), and call
     `require_active`, or with *refresh* `refresh()` with its token."""
@@ -142,6 +147,7 @@ async def _require_active(
         revoked_as=revoked_as,
         revoked_without_reason=revoked_without_reason,
         idle=idle,
+        locked=locked,
     )
     if disabled:
         repo.user_statuses[user] = UserStatus.DISABLED
@@ -169,9 +175,18 @@ async def _require_active(
     )
 
 
-async def test_an_idle_locked_session_moves_the_idle_lock_counter_only() -> None:
+#: The two locks a row can show: its idle deadline passed, or a lock by request (#4743).
+_LOCKS = pytest.mark.parametrize(
+    "lock", [{"idle": True}, {"locked": True}], ids=["idle", "request"]
+)
+
+
+@_LOCKS
+async def test_an_idle_locked_session_moves_the_idle_lock_counter_only(
+    lock: dict[str, Any],
+) -> None:
     """The control for the rows below: it shows that this file sees the idle-lock counter move."""
-    assert await _require_active(idle=True) == _Effects("SessionIdleLocked", idle_locks=1)
+    assert await _require_active(**lock) == _Effects("SessionIdleLocked", idle_locks=1)
 
 
 async def test_an_expired_session_of_a_disabled_user_is_revoked_as_expired() -> None:
@@ -187,14 +202,18 @@ async def test_a_revoked_session_of_a_disabled_user_keeps_its_stored_reason(stor
     assert effects == _Effects(f"SessionRevoked:{stored}", stored)
 
 
-async def test_an_idle_locked_session_of_a_disabled_user_is_revoked_not_left_locked() -> None:
-    assert await _require_active(disabled=True, idle=True) == _revoked_now(
-        "user_disabled", breach=1
-    )
+@_LOCKS
+async def test_an_idle_locked_session_of_a_disabled_user_is_revoked_not_left_locked(
+    lock: dict[str, Any],
+) -> None:
+    assert await _require_active(disabled=True, **lock) == _revoked_now("user_disabled", breach=1)
 
 
-async def test_an_expired_idle_locked_session_is_revoked_as_expired_not_reported_locked() -> None:
-    assert await _require_active(expired=True, idle=True) == _revoked_now("expired")
+@_LOCKS
+async def test_an_expired_idle_locked_session_is_revoked_as_expired_not_reported_locked(
+    lock: dict[str, Any],
+) -> None:
+    assert await _require_active(expired=True, **lock) == _revoked_now("expired")
 
 
 async def test_an_expired_session_revoked_with_no_stored_reason_is_refused_as_expired() -> None:
@@ -215,6 +234,7 @@ _REVOKED_AT_REFRESH = _Effects(
     [
         pytest.param({"expired": True}, _revoked_now("expired"), id="expiry_before_status"),
         pytest.param({"idle": True}, _REVOKED_AT_REFRESH, id="status_before_idle_lock"),
+        pytest.param({"locked": True}, _REVOKED_AT_REFRESH, id="status_before_lock_by_request"),
         pytest.param(
             {"revoked_as": "logout"},
             _Effects("SessionRevoked:logout", "logout"),
@@ -230,7 +250,11 @@ async def test_refresh_order_pins_the_backstop(row: dict[str, Any], effects: _Ef
     assert await _require_active(refresh=True, disabled=True, **row) == effects
 
 
-@pytest.mark.parametrize("idle", [False, True], ids=["unlocked", "idle"])
+@pytest.mark.parametrize(
+    ("idle", "locked"),
+    [(False, False), (True, False), (False, True)],
+    ids=["unlocked", "idle", "locked_by_request"],
+)
 @pytest.mark.parametrize(
     "status", [UserStatus.ACTIVE, UserStatus.DISABLED, None], ids=["active", "disabled", "gone"]
 )
@@ -239,16 +263,24 @@ async def test_refresh_order_pins_the_backstop(row: dict[str, Any], effects: _Ef
     "revoked_as", [None, "rotated", "logout"], ids=["unrevoked", "rotated", "logout"]
 )
 async def test_refresh_refused_as_locked_exactly_when_refresh_refuses_as_locked(
-    revoked_as: str | None, expired: bool, status: UserStatus | None, idle: bool
+    revoked_as: str | None, expired: bool, status: UserStatus | None, idle: bool, locked: bool
 ) -> None:
-    """#3331: on all 36 rows, the predicate on the row as `peek_refresh` reads it is true
+    """#3331: on all 54 rows (a lock by request among them, #4743), the predicate on the row as
+    `peek_refresh` reads it is true
     exactly when `refresh()` raises `SessionIdleLocked`, so the route's early lock answer never
     hides a reuse, a revocation, an expiry or a disabled user."""
     repo = FakeSessionRepository()
     service = SessionService(repo, Hasher(pepper=os.urandom(16).hex()), clock=lambda: _NOW)
     user = str(uuid.uuid4())
     minted = await service.mint(user)
-    _condition(repo, str(minted.session_id), expired=expired, revoked_as=revoked_as, idle=idle)
+    _condition(
+        repo,
+        str(minted.session_id),
+        expired=expired,
+        revoked_as=revoked_as,
+        idle=idle,
+        locked=locked,
+    )
     repo.user_statuses[user] = status
     presented = await service.peek_refresh(minted.refresh_token)
     assert presented is not None

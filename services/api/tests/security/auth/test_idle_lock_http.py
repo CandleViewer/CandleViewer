@@ -22,6 +22,7 @@ from candleviewer.api.idle_lock import ungated_operations
 from candleviewer.api.sessions import REFRESH_COOKIE
 from candleviewer.auth.csrf import CSRF_COOKIE
 from candleviewer.auth.models import MintedSession
+from candleviewer.auth.session_chart import to_us
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from tests.csrf_helpers import csrf_headers
 
@@ -62,6 +63,25 @@ def _lock(stack: Stack) -> None:
     stack.clock.now += timedelta(seconds=_IDLE_S + 1)
 
 
+def _lock_now(stack: Stack, minted: MintedSession) -> None:
+    """CMP-098 "Lock now" (#4743): `POST /auth/lock` through every guard, the clock unmoved."""
+    r = stack.client.post("/auth/lock", headers=_headers(stack, minted))
+    assert r.status_code == 200 and r.json()["session"]["locked"] is True, r.text
+
+
+def _locked(stack: Stack, username: str, how: str, *, idle_timeout_s: int = 3600) -> MintedSession:
+    """A session locked by its idle deadline, or by `POST /auth/lock` long before it: then only
+    the stored lock (`sessions.locked_at`) refuses it."""
+    if how == "deadline":
+        minted = _session(stack, username)
+        _lock(stack)
+        return minted
+    uid, _ = stack.add_user(username)
+    minted = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=idle_timeout_s)
+    _lock_now(stack, minted)
+    return minted
+
+
 def _fill(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "00000000-0000-4000-8000-0000000000ff", path)
 
@@ -73,11 +93,14 @@ def _code(response: Any) -> Any:
         return None
 
 
+@pytest.mark.parametrize("how", ["deadline", "lock_now"])
 def test_every_contract_operation_but_the_allowed_ones_refuses_a_locked_session(
-    stack: Stack,
+    stack: Stack, how: str
 ) -> None:
     """AC "Locked session is recognisable", over the whole contract: every operation answers
-    `401 session_idle_locked`, not `unauthenticated`, and nothing runs or is audited."""
+    `401 session_idle_locked`, not `unauthenticated`, and nothing runs or is audited. The sweep
+    reads the contract, so an operation the app does not serve yet is covered too. In `lock_now`
+    the session was locked by `POST /auth/lock` an hour before its deadline (#4743)."""
     spec = load_openapi_spec()
     ungated = ungated_operations(spec)
     paths = spec["paths"]
@@ -89,9 +112,12 @@ def test_every_contract_operation_but_the_allowed_ones_refuses_a_locked_session(
         if isinstance(item.get(method), dict) and (method.upper(), path) not in ungated
     )
     assert _NAMED <= set(gated)
-    minted = _session(stack, "locked")
-    _lock(stack)
+    app = cast(FastAPI, stack.client.app)
+    served = {(method, route_path(path)) for method, path in served_operations(app)}
+    assert ("POST", "/auth/lock") in served and ("POST", "/auth/lock") not in gated
+    minted = _locked(stack, "locked", how)
     headers = _headers(stack, minted)
+    recorded = len(stack.audit.records)
     answers = {
         (method, path): (r.status_code, _code(r))
         for method, path in gated
@@ -107,7 +133,7 @@ def test_every_contract_operation_but_the_allowed_ones_refuses_a_locked_session(
     assert set(answers.values()) == {(401, "session_idle_locked")}, {
         op: a for op, a in answers.items() if a != (401, "session_idle_locked")
     }
-    assert stack.audit.records == []
+    assert stack.audit.records[recorded:] == []
 
 
 def _kill_switch_stub(stack: Stack) -> list[Any]:
@@ -269,19 +295,25 @@ def _live(stack: Stack, minted: MintedSession) -> bool:
     return row is not None and not row.is_revoked
 
 
-def test_a_locked_session_cannot_sign_out_every_session(stack: Stack) -> None:
+@pytest.mark.parametrize("how", ["deadline", "lock_now"])
+def test_a_locked_session_cannot_sign_out_every_session(stack: Stack, how: str) -> None:
     """#2389 gap H through the deployed stack (#2290 ruling, rule 3b): `all_sessions` from a
     locked session is `401 session_idle_locked`; no session ends, nothing is audited, no
-    cookie is cleared. The calling session can still end itself."""
+    cookie is cleared. The calling session can still end itself. A lock by request (#4743)
+    holds the same."""
     uid, _ = stack.add_user("desk")
     locked = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=_IDLE_S)
     elsewhere = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=3600)
-    _lock(stack)
+    if how == "deadline":
+        _lock(stack)
+    else:
+        _lock_now(stack, locked)
+    recorded = len(stack.audit.records)
     r = stack.client.post(
         "/auth/logout", headers=_headers(stack, locked), json={"all_sessions": True}
     )
     assert (r.status_code, _code(r)) == (401, "session_idle_locked")
-    assert stack.audit.records == [] and "set-cookie" not in r.headers
+    assert stack.audit.records[recorded:] == [] and "set-cookie" not in r.headers
     assert _live(stack, locked) and _live(stack, elsewhere)
     alone = stack.client.post("/auth/logout", headers=_headers(stack, locked))
     assert alone.status_code == 204, alone.text
@@ -381,6 +413,91 @@ def test_a_live_access_token_binds_logout_to_its_own_session_whatever_the_cookie
     r = stack.client.post("/auth/logout", headers=headers)
     assert (r.status_code, _code(r)) == (403, "csrf_token_invalid")
     assert _live(stack, mine) and _live(stack, theirs)
+
+
+# -- "Lock now" (#4743, 22 `authLock`): the lock is a fact on the row, through every guard ------
+
+
+def test_a_session_locked_by_request_reads_itself_relocks_and_unlocks_with_the_password_only(
+    stack: Stack,
+) -> None:
+    """The deployed guards serve a locked session's read and its lock again (200, nothing
+    written), refuse everything else, and the password alone lifts the lock."""
+    minted = _locked(stack, "locking", "lock_now")
+    headers = _headers(stack, minted)
+    info = stack.client.get("/auth/session", headers=headers)
+    assert info.status_code == 200 and info.json()["session"]["locked"] is True
+    again = stack.client.post("/auth/lock", headers=headers)
+    assert again.status_code == 200 and again.json()["session"]["locked"] is True
+    gated = stack.client.get("/auth/sessions", headers=headers)
+    assert (gated.status_code, _code(gated)) == (401, "session_idle_locked")
+    row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    assert row is not None and row.locked_at is not None
+    stack.clock.now += timedelta(seconds=30)  # B16 reads the row after the lock
+    r = stack.client.post("/auth/unlock", headers=headers, json={"password": PW})
+    assert r.status_code == 200 and r.json()["session"]["locked"] is False, r.text
+    assert [rec["action"] for rec in stack.audit.records] == [
+        "auth.session_locked",
+        "auth.idle_locked",  # B16, at its next read of the row (the unlock's), at the lock moment
+        "auth.session_unlocked",
+    ]
+    (idle,) = stack.audit.of("auth.idle_locked")
+    assert idle["after_state"]["idle_locked_at_us"] == to_us(row.locked_at)
+    assert stack.client.get("/auth/sessions", headers=headers).status_code == 200
+
+
+def test_the_cookie_alone_never_locks_a_session_through_the_csrf_guard(stack: Stack) -> None:
+    """22 `authLock` (#4743): lock takes the access token only. With the `cv_refresh` cookie
+    alone, while the access token lives or after it ended, the guard has no session to bind the
+    SR-041 token to, so it refuses `POST /auth/lock` before the route, without a CSRF header and
+    with a pair bound to the cookie's session alike. The session stays unlocked."""
+    uid, _ = stack.add_user("reloading")
+    minted = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=3600)
+    paired = _cookie_only(stack, minted, minted)
+    for later in (timedelta(0), ACCESS_TOKEN_TTL):  # then the access token is gone
+        stack.clock.now += later
+        for headers in ({"Cookie": paired["Cookie"], "Origin": ORIGIN}, paired):
+            stack.client.cookies.clear()
+            r = stack.client.post("/auth/lock", headers=headers)
+            assert (r.status_code, _code(r)) == (403, "csrf_token_invalid")
+    row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    assert row is not None and row.locked_at is None
+    assert not row.is_idle_locked(now=stack.clock.now)
+    assert "auth.session_locked" not in [rec["action"] for rec in stack.audit.records]
+
+
+def test_a_live_access_token_locks_its_own_session_whatever_the_cookie(stack: Stack) -> None:
+    """A live access token identifies the call: another session's `cv_refresh` cookie moves
+    nothing, and its CSRF pair is refused against the token's session."""
+    mine = _session(stack, "mine")
+    theirs = _session(stack, "theirs")
+    bearer = {"Authorization": f"Bearer {mine.access_token}"}
+    refused = stack.client.post(
+        "/auth/lock", headers={**_cookie_only(stack, theirs, theirs), **bearer}
+    )
+    assert (refused.status_code, _code(refused)) == (403, "csrf_token_invalid")
+    r = stack.client.post("/auth/lock", headers={**_cookie_only(stack, theirs, mine), **bearer})
+    assert r.status_code == 200 and r.json()["session"]["id"] == str(mine.session_id), r.text
+    for minted, locked in ((mine, True), (theirs, False)):
+        row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+        assert row is not None and (row.locked_at is not None) is locked
+
+
+def test_a_read_only_session_locks_and_stays_read_only(stack: Stack) -> None:
+    """BQ-4: the step-up penalty refuses every data write, not the lock, which acts on no data
+    and only reduces risk; the downgrade itself is unchanged by it."""
+    minted = _session(stack, "downgraded")
+    headers = _headers(stack, minted)
+    bad = {"code": "000000", "password": PW, "action_class": "keys"}
+    tries = [stack.client.post("/auth/step-up", headers=headers, json=bad) for _ in range(3)]
+    assert _code(tries[-1]) == "session_read_only", [t.text for t in tries]
+    before = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    assert before is not None and before.readonly_until is not None
+    r = stack.client.post("/auth/lock", headers=headers)
+    assert r.status_code == 200 and r.json()["session"]["locked"] is True, r.text
+    after = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    assert after is not None and after.readonly_until == before.readonly_until
+    assert after.locked_at is not None and after.last_seen_at == before.last_seen_at
 
 
 def test_no_one_click_arm_route_is_served_while_unlock_cannot_invalidate_an_arm_record(
