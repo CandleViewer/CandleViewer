@@ -20,7 +20,9 @@ const SRC = resolve(import.meta.dirname, "../src");
 const ENTRY = join(SRC, "main.tsx");
 
 /** slice -> reason + ticket. Stale entries (slice now reachable) fail. */
-const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {};
+const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
+  "chart-errors": "E11-S02 (#334): SCR-048 wraps <Chart>, which no screen mounts until SCR-030",
+};
 
 interface ParsedImports {
   /** relative specifiers (static, re-export and dynamic `import()`) */

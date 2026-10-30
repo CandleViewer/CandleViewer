@@ -24,6 +24,8 @@ export type ChartProps = {
   /** Accessible name of the chart region (05 §6.1). */
   readonly label: string;
   readonly onFrameStats?: (stats: ChartEvents["frameStats"]) => void;
+  /** Every engine `error` (SCR-048 reads `code` and `details`, never `message`). */
+  readonly onError?: (error: ChartEvents["error"]) => void;
   readonly children?: ReactNode;
 };
 
@@ -49,12 +51,14 @@ export function useChartApi(): ChartApi | null {
   return useContext(ChartContext);
 }
 
-export function Chart({ options, label, onFrameStats, children }: ChartProps): ReactNode {
+export function Chart({ options, label, onFrameStats, onError, children }: ChartProps): ReactNode {
   const containerRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const onFrameStatsRef = useRef(onFrameStats);
   onFrameStatsRef.current = onFrameStats;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
   const [chart, setChart] = useState<ChartApi | null>(null);
   // What the live chart was last given, so an unchanged theme or density is never re-applied.
   const applied = useRef<Applied>({ theme: options.theme, density: options.density });
@@ -67,13 +71,16 @@ export function Chart({ options, label, onFrameStats, children }: ChartProps): R
     const initial = optionsRef.current;
     const created = createChart({ ...initial, container });
     applied.current = { theme: initial.theme, density: initial.density };
-    const off = created.subscribe("frameStats", (s) => onFrameStatsRef.current?.(s));
+    const offStats = created.subscribe("frameStats", (s) => onFrameStatsRef.current?.(s));
+    // Subscribed in the creating effect, so no error the engine emits after creation is missed.
+    const offError = created.subscribe("error", (e) => onErrorRef.current?.(e));
     // The chart needs the mounted container, so it is created here and published through state:
     // that costs one extra render per mount or recreate, and `<Pane>` children mount one commit
     // after the chart exists. Accepted: neither carries chart data.
     setChart(created);
     return () => {
-      off();
+      offStats();
+      offError();
       created.dispose();
       setChart(null);
     };
