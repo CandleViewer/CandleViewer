@@ -195,7 +195,7 @@ class InstrumentRefreshPendingError(IngestionError):
 
 class InstrumentsRefreshScheduler:
     """Owns the instrument catalogue: fetch -> parse -> version-diff ->
-    persist -> publish -> atomic cache swap, on a 12 h TTL schedule plus
+    persist -> atomic cache swap -> publish, on a 12 h TTL schedule plus
     on-demand triggers.
 
     Every dependency is injected (clock, sleep, jitter source, fetcher,
@@ -743,7 +743,8 @@ class InstrumentsRefreshScheduler:
     async def _publish_updates(self, updates: list[InstrumentUpdatedEvent]) -> None:
         """One event per changed instrument, after the swap. A failed publish is logged and
         the rest still go: the revision is already recorded and served, so a retry of the
-        refresh would find nothing changed and could not announce it again."""
+        refresh would find nothing changed and could not announce it again. A cancellation
+        midway loses the rest the same way; the catalogue itself is already served."""
         if self._publish is None:
             return
         for event in updates:
