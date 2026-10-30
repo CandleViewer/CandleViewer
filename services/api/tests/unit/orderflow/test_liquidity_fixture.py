@@ -41,7 +41,7 @@ def _set_ask(book: BookState, price: str, qty: str) -> None:
     )
 
 
-def test_recorded_wall_consumed_and_refilled_emits_one_reload() -> None:
+def test_documented_shape_wall_consumed_and_refilled_emits_one_reload() -> None:
     book, t = _snapshot(), tracker()
     wall_px = "631210.0"
     wall = int(Decimal(wall_px) / TICK)
@@ -69,7 +69,7 @@ def test_recorded_wall_consumed_and_refilled_emits_one_reload() -> None:
     assert r.estimated is True and r.symbol == "BTCUSDT"
 
 
-def test_recorded_wall_pulled_without_prints_emits_one_pulled() -> None:
+def test_documented_shape_wall_pulled_without_prints_emits_one_pulled() -> None:
     book, t = _snapshot(), tracker()
     _set_ask(book, "631210.0", "50")
     t.on_sample(0, BookPhase.LIVE, book)
@@ -79,7 +79,7 @@ def test_recorded_wall_pulled_without_prints_emits_one_pulled() -> None:
     assert isinstance(p, LiquidityPulled) and p.traded_qty == 0
 
 
-def test_recorded_wall_consumed_to_zero_and_refilled_emits_one_reload() -> None:
+def test_documented_shape_wall_consumed_to_zero_and_refilled_emits_one_reload() -> None:
     book, t = _snapshot(), tracker()
     wall_px = "631210.0"
     wall = int(Decimal(wall_px) / TICK)
