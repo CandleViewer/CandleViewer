@@ -50,9 +50,10 @@ async def test_a_reply_whose_return_code_is_infinite_has_no_usable_return_code()
             await client.get_public("/v5/market/funding/history", params={"category": "linear"})
 
 
-async def test_a_kline_page_with_an_infinite_start_is_a_value_error() -> None:
+@pytest.mark.parametrize("start", [math.inf, math.nan, None, [1], "abc"])
+async def test_a_kline_page_with_a_malformed_start_is_a_value_error(start: object) -> None:
     async def fetch(start_ms: int, end_ms: int) -> list[dict[str, Any]]:
-        return [{"start": math.inf}]
+        return [{"start": start}]
 
     with pytest.raises(ValueError, match="non-integer start"):
         await paginate_klines(fetch, start_ms=0, end_ms=1_000)

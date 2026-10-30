@@ -887,7 +887,7 @@ async def paginate_klines(
         all_rows.extend(page)
         try:
             oldest_ts = min(int(row["start"]) for row in page if "start" in row)
-        except OverflowError as exc:  # #5040: a non-finite `start` is a malformed row
+        except (TypeError, ValueError, OverflowError) as exc:  # #5040: a malformed row's `start`
             raise ValueError("kline page row has a non-integer start") from exc
         if oldest_ts <= start_ms or len(page) < limit:
             break
