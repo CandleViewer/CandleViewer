@@ -260,6 +260,20 @@ async def test_3d_a_fill_of_a_recorded_stops_order_materialises_its_row_then_app
     assert report.corrected and w.oms.effects("freeze") == []
 
 
+async def test_3d_a_fill_of_a_stop_3c_materialises_goes_to_its_row_once_it_exists() -> None:
+    """A late fill (3d) of an order 3c binds this pass: read again once the row exists, a
+    recorded stop's row takes it as an `EXEC`, as the stream sends it."""
+    w = World()
+    w.oms.records = [_pending_record()]
+    w.venue.seed_order(_stop_order(7), uid="1001")
+    w.venue.seed_execution(
+        fill("e7", n=7, side="sell", qty=Decimal("0.2"), order_link_id=ext_key("x7"))
+    )
+    report = await w.run()
+    assert [e[0] for e in w.oms.log if e[0] in ("materialise", "push")] == ["materialise", "push"]
+    assert (w.oms.effects("push")[0][2], report.corrected) == ("EXEC", (ext_key("x7"),))
+
+
 async def test_a_recorded_stop_under_our_own_id_keeps_it_while_no_row_holds_it() -> None:
     w = World()
     w.oms.records = [_pending_record()]
