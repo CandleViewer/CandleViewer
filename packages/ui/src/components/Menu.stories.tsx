@@ -349,12 +349,15 @@ function IconButtonDemo({ items }: { items: MenuItem[] }): JSX.Element {
   );
 }
 
-/** Overflow=scrolls: the menu caps its height to the room below its trigger and scrolls; Tab closes it. */
+/**
+ * Overflow=scrolls: the menu caps its height to the room below its trigger and scrolls; Tab closes it. 60 rows
+ * outgrow even the 1920x1080 primary target at the compact 24 px row (test/vr/viewport-stories.test.tsx).
+ */
 export const Scrolling: Story = {
   render: () => (
     <Demo
       label="Symbols"
-      items={Array.from({ length: 40 }, (_, i) => ({
+      items={Array.from({ length: 60 }, (_, i) => ({
         id: String(i),
         label: `Symbol ${String(i + 1)}`,
         onSelect: noop,
@@ -367,7 +370,7 @@ export const Scrolling: Story = {
     await expect(menu.getBoundingClientRect().bottom).toBeLessThanOrEqual(window.innerHeight);
     await expect(menu.scrollHeight).toBeGreaterThan(menu.clientHeight);
     await userEvent.keyboard("{End}");
-    const last = page.getByRole("menuitem", { name: "Symbol 40" });
+    const last = page.getByRole("menuitem", { name: "Symbol 60" });
     await expect(last.getBoundingClientRect().bottom).toBeLessThanOrEqual(
       menu.getBoundingClientRect().bottom + 0.5,
     );

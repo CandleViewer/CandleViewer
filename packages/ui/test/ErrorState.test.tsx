@@ -2,7 +2,7 @@
 import { composeStories } from "@storybook/react-vite";
 import { act, useLayoutEffect } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
 import { Callout, ErrorState, InlineError } from "../src/components/index.js";
 import { Icon } from "../src/icons/Icon.js";
 import * as stories from "../src/components/ErrorState.stories.js";
@@ -365,6 +365,31 @@ describe("ErrorState / InlineError (CMP-027)", () => {
     for (const Story of Object.values(composed)) {
       const host = await mount(<Story />);
       expect(host.childElementCount).toBeGreaterThan(0);
+    }
+  });
+
+  it("Summary's host focuses the heading once ErrorState renders it, even a frame later (outside act)", async () => {
+    const { Summary } = composeStories(stories);
+    const host = await mount(<Summary />);
+    const submit = within(host).getByRole("button", { name: "Submit" });
+    const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      // A production build: the submit commits the banner at once, and its words (the heading
+      // among them) land one effect later, in a task the browser may run after the next frame.
+      submit.click();
+      await Promise.resolve();
+      vi.advanceTimersByTime(16);
+      expect(document.getElementById("summary-heading")).toBeNull();
+      for (let turn = 0; turn < 10 && document.getElementById("summary-heading") === null; turn++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      vi.advanceTimersByTime(16);
+      expect(document.activeElement).toBe(document.getElementById("summary-heading"));
+    } finally {
+      env.IS_REACT_ACT_ENVIRONMENT = true;
+      vi.useRealTimers();
     }
   });
 });

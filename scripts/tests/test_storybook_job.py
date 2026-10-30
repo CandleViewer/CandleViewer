@@ -54,7 +54,8 @@ def _needs(tool: str) -> None:
 
 def test_storybook_job_runs_beside_a11y_hardened_and_uploads_only_the_a11y_report() -> None:
     job = _job()
-    assert set(_load("_job-a11y.yml")["jobs"]) == {"a11y", "storybook"}
+    # #270: the `vr` job runs beside both (test_vr_job.py pins it).
+    assert set(_load("_job-a11y.yml")["jobs"]) == {"a11y", "storybook", "vr"}
     # Parallel to `a11y` and able to fail it: no needs, no condition, no continue-on-error, no env.
     assert not {"needs", "if", "continue-on-error", "env"} & set(job)
     assert (job["permissions"], job["timeout-minutes"]) == ({"contents": "read"}, 15)

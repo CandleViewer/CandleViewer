@@ -114,13 +114,25 @@ export const BannerWarning: Story = {
   args: { form: "banner", severity: "warning", message: "Price is far from the last trade." },
 };
 
+/**
+ * Focuses the summary's heading on the first frame it exists, within about a second. ErrorState renders its
+ * words, the heading among them, one effect after it mounts, so the frame after the submit can come first.
+ */
+const focusHeading = (frames = 60): void => {
+  requestAnimationFrame(() => {
+    const heading = document.getElementById("summary-heading");
+    if (heading !== null) heading.focus();
+    else if (frames > 1) focusHeading(frames - 1);
+  });
+};
+
 /** E30-D02 D16's error summary: the host moves focus to the heading; a link moves focus to its field. */
 function SummaryHost(): JSX.Element {
   const [failed, setFailed] = useState(false);
   const submit = (event: FormEvent): void => {
     event.preventDefault();
     setFailed(true);
-    requestAnimationFrame(() => document.getElementById("summary-heading")?.focus());
+    focusHeading();
   };
   return (
     <form onSubmit={submit} style={col} noValidate>

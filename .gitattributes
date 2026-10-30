@@ -40,3 +40,6 @@ packages/fixtures/golden/indicators/** text eol=lf linguist-generated=true
 # E05-T06: the icon modules, written by `pnpm --filter @candleviewer/ui build:icons` from
 # src/icons/source/ and byte-checked by `build` (`--check`) and test/icons/generator.test.ts.
 packages/ui/src/icons/generated/** linguist-generated=true
+
+# E05-T04's visual-regression baselines: PNGs written by the vr_update dispatch, never diffed as text.
+packages/ui/vr/baselines/*.png binary

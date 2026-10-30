@@ -1,7 +1,8 @@
 """Tests for tools/ci/playwright_browsers.sh (CI-A11Y-005) and its use in _job-a11y.yml.
 
-A fake `npx` on PATH, no network. The workflow tests pin that both a11y jobs restore the browser
-cache before the install and key it by the runner OS and the lockfile's Playwright version."""
+A fake `npx` on PATH, no network. The workflow tests pin that the a11y lane's three jobs (a11y,
+storybook, vr) restore the browser cache before the install and key it by the runner OS and the
+lockfile's Playwright version."""
 
 from __future__ import annotations
 
@@ -318,7 +319,7 @@ def test_pr_workflow_runs_the_e2e_filter_for_the_script() -> None:
     assert "- 'tools/ci/playwright_browsers.sh'" in text
 
 
-# --- the workflow: both jobs restore the cache before the install, keyed by OS + version ---
+# --- the workflow: each job restores the cache before the install, keyed by OS + version ---
 
 PINNED = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w.-]+)?@[0-9a-f]{40}")
 
@@ -338,7 +339,7 @@ def _index(steps: list[dict[str, Any]], pick: str) -> int:
     return found
 
 
-@pytest.mark.parametrize("job", ["a11y", "storybook"])
+@pytest.mark.parametrize("job", ["a11y", "storybook", "vr"])
 def test_job_restores_the_browser_cache_before_the_install(job: str) -> None:
     steps = _steps(job)
     install_deps = _index(steps, "Install dependencies")

@@ -106,10 +106,11 @@ def test_storybook_nightly_runs_the_lanes_storybook_job_alone() -> None:
     only = _load(LANE_FILE)[True]["workflow_call"]["inputs"]["storybook_only"]
     assert (only["type"], only["default"]) == ("boolean", False)
     lane = _load(LANE_FILE)["jobs"]
-    # The input skips `a11y` and nothing else: the storybook job runs on every call.
+    # The input skips `a11y` and `vr` (#270) and nothing else: the storybook job runs on every call.
     assert {name: job.get("if") for name, job in lane.items()} == {
         "a11y": A11Y_IF,
         "storybook": None,
+        "vr": A11Y_IF,
     }
 
 
@@ -119,7 +120,7 @@ def test_pr_calls_the_whole_lane_and_the_nightly_is_its_only_other_caller() -> N
         jobs = (_load(path.name).get("jobs") or {}).values()
         calls[path.name] = [job for job in jobs if job.get("uses") == LANE]
     assert sorted(name for name, found in calls.items() if found) == ["pr.yml", NIGHTLY]
-    # pr.yml passes nothing, so a PR runs `a11y` and `storybook`, the required check's two jobs.
+    # pr.yml passes nothing, so a PR runs `a11y`, `storybook` and `vr`, the required check's jobs.
     assert [job for job in calls["pr.yml"] if "with" in job] == []
 
 

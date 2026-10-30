@@ -10,12 +10,23 @@ name: _job-a11y
 # the Playwright browsers and bound their download (CI-A11Y-005, #4305).
 # storybook-nightly.yml sets `storybook_only` to run that job alone on `main` every night; pr.yml
 # keeps the default and runs both.
+# E05-T04 (#270): the `vr` job runs beside them and fails the same check: every story x 3 themes x
+# 2 densities against its committed baseline PNG (ADR-0019), in 10 shards of one browser per two CPUs
+# that each keep a 6 min budget (CI-A11Y-006, CI-A11Y-007). A `workflow_dispatch` with `vr_update`
+# runs it once, unsharded, as `vr:update` and uploads the baselines for a person to commit
+# (packages/ui/README.md).
 
 on:
   workflow_call:
     inputs:
       storybook_only:
-        description: "Skip the a11y job and run the storybook job alone (storybook-nightly.yml)"
+        description: "Skip the a11y and vr jobs and run the storybook job alone (storybook-nightly.yml)"
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      vr_update:
+        description: "Write the visual-regression baselines that changed (vr:update) and upload them"
         type: boolean
         default: false
 
@@ -284,4 +295,145 @@ jobs:
         with:
           name: storybook-a11y-report
           path: reports/storybook-a11y/
+          retention-days: 14
+
+  vr:
+    # Shard 0 is the whole matrix, run only by the vr_update dispatch. The 6 min (360 s) budget (AC)
+    # is measured over a compare shard by its budget step; timeout-minutes is only the backstop.
+    # A pinned image release, never ubuntu-latest: the baselines are drawn with its libraries and the
+    # fonts the next steps install from its archive.
+    name: vr ${{ matrix.shard }}
+    if: ${{ !inputs.storybook_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.vr_update && 40 || 12 }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.vr_update && '[0]' || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]') }}
+    steps:
+      - name: Start the budget clock
+        run: date +%s > "$RUNNER_TEMP/vr-start"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No step after the checkout pushes or fetches, so it keeps no git credentials (#3449).
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the design tokens, then the static Storybook
+        run: |
+          pnpm --filter @candleviewer/ui run build:tokens
+          pnpm --filter @candleviewer/ui run storybook:build
+
+      - name: Resolve the Playwright version
+        id: pwver
+        working-directory: apps/web
+        run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" version'
+
+      - name: Restore the Playwright browsers
+        id: pwcache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
+
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        env:
+          PW_CACHE_KEY: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
+          PW_CACHE_HIT: ${{ steps.pwcache.outputs.cache-hit }}
+          PW_VERSION: ${{ steps.pwver.outputs.version }}
+        run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" install'
+
+      - name: Save the Playwright browsers
+        if: steps.pwcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
+
+      - name: Install the pinned fonts, Inter and JetBrains Mono (CI-A11Y-008)
+        # The token families (font.family.ui, font.family.mono) at fixed versions from the pinned image's
+        # own archive (noble's release pocket); a shard draws with these faces or fails here. The spec
+        # then checks, in Chromium, that it draws exactly them (packages/ui/vr/fonts.ts).
+        env:
+          INTER: "4.0+ds-1"
+          JETBRAINS_MONO: "2.304+ds-4"
+        run: |
+          fail() {
+            echo "::error::CI-A11Y-008 $1 (docs/ci-runbook.md)"
+            exit 1
+          }
+          sudo apt-get update -qq || fail "apt-get update failed before the pinned fonts"
+          sudo apt-get install -y -qq --no-install-recommends \
+            "fonts-inter=$INTER" "fonts-jetbrains-mono=$JETBRAINS_MONO" \
+            || fail "fonts-inter=$INTER and fonts-jetbrains-mono=$JETBRAINS_MONO did not install"
+          for family in Inter "JetBrains Mono"; do
+            fc-list -q "$family" || fail "fontconfig has no $family after the install"
+          done
+          installed=$(dpkg-query -W -f '${Package} ${Version}\n' fonts-inter fonts-jetbrains-mono | paste -sd ',' -)
+          echo "- Fonts installed: ${installed//,/, }" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compare every story x theme x density with its baseline (CI-A11Y-006)
+        # The summary reporter logs the matrix's cell count, the diff count and the faces Chromium drew
+        # for the token families; the runner image goes beside them.
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ strategy.job-total }}
+          VR_UPDATE: ${{ inputs.vr_update && '1' || '' }}
+        run: |
+          date +%s > "$RUNNER_TEMP/vr-step-start"
+          echo "- Runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+          script=vr
+          if [ "$VR_UPDATE" = 1 ]; then script=vr:update; fi
+          # The spec takes its shard's cells itself, every TOTAL-th cell of the matrix (packages/ui/vr/
+          # matrix.ts): Playwright's --shard cuts contiguous ranges, which kept a slow family together.
+          if [ "$SHARD" != 0 ]; then export VR_SHARD="$SHARD/$TOTAL"; fi
+          if ! pnpm --filter @candleviewer/ui run "$script"; then
+            echo "::error::CI-A11Y-006 a visual-regression cell has no baseline, differs from it beyond the tolerance, or did not render (the summary names each cell; the vr-diffs artifact holds the images; packages/ui/README.md, Visual regression)"
+            exit 1
+          fi
+
+      - name: "Budget: a compare shard finishes within 6 minutes (CI-A11Y-007)"
+        if: ${{ !inputs.vr_update }}
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          now=$(date +%s)
+          elapsed=$(( now - $(cat "$RUNNER_TEMP/vr-start") ))
+          step=$(( now - $(cat "$RUNNER_TEMP/vr-step-start") ))
+          echo "- VR shard $SHARD: $elapsed s of its 360 s budget (the compare step: $step s)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$elapsed" -gt 360 ]; then
+            echo "::error::CI-A11Y-007 VR shard $SHARD took $elapsed s, over its 360 s budget (docs/ci-runbook.md)"
+            exit 1
+          fi
+
+      - name: Upload the diff images
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vr-diffs-${{ matrix.shard }}
+          path: packages/ui/test-results/vr/
+          retention-days: 14
+
+      - name: Upload the baselines for a person to commit
+        if: ${{ inputs.vr_update }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vr-baselines
+          path: packages/ui/vr/baselines/
+          if-no-files-found: error
           retention-days: 14

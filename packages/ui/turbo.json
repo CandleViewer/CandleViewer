@@ -6,6 +6,7 @@
       "inputs": [
         "$TURBO_EXTENDS$",
         "tokens/**",
+        "vr/**",
         "scripts/**",
         "contrast/**",
         "eslint-rules/**",
@@ -27,6 +28,7 @@
       "inputs": [
         "$TURBO_EXTENDS$",
         "tokens/**",
+        "vr/**",
         "scripts/**",
         "contrast/**",
         "eslint-rules/**",
@@ -58,6 +60,8 @@
         "$TURBO_EXTENDS$",
         "eslint-rules/*.d.mts",
         "scripts/*.d.mts",
+        "tokens/primitives.tokens.json",
+        "storybook-static/index.json",
         "package.json",
         "$TURBO_ROOT$/tools/style-dictionary/formats/*.d.ts"
       ]

@@ -148,6 +148,8 @@
 /packages/chart-engine/package.json     @CandleViewer/chart-engine @CandleViewer/architecture @basiltt
 /packages/ui/                           @CandleViewer/design-system @CandleViewer/frontend @basiltt
 /packages/ui/tokens/                    @CandleViewer/design-system @CandleViewer/design @basiltt
+# E05-T04: the vr_update dispatch writes the visual-regression baselines; a designer approves each change.
+/packages/ui/vr/baselines/              @CandleViewer/design-system @CandleViewer/design @basiltt
 # future: E02 will restructure tokens under src/; keep both rules until then.
 /packages/ui/src/tokens/                @CandleViewer/design-system @CandleViewer/design @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
