@@ -247,8 +247,11 @@ refuses to start off a keyless testnet); a red "The real lane" is a spec: the
 `correlation-ids.json` (every API answer its pages saw) and `audit-log-slice.json` (the rows of its
 fixture users and of those ids, read once they settled), and the API's log. The lane keeps no trace,
 video or screenshot. "No secret of this run in the failure artefacts" means a file was not text, or a
-password, key or TOTP seed the run generated reached the artefact, which is then not uploaded. A spec
-that fails on the product is a defect to file, never a test to weaken (#293 BQ-4).
+password, key or TOTP seed the run generated reached the artefact, which is then not uploaded. A
+failure on SCR-001 with the password filled uploads nothing, because the scan refuses
+`error-context.md` (Playwright writes the typed password into it): read the job log instead, where
+the value is masked. A spec that fails on the product is a defect to file, never a test to weaken
+(#293 BQ-4).
 
 To triage a red `dast-rules` or `dast-market` run (#3991: `dast-rules-nightly.yml` and
 `dast-market-nightly.yml`, through `_dast-low-priv.yml`, as a synthetic Viewer), find the step that

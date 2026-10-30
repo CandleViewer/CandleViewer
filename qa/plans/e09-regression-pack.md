@@ -124,7 +124,7 @@ Every unsafe request needs the SR-041 double-submit token, except the five pre-s
 ## C. Gaps and deferrals (each cites an open issue unless marked untracked)
 
 - Server-side E2E clock for step-up and session expiry: #2086.
-- Session screens: SCR-005 and SCR-112 are built and covered (`apps/web/e2e/auth/session.spec.ts`; the real-backend lane, `e2e-auth-real.yml`, #2490). SCR-002 cases: #2711. SCR-003 cases: untracked (no owner ticket; to be filed at the post-GA sweep, #293 BQ-8).
+- Session screens: SCR-005 and SCR-112 are built and covered on the stub lane (`apps/web/e2e/auth/session.spec.ts`). The real-backend lane (`e2e-auth-real.yml`) covers them only in PR 3 (#2086). SCR-002 cases: #2711. SCR-003 cases: untracked (no owner ticket; to be filed at the post-GA sweep, #293 BQ-8).
 - Rules-manager grant isolation test: #2094; owner check shape: #2096.
 - k6 Argon2 timing header: #2097.
 - Password change during a live step-up: #2099.
