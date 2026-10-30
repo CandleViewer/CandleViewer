@@ -16,8 +16,9 @@ its code, at most one G1 FAIL per table row:
 - [G3-QUOTES] Q-1 to Q-5 of section 3 stand byte for byte in `E27.json`:416 at the base (Q-5
   with its one bracketed word restored; the word is kept rot13-encoded here, as is the word list).
 - [G4-DANGER] DZ-1 to DZ-3 stand with their pinned sentences and are applied on M-7, M-3 and M-5;
-  A25 (M-8), A25a (M-8, a precision of A25), A26 (M-1) and A27 are each stamped RULED in the ruled form,
-  and A25a's loading-state sentence stands.
+  A25 (M-8), A26 (M-1) and A27 each carry "RULED (orchestrator, <their date>, #2701 ledger addendum A
+  row <row>)"; A25a (M-8) carries the full stamp with the date 2026-10-30, followed by "(a precision
+  of A25)"; and A25a's loading-state sentence stands.
 - [G5-CITE] every `KEY`:line cite resolves to a declared key and an existing range at the base;
   each pinned cite still carries its words; E05-D03 at the base equals the BQ list's pin
   `bca5f0f1d` whenever that commit is readable (recorded in the numbers either way).
@@ -88,8 +89,9 @@ DZ_TEXT = {
 }
 DZ_ON = {"DZ-1": "M-7", "DZ-2": "M-3", "DZ-3": "M-5"}
 LEDGER_ON = {"A25": "M-8", "A25a": "M-8", "A26": "M-1", "A27": ""}
-STAMP = "RULED (orchestrator, 2026-10-29, #2701 ledger addendum A row {row})"
-STAMP_A25A = "#2701 ledger addendum A row A25a (a precision of A25)"  # A25a is cited in this form
+STAMP_DATES = {"A25": "2026-10-29", "A26": "2026-10-29", "A27": "2026-10-29", "A25a": "2026-10-30"}
+STAMP = "RULED (orchestrator, {date}, #2701 ledger addendum A row {row})"
+STAMP_A25A = STAMP.format(date=STAMP_DATES["A25a"], row="A25a") + " (a precision of A25)"
 LOADING_TEXT = "A destructive confirmation's loading state is motion-free in both modes."
 CUT_TIMING = "`motion.duration.instant` · `—`"
 INSTANT = "`motion.duration.instant`"
@@ -304,7 +306,9 @@ def gate_danger(ctx: Ctx, r: Result) -> None:
             r.fail("G4-DANGER", f"{dz} is not applied on {DZ_ON[dz]}")
     flat = " ".join(ctx.spec.split())
     for row, m in LEDGER_ON.items():
-        if (STAMP_A25A if row == "A25a" else STAMP.format(row=row)) not in flat:
+        if (
+            STAMP_A25A if row == "A25a" else STAMP.format(date=STAMP_DATES[row], row=row)
+        ) not in flat:
             r.fail("G4-DANGER", f"{row} is not stamped in the ruled form")
         if m and row not in rs.get(m, {}).get("rules", ""):
             r.fail("G4-DANGER", f"{row} is not applied on {m}")
@@ -458,6 +462,17 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G2-TOKEN", sub("`type.num.base`", "`typo.num.base`")),
     ("G4-DANGER", regex_all(r"\(a\s+precision of A25\)", "(a precision of A24)")),
     ("G4-DANGER", sub("motion-free in both modes.**", "animated in normal mode.**")),
+    (
+        "G4-DANGER",
+        regex_all(
+            r"(\(orchestrator,\s+)2026-10-30(,\s+#2701 ledger addendum A row A25a\))",
+            r"\g<1>2099-01-01\g<2>",
+        ),
+    ),
+    (
+        "G4-DANGER",
+        regex_all(r"RULED \(orchestrator,\s+2026-10-30,\s+#2701 ledger addendum A row A25a\)", ""),
+    ),
     ("G5-CITE", sub("`22`:3292-3296", "`22`:3292-9999999")),
     (
         "G6-HYGIENE",
