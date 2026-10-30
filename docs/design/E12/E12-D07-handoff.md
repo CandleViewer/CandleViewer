@@ -6,43 +6,44 @@ Components: **CMP-049 Table** (the non-time row header, the separator row, the `
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | CMP-049 Table (SCR-045 per mode)                                          | CMP-056 ColumnPicker                                                                                  | CMP-053 Pagination (in a separator row)        |
-| ------------------------ | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Final Penpot link        | [ ] PR 2: boards 01–10                                                    | [ ] PR 2: boards 02, 08                                                                               | [ ] PR 2: board 05                             |
-| Variants × states        | [x] spec §2, §6, §7                                                       | [x] spec §3.1 tiers P / A / E per mode, §4                                                            | [x] spec §7.1 (the lookback row's `Load more`) |
-| Keyboard table           | [x] E11-D04's, unchanged; separator rows are grid rows (spec §7.2, §11)   | [x] E11-D04's, unchanged                                                                              | [x] E11-D04's **Older** control                |
-| Accessible name and role | [x] the row header's name (spec §2.2); a separator row's name is its text | [x] each column by its header word; the auto state named "Auto (shows when the table is wide enough)" | [x] "Older"                                    |
-| Live data                | [x] patches at E11-D04's cadence; the edge announcement once (spec §9.1)  | [x] none                                                                                              | [x] E11-D04's                                  |
-| Motion pair              | [x] none: separator rows appear at once                                   | [x] none                                                                                              | [x] none                                       |
-| Density notes            | [x] compact; fixed 24 px rows (spec §5)                                   | [x] widths per mode (spec §5)                                                                         | [x] compact                                    |
-| Essential exceptions     | [x] none                                                                  | [x] none                                                                                              | [x] none                                       |
-| Tokens used              | [x] spec §14                                                              | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
-| Data contract            | [ ] NO: D07-G1 … D07-G5                                                   | [x] spec §3.1                                                                                         | [x] E11-D04's                                  |
-| Contrast                 | [x] spec §14 (computed)                                                   | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
-| Storybook                | [x] §D                                                                    | [x] §D                                                                                                | [x] §D                                         |
-| Sign-off                 | [ ] owner approval pending                                                | [ ] owner approval pending                                                                            | [ ] owner approval pending                     |
+| Item                     | CMP-049 Table (SCR-045 per mode)                                                                              | CMP-056 ColumnPicker                                                                                  | CMP-053 Pagination (in a separator row)        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Final Penpot link        | [x] page `E12-D07 SCR-045 data table`, page id `cb0c3916-2579-81a4-8008-dd7fc1d05559`: boards 01–10 (spec §0) | [x] the same page: boards 02, 08                                                                      | [x] the same page: board 05                    |
+| Variants × states        | [x] spec §2, §6, §7                                                                                           | [x] spec §3.1 tiers P / A / E per mode, §4                                                            | [x] spec §7.1 (the lookback row's `Load more`) |
+| Keyboard table           | [x] E11-D04's, unchanged; separator rows are grid rows (spec §7.2, §11)                                       | [x] E11-D04's, unchanged                                                                              | [x] E11-D04's **Older** control                |
+| Accessible name and role | [x] the row header's name (spec §2.2); a separator row's name is its text                                     | [x] each column by its header word; the auto state named "Auto (shows when the table is wide enough)" | [x] "Older"                                    |
+| Live data                | [x] patches at E11-D04's cadence; the edge announcement once (spec §9.1)                                      | [x] none                                                                                              | [x] E11-D04's                                  |
+| Motion pair              | [x] none: separator rows appear at once                                                                       | [x] none                                                                                              | [x] none                                       |
+| Density notes            | [x] compact; fixed 24 px rows (spec §5)                                                                       | [x] widths per mode (spec §5)                                                                         | [x] compact                                    |
+| Essential exceptions     | [x] none                                                                                                      | [x] none                                                                                              | [x] none                                       |
+| Tokens used              | [x] spec §14                                                                                                  | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
+| Data contract            | [ ] NO: D07-G1 … D07-G6; tokens: D07-G7                                                                       | [x] spec §3.1                                                                                         | [x] E11-D04's                                  |
+| Contrast                 | [x] spec §14 (computed)                                                                                       | [x] E11-D04's                                                                                         | [x] E11-D04's                                  |
+| Storybook                | [x] §D                                                                                                        | [x] §D                                                                                                | [x] §D                                         |
+| Sign-off                 | [ ] owner approval pending                                                                                    | [ ] owner approval pending                                                                            | [ ] owner approval pending                     |
 
 ## §B Who applies what
 
-| A                                      | Target                             | Applied by                               |
-| -------------------------------------- | ---------------------------------- | ---------------------------------------- |
-| D07-A1, D07-A4, D07-A5, D07-A7, D07-A8 | E11-D04 §5.1, §5.2, §6.3, §13      | E11-D04's owner                          |
-| D07-A2, D07-A3, D07-A6                 | `14` SCR-030's E12 matrix, SCR-045 | `14`'s owner, at the owner's sign-off PR |
+| A                                              | Target                               | Applied by                               |
+| ---------------------------------------------- | ------------------------------------ | ---------------------------------------- |
+| D07-A1, D07-A4, D07-A5, D07-A7, D07-A8, D07-A9 | E11-D04 §3 D3, §5.1, §5.2, §6.3, §13 | E11-D04's owner                          |
+| D07-A2, D07-A3, D07-A6                         | `14` SCR-030's E12 matrix, SCR-045   | `14`'s owner, at the owner's sign-off PR |
 
 ## §C Copy-ready rows (PROPOSED)
 
 Old is a verbatim fragment of the cited line at `83f18fd4c` (the tool checks it); New replaces it, or follows it where the row says "insert after".
 
-| A      | Target                   | Field (`file`:line)                           | Old                                                                                                        | New                                                                                                        |
-| ------ | ------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| D07-A1 | E11-D04 §13              | `chart.data_table_opened` (D04E11:403)        | `interval` (`bar_type` + `param`),                                                                         | insert after: `bar_type` (the `22` `BarType` value), `param` (string),                                     |
-| D07-A2 | `14` SCR-030 forming-bar | Screen reader (`14`:734)                      | SCR-045 state column "Forming"                                                                             | SCR-045 `state` word `forming` (E12-D07 §6)                                                                |
-| D07-A3 | `14` SCR-030 closed-bar  | Screen reader (`14`:735)                      | SCR-045 state "Closed" or "Closed, corrected"                                                              | SCR-045 `state` word `corrected` for a live amend, a closed bar otherwise unmarked (E12-D07 §6)            |
-| D07-A4 | E11-D04 §5.1             | close time, Source (D04E11:187)               | `Bar.close_t`                                                                                              | `Bar.close_time` / `close_t_ms`                                                                            |
-| D07-A5 | E11-D04 §6.3             | Rows (D04E11:260)                             | `aria-rowcount` = loaded bars + 1                                                                          | `aria-rowcount` = loaded bars + separator rows + 1 (E12-D07 §7.2)                                          |
-| D07-A6 | `14` SCR-030 E12 matrix  | intro (`14`:727)                              | the SCR-045 separator rows, its "Closed, corrected" state and its rebuild caption named below are proposed | the SCR-045 separator rows, its `corrected` state and its rebuild caption are specified in E12-D07 §6–§7   |
-| D07-A7 | E11-D04 §5.2             | the `state` budget, measured set (D04E11:196) | delta 8, state 8)                                                                                          | delta 8, state 9) — `corrected` fits; the `state` row of §5.1 (D04E11:183) reads 9 (E12-D07 §5, D07-C12)   |
-| D07-A8 | E11-D04 §5.1             | close time, Tier (D04E11:187)                 | extended (E12-D07)                                                                                         | auto on the non-time sets, 12 characters for `hh:mm:ss.mmm`; the width cell 8 → 12 (E12-D07 §3.1, D07-C15) |
+| A      | Target                   | Field (`file`:line)                           | Old                                                                                                        | New                                                                                                                                  |
+| ------ | ------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| D07-A1 | E11-D04 §13              | `chart.data_table_opened` (D04E11:403)        | `interval` (`bar_type` + `param`),                                                                         | insert after: `bar_type` (the `22` `BarType` value), `param` (string),                                                               |
+| D07-A2 | `14` SCR-030 forming-bar | Screen reader (`14`:734)                      | SCR-045 state column "Forming"                                                                             | SCR-045 `state` word `forming` (E12-D07 §6)                                                                                          |
+| D07-A3 | `14` SCR-030 closed-bar  | Screen reader (`14`:735)                      | SCR-045 state "Closed" or "Closed, corrected"                                                              | SCR-045 `state` word `corrected` for a live amend, a closed bar otherwise unmarked (E12-D07 §6)                                      |
+| D07-A4 | E11-D04 §5.1             | close time, Source (D04E11:187)               | `Bar.close_t`                                                                                              | `Bar.close_time` / `close_t_ms`                                                                                                      |
+| D07-A5 | E11-D04 §6.3             | Rows (D04E11:260)                             | `aria-rowcount` = loaded bars + 1                                                                          | `aria-rowcount` = loaded bars + separator rows + 1 (E12-D07 §7.2)                                                                    |
+| D07-A6 | `14` SCR-030 E12 matrix  | intro (`14`:727)                              | the SCR-045 separator rows, its "Closed, corrected" state and its rebuild caption named below are proposed | the SCR-045 separator rows, its `corrected` state and its rebuild caption are specified in E12-D07 §6–§7                             |
+| D07-A7 | E11-D04 §5.2             | the `state` budget, measured set (D04E11:196) | delta 8, state 8)                                                                                          | delta 8, state 9) — `corrected` fits; the `state` row of §5.1 (D04E11:183) reads 9 (E12-D07 §5, D07-C12)                             |
+| D07-A8 | E11-D04 §5.1             | close time, Tier (D04E11:187)                 | extended (E12-D07)                                                                                         | auto on the non-time sets, 12 characters for `hh:mm:ss.mmm`; the width cell 8 → 12 (E12-D07 §3.1, D07-C15)                           |
+| D07-A9 | E11-D04 §3 D3            | Columns, CVD (D04E11:116)                     | with **CVD rejoining automatically when the table is ≥ 708 CSS px wide** (its "auto" default)              | insert after: ; on SCR-045's per-mode sets CVD stays extended in every bar mode, which overrides this rejoin (E12-D07 §3.1, D07-C16) |
 
 ## §D Storybook story lists (each story per theme and density, `15`:41)
 
@@ -67,12 +68,12 @@ Old is a verbatim fragment of the cited line at `83f18fd4c` (the tool checks it)
 
 ## §F Consumer pointers
 
-| Consumer                | Builds from                               | Waits on                                                  |
-| ----------------------- | ----------------------------------------- | --------------------------------------------------------- |
-| E11-S14 (#521)          | spec §2–§12, §C's A-rows for E11-D04, §D  | D07-G1 … D07-G5 through E12-T05 (#398) and E12-T06 (#399) |
-| E12-D12 (#313)          | spec §3 (the per-mode table), §6, §7      | —                                                         |
-| E12-Q03 (#419), E12-Q07 | spec §3, §4, §6, §7, §9                   | —                                                         |
-| E12-S10 (#396)          | spec §6 (`forming`, `stale`, `corrected`) | D07-G3                                                    |
+| Consumer                | Builds from                               | Waits on                                                                                                   |
+| ----------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| E11-S14 (#521)          | spec §2–§12, §C's A-rows for E11-D04, §D  | D07-G1 … D07-G6 through E12-T05 (#398) and E12-T06 (#399); D07-G7 through the tokens owner (epic E05, #30) |
+| E12-D12 (#313)          | spec §3 (the per-mode table), §6, §7      | —                                                                                                          |
+| E12-Q03 (#419), E12-Q07 | spec §3, §4, §6, §7, §9                   | —                                                                                                          |
+| E12-S10 (#396)          | spec §6 (`forming`, `stale`, `corrected`) | D07-G3                                                                                                     |
 
 ## §G Dry-run needs (spec §18; one item per need, the spec pointer after the arrow)
 
@@ -89,7 +90,9 @@ An item marked (not found) had no pointer when the role ran; its fold is named a
 
 ## §H The board plan for PR 2 (a Penpot lane)
 
-The boards of spec §0; frames named `SCR-045/<mode-or-state> · <theme>`. Data: the recorded fixture paths E12-D06 used, verified at the base by PR 2 before it cites them. Each board's frames:
+**Drawn (PR 2, 2026-10-30).** All ten boards on page `cb0c3916-2579-81a4-8008-dd7fc1d05559`; board ids, PNGs and the as-built record in spec §0.
+
+The boards of spec §0; frames named `SCR-045/<mode-or-state> · <theme>`. Data (RULED P-6): a seeded synthetic stream (seed 242), not recorded; only the tick size (0.1) and qty step (0.001) come from the recorded instrument fixture (spec §0). **Synthetic boards: all ten, 01–10**, each declaring it on its face. Two-panel frames (RULED P-5): `captions/rebuild-and-cache` and both `separators/time-axis`. Each board's frames:
 
 | Board | Frames                                                                                           |
 | ----- | ------------------------------------------------------------------------------------------------ |
@@ -106,7 +109,7 @@ The boards of spec §0; frames named `SCR-045/<mode-or-state> · <theme>`. Data:
 
 ## §I Summary for #242
 
-1. Text-first SCR-045 per-mode spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards follow in PR 2 by a Penpot lane (8<!--=COUNT:boards.dark--> dark, 2<!--=COUNT:boards.light--> light twins).
+1. Text-first SCR-045 per-mode spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards drawn in PR 2 (8<!--=COUNT:boards.dark--> dark, 2<!--=COUNT:boards.light--> light twins).
 2. A non-time row leads with its open time to the ms and "bar k of n", keyed `(generation, index)`; the close time and duration are auto columns and always in the row's name.
 3. Each mode's set is mapped field by field to `22`'s `Bar` and `23`'s bars item; derived cells state their formula; nothing the canvas series lacks.
 4. One lowercase `state` list; `stale` and `corrected` are words; "corrected" is live-only and its loss on a REST re-read is stated.

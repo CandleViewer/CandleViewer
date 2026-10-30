@@ -15,11 +15,13 @@ E33-D06 tools (the same modes, the anchored values, the default-deny pins and th
    (G-MARKER). `--fill` also writes the ruled paragraphs ({{RULING}}) and the mutation rows
    ({{MUTATIONS}}) from this file's constants.
 2. **Cites.** Every `NN`:line and KEY:line cite of both documents resolves to a non-blank line at
-   the base (G-CITE); every "verbatim" copy string occurs on its cited line (G-QUOTE); every Old
-   fragment of the hand-off's A-rows occurs verbatim on its cited line (G-AROW).
+   the base, E12-D08's at its merge commit (G-CITE); every "verbatim" copy string occurs on its
+   cited line (G-QUOTE); every Old fragment of the hand-off's A-rows occurs verbatim on its cited
+   line (G-AROW).
 3. **Gates.** One FAIL line per gate: G-RULED (the ruling's paragraphs verbatim in the RULED
    section), G-PENDING (BQ-13 and D07-Q1 carry the later RULED stamp), G-BOARDS (at most ten
-   boards, at most three light twins, every board PENDING, P&F and Heikin-Ashi on no board),
+   boards, at most three light twins, every board drawn: its board id and its committed PNG at
+   the size the cell states, P&F and Heikin-Ashi on no board),
    G-COLUMNS (the mode columns equal `22`'s `BarType` without `pnf` and `heikin_ashi`; each cell
    marked tier + field / derived or "—"; every named field exists in `22`'s `Bar` and `23`'s
    bars item; a field cell names exactly one field), G-STATE (the ruled lowercase vocabulary, in
@@ -27,8 +29,8 @@ E33-D06 tools (the same modes, the anchored values, the default-deny pins and th
    G-HEUR (every finding marked `(heuristic)`), G-WALK (at most ten walkthrough items), G-OWNER
    (G-ledger owners are tickets or spec owners, never an agent), G-DRYRUN (the dry-run roles of
    the spec and the hand-off agree), G-UNMERGED (no path into an unmerged sibling), G-URL (no URL,
-   host or local path), G-UNTOUCHED (only this ticket's four files differ from the merge base
-   with origin/main), G-BUDGET (600 spec lines, 150 hand-off lines) and G-MUTLIST (the spec's §16
+   host or local path), G-UNTOUCHED (only this ticket's four files and PR 2's boards, sheet kit,
+   manifest and ignore entry differ from the merge base with origin/main), G-BUDGET (600 spec lines, 150 hand-off lines) and G-MUTLIST (the spec's §16
    equals this tool's list).
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of both documents
    (each heading, table row by its lead cell and prose line, by heading path and occurrence, with
@@ -68,6 +70,17 @@ HAND_REL = "docs/design/E12/E12-D07-handoff.md"
 TOOL_REL = "docs/design/_tools/e12_d07_datatable_audit.py"
 PIN_REL = "docs/design/_tools/e12_d07_ruled_pins.txt"
 OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL)
+# PR 2's paths besides those four: the ten PNGs, the sheet kit, its manifest lines, the v4/ ignore entry
+OWN_BOARDS = re.compile(
+    r"docs/design/E12/img/E12-D07-\d\d-[a-z0-9-]+\.png|\.prettierignore"
+    r"|docs/design/_tools/sheets/(?:e12-d07/[A-Za-z0-9._/-]+|MANIFEST\.sha256)"
+)
+# a drawn board's Status cell (§0): its board id, its PNG and the PNG's size (board 08 at 2x, RULED P-4)
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`(?P<png>docs/design/E12/img/E12-D07-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png)` "
+    r"\((?P<w>\d+) × (?P<h>\d+)(?:, 2×)?\)"
+)
 SPEC_BUDGET = 600
 HAND_BUDGET = 150
 
@@ -87,11 +100,14 @@ CITE_FILES = {
     "D03": "docs/design/E12/E12-D03.md",
     "D05": "docs/design/E12/E12-D05.md",
     "D06": "docs/design/E12/E12-D06.md",
+    "D08": "docs/design/E12/E12-D08.md",
     "D09": "docs/design/E12/E12-D09.md",
     "E12J": "docs/plan/backlog/E12.json",
     "E11J": "docs/plan/backlog/E11.json",
 }
-UNMERGED_PATHS = ("E12-D08.md", "E12-D10.md", "E12-D11.md")
+UNMERGED_PATHS = ("E12-D10.md", "E12-D11.md")
+# E12-D08 merged after the base (#4933): its cites are read at its merge commit, every other at BASE.
+FILE_BASE = {"docs/design/E12/E12-D08.md": "80e45841d"}
 DS_SRC_REL = "packages/ui/tokens"
 THEMES: dict[str, tuple[str, ...]] = {
     "dark": ("primitives", "semantic-dark"),
@@ -191,7 +207,7 @@ def git(*args: str) -> str:
 
 @functools.lru_cache(maxsize=64)
 def at_base(rel: str) -> str:
-    return git("show", f"{BASE}:{rel}")
+    return git("show", f"{FILE_BASE.get(rel, BASE)}:{rel}")
 
 
 @functools.lru_cache(maxsize=64)
@@ -531,7 +547,13 @@ class Mutation:
 
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
-        "M-1", "mark board 01 drawn in §0", "G-BOARDS", "spec", "## 0.", "PENDING (PR 2)", "drawn"
+        "M-1",
+        "drop board 01's board id in §0",
+        "G-BOARDS",
+        "spec",
+        "## 0.",
+        "drawn: board id `",
+        "drawn: `",
     ),
     Mutation(
         "M-2",
@@ -592,7 +614,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-9",
-        "cut the RULED stamp from BQ-13's line",
+        "cut the date and time from BQ-13's RULED stamp",
         "G-PENDING",
         "spec",
         "## The questions",
@@ -628,12 +650,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-13",
-        "link E12-D08's unmerged file in §10",
+        "link E12-D10's unmerged file in the start line",
         "G-UNMERGED",
         "spec",
-        "## 10.",
-        "E12-D08 merges",
-        "docs/design/E12/E12-D08.md merges",
+        "",
+        "E12-D10 (#245)",
+        "docs/design/E12/E12-D10.md (#245)",
     ),
     Mutation(
         "M-14",
@@ -789,7 +811,7 @@ def g_marker(t: Texts) -> list[Finding]:
 
 
 CITE_RE = re.compile(
-    r"(?:`(\d\d)`|\b(D04E11|D07E11|D02|D03|D05|D06|D09|E12J|E11J))"
+    r"(?:`(\d\d)`|\b(D04E11|D07E11|D02|D03|D05|D06|D08|D09|E12J|E11J))"
     r"(:\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
 )
 
@@ -881,6 +903,31 @@ def g_pending(t: Texts) -> list[Finding]:
     return out
 
 
+def png_size(rel: str) -> tuple[int, int] | None:
+    """The PNG's width and height from its IHDR, or None when the file is missing or no PNG."""
+    try:
+        head = (ROOT / rel).read_bytes()[:24]
+    except OSError:
+        return None
+    if head[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
+def undrawn(r: list[str]) -> str:
+    """Why a §0 row is not a drawn board ("" when it is): the Status cell, its PNG and its size."""
+    m = DRAWN_CELL.fullmatch(r[4])
+    if not m:
+        return "has no 'drawn: board id …, `<png>` (W × H)' Status"
+    name = re.fullmatch(r"`E12-D07 / (\d\d) ([a-z0-9-]+)`", r[1])
+    if not name or (m["nn"], m["slug"]) != name.groups() or m["nn"] != r[0]:
+        return f"names the PNG of another board ({m['png']})"
+    size = png_size(m["png"])
+    if size != (int(m["w"]), int(m["h"])):
+        return f"PNG {m['png']} is {size}, not {m['w']} × {m['h']}"
+    return ""
+
+
 def g_boards(t: Texts) -> list[Finding]:
     _, _, region = section(t.spec, "## 0.")
     rows = first_table(t.spec, "## 0.")[1:]
@@ -893,8 +940,8 @@ def g_boards(t: Texts) -> list[Finding]:
     for r in rows:
         if len(r) < 5 or r[3] not in ("dark", "light", "hc"):
             bad.append(f"board {r[0]} has no theme")
-        elif not r[4].startswith("PENDING"):
-            bad.append(f"board {r[0]} is not PENDING")
+        elif why := undrawn(r):
+            bad.append(f"board {r[0]} {why}")
         if len(r) > 2 and re.search(r"P&F|Heikin|\bHA\b", r[2]):
             bad.append(f"board {r[0]} draws a text-only type")
     s, e, _ = section(t.spec, "## 0.")
@@ -1043,7 +1090,7 @@ def g_lines(t: Texts, gate: str, test: Callable[[str], bool], what: str) -> list
 
 
 def g_untouched(t: Texts) -> list[Finding]:
-    extra = [p for p in t.changed if p not in OWN]
+    extra = [p for p in t.changed if p not in OWN and not OWN_BOARDS.fullmatch(p)]
     return [("G-UNTOUCHED", f"{p} differs from the base", "", "") for p in extra]
 
 
