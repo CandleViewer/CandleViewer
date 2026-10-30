@@ -281,7 +281,8 @@ route for group definitions; a preview or a group view can leak an ungranted acc
 clears a risk lockout; concurrent admissions can pass the same cap headroom; the kill switch is not re-checked before
 each leg is sent; and no check keeps a stop inside the liquidation price. It also carries the TB-8 consumer rows E13-X01
 asked for (IR-11, IR-12, IR-20, IR-45). Controls SR-E28-01..33 (model §9); the four schema requirements are due before
-E28-T01 merges; abuse cases AC-01..AC-33 go to E28-X03 (#976) and E28-Q01 (#904). Status Approved (2026-10-20). The Critical
+E28-T01 merges; abuse cases AC-01..AC-33 go to E28-X03 (#976) and E28-Q01 (#904); E28-X03's suite and its case map are
+`docs/security/e28/abuse-suite-report.md`. Status Approved (2026-10-20). The Critical
 findings and the schema Highs are RSK-082 to RSK-086 in `32-risk-register.md` (F-11 stays RSK-060) and RR-22 in §16.1;
 the five §11.2 residuals are RR-23; both and the Owner decisions D8 and D11 are queued on #2701.
 
