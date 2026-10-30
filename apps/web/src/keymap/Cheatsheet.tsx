@@ -1,8 +1,12 @@
 import { useSyncExternalStore } from "react";
 import { KEYMAP } from "./keymap";
 import { getBindings, subscribeBindings } from "./profile";
+import { globalShadowNote } from "./registry";
 
-/** SCR-013 overlay: current bindings by context as a real table; conflicts get a warning chip. */
+/**
+ * SCR-013 overlay: current bindings by context as a real table; conflicts get a warning chip, and a view's declared
+ * shadow of a Global key shows its rationale beside the key (BQ-4: no override is silent, `05` §3.1 rule 2).
+ */
 export function Cheatsheet({ onClose }: { readonly onClose?: () => void }): JSX.Element {
   const b = useSyncExternalStore(subscribeBindings, getBindings);
   const seen = new Map<string, number>();
@@ -33,11 +37,13 @@ export function Cheatsheet({ onClose }: { readonly onClose?: () => void }): JSX.
             {KEYMAP.filter((c) => c.context === ctx).map((c) => {
               const bound = b.get(c.id) ?? c.defaultBinding;
               const conflict = (seen.get(`${ctx}|${bound}`) ?? 0) > 1;
+              const shadow = globalShadowNote(c, b);
               return (
                 <tr key={c.id}>
                   <th scope="row">{c.label}</th>
                   <td>
                     <kbd>{bound}</kbd>
+                    {shadow === undefined ? null : <span>{` ${shadow}`}</span>}
                     {conflict ? (
                       <span role="img" aria-label="Warning: conflicting binding">
                         {" "}

@@ -8,6 +8,7 @@
 | Global | Full-screen workspace | `F11` | no | overrides reserved key: Deliberate: app-managed full-screen workspace replaces the browser default; Electron maps it to the same action; valid when: always |
 | Global | Navigate rail item 1-9 | `Alt+1..9` | no | valid when: always |
 | Global | Command palette | `Ctrl+K` | no | valid when: always |
+| Global | Symbol search | `/` | no | valid when: workspace open |
 | Workspace | Full-screen active panel | `F11` | no | overrides reserved key: Deliberate override of browser full screen, see global.fullscreen; valid when: panel focused |
 | Workspace | Move panel | `Alt+drag` | no | valid when: always |
 | Workspace | Cycle panels forward | `Ctrl+Alt+→` | no | valid when: always |
