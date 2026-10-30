@@ -413,6 +413,21 @@ async def test_3c_open_order_bound_to_a_final_row_is_an_anomaly_with_no_mutation
     assert [s for s, _ in w.oms.pages] == ["alert"]
 
 
+async def test_3c_a_standing_anomaly_alerts_once_per_episode() -> None:
+    """24 Sec.8.5: a standing anomaly is listed on every pass with no second alert; once a pass
+    no longer finds its order, the anomaly's next episode alerts again."""
+    w = World()
+    w.oms.seed(row(1, "cancelled"))
+    w.venue.seed_order(remote(1), uid="1001")  # bound to a final row: an anomaly
+    first, second = await w.run(), await w.run()
+    w.venue._open.pop("x1")
+    third = await w.run()
+    w.venue.seed_order(remote(1), uid="1001")
+    fourth = await w.run()
+    assert [len(r.anomalies) for r in (first, second, third, fourth)] == [1, 1, 0, 1]
+    assert [s for s, _ in w.oms.pages] == ["alert", "alert"]
+
+
 async def test_3c_id_another_accounts_row_holds_is_an_anomaly_and_frozen() -> None:
     w = World()
     w.oms.taken_elsewhere = {LINK.format(7)}

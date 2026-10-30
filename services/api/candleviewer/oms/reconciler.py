@@ -925,7 +925,7 @@ class Reconciler:
     ) -> None:
         self._p, self._now, self._new_id = ports, now_us, new_id
         self._on_naked = on_naked
-        self._paged: OrderedDict[tuple[str, str], None] = OrderedDict()
+        self._paged: OrderedDict[tuple[str, AccountId, tuple[str, ...]], None] = OrderedDict()
 
     @property
     def ports(self) -> ReconcilePorts:
@@ -1058,22 +1058,30 @@ class Reconciler:
     def _plan_stops(self, plan: Plan) -> None:
         """Step 5's tests, from step 1's reads alone, so nothing before them can stop them
         (C-2.6), each position on its own (BQ-18): one that cannot be planned is listed by its
-        class and symbol, and every other position still plans."""
-        for p in plan.fetched.positions:
+        class and symbol, and every other position still plans. A position read protected or
+        flat ends its naked episode, so its next one pages again (24 Sec.8.5: once per episode);
+        one not judged this pass keeps its episode."""
+        f = plan.fetched
+        standing: set[tuple[str, ...]] = set()
+        for p in f.positions:
+            key = (p.symbol, str(p.position_idx))
             try:
-                self._plan_stop(plan, p)
+                if self._plan_stop(plan, p):
+                    standing.add(key)
             except Exception as exc:
+                standing.add(key)
                 plan.draft.error("5", type(exc).__name__, p.symbol)
+        self.rearm(_NAKED_PAGES, f.account.account_id, lambda key: key not in standing)
 
-    def _plan_stop(self, plan: Plan, p: Position) -> None:
-        """One position's step 5. A key with a stop request in flight at the copy is left to that
-        request."""
+    def _plan_stop(self, plan: Plan, p: Position) -> bool:
+        """One position's step 5; true while it may stand naked: read so, or left this pass to a
+        stop request in flight at the copy."""
         f, draft = plan.fetched, plan.draft
         if p.qty <= 0 or p.side is None:
-            return
+            return False
         records = [r for r in f.records if (r.symbol, r.position_idx) == (p.symbol, p.position_idx)]
         if _raced(records):
-            return
+            return True
         record = _in_force(p, records)
         stop = p.stop_loss if p.stop_loss is not None and p.stop_loss > 0 else None
         if stop is None and not _covered(p, f.remote_open, plan.ours, records):
@@ -1082,13 +1090,15 @@ class Reconciler:
                 draft.error("5", NO_RECORD_IN_FORCE, p.symbol)
             else:
                 plan.actions.append(AttachStop(p, record))
-        elif stop is not None and record is not None and record.tpsl_mode == "Full":
+            return True
+        if stop is not None and record is not None and record.tpsl_mode == "Full":
             if record.trailing_distance is not None and p.trailing_stop_distance is not None:
-                return  # the venue moves a recorded native trail's stop (Sec.10.7)
+                return False  # the venue moves a recorded native trail's stop (Sec.10.7)
             if loosens(record.position_side, record.trigger_price, stop):
                 plan.actions.append(RestoreStop(p, record))
             elif loosens(record.position_side, stop, record.trigger_price):
                 plan.actions.append(PageTighter(p))
+        return False
 
     # --- The remediation and the report -----------------------------------------------------------
 
@@ -1102,16 +1112,43 @@ class Reconciler:
         return plan.draft.freeze(max(0, (self._now() - plan.fetched.started_us) // 1000))
 
     def page_once(self, reason: str, account_id: AccountId, *key: str) -> None:
-        """One P1 page per reason and subject, across passes (a bounded memory, C-2.18): a
-        standing item pages once, never on every 30 s pass. Logged by its reason and account."""
-        mark = (reason, "\x1f".join((str(account_id), *key)))
+        """One P1 page per reason and subject while its episode lasts, across passes: a standing
+        item pages once, never on every 30 s pass, and pages again once a pass has read its
+        episode over (`rearm`). Logged by its reason and account."""
+        if self._first(reason, account_id, key):
+            _log().critical(
+                "reconcile_paged", reason=reason, account_id=str(account_id), cv_page=True
+            )
+            self._p.pager.raise_alert("page", _PAGES[reason], machine_kind=_KIND)
+
+    def alert_once(self, reason: str, account_id: AccountId, *key: str) -> None:
+        """An alert, once per subject's episode as `page_once` pages: a finding listed again on
+        every pass raises no second alert (24 Sec.8.5)."""
+        if self._first(reason, account_id, key):
+            self._p.pager.raise_alert("alert", _ALERTS[reason], machine_kind=_KIND)
+
+    def rearm(
+        self,
+        reasons: Collection[str],
+        account_id: AccountId,
+        ended: Callable[[tuple[str, ...]], bool],
+    ) -> None:
+        """Ends the episodes of the account's marks under `reasons` whose subject `ended` says
+        this pass read over, so each pages again when it is next found."""
+        over = [m for m in self._paged if m[0] in reasons and m[1] == account_id and ended(m[2])]
+        for mark in over:
+            del self._paged[mark]
+
+    def _first(self, reason: str, account_id: AccountId, key: tuple[str, ...]) -> bool:
+        """Marks a subject's episode, true the first time (a bounded memory, C-2.18: past the
+        bound the oldest mark is forgotten)."""
+        mark = (reason, account_id, key)
         if mark in self._paged:
-            return
+            return False
         self._paged[mark] = None
         if len(self._paged) > PAGED_BOUND:
             self._paged.popitem(last=False)
-        _log().critical("reconcile_paged", reason=reason, account_id=str(account_id), cv_page=True)
-        self._p.pager.raise_alert("page", _PAGES[reason], machine_kind=_KIND)
+        return True
 
 
 class _Unread(Exception):  # an exchange read this pass did not make or that failed
@@ -1307,9 +1344,12 @@ class _OrderDiff:
         """Open orders no live row takes, and the orders a lookup or a mismatch handed over: a
         recorded stop's TP/SL order is materialised; any other is recorded `untracked` (a foreign
         stop among them) or, where a final or another account's row holds its id, an anomaly.
-        No OMS intent opens the freeze first (SR-E27-19)."""
+        No OMS intent opens the freeze first (SR-E27-19). An anomaly's episode ends once its
+        order is none of these, so it alerts again if it comes back (24 Sec.8.5)."""
         p = self._p
         items = [(r, None) for r in rest] + [(w.order, w.entry_id) for w in self._f.waiting_orders]
+        here = {(r.exchange_order_id,) for r, _ in items}
+        self._r.rearm(_ANOMALY_ALERTS, self._account, lambda key: key not in here)
         for r, entry_id in items:
             try:
                 xid = r.exchange_order_id
@@ -1472,6 +1512,12 @@ _PAGES: Final[Mapping[str, str]] = {
     "oms_position_drift": "Reconciliation corrected a position the OMS held otherwise.",
     "oms_freeze_failed": "Reconciliation could not freeze an account for a finding with no intent.",
 }
+#: Each alert's summary, as fixed as a page's.
+_ALERTS: Final[Mapping[str, str]] = {"oms_reconcile_anomaly": "Reconciliation met an anomaly."}
+#: A naked position's pages: its episode ends when a pass reads the position protected or flat.
+_NAKED_PAGES: Final = frozenset({"oms_naked_no_record_in_force", "oms_naked_attach_failed"})
+#: An anomaly's alert: its episode ends when its order is no longer among 3c's orders.
+_ANOMALY_ALERTS: Final = frozenset({"oms_reconcile_anomaly"})
 
 
 def _step_of(action: Action) -> Step:
@@ -1704,12 +1750,13 @@ class _Remediation:
             self._settled.append(entry_id)
 
     def _anomaly(self, order: Order) -> None:
-        """`ReconcileAnomaly` (S6): logged, alerted and listed; nothing is changed."""
+        """`ReconcileAnomaly` (S6): logged and listed on every pass, alerted once per episode
+        (24 Sec.8.5: repeated, with no second page); nothing is changed."""
         _log().error(
             "reconcile_anomaly", account_id=str(self._account),
             exchange_order_id=order.exchange_order_id, pass_id=self._pid,
         )  # fmt: skip
-        self._p.pager.raise_alert("alert", "Reconciliation met an anomaly.", machine_kind=_KIND)
+        self._r.alert_once("oms_reconcile_anomaly", self._account, order.exchange_order_id)
         self._list("anomalies", order.order_link_id)
 
     async def _materialise(

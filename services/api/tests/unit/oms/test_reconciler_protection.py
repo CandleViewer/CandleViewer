@@ -84,6 +84,36 @@ async def test_step5_naked_position_with_no_record_is_paged_once_listed_and_left
     assert_protected(w, paged=frozenset({"BTCUSDT"}))
 
 
+@pytest.mark.parametrize("between", ["protected", "flat"])
+@pytest.mark.parametrize("record_in_force", [False, True])
+async def test_step5_a_naked_position_pages_once_per_episode(
+    between: str, record_in_force: bool
+) -> None:
+    """24 Sec.8.5: a naked position pages once while it stays naked, with no record in force or
+    with an attach the venue refuses; a pass that reads it protected or flat ends the episode, so
+    the next one pages again."""
+    w = World()
+    if record_in_force:
+        w.oms.records = [record()]
+        w.oms.stop_writes["attach"] = "refused"
+    w.venue.seed_position(position(stop_loss=None))
+    await w.run()
+    await w.run()  # the same episode: no second page
+    flat = position(qty=Decimal(0), side=None, stop_loss=None)
+    w.venue.seed_position(position() if between == "protected" else flat)
+    await w.run()
+    w.venue.seed_position(position(stop_loss=None))
+    await w.run()
+    assert [s for s, text in w.oms.pages if text in _NAKED] == ["page", "page"]
+
+
+#: The naked position's two pages (a flat read also pages step 4's drift, which is not one).
+_NAKED = {
+    "An open position has no stop and no recorded stop in force.",
+    "Reconciliation could not attach a naked position's recorded stop.",
+}
+
+
 async def test_step5_an_attach_the_venue_refuses_is_listed_and_paged() -> None:
     w = World()
     w.oms.records = [record()]
