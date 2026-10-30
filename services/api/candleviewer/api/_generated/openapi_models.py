@@ -3271,6 +3271,17 @@ class Totals(BaseModel):
     realised_pnl: Decimal | None = None
 
 
+class Reason(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            description="For `entry_refused` only: the refusing check's code, or the exchange rejection's mapped code, from the `x-error-codes` catalogue (for example `risk_limit_breached`, `trading_disabled`, `rate_limited`, `timeout`). A code, never free text. Null for every other `outcome`, which already says what happened.\n",
+            max_length=64,
+            pattern="^[a-z][a-z0-9_]*$",
+        ),
+    ]
+
+
 class Leg(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -3650,25 +3661,22 @@ class ReversePositionRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    size_mode: Literal["same", "profile", "custom"] = "same"
-    qty: Annotated[
-        str | None,
+    size_mode: Annotated[
+        Literal["profile"],
         Field(
-            description="Required when `size_mode=custom`.",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+            description="The entry is always sized by the account profile (C-12.5); `same` and `custom` were removed before the route was implemented (#915).\n"
         ),
-    ] = None
-    order_type: Literal["market", "limit"] = "market"
+    ] = "profile"
+    order_type: Annotated[Literal["market", "limit"], Field(description="The entry's.")] = "market"
     price: Annotated[
         str | None,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="The entry's limit price.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    __null_refused = field_validator("qty", "price", mode="before")(_refuse_null)
+    __null_refused = field_validator("price", mode="before")(_refuse_null)
 
 
 class Execution(BaseModel):
@@ -3785,7 +3793,7 @@ class ClosedPnl(BaseModel):
     closed_pnl: Annotated[
         str | None,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="Net of fees, as the venue's closed-PnL endpoint reports it (#915).",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
@@ -5167,7 +5175,10 @@ class HotkeyBinding(BaseModel):
     ]
     scope: Literal["global", "chart", "dom", "tape", "orders", "positions"]
     requires_arm: Annotated[
-        StrictBool, Field(description="Forced true for order-sending actions.")
+        StrictBool,
+        Field(
+            description="Forced true for exactly the mutations `ArmToken` requires the token for; never forced for the C-2.6 carve-out `ArmToken` lists, nor for engaging the kill switch (no order mutation)."
+        ),
     ] = True
     confirm: StrictBool = False
     params: dict[str, Any] | None = None
@@ -7345,6 +7356,31 @@ class OrderAcceptance(BaseModel):
             description="True when, as of the answer, the answered order is unresolved, its `lifecycle_state` `validated`, `submitting`, `unknown` or `quarantined`, or its state could not be read; a first answer included, and a repeat's too. A replay of a stored answer (`Idempotency-Replayed: true`) is that answer, so its value is as of the first one. False for every other state, `held` included. A separate member, because `OrderLifecycleState` mirrors the database enum and has no such value.\n"
         ),
     ]
+
+
+class ReverseAcceptance(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    close: OrderAcceptance
+    open: Annotated[
+        OrderAcceptance | None,
+        Field(
+            description="The entry, or null when none was sent (`outcome` other than `reversed`)."
+        ),
+    ]
+    outcome: Annotated[
+        Literal["reversed", "close_unfilled", "close_partially_filled", "entry_refused"],
+        Field(
+            description="`reversed`: the close filled and the entry was accepted or, for a reversal decided from its anchors after a crash, the entry as it ended (`open` names it, `rejected` or `cancelled` included), never an assumed success; while `open.reconciling` is true the entry is not yet known to rest or fill, and reconciliation settles the symbol's exposure. `close_unfilled`: the close had not filled at the deadline, so no entry was sent and the position is as it was. `close_partially_filled`: the close had partly filled at the deadline, so no entry was sent and the position is smaller. `entry_refused`: the close filled but no entry rests: a check refused it (risk cap, rate reserve, kill switch, the deadline) or the exchange rejected it, so the account is flat on this symbol. The last three are outcomes, not failures to hide: a client shows them as they are. A reversal decided from its anchors after a crash never answers `entry_refused`: when its entry's anchor exists, the entry's end is in `open`, so a client reads `open.state` as well as `outcome`.\n"
+        ),
+    ]
+    reason: Annotated[
+        Reason | None,
+        Field(
+            description="For `entry_refused` only: the refusing check's code, or the exchange rejection's mapped code, from the `x-error-codes` catalogue (for example `risk_limit_breached`, `trading_disabled`, `rate_limited`, `timeout`). A code, never free text. Null for every other `outcome`, which already says what happened.\n"
+        ),
+    ] = None
 
 
 class JournalTradeDetail(JournalTrade):
