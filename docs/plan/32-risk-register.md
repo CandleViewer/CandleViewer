@@ -670,7 +670,7 @@ the 30-minute canary meanwhile.
 - **Description** — Introduced by E35-X01 (`docs/security/threat-models/e35-rule-engine.md`). A rule acts with no human present: a grant revoked after authoring (RE-E1), a slow `pre_trade_check` rule (RE-D5) and pathological IR (RE-D1) can respectively act without authority, degrade all order submission, or exhaust the evaluator.
 - **Mitigation** — Runtime scope enforcement on every action (E35-S04), ejection of slow rules from the pre-trade path (E35-FR-13), IR bounds and window-memory budget (E35-FR-10); abuse cases AC-01..AC-16 executed by E35-X02/Q05/Q07.
 - **Trigger** — Any rule action executed after grant revocation; submit p99 above budget with rules armed; evaluator CPU above cap.
-- **Contingency** — Global Panic / `rules_global_enabled=false`; disarm affected rules; Owner review of the audit trail.
+- **Contingency** — Global Panic / `rules.enabled=false`; disarm affected rules; Owner review of the audit trail.
 
 ### RSK-057 · Authenticated client exhausts big-trade market-data capacity (availability)
 

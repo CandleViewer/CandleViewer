@@ -72,6 +72,9 @@ scripts/tests/fixtures/dependabot-alerts/*.json
 # #913 (G-6 #3972, 24 section 19.19): tools/statechart/render_catalogue.py writes the machine index
 # of 28, which is not prettier-formatted on main; edits stay minimal and are never reflowed.
 docs/plan/28-statechart-catalogue.md
+# #863 (E35-S03): the E35 threat model is not prettier-formatted on main (its tables are compact),
+# so a commit's lint-staged run would re-pad every table; edits stay minimal, as for 28 above.
+docs/security/threat-models/e35-rule-engine.md
 # #913 (CR-G6-R3-01 on #3972): the statechart contracts are json.dumps(indent=2) + LF, as every chart on
 # main is and as 28's B<n>.1 blocks hold them; prettier would fold their one-item arrays on a commit.
 services/api/candleviewer/statechart/machines/*.machine.json
