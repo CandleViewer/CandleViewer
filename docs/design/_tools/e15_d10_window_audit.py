@@ -25,7 +25,8 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
                   (`{Kind} · {symbol} · {ENV}`; the environment word for every kind — the BQ-05
                   addendum, 6529482068); S-1 is the rule's output for the merged fixture and TS-3's
                   example the output for the non-order fixture.
-  (d) G-BOUND     the title's longest form is computed from D-5's kind words, the contract's
+  (d) G-BOUND     the title's longest form is computed from every kind's D-5 word (E15-D03
+                  §4.2.4's one row per kind — every kind can pop out, D-20), the contract's
                   `Symbol` pattern and the badge's words — never typed.
   (e) G-SWEEP     the slot widths, the step thresholds, the minimum widths and the comfortable bar
                   are the tool's sums of token values and glyph advances (the house table read from
@@ -135,6 +136,7 @@ PATHS: dict[str, str] = {
     "D04": "docs/design/E15/E15-D04.md",
     "D04H": "docs/design/E15/E15-D04-handoff.md",
     "D05": "docs/design/E15/E15-D05.md",
+    "D06": "docs/design/E15/E15-D06.md",
     "D07": "docs/design/E15/E15-D07.md",
     "D07H": "docs/design/E15/E15-D07-handoff.md",
     "D08": "docs/design/E15/E15-D08.md",
@@ -174,7 +176,13 @@ SPRINT_KEYS = {
 }  # fmt: skip
 BUILDERS = ("s02", "t02", "s08")  # the building consumers the design-ahead distance is read against
 ORDER_KINDS = ("chart", "dom", "positions")  # D-4 (`D03`:169), read as the fixture's Kind word
-NEVER_LEAVE = ("SL-1", "SL-2", "SL-3", "SL-4", "SL-8", "SL-9")  # + SL-5 on an order-capable kind
+NEVER_LEAVE = (
+    "SL-1",
+    "SL-2",
+    "SL-3",
+    "SL-8",
+    "SL-9",
+)  # + SL-5 on an order-capable kind (D-31's six)
 NEVER_LEAVE_PHRASE = "the kind, symbol, badge, feed chip, arm state, ⋮ and × never leave"
 SAFETY_RULE = "never under a scrim, never in a fading layer, never dimmed"
 T2_RULE = "No T2 control exists on SCR-027's chrome"
@@ -588,8 +596,6 @@ def sweep_values(env: Env) -> dict[str, str]:
     for density in ("compact", "comfortable"):
         for kind, last in (("order", 4), ("market", 3)):
             for k in range(last + 1):
-                if kind == "market" and k in (1, 2):
-                    continue
                 vals[f"SWEEP:{kind}.{density}.w{k}"] = str(bar_width(env, kind, density, k))
             vals[f"SWEEP:{kind}.{density}.min"] = vals[f"SWEEP:{kind}.{density}.w{last}"]
     pill = 2 * px("space.2") + advance(env, FIXTURE["arm"], px("font.size.sm"), 600)
@@ -599,13 +605,32 @@ def sweep_values(env: Env) -> dict[str, str]:
     return vals
 
 
-def bound_values(env: Env) -> dict[str, str]:
-    """The OS title's longest form: D-5's kind words (`D03`:170), the contract's `Symbol` pattern
-    (`22`) and the badge's words (`E10D03`:97)."""
-    vals: dict[str, str] = {}
+def kind_words(env: Env) -> list[str]:
+    """Every kind's region-name word in D-5's form (`D03`:170), read from E15-D03 §4.2.4's one
+    row per kind (`D03`:354–365) — the word before the first comma of the Region name cell; every
+    kind can pop out (D-20, `D07`:119), so the bound reads them all, never D-5's four examples."""
     d03 = env.at_base(PATHS["D03"])
-    m = re.search(r"\| D-5 .*", d03)
-    kinds = re.findall(r'"([A-Z][A-Za-z]+), [A-Za-z ]+', m[0]) if m else []
+    if "#### 4.2.4" not in d03:
+        return []
+    words: list[str] = []
+    for ln in d03.split("#### 4.2.4", 1)[1].split("\n")[1:]:
+        if HEADING.match(ln):
+            break
+        cells = split_row(ln)
+        if len(cells) < 5 or not re.fullmatch(r"`[a-z_]+`", cells[0].strip()):
+            continue
+        name = cells[3].strip().strip('"')
+        if name:
+            words.append(name.split(",")[0].strip())
+    return words
+
+
+def bound_values(env: Env) -> dict[str, str]:
+    """The OS title's longest form: every kind's D-5 word (`D03`:170, :354–365), the contract's
+    `Symbol` pattern (`22`) and the badge's words (`E10D03`:97); the kind word is written
+    back-ticked, since a D-5 word may carry a space."""
+    vals: dict[str, str] = {}
+    kinds = kind_words(env)
     longest = max(kinds, key=len) if kinds else ""
     api = env.at_base(PATHS["22"])
     mm = re.search(
@@ -615,8 +640,9 @@ def bound_values(env: Env) -> dict[str, str]:
     e10 = env.at_base(PATHS["E10D03"])
     me = re.search(r"\*\*word\*\* (DEMO) / (LIVE)", e10)
     env_len = max(len(me[1]), len(me[2])) if me else 0
-    vals["BOUND:kind"] = longest
+    vals["BOUND:kind"] = f"`{longest}`" if longest else ""
     vals["BOUND:kind.len"] = str(len(longest))
+    vals["BOUND:kinds"] = str(len(kinds))
     vals["BOUND:symbol.max"] = str(sym)
     vals["BOUND:chars"] = str(len(longest) + 2 * len(SEP) + sym + env_len)
     return vals
@@ -1371,6 +1397,8 @@ def g_bound(t: Texts) -> list[Finding]:
     v = t.values
     if not v.get("BOUND:kind") or v.get("BOUND:symbol.max", "0") == "0":
         bad.append("the bound's inputs could not be read (D-5's kinds or `22`'s Symbol pattern)")
+    if int(v.get("BOUND:kinds", "0")) < 12:
+        bad.append("the bound reads fewer than the twelve kinds of E15-D03 §4.2.4")
     return one("G-BOUND", bad)
 
 
@@ -1381,17 +1409,12 @@ def g_sweep(t: Texts) -> list[Finding]:
         seq = [int(v.get(f"SWEEP:order.{density}.w{k}", "0")) for k in range(5)]
         if any(seq[i] <= seq[i + 1] for i in range(len(seq) - 1)):
             bad.append(f"the order panel's thresholds do not fall step by step ({density})")
-        mk = [
-            int(v.get(f"SWEEP:market.{density}.w0", "0")),
-            int(v.get(f"SWEEP:market.{density}.w3", "0")),
-        ]
-        if mk[0] <= mk[1]:
-            bad.append(
-                f"the market panel's step-3 bar is not narrower than its full bar ({density})"
-            )
+        mk = [int(v.get(f"SWEEP:market.{density}.w{k}", "0")) for k in range(4)]
+        if any(mk[i] <= mk[i + 1] for i in range(len(mk) - 1)):
+            bad.append(f"the market panel's thresholds do not fall step by step ({density})")
     rows = w_rows(t.spec)
-    if [r[0] for r in rows] != [f"W-{n}" for n in range(7)]:
-        bad.append("§2.3 does not list W-0 … W-6 once each, in order")
+    if [r[0] for r in rows] != [f"W-{n}" for n in range(9)]:
+        bad.append("§2.3 does not list W-0 … W-8 once each, in order")
     ids = {int(n) for r in f_rows(t.spec) for n in [r[0][2:]]}
     for r in rows:
         if len(r) != 7 or not any(n in ids for n in frame_ids(r[5])):
@@ -1981,7 +2004,9 @@ MUTATIONS: tuple[Mutation, ...] = (
       subst("| DEMO | Tape · BTCUSDT · DEMO | SL-1 SL-2 SL-3 SL-4 SL-6 SL-7 SL-8 SL-9 at W-5",
             "| DEMO | Tape · BTCUSDT | SL-1 SL-2 SL-3 SL-4 SL-6 SL-7 SL-8 SL-9 at W-5")),
     M("G-BOUND", "type the title's bound by hand", anchor_edit("BOUND:chars", "99")),
+    M("G-BOUND", "name D-5's example word as the longest kind word by hand", anchor_edit("BOUND:kind", "`Positions`")),
     M("G-SWEEP", "type the full bar's width by hand", anchor_edit("SWEEP:order.compact.w0", "900")),
+    M("G-SWEEP", "type the market panel's step-1 width by hand", anchor_edit("SWEEP:market.compact.w1", "700")),
     M("G-CONTRAST", "alter a reproduced ratio by a hundredth", anchor_edit("CR:env.live.focused.dark", "4.41")),
     M("G-CHROME", "draw a lock on the pinned window's bar",
       subst("| SL-1 SL-2 SL-3 SL-4 SL-5 SL-6 SL-7 (pressed) SL-8 SL-9", "| SL-1 SL-2 SL-3 SL-4 SL-5 SL-6 SL-7 (pressed, with a lock) SL-8 SL-9")),
@@ -2195,4 +2220,6 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     sys.exit(main(sys.argv[1:]))
