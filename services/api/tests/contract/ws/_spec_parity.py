@@ -221,6 +221,10 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
     "Upgrade complete within": "limits.SERVER_READ_HEADER_TIMEOUT_S",
     "Sockets awaiting `auth_ok`": "limits.MAX_UNAUTHENTICATED_SOCKETS",
     "Max inbound frame": "limits.MAX_INBOUND_FRAME_BYTES limits.MAX_PREAUTH_FRAME_BYTES",
+    "Max values / inbound frame": "codec.MAX_MSGPACK_VALUES",  # both encodings (#4924)
+    "Inbound frame weight": "limits.INBOUND_WEIGHT_BYTES limits.INBOUND_WEIGHT_VALUES "
+    "limits.INBOUND_WEIGHT_CONTAINERS",  # #4924
+    "Per-user decode budget": "lifecycle.DECODE_BUDGET_BURST lifecycle.DECODE_BUDGET_PER_S",
     "Fragments per inbound message": "limits.WS_MAX_FRAGMENTS_PER_MESSAGE",
     "Charge per inbound fragment": "limits.WS_FRAGMENT_OVERHEAD_BYTES limits.SERVER_WS_MAX_SIZE",
     "Inbound frames / connection": "limits.WS_INBOUND_FRAME_BURST limits.WS_INBOUND_FRAMES_PER_S",
@@ -261,10 +265,15 @@ def _probe(module: str, word: str) -> Callable[[], bool]:
 #: None is left: the deep-book cap (#604, E21-T01) and the heatmap spec caps and snapshot bound
 #: (#605, E21-T02) are built and mapped.
 CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {}
-#: 3.6 table rows that 16.2 does not repeat: the JSON bounds of SR-184.
+#: 3.6 table rows: the JSON bounds of SR-184, which 16.2 does not repeat, and the JSON value bound,
+#: SR-185's number, which 16.2 states for both encodings (#4924).
 SECTION_3_6_ROWS: Final = {
     "Max inbound JSON nesting depth": "limits.MAX_JSON_DEPTH",
     "Max inbound JSON containers": "limits.MAX_JSON_CONTAINERS",
+    "Max inbound MessagePack containers": "limits.MAX_JSON_CONTAINERS",  # either encoding
+    "Max inbound JSON values": "codec.MAX_MSGPACK_VALUES",
+    "Inbound frame weight": "limits.INBOUND_WEIGHT_BYTES limits.INBOUND_WEIGHT_VALUES "
+    "limits.INBOUND_WEIGHT_CONTAINERS",
 }
 #: The MessagePack bounds of SR-185, in a paragraph of 3.6: the phrase that states each (its
 #: number is group 1) and the constant of `ws/codec.py`.

@@ -1060,7 +1060,7 @@ async def test_a_fault_after_the_writers_expiry_counts_the_expiry_once(
                 raise RuntimeError("reader fault")
 
             monkeypatch.setattr(pipe, "abandon", abandon_then_fault)
-            monkeypatch.setattr(conn, "decode", reader_fault)
+            monkeypatch.setattr(conn, "weigh", reader_fault)  # the reader's first step (#4924)
             sock.hold()
             rig.hub.broadcast_system({"kind": "tick"})
             await sock.parked.wait()

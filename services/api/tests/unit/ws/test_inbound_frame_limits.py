@@ -4,8 +4,8 @@ Until the first `auth_ok`, the `hello` included, a frame may be at most `MAX_PRE
 a larger one gets `bye frame_too_big` and 1009 and is never scanned or decoded (SR-040). There, a
 MessagePack frame is decoded under `MAX_PREAUTH_MSGPACK_VALUES` (SR-185), and a `pong` counts
 toward the inbound rate like any other frame. A JSON text frame holds at most `MAX_JSON_CONTAINERS`
-`[` and `{` characters: more is a `frame_malformed` strike, and the depth scan never walks it
-(SR-184). The tests count sizes, what the depth scan and each decoder were handed, the values the
+`[` and `{` characters: more is a `frame_malformed` strike, never decoded or depth-checked
+(SR-184). The tests count sizes, what the depth check and each decoder were handed, the values the
 MessagePack decoder charged and the limiter's answers (spies on the modules' own references).
 After `auth_ok`, a `pong` past 256 bytes gets `bye protocol_violation` and 1002 (§8.5), and no
 parser is handed one that opens with its `t`."""
@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Final
@@ -41,7 +41,7 @@ from candleviewer.ws.limits import (
     MAX_JSON_CONTAINERS,
     MAX_JSON_DEPTH,
     MAX_PREAUTH_FRAME_BYTES,
-    json_depth_exceeds,
+    json_nests_deeper,
 )
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
 from tests.unit.ws.test_gateway_decode import _conn
@@ -136,36 +136,37 @@ def _containers(n: int) -> str:
 
 
 class _Handed:
-    """What `decode` handed the depth scan (`scanned`) and the JSON and MessagePack decoders
-    (`decoded`, each with the decoder's name): the `len()` of every argument."""
+    """What `decode` handed the depth check (`walked`: the decoded values) and the JSON and
+    MessagePack decoders (`decoded`, each with the decoder's name and its argument's `len()`)."""
 
     def __init__(self) -> None:
-        self.scanned: list[int] = []
+        self.walked: list[object] = []
         self.decoded: list[tuple[str, int]] = []
 
     def clear(self) -> None:
-        self.scanned.clear()
+        self.walked.clear()
         self.decoded.clear()
 
     @property
     def nothing(self) -> bool:
-        return not self.scanned and not self.decoded
+        return not self.walked and not self.decoded
 
     @property
     def longest(self) -> int:
-        return max([*self.scanned, *(n for _, n in self.decoded)], default=0)
+        """The longest frame a decoder was handed; the depth check sees only what they decoded."""
+        return max((n for _, n in self.decoded), default=0)
 
 
 @pytest.fixture
 def handed(monkeypatch: pytest.MonkeyPatch) -> _Handed:
-    """Spies on the gateway module's own references to the depth scan, the JSON parser and the
+    """Spies on the gateway module's own references to the depth check, the JSON parser and the
     MessagePack decoder."""
     seen = _Handed()
     loads = json.loads
 
-    def spy_scan(text: str, limit: int) -> bool:
-        seen.scanned.append(len(text))
-        return json_depth_exceeds(text, limit)
+    def spy_walk(value: object, limit: int) -> bool:
+        seen.walked.append(value)
+        return json_nests_deeper(value, limit)
 
     def spy_loads(raw: str) -> Any:
         seen.decoded.append(("json", len(raw)))
@@ -176,7 +177,7 @@ def handed(monkeypatch: pytest.MonkeyPatch) -> _Handed:
         return decode_client_frame(raw, **budget)
 
     monkeypatch.setattr(gateway, "json", SimpleNamespace(loads=spy_loads, dumps=json.dumps))
-    monkeypatch.setattr(gateway, "json_depth_exceeds", spy_scan)
+    monkeypatch.setattr(gateway, "json_nests_deeper", spy_walk)
     monkeypatch.setattr(gateway, "decode_client_frame", spy_unpack)
     return seen
 
@@ -203,8 +204,8 @@ def allowed(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     answers: list[bool] = []
 
     class _Recording(InboundRateLimiter):
-        def allow(self, now: float) -> bool:
-            answers.append(ok := super().allow(now))
+        def allow(self, now: float, weight: int = 1) -> bool:
+            answers.append(ok := super().allow(now, weight))
             return ok
 
     monkeypatch.setattr(gateway, "InboundRateLimiter", _Recording)
@@ -334,36 +335,26 @@ def test_decode_before_auth_ok_hands_the_scan_and_decoders_nothing_over_the_cap(
 # -- `_Connection.decode`: the container cap and the depth scan -----------------------------------
 
 
-class _Walked(Exception):
-    """Raised when something iterates an `_Unwalkable`: the depth scan walked the frame."""
-
-
-class _Unwalkable(str):
-    """JSON text that the depth scan cannot walk: `for ch in text` raises. Sizing it, counting its
-    `[` and `{` and parsing it do not iterate it."""
-
-    def __iter__(self) -> Iterator[str]:
-        raise _Walked
-
-
 @_AUTHED
 @pytest.mark.parametrize("openers", [3, MAX_JSON_DEPTH])
 def test_decode_of_a_frame_with_no_more_openers_than_the_depth_limit_is_never_walked(
     handed: _Handed, openers: int, authed: bool
 ) -> None:
-    frame = _Unwalkable(_containers(openers))
+    frame = _containers(openers)
     assert _decode(_connection(JSON[0], authed=authed), frame)["t"] == "ping"
     assert handed.decoded == [("json", len(frame))]
+    assert handed.walked == []
 
 
 @_AUTHED
 @pytest.mark.parametrize("openers", [MAX_JSON_DEPTH + 1, _STATED_CONTAINERS])
 def test_decode_of_a_frame_between_the_depth_limit_and_the_container_cap_is_walked(
-    openers: int, authed: bool
+    handed: _Handed, openers: int, authed: bool
 ) -> None:
-    frame = _Unwalkable(_containers(openers))
-    with pytest.raises(_Walked):
-        _decode(_connection(JSON[0], authed=authed), frame)
+    frame = _containers(openers)
+    assert _decode(_connection(JSON[0], authed=authed), frame)["t"] == "ping"
+    assert handed.decoded == [("json", len(frame))]
+    assert handed.walked == [json.loads(frame)]
 
 
 @_AUTHED
@@ -372,7 +363,7 @@ def test_decode_of_a_frame_one_over_the_container_cap_is_malformed_and_never_wal
     handed: _Handed, opener: str, authed: bool
 ) -> None:
     conn = _connection(JSON[0], authed=authed)
-    assert _decode(conn, _Unwalkable(opener * (_STATED_CONTAINERS + 1))) == []
+    assert _decode(conn, opener * (_STATED_CONTAINERS + 1)) == []
     assert not conn.closing
     assert handed.nothing
 
@@ -418,8 +409,9 @@ def test_decode_msgpack_before_auth_ok_charges_no_more_values_than_the_budget(
 def test_decode_msgpack_after_auth_ok_value_budget_is_the_sr_185_budget() -> None:
     conn = _connection(MSGPACK[0], authed=True)
     assert _decode(conn, _ping_of(MAX_PREAUTH_MSGPACK_VALUES + 1))["t"] == "ping"
-    for frame in _VALUE_SHAPES.values():
-        assert _decode(conn, frame) == msgpack.unpackb(frame)
+    for name, frame in _VALUE_SHAPES.items():  # past the container cap (#4924) but for the nils
+        expected = msgpack.unpackb(frame) if name == "nils" else []
+        assert _decode(conn, frame) == expected
     assert _decode(conn, _budget_frame(0)) != []  # exactly MAX_MSGPACK_VALUES
     assert _decode(conn, _budget_frame(1)) == []
 

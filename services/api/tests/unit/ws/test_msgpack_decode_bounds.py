@@ -31,7 +31,7 @@ from candleviewer.ws.codec import (
     _require_c_unpacker,
     decode_client_frame,
 )
-from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_TOPICS_PER_SUB
+from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_JSON_CONTAINERS, MAX_TOPICS_PER_SUB
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
 from tests.unit.ws._msgpack_bounds import MAX_PEAK_BYTES, peak_bound, smallest_resize_bytes
 
@@ -327,8 +327,24 @@ def test_msgpack_duplicate_map_keys_are_charged_as_read() -> None:
 
 
 def test_msgpack_every_container_costs_one_even_when_empty() -> None:
-    with pytest.raises(MsgpackFrameError, match="values"):  # 65 + 64 x 129 + 8 192 = 16 513
-        decode_client_frame(_pack([[[]] * 128] * 64))  # (8 256 with empty containers free)
+    """126 lists of 120 nils and 7 empty lists, 1 009 containers (within the cap): 1 + 126 +
+    126 x 128 + 882 = 17 137 values, or 16 255, within the budget, if an empty one were free."""
+    with pytest.raises(MsgpackFrameError, match="values"):
+        decode_client_frame(_pack([[None] * 120 + [[]] * 7] * 126))
+
+
+def test_msgpack_container_cap_exact_accepted_and_plus_one_rejected() -> None:
+    """#4924: at most `MAX_JSON_CONTAINERS` (1 024) containers, JSON's cap, in either encoding:
+    a list of 8 lists holding 1 013 empty lists in all is 1 + 8 + 1 013 = 1 022, plus one each
+    side of it."""
+    assert MAX_JSON_CONTAINERS == 1_024
+    for extra, ok in ((2, True), (3, False)):
+        frame = _pack([[[]] * 127] * 7 + [[[]] * (124 + extra)])
+        if ok:
+            decode_client_frame(frame)
+        else:
+            with pytest.raises(MsgpackFrameError, match="containers"):
+                decode_client_frame(frame)
 
 
 def test_msgpack_sub_with_every_option_list_full_fits_the_budget() -> None:

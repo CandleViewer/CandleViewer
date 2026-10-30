@@ -101,6 +101,13 @@ cv_ws_connect_rate_limited_total = Counter(
     "cv_ws_connect_rate_limited_total",
     "WS sockets refused by the per-user connect rate (bye client_rate_limited after a valid auth).",
 )
+#: #4924 (23 section 8.5): inbound frames refused because their user's decode budget, which every
+#: socket of the user shares, could not cover their tokens past the first. Each is also the
+#: frame's `client_rate_limited` strike on its own socket. Unlabelled: never a user id.
+cv_ws_decode_budget_refused_total = Counter(
+    "cv_ws_decode_budget_refused_total",
+    "WS inbound frames refused by their user's shared decode budget (client_rate_limited).",
+)
 cv_ws_clock_skew_ms = Histogram(
     "cv_ws_clock_skew_ms",
     "Absolute client clock skew reported in welcome (milliseconds).",
@@ -321,6 +328,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_principal_load_failures_total",
         "cv_ws_closes_total",
         "cv_ws_connect_rate_limited_total",
+        "cv_ws_decode_budget_refused_total",
         "cv_ws_audit_failures_total",
         "cv_ws_subscribe_denied_unaudited_total",
         "cv_ws_subscribe_granted_unaudited_total",

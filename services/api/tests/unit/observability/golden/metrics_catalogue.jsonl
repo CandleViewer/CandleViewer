@@ -232,6 +232,7 @@
 ["cv_ws_connect_rate_limited_total", "counter", [], "live", "E17"]
 ["cv_ws_connection_class", "gauge", ["state"], "live", "E17"]
 ["cv_ws_connections_in_use", "gauge", [], "live", "E17"]
+["cv_ws_decode_budget_refused_total", "counter", [], "live", "E17"]
 ["cv_ws_fanout_seconds", "histogram", [], "live", "E17"]
 ["cv_ws_frame_bytes", "histogram", ["kind"], "live", "E17"]
 ["cv_ws_frame_encode_seconds", "histogram", ["kind"], "live", "E17"]

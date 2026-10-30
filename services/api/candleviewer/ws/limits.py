@@ -7,8 +7,14 @@ Single home for every bound the gateway enforces. Overflow policy:
 - Until the first `auth_ok`, a frame > `MAX_PREAUTH_FRAME_BYTES` -> close `1009` (checked the
   same way, so it is never scanned or decoded), and a MessagePack frame past the smaller value
   budget `ws/codec.py` sets for that window -> `frame_malformed`.
-- JSON text frame with > `MAX_JSON_CONTAINERS` `[` and `{` characters -> `frame_malformed` (a
-  protocol violation); it is never depth-scanned or decoded.
+- Every inbound frame is charged against the connection's inbound rate (§8.5) before it is
+  decoded, `inbound_frame_weight` tokens by its size, so a refused frame is never decoded; from
+  the first `auth_ok` a frame that opens with `t: "pong"` takes from its own `pong` budget first.
+- JSON text frame with > `MAX_JSON_CONTAINERS` `[` and `{` characters, or whose value count
+  (`json_values_over_count`) is past the SR-185 value bound the gateway applies to both
+  encodings (`codec.MAX_MSGPACK_VALUES`) -> `frame_malformed` (a protocol violation); it is never
+  decoded. One within it is decoded (the cap bounds the C
+  decoder's nesting), and a value nested deeper than `MAX_JSON_DEPTH` -> `frame_malformed` too.
 - From the first `auth_ok`, a `pong` > `MAX_PONG_BYTES` -> `bye protocol_violation` + close `1002`
   (§8.5); one whose first member is `t: "pong"` is never decoded.
 - `sub` with > `MAX_TOPICS_PER_SUB` topics -> the whole frame is refused with
@@ -43,6 +49,8 @@ Single home for every bound the gateway enforces. Overflow policy:
 
 from __future__ import annotations
 
+from typing import Any
+
 MAX_INBOUND_FRAME_BYTES = 256 * 1024
 #: §13.1 `envelope.id` `maxLength`, in characters. A request `id` that is not a string within it
 #: is dropped before the frame is handled, so no reply echoes it (#2572).
@@ -52,7 +60,8 @@ ENVELOPE_ID_MAX_LEN = 64
 SUB_ID_MAX_LEN = 64
 #: SR-184: max container nesting of an inbound frame. The deepest legitimate
 #: client frame (`sub`/`ctl` envelope -> p -> options -> list -> object) is ~6
-#: levels in ws-schema.json; 32 leaves headroom. Checked BEFORE `json.loads`.
+#: levels in ws-schema.json; 32 leaves headroom. A JSON frame is checked on its decoded value
+#: (`json_nests_deeper`); the container cap below bounds the depth the decoder can reach.
 MAX_JSON_DEPTH = 32
 #: SR-040: max size, in encoded bytes, of an inbound frame until the first `auth_ok`, the `hello`
 #: included. The largest conforming frame there, with each enum list naming every member once,
@@ -68,7 +77,7 @@ MAX_PONG_BYTES = 256
 #: SR-184: max `[` plus `{` characters in an inbound JSON text frame. The count ignores strings,
 #: so it can only over-count. The widest conforming frame, a `sub` of 50 topics with every option
 #: the schema defines and every list full, has about 400: this is about 2.5x that. Checked BEFORE
-#: the depth scan and `json.loads`.
+#: the decode and the depth check.
 MAX_JSON_CONTAINERS = 1024
 #: §13.5 `maxItems` of `sub.topics` and `unsub.topics`, and `welcome.limits.max_topics_per_request`.
 MAX_TOPICS_PER_SUB = 50
@@ -228,7 +237,9 @@ SERVER_CLOSE_DRAIN_TIMEOUT_S = 5.0
 def json_depth_exceeds(text: str, limit: int) -> bool:
     """True if `text` nests `[`/`{` deeper than `limit` (string-aware, O(n)).
 
-    A cheap pre-scan so a hostile frame never reaches the recursive decoder."""
+    A cheap pre-scan so a hostile frame never reaches the recursive decoder. The REST bodies that
+    take JSON still call it before they parse; the WS gateway checks the decoded value instead
+    (`json_nests_deeper`, #4924), and its tests check that one against this."""
     if text.count("[") + text.count("{") <= limit:
         return False  # cannot nest deeper than the number of openers
     depth = 0
@@ -250,4 +261,75 @@ def json_depth_exceeds(text: str, limit: int) -> bool:
                 return True
         elif ch in "]}":
             depth -= 1
+    return False
+
+
+#: §8.5 (#4924, an orchestrator contract decision of 2026-10-29): an inbound frame takes one token
+#: of the inbound rate, plus one per full 32 KiB of its encoded bytes, plus one per full 4 096
+#: values (`INBOUND_WEIGHT_VALUES`). A JSON frame's values are its pre-decode over-count
+#: (`json_values_over_count`); a MessagePack frame's are bounded by twice its size, as its decoder
+#: charges a container twice (itself, and as an element) and every value takes at least one byte.
+#: Either is charged with the rest before the frame is decoded, counted up to one past the value
+#: bound; a MessagePack frame gets back, after its decode, what that bound took past the values its
+#: decoder charged. A frame at `MAX_INBOUND_FRAME_BYTES` takes 9 for its
+#: bytes; one at the value bound 4 more; a `pong` takes 1.
+INBOUND_WEIGHT_BYTES = 32 * 1024
+INBOUND_WEIGHT_VALUES = 4096
+#: §8.5 (#4924): a MessagePack frame also takes one token per full 512 containers. Its decoder
+#: calls a hook per container, so a frame of many small containers costs more than its bytes and
+#: values show; JSON's decoder builds them in C. Bounded before decode by its size (a container
+#: takes a byte), up to one past `MAX_JSON_CONTAINERS`; what that took past the containers its
+#: decoder counted is given back after it.
+INBOUND_WEIGHT_CONTAINERS = 512
+
+
+def inbound_frame_weight(size: int, values: int = 0, containers: int = 0) -> int:
+    """The inbound-rate tokens of a frame of `size` encoded bytes holding `values` values and,
+    for MessagePack, `containers` containers (§8.5). The caller counts each only up to one past
+    its bound (`codec.MAX_MSGPACK_VALUES`, `MAX_JSON_CONTAINERS`), so a frame past one is refused
+    as `frame_malformed`, never priced out of the rate's reach."""
+    return (
+        1
+        + size // INBOUND_WEIGHT_BYTES
+        + values // INBOUND_WEIGHT_VALUES
+        + containers // INBOUND_WEIGHT_CONTAINERS
+    )
+
+
+def json_values_over_count(text: str) -> int:
+    """An upper bound on the values JSON `text` holds, counted as SR-185 charges a MessagePack
+    frame (each container, array element, object key and object value is one), from its characters
+    alone and before any decode.
+
+    In valid JSON every value but the top-level one, and every key, comes right after exactly one
+    structural `[`, `{`, `,` or `:`: an array's first element after its `[`, an object's first key
+    after its `{`, each later element or key after a `,`, each value after its key's `:`. So the
+    count of those four characters, plus one, is at least the frame's values. It can only
+    over-count: an empty container's `[` or `{` precedes nothing, and the characters inside
+    strings are counted too. Each count is one pass in C."""
+    return 1 + text.count("[") + text.count("{") + text.count(",") + text.count(":")
+
+
+#: The containers a decoded JSON value holds (`json_nests_deeper`): `json.loads` builds exact lists
+#: and dicts, so a type lookup finds them (much faster than `isinstance` on every element).
+_JSON_CONTAINERS: frozenset[type] = frozenset({list, dict})
+
+
+def json_nests_deeper(value: object, limit: int) -> bool:
+    """True if a decoded JSON `value` nests lists and objects deeper than `limit`: the depth
+    `json_depth_exceeds` reads from the text, where a top-level container is depth 1.
+
+    Iterative, a level at a time, so no input can exhaust the stack; it reads each element once
+    and stops at the first level past `limit`."""
+    level: list[Any] = [value] if type(value) in _JSON_CONTAINERS else []
+    depth = 0
+    while level:
+        depth += 1
+        if depth > limit:
+            return True
+        below: list[Any] = []
+        for node in level:
+            items = node.values() if type(node) is dict else node
+            below += [item for item in items if type(item) in _JSON_CONTAINERS]
+        level = below
     return False

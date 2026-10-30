@@ -54,6 +54,7 @@ the protocol classes that `uvicorn_kwargs()` passes (`http=CvHttpToolsProtocol`,
   counted in `cv_ws_closes_total{reason="client_rate_limited"}` (no `bye`). While the transport's
   write buffer is over its high-water mark, the client's pings get one pong, for the latest, sent
   once it drains; reading goes on.
+- The gateway also gives each user one decode budget that all of that user's sockets share (23 §8.5): a frame refused by it is the usual `client_rate_limited` strike on its own socket, and is counted in `cv_ws_decode_budget_refused_total`. A sustained rise means one user's sockets are sending frames that are heavy to decode; find the user from the `ws close` log lines with reason `client_rate_limited`.
 - A connection the server has closed, or whose peer has closed its side (FIN), and whose
   transport has not sent what it holds within 5 s is aborted. The bound is on the total drain
   time, not on a stall: it cuts a peer that stopped reading, and also one that reads more slowly

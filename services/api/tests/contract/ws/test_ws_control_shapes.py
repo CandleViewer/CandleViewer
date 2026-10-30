@@ -95,17 +95,21 @@ def test_contract_unsub_of_exactly_the_cap_welcome_advertises_is_answered_entry_
 def test_contract_the_largest_unsub_the_frame_cap_allows_gets_one_small_err() -> None:
     """#2875's repro: 65 526 one-character names fill the 256 KiB inbound cap (262 143 bytes). The
     reply was one `unsub_ok` of about 2.1 MB (65 526 results); it is one `err` of a few hundred
-    bytes, and the socket is still served."""
-    frame = {"t": "unsub", "id": "u", "p": {"topics": ["a"] * 65_526}}
-    text = json.dumps(frame, separators=(",", ":"))  # the very text that is sent below
-    assert len(text.encode()) <= MAX_INBOUND_FRAME_BYTES
+    bytes, and the socket is still served. Past the value bound (§3.6, #4924) that frame is never
+    decoded: `frame_malformed`, no `id`. As large a frame within the bound (10 000 names of 22
+    characters) is read and refused whole, `invalid_options`."""
     with connect(World()) as c:
-        c.send_text(text)
-        f = c.recv()
-        assert (f["t"], f["id"], f["p"]["code"], f["p"]["field"]) == (
-            ("err", "u", "invalid_options", "topics")
-        )
-        assert "ch" not in f and len(json.dumps(f)) < 400
+        for names, reply in (
+            (["a"] * 65_526, ("err", None, "frame_malformed", None)),
+            (["a" * 22] * 10_000, ("err", "u", "invalid_options", "topics")),
+        ):
+            frame = {"t": "unsub", "id": "u", "p": {"topics": names}}
+            text = json.dumps(frame, separators=(",", ":"))  # the very text that is sent below
+            assert MAX_INBOUND_FRAME_BYTES - 16_000 < len(text.encode()) <= MAX_INBOUND_FRAME_BYTES
+            c.send_text(text)
+            f = c.recv()
+            assert (f["t"], f.get("id"), f["p"]["code"], f["p"].get("field")) == reply
+            assert "ch" not in f and len(json.dumps(f)) < 512  # a few hundred bytes
         c.send({"t": "ping", "id": "k"})
         assert c.next_of("pong")["id"] == "k"
 

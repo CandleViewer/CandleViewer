@@ -222,8 +222,11 @@ def _sub_text(topics: list[str]) -> str:
 def test_s1_the_largest_sub_the_frame_cap_allows_gets_one_small_err_and_no_audit_row() -> None:
     """AC-29 at the socket, as a principal with market data only: the issue's frame, 21 842 bare
     `positions` names filling the 256 KiB cap, gets one `err` of a few hundred bytes and writes
-    no audit row, and the socket is still served. A 50-entry frame of private families is then
-    processed, and its 50 refusals are one `ws.subscribe.denied` record that counts them."""
+    no audit row, and the socket is still served. Past the value bound (§3.6, #4924) it is never
+    decoded: `frame_malformed`, with no `id`, one strike of three. A frame as large within the
+    bound (10 000 longer names) is read as a `sub` and refused whole, `too_many_topics`. A 50-entry
+    frame of private families is then processed, and its 50 refusals are one
+    `ws.subscribe.denied` record that counts them."""
     w = World()
     w.perms = frozenset({Permission.MARKETDATA_READ})
     audit = _Audit()
@@ -235,6 +238,12 @@ def test_s1_the_largest_sub_the_frame_cap_allows_gets_one_small_err_and_no_audit
     private = ["orders", "positions", "executions", "wallet"]
     with connect(w) as c:
         c.send_text(text)
+        f = c.recv()
+        assert (f["t"], "id" in f, f["p"]["code"]) == ("err", False, "frame_malformed")
+        assert len(json.dumps(f)) < 512 and audit.records == []  # the catalogue's fixed text
+        within = _sub_text(["positions" + "x" * 13] * 10_000)
+        assert MAX_INBOUND_FRAME_BYTES - 16_000 < len(within) <= MAX_INBOUND_FRAME_BYTES
+        c.send_text(within)
         f = c.recv()
         assert (f["t"], f["id"], f["p"]["code"], f["p"]["field"]) == (
             "err",

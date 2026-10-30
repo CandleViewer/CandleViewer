@@ -26,6 +26,7 @@ from typing import Any, NamedTuple
 import msgpack
 import pytest
 
+import candleviewer.ws.gateway as gateway
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.query import AuditQueryService
 from candleviewer.audit.writer import AuditWriter
@@ -53,6 +54,8 @@ from tests.unit.ws._seq_support import ACC_A
 
 SUBS, SYMBOLS, BARS = 200, 40, 16
 SOCKETS, CONNECTS, FRAMES = 8, 20, 300  # per user; per user a minute; per socket a minute
+RATE = 30  # tokens per socket a second (§8.5)
+WEIGHT_NEAR_CAP = 8  # the tokens of a frame of 224 to 256 KiB: one, plus one per full 32 KiB (§3.6)
 SESSIONS = 3  # of the one user whose sockets and connects AC-15 counts, taking turns
 BUDGET = 20  # `ws.subscribe.denied` records one connection writes in a minute (§4.3)
 MINUTE = 60  # seconds
@@ -343,7 +346,8 @@ def test_x02_ac_11_300_frames_a_minute_end_the_socket_4429_and_the_window_slides
             assert ping(c, (n + 2) / 10, f"p{n}") == pong(f"p{n}")
         title = ERROR_META[ErrorCode.CLIENT_RATE_LIMITED].title
         p = {"code": "client_rate_limited", "message": title, "retryable": True, "close": False}
-        assert ping(c, 59.9, "over") == {"t": "err", "id": "over", "p": p}  # 59.9 s old: in
+        # 59.9 s old: in. Refused before it is read (#4924), so the `err` names no `id`.
+        assert ping(c, 59.9, "over") == {"t": "err", "p": p}
         assert (errors(), closes()) == (1, 0)
         assert ping(c, 60.0, "a") == pong("a")  # a full window old: both 0.0 frames have left
         assert ping(c, 60.0, "b") == pong("b")
@@ -359,11 +363,59 @@ def test_x02_ac_11_300_frames_a_minute_end_the_socket_4429_and_the_window_slides
     assert world.audit.of(CLOSED) == [row | {"request_id": str(CONNECTION_REQUEST_ID)}]
 
 
+def test_x02_frames_near_the_cap_past_the_rate_are_refused_unread_counted_and_audited(
+    world: RawWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#4924: the inbound rate is charged before a frame is decoded, one token plus one per full
+    32 KiB (§3.6, §8.5). Frames near the 256 KiB cap keep 8 each. On JSON, after `hello` and
+    `auth`, three fit the second's 30; on MessagePack each is charged 6 more before decode (its
+    size bounds its values and containers) and given them back after it, so two fit. Those are
+    decoded and answered; the next two are refused unread (no decode, an `err` with no `id`, then
+    `4429`), counted by both metrics and recorded by the close's audit row."""
+    errors = delta("cv_ws_errors_total", code="client_rate_limited")
+    closes = delta("cv_ws_closes_total", reason="client_rate_limited")
+    parsed: list[int] = []
+    parse = gateway._Connection._parse
+
+    def spy(conn: gateway._Connection, raw: str | bytes, *rest: Any) -> Any:
+        parsed.append(len(raw))
+        return parse(conn, raw, *rest)
+
+    def big(name: str) -> dict[str, Any]:
+        return {"t": "ping", "id": name, "p": {"pad": "x" * 250_000}}
+
+    monkeypatch.setattr(gateway._Connection, "_parse", spy)
+    login = world.login("alice")
+    with raw_connect(world) as c:
+        authenticated(c, login)  # `hello` and `auth`: two of the second's 30
+        admitted = 2 if c.msgpack else (RATE - 2) // WEIGHT_NEAR_CAP
+        for n in range(admitted):
+            c.send(big(f"p{n}"))
+            assert c.recv()["t"] == "pong"
+        title = ERROR_META[ErrorCode.CLIENT_RATE_LIMITED].title
+        p = {"code": "client_rate_limited", "message": title, "retryable": True, "close": False}
+        c.send(big("over"))
+        assert c.recv() == {"t": "err", "p": p}
+        c.send(big("again"))
+        text, ms = "Inbound frame rate exceeded.", world.clock.wall_ms()
+        assert c.bye_then_close() == (
+            _bye(ms, "client_rate_limited", text, retry_after_ms=1000),
+            4429,
+        )
+    # `hello`, `auth` and the pings admitted were decoded; the two refused never were.
+    assert len(parsed) == 2 + admitted and all(n > 250_000 for n in parsed[2:])
+    assert (errors(), closes()) == (1, 1)
+    connection = c.seen[0]["p"]["connection_id"]
+    row = _closed(login.user_id, login.minted.session_id, connection, SOURCE, "client_rate_limited")
+    assert world.audit.of(CLOSED) == [row | {"request_id": str(CONNECTION_REQUEST_ID)}]
+
+
 def _near_cap_sub(c: Client) -> dict[str, Any]:
-    """A `sub` just under the 256 KiB inbound cap, refused whole before any entry is read: 20 000
-    bare names on JSON and, as its arrays hold at most 128 entries, 128 names of 2 009 characters
-    on MessagePack. (The model's literal 21 842-name frame is `test_ws_s1.py`'s.)"""
-    names = ["positions" + "x" * 2_000] * 128 if c.msgpack else ["positions"] * 20_000
+    """A `sub` just under the 256 KiB inbound cap, refused whole before any entry is read: 10 000
+    names of 22 characters on JSON, within the value bound (#4924), and, as its arrays hold at most
+    128 entries, 128 names of 2 009 characters on MessagePack. (The model's literal 21 842-name
+    frame, past the value bound, is `test_ws_s1.py`'s.)"""
+    names = ["positions" + "x" * 2_000] * 128 if c.msgpack else ["positions" + "x" * 13] * 10_000
     frame = {"t": "sub", "id": "big", "p": {"topics": names}}
     assert 250_000 < len(msgpack.packb(frame) if c.msgpack else json.dumps(frame)) <= 256 * 1024
     return frame
@@ -398,11 +450,14 @@ class _Sink:
 def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing(
     world: RawWorld, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC-29: a principal with market data only (V) sends, each second of a minute, one frame near
-    256 KiB and two of 50 private-family topics. The near-cap frame gets one small `err` and no
-    record; the other 120 are denied, 20 of them recorded (one record each, never one per topic)
-    and the rest counted. Four `orders.submit` records go through the same `AuditWriter`, two while
-    the 20 records are being written and two after: each lands in the store, under a hang guard.
+    """AC-29: a principal with market data only (V) sends, each second of a minute, two frames of 50
+    private-family topics, and every fourth second one frame near 256 KiB, as often as its weight
+    lets the minute's 300 tokens hold the rest (§8.5, #4924: 10 tokens for its bytes and its 10 000
+    names on JSON, 8 on MessagePack). The near-cap frame
+    gets one small `err` and no record; the other 120 are denied, 20 of them recorded (one record
+    each, never one per topic) and the rest counted. Four `orders.submit` records go through the
+    same `AuditWriter`, two while the 20 records are being written and two after: each lands in
+    the store, under a hang guard.
 
     Measures: the writer's handling of an order-class record during the flood, through its real
     WAL (fsync'd, in `tmp_path`), with one connection's budget spent. Does not measure: an OMS
@@ -439,11 +494,12 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
             big = _near_cap_sub(c)
             for second in range(MINUTE):
                 world.clock.now = float(second)
-                c.send_raw(big)
-                err = c.recv()
-                assert err == {"t": "err", "id": "big", "p": too_many}
-                assert len(json.dumps(err)) < 400  # one small reply
-                for k in range(2):  # three frames a second: 180 a minute, inside the 300
+                if second % 4 == 0:  # 15 x 10 tokens, + 120 + `hello` and `auth`: inside the 300
+                    c.send_raw(big)
+                    err = c.recv()
+                    assert err == {"t": "err", "id": "big", "p": too_many}
+                    assert len(json.dumps(err)) < 400  # one small reply
+                for k in range(2):
                     c.send_raw({"t": "sub", "id": "s", "p": {"topics": private}})
                     if k == 0 and second in ordered:  # meanwhile, an order-class write
                         world.call(_order_write, writer, second)
@@ -470,5 +526,5 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
     assert [r for r in rows if r["action"] == "orders.submit"] == orders  # each one landed
     assert len(rows) == BUDGET + len(ordered)  # nothing else: no store growth with the flood
     assert (verdict.verified, verdict.entries_checked) == (True, len(rows))  # the fake's chain
-    assert (unaudited(), refused(), writer.refused_total) == (2 * MINUTE - BUDGET, MINUTE, 0)
+    assert (unaudited(), refused(), writer.refused_total) == (2 * MINUTE - BUDGET, MINUTE // 4, 0)
     assert [f() for f in failed] == [0, 0, 0, 0]  # no audit row failed, timed out or was dropped

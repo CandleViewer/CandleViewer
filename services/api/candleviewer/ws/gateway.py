@@ -57,12 +57,18 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   on it ends the connection `internal_error` (as a writer fault does, if no close took); and
   teardown cancels it first.
 - **Inbound limits**: size checked before decoding (`1009`), 8 KiB until the first `auth_ok`;
-  30/s and 300/min (`client_rate_limited`, then `4429`). From the first `auth_ok` a `pong` is
-  counted only once its `PongBudget` is spent, and one over `MAX_PONG_BYTES` closes
-  `protocol_violation` (§8.5), never decoded when `t: "pong"` leads it. An envelope `id` that is
-  not a string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped before the frame is
-  handled, so no reply echoes it (§13.1, #2572). Fair scheduling between connections: the reader
-  yields to the loop after each frame it handles, and `handle_sub` within a long `sub`.
+  30/s and 300/min (`client_rate_limited`, then `4429`), in tokens a frame takes by its size,
+  charged once per frame of every kind before the frame is decoded, so a refused frame is never
+  decoded and its `err` has no `id`.
+  From the first `auth_ok` a frame that opens with `t: "pong"` is counted only once its
+  `PongBudget` is spent, and one over `MAX_PONG_BYTES` closes `protocol_violation` (§8.5), never
+  decoded. A JSON frame past the container cap or the SR-185 value bound (over-counted on its
+  text) is malformed and never decoded; one within them decodes through the C decoder, its depth
+  checked on the decoded value (SR-184).
+  An envelope `id` that is not a string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped
+  before the frame is handled, so no reply echoes it (§13.1, #2572). Fair scheduling between
+  connections: the reader yields to the loop after each frame it handles, and `handle_sub` within
+  a long `sub`.
 - Every server-initiated close after `accept` goes through `_Connection.close_with`, which
   queues `bye` ahead of the close frame (requirement S11), except the handler's own fault `bye`
   and 1011, which the handler counts itself. Token expiry and revocation seal the close:
@@ -112,6 +118,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any, Final, Protocol
@@ -148,6 +155,7 @@ from candleviewer.ws.lifecycle import (
     SUBPROTOCOL_MSGPACK,
     ConnectRateLimiter,
     ConnEvent,
+    DecodeBudget,
     InboundRateLimiter,
     Lifecycle,
     OriginRefusal,
@@ -168,13 +176,17 @@ from candleviewer.ws.limits import (
     AUTH_CALL_TIMEOUT_S,
     AUTH_TIMEOUT_S,
     ENVELOPE_ID_MAX_LEN,
+    INBOUND_WEIGHT_CONTAINERS,
+    INBOUND_WEIGHT_VALUES,
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_CONTAINERS,
     MAX_JSON_DEPTH,
     MAX_PONG_BYTES,
     MAX_PREAUTH_FRAME_BYTES,
     MAX_UNAUTHENTICATED_SOCKETS,
-    json_depth_exceeds,
+    inbound_frame_weight,
+    json_nests_deeper,
+    json_values_over_count,
 )
 from candleviewer.ws.metrics import (
     FANOUT_SECONDS,
@@ -189,6 +201,7 @@ from candleviewer.ws.metrics import (
     cv_ws_closes_total,
     cv_ws_connect_rate_limited_total,
     cv_ws_connections_in_use,
+    cv_ws_decode_budget_refused_total,
     cv_ws_handshake_seconds,
     cv_ws_overflow_total,
     cv_ws_system_frames_withheld_total,
@@ -401,6 +414,25 @@ _CLOSE = object()  # writer sentinel: the next queue item is the close code
 #: already queued: the reader stops. Not `None`: `null` (JSON) and nil (msgpack) decode to `None`,
 #: and a frame that does is a non-object strike like any other malformed frame (#2905).
 _OVERSIZE = object()
+#: `_Connection.decode`'s answer for a frame the inbound rate refused before it was decoded: its
+#: strike is already counted (`err`, or the close), and there is nothing to dispatch.
+_REFUSED = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _Weighed:
+    """A frame `_Connection.weigh` sized and weighed, not yet charged or decoded (#4924)."""
+
+    raw: str | bytes
+    values: int  # the MessagePack value budget in force
+    counted: int  # a JSON frame's value over-count
+    bound: int  # its values, bounded above, up to one past the value bound
+    boxes: int  # a MessagePack frame's containers, bounded above, up to one past the cap
+    weight: int
+    pong: bool
+    pong_bound: bool
+
+
 _WRITER_DONE: Final = "cv-ws-writer-done"  # cancel msg: writer finished, stop reading
 
 
@@ -427,6 +459,14 @@ class GatewayHub:
         self._live: set[_Connection] = set()
         #: The sockets between `accept` and their first `auth_ok` (`admit_unauthenticated`).
         self._unauthenticated: set[_Connection] = set()
+        #: #4924 (§8.5): each user's decode budget, kept while the user holds a live socket and,
+        #: after the last one, until it has refilled to its burst (`_idle`, pruned whenever the hub
+        #: touches the map): bounded by the live users plus those whose last socket closed within
+        #: the refill time (16 s), which the per-user connect rate bounds in turn.
+        self._budgets: dict[uuid.UUID, DecodeBudget] = {}
+        #: #4924 (§8.5): each user's decode turn (`_Connection.decode_turn`), kept with its budget.
+        self._turns: dict[uuid.UUID, asyncio.Lock] = {}
+        self._idle: set[uuid.UUID] = set()
         self._empty = asyncio.Event()
         self._empty.set()
 
@@ -455,8 +495,37 @@ class GatewayHub:
     def discard(self, conn: _Connection) -> None:
         self._live.discard(conn)
         self._unauthenticated.discard(conn)
+        user = conn.user_id
+        if user is not None and user in self._budgets:
+            if not any(c.user_id == user for c in self._live):
+                self._idle.add(user)  # the user's last socket: the budget waits to refill
+            self._prune(conn.clock())
         if not self._live:
             self._empty.set()
+
+    def decode_budget(self, user_id: uuid.UUID, now: float) -> DecodeBudget:
+        """The decode budget every socket of `user_id` shares (§8.5, #4924), made at its first
+        `auth_ok`; a socket that authenticates while it is still refilling after the user's last
+        socket closed gets the same one, at its level."""
+        self._idle.discard(user_id)
+        self._prune(now)
+        budget = self._budgets.get(user_id)
+        if budget is None:
+            budget = self._budgets[user_id] = DecodeBudget()
+            self._turns[user_id] = asyncio.Lock()
+        return budget
+
+    def decode_turn(self, user_id: uuid.UUID) -> asyncio.Lock:
+        """The decode turn every socket of `user_id` shares (§8.5, #4924), kept with its budget
+        (`decode_budget` first)."""
+        return self._turns[user_id]
+
+    def _prune(self, now: float) -> None:
+        """Drop the budgets of users with no live socket once they have refilled to the burst:
+        one made afresh would be the same."""
+        for user in [u for u in self._idle if self._budgets[u].full(now)]:
+            self._idle.discard(user)
+            del self._budgets[user], self._turns[user]
 
     async def wait_empty(self) -> None:
         """Return once every connection handler has finished (callers bound it)."""
@@ -634,6 +703,15 @@ class _Connection:
         self.rate = InboundRateLimiter()
         #: §8.5: from the first `auth_ok`, the `pong`s that `rate` does not count.
         self.pongs = PongBudget()
+        #: #4924 (§8.5): the decode budget of the user, shared by its sockets, from the first
+        #: `auth_ok` (`GatewayHub.decode_budget`); None before it, so a socket that has not
+        #: authenticated draws on its own rate only.
+        self.decode_budget: DecodeBudget | None = None
+        #: #4924 (§8.5): the user's decode turn, shared by its sockets: a frame of weight above 1
+        #: is handled only while its socket holds it, its whole handling (decode and dispatch),
+        #: one such frame at a time across the user's sockets, each held to the loop turn after
+        #: it (the reader's `sleep(0)`).
+        self.decode_turn: asyncio.Lock | None = None
         #: Data frames stop at `OUTBOUND_QUEUE_MAX` (`push`); the `CLOSE_ITEMS` still fit (C-2.18).
         self.outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=OUTBOUND_QUEUE_MAX + CLOSE_ITEMS)
         self.user_id: uuid.UUID | None = None
@@ -1070,13 +1148,15 @@ class _Connection:
     # -- inbound ------------------------------------------------------------
 
     def decode(self, msg: Mapping[str, Any], max_frame_bytes: int) -> Any:
-        """One ASGI receive message -> decoded frame; `_OVERSIZE` after an oversize close.
+        """One ASGI receive message -> decoded frame; `_OVERSIZE` after an oversize close,
+        `_REFUSED` when the inbound rate refused it (`charge`), undecoded.
 
         Until the first `auth_ok` (which sets `user_id`), the frame before `hello` included, the
         size cap is the smaller `MAX_PREAUTH_FRAME_BYTES` (SR-040) and a MessagePack frame is
         decoded under the smaller value budget `MAX_PREAUTH_MSGPACK_VALUES` (SR-185). A JSON
-        frame with more than `MAX_JSON_CONTAINERS` `[` and `{` characters is malformed, and is
-        never depth-scanned or decoded (SR-184).
+        frame with more than `MAX_JSON_CONTAINERS` `[` and `{` characters, or more values than
+        `MAX_MSGPACK_VALUES` by `json_values_over_count` (the one value bound of both encodings,
+        #4924), is malformed, and is never decoded or depth-checked (SR-184).
 
         Size is checked on the raw payload BEFORE any decoding (1009). Each subprotocol has one
         frame kind (§2.2): a text frame on `cv.v1.msgpack` and a binary one on `cv.v1.json` are
@@ -1091,7 +1171,18 @@ class _Connection:
         the reader stops (§8.5): one whose first member is `t: "pong"` (`_leads_with_pong`) is
         never decoded, any other once decoded. A frame over the bound that opens with `t: "pong"`
         closes the same way even if the rest would not parse or repeats `t`: no `frame_malformed`
-        strike."""
+        strike.
+
+        Every other frame is charged once, before any decode work (`charge`): from the first
+        `auth_ok` one that opens with `t: "pong"` against the `pong` budget first, any other kind,
+        `ping` included, against the inbound rate."""
+        weighed = self.weigh(msg, max_frame_bytes)
+        return weighed if weighed is _OVERSIZE else self.decode_weighed(weighed)
+
+    def weigh(self, msg: Mapping[str, Any], max_frame_bytes: int) -> Any:
+        """`decode`'s first half, before any decode work: the frame sized, checked against its
+        caps and weighed (`_Weighed`), or `_OVERSIZE` after an oversize close. The reader holds
+        the user's decode turn between the two halves when the weight is above 1 (#4924)."""
         binary = msg.get("bytes")
         raw: str | bytes = binary if binary is not None else (msg.get("text") or "")
         cap, values = max_frame_bytes, MAX_MSGPACK_VALUES
@@ -1105,29 +1196,98 @@ class _Connection:
         if size > cap:
             self.close_with("frame_too_big")
             return _OVERSIZE
-        pong_bound = self.user_id is not None and size > MAX_PONG_BYTES
-        if pong_bound and _leads_with_pong(raw, msgpack=self.msgpack):
+        authed = self.user_id is not None
+        pong = authed and _leads_with_pong(raw, msgpack=self.msgpack)
+        pong_bound = authed and size > MAX_PONG_BYTES
+        if pong_bound and pong:
             self.close_with("protocol_violation")
             return _OVERSIZE
-        frame = self._parse(raw, values)
+        # #4924: a frame's values, bounded above before decode, and only up to one past the value
+        # bound (`_parse` refuses the rest): a JSON frame's over-counted on its text, once, here;
+        # a MessagePack frame's by twice its size (a container is charged twice, a value takes a
+        # byte), and its containers by its size, up to one past the container cap.
+        counted = json_values_over_count(raw) if isinstance(raw, str) and not self.msgpack else 0
+        bound = min(2 * size if self.msgpack else counted, MAX_MSGPACK_VALUES + 1)
+        boxes = min(size, MAX_JSON_CONTAINERS + 1) if self.msgpack else 0
+        weight = inbound_frame_weight(size, bound, boxes)
+        return _Weighed(raw, values, counted, bound, boxes, weight, pong, pong_bound)
+
+    def decode_weighed(self, w: _Weighed) -> Any:
+        """`decode`'s second half: charge the frame (`charge`), then decode it."""
+        raw, values, counted, bound, weight = w.raw, w.values, w.counted, w.bound, w.weight
+        shared = weight > 1  # the tokens past the first also draw on the user's decode budget
+        charged_as = self.charge(pong=w.pong, weight=weight, shared=shared)
+        if charged_as is None:
+            return _REFUSED
+        decoded: list[int] = []
+        frame = self._parse(raw, values, counted, decoded)
+        pong_bound = w.pong_bound
         if pong_bound and isinstance(frame, dict) and frame.get("t") == "pong":
             self.close_with("protocol_violation")  # its `t` comes later, or is written otherwise
             return _OVERSIZE
+        if charged_as == "pong" and not (isinstance(frame, dict) and frame.get("t") == "pong"):
+            # It opened with `t: "pong"` and is another kind: the rate counts it as any frame.
+            if self.charge(pong=False, weight=weight, shared=shared) is None:
+                return _REFUSED
+        if decoded:  # MessagePack: its counts now known, what its size took past them comes back
+            held, boxes = decoded
+            refund = bound // INBOUND_WEIGHT_VALUES - held // INBOUND_WEIGHT_VALUES
+            refund += w.boxes // INBOUND_WEIGHT_CONTAINERS - boxes // INBOUND_WEIGHT_CONTAINERS
+            if refund > 0:
+                self.rate.refund(refund)
+                if self.decode_budget is not None:
+                    self.decode_budget.refund(refund)
         return frame
 
-    def _parse(self, raw: str | bytes, values: int) -> Any:
-        """`decode`'s parse of a frame within its size caps: the decoded value, `[]` if refused."""
+    def charge(self, *, pong: bool, weight: int, shared: bool = False) -> str | None:
+        """Charge one inbound frame before it is decoded (§8.5): `"pong"` when the `pong` budget
+        took it, `"rate"` when the inbound rate did, None when it is refused. From the first
+        `auth_ok`, a `shared` frame also needs its `weight - 1` tokens from the user's decode
+        budget (#4924): checked first, taken only once the rate has admitted it, with no await
+        between, so a refusal takes nothing from either.
+
+        A `pong` (`decode` has read its leading `t` from the first `auth_ok`) takes from its own
+        budget first; past it, and for every other frame, the inbound rate takes `weight` tokens,
+        the frame's size weight (`inbound_frame_weight`, #4924). A refusal
+        is the rate's strike: the first an `err` `client_rate_limited` with no `id` (the frame is
+        never read), the next the `4429` close, which the close's metric and audit row record."""
+        now = self.clock()
+        if pong and self.pongs.allow(now):
+            return "pong"
+        budget = self.decode_budget if shared else None
+        if budget is not None and not budget.can(now, weight - 1):
+            cv_ws_decode_budget_refused_total.inc()
+        elif self.rate.allow(now, weight):
+            if budget is not None:
+                budget.take(weight - 1)
+            return "rate"
+        self.rate_strikes += 1
+        if self.rate_strikes > 1:
+            self.close_with("client_rate_limited", retry_after_ms=1000)
+        else:
+            self.push(build_ws_error("client_rate_limited", id=None))
+        return None
+
+    def _parse(self, raw: str | bytes, values: int, counted: int, decoded: list[int]) -> Any:
+        """`decode`'s parse of a frame within its size caps: the decoded value, `[]` if refused.
+        `counted` is a JSON frame's value over-count (`json_values_over_count`); a MessagePack
+        decode appends the values it charged to `decoded`."""
         try:
             if self.msgpack:
-                return [] if isinstance(raw, str) else decode_client_frame(raw, max_values=values)
+                if isinstance(raw, str):
+                    return []
+                return decode_client_frame(raw, max_values=values, charged=decoded)
             if isinstance(raw, bytes):
                 return []  # a binary frame on cv.v1.json: a violation, never decoded
             openers = raw.count("[") + raw.count("{")  # not string-aware: it can only over-count
             if openers > MAX_JSON_CONTAINERS:
-                return []  # SR-184: too many containers -> protocol violation, never scanned
-            if json_depth_exceeds(raw, MAX_JSON_DEPTH):
-                return []  # SR-184: too deep -> protocol violation, never decoded
-            return json.loads(raw)
+                return []  # SR-184: too many containers -> protocol violation, never decoded
+            if counted > MAX_MSGPACK_VALUES:
+                return []  # #4924: past the SR-185 value bound, as on msgpack -> never decoded
+            value = json.loads(raw)  # the C decoder; its nesting is bounded by the cap above
+            if openers > MAX_JSON_DEPTH and json_nests_deeper(value, MAX_JSON_DEPTH):
+                return []  # SR-184: too deep -> protocol violation (fewer openers cannot nest so)
+            return value
         except (ValueError, RecursionError):  # MsgpackFrameError is a ValueError
             return []  # malformed: handled as a non-object frame (a violation)
 
@@ -1716,6 +1876,8 @@ def make_ws_router(
                 revocation_hub.unregister(conn.session_id, conn.closer)
             conn.pending_session_id = None  # registered above, and now the socket's own
         conn.session_id, conn.user_id = session_id, user_id
+        conn.decode_budget = gateway_hub.decode_budget(user_id, conn.clock())  # #4924: shared
+        conn.decode_turn = gateway_hub.decode_turn(user_id)
         conn.authz.session_id = session_id  # E17-R-16: its audit rows name the session
         # §9.6: a context's end closes the sockets bound to it, and only those (`close_context`).
         revocation_hub.bind(session_id, conn.closer, conn.view_as_context_id)
@@ -1841,15 +2003,7 @@ def make_ws_router(
             del frame["id"]  # #2572: never echoed, on any reply; the frame is still handled
         kind = frame.get("t") if isinstance(frame, dict) else None
         fid = frame.get("id") if isinstance(frame, dict) else None
-        exempt = kind == "pong" and conn.user_id is not None  # §8.5: from the first `auth_ok`
-        exempt = exempt and conn.pongs.allow(conn.clock())  # and within its own `pong` budget
-        if not exempt and not conn.rate.allow(conn.clock()):
-            conn.rate_strikes += 1
-            if conn.rate_strikes > 1:
-                conn.close_with("client_rate_limited", retry_after_ms=1000)
-            else:
-                conn.push(build_ws_error("client_rate_limited", id=_str_or_none(fid)))
-            return
+        # §8.5: the frame was charged against the inbound rate before it was decoded (`charge`).
         if not conn.lifecycle.can(ConnEvent.HELLO) and kind == "hello":
             conn.violation(fid, "protocol_violation")
         elif conn.lifecycle.can(ConnEvent.HELLO):
@@ -1919,12 +2073,20 @@ def make_ws_router(
                 conn.disconnect_code = msg.get("code")
                 return
             conn.watchdog.last_inbound = conn.clock()
-            frame = conn.decode(msg, max_frame_bytes)
-            if frame is _OVERSIZE:
+            weighed = conn.weigh(msg, max_frame_bytes)
+            if weighed is _OVERSIZE:
                 return
-            await dispatch(conn, frame)
-            if not conn.closing:  # fair scheduling between connections: one frame per turn, as
-                await asyncio.sleep(0)  # `receive` returns at once while frames are queued
+            # #4924 (§8.5): a frame of weight above 1 waits for its user's decode turn, which each
+            # socket of the user holds for one such frame and the loop turn after it (FIFO).
+            turn = conn.decode_turn if weighed.weight > 1 else None
+            async with turn if turn is not None else contextlib.nullcontext():
+                frame = conn.decode_weighed(weighed)
+                if frame is _OVERSIZE:
+                    return
+                if frame is not _REFUSED:  # a refused frame's strike is already counted
+                    await dispatch(conn, frame)
+                if not conn.closing:  # fair scheduling between connections: one frame per turn,
+                    await asyncio.sleep(0)  # as `receive` returns at once while frames are queued
 
     async def writer(conn: _Connection) -> None:
         if conn.pipeline is not None:

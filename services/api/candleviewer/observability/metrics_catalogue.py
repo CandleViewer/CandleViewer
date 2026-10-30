@@ -2725,6 +2725,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_decode_budget_refused_total",
+        "counter",
+        "refusals",
+        (),
+        "Client WS frames refused by their user's shared decode budget (#4924, 23 §8.5).",
+        "sustained: one user's sockets sending frames heavy to decode",
+        _L,
+        "E17",
+        exported=True,
+    ),
+    _s(
         "cv_ws_system_frames_withheld_total",
         "counter",
         "frames",
