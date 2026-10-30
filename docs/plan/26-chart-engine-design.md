@@ -559,7 +559,14 @@ export interface ChartEvents {
     code: string;
     message: string;
     recoverable: boolean;
-    details?: { attempt: number; maxAttempts: number; nextTryMs: number }; // CONTEXT_LOST only, BQ-64
+    details?:
+      | { attempt: number; maxAttempts: number; nextTryMs: number } // CONTEXT_LOST only, BQ-64
+      | {
+          reducedCapabilities: (
+            "footprint-text" | "heatmap" | "bubbles" | "profile-shading" | "gpu-effects"
+          )[];
+          reason: "no-webgl2" | "context-failed" | "compile-failed" | "restore-failed" | "forced";
+        }; // NO_WEBGL2 only, E11-T05 BQ-90
   };
 }
 
@@ -686,6 +693,8 @@ Replay uses exactly the same series and the same frame types — only the subscr
 | Frame budget exceeded for 3 consecutive frames | Step down one LOD level; if already at the lowest, reduce DPI of the heatmap layer; log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                                                                                                            |
 | Frame budget exceeded (first frame of a run)   | Log the per-stage timings once per over-budget run; code `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational; package README BQ-44)                                                                                                                           |
 | Worker crash                                   | The controller detects the `error`/`close` event, respawns the worker, replays store state from the last snapshot                                                                                                                                                    |
+
+_Shipped (E11-T05 PR 1, package README BQ-84 to BQ-97): `degraded-2d` is whole-chart. A chart with no WebGL2, or after a compile or restore handoff, draws through `Canvas2DBackend` behind the same `RenderBackend` (§3.4): lines, quads and colour-only cells in one path per style bucket; text waits for E11-S11's text runs (`footprint-text` is disclosed). `ENGINE_NO_WEBGL2` carries the optional `details: { reducedCapabilities, reason }` as codes (§8). Export is reject, not flag (F-13): while parked mid-loss or failed, the worker answers `exported { blob: null, reason }` and `takeScreenshot` rejects with `ExportUnavailableError` (`ENGINE_EXPORT_UNAVAILABLE`); a healthy `degraded-2d` chart draws, then encodes._
 
 ---
 

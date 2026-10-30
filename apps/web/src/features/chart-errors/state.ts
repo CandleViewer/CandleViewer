@@ -80,7 +80,7 @@ function onError(
   if (code === ENGINE_CODES.workerLost && recoverable) return state; // the worker is respawning
   if (code === ENGINE_CODES.lost) {
     if (isCard(state)) return state; // a remount's loss is the retry's, the card holds
-    return details === undefined
+    return details === undefined || !("attempt" in details) // only the loss arm carries attempts
       ? { kind: "restoring", attempt: 1, maxAttempts: 3, nextAt: null, nextTryMs: null }
       : {
           kind: "restoring",

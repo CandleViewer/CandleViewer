@@ -236,11 +236,19 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expectTypeOf<ReturnType<Chart["subscribe"]>>().toEqualTypeOf<Unsubscribe>();
     expectTypeOf<ChartEvents["frameStats"]>().toEqualTypeOf<FrameStats>();
     // BQ-64: one optional field, set only on ENGINE_CONTEXT_LOST; it widens nothing that exists.
+    // E11-T05 BQ-90: the same optional field also carries ENGINE_NO_WEBGL2's codes.
     expectTypeOf<ChartEvents["error"]>().toEqualTypeOf<{
       code: string;
       message: string;
       recoverable: boolean;
-      details?: { attempt: number; maxAttempts: number; nextTryMs: number };
+      details?:
+        | { attempt: number; maxAttempts: number; nextTryMs: number }
+        | {
+            reducedCapabilities: (
+              "footprint-text" | "heatmap" | "bubbles" | "profile-shading" | "gpu-effects"
+            )[];
+            reason: "no-webgl2" | "context-failed" | "compile-failed" | "restore-failed" | "forced";
+          };
     }>();
     expectTypeOf<{ code: string; message: string; recoverable: boolean }>().toMatchTypeOf<
       ChartEvents["error"]

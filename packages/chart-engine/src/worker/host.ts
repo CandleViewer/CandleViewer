@@ -12,12 +12,14 @@ import {
   INPUT_STRIDE,
   ENGINE_CONTEXT_RESTORE_FAILED,
   ENGINE_SHADER_COMPILE_FAILED,
+  ExportUnavailableError,
   RESTART_BACKOFF_MS,
   type BufferLayout,
   type CapabilityReport,
   type ChartId,
   type Command,
   type DataOp,
+  type ExportRejectReason,
   type FromWorker,
   type InputKind,
   type PendingData,
@@ -44,6 +46,11 @@ export interface HostEnv {
   now(): number;
   probe(): CapabilityReport;
   correlationId(): string;
+  /**
+   * Test-only (E11-T05, README BQ-94): start every chart forced to 2D over the existing
+   * `init.profile`, the switch E11-Q07's GPU matrix uses. Not a §8 option, not a user setting.
+   */
+  readonly forceProfile?: "degraded-2d";
 }
 
 export { RESTART_BACKOFF_MS };
@@ -301,7 +308,7 @@ export interface ChartHost {
   /** Hands `buffer` over (it is detached on return) under the two-in-flight rule. */
   data(store: StoreId, op: DataOp, layout: BufferLayout, buffer: ArrayBuffer): void;
   command(cmd: Command): void;
-  /** Resolves the PNG the renderer encodes, or null when it cannot. */
+  /** Resolves the PNG, or null when it cannot encode; rejects `ExportUnavailableError` (BQ-92). */
   exportPng(): Promise<unknown>;
   dispose(): void;
 }
@@ -362,10 +369,10 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   const unacked = new Map<StoreId, number>();
   const queues = new Map<StoreId, PendingData[]>();
   const resyncAsked = new Set<StoreId>();
-  const exports = new Map<number, (blob: unknown) => void>();
+  const exports = new Map<number, (msg: { blob: unknown; reason?: ExportRejectReason }) => void>();
   let exportSeq = 0;
   /** Set once by the degraded-2d handoff and kept across worker restarts (BQ-53). */
-  let forced = false;
+  let forced = o.env.forceProfile !== undefined;
 
   const init = (): void => {
     const canvas = o.canvas();
@@ -393,7 +400,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   }
 
   const settleExports = (): void => {
-    for (const done of exports.values()) done(null);
+    for (const done of exports.values()) done({ blob: null });
     exports.clear();
   };
 
@@ -409,7 +416,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
         return;
       }
       if (msg.t === "exported") {
-        exports.get(msg.reqId)?.(msg.blob);
+        exports.get(msg.reqId)?.(msg);
         exports.delete(msg.reqId);
         return;
       }
@@ -559,8 +566,11 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       if (disposed) return Promise.resolve(null);
       exportSeq += 1;
       const reqId = exportSeq;
-      return new Promise((resolve) => {
-        exports.set(reqId, resolve);
+      return new Promise((resolve, reject) => {
+        // A refusal (F-13, BQ-92) rejects with its reason; any other miss resolves null.
+        exports.set(reqId, (m) =>
+          m.reason === undefined ? resolve(m.blob) : reject(new ExportUnavailableError(m.reason)),
+        );
         link.post({ t: "command", id, cmd: { k: "export", reqId } }, []);
       });
     },

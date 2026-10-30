@@ -55,7 +55,15 @@ let restore: (() => void)[] = [];
 function stubDom(): void {
   const ctx = {
     fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 1,
     clearRect: vi.fn(),
+    beginPath: vi.fn(),
+    rect: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    fill: vi.fn(),
+    stroke: vi.fn(),
     fillRect(): void {
       fills.push(String(ctx.fillStyle));
     },

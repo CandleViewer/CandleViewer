@@ -7,11 +7,13 @@ export class DrawTrace {
   triangles = 0;
   programSwitches = 0;
   textureSwitches = 0;
+  /** Batches a backend cannot draw this frame (2D: `sdf-text`, BQ-88), disclosed, never silent. */
+  skipped = 0;
   /** The node id of each draw this frame, in submission order (only while `enabled`). */
   readonly nodes: string[] = [];
 
   begin(): void {
-    this.draws = this.triangles = this.programSwitches = this.textureSwitches = 0;
+    this.draws = this.triangles = this.programSwitches = this.textureSwitches = this.skipped = 0;
     this.nodes.length = 0;
   }
 }

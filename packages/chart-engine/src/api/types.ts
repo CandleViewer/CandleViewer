@@ -155,8 +155,18 @@ export interface ChartEvents {
     code: string;
     message: string;
     recoverable: boolean;
-    /** Only on `ENGINE_CONTEXT_LOST`; the UI never parses `message`. */
-    details?: { attempt: number; maxAttempts: number; nextTryMs: number };
+    /**
+     * On `ENGINE_CONTEXT_LOST` (BQ-64) and `ENGINE_NO_WEBGL2` (E11-T05, BQ-90) only; the UI never
+     * parses `message`. The second names what `degraded-2d` reduces and why, as codes.
+     */
+    details?:
+      | { attempt: number; maxAttempts: number; nextTryMs: number }
+      | {
+          reducedCapabilities: (
+            "footprint-text" | "heatmap" | "bubbles" | "profile-shading" | "gpu-effects"
+          )[];
+          reason: "no-webgl2" | "context-failed" | "compile-failed" | "restore-failed" | "forced";
+        };
   };
 }
 

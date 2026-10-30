@@ -37,6 +37,41 @@ export interface CapabilityReport {
 export const NO_WEBGL2_REASON = "WebGL2 is not available, so the chart is drawn in 2D.";
 export const FAILED_CONTEXT_REASON = "The graphics context failed, so the chart is drawn in 2D.";
 
+/**
+ * What a profile cannot draw (E11-T05, README BQ-89): the five E11-D04 §23 G-3 values, all of them
+ * under `degraded-2d` (layers not built yet included), none under `full` or `reduced`.
+ */
+export const REDUCED_CAPABILITIES = [
+  "footprint-text",
+  "heatmap",
+  "bubbles",
+  "profile-shading",
+  "gpu-effects",
+] as const;
+export type ReducedCapability = (typeof REDUCED_CAPABILITIES)[number];
+
+/** Why a chart draws in 2D, as a code the app words (BQ-89): never prose. */
+export const DEGRADE_REASONS = [
+  "no-webgl2",
+  "context-failed",
+  "compile-failed",
+  "restore-failed",
+  "forced",
+] as const;
+export type DegradeReason = (typeof DEGRADE_REASONS)[number];
+
+const NONE: readonly ReducedCapability[] = [];
+
+/** BQ-89's mapping beside `selectProfile`: the capabilities `profile` reduces. */
+export function reducedCapabilities(profile: RenderProfile): readonly ReducedCapability[] {
+  return profile === "degraded-2d" ? REDUCED_CAPABILITIES : NONE;
+}
+
+/** The probe's reason code for a `degraded-2d` report (the failed-context line, else no WebGL2). */
+export function degradeReason(report: CapabilityReport): DegradeReason {
+  return report.reasons.includes(FAILED_CONTEXT_REASON) ? "context-failed" : "no-webgl2";
+}
+
 /** BQ-50's decision over probed capabilities (null: no WebGL2). */
 export function selectProfile(caps: GlCaps | null, why = NO_WEBGL2_REASON): CapabilityReport {
   if (caps === null) return { profile: "degraded-2d", reasons: [why], caps: null };

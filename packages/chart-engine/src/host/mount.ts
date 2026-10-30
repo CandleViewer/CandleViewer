@@ -86,7 +86,7 @@ export function mountSurface(container: HTMLElement): HostSurface {
 const probes = new WeakMap<object, CapabilityReport>();
 
 /**
- * Lazy capability probe, once per document, on a throwaway canvas (E11-S02 owns detection and
+ * Lazy capability probe, once per document while it succeeds, on a throwaway canvas (E11-S02 owns detection and
  * the profile rule, README BQ-50 and BQ-57; E11-T05 owns the 2D drawing). The probe context is
  * released at once, so a multi-chart layout never spends the browser's live-context budget
  * (about 16) on probes.
@@ -95,6 +95,8 @@ export function probeRenderProfile(doc: Document): CapabilityReport {
   const known = probes.get(doc);
   if (known !== undefined) return known;
   const report = probeCanvas(doc.createElement("canvas"));
-  probes.set(doc, report);
+  // Only a probe that got a context is kept (E11-T05, README BQ-93): a failed one holds no
+  // context, so the next mount (inline "Retry WebGL2") probes again inside the ~16 budget.
+  if (report.caps !== null) probes.set(doc, report);
   return report;
 }
