@@ -36,8 +36,41 @@ export interface Call {
   readonly body: unknown;
 }
 
+/**
+ * `sessions.py` `_unauthorized()`: the uniform 401 of a session route, also for a revoked or expired session. Only
+ * `POST /auth/unlock` and `POST /auth/lock` answer `session_revoked`; every other route keeps this one, so none is
+ * a session oracle (22 "Idle lock").
+ */
 const UNAUTHENTICATED = json(
-  { type: "about:blank", title: "Unauthorized", status: 401, detail: "unauthenticated" },
+  {
+    type: "about:blank",
+    title: "Unauthorized",
+    status: 401,
+    detail: "authentication required",
+    code: "unauthenticated",
+  },
+  401,
+);
+/** `POST /auth/refresh`'s one 401, for every cause (22 `authRefresh`; `sessions.py` `_REFRESH_INVALID`). */
+const REFRESH_INVALID = json(
+  {
+    type: "about:blank",
+    title: "Unauthorized",
+    status: 401,
+    detail: "refresh_token_invalid",
+    code: "refresh_token_invalid",
+  },
+  401,
+);
+/** `me.py` `_unauthenticated()`: `GET /me` has its own problem body. */
+const ME_UNAUTHENTICATED = json(
+  {
+    type: "https://candleviewer.local/errors/unauthenticated",
+    title: "Missing, malformed or expired access token",
+    status: 401,
+    code: "unauthenticated",
+    detail: "Authentication is required.",
+  },
   401,
 );
 const LOCKED = json({ status: 401, code: "session_idle_locked" }, 401);
@@ -139,10 +172,10 @@ export class SessionStore {
     const call = `${method} ${other === undefined ? path : "/me/sessions/{id}"}`;
     switch (call) {
       case "POST /auth/refresh":
-        if (gone) return route.fulfill(UNAUTHENTICATED);
+        if (gone) return route.fulfill(REFRESH_INVALID);
         return locked ? route.fulfill(LOCKED) : route.fallback();
       case "GET /me":
-        if (gone) return route.fulfill(UNAUTHENTICATED);
+        if (gone) return route.fulfill(ME_UNAUTHENTICATED);
         return locked ? route.fulfill(LOCKED) : route.fallback();
       case "GET /auth/session":
         return gone ? route.fulfill(UNAUTHENTICATED) : route.fulfill(json(this.clock(s)));
