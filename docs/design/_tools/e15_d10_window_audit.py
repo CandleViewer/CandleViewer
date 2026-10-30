@@ -22,8 +22,9 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
                   bar frame of the register lists the never-leave slots (SL-5 on an order-capable
                   kind).
   (c) G-TITLE     every bar frame's OS title equals the composition rule's output for its fixture
-                  (`{Kind} · {symbol} · {ENV}`; a non-order kind without the word); S-1 is the rule's
-                  output for the merged fixture.
+                  (`{Kind} · {symbol} · {ENV}`; the environment word for every kind — the BQ-05
+                  addendum, 6529482068); S-1 is the rule's output for the merged fixture and TS-3's
+                  example the output for the non-order fixture.
   (d) G-BOUND     the title's longest form is computed from D-5's kind words, the contract's
                   `Symbol` pattern and the badge's words — never typed.
   (e) G-SWEEP     the slot widths, the step thresholds, the minimum widths and the comfortable bar
@@ -201,6 +202,9 @@ FIXTURE = {
     "pin": "Pin on top",
 }
 SEP = " · "
+# the non-order OS-title fixture (the BQ-05 addendum, 6529482068: the word for every kind);
+# G-TITLE reads TS-3's example against compose(*NON_ORDER_TITLE)
+NON_ORDER_TITLE = ("Tape", "BTCUSDT", "LIVE")
 # the D13 anchors this tool must reproduce to the hundredth (its key -> the parent's anchor key)
 REPRO_D13 = {
     f"CR:env.{what}.{where}.{th}": f"CR:env.{what}.{where}.{th}"
@@ -619,9 +623,10 @@ def bound_values(env: Env) -> dict[str, str]:
 
 
 def compose(kind: str, symbol: str, env_word: str) -> str:
-    if kind.lower() in ORDER_KINDS:
-        return f"{kind}{SEP}{symbol}{SEP}{env_word}"
-    return f"{kind}{SEP}{symbol}"
+    """§3's composition: every floating window's OS title carries the environment word, whatever
+    the hosted kind (the BQ-05 addendum, 6529482068); ORDER_KINDS governs the arm state, not the
+    title."""
+    return f"{kind}{SEP}{symbol}{SEP}{env_word}"
 
 
 # ---------------------------------------------------------------------------- cites and pins
@@ -1341,11 +1346,20 @@ def g_title(t: Texts) -> list[Finding]:
         want = compose(r[3], r[4], r[5])
         if r[6] != want:
             bad.append(f"{r[0]}: the OS title {r[6]!r} is not the composition's {want!r}")
-        if r[3].lower() in ORDER_KINDS and r[5] not in r[6]:
-            bad.append(f"{r[0]}: an order-capable window's title lacks its environment word")
+        if r[5] not in r[6]:
+            bad.append(
+                f"{r[0]}: the window's title lacks its environment word ({r[3]}, the BQ-05 addendum)"
+            )
     s1 = next((r for r in s_rows(t.spec) if r[0] == "S-1"), None)
     if not s1 or unescape(s1[1]).strip().strip('"') != compose("DOM", "BTCUSDT", "LIVE"):
         bad.append("S-1 is not the composition rule's output for the merged fixture")
+    kind, sym, env_word = NON_ORDER_TITLE
+    non_order = compose(kind, sym, env_word)
+    ts3 = next((r for r in ts_rows(t.spec) if r[0] == "TS-3"), None)
+    if env_word not in non_order or not ts3 or unescape(ts3[2]).strip().strip('"') != non_order:
+        bad.append(
+            f"TS-3's example is not the composition's output for the non-order fixture ({non_order!r})"
+        )
     for r in ts_rows(t.spec):
         if len(r) != 5 or not CITE.search(r[4]):
             bad.append(f"{r[0]}: a title row without five cells or a source cite")
@@ -1963,6 +1977,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("G-TITLE", "give the DEMO window a LIVE title",
       subst("| DEMO | DOM · BTCUSDT · DEMO            | SL-1 SL-2 SL-3 SL-4 SL-5 SL-6 SL-7 SL-8 SL-9                                  |",
             "| DEMO | DOM · BTCUSDT · LIVE            | SL-1 SL-2 SL-3 SL-4 SL-5 SL-6 SL-7 SL-8 SL-9                                  |")),
+    M("G-TITLE", "drop the environment from the market window's title (a non-order kind)",
+      subst("| DEMO | Tape · BTCUSDT · DEMO | SL-1 SL-2 SL-3 SL-4 SL-6 SL-7 SL-8 SL-9 at W-5",
+            "| DEMO | Tape · BTCUSDT | SL-1 SL-2 SL-3 SL-4 SL-6 SL-7 SL-8 SL-9 at W-5")),
     M("G-BOUND", "type the title's bound by hand", anchor_edit("BOUND:chars", "99")),
     M("G-SWEEP", "type the full bar's width by hand", anchor_edit("SWEEP:order.compact.w0", "900")),
     M("G-CONTRAST", "alter a reproduced ratio by a hundredth", anchor_edit("CR:env.live.focused.dark", "4.41")),

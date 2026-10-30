@@ -38,18 +38,18 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason (`16` §11
 
 ## Table N — names and roles (the pack §3, §7)
 
-| Element                   | Role                             | Accessible name (or text)                                                                                         |
-| ------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| the window (the document) | the OS window                    | the title `{Kind} · {symbol} · {ENV}` — "DOM · BTCUSDT · LIVE" (TS-1, order-capable kinds; non-order kinds: TS-3) |
-| the title bar             | `toolbar`                        | "Window" (PROPOSED, KB-4)                                                                                         |
-| the hosted panel          | `region`                         | E15-D03 D-5's name, unchanged by the host — "DOM, BTCUSDT, Live"                                                  |
-| the environment badge     | `img` (CMP-075)                  | "Trading environment: Live"; unconfirmed: "Trading environment: Live — unconfirmed, reconnecting"                 |
-| Return to workspace       | `button`                         | "Return to workspace" (`window.titlebar.return`); the short form "Return" keeps the whole name                    |
-| Pin on top                | toggle `button` (`aria-pressed`) | "Pin on top" (`window.titlebar.pin`)                                                                              |
-| ⋮                         | `button`, `aria-haspopup="menu"` | "More window actions" (`window.titlebar.more`)                                                                    |
-| ×                         | `button`                         | "Close window — {kind} {symbol} {environment}" (`window.titlebar.close`)                                          |
-| the display-gone row      | `status`                         | "This window was on a display that's no longer connected, so it opened here."                                     |
-| the view-as banner        | SCR-124's (E42-D02 D10)          | the one notice; its Exit the first Tab stop                                                                       |
+| Element                   | Role                             | Accessible name (or text)                                                                                                                                                           |
+| ------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the window (the document) | the OS window                    | the title `{Kind} · {symbol} · {ENV}` — "DOM · BTCUSDT · LIVE"; the environment word for every kind, non-order kinds too: "Tape · BTCUSDT · LIVE" (TS-1 … TS-3; the BQ-05 addendum) |
+| the title bar             | `toolbar`                        | "Window" (PROPOSED, KB-4)                                                                                                                                                           |
+| the hosted panel          | `region`                         | E15-D03 D-5's name, unchanged by the host — "DOM, BTCUSDT, Live"                                                                                                                    |
+| the environment badge     | `img` (CMP-075)                  | "Trading environment: Live"; unconfirmed: "Trading environment: Live — unconfirmed, reconnecting"                                                                                   |
+| Return to workspace       | `button`                         | "Return to workspace" (`window.titlebar.return`); the short form "Return" keeps the whole name                                                                                      |
+| Pin on top                | toggle `button` (`aria-pressed`) | "Pin on top" (`window.titlebar.pin`)                                                                                                                                                |
+| ⋮                         | `button`, `aria-haspopup="menu"` | "More window actions" (`window.titlebar.more`)                                                                                                                                      |
+| ×                         | `button`                         | "Close window — {kind} {symbol} {environment}" (`window.titlebar.close`)                                                                                                            |
+| the display-gone row      | `status`                         | "This window was on a display that's no longer connected, so it opened here."                                                                                                       |
+| the view-as banner        | SCR-124's (E42-D02 D10)          | the one notice; its Exit the first Tab stop                                                                                                                                         |
 
 ## Table S — stories (names only; builder)
 
