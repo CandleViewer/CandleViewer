@@ -29,6 +29,7 @@ from candleviewer.api.recording_writes import WriteLimiter
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.domain.primitives import AccountId, Environment
+from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.cancel_all import CancelAllRequest, ScopedAccounts
 from candleviewer.oms.errors import (
@@ -350,7 +351,7 @@ class Runtime:
         if self.refuse_run:
             coro.close()
             raise OmsNotReady
-        task = asyncio.get_running_loop().create_task(coro)
+        task = spawn(coro, name="position-write")  # the request's context carried, as the runtime
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
         return task
