@@ -11,6 +11,8 @@ export interface TopBarProps {
   /** `/me`'s name and role; `null` before `/me` answers (no name is guessed). */
   readonly user: { readonly name: string; readonly role: RoleName } | null;
   readonly connection: ReactNode;
+  /** SCR-102's CMP-219 (E08-S09) once a workspace binds a pane; absent, nothing is drawn in its place. */
+  readonly symbol?: ReactNode;
   readonly searchHint: string; // "Ctrl+K"
   /** Opens the command palette; absent while no palette is registered (E10-S03). */
   readonly onSearch?: () => void;
@@ -49,28 +51,36 @@ const KBD: CSSProperties = {
 
 const roleWord = (role: RoleName): string => role.charAt(0).toUpperCase() + role.slice(1);
 
+/** A picker whose atom has not landed: T2, disabled with its reason. */
+function Placeholder({ label }: { readonly label: string }): JSX.Element {
+  return (
+    <Button size="sm" iconRight="chevron-down" disabledReason={PICKER_REASON}>
+      {label}
+    </Button>
+  );
+}
+
 /**
  * CMP-072 TopBar, first row (#304 S2; E10-D02 SCR-010, E10-D03 §2.1), props only. DOM order is the
  * focus order: wordmark, env badge, pickers, search trigger, connection chip, name and role, Sign out.
- * Stand-ins until their atoms land: T2 picker placeholders (CMP-105/219/220), a plain `<kbd>`
- * (CMP-022), name and role as text plus Sign out (CMP-061). Visible reason lines are `aria-hidden`:
- * each control carries its reason as its description. Deferred: CMP-073, CMP-211 (S7), CMP-210 (S4).
+ * Stand-ins until their atoms land: T2 picker placeholders (CMP-105/220), a plain `<kbd>`
+ * (CMP-022), name and role as text plus Sign out (CMP-061). The symbol picker (CMP-219, SCR-102's
+ * trigger) is drawn only once a workspace binds a pane, and nothing stands in for it (E08-S09).
+ * Visible reason lines are `aria-hidden`: each control carries its reason as its description.
+ * Deferred: CMP-073, CMP-211 (S7), CMP-210 (S4).
  * Deferred: unconfirmed badge state (E10-D03 §3.4), owner slice S8 (modes).
  */
 export function TopBar(props: TopBarProps): JSX.Element {
   const { user, onSearch, signingOut } = props;
-  const pickers = ["Account", "Symbol", "Interval"].map((label) => (
-    <Button key={label} size="sm" iconRight="chevron-down" disabledReason={PICKER_REASON}>
-      {label}
-    </Button>
-  ));
   return (
     <div style={ROW} data-cmp="CMP-072">
       <span style={{ fontWeight: "var(--font-weight-semibold)", fontSize: "var(--font-size-md)" }}>
         CandleViewer
       </span>
       <TopBarEnvBadge env={props.env} />
-      {pickers}
+      <Placeholder label="Account" />
+      {props.symbol}
+      <Placeholder label="Interval" />
       <span aria-hidden style={NOTE}>
         {PICKER_NOTE}
       </span>

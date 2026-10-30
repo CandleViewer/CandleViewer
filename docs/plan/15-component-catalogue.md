@@ -809,6 +809,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe.
 - **As built (E10-S01, #304)**: in `apps/web`, one row in DOM and focus order: wordmark, CMP-075 badge, the Account / Symbol / Interval pickers as disabled-with-reason placeholders ("Not available in this build."), the CMP-084 search trigger (disabled with its reason until E10-S03 registers the palette), the CMP-076 chip, the user's name and role as text and a Sign out button (CMP-061 stand-in), then the CMP-211 slot. No workspace switcher or notification centre here: notifications are the CMP-209 launcher. The badge is announced politely on every route change through the shell's one announcer.
+- **As built (E08-S09)**: the Symbol placeholder above is gone. Between the Account and Interval placeholders the TopBar draws CMP-219, opening SCR-102, only once a workspace binds a pane; until then it is absent, with no placeholder.
 
 ### CMP-073 WorkspaceSwitcher
 
