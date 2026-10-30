@@ -156,12 +156,15 @@ def execution_document(listed: ListedExecution) -> Body:
 
 def closed_pnl_document(listed: ListedExecution) -> Body:
     """22 `ClosedPnl` from a fill that carries a closed PnL (22 `listClosedPnl`): what a fill
-    holds, the closed position's side its opposite; nothing it does not hold is estimated."""
+    holds, the closed position's side its opposite; nothing it does not hold is estimated.
+    `closed_pnl` is net of fees (22 `ClosedPnl`): the fill's PnL less its own fee, the closing
+    fill's (#915, the #848 notes); the opening fills' fees are the venue's closed-PnL backfill's."""
     x = listed.execution
+    net = None if x.closed_pnl is None else x.closed_pnl - x.exec_fee
     return {
         "id": str(x.id), "exchange_account_id": str(x.exchange_account_id), "symbol": x.symbol,
         "side": "short" if x.side == "Buy" else "long", "avg_exit_price": _money(x.exec_price),
-        "closed_pnl": _money(x.closed_pnl), "closed_at": _at(x.exec_ts),
+        "closed_pnl": _money(net), "closed_at": _at(x.exec_ts),
     }  # fmt: skip
 
 

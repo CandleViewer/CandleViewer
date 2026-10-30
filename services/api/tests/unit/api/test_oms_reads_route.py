@@ -259,9 +259,41 @@ async def test_fills_and_closed_pnl_serve_what_a_fill_holds() -> None:
     closed = (await _get(World(), "/executions/closed-pnl", "manager")).json()["items"]
     assert closed == [{
         "id": fills[0]["id"], "exchange_account_id": str(ACCOUNT_A), "symbol": "BTCUSDT",
-        "side": "long", "avg_exit_price": "63099.80", "closed_pnl": "-1.25",
+        "side": "long", "avg_exit_price": "63099.80", "closed_pnl": "-8.191",
         "closed_at": "2026-10-29T12:02:00.000000Z",
     }]  # fmt: skip
+    # -8.191 is -1.25 less the closing fill's 6.941 fee: net of fees (22 ClosedPnl, #915)
+
+
+async def test_closed_pnl_is_net_of_the_closing_fills_fee() -> None:
+    """#915 (the #848 notes): 22 `ClosedPnl.closed_pnl` is net of fees; the fill's stored PnL is
+    gross of its own fee, so the fee is taken off, in `Decimal`."""
+    world = World()
+    row, group = world.store.fills[1]
+    world.store.fills[1] = (_replace(row, closed_pnl=Decimal("10.5"), exec_fee=Decimal("0.25")),
+                            group)  # fmt: skip
+    [shown] = (await _get(world, "/executions/closed-pnl", "manager")).json()["items"]
+    assert shown["closed_pnl"] == "10.25"
+
+
+async def test_closed_pnl_never_carries_a_settlement_row_that_closes_no_size() -> None:
+    """#915 (the #848 notes): a `Settle`, `SessionSettlePnl` or `Funding` row carries a PnL and
+    closes nothing: it is not a closed position."""
+    world = World()
+    row, group = world.store.fills[1]
+    for kind in ("Settle", "SessionSettlePnl", "Funding"):
+        world.store.fills[1] = (_replace(row, exec_type=kind), group)
+        listed = (await _get(world, "/executions/closed-pnl", "manager")).json()["items"]
+        assert listed == [], kind
+
+
+async def test_closed_pnl_a_fill_recovered_by_rest_holds_none_and_is_absent() -> None:
+    """#915: the venue's execution list carries no closed PnL, so a REST-recovered fill keeps
+    NULL and is not listed; a complete listing needs the venue's closed-PnL endpoint."""
+    world = World()
+    row, group = world.store.fills[1]
+    world.store.fills[1] = (_replace(row, closed_pnl=None), group)
+    assert (await _get(world, "/executions/closed-pnl", "manager")).json()["items"] == []
 
 
 async def test_a_stored_exec_type_22_does_not_name_is_absent() -> None:
@@ -567,3 +599,21 @@ async def test_get_order_with_a_history_past_its_caps_fails_closed() -> None:
     ]
     answer = await _get(world, f"/orders/{a1.id}")
     assert (answer.status_code, answer.json()["code"]) == (503, "store_unavailable")
+
+
+def test_closed_pnl_the_venues_figure_is_net_of_both_fees_documented_shape() -> None:
+    """#915 (the #848 notes): the venue's closed-PnL row, which the nightly backfill will serve,
+    is net of the opening and the closing fees: its `closedPnl` sits below its exit value less
+    its entry value. The fixture is documented-shape (docs-transcribed, exception #1778 A), not
+    recorded; it pins the semantics, never a live capture."""
+    import json as _json
+    from pathlib import Path
+
+    fixture = Path(__file__).resolve().parents[5] / (
+        "packages/fixtures/bybit/2026-10-05/rest/trading-closed-pnl.json"
+    )
+    [row] = _json.loads(fixture.read_text(encoding="utf-8"))["result"]["list"]
+    gross = Decimal(row["cumExitValue"]) - Decimal(row["cumEntryValue"])  # a long's, Sell side
+    traded = Decimal(row["cumEntryValue"]) + Decimal(row["cumExitValue"])
+    # both legs' taker fee, 0.06 % of what was traded in and out, is what the row takes off
+    assert gross - Decimal(row["closedPnl"]) == traded * Decimal("0.0006")

@@ -30,6 +30,7 @@ from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope
 from candleviewer.storage.repositories.executions import ExecutionRow
 from candleviewer.storage.repositories.oms_reads import (
+    CLOSING_EXEC_TYPES,
     MAX_ORDER_EXECUTIONS,
     ExecutionQuery,
     Keyset,
@@ -256,7 +257,7 @@ class Store:
         rows = [
             (Keyset(x.exec_ts, x.id), ListedExecution(x, g)) for x, g in self.fills
             if x.exchange_account_id in reach
-            and (not closed or x.closed_pnl is not None)
+            and (not closed or (x.closed_pnl is not None and x.exec_type in CLOSING_EXEC_TYPES))
             and query.symbol in (None, x.symbol)
             and query.order_id in (None, x.order_id)
             and query.trade_group_id in (None, g)

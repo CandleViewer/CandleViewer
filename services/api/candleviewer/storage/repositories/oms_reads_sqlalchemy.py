@@ -27,6 +27,7 @@ from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.executions import ExecutionRow
 from candleviewer.storage.repositories.executions_sqlalchemy import EXECUTION_COLUMNS
 from candleviewer.storage.repositories.oms_reads import (
+    CLOSING_EXEC_TYPES,
     MAX_ORDER_EXECUTIONS,
     MAX_POSITIONS,
     ExecutionQuery,
@@ -147,7 +148,7 @@ def executions_statement(
     accounts: Collection[UUID], after: Keyset | None, limit: int, *, closed: bool = False,
 ) -> sa.Select[Any]:  # fmt: skip
     """`listExecutions`' page: the settled accounts' fills the scope views, newest first;
-    `closed`, `listClosedPnl`'s: only the fills that carry a closed PnL."""
+    `closed`, `listClosedPnl`'s: only the fills that carry a closed PnL and close size."""
     tree, group = _fills()
     account, scoped = _X.exchange_account_id, _scoped_accounts(accounts)
     stmt = (
@@ -158,8 +159,8 @@ def executions_statement(
             scope_clause(scope, environment, account, trade=False),
         )
     )
-    if closed:
-        stmt = stmt.where(_X.closed_pnl.is_not(None))
+    if closed:  # a settlement row carries a PnL and closes no size: never carried (#915)
+        stmt = stmt.where(_X.closed_pnl.is_not(None), _X.exec_type.in_(CLOSING_EXEC_TYPES))
     if query.symbol is not None:
         stmt = stmt.where(_text(_X.symbol) == query.symbol)
     if query.order_id is not None:
