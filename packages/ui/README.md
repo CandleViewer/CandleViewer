@@ -237,6 +237,96 @@ To add an icon, put its SVG at `src/icons/source/<origin>/<name>.svg` (a Lucide 
 verbatim from the registered `lucide-static` tarball, once its sha512 matches the register row),
 add its `registry.ts` entry in name order, then run `build:icons` and `test` in `packages/ui`.
 
+## Visual regression (E05-T04)
+
+[ADR-0019](../../docs/plan/27-adrs/ADR-0019-visual-regression-tooling.md): Playwright's
+`toHaveScreenshot` against PNG baselines committed in `vr/baselines/` (plain git, no LFS).
+
+- Matrix: every story of the built Storybook's `index.json` x 3 themes x 2 densities, one test and
+  one PNG per cell, both named `{story}--{theme}--{density}`, so a missing cell fails by name. At
+  E05-T04, 726 stories made 4,356 cells. A story is left out only by a tag in `EXCLUDED_TAGS`
+  (`vr/matrix.ts`; today `perf`), and the job summary names each one. A story that pins a global
+  itself (`globals: { theme: "light" }`), or whose play function switches one, shows what it sets
+  in every cell of its row; the summary counts those cells.
+- Capture: the story's iframe (no Storybook chrome) with the theme and density set as the E05-T03
+  toolbar globals in the URL, plus `motion:system`, so E05-T02's runtime follows the OS preference.
+  The story renders and plays with none, as in the storybook job where its play function is proven;
+  then the test emulates `prefers-reduced-motion: reduce`, the runtime writes `data-motion="reduce"`
+  and its CSS stops animation for the shot (`REDUCED_MOTION`, `vr/settings.ts`). Under reduce every
+  style change is a 0.01 ms transition, so a play that reads a style right after a step would read
+  the old value. The test waits for Storybook to finish the story (play function included), checks
+  that Storybook took the cell's globals from the URL and that the reduced-motion attribute is on,
+  and clips the shot to what the story paints (`vr/clip.ts`). An overlay's scrim (a flat fill over
+  the whole viewport, out of the flow, with no text, edge or shadow of its own) is no part of that:
+  a dialog is captured as the dialog, its shadow and a 4 px edge, where a scrim change still shows.
+- A cell is never a screenshot of a partial state. Storybook 10.6 reaches `finished` even after a
+  play function threw, so the test reads the play's exception from Storybook's channel and fails
+  the cell by name (`play function failed: ...`, `vr/page.ts`). A play starts only after its
+  story's mount effects (`.storybook/mountAfterEffects.tsx`): a production build has no `act`, so
+  without that wait a play could run before the theme runtime applied the cell's globals. Once the
+  story finished, the page probe (`vr/probe.ts`) lets the timers due within 1 s fire (a tooltip's
+  hover delay), waits for 2 animation frames with no DOM mutation, then freezes every timer, interval
+  and frame; a page still changing after 3 s fails by name (`SETTLE`, `vr/settings.ts`). The clip
+  is measured twice, two frames apart, and must agree; its edges go out to whole pixels unless they
+  lie within 0.01 px of one, so float noise never changes an image's size.
+- Tolerance: a cell fails when more pixels change (pixelmatch's `threshold: 0.2`) than 2% of its
+  capture (`maxDiffPixelRatio: 0.02`) or 25 (`maxDiffPixels: 25`), whichever is smaller, with
+  `animations: "disabled"` (`vr/settings.ts`). The cap holds a capture that is still page-sized (a
+  layout drawn edge to edge) to 25 pixels instead of the 41,000 that 2% of 2 Mpx would allow; two
+  compare runs on an unchanged head found no cell past it (ADR-0019, Validation). Never raise either
+  to accept a change.
+- Determinism: a 1920x1080 viewport at `deviceScaleFactor: 1`, `en-US` and UTC, `Date` held at a
+  fixed instant by the probe except while a play runs, when it moves with real time (a countdown the
+  play waits on counts; timers and frames always stay the browser's, as in the storybook job),
+  storage cleared per cell, Playwright's own retries off. A story whose state needs room (a menu
+  that scrolls) is sized for this viewport, which is taller than the storybook job's.
+- Fonts: the token families, `font.family.ui` (Inter) and `font.family.mono` (JetBrains Mono),
+  name no `@font-face` and no generic fallback, so they draw only where they are installed. The
+  `vr` job runs on the pinned `ubuntu-24.04` image and installs both from its own archive at fixed
+  versions (noble's release pocket): `fonts-inter 4.0+ds-1` (OFL-1.1; its Debian copyright
+  records OFL-1.1 and Apache-2.0) and `fonts-jetbrains-mono 2.304+ds-4` (OFL-1.1 upstream, the design
+  brief's locked record; its Debian copyright records Apache-2). The install is
+  not best-effort: a missing package or family fails the job (CI-A11Y-008). Each shard then draws
+  a sample of each family and asks Chromium, through the DevTools protocol
+  (`CSS.getPlatformFontsForNode`), which faces it used; anything but exactly Inter and JetBrains
+  Mono fails by name (`vr/fonts.ts`), and the job summary names the faces drawn and the packages
+  installed. No font is fetched over the network: every request outside the local Storybook goes
+  to a closed port and fails the cell, naming the URL. Storybook's iframe loads only its own
+  Nunito Sans, for its chrome. Baselines come from the CI image only, never from a laptop.
+- CI: the `vr` job of `_job-a11y.yml`, in 10 shards beside `storybook`, fails the required `a11y`
+  check (CI-A11Y-006, budget CI-A11Y-007; `docs/ci-runbook.md`). Each shard runs one browser per two
+  CPUs (`workers: "50%"`): on a saturated runner a story's commit outruns React's time slice and a
+  play races its page far more often. A shard (`VR_SHARD=k/10`) takes every 10th cell of the matrix
+  from its k-th (`shardCells`, `vr/matrix.ts`), so each samples every story family and a story's six
+  cells run in six shards; Playwright's own `--shard` cut contiguous ranges, and one held the whole
+  skeleton family, whose finite sweep Storybook waits out, over its budget.
+- Local runs, for debugging only: `build:tokens`, `storybook:build`, then `vr` (Chromium once, as
+  for `storybook:test`; the static server is `python3 -m http.server` on 127.0.0.1:6007).
+
+Reviewing a diff:
+
+1. **Inspect.** The job summary lists each failed cell. The `vr-diffs-<shard>` artifact holds, per
+   cell, the baseline (`-expected.png`), the capture (`-actual.png`) and the changed pixels
+   (`-diff.png`). An unintended diff is a bug: fix the component or token. A cell under "Cells not
+   captured" has no image: its reason names the failed play step or what kept moving; fix the story
+   or the component, never the tolerance.
+2. **Accept an intentional change.** A designer approves the change first (C-10.3). Then
+   `vr:update` runs on the CI image only: the gate refuses it in CI unless the a11y workflow's
+   dispatch sets `VR_UPDATE=1`, however the update flag is spelled (`vr/gate.ts`). Run
+   `gh workflow run _job-a11y.yml --ref <branch> -f vr_update=true`; its unsharded `vr 0` job writes
+   every cell that changed beyond the tolerance and every cell with no baseline yet (a new story),
+   deletes the PNGs no cell owns, and uploads the `vr-baselines` artifact. Replace `vr/baselines/`
+   with the artifact, commit it in the same PR, push, and the PR's `vr` shards must pass. GitHub's
+   image diff shows each changed PNG. After a rebase that brings in story or token changes, run the
+   dispatch again: a new story has no baseline and a changed one diffs.
+3. **Approve.** A CODEOWNER of `vr/baselines/` reviews the PNGs (CODEOWNERS lists
+   `@CandleViewer/design-system`, `@CandleViewer/design` and `@basiltt`; any one of them satisfies
+   it), and the designer's sign-off is C-10.3's `design-approved` from `@CandleViewer/design`, which
+   CODEOWNERS does not enforce. Snapshot review never replaces the manual screen-reader pass (E05-Q02).
+
+Repository growth: a PR adds only the PNGs it changes; ADR-0019's Validation records the measured
+size of the full set.
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/ui build` — runs `build:tokens` (Style
@@ -246,3 +336,5 @@ add its `registry.ts` entry in name order, then run `build:icons` and `test` in 
 - `pnpm --filter @candleviewer/ui storybook` — dev server with the a11y addon.
 - `pnpm --filter @candleviewer/ui storybook:build` / `storybook:test` — static build / its Vitest project.
 - `pnpm --filter @candleviewer/ui test` / `test:cov` — the Vitest unit project, ≥80% gate.
+- `pnpm --filter @candleviewer/ui vr` / `vr:update` — compare with / rewrite the visual-regression
+  baselines (see "Visual regression"; `vr:update` refuses to run in CI outside its dispatch).

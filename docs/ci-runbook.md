@@ -55,7 +55,9 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*);
 │                                      beside it the `storybook` job: the Storybook build, play
 │                                      functions and axe per story, the fail-closed fixture and
-│                                      its 10 min budget (CI-A11Y-002..004)
+│                                      its 10 min budget (CI-A11Y-002..004); and the `vr` job: every
+│                                      story x theme x density against its baseline PNG, 10 shards
+│                                      of 6 min each, on pinned fonts (CI-A11Y-006..008)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
 │                                      read-only-scans (security-auth, pip-audit, register
@@ -559,6 +561,34 @@ index alone, removing nothing.
   it is also after "Start the budget clock": the Storybook budget counts the whole job and stays
   600 s, which the cached install is what keeps it inside. The same code is raised when the version
   cannot be read or the key's version is not the installed one.
+- **CI-A11Y-006** (visual-regression cell failed, `_job-a11y.yml`'s `vr` job, ADR-0019): a cell
+  (`{story}--{theme}--{density}`) has no baseline, or more of its pixels changed than 2% of its capture or 25, whichever is smaller,
+  or its story did not render, did not reach the theme runtime with the cell's globals, or asked for
+  something outside the local Storybook. A cell whose play function failed, whose page was still
+  changing after 3 s, or whose capture area kept moving is listed under "Cells not captured" with
+  its reason and has no image: fix the story or component it names. A cell that timed out or threw
+  outside the comparison is listed under "Cells that failed otherwise", with its first error line.
+  The job summary names each cell; the `vr-diffs-<shard>` artifact holds its expected, actual and
+  diff images. Review the
+  images: an unintended change is fixed in the component or token; an intended one is accepted by
+  the update path in `packages/ui/README.md` (Visual regression), never by loosening the tolerance.
+  The same code fails the audit test, which names a missing baseline or a PNG no cell owns.
+- **CI-A11Y-007** (a VR compare shard over its 360 s budget): the step summary records the measured
+  time, the job's and the compare step's own. A shard takes every n-th cell (`VR_SHARD=k/n`, n from
+  `strategy.job-total`; `packages/ui/vr/matrix.ts`), so the shards cost about the same; a story count
+  that has outgrown the budget needs another shard (one more entry in the job's matrix), not a higher
+  number. `workers: "50%"` assumes the 4-vCPU hosted runner of a public repository (2 workers a
+  shard); a 2-vCPU runner would run 1 worker and miss the budget. The `vr_update` dispatch is
+  unsharded and not budget-checked (`timeout-minutes: 40`; its update step took about 30 min in run
+  41094472587, so the headroom shrinks as stories are added) and runs the `a11y` and `storybook`
+  jobs of the same workflow too.
+- **CI-A11Y-008** (the VR fonts are not pinned): the `vr` job's font step could not install
+  `fonts-inter` or `fonts-jetbrains-mono` at the versions it pins (noble's release pocket), or
+  fontconfig has no `Inter` or `JetBrains Mono` family after the install, so the shard would draw
+  the token families in a substitute and fail every cell. Re-run once if the archive was unreachable;
+  if the pinned version is gone from the image's archive, the pin and the baselines move together in
+  one PR (`packages/ui/README.md`, Visual regression). The spec's first test checks the same in
+  Chromium and names the faces it drew.
 
 ### CI-BUILD-* — workspace build prerequisites (`tools/ci/check_built_exports.mjs`)
 

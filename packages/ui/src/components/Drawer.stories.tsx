@@ -190,9 +190,10 @@ export const HostWidthAndName: Story = {
 
 /** Long text and no control in the body: the body is a Tab stop, so the keyboard can scroll it. */
 export const LongText: Story = {
+  // 80 paragraphs: more than a 1080 px drawer holds even where none wraps (480 px wide at 1920 px).
   render: () => (
     <Demo modal={false} title="Iceberg detector">
-      {Array.from({ length: 30 }, (_, i) => (
+      {Array.from({ length: 80 }, (_, i) => (
         <p key={i} style={{ margin: 0 }}>
           A level that refills after each print, paragraph {String(i + 1)} of the methodology.
         </p>

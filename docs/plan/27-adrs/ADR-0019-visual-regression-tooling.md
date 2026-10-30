@@ -70,7 +70,7 @@ leaves the network, not just cost and DX.
   stories instead of Playwright driving the pages directly.
 - Snapshot diffing (`pixelmatch` under the hood) and tolerance config are comparable to (b), but the
   project would then run **two** browser-automation stacks in CI (Storybook test-runner's Playwright
-  under the hood, *plus* Playwright already used for `e2e`/`a11y` E2E jobs per AGENTS.md §4), doubling
+  under the hood, _plus_ Playwright already used for `e2e`/`a11y` E2E jobs per AGENTS.md §4), doubling
   browser-binary cache weight and maintenance surface without a corresponding benefit — Playwright's
   own component/story testing mode ((b)) already covers Storybook stories directly via
   `@storybook/test-runner`'s underlying engine or a direct `page.goto(storyUrl)` approach, so (c) is
@@ -97,10 +97,10 @@ Rationale, against the decision drivers:
   `--shard` across the existing job matrix). This is the **missing datum** called out below.
 - **Flake rate:** not measured for the same reason (no local runner). Anti-aliasing tolerance is
   addressed by config, not by empirical tuning in this spike: `expect(page).toHaveScreenshot(name, {
-  maxDiffPixelRatio: 0.02, animations: 'disabled' })`, fonts pinned via a container image with the
+maxDiffPixelRatio: 0.02, animations: 'disabled' })`, fonts pinned via a container image with the
   project's exact web fonts installed (no Google Fonts network fetch at capture time), and a fixed
   1920x1080 viewport + `deviceScaleFactor: 1`. Per the ticket's Flake-threshold acceptance criterion,
-  a candidate with *any* non-deterministic diff without a configurable threshold is rejected — (b)'s
+  a candidate with _any_ non-deterministic diff without a configurable threshold is rejected — (b)'s
   threshold is configurable and documented here, so it is not rejected on that criterion, but the
   two-identical-runs measurement itself is deferred to E05-T04 (first real implementation), because it
   requires the actual CI runner image this spike did not have access to.
@@ -139,6 +139,55 @@ Both will be captured as part of E05-T04's first green CI run and appended here.
 - Not yet run empirically (no docker/browser sandbox in this spike's environment). E05-T04 will run
   two consecutive identical CI jobs on `main` and record the diff count and wall-clock here as a dated
   amendment.
+
+### Amendment 2026-10-30: E05-T04 (#270) implementation
+
+- Built as decided: `packages/ui/vr/` (`packages/ui/README.md`, "Visual regression") and the `vr`
+  job of `_job-a11y.yml`, beside `storybook`, failing the required `a11y` check. Baselines are plain
+  PNGs in `packages/ui/vr/baselines/`, written only by `vr:update` on the CI image through the
+  workflow's `vr_update` dispatch.
+- Scale: 726 stories x 3 themes x 2 densities = 4,356 cells at E05-T04, about 12 times this ADR's
+  ~60-story estimate, so the job runs in 10 shards of one browser per two CPUs, each held to the 360 s
+  budget by its last step. A shard takes every 10th cell of the matrix, not a contiguous range, so the
+  slow story families spread evenly across the shards.
+- Tolerance as decided (`maxDiffPixelRatio: 0.02`, `animations: 'disabled'`), with pixelmatch's
+  `threshold: 0.2` written out, plus an absolute cap, `maxDiffPixels: 25`: Playwright fails a cell past
+  the smaller of the two. The ratio applies to a capture clipped to what the story paints, an
+  overlay's flat full-viewport scrim left out (a dialog is captured as the dialog, its shadow and a
+  4 px edge); a capture still page-sized (a layout drawn edge to edge) is held to 25 pixels, not the
+  41,000 of 2% of 2 Mpx. The cap rests on the evidence below: two compare runs on an unchanged head
+  found no cell past it, and 25 is below one changed glyph of 13 px text, so a 1 px change on a
+  page-sized capture still fails.
+- Fonts pinned: the `vr` job runs on the `ubuntu-24.04` image and installs the token families from its
+  archive at fixed versions (noble's release pocket): `fonts-inter 4.0+ds-1` (OFL-1.1; its Debian
+  copyright records OFL-1.1 and Apache-2.0) and `fonts-jetbrains-mono 2.304+ds-4` (OFL-1.1 upstream,
+  `16`'s locked record; its Debian copyright records Apache-2). The install is
+  mandatory: a missing package or family fails the job (CI-A11Y-008). Each shard asserts through the
+  DevTools protocol that Chromium draws exactly those faces, never a fontconfig substitute, and the
+  summary names the faces drawn. The token families name no generic fallback, so without the pin
+  every baseline would draw in the image's default serif.
+- Determinism measures, one per cause the first two compare runs on an unchanged head showed:
+  - A failed play: Storybook 10.6 reports `finished` even when a play function threw, so the cell
+    fails by name (`play function failed: ...`) from the play's exception on the preview channel. A
+    play runs as the storybook job runs it: after its story's mount effects (a production build has no
+    `act`), with no reduced-motion preference and a moving `Date`; reduce comes after, for the shot.
+  - Late overlays and tooltips: after `finished`, timers due within 1 s fire, then 2 animation frames
+    pass with no DOM mutation (3 s cap, a named failure), then the page's timers, intervals and
+    frames freeze before the clip is measured. Storybook's own `?freeze=finished` is not used: it
+    makes the body inert from load, so a play could not focus anything.
+  - A 1 px rounding flip: clip edges go out to whole pixels unless within 0.01 px of one, the bound is
+    Playwright's own full-page size, and two measures two frames apart must agree.
+- Measured CI wall-clock, slowest compare shard: 261 s of 360 s (run 41102959975, shard 5; its compare
+  step 135 s), and 240 s in the other run (41100190803, shard 3), the pinned-font install included.
+- Diff count over two consecutive compare runs on an unchanged head: 0 and 0, with no cell held back
+  and Inter and JetBrains Mono drawn in every shard (runs 41100190803 and 41102959975, 10 shards
+  each). A deliberate 1 px Button padding change on a throwaway branch fails all 10 shards with 914
+  diffs (run 41100463585): every non-full-width `atoms-button` cell, and every overlay cell that
+  shows a Button (ConfirmDialog 114, Dialog 78, Drawer 60, CommandPalette 26); the full-width
+  story's box does not change.
+- Full baseline set: 4,356 PNGs, 53.1 MB, written by the `vr_update` dispatch run 41094472587.
+- The first `main` run after the merge must report zero diffs; a non-zero diff is a determinism
+  defect, fixed forward with `Refs #270`.
 
 ## Follow-up configuration notes for E05-T04
 

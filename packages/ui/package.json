@@ -31,7 +31,9 @@
     "size": "echo \"@candleviewer/ui: size-limit wired alongside E05 components\"",
     "storybook": "storybook dev -p 6006 --host 127.0.0.1 -c .storybook --disable-telemetry --no-version-updates",
     "storybook:build": "storybook build -c .storybook -o storybook-static --disable-telemetry",
-    "storybook:test": "vitest run --project storybook"
+    "storybook:test": "vitest run --project storybook",
+    "vr": "playwright test -c vr/playwright.config.ts",
+    "vr:update": "playwright test -c vr/playwright.config.ts --update-snapshots=changed"
   },
   "dependencies": {
     "@floating-ui/dom": "1.8.0"

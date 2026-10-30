@@ -1,6 +1,7 @@
 import type { Preview } from "@storybook/react-vite";
 import { DENSITIES, MOTION_OVERRIDES, THEMES } from "../src/theme/index.js";
 import { withMountCount, withTokenBackground } from "./decorators.js";
+import { mountAfterEffects, withMountSignal } from "./mountAfterEffects.js";
 import "./theme-bundles.js";
 import { withThemeRuntime } from "./withThemeRuntime.js";
 
@@ -60,8 +61,11 @@ const preview: Preview = {
       },
     },
   },
-  // Innermost first: the mount counter sits on the story, the theme runtime outside everything.
-  decorators: [withMountCount, withTokenBackground, withThemeRuntime],
+  // Innermost first: the mount counter sits on the story, the theme runtime outside it, and the mount
+  // signal outside everything, so its effect runs after every other effect of the story's commit.
+  decorators: [withMountCount, withTokenBackground, withThemeRuntime, withMountSignal],
+  // A play starts once those effects ran, in a production build too (mountAfterEffects.tsx).
+  mount: mountAfterEffects,
 };
 
 export default preview;
