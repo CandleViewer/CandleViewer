@@ -2158,13 +2158,14 @@ interface ReplayScrubberProps {
 
 ### CMP-173 AuditRow
 
-- **Tier**: Molecule (owner/admin) · **Purpose**: one append-only audit log entry — actor, role, action, target, before/after diff, timestamp, IP, session.
-- **Props**: `entry: AuditEntry` (the generated type from `packages/protocol`, never hand-written) · `variant: "row" | "compact"` · `onExpand` (row only; shows before/after diff).
-- **A11y**: `row` extends CMP-049 row contract; before/after diff rendered via CMP-068 CopyableCodeBlock inside an expandable region; `compact` rows form a list — time (UTC), actor, action label and code, subject label, outcome and severity as words — each linking to SCR-136.
-- **Tokens**: `type.num.sm` (`font.family.mono`), `color.text.primary`, `color.text.secondary`, `color.text.tertiary`.
-- **Data contract**: `AuditEntry` of `22-api-openapi.yaml`, the generated type, not restated here; compact rows use `ts`, `actor_username`, `action`, `subject_label`, `outcome` and `severity`.
-- **Storybook**: Default, ExpandedDiff, SystemActor, Compact, CompactDenied, CompactElided.
+- **Tier**: Molecule (owner/admin) · **Purpose**: one append-only audit log entry — time, actor, role at the time, action, subject, environment, IP, severity and outcome — with its before/after diff in the E42-D04 diff language, which SCR-122's change summary and SCR-145's flag history reuse; it has no edit, delete or archive control.
+- **Props**: `entry: AuditEntry` (the generated type from `packages/protocol`, never hand-written) · `variant: "row" | "compact"` · `expanded?` · `onExpandedChange?` (row only; shows the before/after diff) · `onOpen` (opens SCR-136) · `afterBreakId?` (marks an entry at or after a known break as not verified in its expanded row and in SCR-136's integrity line, never the collapsed row: the incident banner covers the whole log). The diff part takes `detail` (`before`, `after`, `elided`), reads the record's shape (state, request or result) with its `outcome`, and renders typed values (`value`, `fingerprint`, `identifier`, `secret`, `secret_named`, `credential`, `personal`, `oversize`, `none`, `withheld`, `hidden`); no prop accepts a secret value and nothing is hashed.
+- **A11y**: `row` extends CMP-049 row contract: the expander is a button with `aria-expanded` and `aria-controls`; Space expands, Enter opens SCR-136; the expanded diff is a definition list per changed field with visible "Before" and "After" terms ("Requested" for a refused or intent record), never a code block (the raw JSON stays in SCR-136's CMP-068); severity and outcome are words, a write-ahead record's outcome reads "Started" or "Intent", never "Success", and the glyph is `aria-hidden`; `compact` rows form a list — time (UTC), actor, action label and code, subject label, outcome and severity as words — each linking to SCR-136.
+- **Tokens**: `type.num.sm` (`font.family.mono`), `color.text.primary`, `color.text.secondary`, `color.text.tertiary`, `color.status.danger.strong` (the octagon and the `border.thick` high-severity rule), `color.status.warning.strong` (the triangle), `font.weight.semibold`.
+- **Data contract**: `AuditEntry` of `22-api-openapi.yaml`, the generated type, not restated here; compact rows use `ts`, `actor_username`, `action`, `subject_label`, `outcome` and `severity`; the diff maps the recorded, already-redacted `detail` and the server's redaction markers to its value kinds and never derives a value of its own.
+- **Storybook**: Default, ExpandedDiff, SystemActor, Compact, CompactDenied, CompactElided, HighSeverity, ExpandedNested, ExpandedSecret, ExpandedWithheld, ExpandedRequested, WriteAhead, OwnProjection, DeletedActor, AfterBreak.
 - **Tests**: unit, visual, axe.
+- **Motion spec**: [E42-D04.md](../design/E42/E42-D04.md) (E42-D04 §13; expansion is a cut in both modes and heights never animate — PROPOSED).
 
 ### CMP-174 AuditFilterBar
 
