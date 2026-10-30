@@ -17,7 +17,7 @@ regression subset, the traceability and the open questions. E16-Q02 to E16-Q06 e
     §12 C, G and Q rows, §16.4 code routing and §20.3 frozen set); T2 is a gated control with a visible reason, T4 a
     server refusal shown at the point of action;
   - `TM` is `docs/security/threat-models/e16-recorder.md` (abuse cases `AC-01` to `AC-15`), `ADR-15` is
-    ADR-0015 and `RB` is `docs/ops/runbooks/recorder-retention.md`.
+    ADR-0015, `RB` is `docs/ops/runbooks/recorder-retention.md` and `RO` is `docs/ops/runbooks/recorder-rolloff.md`.
 - **Where the ticket text and the merged design differ**, the case follows the merged design: D06 §12.1 C-r to
   C-z record each difference, the orchestrator ruled "merged wins" (D06 R374 BQ-24), and the E16-D06 hand-off
   comment on #404 corrects this ticket's text. Where merged sources differ from each other, the case says so,
@@ -34,7 +34,8 @@ regression subset, the traceability and the open questions. E16-Q02 to E16-Q06 e
 - **Oracles, in the ticket's order:** an exact row-and-byte manifest (section 5) > an API response assertion > a UI assertion; a
   UI-only oracle is used only on presentation cases, and the case says so. Every case also names a secondary oracle, an audit
   action (a name `22` declares, else the registry's) or a metric from the E16 tickets' Observability sections: a pass whose secondary
-  record is missing fails the case, and a read-only case says "none (a read)".
+  record is missing fails the case, and a read-only case says "none (a read)". A † after a metric marks one that nothing emits on
+  `main` yet: the case asserts its stand-in from the Known gaps table of section 10 until the owner ships it.
 - **Time and destruction:** sections 4 and 5 bind every case. No case sleeps or relies on more than 5 minutes
   of real elapsed time, and every case that can delete runs on the scratch dataset only.
 
@@ -49,14 +50,15 @@ automation code, the perf and chaos scripts and the a11y audit (section 8).
 
 **Read first:** `03` §9, §11 and §16; `04` §5.8 and §7.2.2 rows 8 to 9c; ADR-0015; `22` tag `recording` and
 `/admin/recorder/*`; `23` §6.2.2; D02 to D06; `14` SCR-140 to SCR-142, SCR-047 and SCR-151; `TM`; the E16-X02
-record `docs/security/reviews/e16-recorder-review.md` (verdicts only); `RB` and `docs/ops/runbooks/recorder.md`; the
+record `docs/security/reviews/e16-recorder-review.md` (verdicts only); `RB`, `RO` and `docs/ops/runbooks/recorder.md`; the
 E16-K01 note `docs/plan/notes/e16-storage-measurement.md`.
 
 **Deviations from the ticket** (repeated in the PR): the ticket's path `docs/qa/test-plans/` is new, since plans
-live in `docs/qa/` and `qa/plans/` today (a reviewer may relocate it); five scenarios follow the merged design's
-reading, not the ticket's: S01.7 (Viewer sees status), S01.8 (polling), S02.1 (the notice), S03.3 (the
-client-side inversion check) and S04.7 (a five-minute stale limit), for the reasons in D06 C-r, C-t, C-u, C-w and
-C-y (section 10); and the matrix's "disk-warning" covers ladder levels 1 and 2, "disk-critical" level 3 (D02 §3).
+live in `docs/qa/` and `qa/plans/` today (a reviewer may relocate it); seven scenarios follow the merged design's
+reading, not the ticket's: S01.6 (a warning banner: a polite notice, D06 C-t), S01.7 (Viewer sees status: a restricted view,
+C-r), S01.8 (a polling fallback: not designed, Q-04), S02.1 (the notice: the chip and its Stop, C-y), S03.3 (the client-side
+inversion check: a server refusal, C-u), S04.5 (a cancel control: none, D04-G10) and S04.7 (a five-minute stale limit: two
+missed 60 s reports, C-w), see section 10; and the matrix's "disk-warning" covers ladder levels 1 and 2, "disk-critical" level 3 (D02 §3).
 
 ## 2. The test matrix
 
@@ -105,12 +107,13 @@ from sections 4 to 6 alone. `M(pre)` and `M(post)` are the manifests of section 
 **E16-Q01-C01 Fresh install records nothing and says so [R]** (`e2e`, `contract`; OWNER · empty; mirrors US-REC-001/1, S01.1, T02.1,
 T08.2; D02 §3 `empty`)
 
-- Pre: FX-EMPTY.
+- Pre: FX-EMPTY on the default configuration (no `CV_RECORDER_*` override): the one case that runs on the defaults (section 4).
 - Steps: read `listRecordedSymbols` and `getRecordingStatus`; take `M(pre)`; open `/admin/recorder`.
-- Expected: `200` with `items: []` and `symbols: []`, never `404`; no subscription requested and no session; the page shows "Nothing
-  is recorded yet", the default statement and one primary action "Record a symbol"; the disk card reads "Nothing recorded · 0 GB of
+- Expected: `200` with `items: []` and `symbols: []`, never `404`; no subscription requested and no session; `policy.autostart_delay_s`
+  is 60 and `policy.autostop_grace_s` is 1 800, the 30-minute default (US-REC-002 NFR; T02.3, T02.5); the page shows "Nothing is
+  recorded yet", the default statement and one primary action "Record a symbol"; the disk card reads "Nothing recorded · 0 GB of
   {cap} GB" with no projection.
-- Oracle: `M(pre)` holds no row for any symbol > the two reads > the page text (a presentation check). 2nd: `recorder_symbols_active`
+- Oracle: `M(pre)` holds no row for any symbol > the two reads > the page text (a presentation check). 2nd: `recorder_symbols_active`†
   is 0 and no `recorder.start` record exists.
 
 **E16-Q01-C02 Add starts recording within 5 s and persists the streams [R]** (`e2e`, `integration`; OWNER · empty to recording;
@@ -123,7 +126,7 @@ mirrors US-REC-001/2, S01.2, T02.2; D02 §6.1)
   rows reach the hot tier and one session opens; the repeat answers `200` with the same row and opens no second session. The corpus
   holds no recorded liquidation frames (FX-G2), so that leg asserts the active subscription (`streams` lists it) only.
 - Oracle: `M(post)` per-stream row counts equal the replayed frames' distinct keys > `listRecordedSymbols` and `listRecordingSessions` >
-  the grid. 2nd: one `recorder.start`; `recorder_start_latency_seconds` under 5 s.
+  the grid. 2nd: one `recorder.start`; `recorder_start_latency_seconds`† under 5 s.
 
 **E16-Q01-C03 Add refusals leave nothing behind [F]** (`contract`, `e2e`; OWNER · recording; mirrors T08.1; `22` `addRecordedSymbol`;
 D02 §6.1; D06 §16.4 rows 2, 4, 5)
@@ -135,7 +138,7 @@ D02 §6.1; D06 §16.4 rows 2, 4, 5)
   session and no `recorder.start`; a malformed call spends none of the 30-a-minute write budget (TM R-D7). At the cap "Start
   recording" is `aria-disabled` with `recorder.symbol_cap` ("The symbol limit is reached.") in the DOM at mount (D06 T2-02).
 - Oracle: status and code per call > `M(pre)` equals `M(post)` > the button's state (a presentation check). 2nd: only the step-up
-  refusal writes a record (`auth.step_up_required`); `http_requests_total{route}` counts all.
+  refusal writes a record (`auth.step_up_required`); `http_requests_total{route}`† counts all.
 
 **E16-Q01-C04 Stop confirms first, lingers, and keeps its data [R]** (`e2e`; OWNER · recording; mirrors US-REC-001/3, S01.5, T08.3;
 D02 §6.2, §4.1)
@@ -147,7 +150,7 @@ D02 §6.2, §4.1)
   `linger_until`; at the grace end the session closes (`ended_at`) and the row reads "Stopped {date} · gone by {date}"; every recorded
   row stays readable.
 - Oracle: `M(pre)` equals `M(post)` (no file or row of ETHUSDT removed) > `listRecordedSymbols` and `listRecordingSessions` > the
-  dialog text. 2nd: one `recorder.stop`; `recorder_autostop_total` rises once, after the grace.
+  dialog text. 2nd: one `recorder.stop`; `recorder_autostop_total`† rises once, after the grace.
 
 **E16-Q01-C05 Stop is refused while a trigger holds the symbol [F]** (`e2e`, `contract`; OWNER · recording; mirrors S01.4, T02.4; D02
 §6.3; D06 T2-01; `22` `removeRecordedSymbol`)
@@ -194,7 +197,7 @@ recording; mirrors S01.7, S02.3, S03.7, AC-07; D02 §7; `23` §6.2.2; D06 §20.3
   tag with its last words; no figure reads as live; controls stay enabled, since the server decides a press; the first frame after the
   reconnect clears the state. The ticket's polling fallback is not designed (D06 Q-04): that half is **blocked on E16-D02's owner**
   (OQ-8).
-- Oracle: UI (a presentation case) > the harness's timestamped frame log. 2nd: `ws_topic_subscribers{topic="recorder"}` drops, then
+- Oracle: UI (a presentation case) > the harness's timestamped frame log. 2nd: `ws_topic_subscribers{topic="recorder"}`† drops, then
   recovers.
 
 ### 3.2 US-REC-002 Auto-record triggers (Must)
@@ -209,8 +212,9 @@ mirrors US-REC-002/1, T02.3, S01.3, S02.1, S02.2, S02.5; D02 decision 2, §5.1, 
   naming the trigger; SCR-047 counts down "Recording starts automatically in {m:ss}", then reads "Recording started {hh:mm} UTC" once;
   the REC chip states its state in text on all three hosts, in agreement, from one subscription; no toast or notice appears (decision
   2: the chip and its Stop are the disclosure, so S02.1's notice is not built: OQ-8).
-- Oracle: `M` has no SOLUSDT row after the first visit > `listRecordedSymbols` (`reason: chart_open`) and `getRecordingStatus.policy` >
-  the chip texts. 2nd: `recorder.start` (reason `chart_open`); `recorder_autostart_total` +1.
+- Oracle: `M` has no SOLUSDT row after the first visit > `listRecordedSymbols` (`reason: chart_open`) and
+  `getRecordingStatus.policy` (the configured 20 s; the defaults are C01's) > the chip texts. 2nd: `recorder.start` (reason
+  `chart_open`); `recorder_autostart_total`† +1.
 
 **E16-Q01-C10 An open position records at once and cannot be released; blocked on E29-T06** (`integration`; OWNER · recording;
 mirrors US-REC-002/2, T02.4; D02 §4.1 "Auto: position"; OQ-4)
@@ -219,7 +223,7 @@ mirrors US-REC-002/2, T02.4; D02 §4.1 "Auto: position"; OQ-4)
 - Steps: open a position on XRPUSDT; read the set in the same tick; try to stop it; close the position and wait out the grace.
 - Expected: XRPUSDT enters the set in that tick with reason `position_open`, cannot leave while the position is open (C05's
   `position_*` reasons), and after the close and the grace stops and falls under the auto policy.
-- Oracle: `listRecordedSymbols` > `listRecordingSessions`. 2nd: `recorder_symbols_active{reason="position_open"}`.
+- Oracle: `listRecordedSymbols` > `listRecordingSessions`. 2nd: `recorder_symbols_active{reason="position_open"}`†.
 
 **E16-Q01-C11 The grace keeps one session, and a manual entry survives trigger loss [R]** (`integration`; OWNER · recording; mirrors
 US-REC-002/3, T02.5, T02.6; D02 §4.1)
@@ -231,7 +235,7 @@ US-REC-002/3, T02.5, T02.6; D02 §4.1)
   no trigger left the session closes and the row falls under the auto policy (unpinned, default days); the manual symbol stays in the
   set with reason `manual`.
 - Oracle: `listRecordingSessions` (one session id across the reopen) and an empty gap list > `M` (rows continuous) > the row text
-  "Recording · stops in {n} min". 2nd: `recorder_autostop_total` rises once, only after the grace.
+  "Recording · stops in {n} min". 2nd: `recorder_autostop_total`† rises once, only after the grace.
 
 **E16-Q01-C12 Auto-record is refused at the cap and under disk pressure; the explicit list is not [F]** (`integration`; OWNER ·
 disk-warning; mirrors T07.3, T07.6, AC-02; US-REC-002 NFR; D02 §3 `paused`, §4.1; D05 §4)
@@ -257,7 +261,7 @@ AC-02; TM R-S1, R-D2)
   live-only with the UI note; an alert fires; `level` does not rise because of the run; triggers come from the authenticated
   subscription, never a client-supplied flag.
 - Oracle: `M` (distinct recorded symbols at most the cap) > `listRecordedSymbols` > `getStorageUsage.level`. 2nd:
-  `recorder_symbols_active{reason="chart_open"}` holds at the cap.
+  `recorder_symbols_active{reason="chart_open"}`† holds at the cap.
 
 ### 3.3 US-REC-003 Retention policy and pinning (Must)
 
@@ -330,10 +334,11 @@ mirrors S03.2; D03 §5; D02 §6.4)
 - Pre: FX-A; the scheduler on, then off.
 - Steps: apply a lengthening without `apply_now`; apply a reduction with `apply_now=true`; press Apply now again while it runs; with
   the scheduler off apply now.
-- Expected: `200`, "takes effect at the next nightly sweep", nothing deleted yet; with `apply_now` a `retention_sweep` job shows
-  "Retention run queued", "running · 42 %" and "succeeded", one polite announcement per terminal state; a second run answers
-  `409 job_running` ("A retention run is already running." as T4); with the scheduler off `apply_now` answers `409 conflict` and
-  stores nothing.
+- Expected: `200` and nothing deleted yet; the footer reads "Retention policy saved. Audited as retention.change." (polite, once) and
+  then, at rest, "Next retention run: daily at 03:00 UTC" (D03 §8); with `apply_now` a `retention_sweep` job shows "Retention run
+  queued", "Retention run running · 42 %" and "Retention run succeeded", one polite announcement per terminal state; a second run
+  answers `409 job_running` ("A retention run is already running.", D03 §4, as T4); with the scheduler off `apply_now` answers
+  `409 conflict` and stores nothing.
 - Oracle: statuses and the `getJob` state sequence > `M` equal right after the `PUT` > the footer. 2nd: `retention.change` before the
   store; with the audit writer down `503 audit_unavailable` and nothing stored.
 
@@ -392,36 +397,56 @@ recording; mirrors T06.6, T08.5, AC-04, AC-05, AC-13; `22` `purgeRecordedData`; 
   for any row.
 
 **E16-Q01-C24 An accepted purge deletes exactly its window, audited first [R]** (`integration`, `e2e`; OWNER · recording; mirrors
-T06.6, AC-06; US-REC-003; `22` `purgeRecordedData`; D02 §6.5; D06 §20.3 (ii), (viii))
+T06.6, AC-06; US-REC-003; `22` `purgeRecordedData`; D02 §6.5; D06 §20.3 (ii), (viii); RB "Owner purge")
 
-- Pre: FX-A, FX-B and FX-C loaded; the target is ETHUSDT with `before` at 00:00 UTC of day T-20 (a day boundary).
+- Pre: FX-A, FX-B and FX-C loaded; the target is ETHUSDT with `before` at 00:00 UTC of day T-20 (a day boundary), so the window holds
+  cold partitions only (FX-A's hot partitions are T-7 to T).
 - Steps: open the dialog from the card; fill symbol, `before`, reason and the typed symbol; complete a fresh step-up; poll the job;
   take `M(post)`; read the audit and verify its chain.
 - Expected: the typed field mounts empty and the body states the window, the size and "It cannot be undone"; `202` with a `job_id`;
   `retention.purge` with the exact window, partitions, rows and bytes exists before the job starts; the job ends `succeeded` ("Purged
-  {size} of ETHUSDT data"); the delta is exactly ETHUSDT's cold partitions dated T-35 to T-21; data at or after `before`, other
-  symbols, pinned data and the session, gap and audit rows are untouched; hot day partitions shared with other symbols are skipped
-  (`shared_partition`) and left to the roll-off; the audit chain verifies.
+  {size} of ETHUSDT data"); the delta is exactly ETHUSDT's cold partitions dated T-35 to T-21 (none at T-30); data at or after
+  `before`, other symbols, pinned data and the session, gap and audit rows are untouched; the audit chain verifies.
 - Oracle: `M(pre)` minus `M(post)` equals the window > `getJob.result` (partitions, bytes) > the dialog and outcome text. 2nd:
   `retention.purge` (write-ahead, then closing), one `data.deleted` per partition, `auth.step_up_*`.
+- Variant b, hot days shared with another symbol: `before` at 00:00 UTC of day T-3, so the window also holds ETHUSDT's hot partitions
+  T-7 to T-4, and FX-B's BTCUSDT rows share those days. The four are held at planning, listed with reason `shared_partition` in the
+  write-ahead record's `window.protected` and in the job result's `protected`, never dropped and left to the roll-off (RB "Owner
+  purge"); BTCUSDT's rows are intact and the delta is ETHUSDT's cold partitions only (T-35 to T-8, none at T-30).
 
-**E16-Q01-C25 Destructive actions on a symbol with an open position; blocked on E29-T06 and the `22` owner** (OQ-4; mirrors D06 Q-07):
-`22` declares no open-position check on the purge route and D02 keeps positions recording at level 3, so no source states what a
-purge, a sweep or a compaction does to a symbol with an open position. The case runs on FX-E and records the observed result as "not
-specified", never as a pass, until the owners answer.
+**E16-Q01-C25 Destructive actions on a symbol with an open position; blocked on E29-T06 and the `22` owner** (`integration`; OWNER ·
+recording; mirrors D06 Q-07; `22` `setRetentionPolicies`, `compactRecorder`, `purgeRecordedData`; D02 §3, §4.1; OQ-4)
+
+- Pre: FX-E with FX-A's aged history seeded for XRPUSDT (cold T-35 to T-8 except T-30, hot T-7 to T), the position open and the symbol
+  recording under `position_open`; a fresh seed for each of the three actions.
+- Steps: (a) store a `drop` row for XRPUSDT trades at 30 d and `PUT` the set with `apply_now=true`; (b) `POST /admin/recorder/compact`
+  for XRPUSDT; (c) purge XRPUSDT with `before` at 00:00 UTC of day T-20, a valid body and a fresh step-up. Take `M(pre)` and `M(post)`
+  around each, the position open throughout.
+- Expected: no source states the result: `22` declares no open-position check on the purge route (D06 Q-07 cites :15427 to :15431)
+  and D02 keeps position rows recording at level 3, so each action's status and delta are recorded as "not specified", never judged.
+  Asserted in all three: the row stays `recording` with reason `position_open` (T02.4, INV-B11-a), no session closes, rows newer than
+  the action's window keep arriving, and the action's own audit record exists.
+- Oracle: `listRecordedSymbols` and `listRecordingSessions` > `M` (new rows arrive; the observed delta goes to the case record, not the
+  pass line) > the job results. 2nd: `retention.run` with `data.deleted`; `recorder.compact`; `retention.purge`.
 
 ### 3.4 US-REC-004 Hot and cold tier management (Must)
 
 **E16-Q01-C26 The roll-off archives, verifies, then drops [R] [R2]** (`integration`; OWNER · recording; mirrors US-REC-004/1,
-US-REC-004/3, T05.1, T05.2; RB; `21` §6)
+US-REC-004/3, T05.1, T05.2; RO; `21` §6)
 
-- Pre: FX-A with hot partitions past the hot window; the scheduler on; one pass on demand (section 4).
-- Steps: take `M(pre)`; trigger the pass; take `M(post)`; read coverage. Variant b: fail the verify step (OQ-13).
-- Expected: Parquet files exist at the documented layout; per symbol-day the Parquet row count and checksum equal the hot partition's
-  before it drops, and the watermark advances; coverage splits at it (`parquet` older, `questdb` newer). Variant b [F]: the hot day is
-  kept, the partial file quarantined, an alert raised and the pass retried with backoff.
-- Oracle: `M` (hot `pre` equals cold `post` per symbol-day; hot `post` absent) > `getDataCoverage`. 2nd:
-  `recorder_rolloff_bytes_total{stream}`; variant b `recorder_rolloff_failures_total`. Variant b is **blocked on E16-T05's owner**.
+- Pre: FX-A with its hot tier at T-19 to T-9 and T-7 to T (none at T-8, the boundary day: a 7-day window plus the roll-off's one-day
+  margin, RO) over cold T-35 to T-20, no other symbol holding hot rows; an explicit `archive_parquet` row for ETHUSDT trades at 7 d, so
+  T-19 to T-9 are past the hot window; the scheduler on; one pass on demand (section 4).
+- Steps: take `M(pre)`; trigger the pass; take `M(post)`; read coverage. Variant b: fail the verify step of one day (OQ-13).
+- Expected: Parquet files exist at the documented layout for T-19 to T-9; per symbol-day the Parquet row count and checksum equal the
+  hot partition's before it drops, and the watermark advances (`archived_through_us` at 00:00 UTC of T-8 in
+  `_manifests/_watermarks/trades/symbol=ETHUSDT.json`); the hot partitions T-19 to T-9 are gone and T-7 to T stay; coverage splits at
+  the watermark (`parquet` older, `questdb` newer). Variant b [F]: the hot day is kept, its partial file sits under `_quarantine/`
+  with its `.reason.json` sidecar and no manifest entry, an alert is raised and the day is retried with backoff; if it keeps failing,
+  the stream stops below it and `rolloff_stream_stopped` names the day (RO "Stuck watermark", "Quarantined file").
+- Oracle: `M` (hot `pre` equals cold `post` per symbol-day; hot `post` absent; the watermark file) > `getDataCoverage`. 2nd: one
+  `retention.purge` per dropped day (RO "How it works"); `recorder_rolloff_bytes_total{stream}`; variant b
+  `recorder_rolloff_failures_total{reason}`. Variant b is **blocked on E16-T05's owner**.
 
 **E16-Q01-C27 A query across both tiers is seamless [R] [R2]** (`integration`; OWNER · recording; mirrors US-REC-004/2, T05.3)
 
@@ -441,14 +466,20 @@ T05.4; `22` `compactRecorder`; D04 §6; D06 C-d)
   queued, running and "Compacted at {hh:mm} UTC" once, with no cancel (D04-G10).
 - Oracle: `M` (rows per symbol-day equal; the leased partition's files byte-identical) > `getJob`. 2nd: `recorder.compact`.
 
-**E16-Q01-C29 Raw book data past 180 days is downsampled; the label is blocked** (`integration`; OWNER · recording; mirrors T05.5;
-`21` §7; OQ-10)
+**E16-Q01-C29 Raw book data past 180 days is downsampled; blocked on E16-T05 (unwired, and the label)** (`integration`; OWNER ·
+recording; mirrors T05.5; `21` §7; RO; OQ-10, OQ-13, OQ-14)
 
-- Pre: FX-C with `orderbook_delta` partitions older than 180 days.
-- Steps: run a roll-off pass; take `M(post)`; read coverage over the range.
-- Expected: raw partitions are replaced by 1 s book snapshots and the downsample is recorded; the coverage label "downsampled" is
-  **blocked on the E16-T05 and E16-T08 owners**, since `22` `DataCoverage` has no such field.
-- Oracle: `M` (raw partition absent, 1 s snapshot partition present). 2nd: `retention.downsample`.
+- Pre: FX-A with `orderbook_delta` cold partitions at T-200, T-185 and T-10 (ETHUSDT, unpinned); the roll-off built with its
+  downsampler and its cold-symbol source (it is not on `main`: see Expected).
+- Steps: run a roll-off pass; take `M(pre)` and `M(post)`; read coverage over the range.
+- Expected: the T-200 and T-185 raw partitions are replaced by 1 s book snapshots, T-10 stays raw, and a write-ahead
+  `retention.downsample` record names the symbol and stream before the first file is replaced. The coverage label "downsampled" has
+  no `22` `DataCoverage` field (OQ-10). The whole case is **blocked on E16-T05's owner**: `rolloff_wiring.py:48` builds the roll-off
+  job with no `downsampler` and no `cold_symbols`, so `_downsample` (`recorder/rolloff.py:430`) returns at once and replaces nothing
+  on `main`. Variant b, a pinned symbol (FX-C's raw `orderbook_delta` at T-800, T-740 and T-200): **blocked on OQ-14**; its observed
+  result is recorded as "not specified", never judged.
+- Oracle: `M` (raw partitions absent, 1 s snapshot partitions present, T-10 and every other symbol unchanged). 2nd:
+  `retention.downsample` (phase `intent`).
 
 **E16-Q01-C30 SCR-142 never shows an unreachable tier or an old sample as live [F]** (`e2e`; OWNER · degraded; mirrors S04.4, S04.7;
 D04 §5)
@@ -480,7 +511,8 @@ US-REC-005/1, T07.1, S04.1, S04.2; `22` `getStorageUsage`; D04 §3)
 **E16-Q01-C32 Level 1: the warning is specific and names the actions [R]** (`integration`, `e2e`; OWNER · disk-warning; mirrors
 US-REC-005/2, T07.2, S01.6, S04.3; D02 §3 `disk warning`; D04 §5)
 
-- Pre: the cap sized so seeded bytes are 82 % of `cap_bytes`; separately a seeded slope that reaches the cap in 6 days.
+- Pre: FX-A, FX-B and FX-SAMPLES, the cap sized so seeded bytes are 82 % of `cap_bytes`; separately FX-SAMPLES with a slope that
+  reaches the cap in 6 days.
 - Steps: read `getStorageUsage`; open SCR-140 and SCR-142.
 - Expected: `level: 1`, `write_gate: open`; SCR-140's card reads "Near limit · auto-record pauses in about {n} days · clears below 75
   %" with "Recording budget 82.0 % used" and units, as a polite notice with no banner (D06 C-t); SCR-142 adds "Recording pauses before
@@ -500,7 +532,8 @@ disk-critical; mirrors US-REC-005/3, T07.4, T07.5, S04.3, AC-10; D02 §3 `disk c
   row but the position's reads "Gated · data dropped" (a new add too) and Compact, Purge and Import stay enabled; SCR-142 says
   recording paused and trading unaffected; the order submits and cancels.
 - Oracle: `M` (no deletion; gap rows for the dropped windows) > `getStorageUsage` > the banner. 2nd: `RecorderWriteGateClosed`;
-  `recorder_rows_dropped_total`. The fill to 90 % then 100 % at scale is E16-Q04's (section 8).
+  `trade_writes_dropped_total`, `book_writes_dropped_total` and `ticker_writes_dropped_total`, the inputs of
+  `RecorderMessagesDropped`. The fill to 90 % then 100 % at scale is E16-Q04's (section 8).
 - Variant b, a shared or missing recording volume (SR-096; RB "Recording stays refused"): `level: 3`, `write_gate: closed`,
   `write_gate_reason: volume_refused`, SCR-142 reads "The recording volume was refused at start-up; the gate opens once it is fixed",
   and the API and trading stay up; `CV_ALLOW_SHARED_VOLUME` is refused at boot outside testnet (C55).
@@ -508,7 +541,8 @@ disk-critical; mirrors US-REC-005/3, T07.4, T07.5, S04.3, AC-10; D02 §3 `disk c
 **E16-Q01-C34 A disconnect yields one explicit gap and a new session [R] [R2]** (`integration`; OWNER · degraded; mirrors
 US-REC-006/1, T04.1; `23`; D05 §2)
 
-- Pre: ETHUSDT recording from the recorded reconnect fixture, re-stamped so the outage lasts 12 minutes of event time.
+- Pre: FX-A recording, its feed replaying `ws/reconnect_publicTrade_ETHUSDT.jsonl` re-stamped so the outage lasts 12 minutes of
+  event time.
 - Steps: replay the outage and the resubscribe with a fresh snapshot; read the sessions, coverage and the row detail.
 - Expected: the open session closes, one `recording_gaps` row with cause `ws_disconnect` covers exactly the outage window and a new
   session opens; the row detail's "Gaps (last 24 h)" lists start, end, duration and reason; nothing is interpolated.
@@ -529,7 +563,7 @@ mirrors T04.2, US-REC-006/1; `22` `getDataCoverage`; D05 §3)
 **E16-Q01-C36 A window before the recording start is refused with its timestamp [R] [R2] [F]** (`contract`, `e2e`; OWNER, VIEWER ·
 recording; mirrors T04.3, T08.8, S05.2; `22` `getBars`; D05 §4)
 
-- Pre: a symbol whose recording began yesterday.
+- Pre: FX-A seeded with one session that opened at 00:00 UTC of T-1 and nothing older (a symbol whose recording began yesterday).
 - Steps: request bars for a window entirely before the start; open the same window in the chart.
 - Expected: `422 no_data_recorded` carrying `recording_started_at`, never an empty success; the chart reads "History starts {date}
   {hh:mm} UTC — recording began then." with "Go to recorded history", the same for every role; the server's message is never shown.
@@ -554,10 +588,21 @@ S05.5; D05 §1.5; OQ-10)
   (D05-G1): the API half is **blocked on E16-S05 (#487)**.
 - Oracle: `M` (`recording_gaps.backfilled`, the bars rows) > coverage > the chart line. 2nd: none beyond the rows.
 
-**E16-Q01-C39 The daily integrity job reports what it cannot explain; blocked on E16-T04** (OQ-7; mirrors US-REC-006/2): the job
-(`recorder/integrity.py`) writes a `seq_jump` gap for an unexplained sequence break and raises `recorder.integrity_anomaly` for data
-outside every session, but it has no scheduler wiring and no trigger in `22` at the base. The seed is ready
-(`ws/gap_orderbook_ETHUSDT.jsonl`); the oracle once unblocked: `M` (a `seq_jump` gap row) > the system event.
+**E16-Q01-C39 The integrity job writes a `seq_jump` gap for an unexplained break and raises an event for stray data; blocked on
+E16-T04** (`integration`; OWNER · degraded; mirrors US-REC-006/2; `recorder/integrity.py`; OQ-7)
+
+- Pre: FX-A with a session that opened at the first re-stamped row, its `trades` and `orderbook_delta` continuous from there to the run
+  and inside the job's window (the last 24 h): the `orderbook_delta` from `ws/gap_orderbook_ETHUSDT.jsonl` (its update id jumps by 3
+  at frame 30) is break 1; the same file again later, covered by a seeded `ws_disconnect` gap row, is break 2; and a block of `trades`
+  rows is stamped in a window no session covers.
+- Steps: run the job once for ETHUSDT over `trades` and `orderbook_delta` (the trigger is OQ-7's: the base has none); take `M(pre)` and
+  `M(post)`; read `recording_gaps`, `getDataCoverage` and the system events; run the job a second time.
+- Expected: break 1 becomes one new `recording_gaps` row with cause `seq_jump` covering exactly the break (REST reason `seq_jump`);
+  break 2 writes nothing, since a gap row already explains it; the stray rows raise one critical `recorder.integrity_anomaly` event
+  (T04's "unexplainable"; its `anomaly` detail reads `data_outside_session`) and are neither repaired nor deleted; no other anomaly is
+  raised; the second run writes no further gap row.
+- Oracle: `M` (the new `recording_gaps` row; the data tiers unchanged) > `getDataCoverage` (reason `seq_jump`) > the system event. 2nd:
+  `recorder_integrity_anomalies_total{kind="gap"}` +1 and `{kind="event"}` +1 on the first run.
 
 **E16-Q01-C40 Gaps and empty states name their cause, by role [R] [R2]** (`e2e`, `a11y`; OWNER, a session without `recording:write`,
 view-as; mirrors S02.4, S05.1, S05.3, S05.4; D05 §2, §4; D06 T2-13, T2-14)
@@ -622,8 +667,10 @@ D06 Q-07)
 - Steps: start the import; stop the API after file 12 completes (no cancel route: D04-G10); restart; re-send the same request; poll
   the old job id; reload the page with no job id.
 - Expected: the import resumes at file 13 and the host log shows files 1 to 12 requested once; `M(post)` equals an uninterrupted run
-  and a finished import re-run is a no-op; the old id answers `404 job_unknown`; a press with no job id meets `409 job_running` as T4
-  ("An import is already running.") and the card stays enabled.
+  and a finished import re-run is a no-op; the old id answers `404 not_found`, rule `job_unknown` (`22` `getJob`: jobs are lost at a
+  restart); a press with no job id meets `409 job_running` as T4 ("A {verb} is already running.", D04 §14
+  `storage.job.refused.running`, the code in parentheses; `22` words the response "An import job is already running.") and the card
+  stays enabled.
 - Oracle: the host log and `M(post)` > `getJob` > the text. 2nd: `import_duration_seconds`; no second `recorder.import` accept for
   finished days.
 
@@ -639,7 +686,7 @@ S04.6; D04 §8; `22` `getDataCoverage`; OQ-9)
 
 **E16-Q01-C47 Hostile and oversized imports are refused and write nothing outside the root [R] [F]** (`security`, `contract`; OWNER; mirrors AC-08, AC-09, AC-15; TM R-E4, R-T2, R-D3; D06 §16.4 rows 9, 15, 16)
 
-- Pre: the scratch root with a sentinel tree beside it; the mock host serving hostile members.
+- Pre: FX-D's hostile-members variant on the mock host; the scratch root with a sentinel tree beside it.
 - Steps and expected, one row each; in every row the sentinel tree and `M` are unchanged and no staging file remains:
 
 | Row | Input                                                               | Expected                                                                        |
@@ -652,7 +699,7 @@ S04.6; D04 §8; `22` `getDataCoverage`; OQ-9)
 | f   | a second import while one runs                                      | `409 job_running`                                                               |
 
 - Oracle: status and code per row > the sentinel tree and `M` unchanged. 2nd: `recorder.import` outcome for an accepted call;
-  `recorder_path_containment_reject_total`.
+  `recorder_path_containment_reject_total`†.
 
 ### 3.8 US-REC-008 Recorder health and control (Must)
 
@@ -667,15 +714,17 @@ US-REC-008/1, T08.1, T08.7; `23` §6.2.2, §15.8; D02 §6.7; D06 §7 BG-01)
   the disk rate; the summary region changes only on a change of state, at most once per 10 s, never with a per-row number; REST and
   the frame agree.
 - Oracle: schema validation and frame timestamps > REST equality > the region's text mutations. 2nd:
-  `ws_topic_subscribers{topic="recorder"}`; `recorder_status_cache_age_seconds` is exported.
+  `ws_topic_subscribers{topic="recorder"}`†; `recorder_status_cache_age_seconds` is exported.
 
 **E16-Q01-C49 The writer stores every event exactly once [R]** (`integration`; OWNER · recording; mirrors T03.1; `21`)
 
-- Pre: BTCUSDT at depth 200, with the recorded tape and book windows replayed for 10 minutes of event time.
+- Pre: FX-EMPTY with BTCUSDT added at depth 200; the feed of C02, the recorded tape and book windows, replayed for 10 minutes of
+  event time.
 - Steps: replay; wait for the flush; read `M(post)` and the backlog metric.
 - Expected: every event appears exactly once in its table (the count equals the replayed frames' distinct
   `(symbol, stream, exch_ts, seq)`); `recorder_write_backlog_rows` is 0 at p95.
-- Oracle: `M(post)` against the fixture's distinct-key count > the backlog p95. 2nd: `recorder_rows_dropped_total` unchanged.
+- Oracle: `M(post)` against the fixture's distinct-key count > the backlog p95. 2nd: `trade_writes_dropped_total`,
+  `book_writes_dropped_total` and `ticker_writes_dropped_total` unchanged.
 
 **E16-Q01-C50 QuestDB down: spill, replay in order, and exhaustion becomes an explicit gap [F]** (`integration`; OWNER · degraded;
 mirrors T03.2, T03.3, T03.4, AC-11; ADR-15 d8)
@@ -690,14 +739,23 @@ mirrors T03.2, T03.3, T03.4, AC-11; ADR-15 d8)
 - Oracle: `M` (the row set equals the fixture's keys when nothing dropped, no duplicates, the gap row's bounds when it did) > the
   `recorder_spill_bytes` series. 2nd: `RecorderSpilling` after 5 minutes (rule test); `RecorderMessagesDropped`.
 
-**E16-Q01-C51 Restart a feed; blocked on E16-D02 and the `22` owner** (OQ-5; mirrors US-REC-008/2): `22` has no operation for it and
-D02 C-6 draws no control. The story's expectation stands for when it is answered: the subscription is torn down and re-established,
-the interruption is recorded as a gap and the action is audited. C34 covers the gap half meanwhile.
+**E16-Q01-C51 Restart a feed tears down and re-subscribes, records a gap and audits it; blocked on E16-D02 and the `22` owner**
+(`integration`, `e2e`; OWNER · recording; mirrors US-REC-008/2; D02 C-6; OQ-5)
+
+- Pre: FX-A recording with its feed running.
+- Steps: invoke the restart the owners define for ETHUSDT (its operation, control and step-up class are OQ-5's); read the row during
+  the restart, then the sessions, coverage and the audit.
+- Expected: the subscription is torn down and re-established (the row leaves `recording` and returns to it); the interruption is one
+  `recording_gaps` row covering the interval from the teardown to the first row after the re-subscribe, its cause named by the owners;
+  one audit record names the actor, role, symbol and action (the action name is OQ-5's); the rows before and after are untouched, and
+  whether the session continues or splits is the owners' too.
+- Oracle: `M` (the gap row's bounds; data rows unchanged) > `listRecordingSessions` and `getDataCoverage` > the operation's answer.
+  2nd: the audit record; `recorder_gaps_total{cause}` +1. C34 covers the gap half meanwhile.
 
 **E16-Q01-C52 A silent symbol pages within 90 seconds, and a venue outage pages once [R]** (`integration`; OWNER · degraded; mirrors
 US-REC-008/3, T09.1, T09.2; `infra/prometheus/alerts/recorder.yml`; D02 §4.1 Silent)
 
-- Pre: BTCUSDT and ETHUSDT recording, BTCUSDT's writer suspended while ETHUSDT keeps writing.
+- Pre: FX-A (ETHUSDT) and FX-B (BTCUSDT) recording, BTCUSDT's writer suspended while ETHUSDT keeps writing.
 - Steps: let 60 s of event time pass in the rule test and on the stack; read the alert and the row; then drop the public WS for every
   symbol.
 - Expected: `RecorderSilentStop` pages naming BTCUSDT by t+90 s; the row reads "No writes since {hh:mm:ss}" (derived from
@@ -740,9 +798,9 @@ section 2.2)
 Q-07; `22` `authStepUp`; D02 §6.4)
 
 - Pre: the keyless testnet stack with the offset clock on (section 4), and a synthetic TOTP.
-- Steps: change a symbol's retention (class `recorder`), repeat inside the grace and after moving the clock 301 s; submit two purges
-  in a row; enter three invalid codes; cancel with Esc.
-- Expected: inside the grace the second `recorder` write passes ("Still trusted for recorder changes · {mm:ss}"), after 301 s a code
+- Steps: change a symbol's retention (class `recorder`), repeat inside the grace (clock +120 s) and after it (clock +360 s: the 300 s
+  grace and a one-minute margin); submit two purges in a row; enter three invalid codes; cancel with Esc.
+- Expected: inside the grace the second `recorder` write passes ("Still trusted for recorder changes · {mm:ss}"), after it a code
   is asked again; every purge asks a fresh code and shows no "Still trusted" line; three invalid codes make the session read-only for
   5 minutes (`403 session_read_only`, T4 on each control); Esc, expiry or the third failure ends the held request "Not sent", inputs
   kept; a lost reply after a successful step-up is never reported as not sent and never re-sent by the client.
@@ -770,7 +828,8 @@ D06 §14 KS-01 to KS-11)
   symbol's chart and read the sentence form.
 - Expected: all five tasks complete without a pointer; the purge walk sends no request; the blocked Stop re-shows its reason once; the
   sentence form adds no tab stop; focus lands where D06 §14 names it.
-- Oracle: the request log > the focus target at each step. 2nd: none (the spoken strings are E16-Q05's).
+- Oracle: the request log > the focus target at each step (a presentation check: UI only). 2nd: none (the spoken strings are
+  E16-Q05's).
 
 ## 4. Time control
 
@@ -786,16 +845,16 @@ database, QuestDB namespace and recording volume (C-2.11), writes `system.config
 The recorder's retention, roll-off, importer and policy clocks default to real UTC (`recorder_wiring.Clocks`), so the ticket's "advance the recorder's clock"
 has no wire yet (OQ-3). The strategy therefore does not depend on it:
 
-| Need                                        | Mechanism                                                                                                                                                                                                                                                                            | Cases                        |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
-| a 30-, 7- or 180-day horizon                | seed ages, not clocks: partitions dated T-n days (T = seed time), at least a whole day from the horizon, run within 30 minutes of seeding                                                                                                                                            | C16, C21, C22, C24, C26, C29 |
-| the dwell (60 s) and the grace (30 min)     | configuration: `CV_RECORDER_AUTOSTART_DELAY_S` 20 and `CV_RECORDER_AUTOSTOP_GRACE_S` 90 on the scratch stack; the case reads `getRecordingStatus.policy` back and asserts the ratios; the defaults 60 and 1 800 are asserted once, on that read (C09)                                | C04, C09, C11 to C13         |
-| a nightly job on demand                     | the sweep: `PUT /recording/retention-policies?apply_now=true` (scheduler on, `CV_RETENTION_ENABLED`, else `409 conflict`), polled at 2 s; compaction, import and purge are jobs; the roll-off runs once when its loop starts, so a restart with the scheduler on triggers it (OQ-13) | C16, C19, C26, C28           |
-| the step-up grace (5 min)                   | the testnet offset clock: write 301 s, assert, reset to 0; a margin of one minute, never the exact boundary                                                                                                                                                                          | C56                          |
-| UI timers (2 s, 2 × 60 s, 5 s, 10 s)        | the browser clock (`page.clock`), no wait                                                                                                                                                                                                                                            | C08, C30, C41, C48           |
-| outages (12 min silent, 2 min QuestDB down) | event time inside the replayed fixtures, not wall time                                                                                                                                                                                                                               | C34, C37, C50                |
-| alert windows (60 s, 5 min, 300 s)          | `promtool` rule tests with synthetic series and `eval_time`                                                                                                                                                                                                                          | C30, C50, C52                |
-| a lease TTL, or a 24 h lease (AC-12)        | needs the recorder's wall clock: **blocked on OQ-3**                                                                                                                                                                                                                                 | C21                          |
+| Need                                        | Mechanism                                                                                                                                                                                                                                                                                                                                                                                                    | Cases                        |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
+| a 30-, 7- or 180-day horizon                | seed ages, not clocks: partitions dated by UTC day (T = the UTC date at seeding) and every expected set written from those dates; a seed starts at least 60 minutes before 00:00 UTC and its case within 30 minutes of it, and a case whose UTC date is no longer T at its pre-flight or at its end is voided and re-seeded (a midnight crossing moves every horizon by a day, the 30-day boundary included) | C16, C21, C22, C24, C26, C29 |
+| the dwell (60 s) and the grace (30 min)     | configuration: `CV_RECORDER_AUTOSTART_DELAY_S` 20 and `CV_RECORDER_AUTOSTOP_GRACE_S` 90 on the scratch stack; each case reads `getRecordingStatus.policy` back and asserts the configured values, never the defaults; the defaults 60 and 1 800 are asserted once, on a default-configuration boot (C01)                                                                                                     | C01, C04, C09, C11 to C13    |
+| a nightly job on demand                     | the sweep: `PUT /recording/retention-policies?apply_now=true` (scheduler on, `CV_RETENTION_ENABLED`, else `409 conflict`), polled at 2 s; compaction, import and purge are jobs; the roll-off runs once when its loop starts, so a restart with the scheduler on triggers it (OQ-13)                                                                                                                         | C16, C19, C26, C28           |
+| the step-up grace (5 min)                   | the testnet offset clock: +120 s to assert inside the grace and +360 s (the 300 s grace and a one-minute margin) to assert after it, then reset to 0; never the exact boundary                                                                                                                                                                                                                               | C56                          |
+| UI timers (2 s, 2 × 60 s, 5 s, 10 s)        | the browser clock (`page.clock`), no wait                                                                                                                                                                                                                                                                                                                                                                    | C08, C30, C41, C48           |
+| outages (12 min silent, 2 min QuestDB down) | event time inside the replayed fixtures, not wall time                                                                                                                                                                                                                                                                                                                                                       | C34, C37, C50                |
+| alert windows (60 s, 5 min, 300 s)          | `promtool` rule tests with synthetic series and `eval_time`                                                                                                                                                                                                                                                                                                                                                  | C30, C50, C52                |
+| a lease TTL, or a 24 h lease (AC-12)        | needs the recorder's wall clock: **blocked on OQ-3**                                                                                                                                                                                                                                                                                                                                                         | C21                          |
 
 Every case names its clock, and no assertion sits on an exact boundary instant.
 
@@ -845,7 +904,7 @@ question a case depends on is answered, or that case is marked blocked on it.
 
 **Exit** (the epic's QA sign-off, `03` §16). Every case has a recorded result (pass or fail, build sha, environment), a blocked case carrying its question id; no P0
 or P1 is open (`03` §11.3: a delete outside a stated set, a deletion without its audit record and any recorder effect on the order path are P0); every **[R]** case is
-automated by E16-Q02 or listed manual with an owner, and every **[F]** case ran; every audit action and metric a case names was observed; the charter (E16-Q03), the
+automated by E16-Q02 or listed manual with an owner, and every **[F]** case ran; every audit action and metric a case names was observed (a † metric by its stand-in, section 10); the charter (E16-Q03), the
 drills (E16-Q04) and the a11y audit (E16-Q05) are attached; section 9 has no gap and every section 10 row is answered or accepted by its owner. This plan's sign-off
 is necessary, not sufficient: E16-Q06 (#483) assembles the epic's.
 
@@ -866,7 +925,7 @@ R2 epic that reads recorded data runs before its own QA sign-off, E18 to E26 (`3
 ## 9. Traceability
 
 Scenarios are numbered in source order. Every scenario of US-REC-001 to US-REC-008, E16-S01 to S05 and E16-T02 to T10 maps to a case (T03.5 to E16-Q04, section 8); a
-blocked case still maps, its blocked half marked in the case. Every Must story has an **[F]** case: US-REC-001 C03; 002 C12; 003 C15; 004 C28; 005 C33; 006 C36; 008 C50.
+blocked case still maps, its blocked half marked in the case. Every Must story has an **[F]** case: US-REC-001 C03; 002 C12; 003 C15; 004 C28 and C30 (the story's own failure scenario, 004/3, is C26 variant b: blocked on OQ-13); 005 C33; 006 C36; 008 C50.
 
 | Source     | Scenario to cases                                                       |
 | ---------- | ----------------------------------------------------------------------- |
@@ -908,22 +967,52 @@ Each is a question for the owner of the source it names, not a guess. A case it 
   pin behind the step-up. The server is the control, so cases assert its answer.
 - **OQ-3** Which clock `CV_TEST_CLOCK` moves (C21's TTL half, section 4; blocked on E16-T06's and E16-T07's owners). Reading A (the ticket): the recorder's. Reading B
   (the base, #2086): the auth clock only, with the recorder's clocks on real UTC.
-- **OQ-4** No open-position source on `main` (`NoPositionSource`; E29-T06 provides one), so FX-E cannot be seeded (C05, C07, C10, C25, C33; blocked on E29-T06).
+- **OQ-4** No open-position source on `main` (`NoPositionSource`; E29-T06 provides one), so FX-E cannot be seeded (C05, C07, C10, C25,
+  C33; blocked on E29-T06). Reading A (US-REC-002/2, T02.4, D02 §4.1): an open position records at once and cannot be released, and
+  the position legs run black-box against a real source. Reading B (the base): no source ever reports a position, so `position_open`
+  never fires and those legs can run only against a stubbed source, as integration tests and never as a black-box pass.
 - **OQ-5** Restart a feed (C51; blocked on E16-D02's and the `22` owners). Reading A (US-REC-008/2): a control re-establishes the subscription, records a gap and
   audits. Reading B (`22`, D02 C-6): no operation and no control.
 - **OQ-6** The dry run (C17's API half; blocked on E16-S03, #485). Reading A (US-REC-003/3, T06.3, S03.1): the server reports what would be deleted. Reading B (`22`,
   D03-G1): no preview route, so the editor estimates in the client.
-- **OQ-7** The daily integrity job (C39; blocked on E16-T04's owner): `recorder/integrity.py` is referenced by no wiring module and `22` has no trigger.
-- **OQ-8** The ticket text against the merged design (C07, C08, C09, C20, C30; D06 C-r to C-z): the design's reading of S01.7, S01.8, S02.1, S03.3 and S04.7 stands;
-  only S01.8's polling fallback is open, as it is not designed (D06 Q-04; blocked on E16-D02's owner).
+- **OQ-7** The daily integrity job (C39; blocked on E16-T04's owner). Reading A (US-REC-006/2, T04): a daily job verifies sequence
+  continuity and reports anomalies, so a schedule and a trigger exist. Reading B (the base): `recorder/integrity.py` is referenced by
+  no wiring module and `22` has no trigger, so the job runs only when a test builds it; C39 then runs through `IntegrityJob.run` at
+  the integration level and the daily schedule stays untested until it is wired.
+- **OQ-8** The ticket text against the merged design (C07, C08, C09, C20, C28, C30, C32; D06 C-r to C-z): the design's reading of
+  S01.6, S01.7, S01.8, S02.1, S03.3, S04.5 and S04.7 stands (section 1); only S01.8's polling fallback is open, as it is not designed
+  (D06 Q-04; blocked on E16-D02's owner).
 - **OQ-9** Import and jobs (C28, C42, C44, C46; blocked on E16-S04, #486, and E16-T10's owner for names): the summary shape, a per-interval `source: archive` and a job
   cancel are PROPOSED (D04-G11, D04-G12, D04-G10), and the skip reason codes differ (T10 `import_checksum_failed`, D04 `checksum_mismatch`).
-- **OQ-10** Coverage markers (C29, C38; blocked on E16-S05, #487, and E16-T05's and E16-T08's owners): `backfilled` (D05-G1) and a "downsampled" label (T05.5) are on no
-  `22` `DataCoverage` field.
+- **OQ-10** Coverage markers (C29, C38; blocked on E16-S05, #487, and E16-T05's and E16-T08's owners). Reading A (D05-G1, T05.5,
+  US-REC-006/3): coverage marks a kline-backfilled gap `backfilled` and a range rolled up past 180 days "downsampled". Reading B (`22`
+  `DataCoverage`): it has neither field, so the API reports the gap and the tier only and a client cannot tell either apart.
 - **OQ-11** Audit names (C14, C28; blocked on the `22` owner): `22` declares `recorder.start`, `recorder.stop`, `retention.change`, `retention.purge` and `recorder.import`,
   and none for a pin, an unpin or a compaction (`14` SCR-140 says `recorder.pinned`; the registry holds `recorder.update` and `recorder.compact`; T08 names
   `storage.compaction_triggered`). Those cases assert one record with actor, scope, before and after, and its name once declared.
-- **OQ-12** The purge's check order and step-up class (C23; not blocked). T08.5 reads `403` before the `422`; E42's AD-S07-07 reads class `recorder` with the body after the
-  gate; `22` (after #4597 and #4622) decides the body first and names `recorder_purge`. This plan follows `22`; E42's plan is to be reconciled.
-- **OQ-13** On-demand triggers and fault seams (C26 variant b, section 4; blocked on E16-T05's and E16-T06's owners): the roll-off has no API trigger (it runs when its loop
-  starts), `RB` says the retention loop's nightly schedule is not wired yet, and no seam fails the roll-off's verify step.
+- **OQ-12** The purge's check order and step-up class (C23; not blocked; owner: E42-Q01's author, #962, who reconciles AD-S07-07 in
+  `docs/qa/e42-admin-test-plan.md` :940). T08.5 reads `403` before the `422`; E42's AD-S07-07 reads class `recorder` with the body
+  after the gate; `22` (after #4597 and #4622) decides the body first and names `recorder_purge`. This plan follows `22`.
+- **OQ-13** On-demand triggers and fault seams (C26 variant b, C29, section 4; blocked on E16-T05's and E16-T06's owners). Reading A
+  (T05.1, T05.2, T05.5): a pass can be run when a test needs it, its verify step can be failed, and the downsample runs with it.
+  Reading B (the base, `RB`, `RO`): the roll-off has no API trigger (it runs when its loop starts), the retention loop's nightly
+  schedule is not wired yet, no seam fails the verify step, and `rolloff_wiring.py:48` builds the job with no `downsampler` or
+  `cold_symbols`.
+- **OQ-14** Whether the 180-day downsample applies to a pinned symbol (C29 variant b; blocked on E16-T05's owner and the `21` owner).
+  Reading A (ADR-15 d4 "never delete"; `22` `pinRecordedSymbol` "keep forever"): replacing raw deltas with 1 s snapshots loses data,
+  so a pinned symbol keeps its raw book. Reading B (T05's cold-cold rollup; `recorder/rolloff.py:430`, whose `_downsample` has no pin
+  filter): the rollup is a tier change, not a deletion, so it takes every symbol with cold partitions, pinned ones included.
+
+**Known gaps: metrics with no emitter on `main`** (a `git grep` of `services/`, `infra/`, `packages/`, `apps/`, `tools/` and `tests/`
+finds none; a † marks each use in a case). A case asserts the stand-in until the owner ships the metric or amends its ticket.
+
+| Metric                                   | Cases         | Named by (owner)    | Assert meanwhile                                                                                                                                                |
+| ---------------------------------------- | ------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `recorder_symbols_active{reason}`        | C01, C10, C13 | E16-T02             | `listRecordedSymbols`: each row's `reason` and the count of active rows                                                                                         |
+| `recorder_autostart_total{reason}`       | C09           | E16-T02             | the `recorder.start` record and its reason                                                                                                                      |
+| `recorder_autostop_total{reason}`        | C04, C11      | E16-T02             | the `recorder.stop` record and the session's `ended_at` after the grace                                                                                         |
+| `recorder_start_latency_seconds`         | C02           | E16-T02             | the harness's timing from the add to the row reading `recording`, under 5 s                                                                                     |
+| `ws_topic_subscribers{topic="recorder"}` | C08, C48      | E16-T08             | `cv_ws_recorder_subscriptions_in_use` (`ws/metrics.py`) and the harness's frame log                                                                             |
+| `http_requests_total{route}`             | C03           | E16-T08             | `cv_http_request_duration_seconds` by `route` and `status_class` (`observability/http_duration.py`)                                                             |
+| `recorder_path_containment_reject_total` | C47           | E16-T10 (`TM` R-E4) | the sentinel tree and `M` unchanged, and the job's named reason                                                                                                 |
+| `recorder_rows_dropped_total`            | C33, C49      | E16-T03, E16-T09    | the three `*_writes_dropped_total` counters, the inputs of `RecorderMessagesDropped` (`infra/prometheus/alerts/recorder.yml` :28 to :30); C33 and C49 name them |
