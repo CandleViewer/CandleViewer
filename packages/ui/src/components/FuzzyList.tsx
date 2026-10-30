@@ -49,6 +49,15 @@ export interface FuzzyListItem {
   readonly description?: string;
 }
 
+/** The column header's words, one per cell kind an option draws (E08-D05 §6.1: "Symbol", "Base / quote", "24 h"…). */
+export interface FuzzyListColumns {
+  readonly label: string;
+  readonly hint?: string;
+  /** Over the end-aligned `values`, in their order. */
+  readonly values?: readonly string[];
+  readonly chip?: string;
+}
+
 export interface FuzzyListProps {
   /** The listbox's id: the host input's `aria-controls`; an option's id is `fuzzyOptionId(id, item.id)`. */
   readonly id: string;
@@ -68,6 +77,11 @@ export interface FuzzyListProps {
   readonly emptyMessage?: ReactNode;
   /** Rows shown before the list scrolls (E08-D05 §5: 16 / 11 in SCR-102, 8 / 6 in SCR-041). Default 8. */
   readonly visibleRows?: number;
+  /**
+   * A column header above the list, whatever stands in it (rows, skeleton or `emptyMessage`): one `aria-hidden` row of
+   * the options' own cells, so a column that drops from the rows drops from it too. The option names carry the words.
+   */
+  readonly columns?: FuzzyListColumns;
   readonly "aria-label"?: string;
   readonly "aria-labelledby"?: string;
 }
@@ -157,6 +171,7 @@ export function FuzzyList({
   loading = false,
   emptyMessage,
   visibleRows = 8,
+  columns,
   ...name
 }: FuzzyListProps): JSX.Element {
   const rows = Math.max(1, Math.floor(visibleRows));
@@ -210,9 +225,28 @@ export function FuzzyList({
     offset.current = NaN; // it may have scrolled: unknown until its scroll event says
   }, [id, activeId, ids]);
 
+  const head =
+    columns === undefined ? null : (
+      <div className="cv-fuzzylist__header cv-fuzzylist__columns" aria-hidden="true">
+        <span className="cv-fuzzylist__label">{columns.label}</span>
+        {columns.hint === undefined ? null : (
+          <span className="cv-fuzzylist__hint">{columns.hint}</span>
+        )}
+        {(columns.values ?? []).map((value, i) => (
+          <span key={`value-${String(i)}`} className="cv-fuzzylist__value">
+            {value}
+          </span>
+        ))}
+        {columns.chip === undefined ? null : (
+          <span className="cv-fuzzylist__chip">{columns.chip}</span>
+        )}
+      </div>
+    );
+
   if (!loading && n === 0)
     return (
       <div className="cv-fuzzylist" data-cmp="CMP-213">
+        {head}
         {emptyMessage}
       </div>
     );
@@ -348,6 +382,7 @@ export function FuzzyList({
       data-cmp="CMP-213"
       style={{ "--cv-fuzzylist-rows": String(rows) } as CSSProperties}
     >
+      {head}
       {/* A pointer surface: a press keeps focus in the host's input, which drives the list. */}
       <div
         ref={list}

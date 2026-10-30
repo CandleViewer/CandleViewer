@@ -45,7 +45,7 @@ export function ShellLayout(): JSX.Element {
         <Outlet />
       </AppShell>
       <ShellAnnouncer />
-      <SymbolSearchHost main={mainRef} />
+      <SymbolSearchHost mainRef={mainRef} />
     </InShellProvider>
   );
 }

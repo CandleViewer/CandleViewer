@@ -191,6 +191,35 @@ describe("FuzzyList (CMP-213)", () => {
   });
 });
 
+describe("FuzzyList's column header (E08-D05 §6.1)", () => {
+  it("is one aria-hidden row of the options' own cells, outside the listbox, over the rows, the skeleton and the empty state", async () => {
+    const columns = { label: "Symbol", hint: "Base / quote", values: ["24 h", "24 h turnover"] };
+    const head = (): Element | null => document.querySelector(".cv-fuzzylist__columns");
+    const host = await mount(
+      <FuzzyList {...props({ columns: { ...columns, chip: "Recording" } })} />,
+    );
+    expect([...(head()?.children ?? [])].map((cell) => [cell.className, cell.textContent])).toEqual(
+      [
+        ["cv-fuzzylist__label", "Symbol"],
+        ["cv-fuzzylist__hint", "Base / quote"],
+        ["cv-fuzzylist__value", "24 h"],
+        ["cv-fuzzylist__value", "24 h turnover"],
+        ["cv-fuzzylist__chip", "Recording"],
+      ],
+    );
+    expect([head()?.getAttribute("aria-hidden"), head()?.closest("[role=listbox]")]).toEqual([
+      "true",
+      null,
+    ]);
+    expect(await seriousViolations(host)).toEqual([]);
+    for (const state of [{ loading: true }, { emptyMessage: <p>No match.</p> }]) {
+      document.body.replaceChildren();
+      await mount(<FuzzyList {...props({ items: [], columns, ...state })} />);
+      expect(head()).toHaveTextContent("SymbolBase / quote24 h24 h turnover");
+    }
+  });
+});
+
 describe("FuzzyList windowing (E08-D05 §5; `15`'s 1,000 items)", () => {
   it("at most twice the visible rows renders all, without positions; above, the window and its spacers", async () => {
     await mount(<FuzzyList {...props({ items: many(32), visibleRows: 16 })} />);

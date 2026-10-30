@@ -183,6 +183,15 @@ describe("the check", () => {
     expect(learn.mock.calls.map(([a]) => a.symbol)).toEqual(["ABCDEUSDT"]);
   });
 
+  it("a new symbol starts with no checked time, so Check again's block is never another symbol's", async () => {
+    apiFetch.mockImplementation(notFound);
+    check.request("xyzzy");
+    await settle(300);
+    expect(snap().checkedAt).toBe(Date.now());
+    check.request("abcde");
+    expect(snap()).toMatchObject({ phase: "waiting", symbol: "ABCDEUSDT", checkedAt: null });
+  });
+
   it("a query that ranks again cancels the check", async () => {
     apiFetch.mockImplementationOnce(notFound);
     check.request("xyzzy");

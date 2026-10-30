@@ -29,7 +29,10 @@ export interface CheckSnapshot {
   readonly symbol: string | null;
   /** The answer, for `listed` and `status`. */
   readonly instrument: Instrument | null;
-  /** When the last check settled (the clock's ms): "Checked with the server at 13:02 UTC." */
+  /**
+   * When this symbol's last check settled (the clock's ms): "Checked with the server at 13:02 UTC.". A new symbol
+   * starts at `null`, so a host tells "Check again" running (set) from a first check (`null`).
+   */
   readonly checkedAt: number | null;
   readonly coolingDown: boolean;
 }
@@ -124,7 +127,7 @@ export function createSymbolCheck(index: CheckIndex, clock: Clock = SYSTEM_CLOCK
         if (snap.phase !== "idle") set({ phase: "idle", symbol: null, instrument: null });
         return;
       }
-      set({ phase: "waiting", symbol, instrument: null });
+      set({ phase: "waiting", symbol, instrument: null, checkedAt: null });
       rest = clock.setTimeout(() => {
         rest = null;
         void run(symbol);

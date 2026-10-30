@@ -67,6 +67,22 @@ describe("fuzzylist.css contract (CMP-213, E08-D05 §6.1)", () => {
     expect(find(list.forced, ".cv-fuzzylist__row:hover", "background")).toContain("Canvas");
     expect(list.forced).not.toMatch(/var\(--/);
   });
+
+  it("the column header's cells take its caption type over their own (two classes beat one, A11Y-C2-03)", () => {
+    expect(find(list.normal, ".cv-fuzzylist__header.cv-fuzzylist__columns > *", "font")).toContain(
+      "font: inherit",
+    );
+    expect(find(list.normal, ".cv-fuzzylist__columns > *", "font")).toBe(""); // one class ties, and loses
+  });
+
+  it("the header keeps the list's scrollbar gutter, so a classic scrollbar never shifts the columns under it", () => {
+    expect(find(list.normal, ".cv-fuzzylist__list", "scrollbar-gutter")).toContain(
+      "scrollbar-gutter: stable",
+    );
+    const head = find(list.normal, ".cv-fuzzylist__columns", "scrollbar-gutter");
+    expect(head).toContain("scrollbar-gutter: stable");
+    expect(head).toContain("overflow: hidden"); // a gutter needs a clipping box
+  });
 });
 
 describe("symbolsearch.css contract (CMP-160, E08-D05 D-10)", () => {

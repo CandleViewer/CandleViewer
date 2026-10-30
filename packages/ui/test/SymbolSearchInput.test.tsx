@@ -115,6 +115,39 @@ describe("SymbolSearchInput (CMP-160)", () => {
     expect(status().firstElementChild).toBe(said);
   });
 
+  it("a new messageKey says the same message again (E08-D05 §6.2: Enter with no openable option)", async () => {
+    let bump = noop;
+    function Keyed(): JSX.Element {
+      const [n, setN] = useState(0);
+      bump = () => setN((k) => k + 1);
+      return <Host message="Couldn't load the instrument list." messageKey={n} />;
+    }
+    await mount(<Keyed />);
+    const said = status().firstElementChild;
+    await act(async () => bump());
+    expect([status().textContent, status().firstElementChild === said]).toEqual([
+      "Couldn't load the instrument list.",
+      false,
+    ]);
+  });
+
+  it("a new messageKey says the host's message over a reason said for a press (E08-D05 §6.4: Shift+Enter after Enter)", async () => {
+    const why = "LUNAUSDT is not trading on Bybit.";
+    let bump = noop;
+    function Keyed(): JSX.Element {
+      const [n, setN] = useState(0);
+      bump = () => setN((k) => k + 1);
+      return <Host recentSymbols={[LUNA]} {...(n === 0 ? {} : { message: why, messageKey: n })} />;
+    }
+    await mount(<Keyed />);
+    await press("ArrowDown");
+    await press("Enter"); // the input says the unavailable option's reason
+    const said = status().firstElementChild;
+    expect(said).toHaveTextContent(why);
+    await act(async () => bump()); // the host's own act says it again
+    expect([status().textContent, status().firstElementChild === said]).toEqual([why, false]);
+  });
+
   it("while loading no option is active: the keys move nothing, so aria-activedescendant never dangles (CR-B2AD-02)", async () => {
     const onSelect = vi.fn();
     await mount(<Host loading recentSymbols={[row("ETHUSDT")]} onSelect={onSelect} />);

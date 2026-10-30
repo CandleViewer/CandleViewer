@@ -4,6 +4,9 @@
  * `reread()` (an `instrument_revision`, or "Retry now"); and `lookupSymbol` (`GET /instruments/{symbol}`),
  * whose answers feed the session caches through `learn()`. No React: a plain external store
  * (`subscribe` / `getSnapshot`) on an injected clock, as `features/app-shell/clock.ts` does.
+ * Its lifecycle in the app: the shell's store (`searchSession`) holds one from the shell's start, but
+ * starts it only once a workspace binds the first opener, so a held index is not a running one: a
+ * host that shows the list reads `useRunningIndex()` (or `running`), never `index !== null`.
  */
 import type { generated } from "@candleviewer/protocol";
 import { apiFetch } from "../../lib/http/csrfFetch";
@@ -132,8 +135,13 @@ function retryAfter(res: Response, body: unknown): number | null {
   return Math.min(Math.max(Number(text), 1), MAX_RETRY_AFTER_S);
 }
 
-/** One GET, ended by `signal` or the deadline; `null` when no answer came. */
-async function getJson(path: string, signal: AbortSignal, clock: Clock): Promise<Answer | null> {
+/** One GET (or a POST), ended by `signal` or the deadline; `null` when no answer came. */
+async function getJson(
+  path: string,
+  signal: AbortSignal,
+  clock: Clock,
+  method = "GET",
+): Promise<Answer | null> {
   if (signal.aborted) return null;
   const call = new AbortController();
   const end = (): void => {
@@ -143,7 +151,7 @@ async function getJson(path: string, signal: AbortSignal, clock: Clock): Promise
   const deadline = clock.setTimeout(end, DEADLINE_MS);
   signal.addEventListener("abort", end);
   try {
-    const res = await apiFetch(path, { signal: call.signal });
+    const res = await apiFetch(path, { method, signal: call.signal });
     // A broken success body is no answer; a refusal's body is optional.
     const body: unknown = res.ok ? await res.json() : await res.json().catch(() => null);
     return { ok: res.ok, status: res.status, body, retryAfterS: retryAfter(res, body) };
@@ -169,6 +177,22 @@ export async function lookupSymbol(
     return { kind: "unchecked", symbol };
   }
   return { kind: body.status === "Trading" ? "listed" : "status", symbol, instrument: body };
+}
+
+/** `POST /instruments/refresh` (the Owner's `instruments:write`): its answer, by status and `code` only (§12.2). */
+export type RefreshAnswer =
+  | { readonly kind: "requested" }
+  | { readonly kind: "refused" }
+  | { readonly kind: "rate_limited" | "exchange_rate_limited"; readonly waitS: number };
+
+export async function requestRefresh(clock: Clock = SYSTEM_CLOCK): Promise<RefreshAnswer> {
+  const signal = new AbortController().signal;
+  const answer = await getJson("/api/v1/instruments/refresh", signal, clock, "POST");
+  if (answer?.status === 202) return { kind: "requested" };
+  const code = field<Schemas["Problem"]>(answer?.body, "code");
+  if (answer?.status !== 429 || (code !== "rate_limited" && code !== "exchange_rate_limited"))
+    return { kind: "refused" };
+  return { kind: code, waitS: answer.retryAfterS ?? 1 };
 }
 
 type ReadOutcome =

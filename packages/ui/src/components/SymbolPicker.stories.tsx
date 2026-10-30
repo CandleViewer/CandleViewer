@@ -97,15 +97,33 @@ export const Delisted: Story = {
 /**
  * Hover (CR-ORCH-5028-1): the `color.surface.hover` fill (symbolpicker.css). In light it sits at 1.09:1 on the
  * TopBar's `color.surface.raised`: the pointer is the cue, and E08-D05 §13 asks for a light `surface.hover` value.
+ * A scripted pointer sets no `:hover`, so the fill is `symbolpicker-css.test.ts`'s pin; the play pins the state's
+ * meaning: the pointer over the trigger opens nothing and changes neither its state nor its description.
  */
 export const Hover: Story = {
-  play: async ({ canvasElement }) => userEvent.hover(trigger(canvasElement)),
+  play: async ({ canvasElement, args }) => {
+    const button = trigger(canvasElement);
+    mocked(args.onOpen).mockClear();
+    await userEvent.hover(button);
+    await expect(args.onOpen).not.toHaveBeenCalled();
+    await expect(button).toHaveAttribute("aria-expanded", "false");
+    await expect(button).not.toHaveAttribute("aria-describedby");
+  },
 };
 
-/** Pressed (CR-ORCH-5028-1): a held press takes the `color.surface.selected` fill, as expanded does (B02). */
+/**
+ * Pressed (CR-ORCH-5028-1): a held press takes the `color.surface.selected` fill, as expanded does (B02); a scripted
+ * pointer sets no `:active`, so the fill is `symbolpicker-css.test.ts`'s pin. The play holds the press: the trigger
+ * takes focus, and nothing opens before the release, which is the click.
+ */
 export const Pressed: Story = {
-  play: async ({ canvasElement }) => {
-    await userEvent.pointer({ keys: "[MouseLeft>]", target: trigger(canvasElement) });
+  play: async ({ canvasElement, args }) => {
+    const button = trigger(canvasElement);
+    mocked(args.onOpen).mockClear();
+    await userEvent.pointer({ keys: "[MouseLeft>]", target: button });
+    await expect(button).toHaveFocus();
+    await expect(args.onOpen).not.toHaveBeenCalled();
+    await expect(button).toHaveAttribute("aria-expanded", "false");
   },
 };
 

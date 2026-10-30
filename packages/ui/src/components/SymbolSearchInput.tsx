@@ -10,7 +10,12 @@ import {
   type ReactNode,
 } from "react";
 import { Icon } from "../icons/Icon.js";
-import { FuzzyList, fuzzyOptionId, type FuzzyListItem } from "./FuzzyList.js";
+import {
+  FuzzyList,
+  fuzzyOptionId,
+  type FuzzyListColumns,
+  type FuzzyListItem,
+} from "./FuzzyList.js";
 import { ReasonText } from "./internal/disabledReason.js";
 import { useFieldControl } from "./internal/fieldContext.js";
 import { focusFieldInput, useRefusalAnnounce } from "./internal/fieldParts.js";
@@ -53,6 +58,11 @@ export interface SymbolSearchInputProps {
    */
   readonly message?: string;
   /**
+   * A new value says `message` again, the same words too (E08-D05 §6.2: `Enter` with no openable option), over a reason
+   * the input said for a press on an unavailable option.
+   */
+  readonly messageKey?: string | number;
+  /**
    * No list in memory: CMP-213's skeleton rows. No option is active then, so the arrows and `PageUp` / `PageDown`
    * move nothing and `Enter` is the host's.
    */
@@ -61,6 +71,8 @@ export interface SymbolSearchInputProps {
   readonly emptyMessage?: ReactNode;
   /** Default 8 (E08-D05 §5); `PageUp` / `PageDown` move by it. */
   readonly visibleRows?: number;
+  /** CMP-213's column header above the list (E08-D05 §6.1). */
+  readonly columns?: FuzzyListColumns;
   /** The rest after the last keystroke before the count is said. Default 300 (E08-D05 A-D05-6). */
   readonly settleMs?: number;
   /**
@@ -124,6 +136,12 @@ export function SymbolSearchInput(props: SymbolSearchInputProps): JSX.Element {
   const [activeKey, setActiveKey] = useState<string | undefined>(undefined);
   // A press on an unavailable option says its reason; the count re-keys the node, so each press is said again.
   const [recall, setRecall] = useState<{ readonly text: string; readonly n: number } | null>(null);
+  // A new `messageKey` is the host's own act (a press, a key): its message is said over a reason said earlier.
+  const [keyed, setKeyed] = useState(props.messageKey);
+  if (keyed !== props.messageKey) {
+    setKeyed(props.messageKey);
+    setRecall(null);
+  }
   // The status region is empty at mount and filled after it, so a message set from the start is said too.
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -291,6 +309,7 @@ export function SymbolSearchInput(props: SymbolSearchInputProps): JSX.Element {
             loading={loading}
             emptyMessage={props.emptyMessage}
             visibleRows={visibleRows}
+            {...(props.columns === undefined ? {} : { columns: props.columns })}
             aria-label={props.listLabel ?? "Symbols"}
             onActivate={(row) => {
               const entry = entryOf(row);
@@ -315,7 +334,13 @@ export function SymbolSearchInput(props: SymbolSearchInputProps): JSX.Element {
             {recall !== null ? (
               <span key={`why:${String(recall.n)}`}>{recall.text}</span>
             ) : said === undefined ? null : (
-              <span key={message === undefined ? `said:${query}` : `message:${message}`}>
+              <span
+                key={
+                  message === undefined
+                    ? `said:${query}`
+                    : `message:${message}:${String(props.messageKey ?? "")}`
+                }
+              >
                 {said}
               </span>
             )}
