@@ -1,6 +1,6 @@
 // E11-S01: the node contract, the dirty-propagation matrix, deferral and the pools.
 import { describe, expect, it } from "vitest";
-import { DeferClass, Dirty, DIRTY_ALL, LAYER_ORDER } from "../../src/scene/dirty.js";
+import { DeferClass, Dirty, DIRTY_ALL, LAYER_ORDER, shedUpTo } from "../../src/scene/dirty.js";
 import type { LayerName } from "../../src/scene/dirty.js";
 import { FrameContext } from "../../src/scene/frame-context.js";
 import { SceneGraph } from "../../src/scene/graph.js";
@@ -20,7 +20,7 @@ function build() {
   const frame = (t = 0, shed: DeferClass = DeferClass.NONE): void => {
     sink.reset();
     ctx.begin(t, 16.7);
-    graph.frame(ctx, sink, shed);
+    graph.frame(ctx, sink, shedUpTo(shed));
   };
   frame();
   return { graph, ctx, sink, nodes, frame };

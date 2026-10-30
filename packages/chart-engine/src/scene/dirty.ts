@@ -20,6 +20,10 @@ export const DeferClass = {
 
 export type DeferClass = (typeof DeferClass)[keyof typeof DeferClass];
 
+/** A rung mask for `SceneGraph.frame`: bit `r` defers rung `r`; bit 0 (`NONE`) is never honoured. */
+export const SHED_ALL = 0b11110;
+export const shedUpTo = (rung: DeferClass): number => ((1 << (rung + 1)) - 2) & SHED_ALL;
+
 /** The fixed per-pane layer order, bottom to top. Not configurable. */
 export const LAYER_ORDER = [
   "background",

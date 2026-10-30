@@ -1,6 +1,6 @@
 # E06-K02 prototype scene A — THROWAWAY CODE
 
-Except `scene-graph.ts`: E11-S01 production bench code over `src/scene`, driven by Vitest (BQ-24).
+Except `scene-graph.ts` and `scheduler-overhead.ts`: E11-S01 production bench code over `src/scene`, driven by Vitest (BQ-24).
 
 This directory is **throwaway prototype code** for the M0 spike ticket E06-K02
 ("Prototype scene A: 100k-bar model, visible-window draw and LOD ladder"). It
