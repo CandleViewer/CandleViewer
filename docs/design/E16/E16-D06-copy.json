@@ -337,8 +337,8 @@
         "D04": "\"Read-only while viewing as {user}.\"",
         "D05": "\"Read-only while viewing as {user}.\" · \"Read-only while viewing as alex.\""
       },
-      "cite": "`D03`:432; `D04`:540; `D05`:436",
-      "provenance": "-------------------------------------------------------------",
+      "cite": "`D03`:433; `D04`:541; `D05`:437",
+      "provenance": "E09-D09 §3.1 :95 (the notice stands alone, E16-D02 D-16 :778)",
       "status": "merged",
       "frozen": "(vi)"
     },
@@ -351,9 +351,9 @@
       "sources": {
         "D03": "\"Retention policy\""
       },
-      "cite": "`D03`:433",
-      "provenance": "E09-D09 §3.1 :95 (the notice stands alone, E16-D02 D-16 :778)",
-      "status": "merged"
+      "cite": "`D03`:434",
+      "provenance": "new",
+      "status": "PROPOSED"
     },
     "retention.rule": {
       "parent": "D03",
@@ -364,8 +364,8 @@
       "sources": {
         "D03": "\"A symbol's rule wins over the global default. Pinned symbols are exempt.\""
       },
-      "cite": "`D03`:434",
-      "provenance": "new",
+      "cite": "`D03`:435",
+      "provenance": "new (`22` :5534–5535 in words)",
       "status": "PROPOSED"
     },
     "retention.loading": {
@@ -377,8 +377,8 @@
       "sources": {
         "D03": "\"Loading retention policy…\""
       },
-      "cite": "`D03`:435",
-      "provenance": "new (`22` :5534–5535 in words)",
+      "cite": "`D03`:436",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.section.global": {
@@ -390,7 +390,7 @@
       "sources": {
         "D03": "\"Global defaults\""
       },
-      "cite": "`D03`:436",
+      "cite": "`D03`:437",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -403,7 +403,7 @@
       "sources": {
         "D03": "\"Per-symbol overrides\""
       },
-      "cite": "`D03`:437",
+      "cite": "`D03`:438",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -416,7 +416,7 @@
       "sources": {
         "D03": "\"Pinned symbols (exempt)\""
       },
-      "cite": "`D03`:438",
+      "cite": "`D03`:439",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -429,7 +429,7 @@
       "sources": {
         "D03": "trades \"Trades\" · orderbook_delta \"Order-book deltas\" · orderbook_snapshot \"Order-book snapshots\" · tickers \"Tickers\" · klines \"Exchange klines\" · liquidations \"Liquidations\" · open_interest \"Open interest\" · funding \"Funding rates\" (checked against `21` §7's rows and `24` §13.1's stream list)"
       },
-      "cite": "`D03`:439",
+      "cite": "`D03`:440",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -442,8 +442,8 @@
       "sources": {
         "D03": "\"Retention (days)\" (the unit in the label; `suffix` \"days\")"
       },
-      "cite": "`D03`:440",
-      "provenance": "new",
+      "cite": "`D03`:441",
+      "provenance": "new (`14` :2798)",
       "status": "PROPOSED"
     },
     "retention.help.archive": {
@@ -455,8 +455,8 @@
       "sources": {
         "D03": "\"Days in the fast store before the nightly move to Parquet. Parquet keeps it for {total} in total.\" · fixture \"Days in the fast store before the nightly move to Parquet. Parquet keeps it for 24 months in total.\""
       },
-      "cite": "`D03`:441",
-      "provenance": "new (`14` :2798)",
+      "cite": "`D03`:442",
+      "provenance": "new (`22` :5535–5537)",
       "status": "PROPOSED"
     },
     "retention.help.drop": {
@@ -468,8 +468,8 @@
       "sources": {
         "D03": "\"Days before this stream's data is deleted for good, Parquet included.\" (the four roll-off streams only; the other four take `retention.help.drop_cold`)"
       },
-      "cite": "`D03`:442",
-      "provenance": "new (`22` :5535–5537)",
+      "cite": "`D03`:443",
+      "provenance": "new (`22` :5537)",
       "status": "PROPOSED"
     },
     "retention.help.derived": {
@@ -481,8 +481,8 @@
       "sources": {
         "D03": "\"Bars, footprints and profiles are rebuilt from trades, so trades must be kept at least as long as them.\""
       },
-      "cite": "`D03`:443",
-      "provenance": "new (`22` :5537)",
+      "cite": "`D03`:444",
+      "provenance": "new (`21` :4715)",
       "status": "PROPOSED"
     },
     "retention.kept_until": {
@@ -494,8 +494,8 @@
       "sources": {
         "D03": "\"Kept in Parquet until {total}\" (`{total}` = max(the hot window, the `21` §7 total)) · \"Kept in Parquet with no end date\" (klines, liquidations, open interest, funding)"
       },
-      "cite": "`D03`:444",
-      "provenance": "new (`21` :4715)",
+      "cite": "`D03`:445",
+      "provenance": "new (`21` §7)",
       "status": "PROPOSED"
     },
     "retention.action.archive_parquet": {
@@ -507,8 +507,8 @@
       "sources": {
         "D03": "\"Move to Parquet after\""
       },
-      "cite": "`D03`:445",
-      "provenance": "new (`21` §7)",
+      "cite": "`D03`:446",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.action.drop": {
@@ -520,7 +520,7 @@
       "sources": {
         "D03": "\"Delete after\""
       },
-      "cite": "`D03`:446",
+      "cite": "`D03`:447",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -533,7 +533,7 @@
       "sources": {
         "D03": "\"Default {n} d\" · fixture \"Default 30 d\""
       },
-      "cite": "`D03`:447",
+      "cite": "`D03`:448",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -546,7 +546,7 @@
       "sources": {
         "D03": "\"Reset to default\""
       },
-      "cite": "`D03`:448",
+      "cite": "`D03`:449",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -559,8 +559,8 @@
       "sources": {
         "D03": "\"This stream has no other source.\" · liquidations \"Irreplaceable: there is no history to fetch again.\""
       },
-      "cite": "`D03`:449",
-      "provenance": "new",
+      "cite": "`D03`:450",
+      "provenance": "new (`21` :4711)",
       "status": "PROPOSED"
     },
     "retention.add": {
@@ -572,8 +572,8 @@
       "sources": {
         "D03": "\"Add override\""
       },
-      "cite": "`D03`:450",
-      "provenance": "new (`21` :4711)",
+      "cite": "`D03`:451",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.remove": {
@@ -585,8 +585,8 @@
       "sources": {
         "D03": "\"Remove {symbol} {stream} rule\" · fixture \"Remove ETHUSDT order-book deltas rule\" (stages the removal, D03-D15)"
       },
-      "cite": "`D03`:451",
-      "provenance": "new",
+      "cite": "`D03`:452",
+      "provenance": "new (E30-D03 N7 :102: the button names its object)",
       "status": "PROPOSED"
     },
     "retention.removed.status": {
@@ -598,8 +598,8 @@
       "sources": {
         "D03": "\"Removed: follows the global rule ({n} d)\" · fixture \"Removed: follows the global rule (7 d)\" (the struck row's Status cell)"
       },
-      "cite": "`D03`:452",
-      "provenance": "new (E30-D03 N7 :102: the button names its object)",
+      "cite": "`D03`:453",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.undo": {
@@ -611,7 +611,7 @@
       "sources": {
         "D03": "\"Undo\" (takes the Remove cell of a staged removal)"
       },
-      "cite": "`D03`:453",
+      "cite": "`D03`:454",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -624,7 +624,7 @@
       "sources": {
         "D03": "\"Remove the {symbol} {stream} rule?\" · fixture \"Remove the ETHUSDT trades rule?\" (the typed confirm's title for K4: a removed override whose fallback total is shorter)"
       },
-      "cite": "`D03`:454",
+      "cite": "`D03`:455",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -637,7 +637,7 @@
       "sources": {
         "D03": "\"{symbol} follows the global rule: {n} days, then Parquet.\" · fixture \"ETHUSDT follows the global rule: 7 days, then Parquet.\" (the plain confirm's detail for a removal whose fallback is longer)"
       },
-      "cite": "`D03`:455",
+      "cite": "`D03`:456",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -650,8 +650,8 @@
       "sources": {
         "D03": "\"Exempt (pinned)\""
       },
-      "cite": "`D03`:456",
-      "provenance": "new",
+      "cite": "`D03`:457",
+      "provenance": "new (`22` :5535)",
       "status": "PROPOSED"
     },
     "retention.pin.manage": {
@@ -663,8 +663,8 @@
       "sources": {
         "D03": "\"Manage pin in Recorder\""
       },
-      "cite": "`D03`:457",
-      "provenance": "new (`22` :5535)",
+      "cite": "`D03`:458",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.pin.help": {
@@ -676,8 +676,8 @@
       "sources": {
         "D03": "\"Pinned symbols are never deleted by retention. Unpin a symbol in the Recorder to let its data follow the policy; the Recorder states the volume that becomes eligible.\""
       },
-      "cite": "`D03`:458",
-      "provenance": "new",
+      "cite": "`D03`:459",
+      "provenance": "new (E16-D02 :395)",
       "status": "PROPOSED"
     },
     "retention.pin.none": {
@@ -689,8 +689,8 @@
       "sources": {
         "D03": "\"No pinned symbols.\""
       },
-      "cite": "`D03`:459",
-      "provenance": "new (E16-D02 :395)",
+      "cite": "`D03`:460",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.err.min": {
@@ -702,8 +702,8 @@
       "sources": {
         "D03": "\"Keep at least 1 day.\""
       },
-      "cite": "`D03`:460",
-      "provenance": "new",
+      "cite": "`D03`:461",
+      "provenance": "new (`22` :19321)",
       "status": "PROPOSED"
     },
     "retention.err.max": {
@@ -715,7 +715,7 @@
       "sources": {
         "D03": "\"At most 3650 days (10 years).\""
       },
-      "cite": "`D03`:461",
+      "cite": "`D03`:462",
       "provenance": "new (`22` :19321)",
       "status": "PROPOSED"
     },
@@ -728,8 +728,8 @@
       "sources": {
         "D03": "\"Whole days only.\""
       },
-      "cite": "`D03`:462",
-      "provenance": "new (`22` :19321)",
+      "cite": "`D03`:463",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.err.summary": {
@@ -741,7 +741,7 @@
       "sources": {
         "D03": "\"Fix {n} fields before applying.\" · fixture \"Fix 2 fields before applying.\""
       },
-      "cite": "`D03`:463",
+      "cite": "`D03`:464",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -754,7 +754,7 @@
       "sources": {
         "D03": "\"No changes to apply.\" (the validity look on an empty diff, D03-D1)"
       },
-      "cite": "`D03`:464",
+      "cite": "`D03`:465",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -767,8 +767,8 @@
       "sources": {
         "D03": "\"Preview the change first.\""
       },
-      "cite": "`D03`:465",
-      "provenance": "new",
+      "cite": "`D03`:466",
+      "provenance": "new (the ticket's security note)",
       "status": "PROPOSED",
       "frozen": "(iv)"
     },
@@ -781,8 +781,8 @@
       "sources": {
         "D03": "\"Type {word} to confirm.\" · fixture \"Type trades to confirm.\""
       },
-      "cite": "`D03`:466",
-      "provenance": "new (the ticket's security note)",
+      "cite": "`D03`:467",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.apply.invalid": {
@@ -794,7 +794,7 @@
       "sources": {
         "D03": "\"Fix {n} fields.\" · fixtures \"Fix 1 field.\" · \"Fix 2 fields.\""
       },
-      "cite": "`D03`:467",
+      "cite": "`D03`:468",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -807,7 +807,7 @@
       "sources": {
         "D03": "\"Preview changes\""
       },
-      "cite": "`D03`:468",
+      "cite": "`D03`:469",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -820,7 +820,7 @@
       "sources": {
         "D03": "\"What becomes eligible for deletion\""
       },
-      "cite": "`D03`:469",
+      "cite": "`D03`:470",
       "provenance": "new",
       "status": "PROPOSED",
       "frozen": "(iv)"
@@ -834,7 +834,7 @@
       "sources": {
         "D03": "\"{symbol} · {stream} · {from} · {to} · about {size}\" · when nothing predates the cut-off \"{symbol} · {stream} · — · — · about 0 GB now (recorded since about {since})\" · fixture \"ETHUSDT · Trades · — · — · about 0 GB now (recorded since about 2026-09-12)\""
       },
-      "cite": "`D03`:470",
+      "cite": "`D03`:471",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -847,7 +847,7 @@
       "sources": {
         "D03": "\"About {size} across {n} symbols\" · fixture \"About 0 GB now across 1 symbol\""
       },
-      "cite": "`D03`:471",
+      "cite": "`D03`:472",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -860,7 +860,7 @@
       "sources": {
         "D03": "\"Nothing becomes eligible: this policy keeps data as long as today.\" · after a lengthening \"Nothing becomes eligible: this change keeps data longer.\""
       },
-      "cite": "`D03`:472",
+      "cite": "`D03`:473",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -873,8 +873,8 @@
       "sources": {
         "D03": "\"Moves {stream} older than {n} days to Parquet sooner; it is still kept for {total}. This change deletes nothing.\" · fixture \"Moves trades older than 7 days to Parquet sooner; it is still kept for 24 months. This change deletes nothing.\" (a lowered hot window on a Move-to-Parquet row whose total does not shrink: region (e)'s line and the plain confirm's detail; a hot window lowered from above the `21` §7 total is K7)"
       },
-      "cite": "`D03`:473",
-      "provenance": "new",
+      "cite": "`D03`:474",
+      "provenance": "new (`22` :5535–5537; `21` :3095)",
       "status": "PROPOSED"
     },
     "retention.preview.pinned": {
@@ -886,8 +886,8 @@
       "sources": {
         "D03": "\"{symbol} is pinned and is not affected.\" · fixture \"BTCUSDT is pinned and is not affected.\""
       },
-      "cite": "`D03`:474",
-      "provenance": "new (`22` :5535–5537; `21` :3095)",
+      "cite": "`D03`:475",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.preview.caption": {
@@ -899,8 +899,8 @@
       "sources": {
         "D03": "\"Estimated from the storage report, per symbol across its recorded streams; the retention run's audit record carries the exact figures.\""
       },
-      "cite": "`D03`:475",
-      "provenance": "new",
+      "cite": "`D03`:476",
+      "provenance": "new (E16-D02 §6.5 :404's convention)",
       "status": "PROPOSED"
     },
     "retention.confirm.title": {
@@ -912,8 +912,8 @@
       "sources": {
         "D03": "\"Delete {stream} after {n} days?\" · fixtures \"Delete trades after 7 days?\" (K1) · \"Delete trades after 3 days?\" (K2; one stream over several symbols keeps this title too)"
       },
-      "cite": "`D03`:476",
-      "provenance": "new (E16-D02 §6.5 :404's convention)",
+      "cite": "`D03`:477",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.confirm.title_symbol": {
@@ -925,7 +925,7 @@
       "sources": {
         "D03": "\"Delete {symbol} {stream} after {n} days?\" · fixture \"Delete ETHUSDT trades after 14 days?\" (K3)"
       },
-      "cite": "`D03`:477",
+      "cite": "`D03`:478",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -938,7 +938,7 @@
       "sources": {
         "D03": "\"Shorten retention for {k} streams?\" · fixture \"Shorten retention for 2 streams?\" (K5)"
       },
-      "cite": "`D03`:478",
+      "cite": "`D03`:479",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -951,8 +951,8 @@
       "sources": {
         "D03": "\"Move {stream} to Parquet and shorten retention to {total}?\" · fixture \"Move trades to Parquet and shorten retention to 24 months?\" · with an 800-day hot window \"Move trades to Parquet and shorten retention to 800 days?\" (K6: a `drop` row set to Move to Parquet whose total falls; its title differs from K7's)"
       },
-      "cite": "`D03`:479",
-      "provenance": "new",
+      "cite": "`D03`:480",
+      "provenance": "new (`21` :3095)",
       "status": "PROPOSED"
     },
     "retention.confirm.title_total": {
@@ -964,8 +964,8 @@
       "sources": {
         "D03": "\"Shorten {stream} retention to {total}?\" · fixture \"Shorten trades retention to 24 months?\" (K7: a hot window lowered from above the `21` §7 total; `{total}` as defined above)"
       },
-      "cite": "`D03`:480",
-      "provenance": "new (`21` :3095)",
+      "cite": "`D03`:481",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.confirm.body": {
@@ -977,8 +977,8 @@
       "sources": {
         "D03": "\"{Stream} for {scope} older than {n} days become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" · fixture \"Trades for ETHUSDT older than 7 days become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. Nothing recorded before 2026-09-07 exists yet (about 0 GB now; recording started about 2026-09-12), so the first run deletes nothing. It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (the four roll-off streams only; the other four take `retention.confirm.body_cold`)"
       },
-      "cite": "`D03`:481",
-      "provenance": "new",
+      "cite": "`D03`:482",
+      "provenance": "new (E16-D02 :395's grammar; `24` :3898)",
       "status": "PROPOSED",
       "frozen": "(viii)"
     },
@@ -991,8 +991,8 @@
       "sources": {
         "D03": "the size clause: \"About {size} across {symbol}'s recorded streams, recorded from {from} to {to}, goes at the first run.\" · when nothing predates the cut-off \"Nothing recorded before {to} exists yet (about 0 GB now; recording started about {since}), so the first run deletes nothing.\" (the fixture's case; \"this sweep\" with `apply_now`)"
       },
-      "cite": "`D03`:482",
-      "provenance": "new (E16-D02 :395's grammar; `24` :3898)",
+      "cite": "`D03`:483",
+      "provenance": "new (C-2.13, C-2.14)",
       "status": "PROPOSED"
     },
     "retention.confirm.body_now": {
@@ -1004,8 +1004,8 @@
       "sources": {
         "D03": "\"{Stream} for {scope} older than {n} days are deleted when you apply: a retention sweep starts now, and every daily run repeats it, Parquet included. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" · fixture \"Trades for ETHUSDT older than 7 days are deleted when you apply: a retention sweep starts now, and every daily run repeats it, Parquet included. Nothing recorded before 2026-09-07 exists yet (about 0 GB now; recording started about 2026-09-12), so this sweep deletes nothing. It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (the four roll-off streams only; the other four take `retention.confirm.body_cold_now`)"
       },
-      "cite": "`D03`:483",
-      "provenance": "new (C-2.13, C-2.14)",
+      "cite": "`D03`:484",
+      "provenance": "new (`22` :5542)",
       "status": "PROPOSED",
       "frozen": "(viii)"
     },
@@ -1018,8 +1018,8 @@
       "sources": {
         "D03": "\"{symbol} then follows the global rule.\" + `retention.confirm.body` · fixture \"ETHUSDT then follows the global rule.\" (K4)"
       },
-      "cite": "`D03`:484",
-      "provenance": "new (`22` :5542)",
+      "cite": "`D03`:485",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.confirm.body_multi": {
@@ -1031,7 +1031,7 @@
       "sources": {
         "D03": "one line per stream × scope \"{Stream} for {scope}: older than {n} days\", then \"become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included.\" once, the size clause per line, then \"It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (K5; the four roll-off streams only: a stream without roll-off takes its `retention.confirm.body_cold` line)"
       },
-      "cite": "`D03`:485",
+      "cite": "`D03`:486",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -1044,8 +1044,8 @@
       "sources": {
         "D03": "\"{Stream} for {scope} older than {total} become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" · fixture \"Trades for ETHUSDT older than 24 months become eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it, Parquet included. Nothing recorded before 2024-09-14 exists yet (about 0 GB now; recording started about 2026-09-12), so the first run deletes nothing. It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (K6, K7; the four roll-off streams only; the other four take `retention.confirm.body_cold`)"
       },
-      "cite": "`D03`:486",
-      "provenance": "new",
+      "cite": "`D03`:487",
+      "provenance": "new (`21` :3095)",
       "status": "PROPOSED"
     },
     "retention.help.drop_cold": {
@@ -1057,7 +1057,7 @@
       "sources": {
         "D03": "\"Days before this stream's Parquet copy is deleted for good. The fast store keeps its rows.\" (PROPOSED: a Delete-after row on `orderbook_snapshot`, `klines`, `open_interest` or `funding`, the streams without roll-off)"
       },
-      "cite": "`D03`:487",
+      "cite": "`D03`:488",
       "provenance": "new (`21` :3095)",
       "status": "PROPOSED"
     },
@@ -1070,7 +1070,7 @@
       "sources": {
         "D03": "\"{Stream} for {scope}: the Parquet copy older than {n} days becomes eligible for deletion at the next retention run (daily, 03:00 UTC) and at every run after it; the fast store keeps its rows. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (PROPOSED: the streams without roll-off, in place of `retention.confirm.body`)"
       },
-      "cite": "`D03`:488",
+      "cite": "`D03`:489",
       "provenance": "new (`21` :3095)",
       "status": "PROPOSED"
     },
@@ -1083,8 +1083,8 @@
       "sources": {
         "D03": "\"{Stream} for {scope}: the Parquet copy older than {n} days is deleted when you apply: a retention sweep starts now, and every daily run repeats it; the fast store keeps its rows. {size clause} It cannot be undone. Replay, footprint history and the journal lose the deleted days.\" (PROPOSED: `retention.confirm.body_cold` with Apply now ticked, `retention.confirm.body_now`'s timing clause)"
       },
-      "cite": "`D03`:489",
-      "provenance": "new (`21` :3095)",
+      "cite": "`D03`:490",
+      "provenance": "new (`21` :3095; `22` :5542)",
       "status": "PROPOSED"
     },
     "retention.confirm.trades_extra": {
@@ -1096,8 +1096,8 @@
       "sources": {
         "D03": "\"Bars built from these trades can no longer be rebuilt.\""
       },
-      "cite": "`D03`:490",
-      "provenance": "new (`21` :3095; `22` :5542)",
+      "cite": "`D03`:491",
+      "provenance": "new (`21` :4715)",
       "status": "PROPOSED"
     },
     "retention.confirm.typed": {
@@ -1109,8 +1109,8 @@
       "sources": {
         "D03": "\"Type {word} to confirm\" · fixture \"Type trades to confirm\" (the typed field's label; `{word}` set in the mono face; the match is exact after trimming, case-sensitive — D03-D14)"
       },
-      "cite": "`D03`:491",
-      "provenance": "new (`21` :4715)",
+      "cite": "`D03`:492",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.confirm.ok": {
@@ -1122,8 +1122,8 @@
       "sources": {
         "D03": "\"Apply · delete eligible data at the next run\""
       },
-      "cite": "`D03`:492",
-      "provenance": "new",
+      "cite": "`D03`:493",
+      "provenance": "new (E30-D03 N7 :102)",
       "status": "PROPOSED"
     },
     "retention.confirm.ok_now": {
@@ -1135,8 +1135,8 @@
       "sources": {
         "D03": "\"Apply · start the retention run\""
       },
-      "cite": "`D03`:493",
-      "provenance": "new (E30-D03 N7 :102)",
+      "cite": "`D03`:494",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.confirm.lengthen.title": {
@@ -1148,7 +1148,7 @@
       "sources": {
         "D03": "\"Keep {stream} for {n} days?\" · fixture \"Keep trades for 90 days?\""
       },
-      "cite": "`D03`:494",
+      "cite": "`D03`:495",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -1161,7 +1161,7 @@
       "sources": {
         "D03": "\"Nothing is deleted. The fast store settles at most about {size}, plus pinned data.\" · fixture \"Nothing is deleted. The fast store settles at most about 189.8 GB, plus pinned data.\" (the fast store only: Parquet keeps each stream to its total, and four streams have no end date, `21` §7); true only while Apply now is unticked — with it ticked the body is \"This change deletes nothing more. The retention run that starts now still deletes what the current rules already make eligible. The fast store settles at most about {size}, plus pinned data.\""
       },
-      "cite": "`D03`:495",
+      "cite": "`D03`:496",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -1174,7 +1174,7 @@
       "sources": {
         "D03": "\"Apply the retention changes?\" (the plain confirm, only when no total horizon shrinks: a tiering change or a removal whose fallback is not shorter)"
       },
-      "cite": "`D03`:496",
+      "cite": "`D03`:497",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -1187,7 +1187,7 @@
       "sources": {
         "D03": "\"Nothing is deleted. {detail}\" (the detail drops its closing sentence) · the detail is `retention.confirm.tiering` or `retention.confirm.removed`; true only while no total horizon shrinks (§3) and Apply now is unticked"
       },
-      "cite": "`D03`:497",
+      "cite": "`D03`:498",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -1200,8 +1200,8 @@
       "sources": {
         "D03": "\"This change deletes nothing more. The retention run that starts now still deletes what the current rules already make eligible. {detail}\" (the plain confirm and the lengthening confirm with Apply now ticked, in place of `retention.confirm.plain.body` and `retention.confirm.lengthen.body`'s \"Nothing is deleted.\"; the detail drops its closing sentence)"
       },
-      "cite": "`D03`:498",
-      "provenance": "new",
+      "cite": "`D03`:499",
+      "provenance": "new (`22` :5542)",
       "status": "PROPOSED"
     },
     "retention.dirty": {
@@ -1213,8 +1213,8 @@
       "sources": {
         "D03": "\"Unsaved changes — Cancel or Esc discards them.\" (the footer caption while the form is dirty, D03-D16)"
       },
-      "cite": "`D03`:499",
-      "provenance": "new (`22` :5542)",
+      "cite": "`D03`:500",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.stepup.code": {
@@ -1226,9 +1226,9 @@
       "sources": {
         "D03": "\"You'll confirm with your password and a code.\""
       },
-      "cite": "`D03`:500",
-      "provenance": "new",
-      "status": "PROPOSED",
+      "cite": "`D03`:501",
+      "provenance": "E16-D02 §6.4 :380",
+      "status": "merged",
       "frozen": "(iii)"
     },
     "retention.stepup.grace": {
@@ -1240,7 +1240,7 @@
       "sources": {
         "D03": "\"Still trusted for recorder changes · {mm:ss}\""
       },
-      "cite": "`D03`:501",
+      "cite": "`D03`:502",
       "provenance": "E16-D02 §6.4 :380",
       "status": "merged"
     },
@@ -1253,7 +1253,7 @@
       "sources": {
         "D03": "\"Not sent\""
       },
-      "cite": "`D03`:502",
+      "cite": "`D03`:503",
       "provenance": "E16-D02 §6.4 :380",
       "status": "merged"
     },
@@ -1266,8 +1266,8 @@
       "sources": {
         "D03": "\"This action is audited.\""
       },
-      "cite": "`D03`:503",
-      "provenance": "E16-D02 §6.4 :380",
+      "cite": "`D03`:504",
+      "provenance": "E16-D02 §6.4 (CMP-093's line)",
       "status": "merged"
     },
     "retention.apply_now": {
@@ -1279,9 +1279,9 @@
       "sources": {
         "D03": "\"Apply now (start a retention run)\""
       },
-      "cite": "`D03`:504",
-      "provenance": "E16-D02 §6.4 (CMP-093's line)",
-      "status": "merged"
+      "cite": "`D03`:505",
+      "provenance": "new (`22` :5552)",
+      "status": "PROPOSED"
     },
     "retention.footer.buttons": {
       "parent": "D03",
@@ -1292,8 +1292,8 @@
       "sources": {
         "D03": "\"Cancel\" · \"Apply\" · \"Close\" (after the outcome)"
       },
-      "cite": "`D03`:505",
-      "provenance": "new (`22` :5552)",
+      "cite": "`D03`:506",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.next_run": {
@@ -1305,9 +1305,9 @@
       "sources": {
         "D03": "\"Next retention run: daily at 03:00 UTC\""
       },
-      "cite": "`D03`:506",
-      "provenance": "new",
-      "status": "PROPOSED"
+      "cite": "`D03`:507",
+      "provenance": "`24` :3898",
+      "status": "merged"
     },
     "retention.job.queued": {
       "parent": "D03",
@@ -1318,9 +1318,9 @@
       "sources": {
         "D03": "\"Retention run queued\""
       },
-      "cite": "`D03`:507",
-      "provenance": "`24` :3898",
-      "status": "merged"
+      "cite": "`D03`:508",
+      "provenance": "new",
+      "status": "PROPOSED"
     },
     "retention.job.running": {
       "parent": "D03",
@@ -1331,7 +1331,7 @@
       "sources": {
         "D03": "\"Retention run running · {pct} %\" · fixture \"Retention run running · 42 %\""
       },
-      "cite": "`D03`:508",
+      "cite": "`D03`:509",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -1344,7 +1344,7 @@
       "sources": {
         "D03": "\"Retention run succeeded\" · with D03-G4 \"Retention run succeeded · about {size} freed\" (the contract's word, BQ-18 RULED)"
       },
-      "cite": "`D03`:509",
+      "cite": "`D03`:510",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -1357,8 +1357,8 @@
       "sources": {
         "D03": "\"Retention run failed ({code})\" · \"Some data may already be deleted: check the storage report.\""
       },
-      "cite": "`D03`:510",
-      "provenance": "new",
+      "cite": "`D03`:511",
+      "provenance": "new (E16-D02 §3.2's pattern)",
       "status": "PROPOSED"
     },
     "retention.job.cancelled": {
@@ -1370,8 +1370,8 @@
       "sources": {
         "D03": "\"Retention run cancelled\""
       },
-      "cite": "`D03`:511",
-      "provenance": "new (E16-D02 §3.2's pattern)",
+      "cite": "`D03`:512",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.outcome.saved": {
@@ -1383,8 +1383,8 @@
       "sources": {
         "D03": "\"Retention policy saved. Audited as retention.change.\""
       },
-      "cite": "`D03`:512",
-      "provenance": "new",
+      "cite": "`D03`:513",
+      "provenance": "new (`22` :5545)",
       "status": "PROPOSED"
     },
     "retention.refused.job_running": {
@@ -1396,8 +1396,8 @@
       "sources": {
         "D03": "\"A retention run is already running.\""
       },
-      "cite": "`D03`:513",
-      "provenance": "new (`22` :5545)",
+      "cite": "`D03`:514",
+      "provenance": "new (`22` :5542)",
       "status": "PROPOSED"
     },
     "retention.refused.scheduler_off": {
@@ -1409,8 +1409,8 @@
       "sources": {
         "D03": "\"Retention runs are off on this server.\""
       },
-      "cite": "`D03`:514",
-      "provenance": "new (`22` :5542)",
+      "cite": "`D03`:515",
+      "provenance": "new (BQ-17 RULED)",
       "status": "PROPOSED"
     },
     "retention.refused.audit": {
@@ -1422,8 +1422,8 @@
       "sources": {
         "D03": "\"Not saved: the audit record could not be written.\""
       },
-      "cite": "`D03`:515",
-      "provenance": "new (BQ-17 RULED)",
+      "cite": "`D03`:516",
+      "provenance": "new (`22` :5546)",
       "status": "PROPOSED"
     },
     "retention.refused.invalid": {
@@ -1435,8 +1435,8 @@
       "sources": {
         "D03": "\"Bars can't be deleted before the ticks they came from are kept — adjust the tiers.\" (the derived rule) · else \"The server did not accept this policy set.\""
       },
-      "cite": "`D03`:516",
-      "provenance": "new (`22` :5546)",
+      "cite": "`D03`:517",
+      "provenance": "`14` :2795 · new",
       "status": "PROPOSED"
     },
     "retention.refused.unknown": {
@@ -1448,8 +1448,8 @@
       "sources": {
         "D03": "\"Something in this form is not accepted by the server.\""
       },
-      "cite": "`D03`:517",
-      "provenance": "`14` :2795 · new",
+      "cite": "`D03`:518",
+      "provenance": "new (`22` :5540)",
       "status": "PROPOSED"
     },
     "retention.estimate": {
@@ -1461,8 +1461,8 @@
       "sources": {
         "D03": "\"Under this policy the fast store settles at most about {size} ({pct} % of {cap}), plus pinned data.\" · fixture \"Under this policy the fast store settles at most about 189.8 GB (9 % of 2,000 GB), plus pinned data.\" (the bound is the fast store's: non-pinned growth × the longest hot window; Parquet's share follows the formula line)"
       },
-      "cite": "`D03`:518",
-      "provenance": "new (`22` :5540)",
+      "cite": "`D03`:519",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "retention.estimate.formula": {
@@ -1474,8 +1474,8 @@
       "sources": {
         "D03": "\"Non-pinned growth 520 MB/day × the longest window 365 days ≈ 189.8 GB. Pinned symbols are never deleted by retention: about 780 MB/day today. Parquet keeps archived streams until their horizon; a per-stream figure needs the storage report to split by stream.\""
       },
-      "cite": "`D03`:519",
-      "provenance": "new",
+      "cite": "`D03`:520",
+      "provenance": "new (E16-D02 §8.3 :486's formula line)",
       "status": "PROPOSED"
     },
     "retention.effect": {
@@ -1487,8 +1487,8 @@
       "sources": {
         "D03": "\"Shorter retention removes history from replay, footprint and profile look-backs and from journal back-fill after the cut-off date; those views then start at the oldest kept day and show \"Older data was removed by the retention policy (<N> days).\" Data a saved replay session or an unexported journal trade still needs is kept until they release it.\""
       },
-      "cite": "`D03`:520",
-      "provenance": "new (E16-D02 §8.3 :486's formula line)",
+      "cite": "`D03`:521",
+      "provenance": "new (E16-D01 :222; `24` :3898; `14` :83)",
       "status": "PROPOSED"
     },
     "storage.title": {
@@ -1500,8 +1500,8 @@
       "sources": {
         "D04": "\"Storage and database\""
       },
-      "cite": "`D04`:498",
-      "provenance": "----------------------------------------------------------------------------------------------------------------------------------------",
+      "cite": "`D04`:499",
+      "provenance": "`14` :2770 (the heading, cased)",
       "status": "merged"
     },
     "storage.stamp": {
@@ -1513,9 +1513,9 @@
       "sources": {
         "D04": "\"Sampled {HH:MM:SS} UTC (every {every})\" · \"Sampled 10:31:03 UTC (every 60 s)\""
       },
-      "cite": "`D04`:499",
-      "provenance": "`14` :2770 (the heading, cased)",
-      "status": "merged"
+      "cite": "`D04`:500",
+      "provenance": "`new`",
+      "status": "PROPOSED"
     },
     "storage.stamp.stale": {
       "parent": "D04",
@@ -1526,7 +1526,7 @@
       "sources": {
         "D04": "\"Sampled {HH:MM:SS} UTC, stale ({age} old)\" · \"Sampled 10:31:03 UTC, stale (3 min old)\""
       },
-      "cite": "`D04`:500",
+      "cite": "`D04`:501",
       "provenance": "`new`",
       "status": "PROPOSED"
     },
@@ -1539,7 +1539,7 @@
       "sources": {
         "D04": "\"Sampling…\""
       },
-      "cite": "`D04`:501",
+      "cite": "`D04`:502",
       "provenance": "`new`",
       "status": "PROPOSED"
     },
@@ -1552,8 +1552,8 @@
       "sources": {
         "D04": "\"Recording budget: {used} of {cap} ({pct})\" · \"Recording budget: 1,188.0 GB of 2,000.0 GB (59.4 %)\""
       },
-      "cite": "`D04`:502",
-      "provenance": "`new`",
+      "cite": "`D04`:503",
+      "provenance": "`new` (the numerator rule `22` :5424)",
       "status": "PROPOSED"
     },
     "storage.meter.volume": {
@@ -1565,8 +1565,8 @@
       "sources": {
         "D04": "\"Disk volume: {used} of {total} ({pct}), {free} free\" · \"Disk volume: 1.2 TB of 4.0 TB (30.1 %), 2.8 TB free\""
       },
-      "cite": "`D04`:503",
-      "provenance": "`new` (the numerator rule `22` :5424)",
+      "cite": "`D04`:504",
+      "provenance": "`new`",
       "status": "PROPOSED"
     },
     "storage.projection": {
@@ -1578,8 +1578,8 @@
       "sources": {
         "D04": "\"Full in about {d} days ({date}) at {growth}: the {wall} is the nearer wall\" · \"Full in about 560 days (2028-03-27) at 1.45 GB/day: the budget is the nearer wall (the volume about 1,928 days)\""
       },
-      "cite": "`D04`:504",
-      "provenance": "`new`",
+      "cite": "`D04`:505",
+      "provenance": "`new` (E16-D02 :153's rule)",
       "status": "PROPOSED"
     },
     "storage.headline.0": {
@@ -1591,9 +1591,9 @@
       "sources": {
         "D04": "\"Growing · auto-record pauses in about {d} days\" · \"Growing · auto-record pauses in about 422 days\""
       },
-      "cite": "`D04`:505",
-      "provenance": "`new` (E16-D02 :153's rule)",
-      "status": "PROPOSED"
+      "cite": "`D04`:506",
+      "provenance": "E16-D02 §8.3 :490",
+      "status": "merged"
     },
     "storage.headline.1": {
       "parent": "D04",
@@ -1604,8 +1604,8 @@
       "sources": {
         "D04": "\"Near limit · auto-record pauses in about {d} days · clears below {warn − 5} %\" · \"… about 131 days · clears below 75 %\""
       },
-      "cite": "`D04`:506",
-      "provenance": "E16-D02 §8.3 :490",
+      "cite": "`D04`:507",
+      "provenance": "E16-D02 §8.3 :493",
       "status": "merged"
     },
     "storage.headline.2": {
@@ -1617,8 +1617,8 @@
       "sources": {
         "D04": "\"Auto-record paused · resumes below {autostop − 5} % of the budget with 20 % of the volume free\""
       },
-      "cite": "`D04`:507",
-      "provenance": "E16-D02 §8.3 :493",
+      "cite": "`D04`:508",
+      "provenance": "E16-D02 §8.3 :494",
       "status": "merged"
     },
     "storage.headline.3": {
@@ -1630,8 +1630,8 @@
       "sources": {
         "D04": "\"Recording stopped · resumes below {halt − 5} % with 10 % of the volume free\" · \"… below 90 % …\""
       },
-      "cite": "`D04`:508",
-      "provenance": "E16-D02 §8.3 :494",
+      "cite": "`D04`:509",
+      "provenance": "E16-D02 §8.3 :496",
       "status": "merged"
     },
     "storage.level3.fact": {
@@ -1643,7 +1643,7 @@
       "sources": {
         "D04": "\"Open positions keep recording; other symbols' data is dropped and recorded as gaps.\""
       },
-      "cite": "`D04`:509",
+      "cite": "`D04`:510",
       "provenance": "E16-D02 §8.3 :496",
       "status": "merged"
     },
@@ -1656,8 +1656,8 @@
       "sources": {
         "D04": "\"({autostop} % × {cap} − {used}) ÷ {growth} ≈ {d} days\" · \"(90 % × 2,000.0 GB − 1,188.0 GB) ÷ 1.45 GB/day ≈ 422 days\""
       },
-      "cite": "`D04`:510",
-      "provenance": "E16-D02 §8.3 :496",
+      "cite": "`D04`:511",
+      "provenance": "E16-D02 §8.3 :490",
       "status": "merged"
     },
     "storage.scale": {
@@ -1669,8 +1669,8 @@
       "sources": {
         "D04": "\"80 % warning · 90 % auto-record pauses · 95 % recording stops (open positions keep writing)\""
       },
-      "cite": "`D04`:511",
-      "provenance": "E16-D02 §8.3 :490",
+      "cite": "`D04`:512",
+      "provenance": "E16-D02 §8.3 :499",
       "status": "merged"
     },
     "storage.degradation": {
@@ -1682,9 +1682,9 @@
       "sources": {
         "D04": "\"Recording pauses before trading is affected.\""
       },
-      "cite": "`D04`:512",
-      "provenance": "E16-D02 §8.3 :499",
-      "status": "merged"
+      "cite": "`D04`:513",
+      "provenance": "`new` (AC 2; `14` :2780)",
+      "status": "PROPOSED"
     },
     "storage.degradation.detail": {
       "parent": "D04",
@@ -1695,8 +1695,8 @@
       "sources": {
         "D04": "\"At 90 % of the recording budget auto-record pauses; at 95 % recording stops for symbols without an open position; orders and positions are never gated by the disk.\""
       },
-      "cite": "`D04`:513",
-      "provenance": "`new` (AC 2; `14` :2780)",
+      "cite": "`D04`:514",
+      "provenance": "`new` (`20` :905–907; `24` :3845, :3854)",
       "status": "PROPOSED"
     },
     "storage.autostop.next": {
@@ -1708,9 +1708,9 @@
       "sources": {
         "D04": "\"Recording stops at {halt} % in about {d} days\" · \"Recording stops at 95 % in about 69 days\""
       },
-      "cite": "`D04`:514",
-      "provenance": "`new` (`20` :905–907; `24` :3845, :3854)",
-      "status": "PROPOSED"
+      "cite": "`D04`:515",
+      "provenance": "E16-D02 §8.3 :494",
+      "status": "merged"
     },
     "storage.accelerated": {
       "parent": "D04",
@@ -1721,9 +1721,9 @@
       "sources": {
         "D04": "\"Retention accelerated\""
       },
-      "cite": "`D04`:515",
-      "provenance": "E16-D02 §8.3 :494",
-      "status": "merged"
+      "cite": "`D04`:516",
+      "provenance": "`new` (`22` :19243)",
+      "status": "PROPOSED"
     },
     "storage.volume_refused": {
       "parent": "D04",
@@ -1734,8 +1734,8 @@
       "sources": {
         "D04": "\"The recording volume was refused at start-up; the gate opens once it is fixed\""
       },
-      "cite": "`D04`:516",
-      "provenance": "`new` (`22` :19243)",
+      "cite": "`D04`:517",
+      "provenance": "`new` (`23` :4103–4104; SR-096)",
       "status": "PROPOSED"
     },
     "storage.actions.shorten": {
@@ -1747,9 +1747,9 @@
       "sources": {
         "D04": "\"Shorten retention\""
       },
-      "cite": "`D04`:517",
-      "provenance": "`new` (`23` :4103–4104; SR-096)",
-      "status": "PROPOSED"
+      "cite": "`D04`:518",
+      "provenance": "E16-D02 §8.3 :503",
+      "status": "merged"
     },
     "storage.actions.depth": {
       "parent": "D04",
@@ -1760,7 +1760,7 @@
       "sources": {
         "D04": "\"Reduce depth\""
       },
-      "cite": "`D04`:518",
+      "cite": "`D04`:519",
       "provenance": "E16-D02 §8.3 :503",
       "status": "merged"
     },
@@ -1773,8 +1773,8 @@
       "sources": {
         "D04": "\"Unpin\""
       },
-      "cite": "`D04`:519",
-      "provenance": "E16-D02 §8.3 :503",
+      "cite": "`D04`:520",
+      "provenance": "E16-D02 §8.3 :504",
       "status": "merged"
     },
     "storage.tier.questdb": {
@@ -1786,9 +1786,9 @@
       "sources": {
         "D04": "\"QuestDB · hot\""
       },
-      "cite": "`D04`:520",
-      "provenance": "E16-D02 §8.3 :504",
-      "status": "merged"
+      "cite": "`D04`:521",
+      "provenance": "`new` (ADR-0003 :34)",
+      "status": "PROPOSED"
     },
     "storage.tier.parquet": {
       "parent": "D04",
@@ -1799,8 +1799,8 @@
       "sources": {
         "D04": "\"Parquet/DuckDB · cold\""
       },
-      "cite": "`D04`:521",
-      "provenance": "`new` (ADR-0003 :34)",
+      "cite": "`D04`:522",
+      "provenance": "`new` (ADR-0003 :35)",
       "status": "PROPOSED"
     },
     "storage.tier.postgres": {
@@ -1812,8 +1812,8 @@
       "sources": {
         "D04": "\"Postgres · relational\""
       },
-      "cite": "`D04`:522",
-      "provenance": "`new` (ADR-0003 :35)",
+      "cite": "`D04`:523",
+      "provenance": "`new` (ADR-0003 :36)",
       "status": "PROPOSED"
     },
     "storage.tier.rows": {
@@ -1825,8 +1825,8 @@
       "sources": {
         "D04": "\"Size\" · \"Share of budget\" · \"Retention\" · \"Growth/day\" · \"Projected full\" · \"Health\" · \"Ingestion\" · \"Last compaction\" · \"Last vacuum\" · \"Migration\" · \"Rows by table\""
       },
-      "cite": "`D04`:523",
-      "provenance": "`new` (ADR-0003 :36)",
+      "cite": "`D04`:524",
+      "provenance": "`new` (`14` :2772, :2777; \"Last compaction\", \"Last vacuum\", \"Migration\" and \"Rows by table\" label PROPOSED rows: D04-G6, D04-G7, D04-G3)",
       "status": "PROPOSED"
     },
     "storage.tier.not_counted": {
@@ -1838,8 +1838,8 @@
       "sources": {
         "D04": "\"not counted\""
       },
-      "cite": "`D04`:524",
-      "provenance": "`new` (`14` :2772, :2777; \"Last compaction\", \"Last vacuum\", \"Migration\" and \"Rows by table\" label PROPOSED rows: D04-G6, D04-G7, D04-G3)",
+      "cite": "`D04`:525",
+      "provenance": "`new` (`22` :5424)",
       "status": "PROPOSED"
     },
     "storage.tier.all_tiers": {
@@ -1851,8 +1851,8 @@
       "sources": {
         "D04": "\"all tiers {growth}\" · \"all tiers 1.45 GB/day\" · \"all tiers 2028-03-27\""
       },
-      "cite": "`D04`:525",
-      "provenance": "`new` (`22` :5424)",
+      "cite": "`D04`:526",
+      "provenance": "`new` (D04-G1's fallback)",
       "status": "PROPOSED"
     },
     "storage.tier.health": {
@@ -1864,8 +1864,8 @@
       "sources": {
         "D04": "\"healthy\" · \"degraded\" · \"warning\" · \"down\" · \"not deployed\" · \"not reported\""
       },
-      "cite": "`D04`:526",
-      "provenance": "`new` (D04-G1's fallback)",
+      "cite": "`D04`:527",
+      "provenance": "`22` :17419 (`ComponentState`); `new` the last",
       "status": "PROPOSED"
     },
     "storage.tier.unreachable": {
@@ -1877,8 +1877,8 @@
       "sources": {
         "D04": "\"{Tier} unreachable since {HH:MM:SS} UTC\" · \"QuestDB unreachable since 10:24:03 UTC\""
       },
-      "cite": "`D04`:527",
-      "provenance": "`22` :17419 (`ComponentState`); `new` the last",
+      "cite": "`D04`:528",
+      "provenance": "`new`",
       "status": "PROPOSED"
     },
     "storage.tier.retry": {
@@ -1890,9 +1890,9 @@
       "sources": {
         "D04": "\"Retry\""
       },
-      "cite": "`D04`:528",
-      "provenance": "`new`",
-      "status": "PROPOSED"
+      "cite": "`D04`:529",
+      "provenance": "E16-D02 §3.1 :191",
+      "status": "merged"
     },
     "storage.ingestion": {
       "parent": "D04",
@@ -1903,9 +1903,9 @@
       "sources": {
         "D04": "\"Ingest {rate} msg/s, backlog {rows} rows, lag —\" · \"Ingest 18,400 msg/s, backlog 25,000 rows, lag — (PROPOSED — D04-G4, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row 57))\""
       },
-      "cite": "`D04`:529",
-      "provenance": "E16-D02 §3.1 :191",
-      "status": "merged"
+      "cite": "`D04`:530",
+      "provenance": "`new` (`23` :4060–4061; the lag PROPOSED, D04-G4)",
+      "status": "PROPOSED"
     },
     "storage.lag.banner": {
       "parent": "D04",
@@ -1916,8 +1916,8 @@
       "sources": {
         "D04": "\"Ingestion backlog {rows} rows — writes are behind the feed\" · \"Ingestion backlog 25,000 rows — writes are behind the feed\""
       },
-      "cite": "`D04`:530",
-      "provenance": "`new` (`23` :4060–4061; the lag PROPOSED, D04-G4)",
+      "cite": "`D04`:531",
+      "provenance": "`new`",
       "status": "PROPOSED"
     },
     "storage.proposed.caption": {
@@ -1929,8 +1929,8 @@
       "sources": {
         "D04": "\"PROPOSED — D04-G{n}, RULED (orchestrator, 2026-10-29, #2701 ledger 1 row {row})\""
       },
-      "cite": "`D04`:531",
-      "provenance": "`new`",
+      "cite": "`D04`:532",
+      "provenance": "`new` (the orchestrator's ruling; ledger 1 rows 57–59)",
       "status": "PROPOSED"
     },
     "storage.proposed.rows": {
@@ -1942,8 +1942,8 @@
       "sources": {
         "D04": "\"Row counts by table are not produced yet\""
       },
-      "cite": "`D04`:532",
-      "provenance": "`new` (the orchestrator's ruling; ledger 1 rows 57–59)",
+      "cite": "`D04`:533",
+      "provenance": "`new` (D04-G3's fallback)",
       "status": "PROPOSED"
     },
     "storage.proposed.queries": {
@@ -1955,8 +1955,8 @@
       "sources": {
         "D04": "\"Slowest queries are not produced yet\""
       },
-      "cite": "`D04`:533",
-      "provenance": "`new` (D04-G3's fallback)",
+      "cite": "`D04`:534",
+      "provenance": "`new` (D04-G5's fallback)",
       "status": "PROPOSED"
     },
     "storage.compaction.schedule": {
@@ -1968,9 +1968,9 @@
       "sources": {
         "D04": "\"weekly, Sundays 03:00 UTC\""
       },
-      "cite": "`D04`:534",
-      "provenance": "`new` (D04-G5's fallback)",
-      "status": "PROPOSED"
+      "cite": "`D04`:535",
+      "provenance": "`21` :4410",
+      "status": "merged"
     },
     "storage.symbols.attributed": {
       "parent": "D04",
@@ -1981,9 +1981,9 @@
       "sources": {
         "D04": "\"{sum} of {used} attributed to symbols ({pct})\" · \"813.6 GB of 1,188.0 GB attributed to symbols (68.5 %)\""
       },
-      "cite": "`D04`:535",
-      "provenance": "`21` :4410",
-      "status": "merged"
+      "cite": "`D04`:536",
+      "provenance": "`new` (D04-CG3)",
+      "status": "PROPOSED"
     },
     "storage.migration.banner": {
       "parent": "D04",
@@ -1994,8 +1994,8 @@
       "sources": {
         "D04": "\"Migration pending · {n} pending · {from} → {to} — applied with the next release\" · \"Migration pending · 1 pending · 0008 → 0009 — applied with the next release\""
       },
-      "cite": "`D04`:536",
-      "provenance": "`new` (D04-CG3)",
+      "cite": "`D04`:537",
+      "provenance": "`new` (PROPOSED D04-G7; `22` :11103)",
       "status": "PROPOSED"
     },
     "storage.unavailable": {
@@ -2007,9 +2007,9 @@
       "sources": {
         "D04": "\"Disk figures could not be loaded.\""
       },
-      "cite": "`D04`:537",
-      "provenance": "`new` (PROPOSED D04-G7; `22` :11103)",
-      "status": "PROPOSED"
+      "cite": "`D04`:538",
+      "provenance": "E16-D02 §3.1 :191",
+      "status": "merged"
     },
     "storage.stale.announce": {
       "parent": "D04",
@@ -2020,9 +2020,9 @@
       "sources": {
         "D04": "\"Storage figures are stale\""
       },
-      "cite": "`D04`:538",
-      "provenance": "E16-D02 §3.1 :191",
-      "status": "merged"
+      "cite": "`D04`:539",
+      "provenance": "`new`",
+      "status": "PROPOSED"
     },
     "notice.panel_read_only": {
       "parent": "D04",
@@ -2033,9 +2033,9 @@
       "sources": {
         "D04": "\"Read-only — read-only while viewing as {user}.\" · \"Read-only — read-only while viewing as alex.\""
       },
-      "cite": "`D04`:539",
-      "provenance": "`new`",
-      "status": "PROPOSED"
+      "cite": "`D04`:540",
+      "provenance": "E16-D02 D-16 :778 (E09-D09 §10's template)",
+      "status": "merged"
     },
     "storage.compact.button": {
       "parent": "D04",
@@ -2046,9 +2046,9 @@
       "sources": {
         "D04": "\"Compact Parquet…\""
       },
-      "cite": "`D04`:541",
-      "provenance": "E09-D09 §3.1 :95",
-      "status": "merged"
+      "cite": "`D04`:542",
+      "provenance": "`new` (E16-D02 §6.6's \"Compact now\" on SCR-140)",
+      "status": "PROPOSED"
     },
     "storage.compact.title": {
       "parent": "D04",
@@ -2059,8 +2059,8 @@
       "sources": {
         "D04": "\"Compact Parquet partitions?\""
       },
-      "cite": "`D04`:542",
-      "provenance": "`new` (E16-D02 §6.6's \"Compact now\" on SCR-140)",
+      "cite": "`D04`:543",
+      "provenance": "`new`",
       "status": "PROPOSED"
     },
     "storage.compact.body": {
@@ -2072,8 +2072,8 @@
       "sources": {
         "D04": "\"Merges small files into partitions of at most 512 MiB. Nothing is deleted. Replay is paused on partitions it touches.\""
       },
-      "cite": "`D04`:543",
-      "provenance": "`new`",
+      "cite": "`D04`:544",
+      "provenance": "`new` (`21` :4414, :4417, :4418)",
       "status": "PROPOSED"
     },
     "storage.vacuum.button": {
@@ -2085,8 +2085,8 @@
       "sources": {
         "D04": "\"Vacuum Postgres…\""
       },
-      "cite": "`D04`:544",
-      "provenance": "`new` (`21` :4414, :4417, :4418)",
+      "cite": "`D04`:545",
+      "provenance": "`new` (PROPOSED D04-G8)",
       "status": "PROPOSED"
     },
     "storage.vacuum.title": {
@@ -2098,7 +2098,7 @@
       "sources": {
         "D04": "\"Vacuum Postgres?\""
       },
-      "cite": "`D04`:545",
+      "cite": "`D04`:546",
       "provenance": "`new` (PROPOSED D04-G8)",
       "status": "PROPOSED"
     },
@@ -2111,7 +2111,7 @@
       "sources": {
         "D04": "\"Reclaims space from deleted rows. Nothing is deleted. Queries may be slower while it runs.\""
       },
-      "cite": "`D04`:546",
+      "cite": "`D04`:547",
       "provenance": "`new` (PROPOSED D04-G8)",
       "status": "PROPOSED"
     },
@@ -2124,9 +2124,9 @@
       "sources": {
         "D04": "\"This action is audited.\""
       },
-      "cite": "`D04`:547",
-      "provenance": "`new` (PROPOSED D04-G8)",
-      "status": "PROPOSED"
+      "cite": "`D04`:548",
+      "provenance": "E16-D03 §5 :210",
+      "status": "merged"
     },
     "storage.confirm.cancel": {
       "parent": "D04",
@@ -2137,8 +2137,8 @@
       "sources": {
         "D04": "\"Cancel\""
       },
-      "cite": "`D04`:548",
-      "provenance": "E16-D03 §5 :210",
+      "cite": "`D04`:549",
+      "provenance": "CMP-044 `15` :473",
       "status": "merged"
     },
     "storage.job.running": {
@@ -2150,8 +2150,8 @@
       "sources": {
         "D04": "\"{verb} running · {pct} %\" · \"Compaction running · 42 %\" · \"Import running · 38 %\""
       },
-      "cite": "`D04`:549",
-      "provenance": "CMP-044 `15` :473",
+      "cite": "`D04`:550",
+      "provenance": "E16-D03 §8 :262 (the grammar)",
       "status": "merged"
     },
     "storage.job.started": {
@@ -2163,9 +2163,9 @@
       "sources": {
         "D04": "\"{verb} started\" · \"Compaction started\" · \"Import started\""
       },
-      "cite": "`D04`:550",
-      "provenance": "E16-D03 §8 :262 (the grammar)",
-      "status": "merged"
+      "cite": "`D04`:551",
+      "provenance": "`new`",
+      "status": "PROPOSED"
     },
     "storage.job.stop": {
       "parent": "D04",
@@ -2176,8 +2176,8 @@
       "sources": {
         "D04": "\"Stop job\""
       },
-      "cite": "`D04`:551",
-      "provenance": "`new`",
+      "cite": "`D04`:552",
+      "provenance": "`new` (PROPOSED D04-G10)",
       "status": "PROPOSED"
     },
     "storage.job.refused.running": {
@@ -2189,8 +2189,8 @@
       "sources": {
         "D04": "\"A {verb} is already running.\" · \"A compaction is already running.\""
       },
-      "cite": "`D04`:552",
-      "provenance": "`new` (PROPOSED D04-G10)",
+      "cite": "`D04`:553",
+      "provenance": "`new` (`22` :14942 `409 job_running`)",
       "status": "PROPOSED"
     },
     "storage.compact.succeeded": {
@@ -2202,9 +2202,9 @@
       "sources": {
         "D04": "\"Compacted at {HH:MM} UTC\" · \"Compacted at 10:42 UTC\""
       },
-      "cite": "`D04`:553",
-      "provenance": "`new` (`22` :14942 `409 job_running`)",
-      "status": "PROPOSED"
+      "cite": "`D04`:554",
+      "provenance": "E16-D02 §3.2 :204",
+      "status": "merged"
     },
     "storage.compact.failed": {
       "parent": "D04",
@@ -2215,8 +2215,8 @@
       "sources": {
         "D04": "\"Compaction failed (`<code>`); nothing was deleted.\""
       },
-      "cite": "`D04`:554",
-      "provenance": "E16-D02 §3.2 :204",
+      "cite": "`D04`:555",
+      "provenance": "E16-D02 §3.2 :203",
       "status": "merged"
     },
     "storage.compact.cancelled": {
@@ -2228,8 +2228,8 @@
       "sources": {
         "D04": "\"Compaction cancelled; nothing was deleted.\""
       },
-      "cite": "`D04`:555",
-      "provenance": "E16-D02 §3.2 :203",
+      "cite": "`D04`:556",
+      "provenance": "E16-D02 §3.2 :203 (elided there; completed by D04-A8)",
       "status": "merged"
     },
     "storage.compact.unknown": {
@@ -2241,8 +2241,8 @@
       "sources": {
         "D04": "\"Compaction status is no longer available on the server.\""
       },
-      "cite": "`D04`:556",
-      "provenance": "E16-D02 §3.2 :203 (elided there; completed by D04-A8)",
+      "cite": "`D04`:557",
+      "provenance": "E16-D02 §3.2 :203",
       "status": "merged"
     },
     "storage.vacuum.succeeded": {
@@ -2254,9 +2254,9 @@
       "sources": {
         "D04": "\"Vacuumed at {HH:MM} UTC\""
       },
-      "cite": "`D04`:557",
-      "provenance": "E16-D02 §3.2 :203",
-      "status": "merged"
+      "cite": "`D04`:558",
+      "provenance": "`new` (PROPOSED D04-G8)",
+      "status": "PROPOSED"
     },
     "storage.vacuum.failed": {
       "parent": "D04",
@@ -2267,7 +2267,7 @@
       "sources": {
         "D04": "\"Vacuum failed (`<code>`); nothing was deleted.\""
       },
-      "cite": "`D04`:558",
+      "cite": "`D04`:559",
       "provenance": "`new` (PROPOSED D04-G8)",
       "status": "PROPOSED"
     },
@@ -2280,7 +2280,7 @@
       "sources": {
         "D04": "\"Vacuum cancelled; nothing was deleted.\""
       },
-      "cite": "`D04`:559",
+      "cite": "`D04`:560",
       "provenance": "`new` (PROPOSED D04-G8)",
       "status": "PROPOSED"
     },
@@ -2293,7 +2293,7 @@
       "sources": {
         "D04": "\"Vacuum status is no longer available on the server.\""
       },
-      "cite": "`D04`:560",
+      "cite": "`D04`:561",
       "provenance": "`new` (PROPOSED D04-G8)",
       "status": "PROPOSED"
     },
@@ -2306,9 +2306,9 @@
       "sources": {
         "D04": "\"Purge data…\" · \"Purge…\""
       },
-      "cite": "`D04`:561",
-      "provenance": "`new` (PROPOSED D04-G8)",
-      "status": "PROPOSED"
+      "cite": "`D04`:562",
+      "provenance": "E16-D02 §6.5 :404",
+      "status": "merged"
     },
     "storage.purge.title": {
       "parent": "D04",
@@ -2319,8 +2319,8 @@
       "sources": {
         "D04": "\"Purge {symbol} data?\" · \"Purge ETHUSDT data?\""
       },
-      "cite": "`D04`:562",
-      "provenance": "E16-D02 §6.5 :404",
+      "cite": "`D04`:563",
+      "provenance": "E16-D02 §6.5 :408",
       "status": "merged"
     },
     "storage.purge.body": {
@@ -2332,8 +2332,8 @@
       "sources": {
         "D04": "\"This deletes about {size} recorded from {from} to {to} from QuestDB and Parquet. It cannot be undone, and replay, footprint history and the journal lose this range. Shared QuestDB day partitions are freed by the nightly roll-off.\""
       },
-      "cite": "`D04`:563",
-      "provenance": "E16-D02 §6.5 :408",
+      "cite": "`D04`:564",
+      "provenance": "E16-D02 §6.5 :410–412",
       "status": "merged",
       "frozen": "(viii)"
     },
@@ -2346,8 +2346,8 @@
       "sources": {
         "D04": "\"Delete data recorded before\""
       },
-      "cite": "`D04`:564",
-      "provenance": "E16-D02 §6.5 :410–412",
+      "cite": "`D04`:565",
+      "provenance": "E16-D02 §6.5 :409 (`22` :15086: `before`, required)",
       "status": "merged",
       "frozen": "(ii)"
     },
@@ -2360,9 +2360,9 @@
       "sources": {
         "D04": "\"Data recorded at or after this time is kept.\""
       },
-      "cite": "`D04`:565",
-      "provenance": "E16-D02 §6.5 :409 (`22` :15086: `before`, required)",
-      "status": "merged"
+      "cite": "`D04`:566",
+      "provenance": "`new` (`22` :15053–15054)",
+      "status": "PROPOSED"
     },
     "storage.purge.before.reason": {
       "parent": "D04",
@@ -2373,8 +2373,8 @@
       "sources": {
         "D04": "\"Choose a time no later than now.\""
       },
-      "cite": "`D04`:566",
-      "provenance": "`new` (`22` :15053–15054)",
+      "cite": "`D04`:567",
+      "provenance": "`new` (`22` :15054–15057 `before_in_future`)",
       "status": "PROPOSED"
     },
     "storage.purge.refused.before": {
@@ -2386,8 +2386,8 @@
       "sources": {
         "D04": "\"Not started: the time is later than the server's ({server_time}). Choose a time at or before it.\" · \"Not started: the time is later than the server's (2026-09-14 10:31:03 UTC). Choose a time at or before it.\""
       },
-      "cite": "`D04`:567",
-      "provenance": "`new` (`22` :15054–15057 `before_in_future`)",
+      "cite": "`D04`:568",
+      "provenance": "`new` (`22` :15054–15057: `422 validation_failed`, the server's time in `message`)",
       "status": "PROPOSED"
     },
     "storage.purge.typed": {
@@ -2399,9 +2399,9 @@
       "sources": {
         "D04": "\"Type the symbol to confirm\""
       },
-      "cite": "`D04`:568",
-      "provenance": "`new` (`22` :15054–15057: `422 validation_failed`, the server's time in `message`)",
-      "status": "PROPOSED",
+      "cite": "`D04`:569",
+      "provenance": "E16-D02 §6.5 :415",
+      "status": "merged",
       "frozen": "(ii)"
     },
     "storage.purge.typed.reason": {
@@ -2413,9 +2413,9 @@
       "sources": {
         "D04": "\"Type {symbol} exactly to confirm.\" · \"Type ETHUSDT exactly to confirm.\""
       },
-      "cite": "`D04`:569",
-      "provenance": "E16-D02 §6.5 :415",
-      "status": "merged",
+      "cite": "`D04`:570",
+      "provenance": "`new` (the validity reason)",
+      "status": "PROPOSED",
       "frozen": "(ii)"
     },
     "storage.purge.stepup": {
@@ -2427,9 +2427,9 @@
       "sources": {
         "D04": "\"You'll confirm with your password and a code.\""
       },
-      "cite": "`D04`:570",
-      "provenance": "`new` (the validity reason)",
-      "status": "PROPOSED",
+      "cite": "`D04`:571",
+      "provenance": "E16-D02 §6.4 :388",
+      "status": "merged",
       "frozen": "(iii)"
     },
     "storage.purge.stepup.trusted": {
@@ -2441,8 +2441,8 @@
       "sources": {
         "D04": "\"Still trusted for recorder changes · {mm:ss}\""
       },
-      "cite": "`D04`:571",
-      "provenance": "E16-D02 §6.4 :388",
+      "cite": "`D04`:572",
+      "provenance": "E16-D02 §6.4 :389 (never on purge: `recorder_purge` is no-grace, `22` :12495)",
       "status": "merged",
       "frozen": "(iii)"
     },
@@ -2455,8 +2455,8 @@
       "sources": {
         "D04": "\"This action is audited (high severity).\""
       },
-      "cite": "`D04`:572",
-      "provenance": "E16-D02 §6.4 :389 (never on purge: `recorder_purge` is no-grace, `22` :12495)",
+      "cite": "`D04`:573",
+      "provenance": "E16-D02 §6.5 :417",
       "status": "merged",
       "frozen": "(ii)"
     },
@@ -2469,8 +2469,8 @@
       "sources": {
         "D04": "\"Purge {symbol} data\" · \"Purge ETHUSDT data\""
       },
-      "cite": "`D04`:573",
-      "provenance": "E16-D02 §6.5 :417",
+      "cite": "`D04`:574",
+      "provenance": "E16-D02 §6.5 :418",
       "status": "merged",
       "frozen": "(ii)"
     },
@@ -2483,9 +2483,9 @@
       "sources": {
         "D04": "\"Pinned data is excluded. Tick Include pinned to delete it too.\""
       },
-      "cite": "`D04`:574",
-      "provenance": "E16-D02 §6.5 :418",
-      "status": "merged"
+      "cite": "`D04`:575",
+      "provenance": "`new` (`22` :15045)",
+      "status": "PROPOSED"
     },
     "storage.purge.refused.audit": {
       "parent": "D04",
@@ -2496,8 +2496,8 @@
       "sources": {
         "D04": "\"Not started: the audit record could not be written.\""
       },
-      "cite": "`D04`:575",
-      "provenance": "`new` (`22` :15045)",
+      "cite": "`D04`:576",
+      "provenance": "`new` (`22` :15073–15075)",
       "status": "PROPOSED"
     },
     "storage.purge.failed": {
@@ -2509,9 +2509,9 @@
       "sources": {
         "D04": "\"Purge of {symbol} failed (`<code>`). Some data may already be deleted: check {symbol}'s size and gaps.\""
       },
-      "cite": "`D04`:576",
-      "provenance": "`new` (`22` :15073–15075)",
-      "status": "PROPOSED"
+      "cite": "`D04`:577",
+      "provenance": "E16-D02 §3.2 :200",
+      "status": "merged"
     },
     "storage.purge.cancelled": {
       "parent": "D04",
@@ -2522,8 +2522,8 @@
       "sources": {
         "D04": "\"Purge of {symbol} was cancelled. Data deleted before the cancel is gone.\""
       },
-      "cite": "`D04`:577",
-      "provenance": "E16-D02 §3.2 :200",
+      "cite": "`D04`:578",
+      "provenance": "E16-D02 §3.2 :201",
       "status": "merged"
     },
     "storage.purge.unknown": {
@@ -2535,8 +2535,8 @@
       "sources": {
         "D04": "\"The purge's status is no longer available on the server. Check {symbol}'s size and gaps.\""
       },
-      "cite": "`D04`:578",
-      "provenance": "E16-D02 §3.2 :201",
+      "cite": "`D04`:579",
+      "provenance": "E16-D02 §3.2 :202",
       "status": "merged"
     },
     "storage.purge.succeeded": {
@@ -2548,8 +2548,8 @@
       "sources": {
         "D04": "\"Purged {size} of {symbol} data\" · \"Purged 1.2 GB of ETHUSDT data\""
       },
-      "cite": "`D04`:579",
-      "provenance": "E16-D02 §3.2 :202",
+      "cite": "`D04`:580",
+      "provenance": "E16-D02 §3.2 :204",
       "status": "merged"
     },
     "storage.import.button": {
@@ -2561,9 +2561,9 @@
       "sources": {
         "D04": "\"Import archives\""
       },
-      "cite": "`D04`:580",
-      "provenance": "E16-D02 §3.2 :204",
-      "status": "merged"
+      "cite": "`D04`:581",
+      "provenance": "`new`",
+      "status": "PROPOSED"
     },
     "storage.import.consequence": {
       "parent": "D04",
@@ -2574,8 +2574,8 @@
       "sources": {
         "D04": "\"Imports Bybit's public daily trade archives (trades only, no book data). Recorded data wins where they overlap. Re-running skips finished days.\""
       },
-      "cite": "`D04`:581",
-      "provenance": "`new`",
+      "cite": "`D04`:582",
+      "provenance": "`new` (`22` :14981–14986)",
       "status": "PROPOSED"
     },
     "storage.import.tag": {
@@ -2587,8 +2587,8 @@
       "sources": {
         "D04": "\"Archive-derived · trades only · no book data\""
       },
-      "cite": "`D04`:582",
-      "provenance": "`new` (`22` :14981–14986)",
+      "cite": "`D04`:583",
+      "provenance": "`new` (`22` :14984–14985; US-REC-007 :4226)",
       "status": "PROPOSED"
     },
     "storage.import.range.reason": {
@@ -2600,8 +2600,8 @@
       "sources": {
         "D04": "\"Choose a range of at most 366 days.\""
       },
-      "cite": "`D04`:583",
-      "provenance": "`new` (`22` :14984–14985; US-REC-007 :4226)",
+      "cite": "`D04`:584",
+      "provenance": "`new` (`22` :14982)",
       "status": "PROPOSED"
     },
     "storage.import.progress": {
@@ -2613,8 +2613,8 @@
       "sources": {
         "D04": "\"{done} of {n} days · {pct} %\" · \"12 of 31 days · 38 %\" · \"30 of 31 days · 96 %\""
       },
-      "cite": "`D04`:584",
-      "provenance": "`new` (`22` :14982)",
+      "cite": "`D04`:585",
+      "provenance": "`new`",
       "status": "PROPOSED"
     },
     "storage.import.skipped_count": {
@@ -2626,8 +2626,8 @@
       "sources": {
         "D04": "\"{k} skipped\" · \"1 skipped\""
       },
-      "cite": "`D04`:585",
-      "provenance": "`new`",
+      "cite": "`D04`:586",
+      "provenance": "`new` (PROPOSED D04-G11)",
       "status": "PROPOSED"
     },
     "storage.import.finished": {
@@ -2639,8 +2639,8 @@
       "sources": {
         "D04": "\"Import finished: {symbol}, {from} → {to}\" · \"Import finished: BTCUSDT, 2026-01-01 → 2026-01-31\""
       },
-      "cite": "`D04`:586",
-      "provenance": "`new` (PROPOSED D04-G11)",
+      "cite": "`D04`:587",
+      "provenance": "`new`",
       "status": "PROPOSED"
     },
     "storage.import.columns": {
@@ -2652,8 +2652,8 @@
       "sources": {
         "D04": "\"Day\" · \"Status\" · \"Reason\" · \"Rows\""
       },
-      "cite": "`D04`:587",
-      "provenance": "`new`",
+      "cite": "`D04`:588",
+      "provenance": "`new` (PROPOSED D04-G11)",
       "status": "PROPOSED"
     },
     "storage.import.status": {
@@ -2665,7 +2665,7 @@
       "sources": {
         "D04": "\"done\" · \"skipped\" · \"error\" · \"downloading\""
       },
-      "cite": "`D04`:588",
+      "cite": "`D04`:589",
       "provenance": "`new` (PROPOSED D04-G11)",
       "status": "PROPOSED"
     },
@@ -2678,8 +2678,8 @@
       "sources": {
         "D04": "\"Checksum did not match; the file was skipped.\""
       },
-      "cite": "`D04`:589",
-      "provenance": "`new` (PROPOSED D04-G11)",
+      "cite": "`D04`:590",
+      "provenance": "`new` (`checksum_mismatch`, `22` :11809)",
       "status": "PROPOSED"
     },
     "storage.import.reason.parse": {
@@ -2691,8 +2691,8 @@
       "sources": {
         "D04": "\"The file could not be read; it was skipped.\""
       },
-      "cite": "`D04`:590",
-      "provenance": "`new` (`checksum_mismatch`, `22` :11809)",
+      "cite": "`D04`:591",
+      "provenance": "`new` (`parse_error`; PROPOSED D04-G11)",
       "status": "PROPOSED"
     },
     "storage.import.reason.download": {
@@ -2704,8 +2704,8 @@
       "sources": {
         "D04": "\"The file could not be downloaded; run the import again to retry it.\""
       },
-      "cite": "`D04`:591",
-      "provenance": "`new` (`parse_error`; PROPOSED D04-G11)",
+      "cite": "`D04`:592",
+      "provenance": "`new` (`download_failed`)",
       "status": "PROPOSED"
     },
     "storage.import.reason.already": {
@@ -2717,8 +2717,8 @@
       "sources": {
         "D04": "\"Already imported on an earlier run.\""
       },
-      "cite": "`D04`:592",
-      "provenance": "`new` (`download_failed`)",
+      "cite": "`D04`:593",
+      "provenance": "`new` (`already_imported`; PROPOSED D04-G11; `22` :14985–14986)",
       "status": "PROPOSED"
     },
     "storage.import.overlap": {
@@ -2730,8 +2730,8 @@
       "sources": {
         "D04": "\"{rows} rows inside recorded windows were discarded — recorded data wins.\" · \"660,000 rows inside recorded windows were discarded — recorded data wins.\""
       },
-      "cite": "`D04`:593",
-      "provenance": "`new` (`already_imported`; PROPOSED D04-G11; `22` :14985–14986)",
+      "cite": "`D04`:594",
+      "provenance": "`new` (PROPOSED D04-G11; `22` :14983–14984; US-REC-007 :4220)",
       "status": "PROPOSED"
     },
     "storage.import.summary": {
@@ -2743,8 +2743,8 @@
       "sources": {
         "D04": "\"Imported {days} days of {symbol} trades · {k} file skipped · {e} file failed · {rows} overlapping rows discarded\" · \"Imported 29 days of BTCUSDT trades · 1 file skipped · 1 file failed · 660,000 overlapping rows discarded\""
       },
-      "cite": "`D04`:594",
-      "provenance": "`new` (PROPOSED D04-G11; `22` :14983–14984; US-REC-007 :4220)",
+      "cite": "`D04`:595",
+      "provenance": "`new` (PROPOSED D04-G11)",
       "status": "PROPOSED"
     },
     "storage.import.failed": {
@@ -2756,8 +2756,8 @@
       "sources": {
         "D04": "\"Import failed ({code}). Finished days are kept; run it again to resume.\" · \"Import failed (download_failed). Finished days are kept; run it again to resume.\""
       },
-      "cite": "`D04`:595",
-      "provenance": "`new` (PROPOSED D04-G11)",
+      "cite": "`D04`:596",
+      "provenance": "`new` (`22` :14985–14986)",
       "status": "PROPOSED"
     },
     "storage.import.cancelled": {
@@ -2769,8 +2769,8 @@
       "sources": {
         "D04": "\"Import cancelled. Finished days are kept.\""
       },
-      "cite": "`D04`:596",
-      "provenance": "`new` (`22` :14985–14986)",
+      "cite": "`D04`:597",
+      "provenance": "`new` (PROPOSED D04-G10)",
       "status": "PROPOSED"
     },
     "storage.import.unknown": {
@@ -2782,8 +2782,8 @@
       "sources": {
         "D04": "\"The import's status is no longer available on the server. Run it again: finished days are skipped.\""
       },
-      "cite": "`D04`:597",
-      "provenance": "`new` (PROPOSED D04-G10)",
+      "cite": "`D04`:598",
+      "provenance": "`new`",
       "status": "PROPOSED"
     },
     "storage.import.resume": {
@@ -2795,8 +2795,8 @@
       "sources": {
         "D04": "\"Run it again to resume: finished days are skipped.\""
       },
-      "cite": "`D04`:598",
-      "provenance": "`new`",
+      "cite": "`D04`:599",
+      "provenance": "`new` (`22` :14985–14986)",
       "status": "PROPOSED"
     },
     "storage.links.storage_details": {
@@ -2808,8 +2808,8 @@
       "sources": {
         "D04": "\"Storage details →\""
       },
-      "cite": "`D04`:599",
-      "provenance": "`new` (`22` :14985–14986)",
+      "cite": "`D04`:600",
+      "provenance": "`new` (D04-A4; on SCR-140's card)",
       "status": "PROPOSED"
     },
     "storage.links.health": {
@@ -2821,8 +2821,8 @@
       "sources": {
         "D04": "\"System health →\""
       },
-      "cite": "`D04`:600",
-      "provenance": "`new` (D04-A4; on SCR-140's card)",
+      "cite": "`D04`:601",
+      "provenance": "`new` (the CMP-178 tile to SCR-143)",
       "status": "PROPOSED"
     },
     "empty.heading.history_starts": {
@@ -2834,8 +2834,8 @@
       "sources": {
         "D05": "\"History starts {ts} — recording began then.\" · \"History starts 2026-09-01 00:00 UTC — recording began then.\""
       },
-      "cite": "`D05`:416",
-      "provenance": "------------------------------------------------",
+      "cite": "`D05`:417",
+      "provenance": "`14` :83 (E11-D04 O-7 RULED)",
       "status": "merged"
     },
     "empty.heading.not_recorded": {
@@ -2847,8 +2847,8 @@
       "sources": {
         "D05": "\"History starts when you record {symbol} — recording has not begun yet.\""
       },
-      "cite": "`D05`:417",
-      "provenance": "`14` :83 (E11-D04 O-7 RULED)",
+      "cite": "`D05`:418",
+      "provenance": "E11-D04 :919 (C-4), :798",
       "status": "merged"
     },
     "empty.heading.no_bars_between": {
@@ -2860,8 +2860,8 @@
       "sources": {
         "D05": "\"No bars for {symbol} {interval} between {from} and {to} UTC.\" · \"No bars for BTCUSDT 1m between 02:11 and 02:14 UTC.\""
       },
-      "cite": "`D05`:418",
-      "provenance": "E11-D04 :919 (C-4), :798",
+      "cite": "`D05`:419",
+      "provenance": "E11-D04 :798",
       "status": "merged"
     },
     "empty.heading.no_bars_window": {
@@ -2873,9 +2873,9 @@
       "sources": {
         "D05": "\"No bars for {symbol} {interval} in this window.\""
       },
-      "cite": "`D05`:419",
-      "provenance": "E11-D04 :798",
-      "status": "merged"
+      "cite": "`D05`:420",
+      "provenance": "new",
+      "status": "PROPOSED"
     },
     "empty.heading.retention_trimmed": {
       "parent": "D05",
@@ -2886,8 +2886,8 @@
       "sources": {
         "D05": "\"{symbol} history before {date} was removed by the retention policy.\" · \"BTCUSDT history before 2026-09-14 was removed by the retention policy.\""
       },
-      "cite": "`D05`:420",
-      "provenance": "new",
+      "cite": "`D05`:421",
+      "provenance": "new (D05-D4)",
       "status": "PROPOSED"
     },
     "empty.heading.not_trading": {
@@ -2899,9 +2899,9 @@
       "sources": {
         "D05": "\"{symbol} is not trading on Bybit.\" · \"BTCUSDT is not trading on Bybit.\""
       },
-      "cite": "`D05`:421",
-      "provenance": "new (D05-D4)",
-      "status": "PROPOSED"
+      "cite": "`D05`:422",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
     },
     "empty.heading.no_history_here": {
       "parent": "D05",
@@ -2912,9 +2912,9 @@
       "sources": {
         "D05": "\"No history is available for {symbol} here.\""
       },
-      "cite": "`D05`:422",
-      "provenance": "E11-D04 :798",
-      "status": "merged"
+      "cite": "`D05`:423",
+      "provenance": "new",
+      "status": "PROPOSED"
     },
     "empty.cause.recorded_only": {
       "parent": "D05",
@@ -2925,8 +2925,8 @@
       "sources": {
         "D05": "\"Nothing is missing or broken: CandleViewer keeps only what it records.\""
       },
-      "cite": "`D05`:423",
-      "provenance": "new",
+      "cite": "`D05`:424",
+      "provenance": "new (BQ-16 RULED; replaces E11-D04 :798's cause)",
       "status": "PROPOSED"
     },
     "empty.gap.ws_disconnect": {
@@ -2938,8 +2938,8 @@
       "sources": {
         "D05": "\"Recording was interrupted (connection to the exchange lost).\""
       },
-      "cite": "`D05`:424",
-      "provenance": "new (BQ-16 RULED; replaces E11-D04 :798's cause)",
+      "cite": "`D05`:425",
+      "provenance": "new (E11-D04 :798 \"connection lost\" extended)",
       "status": "PROPOSED"
     },
     "empty.gap.backend_restart": {
@@ -2951,9 +2951,9 @@
       "sources": {
         "D05": "\"Recording was interrupted (CandleViewer restarted).\""
       },
-      "cite": "`D05`:425",
-      "provenance": "new (E11-D04 :798 \"connection lost\" extended)",
-      "status": "PROPOSED"
+      "cite": "`D05`:426",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
     },
     "empty.gap.exchange_outage": {
       "parent": "D05",
@@ -2964,7 +2964,7 @@
       "sources": {
         "D05": "\"Recording was interrupted (exchange outage).\""
       },
-      "cite": "`D05`:426",
+      "cite": "`D05`:427",
       "provenance": "E11-D04 :798",
       "status": "merged"
     },
@@ -2977,9 +2977,9 @@
       "sources": {
         "D05": "\"Recording dropped data while the disk was under pressure.\""
       },
-      "cite": "`D05`:427",
-      "provenance": "E11-D04 :798",
-      "status": "merged"
+      "cite": "`D05`:428",
+      "provenance": "new",
+      "status": "PROPOSED"
     },
     "empty.gap.seq_jump": {
       "parent": "D05",
@@ -2990,7 +2990,7 @@
       "sources": {
         "D05": "\"Recording lost order-book updates (sequence gap).\""
       },
-      "cite": "`D05`:428",
+      "cite": "`D05`:429",
       "provenance": "new",
       "status": "PROPOSED"
     },
@@ -3003,9 +3003,9 @@
       "sources": {
         "D05": "\"Older data was removed by the retention policy ({N} days).\" · \"Older data was removed by the retention policy (30 days).\""
       },
-      "cite": "`D05`:429",
-      "provenance": "new",
-      "status": "PROPOSED"
+      "cite": "`D05`:430",
+      "provenance": "E11-D04 :798; E16-D01 :222",
+      "status": "merged"
     },
     "empty.gap.unknown": {
       "parent": "D05",
@@ -3016,9 +3016,9 @@
       "sources": {
         "D05": "\"Recording gap.\""
       },
-      "cite": "`D05`:430",
-      "provenance": "E11-D04 :798; E16-D01 :222",
-      "status": "merged"
+      "cite": "`D05`:431",
+      "provenance": "new (E16-D02 :134)",
+      "status": "PROPOSED"
     },
     "empty.gap.no_trades": {
       "parent": "D05",
@@ -3029,9 +3029,9 @@
       "sources": {
         "D05": "\"No trades were recorded in this window.\""
       },
-      "cite": "`D05`:431",
-      "provenance": "new (E16-D02 :134)",
-      "status": "PROPOSED"
+      "cite": "`D05`:432",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
     },
     "empty.cause.interval_too_fine": {
       "parent": "D05",
@@ -3042,9 +3042,9 @@
       "sources": {
         "D05": "\"No {interval} bars fit this window — pick a coarser interval.\""
       },
-      "cite": "`D05`:432",
-      "provenance": "E11-D04 :798",
-      "status": "merged"
+      "cite": "`D05`:433",
+      "provenance": "new",
+      "status": "PROPOSED"
     },
     "empty.cause.not_trading_status": {
       "parent": "D05",
@@ -3055,9 +3055,9 @@
       "sources": {
         "D05": "\"Status: Closed.\" · \"Status: Delivering.\" · \"Not trading yet — status: Pre-launch.\" · \"No live data will arrive.\""
       },
-      "cite": "`D05`:433",
-      "provenance": "new",
-      "status": "PROPOSED"
+      "cite": "`D05`:434",
+      "provenance": "E11-D04 :798",
+      "status": "merged"
     },
     "empty.status.restricted": {
       "parent": "D05",
@@ -3068,8 +3068,8 @@
       "sources": {
         "D05": "\"Recording status restricted\""
       },
-      "cite": "`D05`:434",
-      "provenance": "E11-D04 :798",
+      "cite": "`D05`:435",
+      "provenance": "E16-D02 :340",
       "status": "merged",
       "frozen": "(vii)"
     },
@@ -3082,8 +3082,8 @@
       "sources": {
         "D05": "\"Only the owner can change recording.\""
       },
-      "cite": "`D05`:435",
-      "provenance": "E16-D02 :340",
+      "cite": "`D05`:436",
+      "provenance": "E09-D09 :85, :108; E16-D02 :326 (BQ-8 RULED)",
       "status": "merged",
       "frozen": "(vi)"
     },
@@ -3096,8 +3096,8 @@
       "sources": {
         "D05": "`Record this symbol`"
       },
-      "cite": "`D05`:437",
-      "provenance": "E09-D09 :95",
+      "cite": "`D05`:438",
+      "provenance": "E11-D04 :798; `14` :1074",
       "status": "merged"
     },
     "empty.cta.record_now": {
@@ -3109,8 +3109,8 @@
       "sources": {
         "D05": "`Record now`"
       },
-      "cite": "`D05`:438",
-      "provenance": "E11-D04 :798; `14` :1074",
+      "cite": "`D05`:439",
+      "provenance": "E12-D02 :313",
       "status": "merged"
     },
     "empty.cta.go_recorded": {
@@ -3122,8 +3122,8 @@
       "sources": {
         "D05": "`Go to recorded history`"
       },
-      "cite": "`D05`:439",
-      "provenance": "E12-D02 :313",
+      "cite": "`D05`:440",
+      "provenance": "E11-D04 :798",
       "status": "merged"
     },
     "empty.cta.go_latest": {
@@ -3135,7 +3135,7 @@
       "sources": {
         "D05": "`Go to latest`"
       },
-      "cite": "`D05`:440",
+      "cite": "`D05`:441",
       "provenance": "E11-D04 :798",
       "status": "merged"
     },
@@ -3148,7 +3148,7 @@
       "sources": {
         "D05": "`Open symbol info`"
       },
-      "cite": "`D05`:441",
+      "cite": "`D05`:442",
       "provenance": "E11-D04 :798",
       "status": "merged"
     },
@@ -3161,8 +3161,8 @@
       "sources": {
         "D05": "`Learn more`"
       },
-      "cite": "`D05`:442",
-      "provenance": "E11-D04 :798",
+      "cite": "`D05`:443",
+      "provenance": "E11-D04 :798; `14` :1074",
       "status": "merged"
     },
     "empty.link.show_coverage": {
@@ -3174,8 +3174,8 @@
       "sources": {
         "D05": "`Show coverage`"
       },
-      "cite": "`D05`:443",
-      "provenance": "E11-D04 :798; `14` :1074",
+      "cite": "`D05`:444",
+      "provenance": "E11-D04 :798; `14` :2233",
       "status": "merged"
     },
     "empty.link.switch_symbol": {
@@ -3187,8 +3187,8 @@
       "sources": {
         "D05": "`Switch symbol`"
       },
-      "cite": "`D05`:444",
-      "provenance": "E11-D04 :798; `14` :2233",
+      "cite": "`D05`:445",
+      "provenance": "E11-D04 :798",
       "status": "merged"
     },
     "empty.link.switch_time_bars": {
@@ -3200,8 +3200,8 @@
       "sources": {
         "D05": "`Switch to time bars`"
       },
-      "cite": "`D05`:445",
-      "provenance": "E11-D04 :798",
+      "cite": "`D05`:446",
+      "provenance": "E12-D02 :313–314",
       "status": "merged"
     },
     "empty.link.manage_symbols": {
@@ -3213,8 +3213,8 @@
       "sources": {
         "D05": "`Manage recorded symbols`"
       },
-      "cite": "`D05`:446",
-      "provenance": "E12-D02 :313–314",
+      "cite": "`D05`:447",
+      "provenance": "E12-D02 :314",
       "status": "merged"
     },
     "empty.link.retention_policy": {
@@ -3226,9 +3226,9 @@
       "sources": {
         "D05": "`Retention policy`"
       },
-      "cite": "`D05`:447",
-      "provenance": "E12-D02 :314",
-      "status": "merged"
+      "cite": "`D05`:448",
+      "provenance": "new (D05-D4)",
+      "status": "PROPOSED"
     },
     "empty.live.now": {
       "parent": "D05",
@@ -3239,9 +3239,9 @@
       "sources": {
         "D05": "\"Live data is streaming now.\""
       },
-      "cite": "`D05`:448",
-      "provenance": "new (D05-D4)",
-      "status": "PROPOSED"
+      "cite": "`D05`:449",
+      "provenance": "E11-D04 :798, :351",
+      "status": "merged"
     },
     "empty.live.reduced": {
       "parent": "D05",
@@ -3252,7 +3252,7 @@
       "sources": {
         "D05": "\"Live data is streaming at a reduced rate.\""
       },
-      "cite": "`D05`:449",
+      "cite": "`D05`:450",
       "provenance": "E11-D04 :798, :351",
       "status": "merged"
     },
@@ -3265,8 +3265,8 @@
       "sources": {
         "D05": "\"Live data will resume when the connection returns.\""
       },
-      "cite": "`D05`:450",
-      "provenance": "E11-D04 :798, :351",
+      "cite": "`D05`:451",
+      "provenance": "E11-D04 :798, :351 (SCR-152's copy)",
       "status": "merged"
     },
     "empty.autorecord.countdown": {
@@ -3278,8 +3278,8 @@
       "sources": {
         "D05": "\"Recording starts automatically in 0:42\""
       },
-      "cite": "`D05`:451",
-      "provenance": "E11-D04 :798, :351 (SCR-152's copy)",
+      "cite": "`D05`:452",
+      "provenance": "E12-D02 :313",
       "status": "merged"
     },
     "empty.outcome.started": {
@@ -3291,7 +3291,7 @@
       "sources": {
         "D05": "\"Recording started {time} UTC\" · \"Recording started 10:22 UTC\""
       },
-      "cite": "`D05`:452",
+      "cite": "`D05`:453",
       "provenance": "E12-D02 :313",
       "status": "merged"
     },
@@ -3304,8 +3304,8 @@
       "sources": {
         "D05": "\"Recording has not started: the 20-symbol limit is reached\""
       },
-      "cite": "`D05`:453",
-      "provenance": "E12-D02 :313",
+      "cite": "`D05`:454",
+      "provenance": "E12-D02 :314",
       "status": "merged"
     },
     "empty.refused.disk_pressure": {
@@ -3317,7 +3317,7 @@
       "sources": {
         "D05": "\"Recording has not started: the disk is nearly full\""
       },
-      "cite": "`D05`:454",
+      "cite": "`D05`:455",
       "provenance": "E12-D02 :314",
       "status": "merged"
     },
@@ -3330,8 +3330,8 @@
       "sources": {
         "D05": "\"{symbol}, 1 minute — no bars\" · \"BTCUSDT, 1 minute — no bars\""
       },
-      "cite": "`D05`:455",
-      "provenance": "E12-D02 :314",
+      "cite": "`D05`:456",
+      "provenance": "E11-D04 :798",
       "status": "merged"
     },
     "chip.partial": {
@@ -3343,9 +3343,9 @@
       "sources": {
         "D05": "\"Partial: {n} of {m} requested days recorded\" · \"Partial: 13 of 14 requested days recorded\""
       },
-      "cite": "`D05`:456",
-      "provenance": "E11-D04 :798",
-      "status": "merged"
+      "cite": "`D05`:457",
+      "provenance": "new (`14` :963 without \"only\", D05-C9)",
+      "status": "PROPOSED"
     },
     "chip.partial.missing": {
       "parent": "D05",
@@ -3356,8 +3356,8 @@
       "sources": {
         "D05": "\"Missing: {range} ({cause}); …\" · \"Missing: 2026-09-04 02:11–02:14 UTC (connection lost).\""
       },
-      "cite": "`D05`:457",
-      "provenance": "new (`14` :963 without \"only\", D05-C9)",
+      "cite": "`D05`:458",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "profile.gaps_excluded": {
@@ -3369,8 +3369,8 @@
       "sources": {
         "D05": "\"Gaps excluded: {k} ranges, {duration}\" · \"Gaps excluded: 1 range, 3 min 20 s\""
       },
-      "cite": "`D05`:458",
-      "provenance": "new",
+      "cite": "`D05`:459",
+      "provenance": "new (D05-D8)",
       "status": "PROPOSED"
     },
     "gap.tooltip.title": {
@@ -3382,8 +3382,8 @@
       "sources": {
         "D05": "\"Recording gap\" · \"Removed by retention\""
       },
-      "cite": "`D05`:459",
-      "provenance": "new (D05-D8)",
+      "cite": "`D05`:460",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "gap.tooltip.range": {
@@ -3395,8 +3395,8 @@
       "sources": {
         "D05": "\"{date} {from} → {to} UTC · {duration}\" · \"2026-09-04 02:11 → 02:23 UTC · 12 min\" (the AC 2 band, board 06) · \"2026-09-04 02:11 → 02:14 UTC · 3 min 20 s\" (the `22` fixture gap, SCR-103)"
       },
-      "cite": "`D05`:460",
-      "provenance": "new",
+      "cite": "`D05`:461",
+      "provenance": "new (D05-D7)",
       "status": "PROPOSED"
     },
     "gap.tooltip.backfilled": {
@@ -3408,8 +3408,8 @@
       "sources": {
         "D05": "\"Bars from exchange klines; order flow missing.\""
       },
-      "cite": "`D05`:461",
-      "provenance": "new (D05-D7)",
+      "cite": "`D05`:462",
+      "provenance": "new (PROPOSED until D05-G1)",
       "status": "PROPOSED"
     },
     "gap.band.label": {
@@ -3421,8 +3421,8 @@
       "sources": {
         "D05": "\"Not recorded {from}–{to} UTC: {short cause}\" · \"Not recorded 02:11–02:23 UTC: connection lost\""
       },
-      "cite": "`D05`:462",
-      "provenance": "new (PROPOSED until D05-G1)",
+      "cite": "`D05`:463",
+      "provenance": "E12-D02 :276's form + the cause (new; D05-C13)",
       "status": "PROPOSED"
     },
     "gap.band.kline_hole": {
@@ -3434,9 +3434,9 @@
       "sources": {
         "D05": "\"No bars for {from}–{to} UTC\""
       },
-      "cite": "`D05`:463",
-      "provenance": "E12-D02 :276's form + the cause (new; D05-C13)",
-      "status": "PROPOSED"
+      "cite": "`D05`:464",
+      "provenance": "E12-D02 :276",
+      "status": "merged"
     },
     "gap.axis.tag": {
       "parent": "D05",
@@ -3447,9 +3447,9 @@
       "sources": {
         "D05": "\"{from}–{to} gap\" · \"02:11–02:23 gap\""
       },
-      "cite": "`D05`:464",
-      "provenance": "E12-D02 :276",
-      "status": "merged"
+      "cite": "`D05`:465",
+      "provenance": "new (D05-A4)",
+      "status": "PROPOSED"
     },
     "gap.seam.label": {
       "parent": "D05",
@@ -3460,9 +3460,9 @@
       "sources": {
         "D05": "\"Recording gap {from}–{to} UTC\" · \"Series restarted {time} UTC\""
       },
-      "cite": "`D05`:465",
-      "provenance": "new (D05-A4)",
-      "status": "PROPOSED"
+      "cite": "`D05`:466",
+      "provenance": "E12-D02 :276",
+      "status": "merged"
     },
     "gap.cursor": {
       "parent": "D05",
@@ -3473,8 +3473,8 @@
       "sources": {
         "D05": "\"after a recording gap {from}–{to} UTC\" · \"after a recording gap 02:11–02:23 UTC\""
       },
-      "cite": "`D05`:466",
-      "provenance": "E12-D02 :276",
+      "cite": "`D05`:467",
+      "provenance": "E12-D02 :291",
       "status": "merged"
     },
     "gap.table.row": {
@@ -3486,9 +3486,9 @@
       "sources": {
         "D05": "\"Recording gap {from}–{to} UTC · {duration} · {short cause}\" · \"Recording gap 02:11–02:23 UTC · 12 min · connection lost\""
       },
-      "cite": "`D05`:467",
-      "provenance": "E12-D02 :291",
-      "status": "merged"
+      "cite": "`D05`:468",
+      "provenance": "new (E11-D04 D11's row, the words)",
+      "status": "PROPOSED"
     },
     "gap.table.retention": {
       "parent": "D05",
@@ -3499,8 +3499,8 @@
       "sources": {
         "D05": "\"Removed by retention before {date} · {N}-day policy\" · \"Removed by retention before 2026-09-14 · 30-day policy\""
       },
-      "cite": "`D05`:468",
-      "provenance": "new (E11-D04 D11's row, the words)",
+      "cite": "`D05`:469",
+      "provenance": "new",
       "status": "PROPOSED"
     },
     "gap.legend.row": {
@@ -3512,8 +3512,8 @@
       "sources": {
         "D05": "\"Recording gap\" · \"Removed by retention\""
       },
-      "cite": "`D05`:469",
-      "provenance": "new",
+      "cite": "`D05`:470",
+      "provenance": "new (D05-A5)",
       "status": "PROPOSED"
     },
     "confidence.gapped": {
@@ -3525,9 +3525,9 @@
       "sources": {
         "D05": "\"Reconstructed after gap\""
       },
-      "cite": "`D05`:470",
-      "provenance": "new (D05-A5)",
-      "status": "PROPOSED"
+      "cite": "`D05`:471",
+      "provenance": "E08-D04 :46",
+      "status": "merged"
     },
     "confidence.backfilling": {
       "parent": "D05",
@@ -3538,8 +3538,8 @@
       "sources": {
         "D05": "\"Loading history…\""
       },
-      "cite": "`D05`:471",
-      "provenance": "E08-D04 :46",
+      "cite": "`D05`:472",
+      "provenance": "E08-D04 :47",
       "status": "merged"
     },
     "empty.outcome.loaded": {
@@ -3551,9 +3551,9 @@
       "sources": {
         "D05": "\"History loaded\""
       },
-      "cite": "`D05`:472",
-      "provenance": "E08-D04 :47",
-      "status": "merged"
+      "cite": "`D05`:473",
+      "provenance": "new",
+      "status": "PROPOSED"
     },
     "empty.announce.enter": {
       "parent": "D05",
@@ -3564,8 +3564,8 @@
       "sources": {
         "D05": "\"{heading} {cause}\""
       },
-      "cite": "`D05`:473",
-      "provenance": "new",
+      "cite": "`D05`:474",
+      "provenance": "new (D05-D15)",
       "status": "PROPOSED"
     },
     "strip.order_flow_from": {
@@ -3577,9 +3577,9 @@
       "sources": {
         "D05": "\"Order flow from {ts}; earlier bars come from exchange klines\" · \"Order flow from 2026-09-01 00:00 UTC; earlier bars come from exchange klines\""
       },
-      "cite": "`D05`:474",
-      "provenance": "new (D05-D15)",
-      "status": "PROPOSED"
+      "cite": "`D05`:475",
+      "provenance": "E12-D02 :272",
+      "status": "merged"
     },
     "classes.created.heading": {
       "parent": "D05",
@@ -3590,8 +3590,8 @@
       "sources": {
         "D05": "\"No workspaces yet\" · \"No symbols on this watchlist\""
       },
-      "cite": "`D05`:475",
-      "provenance": "E12-D02 :272",
+      "cite": "`D05`:476",
+      "provenance": "E10-D03 :270; E08-D07 :105",
       "status": "merged"
     },
     "classes.created.cause": {
@@ -3603,9 +3603,9 @@
       "sources": {
         "D05": "\"You haven't created a workspace yet.\""
       },
-      "cite": "`D05`:476",
-      "provenance": "E10-D03 :270; E08-D07 :105",
-      "status": "merged"
+      "cite": "`D05`:477",
+      "provenance": "new (PROPOSED exemplar)",
+      "status": "PROPOSED"
     },
     "classes.created.cta": {
       "parent": "D05",
@@ -3616,9 +3616,9 @@
       "sources": {
         "D05": "`Create a workspace` · `Add symbols to watch`"
       },
-      "cite": "`D05`:477",
-      "provenance": "new (PROPOSED exemplar)",
-      "status": "PROPOSED"
+      "cite": "`D05`:478",
+      "provenance": "E10-D03 :270; E08-D07 :105",
+      "status": "merged"
     },
     "classes.filter.heading": {
       "parent": "D05",
@@ -3629,9 +3629,9 @@
       "sources": {
         "D05": "\"No symbols match these filters\""
       },
-      "cite": "`D05`:478",
-      "provenance": "E10-D03 :270; E08-D07 :105",
-      "status": "merged"
+      "cite": "`D05`:479",
+      "provenance": "new (PROPOSED exemplar)",
+      "status": "PROPOSED"
     },
     "classes.filter.cause": {
       "parent": "D05",
@@ -3642,7 +3642,7 @@
       "sources": {
         "D05": "\"Widen or clear a filter to see symbols.\""
       },
-      "cite": "`D05`:479",
+      "cite": "`D05`:480",
       "provenance": "new (PROPOSED exemplar)",
       "status": "PROPOSED"
     },
@@ -3655,7 +3655,7 @@
       "sources": {
         "D05": "`Clear filters`"
       },
-      "cite": "`D05`:480",
+      "cite": "`D05`:481",
       "provenance": "new (PROPOSED exemplar)",
       "status": "PROPOSED"
     },
@@ -3668,9 +3668,9 @@
       "sources": {
         "D05": "\"REC · manual\" · \"Not recording · limit reached\" · \"Not recording · disk nearly full\" · \"REC gated · data dropped\" · \"REC degraded\" · \"Recording status restricted\""
       },
-      "cite": "`D05`:481",
-      "provenance": "new (PROPOSED exemplar)",
-      "status": "PROPOSED",
+      "cite": "`D05`:482",
+      "provenance": "E16-D02 :331–340",
+      "status": "merged",
       "frozen": "(vii)"
     },
     "replay.absence": {
@@ -3682,9 +3682,9 @@
       "sources": {
         "D05": "\"Replay availability shading is E26's (CMP-172); it will take this deck's stem and causes.\""
       },
-      "cite": "`D05`:482",
-      "provenance": "E16-D02 :331–340",
-      "status": "merged"
+      "cite": "`D05`:483",
+      "provenance": "new (caption only)",
+      "status": "PROPOSED"
     }
   },
   "script": {

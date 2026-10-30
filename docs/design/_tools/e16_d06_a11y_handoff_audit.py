@@ -13,13 +13,14 @@ lists are the E16-D03 / D04 / D05 audits' ``PAIRS_TABLE`` plus E16-D02 §10.4's 
     --check         exit 1 on any FAIL
     --json          the numbers and findings as JSON
     --fill          rewrite every marker's number in the spec from the computed value
-    --self-test     one mutation per gate; each must raise exactly its own FAIL
+    --self-test     at least one mutation per gate; each must raise exactly its own FAIL
     --repin-ruled   rewrite the pins file from the spec's cites (the only pins writer)
 """
 
 from __future__ import annotations
 
 import argparse
+import difflib
 import functools
 import hashlib
 import importlib.util
@@ -207,6 +208,9 @@ class Ctx(NamedTuple):
     spec: str
     deck: str
     pins: str
+    work14: (
+        str  # the working tree's `14` (G22 reads it here, so the self-test never writes to disk)
+    )
 
 
 def load_ctx() -> Ctx:
@@ -214,6 +218,7 @@ def load_ctx() -> Ctx:
         SPEC.read_text(encoding="utf-8"),
         DECK.read_text(encoding="utf-8"),
         PINS.read_text(encoding="utf-8") if PINS.exists() else "",
+        (ROOT / KEYS["14"]).read_text(encoding="utf-8"),
     )
 
 
@@ -347,12 +352,30 @@ def parent_deck_rows(key: str) -> list[tuple[str, str, str]]:
         return out
     head = {"D03": "14. Copy deck", "D04": "14. Copy deck", "D05": "14. Copy deck"}[key]
     blk = section(text, head)
-    offset = text[: text.index(blk)].count("\n") if blk else 0
+    # `blk` starts inside the heading line, so its split index 0 is the heading line itself:
+    # the 1-based line of split index i is the heading's line (newlines before + 1) plus i.
+    first = text[: text.index(blk)].count("\n") + 1 if blk else 0
     for i, ln in enumerate(blk.split("\n")):
         if ln.startswith("| `") and "---" not in ln:
             cs = cells(ln)
             if len(cs) >= 2:
-                out.append((cs[0].strip("`"), cs[1], f"`{key}`:{offset + i}"))
+                out.append((cs[0].strip("`"), cs[1], f"`{key}`:{first + i}"))
+    return out
+
+
+@functools.cache
+def parent_deck_provenance(key: str) -> dict[str, str]:
+    """deck key → the parent's Source cell (its provenance) for `D03` / `D04` / `D05` §14 rows at
+    origin/main; the status PROPOSED mirrors a `new` / PROPOSED provenance."""
+    out: dict[str, str] = {}
+    if key == "D02":
+        return out
+    text = git_show(HEAD, KEYS[key])
+    for ln in section(text, "14. Copy deck").split("\n"):
+        if ln.startswith("| `") and "---" not in ln:
+            cs = cells(ln)
+            if len(cs) >= 3:
+                out[cs[0].strip("`")] = cs[2]
     return out
 
 
@@ -1099,6 +1122,9 @@ def rows_of_token(spec: str, tok: str) -> str:
 
 
 def gate_hygiene(ctx: Ctx, r: Result, n: dict[str, Any]) -> None:
+    """G15: no URL, page or file id, local path, advisory-style identifier or loopback host / port
+    in the spec, the deck, the pins or the tool itself; no host-like token, private-record word or
+    person / lane / role word in the spec or the deck (patterns, never literals)."""
     for name, text in (
         ("spec", ctx.spec),
         ("deck", ctx.deck),
@@ -1110,17 +1136,15 @@ def gate_hygiene(ctx: Ctx, r: Result, n: dict[str, Any]) -> None:
             (UUID, "a UUID / page or file id"),
             (LOCAL_PATH, "a local path"),
             (ADVISORY_ID, "an advisory-style identifier"),
+            (LOOPBACK, "a loopback host or a port"),
         ):
             m = pat.search(text)
-            if m and name != "tool":
+            if m:
                 r.fail("G15-HYGIENE", f"{name} carries {what}: {m.group(0)[:30]}")
         if name in ("spec", "deck"):
             m = HOST.search(text)
             if m and not m.group(0).lower().startswith(("e16-", "d0")):
                 r.fail("G15-HYGIENE", f"{name} carries a host-like token: {m.group(0)}")
-            m = LOOPBACK.search(text)
-            if m:
-                r.fail("G15-HYGIENE", f"{name} carries a loopback host or a port: {m.group(0)}")
             m = RECORD_WORDS.search(text)
             if m:
                 r.fail(
@@ -1158,6 +1182,7 @@ def gate_deck(ctx: Ctx, r: Result, n: dict[str, Any]) -> None:
         for k in ("parent", "surface", "string", "provenance", "status"):
             if k not in ent:
                 r.fail("G16-DECK", f"{dk}: field {k} missing")
+        deck_cite_check(dk, ent, r)
         if (
             ent.get("status") == "PROPOSED"
             and "PROPOSED" not in ent.get("provenance", "")
@@ -1167,6 +1192,40 @@ def gate_deck(ctx: Ctx, r: Result, n: dict[str, Any]) -> None:
     if deck.get("pack") != "E16-D06":
         r.fail("G16-DECK", "the deck's pack field is not E16-D06")
     n["deck-missing"] = missing
+
+
+def deck_cite_check(dk: str, ent: dict[str, Any], r: Result) -> None:
+    """Each entry's cited parent line (at origin/main) holds the entry's own row: for a `D03` /
+    `D04` / `D05` row its key and its provenance (the parent's Source cell), and its status mirrors
+    that provenance; for a `D02` row the opening words of the cited cell."""
+    cites = [(k, a) for k, a, _b in cites_in(str(ent.get("cite", ""))) if k in PARENTS]
+    if not cites:
+        r.fail("G16-DECK", f"{dk}: the cite names no parent line")
+        return
+    primary = str(ent.get("parent", ""))
+    for key, line in cites:
+        src = source_lines(key)
+        text = norm(src[line]) if 0 < line < len(src) else ""
+        if key == "D02":
+            cell = str(ent.get("sources", {}).get("D02", ""))
+            head = norm(cell.split(" · ")[0])[:40]
+            if not head or head not in text:
+                r.fail("G16-DECK", f"{dk}: `D02`:{line} does not hold the cited cell")
+            continue
+        if f"`{dk}`" not in text:
+            r.fail("G16-DECK", f"{dk}: `{key}`:{line} does not hold the key")
+        if key == primary:
+            prov = norm(str(ent.get("provenance", "")))
+            want = parent_deck_provenance(key).get(dk)
+            if want is None or norm(want) != prov:
+                r.fail("G16-DECK", f"{dk}: provenance is not `{key}`:{line}'s Source cell")
+            elif prov not in text:
+                r.fail("G16-DECK", f"{dk}: `{key}`:{line} does not hold the provenance")
+            status = "PROPOSED" if re.search(r"\bnew\b|PROPOSED", prov) else "merged"
+            if ent.get("status") != status:
+                r.fail(
+                    "G16-DECK", f"{dk}: status {ent.get('status')!r}, the provenance says {status}"
+                )
 
 
 def gate_frozen(ctx: Ctx, r: Result, n: dict[str, Any]) -> None:
@@ -1303,14 +1362,18 @@ def gate_icons(ctx: Ctx, r: Result, n: dict[str, Any]) -> None:
 
 
 def gate_edit_set(ctx: Ctx, r: Result, n: dict[str, Any]) -> None:
+    """G22: the parents, `D02H` and `15` untouched; `14` differs from origin/main by the five
+    pointer lines only (read from `ctx.work14`, so the self-test probes it without a disk write)."""
     for key in UNTOUCHED:
         if git_diff_names(KEYS[key]).strip():
             r.fail(
                 "G22-EDIT-SET", f"{key} differs from {HEAD}: the parents and `15` are never edited"
             )
-    diff = git_diff_names(KEYS["14"])
-    added = [ln[1:] for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++")]
-    removed = [ln for ln in diff.splitlines() if ln.startswith("-") and not ln.startswith("---")]
+    head14 = git_show(HEAD, KEYS["14"]).split("\n")
+    work14 = ctx.work14.split("\n")
+    diff = list(difflib.unified_diff(head14, work14, n=0, lineterm=""))[2:]
+    added = [ln[1:] for ln in diff if ln.startswith("+")]
+    removed = [ln for ln in diff if ln.startswith("-")]
     if removed:
         r.fail(
             "G22-EDIT-SET",
@@ -1327,15 +1390,12 @@ def gate_edit_set(ctx: Ctx, r: Result, n: dict[str, Any]) -> None:
             r.fail("G22-EDIT-SET", f"`14` added line is not a pointer line: {ln[:60]}")
         if "[x]" in ln or "[ ]" in ln:
             r.fail("G22-EDIT-SET", "a `14` pointer line carries a checklist tick")
-    head14 = git_show(HEAD, KEYS["14"]).split("\n")
-    work14 = (ROOT / KEYS["14"]).read_text(encoding="utf-8").split("\n")
     if added:
         for scr, anchor in POINTER_ANCHORS.items():
             idx = next((i for i, ln in enumerate(work14) if ln.startswith(anchor)), None)
             if idx is None or idx + 1 >= len(work14) or POINTER_MARK not in work14[idx + 1]:
                 r.fail("G22-EDIT-SET", f"{scr}: the pointer line does not follow its anchor line")
     n["14-added"] = len(added)
-    del head14
 
 
 WALK_SELF = "self-counted by an independent fresh-context reader"
@@ -1662,6 +1722,18 @@ def deck_sub(old: str, new: str) -> Mut:
     return lambda c: c._replace(deck=c.deck.replace(old, new, 1))
 
 
+def deck_status_swap(a: str, b: str) -> Mut:
+    """Swap two entries' `status` values (the PROPOSED count stays, so only G16 may fire)."""
+
+    def mut(c: Ctx) -> Ctx:
+        deck = json.loads(c.deck)
+        s = deck["strings"]
+        s[a]["status"], s[b]["status"] = s[b]["status"], s[a]["status"]
+        return c._replace(deck=json.dumps(deck, ensure_ascii=False, indent=2) + "\n")
+
+    return mut
+
+
 def pin_sub(pattern: str, repl: str) -> Mut:
     return lambda c: c._replace(pins=re.sub(pattern, repl, c.pins, count=1, flags=re.MULTILINE))
 
@@ -1725,7 +1797,8 @@ MUTATIONS: tuple[tuple[str, Mut], ...] = (
         "G15-HYGIENE",
         sub(
             "## 25. Summary for #374 (≤ 10 lines)",
-            "## 25. Summary for #374 (≤ 10 lines; see https://example.invalid)",
+            # built from parts so the tool's own text carries no URL literal (G15 scans the tool)
+            "## 25. Summary for #374 (≤ 10 lines; see " + "http" + "s://" + "example.invalid)",
         ),
     ),
     (
@@ -1743,6 +1816,21 @@ MUTATIONS: tuple[tuple[str, Mut], ...] = (
         ),
     ),
     ("G16-DECK", deck_sub('"rbac.view_as": {', '"rbac.view_as_x": {')),
+    (
+        "G16-DECK",  # a cite one line too high: the cited line no longer holds the entry's key
+        deck_sub('"cite": "`D04`:499"', '"cite": "`D04`:498"'),
+    ),
+    (
+        "G16-DECK",  # a provenance that is not the cited line's Source cell
+        deck_sub(
+            '"provenance": "`14` :2770 (the heading, cased)"',
+            '"provenance": "`14` :2771 (the heading, cased)"',
+        ),
+    ),
+    (
+        "G16-DECK",  # two statuses swapped (the PROPOSED count unchanged): neither mirrors its provenance
+        deck_status_swap("retention.title", "rbac.view_as"),
+    ),
     ("G17-FROZEN", regex(r"^\| \(ix\)\s+\|", "| (ix-b) |")),
     (
         "G18-REDLINES",
@@ -1752,9 +1840,9 @@ MUTATIONS: tuple[tuple[str, Mut], ...] = (
     ("G20-COMPONENTS", regex(r"(\| CMP-177 [^\n]*?\| )the nineteen", r"\1built: the nineteen")),
     ("G21-ICONS", regex(r"(\| `lock` \(the T2 glyph\)\s+\| )`lock`", r"\1`padlock`")),
     (
-        "G22-EDIT-SET",
-        lambda c: c,
-    ),  # replaced at run time: the working tree is probed, see self_test
+        "G22-EDIT-SET",  # a tick on one pointer line of `14`, in the context only — never on disk
+        lambda c: c._replace(work14=c.work14.replace(POINTER_MARK, POINTER_MARK + " [x]", 1)),
+    ),
     ("G23-WALK", regex(r"(\| story: E16-S01 \(#484\)[^\n]*?\| )pointer \d+", r"\1pointer 0")),
     (
         "G23-WALK",  # the sum still holds, the §22.4 row count does not
@@ -1771,7 +1859,7 @@ MUTATIONS: tuple[tuple[str, Mut], ...] = (
 
 
 def digests() -> dict[str, str]:
-    paths = (SPEC, DECK, PINS, Path(__file__))
+    paths = (SPEC, DECK, PINS, Path(__file__), ROOT / KEYS["14"])
     return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.exists()}
 
 
@@ -1781,14 +1869,11 @@ def self_test(ctx: Ctx, base: Result) -> list[str]:
     covered = {code for code, _ in MUTATIONS}
     bad += [f"self-test: gate {g} has no mutation" for g, _ in GATE_FNS if g not in covered]
     for code, fn in MUTATIONS:
-        if code == "G22-EDIT-SET":
-            new = edit_set_probe(ctx, base)
-        else:
-            mutated = fn(ctx)
-            if mutated == ctx:
-                bad.append(f"self-test {code}: the mutation did not apply")
-                continue
-            new = sorted(set(run(mutated).fails) - set(base.fails))
+        mutated = fn(ctx)
+        if mutated == ctx:
+            bad.append(f"self-test {code}: the mutation did not apply")
+            continue
+        new = sorted(set(run(mutated).fails) - set(base.fails))
         if not new or not all(x.startswith(f"[{code}]") for x in new):
             bad.append(f"self-test {code}: expected new [{code}] FAILs only, got {new[:3]}")
     again = run(ctx)
@@ -1797,22 +1882,6 @@ def self_test(ctx: Ctx, base: Result) -> list[str]:
     if digests() != before:
         bad.append("self-test: a file on disk changed")
     return bad
-
-
-def edit_set_probe(ctx: Ctx, base: Result) -> list[str]:
-    """G22 reads the working tree: probe it by appending a tick to one pointer line on disk, then
-    restore the file byte for byte."""
-    path = ROOT / KEYS["14"]
-    original = path.read_bytes()
-    text = original.decode("utf-8")
-    probe = text.replace(POINTER_MARK, POINTER_MARK + " [x]", 1)
-    if probe == text:
-        return ["[G22-EDIT-SET] no pointer line to probe (the `14` edit set is not in the tree)"]
-    try:
-        path.write_bytes(probe.encode("utf-8"))
-        return sorted(set(run(ctx).fails) - set(base.fails))
-    finally:
-        path.write_bytes(original)
 
 
 # ----------------------------------------------------------------------------- main
@@ -1857,8 +1926,9 @@ def main(argv: list[str]) -> int:
         if args.self_test:
             out += [f"FAIL {line}" for line in st]
             out.append(
-                f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations (one per gate), "
-                "each its own FAIL; a re-run reproduces the base result; files on disk unchanged"
+                f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations "
+                f"(at least one per gate, {len(GATE_FNS)} gates), each its own FAIL; a re-run "
+                "reproduces the base result; files on disk unchanged"
             )
         print("\n".join(out))
     failed = bool(res.fails or st)

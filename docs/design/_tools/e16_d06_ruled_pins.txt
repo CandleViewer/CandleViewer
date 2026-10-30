@@ -83,9 +83,9 @@
 15|878|### CMP-079 RbacGate (disabled-with-reason wrapper)
 15|952|### CMP-087 AdminLayout (RBAC-gated shell)
 15|1008|### CMP-093 AuditActionTrigger (wraps any state-changing control to gu
-15|2187|### CMP-177 RecorderStatusRow
-15|2193|- **Storybook**: Recording, Stopped, Pinned, NearDiskBudget, AutoChart
-15|2678|### CMP-212 ToastHost
+15|2188|### CMP-177 RecorderStatusRow
+15|2194|- **Storybook**: Recording, Stopped, Pinned, NearDiskBudget, AutoChart
+15|2679|### CMP-212 ToastHost
 16|514|### 11.4 Per-component handoff checklist (every CMP-\* design ticket; 
 16|623|## 12. Design QA checklist
 16|677|### 13.3 Definition of Done (a design ticket may move to "Done," unblo
@@ -178,7 +178,7 @@
 22|19713|RetentionPolicy:
 23|865|| `recorder` | `symbols` | Current recorder status | 1 000 ms | [`Reco
 23|893|**Contract (E16-T08, #492).** `recording:read`, scope none (§6.3). The
-23|4084|### 15.8 `RecorderUpdate`
+23|4112|### 15.8 `RecorderUpdate`
 CAL|13|SPRINT01_START = datetime.date(2026, 9, 25) # Friday
 CAL|14|SPRINT_DAYS = 7
 D02|19|`05-accessibility-standard.md`; `16-design-system-brief.md`; `docs/des
@@ -197,6 +197,7 @@ D02|43|| Checklist: empty state | §3 `empty` (board 08 not drawn — the text b
 D02|44|| Catalogue sign-off: purge is irreversible and says so; gap visualisa
 D02|57|Admin screens default to **comfortable** density (`16-design-system-br
 D02|93|| Shell | CMP-087 AdminLayout | admin nav (assumed 240 px; CMP-087 nam
+D02|94|| Header | CMP-088 PageHeader (title + primary action), CMP-001 Button
 D02|99|| Search + filters | CMP-054 SearchBox, CMP-055 FilterBar | a symbol s
 D02|100|| Recorded symbols | CMP-049 Table, as a grid (§10.1), of CMP-177 Reco
 D02|103|**Column plan (comfortable).** Content width = viewport − nav 240 − 2 
@@ -229,6 +230,7 @@ D02|183|banner holds the slot, so the purge's progress shows as the card's pur
 D02|184|an inset on `disk-critical`, where "Purge data…" in the banner and the
 D02|190|| State (board) | Condition | What the screen shows |
 D02|192|| **loading** | the first `GET /recording/symbols`, `/status` or `/sto
+D02|193|| **unavailable** | any of the three returns 503 or fails | CMP-028 da
 D02|194|| **stale** | no `recorder` frame for 2 s while the socket is up, or t
 D02|196|### 3.2 Job terminal states (purge and compact)
 D02|200|- **Purge failed:** CMP-028 danger, `role="alert"` once: "Purge of ADA
@@ -389,6 +391,7 @@ D02|669|| Motion | `motion.duration.normal` (200 ms), `motion.easing.decelerat
 D02|676|## 12. Analytics and audit events
 D02|688|of the four `recorder.*` events (§15, D-3); the design depends on none
 D02|714|1. Open the Penpot page; step through the prototype flow in §3 from `r
+D02|719|5. On `purge-confirm`, check that the window, the size, "cannot be und
 D02|725|A moderated session protocol for the later live check is E16-D01 §5 (T
 D02|748|- **D-2 (CMP-177 contract):** `recording: boolean` and `onToggleRecord
 D02|760|- **D-8 (owner decision):** the security note routes every retention c
