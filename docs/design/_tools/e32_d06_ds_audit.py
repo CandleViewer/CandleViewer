@@ -24,7 +24,8 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
                   resolves to a hex in all three themes); zero proposals; the PROPOSED `PAIRS` row's
                   tokens shipped.
   (d) G-CONTRAST  every pair of §11 unrounded in three themes; `registered` rows gated at 4.5 text /
-                  3.0 non-text, PROPOSED rows measured and reported; the `PAIRS` column a read-only
+                  3.0 non-text, PROPOSED and unregistered rows (an owner's pair, its line cited)
+                  measured and reported; the `PAIRS` column a read-only
                   cross-check of `tools/contrast/pairs.mjs`; every ratio and Reading cell compared
                   whole (no fill residue in front of an anchored value, in any table cell).
   (e) G-CVD       the V-rows through `cvd_sim.py`'s matrices and greyscale weights read from its
@@ -43,6 +44,10 @@ Gates (one mutation each in `--self-test`; the pins gate besides):
                   fields at `origin/main` equal the base; each cite's content at the base stands at
                   `origin/main`, re-found inside the cited entry's heading span alone (moved once =
                   WARN; gone or ambiguous = FAIL).
+  (k) G-CLAIM     claim accuracy (C-2.6): no line of the pack or the hand-off bounds the native
+                  stop's attach by a time ("within N s", "N s after", "up to N s" and kin); the
+                  ruled wording — scheduled with a 2 s deadline; until the stop lands, or if it never
+                  does, the `unprotected` banner shows it — stands in §4, §12 and C-15.
   (i) G-HYGIENE   placeholders filled and re-derived, no `{{` left, every cite in range, non-blank
                   and content-pinned (a moved cite is a WARN until `--repin-ruled` records it or the
                   spec re-points it; an edited one a FAIL), the tree against the merge-base: PR 1 may
@@ -150,10 +155,10 @@ OPTIONAL_FIELDS = ("Forbidden", "Security", "Performance", "Observability")
 LEAD_FIELDS = ("Motion (E32-D06)", "Usage (E32-D06)")
 # the Storybook unions (BQ-15): A-row -> (`15` line at the base, the parent's cite and its lead, rule)
 STORY_ROWS: dict[str, tuple[str, int, tuple[str, int, str] | None, str, tuple[str, ...]]] = {
-    "158": ("A-6", 1886, None, "superset", ("InHeldPosition", "InDraftBuilder")),
-    "119": ("A-15", 1427, ("D03", 332, "| HA-6 "), "superset", ()),
-    "120": ("A-23", 1440, ("D05", 210, "**Storybook (PROPOSED, D05-A1):**"), "equal", ()),
-    "228": ("A-28", 2857, ("D04", 417, "| D04-A2 "), "superset", ()),
+    "158": ("A-6", 1893, None, "superset", ("InHeldPosition", "InDraftBuilder")),
+    "119": ("A-15", 1434, ("D03", 332, "| HA-6 "), "superset", ()),
+    "120": ("A-23", 1447, ("D05", 210, "**Storybook (PROPOSED, D05-A1):**"), "equal", ()),
+    "228": ("A-28", 2895, ("D04", 417, "| D04-A2 "), "superset", ()),
 }
 # the sprint values the design-ahead section anchors (key in the backlog JSON -> anchor id)
 SPRINT_KEYS = {
@@ -196,6 +201,19 @@ LOCAL_PATH = re.compile("/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b")
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 FULL_STOP = re.compile(r"(?<=[.!?])\s+(?=[*`\"(A-Z0-9§])")
+# G-CLAIM: a time bound on the stop's attach ("within 2 s", "2 s after", "up to 2 s" and kin); the
+# ruled wording states a deadline and the banner, never a time by which the stop is attached
+TIME_BOUND = re.compile(
+    r"\b(?:within|up to|inside|in under|no later than|before|after)\s+(?:an?\s+|the\s+)?"
+    r"\d+(?:\.\d+)?\s?(?:ms|s|sec|seconds?)\b"
+    r"|\b\d+(?:\.\d+)?\s?(?:ms|s|sec|seconds?)\s+(?:after|later|at (?:the )?most)\b",
+    re.IGNORECASE,
+)
+RULED_CLAIM = (
+    "scheduled with a 2 s deadline; until the stop lands — or if it never does — the "
+    "`unprotected` banner shows it"
+)
+PAIR_STATUSES = ("registered", "PROPOSED", "unregistered")  # the §11 `PAIRS` column's first word
 
 
 # ---------------------------------------------------------------------------- git and caches
@@ -776,6 +794,11 @@ def date_values(env: Env) -> dict[str, str]:
     return vals
 
 
+def pair_status(cell: str) -> str:
+    """The `PAIRS` column's status word: `registered`, `PROPOSED` or `unregistered (<owner cite>)`."""
+    return cell.split(" ", 1)[0]
+
+
 def pair_values(env: Env, spec: str) -> dict[str, str]:
     vals: dict[str, str] = {}
     gated = failing = reported = 0
@@ -783,7 +806,7 @@ def pair_values(env: Env, spec: str) -> dict[str, str]:
         if len(r) < 10:
             continue
         pid = r[0].lower().replace("-", "")
-        fg, bg, kind, status = r[2].strip("`"), r[3].strip("`"), r[4], r[9]
+        fg, bg, kind, status = r[2].strip("`"), r[3].strip("`"), r[4], pair_status(r[9])
         ratios: dict[str, float] = {}
         for t in THEMES:
             a, b = resolve(env, t, fg), resolve(env, t, bg)
@@ -792,7 +815,7 @@ def pair_values(env: Env, spec: str) -> dict[str, str]:
                 vals[f"CONTRAST:{pid}.{t}"] = show_ratio(ratios[t])
         below = [t for t in THEMES if t in ratios and kind in BARS and ratios[t] < BARS[kind]]
         reading = "meets" if not below else "below:" + "+".join(below)
-        if status == "PROPOSED":
+        if status != "registered":
             reported += 1
             reading += "/reported"
         else:
@@ -1262,7 +1285,7 @@ def g_contrast(t: Texts) -> list[Finding]:
         if len(r) != 10:
             bad.append(f"{r[0]} has {len(r)} cells, not 10")
             continue
-        fg, bg, kind, status = r[2].strip("`"), r[3].strip("`"), r[4], r[9]
+        fg, bg, kind, status = r[2].strip("`"), r[3].strip("`"), r[4], pair_status(r[9])
         pid = r[0].lower().replace("-", "")
         # the whole cell against the computed value, not the anchored tail alone
         for th, cell in zip(THEMES, r[5:8]):
@@ -1278,15 +1301,19 @@ def g_contrast(t: Texts) -> list[Finding]:
             bad.append(f"{r[0]}: kind {kind!r} is neither text nor non-text")
         if status == "registered" and (fg, bg) not in reg:
             bad.append(f"{r[0]}: {PAIRS_REL} has no row for this fg / bg")
-        if status == "PROPOSED" and (fg, bg) in reg:
-            bad.append(f"{r[0]}: marked PROPOSED but {PAIRS_REL} registers it")
-        if status not in ("registered", "PROPOSED"):
+        if status != "registered" and (fg, bg) in reg:
+            bad.append(f"{r[0]}: marked {status} but {PAIRS_REL} registers it")
+        if status not in PAIR_STATUSES:
             bad.append(f"{r[0]}: PAIRS column {status!r}")
+        if status == "unregistered" and not cites_in(r[9]):
+            bad.append(f"{r[0]}: an unregistered pair names no owner's line")
+        if status == "PROPOSED" and r[0] != "P-2":
+            bad.append(f"{r[0]}: PROPOSED — §7 proposes one `PAIRS` row, P-2 (BQ-10)")
         for th in THEMES:
             a, b = resolve(t.env, th, fg), resolve(t.env, th, bg)
             if not (a and b):
                 bad.append(f"{r[0]}: a token does not resolve in {th}")
-            elif status != "PROPOSED" and kind in BARS and contrast(a, b) < BARS[kind]:
+            elif status == "registered" and kind in BARS and contrast(a, b) < BARS[kind]:
                 bad.append(f"{r[0]}: below {BARS[kind]} in {th}")
     return one("G-CONTRAST", bad)
 
@@ -1577,6 +1604,30 @@ def g_hygiene(t: Texts) -> list[Finding]:
     return one("G-HYGIENE", bad) + one("G-HYGIENE", warns, "WARN")
 
 
+def g_claim(t: Texts) -> list[Finding]:
+    """(k) Claim accuracy (C-2.6; the round-1 lens's Major 1): no line of the pack or the hand-off
+    states a time by which the native stop is attached — the server schedules the `trading-stop`
+    write with a deadline, and the `unprotected` banner shows the gap until the stop lands or for
+    good — and the ruled wording stands in §4, §12 and C-15."""
+    bad: list[str] = []
+    for doc, text in (("spec", t.spec), ("hand", t.hand)):
+        for i, ln in enumerate(lines_of(text), 1):
+            for m in TIME_BOUND.finditer(ln):
+                bad.append(
+                    f"{doc}:{i} bounds the stop's attach by a time ({m[0]!r}); the stop is "
+                    "scheduled with a deadline, never attached by a time (C-2.6)"
+                )
+    c15 = next((" | ".join(r) for r in contradiction_rows(t.spec) if r and r[0] == "C-15"), "")
+    for name, block in (
+        ("§4", sec(t.spec, "## 4.")),
+        ("§12", sec(t.spec, "## 12.")),
+        ("C-15", c15),
+    ):
+        if not flex(RULED_CLAIM).search(block):
+            bad.append(f"{name} lacks the ruled wording ({RULED_CLAIM[:40]!r} ...)")
+    return one("G-CLAIM", bad)
+
+
 def g_pins(t: Texts) -> list[Finding]:
     pinned = parse_pins(t.pins)
     if not pinned:
@@ -1586,7 +1637,7 @@ def g_pins(t: Texts) -> list[Finding]:
 
 GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_ledger, g_arow, g_token, g_contrast, g_cvd, g_motion, g_strings, g_stories, g_entry,
-    g_version, g_hygiene,
+    g_version, g_hygiene, g_claim,
 )  # fmt: skip
 
 
@@ -1835,6 +1886,9 @@ MUTATIONS: tuple[Mutation, ...] = (
       lambda t: pr2_moved(t, hash_edit="CONST:443–444")),
     M("G-HYGIENE", "simulate PR 2 with one cite pin dropped",
       lambda t: pr2_moved(t, drop="CONST:164–166")),
+    M("G-CLAIM", "state a time by which the stop is attached ('within 2 s') in §4",
+      subst("in which the `trading-stop` write is scheduled with a 2 s deadline; until the stop lands",
+            "in which the native stop is attached within 2 s of the order; until the stop lands")),
     M("G-RULED-PIN", "re-word one pinned sentence of §12",
       subst("The control is E32-T01's single submission choke point (#931).",
             "The control is E32-T01's one submission choke point (#931).")),
@@ -1862,8 +1916,17 @@ def selftest() -> tuple[bool, list[str]]:
     base = replace(load(), changed=[SPEC_REL])  # the PR-1 view; N-1 / N-2 plant the PR-2 one
     disk = [hashlib.sha256(read_raw(r).encode()).hexdigest() for r in OWN_PATHS]
     before = digest(base)
-    base_found = [f for f in audit(base) if f.level == "FAIL"]
-    out = [f"self-test: baseline {len(base_found)} FAIL"]
+    base_all = audit(base)
+    base_found = [f for f in base_all if f.level == "FAIL"]
+    # the head's own drift: a `14` / `15` line moved at origin/main after the base is G-VERSION's
+    # WARN on the baseline too, so the negatives subtract it (never a FAIL, never another gate)
+    drift = {(f.gate, f.msg) for f in base_all if f.level == "WARN" and f.gate == "G-VERSION"}
+    out = [
+        (
+            f"self-test: baseline {len(base_found)} FAIL, {len(drift)} G-VERSION WARN "
+            "(origin/main drift, subtracted from the negatives)"
+        )
+    ]
     ok = not base_found
     for f in base_found:
         out.append(ascii_line(f"  baseline {f.gate}: {f.msg}"))
@@ -1878,7 +1941,11 @@ def selftest() -> tuple[bool, list[str]]:
             )
         )
     for name, scenario in NEGATIVES:
-        extra = [f for f in audit(scenario(base)) if f.level in ("FAIL", "WARN")]
+        extra = [
+            f
+            for f in audit(scenario(base))
+            if f.level in ("FAIL", "WARN") and (f.gate, f.msg) not in drift
+        ]
         ok &= not extra
         shown = ", ".join(sorted({f"{f.gate} ({f.level})" for f in extra})) or "none"
         out.append(ascii_line(f"{'ok  ' if not extra else 'FAIL'} {name} -> {shown}"))
