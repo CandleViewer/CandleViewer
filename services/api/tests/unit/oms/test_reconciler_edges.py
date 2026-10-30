@@ -478,7 +478,7 @@ async def test_the_phases_hold_the_watermark_when_it_cannot_be_written(
     summary = await job.phases.report(
         str(ACCOUNT), pass_id=SWEEP_ID, trigger="periodic", episode_open=False, failure=None
     )
-    assert summary["result"] == "clean"
+    assert summary["outcome"] == "clean"
 
 
 def test_the_phases_observe_only_their_own_report_and_refuse_a_bad_severity() -> None:

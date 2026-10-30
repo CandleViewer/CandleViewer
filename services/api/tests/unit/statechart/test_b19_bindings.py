@@ -235,7 +235,7 @@ async def test_the_report_actions_hand_on_its_notices_and_items() -> None:
     port = _Reports(
         {
             "unresolved": 2,
-            "result": "divergent",
+            "outcome": "divergent",
             "notices": [["oms.account_desync", "warning"], ["bad"]],
             "episode_open": True,
         }
@@ -246,7 +246,7 @@ async def test_the_report_actions_hand_on_its_notices_and_items() -> None:
         await b19.persist_report(None, context, _Event("x"), None)
         await b19.emit_recon_metrics(None, context, _Event("x"), None)
         await b19.broadcast_recon_complete(None, context, _Event("x"), None)
-        assert (context["unresolved"], context["result"], context["episode_open"]) == (
+        assert (context["unresolved"], context["outcome"], context["episode_open"]) == (
             2,
             "divergent",
             True,

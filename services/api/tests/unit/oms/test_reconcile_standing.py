@@ -192,7 +192,7 @@ async def test_the_report_is_recorded_ahead_and_the_watermark_is_the_reads_upper
     )  # fmt: skip
     assert job.watermarks.advanced == [NOW_US]  # the read's end, not the report's own instant
     assert summary == {
-        "unresolved": 0, "result": "corrected",
+        "unresolved": 0, "outcome": "corrected",
         "notices": [["oms.account_desync", "warning"]], "episode_open": True,
     }  # fmt: skip
 
@@ -209,7 +209,7 @@ async def test_a_report_that_cannot_be_recorded_still_ends_its_pass_and_pages() 
     job = Job()
     job.records.refuse = True
     summary = await _pass(job)
-    assert summary["result"] == "clean"
+    assert summary["outcome"] == "clean"
     assert ("page", "A reconciliation report could not be written.") in job.world.oms.pages
 
 
@@ -235,7 +235,7 @@ async def test_a_pass_whose_reads_are_gone_reports_its_loss() -> None:
     summary = await job.phases.report(
         str(ACCOUNT), pass_id=SWEEP_ID, trigger="startup", episode_open=False, failure=None
     )
-    assert summary["result"] == "errored"
+    assert summary["outcome"] == "errored"
     assert job.records.rows[0][2]["errors"] == [{"step": "1", "kind": "pass_lost", "subject": None}]
 
 

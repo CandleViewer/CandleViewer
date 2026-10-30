@@ -619,7 +619,7 @@ class Adopt:
     order: Order
     key: str
     foreign_stop: bool
-    flag: bool
+    no_intent: bool
     entry_id: int | None = None
 
 
@@ -628,7 +628,7 @@ class Anomaly:
     """3c: a `ReconcileAnomaly` (S6): audited, alerted, no mutation."""
 
     order: Order
-    flag: bool
+    no_intent: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -1265,10 +1265,10 @@ class _OrderDiff:
                 else:
                     continue  # draft, validated or submitting: its own send decides (rule 3)
                 if key is None:
-                    self._add(Anomaly(r, flag=b is None))
+                    self._add(Anomaly(r, no_intent=b is None))
                 else:
                     self._planned.add(xid)
-                    self._add(Adopt(r, key, stop, flag=b is None, entry_id=entry_id))
+                    self._add(Adopt(r, key, stop, no_intent=b is None, entry_id=entry_id))
             except Exception as exc:
                 self._draft.error("3c", _kind(exc), r.order_link_id)
 
@@ -1501,7 +1501,7 @@ class _Remediation:
                 if row.state == "untracked":
                     self._plan.untracked -= 1
             case Mismatch(_, row, order):
-                await self._flag("order", order.exchange_order_id, order.exchange_placed)
+                await self._no_intent("order", order.exchange_order_id, order.exchange_placed)
                 await _bounded(p.handovers.hand_over_order(self._account, order), PORT_TIMEOUT_S)
                 xid = order.exchange_order_id
                 await self._command(
@@ -1521,13 +1521,13 @@ class _Remediation:
                     self._plan.untracked -= row.state == "untracked"
             case HoldPastSpan(row):
                 self._r._page_once("oms_unknown_past_history", self._account, row.order_link_id)
-            case Adopt(order, key, stop, flag, entry_id):
-                if flag:
-                    await self._flag("order", order.exchange_order_id, order.exchange_placed)
+            case Adopt(order, key, stop, no_intent, entry_id):
+                if no_intent:
+                    await self._no_intent("order", order.exchange_order_id, order.exchange_placed)
                 await self._record(order, key, stop=stop, entry_id=entry_id)
-            case Anomaly(order, flag):
-                if flag:
-                    await self._flag("order", order.exchange_order_id, order.exchange_placed)
+            case Anomaly(order, no_intent):
+                if no_intent:
+                    await self._no_intent("order", order.exchange_order_id, order.exchange_placed)
                 self._anomaly(order)
             case Materialise(_, record, order, fill, entry_id):
                 await self._materialise(record, order, fill, entry_id)
@@ -1536,7 +1536,7 @@ class _Remediation:
             case Unpaired(e, order, decided):
                 if not decided:  # no OMS intent: frozen first, then kept and decided
                     placed = order is not None and order.exchange_placed
-                    await self._flag("execution", e.exec_id, placed)
+                    await self._no_intent("execution", e.exec_id, placed)
                     await self._keep(e, empty_read=False)
                     await _bounded(p.handovers.decide(self._account, e.exec_id), PORT_TIMEOUT_S)
                 self._list("unpaired", e.exec_id)
@@ -1574,7 +1574,7 @@ class _Remediation:
         call = self._p.handovers.hand_over_execution(self._account, e, empty_read=empty_read)
         await _bounded(call, PORT_TIMEOUT_S)
 
-    async def _flag(self, finding: Finding, key: str, exchange_placed: bool) -> None:
+    async def _no_intent(self, finding: Finding, key: str, exchange_placed: bool) -> None:
         """No OMS intent (SR-E27-19): the freeze, E39-T04's one setter, or for an order the
         venue placed itself its audit and page alone (24 Sec.8.10). A failure pages and ends
         neither the action nor the pass."""

@@ -241,7 +241,10 @@ async def test_scenario_unknown_resolves_without_resubmission(rig: Rig) -> None:
     )
     assert rig.commands.kinds() == sent_before  # no create, and no other command, was sent
     _only_reads(s.world)
-    assert (s.record_of()["corrected"], summary["result"]) == ([order.order_link_id], "corrected")
+    assert (s.record_of()["corrected"], summary["outcome"]) == (
+        [order.order_link_id],
+        "corrected",
+    )
 
 
 async def test_scenario_unresolvable_order_is_abandoned_deterministically(rig: Rig) -> None:

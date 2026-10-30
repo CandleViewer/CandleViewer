@@ -268,7 +268,7 @@ class ReconcilePhases:
         notices = pass_notices(report, episode_open=episode_open)
         return {
             "unresolved": report.owner_items,
-            "result": report.result,
+            "outcome": report.result,
             "notices": [[n.reason, n.severity] for n in notices.notices],
             "episode_open": notices.episode_open,
         }

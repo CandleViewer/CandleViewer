@@ -14,7 +14,7 @@ is logged by its class and paged where it matters, never raised.
 The job's context: the account (`input.account_id`, copied to `account_id` by `stamp_start`, with
 `input.auto_remediate`, the capability that keeps testnet reporting drift without acting on it,
 INV-B19-d), the pass's `trigger` and `pass_id`, its fetch's start (`started_us`), the diff's and the
-remediation's summaries, the failure count, the report's `unresolved` items, `result` and
+remediation's summaries, the failure count, the report's `unresolved` items, `outcome` and
 `notices`, and whether a desync or stale episode is open (`episode_open`, 23 §15.9). All plain JSON,
 so a snapshot stays compact (A8).
 
@@ -369,7 +369,7 @@ async def persist_report(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> 
     `oms.reconcile` record (24 §15.5), with what the next actions and the guard read: the items
     left for the Owner, the result, the notices and whether an episode stays open. A report that
     cannot be written still ends its pass, logged and paged by the port; none is left here."""
-    context["unresolved"], context["result"], context["notices"] = 0, None, []
+    context["unresolved"], context["outcome"], context["notices"] = 0, None, []
     ports, account, pass_id = _ports("persist_report"), _account(context), _pass_id(context)
     if ports is None or account is None or pass_id is None:
         return
@@ -386,8 +386,8 @@ async def persist_report(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> 
         logger().error("reconcile_report_failed", account_id=account, failure=type(exc).__name__)
         return
     context["unresolved"] = _count(summary.get("unresolved"))
-    result = summary.get("result")
-    context["result"] = result if isinstance(result, str) else None
+    outcome = summary.get("outcome")
+    context["outcome"] = outcome if isinstance(outcome, str) else None
     notices = summary.get("notices")
     context["notices"] = [
         [str(n[0]), str(n[1])]
