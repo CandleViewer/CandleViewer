@@ -45,7 +45,6 @@ export const E09_SCREENS: ReadonlyArray<{
   { scr: "SCR-004", path: "/login/change-password" }, // ChangePasswordScreen (#1824), R-007
   {
     scr: "SCR-005",
-    shipped: false,
     path: "/locked",
     reason: "a dialog over the current route (#1640): R-005 /locked only redirects to the terminal",
     scannedIn: "auth/session.spec.ts (E09-TC-C02 scans the warning and the lock)",
@@ -110,14 +109,15 @@ test("not-assessed screens are still placeholders (fails when one ships: audit i
   // A route a shipped screen also renders on (R-201: SCR-111 beside SCR-112) is no longer a placeholder.
   const shippedPaths = new Set(E09_SCREENS.filter((s) => s.shipped !== false).map((s) => s.path));
   for (const { path } of E09_SCREENS.filter(
-    (s) => s.shipped === false && s.scannedIn === undefined && !shippedPaths.has(s.path),
+    (s) => s.shipped === false && !shippedPaths.has(s.path),
   )) {
     await page.goto(path);
     await expect(page.getByText("This screen has not shipped yet.")).toBeVisible();
   }
 });
 
-const SHIPPED = E09_SCREENS.filter((s) => s.shipped !== false);
+// Built screens with a page of their own to scan here (a `scannedIn` one is scanned in its spec).
+const SCANNED_HERE = E09_SCREENS.filter((s) => s.shipped !== false && s.scannedIn === undefined);
 
 for (const { scr, path, shipped, marker, scannedIn } of E09_SCREENS) {
   test(`${scr} ${path}: axe serious/critical`, async ({ page }) => {
@@ -126,7 +126,7 @@ for (const { scr, path, shipped, marker, scannedIn } of E09_SCREENS) {
     await page.waitForLoadState("networkidle");
     // Placeholder screens are reported as SKIPPED (not passed): axe on a stub proves nothing.
     test.skip(
-      shipped === false,
+      shipped === false || scannedIn !== undefined,
       scannedIn === undefined
         ? "not-assessed: placeholder screen, no real UI to audit"
         : `scanned in ${scannedIn}`,
@@ -139,7 +139,7 @@ for (const { scr, path, shipped, marker, scannedIn } of E09_SCREENS) {
   });
 }
 
-for (const { scr, path } of SHIPPED) {
+for (const { scr, path } of SCANNED_HERE) {
   test(`${scr}: reflow at 320px, no horizontal scroll (SC 1.4.10)`, async ({ page }) => {
     await stub(page);
     await page.setViewportSize({ width: 320, height: 640 });
