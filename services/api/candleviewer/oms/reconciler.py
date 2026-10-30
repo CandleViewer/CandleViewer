@@ -869,7 +869,8 @@ def _has_stop_order(position: Position, remote_open: Sequence[Order]) -> bool:
 
 class Reconciler:
     """The pass's phases (module docstring). One serves every account; B19 runs one pass at a
-    time per account, so a pass never overlaps itself."""
+    time per account, so a pass never overlaps itself. Its helpers read it through its public
+    surface (`ports`, `now_us`, `new_id`, `count_naked`, `page_once`), never a private name."""
 
     def __init__(
         self,
@@ -882,6 +883,24 @@ class Reconciler:
         self._p, self._now, self._new_id = ports, now_us, new_id
         self._on_naked = on_naked
         self._paged: OrderedDict[tuple[str, str], None] = OrderedDict()
+
+    @property
+    def ports(self) -> ReconcilePorts:
+        """The ports the pass reads and writes through."""
+        return self._p
+
+    def now_us(self) -> int:
+        """The pass's clock, in microseconds (as `ReconcilePhases.now_us`)."""
+        return self._now()
+
+    def new_id(self) -> UUID:
+        """A new row's id."""
+        return self._new_id()
+
+    def count_naked(self) -> None:
+        """Counts `naked_position_alerts_total` (BQ-9), where the wiring gave a counter."""
+        if self._on_naked is not None:
+            self._on_naked()
 
     async def reconcile(
         self,
@@ -1032,7 +1051,7 @@ class Reconciler:
         """The pass's report, its run time from its fetch to now."""
         return plan.draft.freeze(max(0, (self._now() - plan.fetched.started_us) // 1000))
 
-    def _page_once(self, reason: str, account_id: AccountId, *key: str) -> None:
+    def page_once(self, reason: str, account_id: AccountId, *key: str) -> None:
         """One P1 page per reason and subject, across passes (a bounded memory, C-2.18): a
         standing item pages once, never on every 30 s pass. Logged by its reason and account."""
         mark = (reason, "\x1f".join((str(account_id), *key)))
@@ -1064,6 +1083,7 @@ class _OrderDiff:
 
     def __init__(self, reconciler: Reconciler, plan: Plan) -> None:
         self._r, self._plan, self._f = reconciler, plan, plan.fetched
+        self._p, self._now = reconciler.ports, reconciler.now_us
         self._draft = plan.draft
         self._account = self._f.account.account_id
         self._bound: dict[str, OrderRow] = {}
@@ -1082,7 +1102,7 @@ class _OrderDiff:
         self._plan.actions.append(action)
 
     async def run(self) -> None:
-        p = self._r._p
+        p = self._p
         self._port = p.router.port_for(self._f.account.environment)
         rows = tuple(await _bounded(p.orders.unfinished_for(self._account), PORT_TIMEOUT_S))
         if any(row.exchange_account_id != self._account for row in rows):
@@ -1108,7 +1128,7 @@ class _OrderDiff:
             unique.setdefault(e.exec_id, e)
         if not unique:
             return []
-        call = self._r._p.executions.stored(self._account, tuple(unique))
+        call = self._p.executions.stored(self._account, tuple(unique))
         stored = await _bounded(call, PORT_TIMEOUT_S)
         for exec_id in stored:
             if (entry := self._entries.get(exec_id)) is not None:
@@ -1207,7 +1227,7 @@ class _OrderDiff:
     async def _step_3b(self, rows: Sequence[OrderRow], paired: set[UUID]) -> None:
         """Local rows absent remotely, looked up in the order history, one read each; a request
         in flight, and a held row, wait for their own answer."""
-        f, now = self._f, self._r._now()
+        f, now = self._f, self._now()
         for row in rows:
             if row.id in paired or row.state in _LEFT_TO_THEIR_REQUEST:
                 continue
@@ -1236,7 +1256,7 @@ class _OrderDiff:
         recorded stop's TP/SL order is materialised; any other is recorded `untracked` (a foreign
         stop among them) or, where a final or another account's row holds its id, an anomaly.
         No OMS intent opens the freeze first (SR-E27-19)."""
-        p = self._r._p
+        p = self._p
         items = [(r, None) for r in rest] + [(w.order, w.entry_id) for w in self._f.waiting_orders]
         for r, entry_id in items:
             try:
@@ -1312,7 +1332,7 @@ class _OrderDiff:
     async def _row_by_xid(self, xid: str) -> OrderRow | None:
         """The account's row bound to the exchange order id, in any state (`ux_orders_exch_id`)."""
         if xid not in self._by_xid:
-            call = self._r._p.orders.get_by_exchange_order_id(self._account, xid)
+            call = self._p.orders.get_by_exchange_order_id(self._account, xid)
             row = await _bounded(call, PORT_TIMEOUT_S)
             if row is not None and (row.exchange_account_id, row.exchange_order_id) != (
                 self._account,
@@ -1324,7 +1344,7 @@ class _OrderDiff:
 
     async def _row_by_link(self, link: str) -> OrderRow | None:
         if link not in self._by_link:
-            call = self._r._p.orders.get_by_link_id(self._account, link)
+            call = self._p.orders.get_by_link_id(self._account, link)
             row = await _bounded(call, PORT_TIMEOUT_S)
             if row is not None and row.exchange_account_id != self._account:
                 raise _AnotherAccount
@@ -1386,7 +1406,7 @@ class _OrderDiff:
         """An empty read decides only once an earlier one counted a cadence before exists."""
         if entry is None or entry.empty_reads < 1 or entry.first_empty_read_at is None:
             return False
-        return _us(entry.first_empty_read_at) <= self._r._now() - EMPTY_READ_CADENCE_US
+        return _us(entry.first_empty_read_at) <= self._now() - EMPTY_READ_CADENCE_US
 
 
 _PROTECTIVE: Final = (AttachStop, PageNaked, RestoreStop, PageTighter)
@@ -1438,7 +1458,7 @@ class _Remediation:
     def __init__(self, reconciler: Reconciler, plan: Plan) -> None:
         self._r, self._plan, self._f = reconciler, plan, plan.fetched
         self._draft = plan.draft
-        self._p = reconciler._p
+        self._p = reconciler.ports
         self._account = self._f.account.account_id
         self._pid = self._f.pass_id
         self._settled: list[int] = list(plan.settled)
@@ -1524,7 +1544,7 @@ class _Remediation:
                     self._list("abandoned", row.order_link_id)
                     self._plan.untracked -= row.state == "untracked"
             case HoldPastSpan(row):
-                self._r._page_once("oms_unknown_past_history", self._account, row.order_link_id)
+                self._r.page_once("oms_unknown_past_history", self._account, row.order_link_id)
             case Adopt(order, key, stop, no_intent, entry_id):
                 if no_intent:
                     await self._no_intent("order", order.exchange_order_id, order.exchange_placed)
@@ -1549,7 +1569,7 @@ class _Remediation:
             case AttachStop(position, record):
                 await self._attach(position, record)
             case PageNaked(position):
-                self._r._page_once(
+                self._r.page_once(
                     "oms_naked_no_record_in_force", self._account, position.symbol,
                     str(position.position_idx),
                 )  # fmt: skip
@@ -1557,7 +1577,7 @@ class _Remediation:
                 await self._restore(position, record)
             case PageTighter(position):
                 shown = str(position.stop_loss)  # the page's key, never logged
-                self._r._page_once(
+                self._r.page_once(
                     "oms_stop_tighter_than_recorded", self._account, position.symbol, shown
                 )
                 self._list("sl_tighter", position.symbol)
@@ -1595,7 +1615,7 @@ class _Remediation:
                 "reconcile_freeze_failed", account_id=str(self._account), finding=finding,
                 failure=type(exc).__name__,
             )  # fmt: skip
-            self._r._page_once("oms_freeze_failed", self._account, finding, key)
+            self._r.page_once("oms_freeze_failed", self._account, finding, key)
             self._draft.error("3c" if finding == "order" else "3d", "freeze_failed", key)
 
     async def _record(self, order: Order, key: str, *, stop: bool, entry_id: int | None) -> None:
@@ -1603,7 +1623,7 @@ class _Remediation:
         An order the table cannot hold, or whose id a row holds already (`ux_orders_exch_id`), is
         an anomaly, never merged (24 Sec.8.5)."""
         try:
-            new = adopted_row(self._r._new_id(), self._account, order, key, stop=stop)
+            new = adopted_row(self._r.new_id(), self._account, order, key, stop=stop)
         except (ValueError, KeyError):
             self._anomaly(order)
             return
@@ -1647,7 +1667,7 @@ class _Remediation:
             holder = await _bounded(p.orders.get_by_link_id(self._account, link), PORT_TIMEOUT_S)
             link = link if holder is None else ext_key(xid)
         qty = self._size_of(record, order, fill)
-        new = materialised_row(self._r._new_id(), self._account, record, order, link, qty)
+        new = materialised_row(self._r.new_id(), self._account, record, order, link, qty)
         binds = RecordedStopBind(record_id=record.id, kind=record.kind)
         call = p.machines.materialise(
             new, environment=self._f.account.environment, pass_id=self._pid, binds=binds
@@ -1705,8 +1725,7 @@ class _Remediation:
     async def _attach(self, position: Position, record: RecordedStopRow) -> None:
         """BQ-9: the record in force attached through the recorded-stop writer, on the `critical`
         lane, and counted in `naked_position_alerts_total`."""
-        if self._r._on_naked is not None:
-            self._r._on_naked()
+        self._r.count_naked()
         call = self._p.protective.attach_recorded(
             self._f.account, position, record, pass_id=self._pid
         )
@@ -1715,7 +1734,7 @@ class _Remediation:
             self._list("sl_repaired", position.symbol)
             return
         self._draft.error("5", f"attach_{outcome}", position.symbol)
-        self._r._page_once(
+        self._r.page_once(
             "oms_naked_attach_failed", self._account, position.symbol, str(position.position_idx)
         )
 
@@ -1729,7 +1748,7 @@ class _Remediation:
         if outcome == "sent":
             self._list("sl_restored", position.symbol)
         elif outcome == "refused":
-            self._r._page_once(
+            self._r.page_once(
                 "oms_stop_restore_refused", self._account, position.symbol, str(record.id)
             )
             self._list("sl_restore_refused", position.symbol)

@@ -367,9 +367,9 @@ async def test_each_actions_failure_is_listed_with_its_step(
 async def test_the_pages_remembered_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rc, "PAGED_BOUND", 1)
     w = World()
-    w.reconciler._page_once("oms_unknown_past_history", ACCOUNT, "a")
-    w.reconciler._page_once("oms_unknown_past_history", ACCOUNT, "b")
-    w.reconciler._page_once("oms_unknown_past_history", ACCOUNT, "a")  # forgotten: paged again
+    w.reconciler.page_once("oms_unknown_past_history", ACCOUNT, "a")
+    w.reconciler.page_once("oms_unknown_past_history", ACCOUNT, "b")
+    w.reconciler.page_once("oms_unknown_past_history", ACCOUNT, "a")  # forgotten: paged again
     assert len(w.oms.pages) == 3
 
 
