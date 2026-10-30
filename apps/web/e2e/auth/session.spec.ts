@@ -203,7 +203,9 @@ test("E09-TC-D03 SCR-112 sign out everywhere: logout all, SCR-001, the 4401 clos
   // The harness's own output: a precondition that the client was told (`bye.reconnect` false), not evidence.
   expect(harness.sent.at(-1)).toMatchObject({ t: "bye", p: { code: 4401, reconnect: false } });
   // The evidence: no second socket was tried. `authenticated()` could not show it: the revoked session's next
-  // socket is closed before any `auth` frame is answered, so it stays 1 whatever the client does.
+  // socket is closed before any `auth` frame is answered, so it stays 1 whatever the client does. Best-effort: a
+  // retry would first refresh its token, which the stub refuses for a revoked session, so only a client that
+  // reopens without refreshing moves this; `closePolicy.test.ts` pins the fatal-bye decision itself.
   expect(harness.connections()).toBe(1);
 });
 
@@ -466,6 +468,7 @@ test("E09-TC-D03 sign out everywhere in context A: B's socket gets bye then 4401
   await expect(b.page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
   // The evidence, once B has landed: it never tried a second socket (`connections()` counts a refused attempt too;
   // `authenticated()` would stay 1 whatever B did, as the revoked session's next socket is closed unanswered).
+  // Best-effort, as in the first test.
   expect(b.harness.connections()).toBe(1);
   await a.context.close();
   await b.context.close();
