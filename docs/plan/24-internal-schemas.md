@@ -451,6 +451,8 @@ class BookDesyncEvent(MarketEvent):        # E21-T01: one per resync incident
 | `TradeClusterEvent`      | derived (§2.10)                    | on cluster close    | no (derivable from trades, C-2.15) | `{env}.md.{symbol}.cluster`            |
 | `BigTradeThresholdEvent` | derived (§2.10)                    | ≤ 1 / 5 s           | yes (config echo; not derivable)   | `{env}.md.{symbol}.bigtrade-threshold` |
 | `BigTradeAdvisoryEvent`  | derived (§2.10)                    | on over-flag entry  | yes                                | `{env}.md.{symbol}.bigtrade-advisory`  |
+| `LiquidityReload`        | derived (§2.11)                    | per detected reload | no (derivable from book+trades)    | `{env}.md.{symbol}.liquidity`          |
+| `LiquidityPulled`        | derived (§2.11)                    | per detected pull   | no (derivable from book+trades)    | `{env}.md.{symbol}.liquidity`          |
 
 **Ingestion health reasons (#1919).** `IngestionService.health()` returns `degraded` (never `down`;
 `stopped` before start) with `detail` = comma-joined `HealthReason` tokens, derived from published plain
@@ -598,6 +600,49 @@ Topic details are flat single segments (`bus/models.py` `_SEGMENT_RE` = `[a-zA-Z
 - **State caps (closes threat-model gap G3; SR-E22-05).** Per symbol: `CLUSTER_KEYS_MAX = 4096` open cluster keys and `PRINTS_BUFFER_MAX = 16384` buffered prints (a floor). The buffer holds **all** evaluated prints (not only flagged ones) inside the active cluster window, so a config change can recompute without a restart. Its effective bound is the asserted constant expression `PRINTS_BUFFER_EFFECTIVE_MAX = max(PRINTS_BUFFER_MAX, cluster_window_ms × 5)` in `orderflow/limits.py`, where 5 = the 5 000 prints/s budget #5 expressed per ms. That means a healthy feed never evicts inside the window: 25 000 at the 5 000 ms REST cap, 10 000 → 16 384 at the 2 000 ms WS cap. It stays bounded because `cluster_window_ms` is capped (SR-E22-04). The oldest entry is evicted (`close_reason="evicted"`) and `bigtrade_state_truncated_total{symbol}` is incremented, never silently. Every bound is imported from `orderflow/limits.py` (E22 threat model §7). No literal copies are allowed elsewhere.
 - **Bounded membership.** `trade_ids` is capped at `CLUSTER_IDS_MAX = 64` (`orderflow/limits.py`, asserted), with `trade_ids_truncated` set when the cap applies. The exact count and the first/last ids are always present, so the event size is O(1) on the bus while still giving tape highlighting and determinism tests concrete members. The full membership stays reconstructible from the tape by `(symbol, side, price_bucket, first_ts_event..last_ts_event)`.
 - **Input assert (SR-E22-13).** Engine inputs are `Decimal` > 0 and on tick. Anything else is rejected and counted.
+
+### 2.11 Liquidity events (E21-T04, contract-first; PR 1 = the pure core)
+
+Produced by M9 `orderflow/liquidity.py` (`LiquidityTracker`) from a 100 ms book sample (`BookState.walk`, read only while `BookPhase.LIVE`) and the `TradeEvent` tape. Plain synchronous code, not a statechart (C-2.20); every time is the caller's `ts_us`, so live and replay take the same path. Bus only: no REST or WS surface (`23-ws-protocol.md` is untouched; WS exposure is E21-S07's own contract PR), and nothing is persisted (`heatmap_cells.refill_count` and the age columns stay NULL).
+
+```python
+class LiquidityReload(MarketEvent):        # (estimated) a level consumed by prints, then replenished in the window
+    side: Literal["bid", "ask"]            # the resting side of the level
+    price: Px
+    price_ticks: Ticks
+    prior_size: Qty                        # size before the consume
+    replenished_size: Qty
+    refill_count: int                      # consume -> replenish cycles at this price within the window
+    estimated: Literal[True] = True        # L2-only inference, no L3/MBO
+
+class LiquidityPulled(MarketEvent):        # (estimated) a level dropped without matching prints
+    side: Literal["bid", "ask"]
+    price: Px
+    price_ticks: Ticks
+    prior_size: Qty
+    remaining_size: Qty
+    traded_qty: Qty                        # tape volume at or through the price in the window
+    estimated: Literal[True] = True
+```
+
+`ts_event` = `ts_ingest` = the sample time for `LiquidityReload` (the sample that closes the refill). `LiquidityPulled` carries the sample time of the drop (`ts_event` = `ts_ingest`), although it is emitted one sample later, once the hold for late prints has passed; `event_id` is content-derived (as §2.10). Config `liquidity.*` (`LiquidityConfig`; `*_pct` are fractions):
+
+| Key                    | Default                | Meaning                                                               |
+| ---------------------- | ---------------------- | --------------------------------------------------------------------- |
+| `bands_ticks`          | `(5, 10, 25, 50, 100)` | depth bands, ticks from the mid, inclusive and cumulative (bps later) |
+| `reload_consume_pct`   | `0.5`                  | size drop (of the previous sample) that opens a consume / pull        |
+| `reload_replenish_pct` | `0.9`                  | share of the prior size that closes a reload                          |
+| `reload_window_ms`     | `5000`                 | tape look-back, reload deadline and refill-count window (inclusive)   |
+| `min_size`             | `10 x qty_step`        | smaller levels are ignored (base qty)                                 |
+| `tolerance_pct`        | `0.1`                  | traded volume needed to call a drop consumed: `drop x tolerance_pct`  |
+
+Rules. A drop of at least `reload_consume_pct` with traded volume at or through the price (buys through an ask, sells through a bid) of at least `drop x tolerance_pct` in the window is **consumed**, otherwise **pulled** (`LiquidityPulled`, no reload). A consumed level back at `reload_replenish_pct` of its prior size within `reload_window_ms` emits one `LiquidityReload`. A sample while the book is not LIVE (or one-sided) is an estimated gap: pending detection state of every level is reset and no event fires on the first live sample after it (the book is re-baselined). Levels that fall out of the walked depth are forgotten, not pulled. **v1 limitation:** detection compares each level with its previous sample only, so a pull spread over several sub-threshold steps is not detected (single-step comparison). A drop no print yet explains is held one sample before it is called pulled, so a print stamped before the sample but delivered after it still makes it consumed; a pending (consumed) entry for a level that leaves the walked depth lives until its window expires. A level consumed to zero that returns counts as a replenishment from 0.
+
+The tape is kept as volume per `(side, tick)` inside the window (expired on insert and on each sample, at most 16 384 prints per side); the at-or-through sum is a prefix sum over those ticks, built once per sample and only when some level dropped.
+
+Bands: `BandDepth(band_ticks, bid, ask, diff = bid - ask)`, exact `Decimal` from the book (distance to the mid measured in half ticks, so the integer arithmetic is exact).
+
+Ring and bound: `buckets` (200, at most 256) price rows x `ring_ms / cadence_ms` (600 000 / 100 = 6 000) samples x (bid, ask) `float32`, preallocated, rows keyed by `bucket % buckets` (a row whose bucket changes is wiped). 200 x 6 000 x 8 B = 9.6 MB per symbol. The bound is given by its formula, `buckets x (ring_ms / cadence_ms) x 8 B`: `buckets` is at most 256 and `ring_ms / cadence_ms` at most 6 000 (both validated, `LiquidityConfigInvalid`), so the ring never exceeds 256 x 6 000 x 8 B = 12.3 MB (the "12 MB" figure of `20-architecture.md` §3.2). Coarser prices: `bucket_ticks`. `max_levels` (500) bounds the per-sample work on a pathological book. `distance_to_liquidity_cluster(side, z=2.0, window_columns=600)` is `None` when any of those samples is estimated, when there is no history or when no cell has `heatmap_cluster_z >= z`.
 
 ---
 
@@ -1064,29 +1109,29 @@ class MetricDescriptor(BaseModel):
 
 **Order flow**
 
-| Name                                | Definition                                                            | Params (defaults)                                                 | Confidence |
-| ----------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------- |
-| `delta`                             | Bar `buy_volume - sell_volume`                                        | —                                                                 | exact      |
-| `cvd`                               | Running Σ signed volume from anchor                                   | `anchor=session`\|`utc_day` (no `since_load`, `custom_ts` yet)    | exact      |
-| `cvd_slope`                         | Least-squares slope of CVD over N bars                                | `n=10`                                                            | exact      |
-| `min_delta`/`max_delta`             | Intrabar delta extremes                                               | —                                                                 | exact      |
-| `delta_divergence`                  | Price makes new N-bar extreme, CVD does not                           | `n=10`, `pivot_lookback=3`                                        | estimated  |
-| `cvd_divergence`                    | Pivot-based swing comparison price vs CVD                             | `n=10`                                                            | estimated  |
-| `buy_sell_ratio`                    | `buy_volume / max(sell_volume, qty_step)`                             | —                                                                 | exact      |
-| `stacked_imbalance_zone`            | Price is within a stacked-imbalance run from the last `n` bars        | `n=20`, footprint config                                          | exact      |
-| `unfinished_auction_above`/`_below` | Nearest unfinished extreme within `n` bars                            | `n=50`                                                            | exact      |
-| `absorption`                        | Large volume at a level with price failing to move `>= k` ticks       | `min_volume_z=2.0`, `k=2`                                         | estimated  |
-| `exhaustion`                        | Bar extreme cell one-sided with volume < `pct` of bar max cell        | `pct=0.25`                                                        | estimated  |
-| `big_trade_notional`                | Largest print notional in window                                      | `window_ms=1000`                                                  | exact      |
-| `big_trade_zscore`                  | Z-score of print size vs rolling mean                                 | `window=500 trades`, `z_threshold=3.0`                            | exact      |
-| `tape_speed`                        | Trades/second                                                         | `window_ms=1000`                                                  | exact      |
-| `tape_speed_zscore`                 | Fast window vs baseline                                               | `fast_ms=1000`, `base_ms=300000`, alert `>3.0`                    | exact      |
-| `trade_cluster`                     | Prints within `window_ms` at same price/side treated as one aggressor | `window_ms=50`                                                    | estimated  |
-| `iceberg_present_at_level`          | Repeated resting-size refills at a level                              | `min_reload_count=3`, `size_tolerance_pct=0.2`, `window_ms=60000` | estimated  |
-| `iceberg_executed_volume`           | Volume traded through a detected iceberg level                        | same                                                              | estimated  |
-| `stop_run_detected`                 | Aggressive sweep consuming a liquidity cluster then reversing         | `cluster_min_z=2.0`, `follow_through_bars=2`                      | estimated  |
-| `in_stop_hunt_zone`                 | Price within `k` ticks of a detected stop cluster                     | `k=5`                                                             | estimated  |
-| `distance_to_liquidity_cluster`     | Ticks to nearest heatmap cluster ≥ z                                  | `z=2.0`                                                           | estimated  |
+| Name                                | Definition                                                            | Params (defaults)                                                 | Confidence                                                           |
+| ----------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `delta`                             | Bar `buy_volume - sell_volume`                                        | —                                                                 | exact                                                                |
+| `cvd`                               | Running Σ signed volume from anchor                                   | `anchor=session`\|`utc_day` (no `since_load`, `custom_ts` yet)    | exact                                                                |
+| `cvd_slope`                         | Least-squares slope of CVD over N bars                                | `n=10`                                                            | exact                                                                |
+| `min_delta`/`max_delta`             | Intrabar delta extremes                                               | —                                                                 | exact                                                                |
+| `delta_divergence`                  | Price makes new N-bar extreme, CVD does not                           | `n=10`, `pivot_lookback=3`                                        | estimated                                                            |
+| `cvd_divergence`                    | Pivot-based swing comparison price vs CVD                             | `n=10`                                                            | estimated                                                            |
+| `buy_sell_ratio`                    | `buy_volume / max(sell_volume, qty_step)`                             | —                                                                 | exact                                                                |
+| `stacked_imbalance_zone`            | Price is within a stacked-imbalance run from the last `n` bars        | `n=20`, footprint config                                          | exact                                                                |
+| `unfinished_auction_above`/`_below` | Nearest unfinished extreme within `n` bars                            | `n=50`                                                            | exact                                                                |
+| `absorption`                        | Large volume at a level with price failing to move `>= k` ticks       | `min_volume_z=2.0`, `k=2`                                         | estimated                                                            |
+| `exhaustion`                        | Bar extreme cell one-sided with volume < `pct` of bar max cell        | `pct=0.25`                                                        | estimated                                                            |
+| `big_trade_notional`                | Largest print notional in window                                      | `window_ms=1000`                                                  | exact                                                                |
+| `big_trade_zscore`                  | Z-score of print size vs rolling mean                                 | `window=500 trades`, `z_threshold=3.0`                            | exact                                                                |
+| `tape_speed`                        | Trades/second                                                         | `window_ms=1000`                                                  | exact                                                                |
+| `tape_speed_zscore`                 | Fast window vs baseline                                               | `fast_ms=1000`, `base_ms=300000`, alert `>3.0`                    | exact                                                                |
+| `trade_cluster`                     | Prints within `window_ms` at same price/side treated as one aggressor | `window_ms=50`                                                    | estimated                                                            |
+| `iceberg_present_at_level`          | Repeated resting-size refills at a level                              | `min_reload_count=3`, `size_tolerance_pct=0.2`, `window_ms=60000` | estimated                                                            |
+| `iceberg_executed_volume`           | Volume traded through a detected iceberg level                        | same                                                              | estimated                                                            |
+| `stop_run_detected`                 | Aggressive sweep consuming a liquidity cluster then reversing         | `cluster_min_z=2.0`, `follow_through_bars=2`                      | estimated                                                            |
+| `in_stop_hunt_zone`                 | Price within `k` ticks of a detected stop cluster                     | `k=5`                                                             | estimated                                                            |
+| `distance_to_liquidity_cluster`     | Ticks to nearest heatmap cluster ≥ z                                  | `z=2.0`                                                           | estimated; `None` while any contributing sample is estimated (§2.11) |
 
 **Book / microstructure**
 
@@ -1195,14 +1240,14 @@ Zones are produced by the footprint engine (§4.3) and carry `(bar_id, price_lo_
 
 **Heatmap / liquidity** (read the `HeatmapColumn` series of §6)
 
-| Name                               | Definition                                                                   | Params                       | Confidence                                              |
-| ---------------------------------- | ---------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
-| `heatmap_cluster_z`                | Z-score of a cell's resting size vs the visible-window non-zero distribution | `window_columns=600`, `side` | exact (estimated if any source column `estimated=True`) |
-| `distance_to_liquidity_cluster`    | Ticks to nearest cell with `heatmap_cluster_z ≥ z`                           | `z=2.0`, `side`              | estimated                                               |
-| `liquidity_cluster_notional`       | Notional resting at that cluster                                             | `z=2.0`                      | estimated                                               |
-| `liquidity_cluster_persistence_ms` | How long the cluster has survived across columns                             | `z=2.0`                      | estimated                                               |
-| `liquidity_pulled`                 | Cluster disappeared without a matching traded volume (spoof-ish behaviour)   | `z=2.0`, `tolerance_pct=0.1` | **estimated**                                           |
-| `liquidation_cluster_distance`     | Ticks to nearest realized-liquidation cluster (§6.4)                         | `half_life_ms=1_800_000`     | estimated                                               |
+| Name                               | Definition                                                                   | Params                       | Confidence                                                |
+| ---------------------------------- | ---------------------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------- |
+| `heatmap_cluster_z`                | Z-score of a cell's resting size vs the visible-window non-zero distribution | `window_columns=600`, `side` | exact (estimated if any source column `estimated=True`)   |
+| `distance_to_liquidity_cluster`    | Ticks to nearest cell with `heatmap_cluster_z ≥ z`                           | `z=2.0`, `side`              | `None` while any contributing sample is estimated (§2.11) |
+| `liquidity_cluster_notional`       | Notional resting at that cluster                                             | `z=2.0`                      | estimated                                                 |
+| `liquidity_cluster_persistence_ms` | How long the cluster has survived across columns                             | `z=2.0`                      | estimated                                                 |
+| `liquidity_pulled`                 | Cluster disappeared without a matching traded volume (spoof-ish behaviour)   | `z=2.0`, `tolerance_pct=0.1` | **estimated**                                             |
+| `liquidation_cluster_distance`     | Ticks to nearest realized-liquidation cluster (§6.4)                         | `half_life_ms=1_800_000`     | estimated                                                 |
 
 **Replay / session control** (`scope="global"`, only defined inside a replay session; `None` live)
 
@@ -1248,7 +1293,7 @@ Every order-flow feature named in the planning brief must resolve to at least on
 | Derivatives context             | `open_interest`, `open_interest_delta`, `oi_price_quadrant`, `funding_rate`, `funding_annualized`, `basis`, `premium_pct`                                   | exact / estimated |
 | Risk & journal                  | `unrealised_r_multiple`, `daily_loss_pct`, `realised_pnl_today`, `margin_ratio`, `adl_risk_proxy`                                                           | exact / estimated |
 
-Heatmap-derived descriptors referenced above and specified in §6: `heatmap_cluster_z` = z-score of a heatmap cell's resting size against the visible-window distribution; `distance_to_liquidity_cluster` = ticks to the nearest cell with `heatmap_cluster_z ≥ z`. Both read the `HeatmapColumn` series and are `estimated` whenever any contributing column has `estimated=True`.
+Heatmap-derived descriptors referenced above and specified in §6: `heatmap_cluster_z` = z-score of a heatmap cell's resting size against the visible-window distribution; `distance_to_liquidity_cluster` = ticks to the nearest cell with `heatmap_cluster_z ≥ z`. Both read the `HeatmapColumn` series. `heatmap_cluster_z` is `estimated` whenever any contributing column has `estimated=True`; `distance_to_liquidity_cluster` is `None` then (BQ-9, §2.11), never an estimated number.
 
 ### 7.3 Evaluation guarantees
 
