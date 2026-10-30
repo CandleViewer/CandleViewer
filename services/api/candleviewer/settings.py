@@ -248,6 +248,12 @@ _ORIGIN_LABEL = r"[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?"
 _ORIGIN_HOST_RE = re.compile(rf"{_ORIGIN_LABEL}(?:\.{_ORIGIN_LABEL})*\.?")
 #: An HTTP field name (RFC 9110 `token`), lowercase.
 _FIELD_NAME_RE = re.compile(r"[!#$%&'*+.^_`|~0-9a-z-]+")
+#: #306 (E10-S04): `CV_VERSION`'s bound is the build label's in `22` (`BuildInfo.version`,
+#: `HealthReport.version`) and `23` §13.3 (`welcome.server_version`), the one the web client
+#: keeps: 1 to 32 printable ASCII characters with no space at either end. The contract's own
+#: pattern, read whole (`fullmatch`): Python's `$` also matches before a final line feed.
+_BUILD_LABEL_MAX_LENGTH: Final = 32
+_BUILD_LABEL_RE = re.compile(r"^[!-~](?:[ -~]*[!-~])?$")
 
 
 def _is_origin_host(host: str) -> bool:
@@ -363,7 +369,9 @@ class Settings(BaseSettings):
     `CV_GIT_SHA`; defaults are `"unknown"`/the package version). `/healthz` and
     `/readyz` surface `version` (E02-T05 acceptance criterion 3) and never
     `git_sha`, which is read after authentication (E09-X02 F-8, #4222; the
-    `/metrics` `build_info` gauge still carries it: #4206).
+    `/metrics` `build_info` gauge still carries it: #4206). `version` is also
+    every `welcome`'s `server_version`, so one outside the build-label bound of
+    `22` and `23` §13.3 refuses startup (#306).
     """
 
     model_config = SettingsConfigDict(
@@ -1391,6 +1399,22 @@ class Settings(BaseSettings):
         if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
             address = address.ipv4_mapped
         return str(address)
+
+    @field_validator("version")
+    @classmethod
+    def _version_is_a_build_label(cls, value: str) -> str:
+        """#306 (E10-S04): `/healthz`, `/readyz` and every `welcome` carry `CV_VERSION`, and the
+        web client drops a label outside the contract's bound, which turns SCR-157 off without a
+        trace. Such a label refuses startup before any module starts; it is never cut or cleaned
+        into a label no build has. A blank value is refused, not defaulted: it names no label.
+        The message is fixed text naming the variable and the rule, and `hide_input_in_errors`
+        keeps the label out of `str()`."""
+        if len(value) > _BUILD_LABEL_MAX_LENGTH or _BUILD_LABEL_RE.fullmatch(value) is None:
+            raise ValueError(
+                f"CV_VERSION must be 1 to {_BUILD_LABEL_MAX_LENGTH} printable ASCII characters "
+                "with no space at either end"
+            )
+        return value
 
     @model_validator(mode="after")
     def _trusted_proxy_set_together(self) -> Settings:

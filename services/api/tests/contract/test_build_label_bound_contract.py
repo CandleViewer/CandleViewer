@@ -23,7 +23,7 @@ import pytest
 from pydantic import ValidationError
 
 from candleviewer.api._generated.openapi_models import BuildInfo, HealthReport
-from candleviewer.settings import Settings
+from candleviewer.settings import _BUILD_LABEL_MAX_LENGTH, _BUILD_LABEL_RE, Settings
 from candleviewer.ws.lifecycle import welcome_payload
 from tests.contract.ws._harness import SCHEMAS, _validator
 
@@ -117,6 +117,13 @@ def test_contract_health_report_version_refuses_a_label_the_client_refuses(label
 
 def test_contract_health_report_version_stays_optional() -> None:
     assert HealthReport().version is None
+
+
+def test_contract_server_bound_is_the_welcome_pattern_and_length() -> None:
+    assert (_BUILD_LABEL_RE.pattern, _BUILD_LABEL_MAX_LENGTH) == (
+        WELCOME_LABEL["pattern"],
+        WELCOME_LABEL["maxLength"],
+    )
 
 
 @pytest.mark.parametrize("label", KEPT)
