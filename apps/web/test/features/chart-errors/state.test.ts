@@ -1,10 +1,13 @@
 // E11-S02 PR4: SCR-048's state model is driven by `code` and `details` only (never `message`).
+// E11-T05: the reduced list (BQ-90), the once-per-session `seen` (BQ-96) and the 2D handoff.
 import { describe, expect, it } from "vitest";
 import type { ChartEvents } from "@candleviewer/chart-engine";
 import {
   chartErrorReducer as reduce,
   ENGINE_CODES as C,
   INITIAL,
+  REDUCED_ORDER,
+  reducedOf,
   type ChartErrorState,
 } from "../../../src/features/chart-errors/state";
 
@@ -32,14 +35,11 @@ describe("SCR-048 state model", () => {
     expect(on(INITIAL, lost(2, 4000, "other words"), 1000)).toEqual(a);
   });
 
-  it("a loss without details shows the strip with no countdown", () => {
-    expect(on(INITIAL, err(C.lost))).toEqual({
-      kind: "restoring",
-      attempt: 1,
-      maxAttempts: 3,
-      nextAt: null,
-      nextTryMs: null,
-    });
+  it("a loss without details, or with null details, shows the strip with no countdown", () => {
+    const none = { kind: "restoring", attempt: 1, maxAttempts: 3, nextAt: null, nextTryMs: null };
+    expect(on(INITIAL, err(C.lost))).toEqual(none);
+    const nul = null as unknown as NonNullable<ChartEvents["error"]["details"]>;
+    expect(on(INITIAL, err(C.lost, { details: nul }))).toEqual(none);
   });
 
   it("restored closes a restoring episode and is ignored otherwise", () => {
@@ -53,7 +53,7 @@ describe("SCR-048 state model", () => {
     [C.noWebgl2, "no-webgl2"],
     [C.workerLost, "worker-lost"],
   ])("%s opens the %s card with the minted reference", (code, kind) => {
-    expect(on(on(INITIAL, lost(3, 4000)), err(code, { recoverable: false }))).toEqual({
+    expect(on(on(INITIAL, lost(3, 4000)), err(code, { recoverable: false }))).toMatchObject({
       kind,
       code,
       ref: "urn:cv:ui:r",
@@ -89,7 +89,7 @@ describe("SCR-048 state model", () => {
     expect(on(card, err(C.shaderFailed))).toBe(card);
   });
 
-  it("a manual retry is pending until a failure or a frame: WebGL2 restores, 2D fails", () => {
+  it("a manual retry is pending until a failure or a frame: WebGL2 restores, 2D hands over", () => {
     const pending = reduce(on(INITIAL, err(C.restoreFailed)), { type: "retry" });
     expect(pending).toMatchObject({ kind: "failed", retry: "pending" });
     expect(on(pending, err(C.noWebgl2))).toMatchObject({
@@ -97,10 +97,18 @@ describe("SCR-048 state model", () => {
       retry: "failed",
       ref: "urn:cv:ui:r",
     });
+    // The ruled handoff: a retry that lands in 2D is the degraded card, its retry failed.
     expect(reduce(pending, { type: "frame", profile: "degraded-2d" })).toMatchObject({
-      kind: "failed",
+      kind: "no-webgl2",
       retry: "failed",
       ref: "urn:cv:ui:r",
+      handover: true,
+    });
+    const webgl = reduce(on(INITIAL, err(C.noWebgl2)), { type: "retry" });
+    expect(reduce(webgl, { type: "frame", profile: "degraded-2d" })).toMatchObject({
+      kind: "no-webgl2",
+      retry: "failed",
+      handover: false,
     });
     expect(reduce(pending, { type: "frame", profile: "full" })).toEqual({ kind: "restored" });
     expect(reduce(INITIAL, { type: "frame", profile: "full" })).toBe(INITIAL);
@@ -114,5 +122,68 @@ describe("SCR-048 state model", () => {
     expect(on(basic, err(C.restoreFailed))).toMatchObject({ kind: "failed" });
     const failed = on(INITIAL, err(C.restoreFailed));
     expect(reduce(failed, { type: "continue" })).toBe(failed);
+  });
+});
+
+describe("E11-T05 reduced list, once per session and the 2D handoff", () => {
+  const degrade = (reducedCapabilities: unknown, reason: unknown = "no-webgl2") =>
+    ({ reducedCapabilities, reason }) as NonNullable<ChartEvents["error"]["details"]>;
+
+  it("reducedOf keeps the vocabulary order, drops unknown values and defaults to all five", () => {
+    expect(reducedOf(undefined)).toEqual(REDUCED_ORDER);
+    expect(reducedOf({ attempt: 1, maxAttempts: 3, nextTryMs: 1000 })).toEqual(REDUCED_ORDER);
+    expect(reducedOf(degrade(["gpu-effects", "heatmap", "sparkles", "heatmap"]))).toEqual([
+      "heatmap",
+      "gpu-effects",
+    ]);
+    // An empty filtered list is treated like a missing one: a body never names no reduction.
+    expect(reducedOf(degrade(["sparkles"], "warp"))).toEqual(REDUCED_ORDER);
+    expect(reducedOf(degrade([]))).toEqual(REDUCED_ORDER);
+    expect(reducedOf(degrade("heatmap"))).toEqual(REDUCED_ORDER);
+    // A null or non-object `details` from the worker is ignored, never a crash (PR 1 Low-3).
+    for (const bad of [null, "heatmap", 7])
+      expect(reducedOf(bad as unknown as ChartEvents["error"]["details"])).toEqual(REDUCED_ORDER);
+  });
+
+  it("ENGINE_NO_WEBGL2 carries the list onto the card; an unknown reason opens it unchanged", () => {
+    expect(on(INITIAL, err(C.noWebgl2, { details: degrade(["heatmap"], "warp") }))).toEqual({
+      kind: "no-webgl2",
+      code: C.noWebgl2,
+      ref: "urn:cv:ui:r",
+      retry: "idle",
+      recoverable: true,
+      reduced: ["heatmap"],
+      handover: false,
+    });
+    expect(on(INITIAL, err(C.noWebgl2))).toMatchObject({ reduced: REDUCED_ORDER });
+  });
+
+  it("a degraded card already shown this session goes straight to basic", () => {
+    const action = { type: "error", error: err(C.noWebgl2), now: 0, ref: "r", seen: true } as const;
+    expect(reduce(INITIAL, action)).toEqual({ kind: "basic" });
+  });
+
+  it.each([C.restoreFailed, C.shaderFailed])(
+    "%s then a degraded-2d frame becomes the degraded card with all five, code and ref kept",
+    (code) => {
+      const card = on(INITIAL, err(code, { recoverable: false }));
+      expect(reduce(card, { type: "frame", profile: "degraded-2d" })).toEqual({
+        kind: "no-webgl2",
+        code,
+        ref: "urn:cv:ui:r",
+        retry: "idle",
+        recoverable: false,
+        reduced: REDUCED_ORDER,
+        handover: true,
+      });
+      const seen = { type: "frame", profile: "degraded-2d", seen: true } as const;
+      expect(reduce(card, seen)).toEqual({ kind: "basic" });
+      expect(reduce(card, { type: "frame", profile: "full" })).toBe(card);
+    },
+  );
+
+  it("a worker that could not be restarted keeps the fatal card on any frame", () => {
+    const card = on(INITIAL, err(C.workerLost, { recoverable: false }));
+    expect(reduce(card, { type: "frame", profile: "degraded-2d" })).toBe(card);
   });
 });

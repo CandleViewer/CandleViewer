@@ -13,8 +13,8 @@ import type {
 } from "@candleviewer/chart-engine";
 import type * as EngineModule from "@candleviewer/chart-engine";
 import { ChartErrorSurface } from "../../../src/features/chart-errors/ChartErrorSurface";
-import { CHART_ERROR_COPY as COPY } from "../../../src/features/chart-errors/copy";
-import { ENGINE_CODES as C } from "../../../src/features/chart-errors/state";
+import { CHART_ERROR_COPY as COPY, noWebgl2Body } from "../../../src/features/chart-errors/copy";
+import { ENGINE_CODES as C, REDUCED_ORDER } from "../../../src/features/chart-errors/state";
 import { THEME_ANALYTICS_EVENT } from "../../../src/shell/bootstrap/themeStore";
 
 type Listeners = {
@@ -70,6 +70,7 @@ beforeEach(() => {
   engine.charts.length = 0;
   engine.log.length = 0;
   engine.realErrors = false;
+  sessionStorage.clear(); // BQ-96's once-per-session flag lives here
   const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(((
     kind: string,
   ) => {
@@ -337,7 +338,8 @@ describe("SCR-048 no-WebGL2 card", () => {
     });
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(COPY.noWebgl2.heading);
-    expect(alert).toHaveTextContent(COPY.noWebgl2.body);
+    // The real engine names all five (BQ-89), so the body names all five fragments (BQ-91).
+    expect(alert).toHaveTextContent(noWebgl2Body(REDUCED_ORDER));
     const card = within(alert.closest("[data-cmp='SCR-048']") as HTMLElement);
     const go = card.getByRole("button", { name: COPY.noWebgl2.continue });
     expect(card.getByRole("button", { name: COPY.noWebgl2.retry })).toBeInTheDocument();
@@ -356,6 +358,201 @@ describe("SCR-048 no-WebGL2 card", () => {
     emit(C.noWebgl2);
     expect(screen.getAllByText(COPY.noWebgl2.retryFailed)).toHaveLength(2); // the line and the status
     expect(said()).toBe(COPY.noWebgl2.retryFailed);
+  });
+});
+
+describe("E11-T05 degraded-2d: the reduced list, once per session, the badge, the handoff", () => {
+  const degrade = (reducedCapabilities: unknown[], reason = "no-webgl2") => ({
+    details: { reducedCapabilities, reason } as NonNullable<ChartEvents["error"]["details"]>,
+  });
+  const badge = (): HTMLElement | null => screen.queryByText(COPY.badge);
+  const HANDOVER = `${COPY.noWebgl2.heading} ${noWebgl2Body(REDUCED_ORDER)}`;
+  /** Every text the surface's polite region receives from now on (one entry per announcement). */
+  const listen = (): (() => string[]) => {
+    const got: string[] = [];
+    const node = document.querySelector("[data-chart-error] > [role='status']");
+    const obs = new MutationObserver((ms) => {
+      for (const m of ms) for (const n of m.addedNodes) got.push(n.textContent ?? "");
+    });
+    if (node !== null) obs.observe(node, { childList: true });
+    restore.push(() => obs.disconnect());
+    return () => {
+      for (const m of obs.takeRecords())
+        for (const n of m.addedNodes) got.push(n.textContent ?? "");
+      return got;
+    };
+  };
+  const recreate = (rerender: ReturnType<typeof mount>["rerender"], locale: string): void =>
+    rerender(<ChartErrorSurface options={{ theme, locale }} label="Price chart" />);
+
+  it("the card names the event's list in vocabulary order and ignores unknown values", () => {
+    mount();
+    emit(C.noWebgl2, degrade(["heatmap", "sparkles", "footprint-text"], "warp"));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      noWebgl2Body(["footprint-text", "heatmap"]),
+    );
+    expect(screen.queryByText(/sparkles|warp/)).toBeNull();
+  });
+
+  it("the badge is absent under the card, shown after Continue, gone when WebGL2 returns", async () => {
+    mount();
+    emit(C.noWebgl2, degrade([...REDUCED_ORDER]));
+    frame("degraded-2d");
+    expect(badge()).toBeNull();
+    // Keyboard: Continue is the card's first stop, Retry WebGL2 follows; both take focus.
+    const [go, retry] = [COPY.noWebgl2.continue, COPY.noWebgl2.retry].map((name) =>
+      screen.getByRole("button", { name }),
+    );
+    expect(go?.compareDocumentPosition(retry as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    for (const b of [go, retry]) {
+      b?.focus();
+      expect(document.activeElement).toBe(b);
+    }
+    fireEvent.click(go as HTMLElement);
+    const shown = badge();
+    expect(shown).not.toBeNull();
+    expect(shown?.closest("[aria-live],[role='alert'],[role='status']")).toBeNull();
+    expect(stack()?.style.visibility).toBe(""); // the 2D chart keeps drawing, never suspended
+    expect(said()).toBe("");
+    await expectNoSeriousAxe();
+    frame("full");
+    expect(badge()).toBeNull();
+  });
+
+  it("once per session: a recreate and a new surface go straight to the badge", () => {
+    const { rerender, unmount } = mount();
+    emit(C.noWebgl2);
+    frame("degraded-2d");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(sessionStorage.getItem("cv.chart.degradedCardShown.degraded-2d")).toBe("1");
+    recreate(rerender, "de-DE");
+    emit(C.noWebgl2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(badge()).not.toBeNull();
+    unmount();
+    mount();
+    emit(C.noWebgl2);
+    frame("degraded-2d");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(badge()).not.toBeNull();
+  });
+
+  it("storage that throws: the card still shows once and a recreate still never re-shows it", () => {
+    const fail = (): never => {
+      throw new DOMException("denied", "SecurityError");
+    };
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(fail);
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(fail);
+    restore.push(
+      () => get.mockRestore(),
+      () => set.mockRestore(),
+    );
+    const { rerender } = mount();
+    emit(C.noWebgl2);
+    frame("degraded-2d");
+    expect(screen.getByRole("alert")).toHaveTextContent(COPY.noWebgl2.heading);
+    fireEvent.click(screen.getByRole("button", { name: COPY.noWebgl2.continue }));
+    expect(badge()).not.toBeNull();
+    recreate(rerender, "fr-FR");
+    emit(C.noWebgl2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(set).toHaveBeenCalled();
+  });
+
+  it.each([C.shaderFailed, C.restoreFailed])(
+    "%s then degraded-2d frames: the stopped card becomes the degraded card, alerted once",
+    async (code) => {
+      const shown: unknown[] = [];
+      const on = (e: Event): void => {
+        shown.push((e as CustomEvent).detail);
+      };
+      window.addEventListener(THEME_ANALYTICS_EVENT, on);
+      restore.push(() => window.removeEventListener(THEME_ANALYTICS_EVENT, on));
+      mount();
+      emit(code, { recoverable: false });
+      expect(screen.getByRole("alert")).toHaveTextContent(COPY.stopped.heading);
+      const spoken = listen();
+      const ref = screen.getByText(/· ref /).textContent;
+      screen.getAllByRole("button")[0]?.focus(); // the user is on the stopped card
+      frame("degraded-2d");
+      frame("degraded-2d");
+      // Focus stays inside the card across the handoff, never dropped to <body> (05 §3.4 item 3).
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement?.closest("[data-cmp='SCR-048']")).not.toBeNull();
+      expect(screen.queryByText(COPY.stopped.heading)).toBeNull();
+      expect(screen.getByRole("heading", { name: COPY.noWebgl2.heading })).toBeInTheDocument();
+      expect(screen.getByText(noWebgl2Body(REDUCED_ORDER))).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull(); // the fatal alert already spoke
+      expect(said()).toBe(HANDOVER); // §19's heading and body, said once, politely
+      expect(spoken()).toEqual([HANDOVER]);
+      expect(screen.getByText(/· ref /).textContent).toBe(ref);
+      expect(shown).toHaveLength(1);
+      await expectNoSeriousAxe();
+      fireEvent.click(screen.getByRole("button", { name: COPY.noWebgl2.continue }));
+      expect(badge()).not.toBeNull();
+    },
+  );
+
+  it.each([C.shaderFailed, C.restoreFailed])(
+    "%s then degraded-2d frames with the card already seen: basic, §19 said once, no alert",
+    (code) => {
+      sessionStorage.setItem("cv.chart.degradedCardShown.degraded-2d", "1");
+      mount();
+      emit(code, { recoverable: false });
+      const spoken = listen();
+      frame("degraded-2d");
+      frame("degraded-2d");
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByText(COPY.noWebgl2.heading)).toBeNull();
+      expect(badge()).not.toBeNull();
+      expect(said()).toBe(HANDOVER);
+      expect(spoken()).toEqual([HANDOVER]);
+    },
+  );
+
+  it("two surfaces mounted together: one card, the second goes straight to the badge", () => {
+    render(
+      <>
+        <ChartErrorSurface options={{ theme }} label="First chart" />
+        <ChartErrorSurface options={{ theme }} label="Second chart" />
+      </>,
+    );
+    const [a, b] = engine.charts.map((c) => c.on);
+    const fire = (on: Listeners | undefined): void =>
+      act(() => {
+        for (const cb of on?.error ?? []) cb({ code: C.noWebgl2, message: "", recoverable: true });
+        for (const cb of on?.stats ?? []) cb({ renderProfile: "degraded-2d" } as FrameStats);
+      });
+    fire(a);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    fire(b);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    const second = screen.getByRole("region", { name: "Second chart" });
+    expect(within(second).queryByRole("alert")).toBeNull();
+    expect(within(second).getByText(COPY.badge)).toBeInTheDocument();
+  });
+
+  it("frames read sessionStorage only at a fatal card's 2D handoff, never per frame", () => {
+    mount();
+    const get = vi.spyOn(Storage.prototype, "getItem");
+    for (let i = 0; i < 5; i += 1) frame("degraded-2d");
+    expect(get).not.toHaveBeenCalled();
+    emit(C.shaderFailed, { recoverable: false });
+    get.mockClear();
+    frame("degraded-2d");
+    expect(get).toHaveBeenCalledTimes(1);
+    get.mockClear();
+    for (let i = 0; i < 5; i += 1) frame("degraded-2d");
+    expect(get).not.toHaveBeenCalled();
+    get.mockRestore();
+  });
+
+  it("a final ENGINE_WORKER_LOST stays the stopped card whatever the frames say", () => {
+    mount();
+    emit(C.workerLost, { recoverable: false });
+    frame("degraded-2d");
+    expect(screen.getByRole("alert")).toHaveTextContent(COPY.stopped.heading);
+    expect(badge()).toBeNull();
   });
 });
 
