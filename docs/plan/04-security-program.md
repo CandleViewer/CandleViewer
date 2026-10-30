@@ -306,6 +306,8 @@ the five §11.2 residuals are RR-23; both and the Owner decisions D8 and D11 are
 > the exchange-boundary elements (M3 port, M4 Bybit adapter, M6 ingestion) not enumerated by this
 > programme-level table.
 
+> W1 and W8 are re-derived on the client side, from the WS shared worker to the GPU, in `docs/plan/threat-models/E11-chart-engine.md` (E11-X01, the chart engine and its data plane).
+
 ### 5.6 Area 6 — Authentication & RBAC (A-03, A-04)
 
 | T   | STRIDE                 | Threat                                                               | L   | I   | Risk         | Mitigations                                                                                                                                                                              | Residual |
