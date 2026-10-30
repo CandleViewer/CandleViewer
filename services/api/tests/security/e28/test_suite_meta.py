@@ -23,8 +23,8 @@ from fastapi import APIRouter
 from candleviewer.api.deny_by_default import served_operations
 from tests.contract.rbac.rbac_harness import ACTORS
 from tests.security.e28 import _cells as cells
-from tests.security.e28._guard import live_target_refusal
 from tests.security.e28._world import E28World
+from tests.security.e28.conftest import live_target_refusal
 
 _HERE = os.path.dirname(__file__)
 #: Declared, not served: each owes its cells the day its ticket mounts it.

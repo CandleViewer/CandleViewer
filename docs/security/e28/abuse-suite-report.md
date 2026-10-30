@@ -13,14 +13,14 @@
 
 ## 1. Where the suite lives
 
-| Path                                                                   | What it holds                                                                  |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `services/api/tests/security/e28/test_rbac_matrix.py`                  | Every E28 route x every role x every scope situation; absent vs ungranted 404s |
-| `services/api/tests/security/e28/test_ws_scope.py`                     | The `trade_groups` topic per role, through the app's own gateway and topic     |
-| `services/api/tests/security/e28/test_abuse_cases.py`                  | AC-01 to AC-10, the preview halves of AC-11 and AC-15, SR-E28-21 (AC-29)       |
-| `services/api/tests/security/e28/test_suite_meta.py`                   | Coverage of the route table, unmounted routes, the WS row and the live guard   |
-| `services/api/tests/security/e28/_cells.py`, `_world.py`, `_guard.py`  | The generated cells, the world and the live-target guard                       |
-| `services/api/tests/integration/accounts/test_e28_rbac_snapshot_pg.py` | The refused cells on Postgres, a row-hash checksum over every reachable table  |
+| Path                                                                    | What it holds                                                                  |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `services/api/tests/security/e28/test_rbac_matrix.py`                   | Every E28 route x every role x every scope situation; absent vs ungranted 404s |
+| `services/api/tests/security/e28/test_ws_scope.py`                      | The `trade_groups` topic per role, through the app's own gateway and topic     |
+| `services/api/tests/security/e28/test_abuse_cases.py`                   | AC-01 to AC-10, the preview halves of AC-11 and AC-15, SR-E28-21 (AC-29)       |
+| `services/api/tests/security/e28/test_suite_meta.py`                    | Coverage of the route table, unmounted routes, the WS row and the live guard   |
+| `services/api/tests/security/e28/_cells.py`, `_world.py`, `conftest.py` | The generated cells, the world and the live-target guard                       |
+| `services/api/tests/integration/accounts/test_e28_rbac_snapshot_pg.py`  | The refused cells on Postgres, a row-hash checksum over every reachable table  |
 
 The in-memory suite runs in the existing `contract-security-2` lane of the required `ci-required`
 check; the Postgres module in the `integration` lane. No new required check name (C-9.1).
@@ -57,21 +57,21 @@ group with one leg outside the grants is never sent, not even in part.
 
 ## 3. The abuse cases
 
-| Case  | Class                                                 | Controls                  | Threats        | Asserted                                                                                                |
-| ----- | ----------------------------------------------------- | ------------------------- | -------------- | ------------------------------------------------------------------------------------------------------- |
-| AC-01 | Turning the native stop off                           | SR-E28-08, SR-056         | F6, PF-T09     | 422 `native_stop_mandatory` on create, update and a hand-made payload; `profile.save_refused`; no write |
-| AC-02 | A symbol off the account's allow-list                 | SR-E28-06, SR-054         | O3, PF-T07     | The leg is not planned (`symbol_not_allowed`); the preview is recorded; nothing is sent                 |
-| AC-03 | An oversized quantity hint                            | SR-052, SR-053, D6        | O3, PF-T06     | 403 `risk_limit_breached`, never clamped; `trade_group.override_refused` ahead of the preview record    |
-| AC-04 | An alternate widening each protected cap in turn      | SR-E28-03, SR-052, SR-053 | O3, F2, PF-T03 | Notional, daily loss, leverage: 403 and `override_refused`; symbol lists: the bound list decides        |
-| AC-05 | Demo and live in one group, or a member edited across | SR-E28-16, C-2.11         | PF-T16         | Preview 400 `environment_mismatch`, recorded; definition create and replace 400 before any write        |
-| AC-06 | A preview or group read reaching an ungranted account | SR-E28-21, SR-E29-13      | F2, PF-I01/I02 | One `account_scope_denied` shape for a foreign and an absent account; `rbac.denied`; reads 404          |
-| AC-07 | A profile write without step-up                       | SR-025, SR-E28-02         | PF-S02         | 403 `step_up_required` from the production step-up service, its challenge recorded; no write            |
-| AC-08 | A wildcard pattern matching outside the listed perps  | SR-E28-06, SR-054         | PF-T07         | Seeded property test over anchored suffix patterns; bare, short or malformed patterns 422 at save       |
-| AC-09 | An idempotency key reused with another body           | SR-E28-17                 | F4, PF-T17     | 409 `idempotency_key_reuse` on profile create, replace and delete; nothing more written                 |
-| AC-10 | A client-supplied profile snapshot                    | SR-052                    | PF-T06         | 422 (`additionalProperties: false`), recorded                                                           |
-| AC-11 | Another account's profile named as an alternate       | SR-E28-03                 | PF-T03         | Preview half: the 404 of an unknown id, byte for byte                                                   |
-| AC-15 | One account repeated in the legs                      | SR-E28-17                 | PF-T17         | Preview half: 422 before any read, recorded                                                             |
-| AC-29 | Group reads and frames with a leg outside the grants  | SR-E28-21, SR-074         | F2, PF-I02     | Not listed, a 404 when named, never framed (the matrix's mixed cells and the WS test)                   |
+| Case  | Class                                                 | Controls                  | Threats        | Asserted                                                                                                   |
+| ----- | ----------------------------------------------------- | ------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------- |
+| AC-01 | Turning the native stop off                           | SR-E28-08, SR-056         | F6, PF-T09     | 422 `native_stop_mandatory` on create, update and a hand-made payload; `profile.save_refused`; no write    |
+| AC-02 | A symbol off the account's allow-list                 | SR-E28-06, SR-054         | O3, PF-T07     | The leg is not planned (`symbol_not_allowed`); the preview is recorded; nothing is sent                    |
+| AC-03 | An oversized quantity hint                            | SR-052, SR-053, D6        | O3, PF-T06     | 403 `risk_limit_breached`, never clamped; `trade_group.override_refused` ahead of the preview record       |
+| AC-04 | An alternate widening each protected cap in turn      | SR-E28-03, SR-052, SR-053 | O3, F2, PF-T03 | Notional, daily loss, leverage: 403 and `override_refused`; symbol lists: the bound list decides           |
+| AC-05 | Demo and live in one group, or a member edited across | SR-E28-16, C-2.11         | PF-T16         | Preview 400 `environment_mismatch`, recorded; definition create and replace 400 before any write († #5120) |
+| AC-06 | A preview or group read reaching an ungranted account | SR-E28-21, SR-E29-13      | F2, PF-I01/I02 | One `account_scope_denied` shape for a foreign and an absent account; `rbac.denied`; reads 404             |
+| AC-07 | A profile write without step-up                       | SR-025, SR-E28-02         | PF-S02         | 403 `step_up_required` from the production step-up service, its challenge recorded; no write               |
+| AC-08 | A wildcard pattern matching outside the listed perps  | SR-E28-06, SR-054         | PF-T07         | Seeded property test over anchored suffix patterns; bare, short or malformed patterns 422 at save          |
+| AC-09 | An idempotency key reused with another body           | SR-E28-17                 | F4, PF-T17     | 409 `idempotency_key_reuse` on profile create, replace and delete; nothing more written                    |
+| AC-10 | A client-supplied profile snapshot                    | SR-052                    | PF-T06         | 422 (`additionalProperties: false`), recorded                                                              |
+| AC-11 | Another account's profile named as an alternate       | SR-E28-03                 | PF-T03         | Preview half: the 404 of an unknown id, byte for byte                                                      |
+| AC-15 | One account repeated in the legs                      | SR-E28-17                 | PF-T17         | Preview half: 422 before any read, recorded                                                                |
+| AC-29 | Group reads and frames with a leg outside the grants  | SR-E28-21, SR-074         | F2, PF-I02     | Not listed, a 404 when named, never framed (the matrix's mixed cells and the WS test)                      |
 
 ## 4. Where the ticket's wording and the model differ (the model wins)
 
@@ -79,14 +79,17 @@ group with one leg outside the grants is never sent, not even in part.
   surface (E28-S02) whose saves are the profile writes asserted here.
 - C-2 (AC-02, `profile_forbidden`): no such code is registered (22 `x-error-codes`). The preview
   plans no leg for a symbol off the bound profile's list and says why (`symbol_not_allowed`); the
-  submit's refusal is owed with `createTradeGroup` (E34-S02 #1110).
+  submit's refusal is owed with `createTradeGroup` (E34-S02 #1110). The threat model's
+  `profile_forbidden` wording is a C-row for E28-X01's owner (ruled 2026-10-30).
 - C-3 (AC-03): refused with `risk_limit_breached`, never clamped (D6).
 - C-4 (AC-04): a wider alternate never raises a cap; a request past the bound profile's value is
   refused and audited. For the symbol lists the bound list decides the leg (a plan refusal, not an
   `override_refused` record). `require_native_sl` is no override member at all (422).
-- C-5 (AC-05): a definition refused for its environments writes no record: nothing was attempted,
-  and the threat model's expectation is the refusal alone.
-- C-6 (AC-09): the 409 writes no record; the expectation is the code alone.
+- C-5 (AC-05) † known gap, **#5120**: a definition refused for its environments writes no audit
+  record today. Ruled a production gap (C-2.11's class must be recorded); the suite pins the
+  absence and #5120 flips the assertion to the record.
+- C-6 (AC-09): the 409 writes no record, by design (ruled 2026-10-30); the expectation is the
+  code alone.
 - C-7 (AC-10): a 422, not "ignored" (the model, section 10).
 - C-8: a refused read outside the grants is the unaudited 404 (PF-I06), not a 403 with a record.
 
