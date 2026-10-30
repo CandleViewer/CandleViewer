@@ -6,7 +6,7 @@ an import keeps each account reference the importer is granted, as written, and 
 naming any other. G-14: a rule's name conflicts only with a rule its caller owns or may read. G-15:
 a quarantined rule's view carries its stored IR only in the form an export carries it. The conflict
 response carries only the version and the time. The export strips by an allow-list of IR keys, and
-an import lands at version 1.
+an import needs its ir_version, ignores the keys the server sets and lands at version 1.
 """
 
 from __future__ import annotations
@@ -401,13 +401,18 @@ async def test_an_export_round_trips_to_a_disabled_demo_rule_at_version_one() ->
     assert versions[0]["ir_hash"] == ir_hash(landed)
 
 
-@pytest.mark.parametrize("carried", [{}, {"version": 0}, {"version": "3"}, {"rule_id": "r-1"}])
+@pytest.mark.parametrize(
+    "carried",
+    [{}, {"version": 0}, {"version": "3"}, {"rule_id": "r-1"}, {"created_at": "x"},
+     {"created_by": "x", "updated_at": 1.5}, dict.fromkeys(SERVER_SET, "x")],
+)  # fmt: skip
 async def test_an_import_ignores_the_rule_id_version_and_authorship_a_bundle_carries(
     carried: dict[str, Any],
 ) -> None:
-    """A bundle carrying a rule id, a version or authorship (its source's, or any other value)
-    imports cleanly with each ignored: the rule lands under a new rule id at version 1, hashed as
-    stored, authored by the importer at the server's time, and the source is untouched."""
+    """A bundle carrying a rule id, a version or authorship (its source's, or any other value,
+    malformed included) imports cleanly with each ignored: the rule lands under a new rule id at
+    version 1, hashed as stored, authored by the importer at the server's time, and the source is
+    untouched."""
     now = [SAVED_US]
     m = RulesManager(InMemoryRuleStore(), default_registry(), now_us=lambda: now[0])
     owner_a = _manager(USER_A, A)
@@ -449,3 +454,22 @@ async def test_an_import_validates_the_ir_version_a_bundle_carries() -> None:
         await m.import_rule(bundle, OWNER)
     assert (refused.value.status, refused.value.extra.get("path")) == (422, "/ir_version")
     assert await m._s.all() == []
+
+
+@pytest.mark.parametrize("importer", [_manager(USER_A, A), OWNER])
+async def test_an_import_refuses_a_bundle_that_carries_no_ir_version(importer: Actor) -> None:
+    """`ir_version` is never supplied or defaulted on import: a bundle carrying none is refused as
+    a bundle missing any other required key is, `422 rule_ir_invalid` at its path, audited as the
+    import's refusals are, and nothing is stored."""
+    m, audits = _mgr()
+    unnamed, ir = _ir(), _ir(name="imp")
+    del unnamed["name"], ir["ir_version"]
+    with pytest.raises(RuleError) as missing:  # the model's own answer to a missing key
+        await m.import_rule({"ir": unnamed}, importer)
+    with pytest.raises(RuleError) as refused:
+        await m.import_rule({"format": "cv-rule-bundle/1", "ir": ir}, importer)
+    answer = (refused.value.status, refused.value.code, refused.value.message)
+    assert answer == (422, "rule_ir_invalid", missing.value.message)
+    assert refused.value.extra == {"path": "/ir_version"}
+    refusal = {"actor": importer.user_id, "reason": "ir_version_missing", "count": 1}
+    assert audits == [("rule.import_refused", refusal)] and await m._s.all() == []

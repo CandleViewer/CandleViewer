@@ -471,12 +471,14 @@ class RulesManager:
         return {"format": "cv-rule-bundle/1", "ir": _exported(ver.ir)}
 
     async def import_rule(self, bundle: dict[str, Any], actor: Actor) -> dict[str, Any]:
-        """Always lands disabled, on demo, at version 1: a version the bundle carries is discarded,
-        never trusted, and its rule id and authorship are the server's to set; its `ir_version` is
-        validated as carried. Every account id anywhere in the bundle must be granted to the
-        importer, else the bundle is refused, audited with the count refused (never the ids) and
-        nothing is stored; each one is then kept as written, never remapped (G-10). A bundle
-        naming no account lands naming none, so it applies to every account its owner is granted."""
+        """Always lands disabled, on demo, at version 1: the keys the server sets (`_SERVER_SET`,
+        those an export strips) are dropped, so any value a bundle carries for them is ignored.
+        Its `ir_version` is validated as carried, never supplied or defaulted: a bundle carrying
+        none is refused as a malformed one is, audited as the import's refusals are. Every account
+        id anywhere in the bundle must be granted to the importer, else the bundle is refused,
+        audited with the count refused (never the ids) and nothing is stored; each one is then
+        kept as written, never remapped (G-10). A bundle naming no account lands naming none, so
+        it applies to every account its owner is granted."""
         self.check_document(bundle.get("ir", {}))  # the bounds, before the copy and walks below
         ir = copy.deepcopy(bundle.get("ir", {}))
         refs = collect_account_ids(ir)
@@ -487,6 +489,14 @@ class RulesManager:
                 {"actor": actor.user_id, "reason": "ungranted_account", "count": len(denied)},
             )
             raise RuleError(403, "forbidden", "The bundle references an account you cannot access.")
+        if "ir_version" not in ir:
+            await self._audit(
+                "rule.import_refused",
+                {"actor": actor.user_id, "reason": "ir_version_missing", "count": 1},
+            )
+            missing = "The rule document is not valid: Field required"  # as `_validated` words it
+            raise RuleError(422, "rule_ir_invalid", missing, path="/ir_version")
+        ir = {k: v for k, v in ir.items() if k not in _SERVER_SET}
         scope = dict(ir.get("scope", {}))
         scope["environments"] = ["demo"]
         ir.update(scope=scope, version=1)
