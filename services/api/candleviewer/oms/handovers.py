@@ -12,9 +12,11 @@ that does not answer within `HANDOVER_TIMEOUT_S`. The callers log and count it (
 step 4); cancellation passes through.
 
 The pass reads the entries back as their models (`waiting_orders`, `waiting_executions`), each
-with its id, and an execution with its empty reads and decision (24 Sec.8.5 step 3d); an entry it
-cannot read is logged and skipped, so one row never ends the read (BQ-18). `decide` and `prune` are
-the store's, for the account.
+with its id, and an execution with its empty reads and decision (24 Sec.8.5 step 3d). An entry
+that no longer reads as its model is logged and answered by its id alone (`HandoverRead.unreadable`,
+never its record), for the report's `errors` (`handover_unreadable`, a standing item), so one row
+never ends the read (BQ-18) and none is skipped silently. `decide` and `prune` are the store's, for
+the account.
 
 Not bound: `NoHandoverStore` stays the one production binding until E29-T06's wiring replaces it,
 so nothing here runs in production yet.
@@ -62,6 +64,15 @@ _T = TypeVar("_T")
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class HandoverRead[E]:
+    """What a read of the account's hand-overs answers: the entries that read as their model, and
+    the ids of those that do not (24 Sec.8.5, `handover_unreadable`), which stay in the table."""
+
+    entries: tuple[E, ...]
+    unreadable: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,32 +129,34 @@ class StoreHandovers:
         keys = (execution.exchange_order_id, execution.exec_id)
         await self._append(account_id, "execution", record, *keys, empty_read)
 
-    async def waiting_orders(self, account_id: AccountId) -> tuple[WaitingOrder, ...]:
+    async def waiting_orders(self, account_id: AccountId) -> HandoverRead[WaitingOrder]:
         rows = await self._call(account_id, "order", self._store.pending(account_id, "order"))
         out: list[WaitingOrder] = []
+        unreadable: list[int] = []
         for row in rows:
             try:
                 out.append(WaitingOrder(row.id, Order.model_validate(dict(row.record))))
             except ValidationError:
-                _log().error("oms_handover_unreadable", account_id=str(account_id), entry_id=row.id)
-        return tuple(out)
+                _unreadable(account_id, row.id, unreadable)
+        return HandoverRead(tuple(out), tuple(unreadable))
 
-    async def waiting_executions(self, account_id: AccountId) -> tuple[WaitingExecution, ...]:
+    async def waiting_executions(self, account_id: AccountId) -> HandoverRead[WaitingExecution]:
         kind: HandoverKind = "execution"
         rows = await self._call(account_id, kind, self._store.pending(account_id, kind))
         out: list[WaitingExecution] = []
+        unreadable: list[int] = []
         for row in rows:
             try:
                 execution = Execution.model_validate(dict(row.record))
             except ValidationError:
-                _log().error("oms_handover_unreadable", account_id=str(account_id), entry_id=row.id)
+                _unreadable(account_id, row.id, unreadable)
                 continue
             decided = row.decided_at is not None
             entry = WaitingExecution(
                 row.id, execution, row.empty_reads, row.first_empty_read_at, decided=decided
             )
             out.append(entry)
-        return tuple(out)
+        return HandoverRead(tuple(out), tuple(unreadable))
 
     async def decide(self, account_id: AccountId, exec_id: str) -> bool:
         return await self._call(account_id, "execution", self._store.decide(account_id, exec_id))
@@ -195,3 +208,9 @@ class StoreHandovers:
         _log().error(
             "oms_handover_refused", account_id=str(account_id), kind=kind, reason=reason, **detail
         )
+
+
+def _unreadable(account_id: AccountId, entry_id: int, into: list[int]) -> None:
+    """An entry that no longer reads as its model: logged and answered by its id (BQ-18)."""
+    _log().error("oms_handover_unreadable", account_id=str(account_id), entry_id=entry_id)
+    into.append(entry_id)
