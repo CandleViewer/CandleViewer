@@ -4,10 +4,18 @@ The web client keeps a `welcome.server_version` of 1 to 32 printable ASCII chara
 at either end and refuses any other (slice 10a), so another label would turn SCR-157 off without a
 trace. `23` §13.3's `welcome.server_version` and `22`'s `BuildInfo.version` and
 `HealthReport.version`, which carry the same `CV_VERSION`, now state that predicate;
-`hello.client_version` has the same 32-character bound."""
+`hello.client_version` has the same 32-character bound. The server refuses to start with a
+`CV_VERSION` outside it (`Settings.version`), so its bound runs the same rows.
+
+A label that ends in a line feed is refused by the client and by every carrier that reads the
+pattern whole: the generated models (pydantic's Rust regex) and the server's bound (`fullmatch`).
+The harness's `_validator` applies `pattern` with Python's `re.search`, whose `$` also matches
+before a final line feed, so it cannot see this class: the `welcome` rows read the pattern with
+`re.fullmatch` instead, as `ws/test_ws_trailing_newline.py` asserts apart from the harness."""
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +23,7 @@ import pytest
 from pydantic import ValidationError
 
 from candleviewer.api._generated.openapi_models import BuildInfo, HealthReport
+from candleviewer.settings import Settings
 from candleviewer.ws.lifecycle import welcome_payload
 from tests.contract.ws._harness import SCHEMAS, _validator
 
@@ -27,6 +36,8 @@ KEPT = [
     pytest.param("v" * BOUND, id="exactly-the-bound"),
     pytest.param("1 0", id="inner-space"),
     pytest.param("~", id="one-character"),
+    pytest.param("! ~~", id="class-edges-first-and-inside"),
+    pytest.param("~ !", id="class-edges-last"),
 ]
 #: Labels the client refuses, so the contract refuses them too.
 REFUSED = [
@@ -36,8 +47,15 @@ REFUSED = [
     pytest.param("1.0 ", id="trailing-space"),
     pytest.param("1.\x1f0", id="control-inside"),
     pytest.param("1.0\x7f", id="delete-at-the-end"),
+    pytest.param("1.\x7f0", id="delete-inside"),
     pytest.param("1.0-é", id="not-ascii"),
 ]
+#: Refused by the client and every carrier that reads the pattern whole; `_validator` admits them.
+LINE_FEED = [
+    pytest.param("1.0\n", id="line-feed-last"),
+    pytest.param("1\n", id="one-character-and-a-line-feed"),
+]
+WELCOME_LABEL = SCHEMAS["cv://ws/v1/welcome.schema.json"]["properties"]["server_version"]
 
 
 def _welcome_errors(server_version: str) -> list[str]:
@@ -73,13 +91,25 @@ def test_contract_build_info_version_admits_a_label_the_client_keeps(label: str)
     assert BuildInfo(version=label, commit="c", built_at=BUILT_AT).version == label
 
 
-@pytest.mark.parametrize("label", REFUSED)
+@pytest.mark.parametrize("label", LINE_FEED)
+def test_contract_welcome_pattern_read_whole_refuses_a_label_ending_in_a_line_feed(
+    label: str,
+) -> None:
+    assert re.fullmatch(WELCOME_LABEL["pattern"], label) is None
+
+
+@pytest.mark.parametrize("label", [*REFUSED, *LINE_FEED])
 def test_contract_build_info_version_refuses_a_label_the_client_refuses(label: str) -> None:
     with pytest.raises(ValidationError):
         BuildInfo(version=label, commit="c", built_at=BUILT_AT)
 
 
-@pytest.mark.parametrize("label", REFUSED)
+@pytest.mark.parametrize("label", KEPT)
+def test_contract_health_report_version_admits_a_label_the_client_keeps(label: str) -> None:
+    assert HealthReport(version=label).version == label
+
+
+@pytest.mark.parametrize("label", [*REFUSED, *LINE_FEED])
 def test_contract_health_report_version_refuses_a_label_the_client_refuses(label: str) -> None:
     with pytest.raises(ValidationError):
         HealthReport(version=label)
@@ -87,3 +117,15 @@ def test_contract_health_report_version_refuses_a_label_the_client_refuses(label
 
 def test_contract_health_report_version_stays_optional() -> None:
     assert HealthReport().version is None
+
+
+@pytest.mark.parametrize("label", KEPT)
+def test_contract_server_bound_admits_a_label_the_client_keeps(label: str) -> None:
+    assert Settings(version=label).version == label
+
+
+@pytest.mark.parametrize("label", [*REFUSED, *LINE_FEED])
+def test_contract_server_bound_refuses_a_label_the_client_refuses(label: str) -> None:
+    with pytest.raises(ValidationError) as refused:
+        Settings(version=label)
+    assert [e["loc"] for e in refused.value.errors()] == [("version",)]
