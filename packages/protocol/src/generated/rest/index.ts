@@ -4616,8 +4616,13 @@ export interface paths {
      *     cancelled; below 100 % the position's protective orders are left as they are (adjusting
      *     them is E32's), so the remaining position keeps its native stop (C-2.6). Answers
      *     `OrderAcceptance` as `placeOrder` does for a reduce-only order: `order` set,
-     *     `trade_group` null (a reduce-only order joins no trade group). Amended 2026-10-29 by
-     *     an orchestrator contract decision (#915), before the route was implemented.
+     *     `trade_group` null (a reduce-only order joins no trade group). The request is anchored
+     *     as `placeOrder`'s is (`21-database-schema.md` section 3.3.10), one permanent anchor
+     *     naming its order, so the exact repeat never sends a second close; a repeat while the
+     *     first is still running, or within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of an anchor a crash
+     *     left undecided, is `409 idempotency_in_flight` with `Retry-After: 1`. Never refused for
+     *     want of the arm (C-2.6). Amended 2026-10-29 by an orchestrator contract decision (#915),
+     *     before the route was implemented.
      */
     post: operations["closePosition"];
     delete?: never;
@@ -4676,13 +4681,25 @@ export interface paths {
      *     position. A close the exchange rejects is a `502` and no entry is sent. The answer
      *     always names the close, and `outcome` says how the reversal ended.
      *
-     *     One `Idempotency-Key` covers both orders, and each order's `orderLinkId` derives from
-     *     it, so neither can be sent twice (C-2.10). Every `202`, whatever its `outcome`, is
-     *     stored and replayed verbatim (`Idempotency-Replayed: true`). Only a request that ended
-     *     before any answer was stored (between the close's fill and the entry's record) is
-     *     resumed by a replay: it sends the entry, never closing again, and only within the first
-     *     request's deadline; past it no entry is sent and the answer is `entry_refused` with
-     *     `reason` `timeout`. A replay still passes the arm check, which precedes the lookup.
+     *     One `Idempotency-Key` covers both orders. The request is anchored as `placeOrder`'s is
+     *     (`21-database-schema.md` section 3.3.10, 24-internal-schemas.md section 8.3 rule 1):
+     *     one permanent anchor per order, scoped to the caller and the operation and keyed
+     *     `uuid5(key, "close")` and `uuid5(key, "open")`, so the exact repeat reaches the first
+     *     request's rows before any send and never sends a second close or a second entry. Each
+     *     order's `orderLinkId` is minted by the server as every order's is (C-2.10); no
+     *     client-supplied string goes into it. Every `202`, whatever its `outcome`, is stored and
+     *     replayed verbatim (`Idempotency-Replayed: true`). A repeat while the first request is
+     *     still running, or within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of an anchor a crash left
+     *     undecided, is `409 idempotency_in_flight` with `Retry-After: 1`. Later, an undecided
+     *     reversal is decided, never resumed: its deadline has long passed, so no entry is sent,
+     *     and the answer follows the close's reconciled state: `close_unfilled` or
+     *     `close_partially_filled`, `entry_refused` with `reason` `timeout` once the close
+     *     filled, and `close_unfilled` with `close.reconciling` true while reconciliation has not
+     *     resolved it. So no repeat ever sends an order. A repeat still passes the arm check,
+     *     which precedes the lookup. The refusals knowable before any send (the
+     *     `trading_disabled` checks of the binding point under Idempotency: the OMS flag, live
+     *     trading not enabled, the kill switch and the order-entry gate) are checked before the
+     *     close, as for any order submit: `403 trading_disabled`, nothing sent.
      *     Each order keeps its own write-ahead submit audit record (C-2.9); one
      *     `position.reversed` record correlates the pair and the outcome.
      *
@@ -12240,7 +12257,7 @@ export interface components {
         "application/problem+json": components["schemas"]["OpenExposureProblem"];
       };
     };
-    /** @description The exchange refused an order or position call. `exchange` holds `ret_code` only (`OrderExchangeProblem`, SR-E29-09): the exchange's text is served only by the audited diagnostics read (`getOrderDiagnostics`). Every route that answers it takes an `Idempotency-Key`, so where a `502` is stored under the key, today only by `placeOrder`'s anchor (Idempotency, above), its repeat carries `Idempotency-Replayed: true`. */
+    /** @description The exchange refused an order or position call. `exchange` holds `ret_code` only (`OrderExchangeProblem`, SR-E29-09): the exchange's text is served only by the audited diagnostics read (`getOrderDiagnostics`). Every route that answers it takes an `Idempotency-Key`, so where a `502` is stored under the key, by `placeOrder`'s anchor or the `closePosition` and `reversePosition` anchors (Idempotency, above), its repeat carries `Idempotency-Replayed: true`. */
     OrderExchangeError: {
       headers: {
         "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
@@ -19042,6 +19059,7 @@ export interface operations {
       /** @description Close order accepted. */
       202: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
@@ -19050,9 +19068,10 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
-      /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description). */
+      /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description). Nothing was sent for this request. `idempotency_in_flight` carries `Retry-After`. */
       409: {
         headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
           [name: string]: unknown;
         };
         content: {
@@ -19063,6 +19082,10 @@ export interface operations {
       /** @description `exchange_rate_limited` with `Retry-After`, or the per-user `rate_limited` of every route. Nothing was sent. */
       429: {
         headers: {
+          "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+          "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+          "RateLimit-Reset": components["headers"]["RateLimitReset"];
+          "Retry-After": components["headers"]["RetryAfter"];
           [name: string]: unknown;
         };
         content: {
@@ -19210,6 +19233,7 @@ export interface operations {
       /** @description Reversal accepted; `outcome` says whether the entry was sent. */
       202: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
@@ -19218,9 +19242,10 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
-      /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description). */
+      /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description). Nothing was sent for this request. `idempotency_in_flight` carries `Retry-After`. */
       409: {
         headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
           [name: string]: unknown;
         };
         content: {
@@ -19231,6 +19256,10 @@ export interface operations {
       /** @description `exchange_rate_limited` with `Retry-After`, or the per-user `rate_limited` of every route. Nothing was sent. */
       429: {
         headers: {
+          "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+          "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+          "RateLimit-Reset": components["headers"]["RateLimitReset"];
+          "Retry-After": components["headers"]["RetryAfter"];
           [name: string]: unknown;
         };
         content: {
