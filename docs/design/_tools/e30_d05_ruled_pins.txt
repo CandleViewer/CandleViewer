@@ -58,6 +58,7 @@
 22|15688|token issued without the live step-up (see `POST /settings/arm`). Like t
 22|15695|Idempotency in `info.description`). Demo and paper
 22|15696|The C-2.6 carve-out binds this refusal as it binds every synchronous
+22|15697|refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`
 22|15699|tightening a stop or re-arming a protective trigger are never refused
 22|16185|the C-2.6 carve-out binds every synchronous refusal, not just the gate
 24|1674|the arm token (`403 session_not_armed`)

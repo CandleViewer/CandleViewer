@@ -21,8 +21,8 @@ FAIL led by its code:
 - [G3-R5] section 5: AR-01..AR-17, the R5 cell from the two words, no never-gated row names
   `arm.locked` / `arm.unknown`, every backticked route is a `22` operationId at the base, every
   arm-gated row names one, the FREEZE and view-as legs of AR-13 / AR-14 as ruled (A34: FREEZE and
-  view-as leave both enabled, no `rbac.view_as` and no FREEZE reason on them), AR-11's disarm never
-  a dialog.
+  view-as leave both enabled, no `rbac.view_as` and no FREEZE reason anywhere on the AR-13 row),
+  AR-04 names the arm lapsing mid-dialog (LR-07), AR-11's disarm never a dialog.
 - [G4-T2] section 6: a class per row; no row greys "Flatten now" or "Set stop by hand" or shows
   the FREEZE close reason (A34); a T2 row's rendering (2a / 2b / sentence), its checks, no
   disabled token; a `rbac.*` reason is one sentence of at most 60 characters with no digit; every
@@ -37,11 +37,12 @@ FAIL led by its code:
   an area, never an agent), target E30-D06 (#919), R5 and G-T2 cells (a row with neither filled
   fails); the hold sentence while a Blocking row stands; no dangling F id, nor an AR, LR, T2, CF,
   SD, CR, CT, G or Q id defined in no table; F-01 greys every write except the carve-out and quotes
-  E09-D09 step 3a and says "never refused on the view-as leg" (R0315); KS-X03 cites AR-11;
+  E09-D09 step 3a and says "never refused on the view-as leg" (R0315); AR-13, AR-14 and Feature 3
+  say the view-as write is "audited as the viewer"; KS-X03 cites AR-11;
   section 19's row counts.
-- [G9-RULED] every A30 / A31 / A32 / A33 stamp, at every site (STAMP_LINES, STAMP_LEADS), in the
+- [G9-RULED] every A30 to A34 stamp, at every site (STAMP_LINES, STAMP_LEADS), in the
   exact form with its own row and date, no stamp at an unchecked site, and the ruled words
-  (RULING_PINS); with `--source NAME=FILE` each pin also stands in that saved copy of the ruling.
+  (RULING_PINS), and 7.2 (d)'s range held at 10–60 s with no extend; with `--source NAME=FILE` each pin also stands in that saved copy of the ruling.
 - [G10-CITE] every `KEY`:line cite resolves at the base to a non-blank line; the pins file and the
   cited endpoints match both ways, each pin's words on its line; every cited file identical at the
   BQ list's base.
@@ -133,6 +134,9 @@ STAMP = "RULED (orchestrator, 2026-10-30, #2701 ledger addendum A row {})"
 WALK = "owner walkthrough: post-Done (#2701)"
 R5_NAME = "R5 (arm carve-out, `DS`:74–78)"
 FROZEN = "Frozen — the owner closes or releases"
+VIEWER = "audited as the viewer"
+LAPSE = "the arm lapsing mid-dialog included (LR-07)"
+RANGE_WORDS = ("The user range stays 10–60 s", "no extend affordance is added")
 # The ruled words, by ruling (R918 = #918 6513445642; LA = #2701 ledger addendum A, 6513450133;
 # LA33 / LA34 = its rows A33 (6514063706) and A34 (6514157772); R0315 = the 03:15Z and 03:23Z
 # rulings on the PR); each stands in the spec,
@@ -172,6 +176,7 @@ STAMP_RE = re.compile(r"RULED \(orchestrator, (?!R918)[^)]*\)")
 # or the words that lead into the stamp where one line carries several.
 STAMP_LINES = {
     "| AR-13 ": "A34",
+    "| AR-14 ": "A34",
     "| C-i ": "A34",
     "| C-b ": "A31",
     "| C-c ": "A31",
@@ -500,11 +505,13 @@ def gate_r5(ctx: Ctx, r: Result) -> None:
     legs = {k: v[4] if len(v) > 4 else "" for k, v in table.items()}
     if "none on any leg" not in legs.get("AR-14", "") or ENABLED not in legs.get("AR-14", ""):
         r.fail("G3-R5", "AR-14's carve-out is not as ruled (L1 row 82, A34)")
-    ar13 = legs.get("AR-13", "")
+    ar13 = " | ".join(table.get("AR-13", []))
     if ENABLED not in ar13 or FROZEN in ar13 or "rbac.view_as" in ar13:
         r.fail(
             "G3-R5", "AR-13's close is T2 under FREEZE or view-as (A34, R0315: it stays enabled)"
         )
+    if LAPSE not in legs.get("AR-04", ""):
+        r.fail("G3-R5", "AR-04 does not name the arm lapsing mid-dialog (LR-07, m-3)")
     if "never a dialog" not in legs.get("AR-11", ""):
         r.fail("G3-R5", "AR-11's disarm is not one press, never a dialog")
     r.numbers["arm_rows"] = len(table)
@@ -766,8 +773,20 @@ def gate_findings(ctx: Ctx, r: Result) -> None:
     if loose := sorted(cited - defined):
         r.fail("G8-FINDINGS", f"row ids cited but defined in no table: {loose}")
     f01 = " ".join(table.get("F-01", []))
+    arm = by_id(section(ctx.spec, "5. The arm table"), "AR")
+    legs13, legs14 = (" ".join(arm.get(k, [])) for k in ("AR-13", "AR-14"))
     if not all(w in f01 for w in F01_WORDS) or any(w in f01 for w in F01_NEVER):
         r.fail("G8-FINDINGS", "F-01 does not grey every write except the carve-out (R0315)")
+    scenario = ctx.spec.partition("Scenario: The carve-out is never refused")[2].partition("\n\n")[
+        0
+    ]
+    sites = {
+        "AR-13": legs13,
+        "AR-14": legs14,
+        "the carve-out scenario": scenario,
+    }
+    if gone := [k for k, v in sites.items() if VIEWER not in v]:
+        r.fail("G8-FINDINGS", f"the view-as write is not 'audited as the viewer' at {gone}")
     x03 = by_id(section(ctx.spec, "3. The keyboard-only sequences"), "KS").get("KS-X03", [])
     if "AR-11" not in " ".join(x03):
         r.fail("G8-FINDINGS", "KS-X03's disarm does not cite the disarm row AR-11")
@@ -829,6 +848,10 @@ def gate_ruled(ctx: Ctx, r: Result) -> None:
                     ctx.sources[name].replace("`", "").replace("**", "")
                 ):
                     r.fail("G9-RULED", f"{name}: {pin!r} is not in the saved copy")
+    (bullet,) = [ln for ln in ctx.spec.splitlines() if ln.startswith("- **(d) WCAG 2.2.1")] or [""]
+    ranges = set(re.findall(r"\d+–\d+ s", bullet))
+    if not all(w in bullet for w in RANGE_WORDS) or ranges != {"10–60 s"}:
+        r.fail("G9-RULED", "7.2 (d) does not hold the range at 10–60 s with no extend (A33)")
     r.numbers["ruling_pins"] = sum(len(p) for p in RULING_PINS.values())
     r.numbers["sources_checked"] = checked
 
@@ -1027,7 +1050,7 @@ PROBES: tuple[tuple[str, Mut], ...] = (
     ("G3-R5", sub("one press, never a dialog (`D02`:66; F-11)", "opens a dialog (`D02`:66; F-11)")),
     (
         "G3-R5",
-        sub("never refused on the view-as leg (`E09-D09`:40", "T2 `rbac.view_as` (`E09-D09`:40"),
+        sub("never refused on the view-as leg, where", "T2 `rbac.view_as`, where"),
     ),
     (
         "G3-R5",
@@ -1047,6 +1070,20 @@ PROBES: tuple[tuple[str, Mut], ...] = (
     ("G8-FINDINGS", sub('never refused on the view-as leg";', 'stay enabled under every leg";')),
     ("G8-FINDINGS", sub("no dialog (AR-11, F-11)", "no dialog (AR-12, F-11)")),
     ("G8-FINDINGS", sub("before it is pressed (AR-04)", "before it is pressed (AR-40)")),
+    (
+        "G8-FINDINGS",
+        sub(
+            "never refused; the write runs and is audited as the viewer",
+            "never refused; the write runs",
+        ),
+    ),
+    ("G9-RULED", regex(r"^(\| AR-14 .*?)2026-10-30", r"\g<1>2026-10-31")),
+    ("G3-R5", sub("the arm lapsing mid-dialog included (LR-07)", "a leg removed")),
+    ("G9-RULED", sub("The user range stays 10–60 s", "The user range widens to 10–200 s")),
+    (
+        "G3-R5",
+        regex(r"^(\| AR-13 .*?)never refused for want of the arm", r"\1" + FROZEN),
+    ),
     ("G10-CITE", pin_sub("|The C-2.6 carve-out binds this", "|The C-2.6 carve-out binds no")),
     ("G11-HYGIENE", sub('"Preset {n}, {qty} {coin}, active"', '"Preset 3, 0.250 BTC, active"')),
 )
