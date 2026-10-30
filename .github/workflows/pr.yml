@@ -221,6 +221,9 @@ jobs:
               - 'packages/protocol/**'
               - 'docs/plan/22-api-openapi.yaml'
               - 'docs/plan/23-ws-protocol.md'
+              # The client keymap `22`'s hotkey contract is pinned to: a keymap-only PR runs it too
+              # (services/api/tests/contract/test_hotkey_keymap_contract.py, #305).
+              - 'apps/web/src/keymap/**'
               # The contract job, its `make contracts` recipe and the recipe's scripts (#3182).
               - '.github/workflows/_job-contract.yml'
               - '.npmrc' # pnpm's config: every pnpm install reads it
