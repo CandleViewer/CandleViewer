@@ -19,8 +19,9 @@ name: e2e-auth-real
 # They are uploaded for 14 days only if every file is text and none of the run's passwords, keys
 # and TOTP seeds reached them (check_artefact_secrets.py). Session values (the cookies, the
 # bearers) die with the stack and are not searched for (#5061's security look). The database is
-# thrown away with `down -v`. A red run on main comments on, or opens, the signal's issue
-# (_nightly-issue.yml, #1849); a dispatch on a branch files nothing.
+# thrown away with `down -v`, and the seeds, the lane key and the clock file with their directories.
+# A red run on main comments on, or opens, the signal's issue (_nightly-issue.yml, #1849); a
+# dispatch on a branch files nothing.
 on:
   schedule:
     - cron: "51 3 * * *"
@@ -35,6 +36,8 @@ jobs:
     name: e2e-auth-real
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
     env:
       FIXTURE_USERS: "24" # one per test: no two tests share a lockout counter or a TOTP step
       CV_E2E_REAL_API: http://127.0.0.1:8000
@@ -80,7 +83,8 @@ jobs:
           (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
 
       - name: Start Postgres and QuestDB (the compose data stores, loopback only)
-        run: docker compose up -d --wait postgres questdb
+        # Bounded: the slowest healthcheck (QuestDB's) gives up after about two minutes.
+        run: docker compose up -d --wait --wait-timeout 180 postgres questdb
 
       - name: Migrate, then seed the fixture users, each with a TOTP method of its own (testnet)
         working-directory: services/api
@@ -134,11 +138,18 @@ jobs:
           PYTHONFAULTHANDLER=1 nohup uv run --frozen python -m candleviewer.server > "$RUNNER_TEMP/cv/api.log" 2>&1 &
           api=$!
           for _ in $(seq 60); do
-            if curl -fsS -o /dev/null "$CV_E2E_REAL_API/healthz"; then exit 0; fi
+            if curl -fsS --max-time 5 -o /dev/null "$CV_E2E_REAL_API/healthz"; then exit 0; fi
             kill -0 "$api" 2>/dev/null || break # it exited: stop waiting
             sleep 2
           done
-          echo "::error title=e2e-auth-real::the API did not answer /healthz; the last of its log follows"
+          if kill -0 "$api" 2>/dev/null; then
+            state="still running, not answering" # it has no exit code to report
+          else
+            code=0
+            wait "$api" || code=$?
+            state="exit ${code}"
+          fi
+          echo "::error title=e2e-auth-real::the API did not answer /healthz (${state}); the last of its log follows"
           tail -n 200 "$RUNNER_TEMP/cv/api.log"
           exit 1
 
@@ -181,12 +192,14 @@ jobs:
         id: scrub
         if: ${{ failure() }}
         # Text only: the search reads bytes, so an image or an archive would hide what it holds.
+        # (`sed` lists the first five, not `head`: `head` quits early and `find` then exits 141
+        # under pipefail, before the message below prints.)
         # Then each secret this run made: its passwords, pepper and keys (in $GITHUB_ENV since the
         # credentials step; only their names are passed), the TOTP seeds and the audit lane key.
         # No session file: `--env-dir` names a directory that does not exist.
         run: |
           set -euo pipefail
-          other=$(find apps/web/test-results -type f ! -name '*.json' ! -name '*.md' ! -name '*.log' ! -name '*.txt' | head -n 5)
+          other=$(find apps/web/test-results -type f ! -name '*.json' ! -name '*.md' ! -name '*.log' ! -name '*.txt' | sed -n '1,5p')
           if [ -n "$other" ]; then
             echo "::error title=e2e-auth-real::a file the secret check cannot read is in the artefact: ${other//$'\n'/, }"
             exit 1
@@ -206,9 +219,11 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-      - name: Tear down (the throwaway database goes with its volume)
+      - name: Tear down (the throwaway database goes with its volume, the run's seeds and keys with theirs)
         if: always()
-        run: docker compose down -v || true
+        run: |
+          docker compose down -v || true
+          rm -rf "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-clock" || true
 
   report:
     needs: e2e-auth-real
