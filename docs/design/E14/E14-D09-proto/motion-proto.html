@@ -1,0 +1,1040 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>E14-D09 motion prototype</title>
+    <style>
+      /* E14-D09 prototype (design evidence only; the prototype is not the engine). Raw WebGL2, 200 drawings
+         over a seeded candle series in one instanced batch. Colours are the dark tokens' values at the base:
+         color.surface.canvas, color.drawing.default / .selected, TP-13 color.drawing.snap = {color.focus.ring},
+         color.candle.*, color.surface.raised / .selected, color.text.*. */
+      :root {
+        --canvas: #11151a;
+        --raised: #161b22;
+        --row-selected: #2e363e;
+        --text: #e8eaed;
+        --text-2: #b1bac4;
+        --text-3: #8b949e;
+      }
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--text);
+        font:
+          12px/1.4 system-ui,
+          sans-serif;
+      }
+      #out {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 3;
+        max-width: 1280px;
+        word-break: break-all;
+        color: var(--text-2);
+      }
+      #stage {
+        display: flex;
+        margin-top: 24px;
+      }
+      #chart {
+        position: relative;
+        width: 1280px;
+        height: 720px;
+      }
+      #gl {
+        display: block;
+        width: 1280px;
+        height: 720px;
+      }
+      #snaptext {
+        position: absolute;
+        display: none;
+        padding: 0 4px;
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
+      }
+      #tree {
+        width: 240px;
+        height: 720px;
+        overflow: hidden;
+        background: var(--raised);
+        border-left: 1px solid var(--row-selected);
+      }
+      .row {
+        position: relative;
+        height: 24px;
+        padding: 0 8px;
+        line-height: 24px;
+        white-space: nowrap;
+        color: var(--text-2);
+      }
+      .row[aria-selected="true"] {
+        background: var(--row-selected);
+        outline: 1px solid var(--text-3);
+        outline-offset: -1px;
+        color: var(--text);
+      }
+      .row .ov {
+        /* the D9-09 tree half: an opacity overlay pre-tinted color.surface.selected; never a fill tween */
+        position: absolute;
+        inset: 0;
+        background: var(--row-selected);
+        opacity: 0;
+        pointer-events: none;
+      }
+      .row .lbl {
+        position: relative;
+      }
+      .row .tag {
+        position: relative;
+        margin-left: 6px;
+        color: var(--text-3);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="out">
+      E14-D09 prototype. Modes: ?play=snap|select|undo, ?motion=reduce, ?drawings=N, ?ms=&amp;reps=
+      (measure), ?capture=snap|select|undo&amp;at=start|mid|end. The prototype is not the engine.
+    </div>
+    <div id="stage">
+      <div id="chart">
+        <canvas id="gl" width="1280" height="720"></canvas>
+        <div id="snaptext" aria-live="polite"></div>
+      </div>
+      <div id="tree" role="tree" aria-label="Drawings"></div>
+    </div>
+    <script>
+      "use strict";
+      // ---- configuration: the query string (the runner passes `ms` and `reps`; see run-proto.mjs) ----------
+      const q = new URLSearchParams(location.search);
+      const P = (k, d) => (q.has(k) ? q.get(k) : d);
+      const CFG = {
+        play: P("play", ""),
+        capture: P("capture", ""),
+        at: P("at", "start"),
+        reduce: P("motion", "") === "reduce",
+        drawings: Math.max(6, Math.min(2000, Math.floor(+P("drawings", 200)) || 200)),
+        ms: Math.max(200, +P("ms", 2000) || 2000),
+        reps: Math.max(1, Math.floor(+P("reps", 5)) || 5),
+        seed: Math.floor(+P("seed", 353)) || 353,
+      };
+      const MODE = CFG.capture ? "capture" : CFG.play ? "play" : q.has("ms") ? "measure" : "static";
+      // ---- tokens (primitives at the base) and the spec's rules (E14-D09 sections 2 and 6) -----------------
+      const DUR = { instant: 0, fast: 100, normal: 200, slow: 400 };
+      const EASE = {
+        standard: [0.2, 0, 0, 1],
+        decelerate: [0, 0, 0, 1],
+        accelerate: [0.3, 0, 1, 1],
+      };
+      const HEX = {
+        canvas: "#11151A",
+        drawing: "#3FBFE0",
+        selected: "#F0B441",
+        snap: "#6EA1F5",
+        up: "#2EBD59",
+        down: "#E5484D",
+        wick: "#8B949E",
+      };
+      const HS1_GAP = 500; // ms between starts on one element (HS-1)
+      const HS1_CAP = 20; // emphasised objects per frame (HS-1)
+      const REGION = [341, 256]; // HS-1b's region
+      const AREA_CAP = 21824; // 25 % of 341 x 256 px
+      const BAND = 4; // the halo widens the outline by 4 px (2 px each side)
+      const HALO_PEAK = 0.6;
+      const RING_R = 5; // the 10 px ring
+      const RING_FROM = 1.4; // scale 1.4 -> 1.0 (14 -> 10 px)
+      const MAGNET = 12; // px
+      const DRAG_THRESHOLD = 4; // px; a press that travels further is a drag
+      const ENTRY = {
+        snap: { row: "D9-03", dur: DUR.fast, ease: "decelerate" },
+        select: { row: "D9-05", dur: DUR.normal, ease: "standard" },
+        undo: {
+          row: "D9-09",
+          dur: DUR.slow,
+          ease: "standard",
+          tree: DUR.normal,
+          treeEase: "accelerate",
+        },
+      };
+      // ---- helpers -----------------------------------------------------------------------------------
+      function mulberry32(a) {
+        return () => {
+          a |= 0;
+          a = (a + 0x6d2b79f5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      function bezier([x1, y1, x2, y2]) {
+        // CSS cubic-bezier: solve x(t) = p by bisection (robust for the 0-slope ends), return y(t)
+        const c = (a, b, t) => 3 * a * t * (1 - t) * (1 - t) + 3 * b * t * t * (1 - t) + t * t * t;
+        return (p) => {
+          if (p <= 0) return 0;
+          if (p >= 1) return 1;
+          let lo = 0,
+            hi = 1,
+            t = p;
+          for (let i = 0; i < 30; i++) {
+            t = (lo + hi) / 2;
+            if (c(x1, x2, t) < p) lo = t;
+            else hi = t;
+          }
+          return c(y1, y2, t);
+        };
+      }
+      const EASING = Object.fromEntries(Object.entries(EASE).map(([k, v]) => [k, bezier(v)]));
+      const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+      const fmt = (v) =>
+        v.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      const pct = (a, p) => {
+        if (!a.length) return 0;
+        const s = [...a].sort((x, y) => x - y);
+        return s[Math.min(s.length - 1, Math.ceil((p / 100) * s.length) - 1)];
+      };
+      const r2 = (x) => +x.toFixed(2);
+      const out = document.getElementById("out");
+      // ---- the seeded scene: 160 candles and N drawings ------------------------------------------------
+      const W = 1280,
+        H = 720,
+        BARS = 160,
+        BW = W / BARS;
+      const rnd = mulberry32(CFG.seed);
+      const candles = [];
+      {
+        let p = 64000;
+        for (let i = 0; i < BARS; i++) {
+          const o = p,
+            c = o + (rnd() - 0.5) * 160,
+            hi = Math.max(o, c) + rnd() * 70,
+            lo = Math.min(o, c) - rnd() * 70;
+          candles.push({ o, h: hi, l: lo, c });
+          p = c;
+        }
+      }
+      const pMin = Math.min(...candles.map((k) => k.l)),
+        pMax = Math.max(...candles.map((k) => k.h));
+      const py = (v) => 40 + ((pMax - v) / (pMax - pMin)) * (H - 80);
+      const bx = (i) => i * BW + BW / 2;
+      const FIELDS = [
+        ["Open", "o"],
+        ["High", "h"],
+        ["Low", "l"],
+        ["Close", "c"],
+      ];
+      const N = CFG.drawings;
+      const drawings = [];
+      // three overlapping trendlines at the centre (the pick target of ?play=select), then the seeded rest
+      drawings.push({ kind: 0, x0: 500, y0: 300, x1: 780, y1: 420, name: "Trendline" });
+      drawings.push({ kind: 0, x0: 500, y0: 400, x1: 780, y1: 320, name: "Trendline" });
+      drawings.push({ kind: 1, x0: 590, y0: 330, x1: 700, y1: 400, name: "Rectangle" });
+      const DRAG = 3; // the trendline the snap scenario drags (anchor 2 follows the pointer)
+      drawings.push({
+        kind: 0,
+        x0: bx(60),
+        y0: py(candles[60].l),
+        x1: bx(100),
+        y1: py(candles[100].h),
+        name: "Trendline",
+      });
+      while (drawings.length < N) {
+        const r = rnd();
+        if (r < 0.5) {
+          const i = Math.floor(rnd() * (BARS - 20)),
+            j = i + 4 + Math.floor(rnd() * 16);
+          drawings.push({
+            kind: 0,
+            x0: bx(i),
+            y0: py(candles[i].h),
+            x1: bx(j),
+            y1: py(candles[j].l),
+            name: "Trendline",
+          });
+        } else if (r < 0.7) {
+          const y = py(pMin + rnd() * (pMax - pMin));
+          drawings.push({ kind: 0, x0: 0, y0: y, x1: W, y1: y, name: "Horizontal line" });
+        } else {
+          const x = rnd() * (W - 120),
+            y = 40 + rnd() * (H - 160);
+          drawings.push({
+            kind: 1,
+            x0: x,
+            y0: y,
+            x1: x + 30 + rnd() * 90,
+            y1: y + 20 + rnd() * 80,
+            name: "Rectangle",
+          });
+        }
+      }
+      drawings.forEach((d, i) => {
+        d.id = i;
+        d.len =
+          d.kind === 0
+            ? Math.hypot(d.x1 - d.x0, d.y1 - d.y0)
+            : 2 * (Math.abs(d.x1 - d.x0) + Math.abs(d.y1 - d.y0));
+        d.cx = (d.x0 + d.x1) / 2;
+        d.cy = (d.y0 + d.y1) / 2;
+      });
+      const DRAG_HOME = { x1: drawings[DRAG].x1, y1: drawings[DRAG].y1 };
+      // ---- WebGL2: the candle batch and the drawings batch (one instanced draw call each) -------------------
+      const canvas = document.getElementById("gl");
+      const gl = canvas.getContext("webgl2", {
+        antialias: false,
+        preserveDrawingBuffer: MODE === "capture",
+      });
+      if (!gl) {
+        out.textContent = 'RESULT{"error":"no WebGL2 context"}';
+        throw new Error("no WebGL2");
+      }
+      function program(vs, fs) {
+        const p = gl.createProgram();
+        for (const [type, src] of [
+          [gl.VERTEX_SHADER, vs],
+          [gl.FRAGMENT_SHADER, fs],
+        ]) {
+          const s = gl.createShader(type);
+          gl.shaderSource(s, src);
+          gl.compileShader(s);
+          if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+          gl.attachShader(p, s);
+        }
+        gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+        return p;
+      }
+      const CORNERS = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+      const CANDLE_VS = `#version 300 es
+        layout(location=0) in vec2 a_c; layout(location=1) in vec4 a_rect; layout(location=2) in vec3 a_col;
+        uniform vec2 u_res; out vec3 v_col;
+        void main() {
+          vec2 p = mix(a_rect.xy, a_rect.zw, a_c * 0.5 + 0.5);
+          gl_Position = vec4(p.x / u_res.x * 2.0 - 1.0, 1.0 - p.y / u_res.y * 2.0, 0.0, 1.0);
+          v_col = a_col;
+        }`;
+      const CANDLE_FS = `#version 300 es
+        precision mediump float; in vec3 v_col; out vec4 o;
+        void main() { o = vec4(v_col, 1.0); }`;
+      // kind 0 segment, 1 rectangle outline, 2 the snap ring (scaled by u_ring), 3 a filled handle dot
+      const DRAW_VS = `#version 300 es
+        layout(location=0) in vec2 a_c; layout(location=1) in vec4 a_geo; layout(location=2) in vec4 a_sty;
+        layout(location=3) in vec3 a_col; layout(location=4) in float a_alpha;
+        uniform vec2 u_res; uniform float u_ring;
+        out vec2 v_p; flat out vec4 v_geo; flat out vec4 v_sty; flat out vec4 v_col;
+        void main() {
+          float k = a_sty.x, hw = a_sty.y * 0.5 + 1.0, r = a_sty.z * (k == 2.0 ? u_ring : 1.0);
+          vec2 p;
+          if (k == 0.0) {
+            vec2 d = a_geo.zw - a_geo.xy; float l = max(length(d), 0.001); vec2 u = d / l, n = vec2(-u.y, u.x);
+            p = a_geo.xy + u * ((a_c.x * 0.5 + 0.5) * (l + 2.0) - 1.0) + n * a_c.y * hw;
+          } else if (k == 1.0) {
+            vec2 lo = min(a_geo.xy, a_geo.zw) - hw, hi = max(a_geo.xy, a_geo.zw) + hw;
+            p = mix(lo, hi, a_c * 0.5 + 0.5);
+          } else {
+            p = a_geo.xy + a_c * (r + hw);
+          }
+          v_p = p; v_geo = a_geo; v_sty = vec4(k, a_sty.y, r, 0.0); v_col = vec4(a_col, a_alpha);
+          gl_Position = a_alpha > 0.0 ? vec4(p.x / u_res.x * 2.0 - 1.0, 1.0 - p.y / u_res.y * 2.0, 0.0, 1.0)
+                                      : vec4(2.0, 2.0, 2.0, 1.0);
+        }`;
+      const DRAW_FS = `#version 300 es
+        precision highp float; in vec2 v_p; flat in vec4 v_geo; flat in vec4 v_sty; flat in vec4 v_col; out vec4 o;
+        void main() {
+          float k = v_sty.x, hw = v_sty.y * 0.5, d;
+          if (k == 0.0) {
+            vec2 a = v_geo.xy, b = v_geo.zw, pa = v_p - a, ba = b - a;
+            float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.001), 0.0, 1.0);
+            d = length(pa - ba * h) - hw;
+          } else if (k == 1.0) {
+            vec2 c = (v_geo.xy + v_geo.zw) * 0.5, e = abs(v_geo.zw - v_geo.xy) * 0.5, q = abs(v_p - c) - e;
+            d = abs(length(max(q, 0.0)) + min(max(q.x, q.y), 0.0)) - hw;
+          } else if (k == 2.0) {
+            d = abs(length(v_p - v_geo.xy) - v_sty.z) - hw;
+          } else {
+            d = length(v_p - v_geo.xy) - v_sty.z;
+          }
+          float cov = clamp(0.5 - d, 0.0, 1.0) * v_col.a;
+          if (cov <= 0.0) discard;
+          o = vec4(v_col.rgb * cov, cov);
+        }`;
+      const candleProg = program(CANDLE_VS, CANDLE_FS);
+      const drawProg = program(DRAW_VS, DRAW_FS);
+      const U = {
+        cRes: gl.getUniformLocation(candleProg, "u_res"),
+        dRes: gl.getUniformLocation(drawProg, "u_res"),
+        ring: gl.getUniformLocation(drawProg, "u_ring"),
+      };
+      function attrib(loc, data, size, divisor, usage) {
+        const b = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, b);
+        gl.bufferData(gl.ARRAY_BUFFER, data, usage || gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribDivisor(loc, divisor);
+        return b;
+      }
+      // candles: a wick rect and a body rect per bar
+      const cRect = new Float32Array(BARS * 2 * 4),
+        cCol = new Float32Array(BARS * 2 * 3);
+      candles.forEach((k, i) => {
+        const x = bx(i),
+          up = k.c >= k.o,
+          col = rgb(up ? HEX.up : HEX.down),
+          wick = rgb(HEX.wick);
+        cRect.set([x - 0.5, py(k.h), x + 0.5, py(k.l)], i * 8);
+        cRect.set(
+          [x - BW * 0.35, py(Math.max(k.o, k.c)), x + BW * 0.35, py(Math.min(k.o, k.c)) + 1],
+          i * 8 + 4,
+        );
+        cCol.set(wick, i * 6);
+        cCol.set(col, i * 6 + 3);
+      });
+      const candleVao = gl.createVertexArray();
+      gl.bindVertexArray(candleVao);
+      attrib(0, CORNERS, 2, 0);
+      attrib(1, cRect, 4, 1);
+      attrib(2, cCol, 3, 1);
+      // the drawings batch: [halo slots x 20][N drawings][2 handles][the snap ring]
+      const HALO0 = 0,
+        DRAW0 = HS1_CAP,
+        HANDLE0 = DRAW0 + N,
+        RING = HANDLE0 + 2,
+        COUNT = RING + 1;
+      const geo = new Float32Array(COUNT * 4),
+        sty = new Float32Array(COUNT * 4),
+        col = new Float32Array(COUNT * 3),
+        alpha = new Float32Array(COUNT);
+      const C = { drawing: rgb(HEX.drawing), selected: rgb(HEX.selected), snap: rgb(HEX.snap) };
+      drawings.forEach((d, i) => {
+        geo.set([d.x0, d.y0, d.x1, d.y1], (DRAW0 + i) * 4);
+        sty.set([d.kind, 1.5, 0, 0], (DRAW0 + i) * 4);
+        col.set(C.drawing, (DRAW0 + i) * 3);
+        alpha[DRAW0 + i] = 1;
+      });
+      for (let h = 0; h < 2; h++) {
+        sty.set([3, 0, 4, 0], (HANDLE0 + h) * 4); // the 8 px handle dot
+        col.set(C.selected, (HANDLE0 + h) * 3);
+      }
+      sty.set([2, 1.5, RING_R, 0], RING * 4);
+      col.set(C.snap, RING * 3);
+      const drawVao = gl.createVertexArray();
+      gl.bindVertexArray(drawVao);
+      attrib(0, CORNERS, 2, 0);
+      const B = {
+        geo: attrib(1, geo, 4, 1, gl.DYNAMIC_DRAW),
+        sty: attrib(2, sty, 4, 1, gl.DYNAMIC_DRAW),
+        col: attrib(3, col, 3, 1, gl.DYNAMIC_DRAW),
+        alpha: attrib(4, alpha, 1, 1, gl.DYNAMIC_DRAW),
+      };
+      gl.bindVertexArray(null);
+      // ---- upload accounting: the entry's bytes (instance alpha, the ring's scale uniform) vs the cuts' ------
+      const F = { draws: 0, entryBytes: 0, cutBytes: 0 };
+      function put(buf, arr, index, comps, entry) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, B[buf]);
+        gl.bufferSubData(gl.ARRAY_BUFFER, index * comps * 4, arr, index * comps, comps);
+        if (entry) F.entryBytes += comps * 4;
+        else F.cutBytes += comps * 4;
+      }
+      let ringScale = 1,
+        ringSent = 1;
+      function render() {
+        F.draws = 0;
+        gl.viewport(0, 0, W, H);
+        const bg = rgb(HEX.canvas);
+        gl.clearColor(bg[0], bg[1], bg[2], 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(candleProg);
+        gl.uniform2f(U.cRes, W, H);
+        gl.bindVertexArray(candleVao);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, BARS * 2);
+        F.draws++;
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.useProgram(drawProg);
+        gl.uniform2f(U.dRes, W, H);
+        gl.uniform1f(U.ring, ringScale);
+        if (ringScale !== ringSent) F.entryBytes += 4; // the scale uniform: one float
+        ringSent = ringScale;
+        gl.bindVertexArray(drawVao);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, COUNT);
+        F.draws++;
+        gl.disable(gl.BLEND);
+        gl.bindVertexArray(null);
+      }
+      const px1 = new Uint8Array(4);
+      const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1); // wait for the GPU
+      // ---- the tree (CMP-240 stand-in): a DOM sibling of the chart; its D9-09 half is an opacity overlay ----
+      const tree = document.getElementById("tree");
+      const rowsEl = drawings.map((d) => {
+        const r = document.createElement("div");
+        r.className = "row";
+        r.setAttribute("role", "treeitem");
+        r.setAttribute("aria-selected", "false");
+        r.innerHTML = '<div class="ov"></div><span class="lbl"></span><span class="tag"></span>';
+        r.querySelector(".lbl").textContent = `${d.id + 1}. ${d.name}`;
+        tree.appendChild(r);
+        return r;
+      });
+      // ---- the entries (time-based: every state is a function of `now`, so a dropped frame changes nothing) --
+      const S = {
+        animate: !CFG.reduce, // RenderFlags.animate; reduce = snap to the resting value
+        selected: -1,
+        halos: [], // { slot, d, t0, dur, ease }
+        lastStart: new Map(), // per element (HS-1)
+        overlays: [], // the tree halves: { el, anim }
+        ring: { key: "", t0: -1e9, last: -1e9, shown: false, settles: 0, atRest: 0, starts: [] },
+        deleted: new Set(),
+        log: [],
+      };
+      function setSelected(i) {
+        if (S.selected >= 0) {
+          col.set(C.drawing, (DRAW0 + S.selected) * 3);
+          put("col", col, DRAW0 + S.selected, 3);
+          rowsEl[S.selected].setAttribute("aria-selected", "false");
+        }
+        S.selected = i;
+        for (let h = 0; h < 2; h++) {
+          if (i >= 0) {
+            const d = drawings[i];
+            const [x, y] = h ? [d.x1, d.y1] : [d.x0, d.y0];
+            geo.set([x, y, x, y], (HANDLE0 + h) * 4);
+            put("geo", geo, HANDLE0 + h, 4);
+          }
+          alpha[HANDLE0 + h] = i >= 0 ? 1 : 0;
+          put("alpha", alpha, HANDLE0 + h, 1);
+        }
+        if (i >= 0) {
+          col.set(C.selected, (DRAW0 + i) * 3);
+          put("col", col, DRAW0 + i, 3);
+          rowsEl[i].setAttribute("aria-selected", "true");
+        }
+      }
+      function setAlive(i, on) {
+        alpha[DRAW0 + i] = on ? 1 : 0;
+        put("alpha", alpha, DRAW0 + i, 1);
+        if (on) S.deleted.delete(i);
+        else S.deleted.add(i);
+        rowsEl[i].style.display = on ? "" : "none";
+      }
+      function freeHalo(h) {
+        alpha[HALO0 + h.slot] = 0;
+        put("alpha", alpha, HALO0 + h.slot, 1, true);
+        S.halos.splice(S.halos.indexOf(h), 1);
+      }
+      function regionOf(d) {
+        return `${Math.floor(d.cx / REGION[0])}:${Math.floor(d.cy / REGION[1])}`;
+      }
+      // HS-1 and HS-1b: latest start wins, nothing queues; 500 ms per element; 20 per frame; 21 824 px² per region
+      function startHalo(i, now, entry) {
+        const d = drawings[i];
+        const running = S.halos.find((h) => h.d === i);
+        if (running) freeHalo(running); // a new start cuts the running one to rest
+        if (!S.animate) return "reduce";
+        if (now - (S.lastStart.get(i) ?? -1e9) < HS1_GAP) return "gap";
+        if (S.halos.length >= HS1_CAP) return "cap";
+        const area = new Map();
+        for (const h of S.halos)
+          area.set(
+            regionOf(drawings[h.d]),
+            (area.get(regionOf(drawings[h.d])) || 0) + BAND * drawings[h.d].len,
+          );
+        if ((area.get(regionOf(d)) || 0) + BAND * d.len > AREA_CAP) return "area";
+        const used = new Set(S.halos.map((h) => h.slot));
+        let slot = 0;
+        while (used.has(slot)) slot++;
+        S.lastStart.set(i, now);
+        geo.set([d.x0, d.y0, d.x1, d.y1], (HALO0 + slot) * 4);
+        sty.set([d.kind, 1.5 + BAND, 0, 0], (HALO0 + slot) * 4);
+        col.set(C.selected, (HALO0 + slot) * 3);
+        put("geo", geo, HALO0 + slot, 4);
+        put("sty", sty, HALO0 + slot, 4);
+        put("col", col, HALO0 + slot, 3);
+        S.halos.push({
+          slot,
+          d: i,
+          t0: now,
+          dur: ENTRY[entry].dur,
+          ease: EASING[ENTRY[entry].ease],
+        });
+        return "start";
+      }
+      function startOverlay(i, now, frozenAt) {
+        const ov = rowsEl[i].querySelector(".ov");
+        if (!S.animate) return;
+        const e = ENTRY.undo;
+        if (frozenAt != null) {
+          ov.style.opacity = String(1 - EASING[e.treeEase](Math.min(1, frozenAt / e.tree)));
+          return;
+        }
+        const anim = ov.animate([{ opacity: 1 }, { opacity: 0 }], {
+          duration: e.tree,
+          easing: `cubic-bezier(${EASE[e.treeEase].join(",")})`,
+        });
+        S.overlays.push({ el: ov, anim });
+        anim.onfinish = () =>
+          S.overlays.splice(
+            S.overlays.findIndex((o) => o.anim === anim),
+            1,
+          );
+      }
+      // DNA-4: a press that crosses the drag threshold cuts every running halo and overlay to rest in that frame
+      function dragCut() {
+        for (const h of [...S.halos]) freeHalo(h);
+        for (const o of [...S.overlays]) o.anim.cancel();
+        S.overlays.length = 0;
+      }
+      function stepHalos(now) {
+        for (const h of [...S.halos]) {
+          const p = (now - h.t0) / h.dur;
+          if (p >= 1) freeHalo(h);
+          else {
+            alpha[HALO0 + h.slot] = HALO_PEAK * (1 - h.ease(Math.max(0, p)));
+            put("alpha", alpha, HALO0 + h.slot, 1, true);
+          }
+        }
+      }
+      // D9-03: the drag runs on the pointer; a latch to a new OHLC value starts the settle only 500 ms after the
+      // last start; otherwise (and in reduce) the ring is drawn at rest; the value text is a cut
+      const snaptext = document.getElementById("snaptext");
+      function pointerAt(t) {
+        const x = 160 + ((t * 0.24) % 960),
+          i = Math.min(BARS - 1, Math.floor(x / BW));
+        return { x, y: py(candles[i].h) + 7 * Math.sin(t / 53), i };
+      }
+      let PTR = null; // a fixed pointer (capture mode)
+      function stepSnap(now, t, frozen) {
+        const ptr = PTR || pointerAt(t);
+        const k = candles[ptr.i];
+        let best = null;
+        for (const [label, f] of FIELDS) {
+          const dy = Math.abs(py(k[f]) - ptr.y);
+          if (dy <= MAGNET && (!best || dy < best.dy)) best = { label, f, dy };
+        }
+        const R = S.ring;
+        const ax = best ? bx(ptr.i) : ptr.x,
+          ay = best ? py(k[best.f]) : ptr.y;
+        geo.set([drawings[DRAG].x0, drawings[DRAG].y0, ax, ay], (DRAW0 + DRAG) * 4);
+        put("geo", geo, DRAW0 + DRAG, 4); // the rubber band: a cut (D9-02)
+        const key = best ? `${ptr.i}:${best.f}` : "";
+        if (key !== R.key) {
+          R.key = key;
+          if (best) {
+            geo.set([ax, ay, ax, ay], RING * 4);
+            put("geo", geo, RING, 4);
+            if (!R.shown) {
+              alpha[RING] = 1;
+              put("alpha", alpha, RING, 1);
+            }
+            R.shown = true;
+            if (S.animate && now - R.last >= HS1_GAP) {
+              R.t0 = R.last = now;
+              R.settles++;
+              R.starts.push(now);
+            } else {
+              R.t0 = -1e9; // latest latch wins: drawn at rest, nothing queues
+              R.atRest++;
+            }
+            if (!frozen) {
+              snaptext.textContent = `${best.label} ${fmt(k[best.f])}`;
+              snaptext.style.left = `${ax + 10}px`;
+              snaptext.style.top = `${ay - 20}px`;
+              snaptext.style.display = "block";
+            }
+            R.text = `${best.label} ${fmt(k[best.f])}`;
+            R.at = [ax, ay];
+          } else {
+            if (R.shown) {
+              alpha[RING] = 0;
+              put("alpha", alpha, RING, 1);
+            }
+            R.shown = false;
+            R.t0 = -1e9;
+            if (!frozen) snaptext.style.display = "none";
+          }
+        }
+        const p = (now - R.t0) / ENTRY.snap.dur;
+        ringScale = p >= 0 && p < 1 ? RING_FROM - (RING_FROM - 1) * EASING.decelerate(p) : 1;
+        return p >= 0 && p < 1;
+      }
+      // ---- scenarios -----------------------------------------------------------------------------------
+      const UNDO_PICK = drawings.findIndex((d, i) => i > DRAG && d.name === "Trendline");
+      const GROUP = Math.max(1, Math.floor(N / 5)); // a bulk undo restores one fifth of the drawings
+      function reset(animate) {
+        for (const h of [...S.halos]) freeHalo(h);
+        for (const o of S.overlays) o.anim.cancel();
+        S.overlays.length = 0;
+        for (const i of [...S.deleted]) setAlive(i, true);
+        setSelected(-1);
+        rowsEl.forEach((r) => (r.querySelector(".tag").textContent = ""));
+        S.lastStart.clear();
+        Object.assign(S.ring, {
+          key: "",
+          t0: -1e9,
+          last: -1e9,
+          shown: false,
+          settles: 0,
+          atRest: 0,
+          starts: [],
+        });
+        alpha[RING] = 0;
+        put("alpha", alpha, RING, 1);
+        geo.set(
+          [drawings[DRAG].x0, drawings[DRAG].y0, DRAG_HOME.x1, DRAG_HOME.y1],
+          (DRAW0 + DRAG) * 4,
+        );
+        put("geo", geo, DRAW0 + DRAG, 4);
+        snaptext.style.display = "none";
+        ringScale = 1;
+        S.animate = animate;
+        S.phase = -1;
+        S.restored = -1;
+        S.bulk = { started: 0, tagged: 0 };
+      }
+      function restore(ids, now) {
+        // tree order among the restored objects on screen; past the caps: the "restored" tag only
+        let started = 0;
+        for (const i of ids) {
+          setAlive(i, true);
+          rowsEl[i].querySelector(".tag").textContent = "restored";
+          if (startHalo(i, now, "undo") === "start") {
+            started++;
+            startOverlay(i, now);
+          }
+        }
+        if (ids.length === 1) setSelected(ids[0]);
+        return { started, tagged: ids.length - started };
+      }
+      // one frame of a measured arm; returns whether the entry is running in this frame
+      function tick(entry, now, t) {
+        if (entry === "snap") return stepSnap(now, t, false);
+        const n = Math.floor(t / HS1_GAP);
+        if (entry === "select" && n !== S.phase) {
+          S.phase = n;
+          const i = (n * 7) % N;
+          setSelected(i);
+          startHalo(i, now, "select");
+        }
+        if (entry === "undo") {
+          const g = n % 5,
+            ids = drawings.slice(g * GROUP, g * GROUP + GROUP).map((d) => d.id);
+          if (n !== S.phase) {
+            S.phase = n;
+            ids.forEach((i) => setAlive(i, false)); // a bulk delete: a cut (D9-10)
+          } else if (t - n * HS1_GAP >= 50 && S.restored !== n) {
+            S.restored = n;
+            const r = restore(ids, now);
+            S.bulk.started = Math.max(S.bulk.started, r.started);
+            S.bulk.tagged = Math.max(S.bulk.tagged, r.tagged);
+          }
+        }
+        stepHalos(now);
+        return S.halos.length > 0;
+      }
+      // ---- measure mode: p50 / p95 frame work time and fps, with and without each entry -------------------
+      const raf = () => new Promise(requestAnimationFrame);
+      async function runArm(entry, animate, ms) {
+        reset(animate);
+        const a = {
+          work: [],
+          active: [],
+          deltas: [],
+          draws: new Set(),
+          entryBytes: 0,
+          cutBytes: 0,
+        };
+        const start = await raf();
+        let last = start;
+        for (;;) {
+          const now = await raf();
+          const t0 = performance.now();
+          F.entryBytes = F.cutBytes = 0;
+          const active = tick(entry, now, now - start);
+          render();
+          sync();
+          const work = performance.now() - t0;
+          a.work.push(work);
+          if (active) a.active.push(work);
+          a.deltas.push(now - last);
+          a.draws.add(F.draws);
+          a.entryBytes = Math.max(a.entryBytes, F.entryBytes);
+          a.cutBytes = Math.max(a.cutBytes, F.cutBytes);
+          last = now;
+          if (now - start >= ms) break;
+        }
+        a.elapsed = last - start;
+        return a;
+      }
+      function summary(arms) {
+        const all = arms.flatMap((a) => a.work),
+          act = arms.flatMap((a) => a.active),
+          del = arms.flatMap((a) => a.deltas);
+        const frames = all.length,
+          secs = arms.reduce((s, a) => s + a.elapsed, 0) / 1000;
+        return {
+          frames,
+          p50_ms: r2(pct(all, 50)),
+          p95_ms: r2(pct(all, 95)),
+          max_ms: r2(Math.max(...all)),
+          active_frames: act.length,
+          active_p50_ms: r2(pct(act, 50)),
+          active_p95_ms: r2(pct(act, 95)),
+          fps: r2(frames / secs),
+          fps_per_rep: arms.map((a) => r2(a.work.length / (a.elapsed / 1000))),
+          dropped_ge_33ms: del.filter((x) => x >= 33).length,
+          draw_calls: [...new Set(arms.flatMap((a) => [...a.draws]))].sort(),
+          entry_bytes_max: Math.max(...arms.map((a) => a.entryBytes)),
+          cut_bytes_max: Math.max(...arms.map((a) => a.cutBytes)),
+        };
+      }
+      async function measure() {
+        const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+        const res = {
+          note: "the prototype is not the engine",
+          ua: navigator.userAgent,
+          renderer: dbg
+            ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)
+            : gl.getParameter(gl.RENDERER),
+          cores: navigator.hardwareConcurrency,
+          canvas: [W, H],
+          drawings: N,
+          seed: CFG.seed,
+          win_ms: CFG.ms,
+          reps: CFG.reps,
+          metric:
+            "work = rAF callback start to a 1 px readPixels after the draw (CPU + GPU of one frame); fps = rAF " +
+            "frames per second; active = frames where the entry runs; without = the same scenario with " +
+            "RenderFlags.animate off (each start drawn at rest)",
+          entries: {},
+        };
+        out.textContent = "measuring…";
+        await runArm("select", true, 600); // warm-up (shader compile, buffer residency)
+        for (const e of ["snap", "select", "undo"]) {
+          const arms = { without: [], with: [] };
+          let bulk = null;
+          for (let r = 0; r < CFG.reps; r++)
+            for (const arm of ["without", "with"]) {
+              arms[arm].push(await runArm(e, arm === "with", CFG.ms));
+              if (e === "undo" && arm === "with") bulk = { ...S.bulk };
+              if (e === "snap" && arm === "with")
+                bulk = { settles: S.ring.settles, at_rest: S.ring.atRest };
+            }
+          res.entries[e] = {
+            row: ENTRY[e].row,
+            without: summary(arms.without),
+            with: summary(arms.with),
+          };
+          if (e === "undo")
+            res.entries[e].bulk_last_rep = {
+              group: GROUP,
+              emphasised: bulk.started,
+              tagged: bulk.tagged,
+            };
+          if (e === "snap") res.entries[e].latches_last_rep = bulk;
+        }
+        reset(true);
+        render();
+        out.textContent = "RESULT" + JSON.stringify(res);
+      }
+      // ---- play mode: each entry on the real clock; the loop renders on demand and parks when idle ----------
+      async function play(entry) {
+        reset(!CFG.reduce);
+        const T0 = performance.now(),
+          ev = [],
+          P = { frames: 0, parks: 0, pending: false, dragUntil: entry === "snap" ? 3000 : 0 };
+        const frame = (now) => {
+          P.pending = false;
+          P.frames++;
+          const t = now - T0;
+          const dragging = t < P.dragUntil;
+          const ring = dragging ? stepSnap(now, t, false) : false;
+          stepHalos(now);
+          render();
+          if (dragging || ring || S.halos.length || S.overlays.length) kick();
+          else P.parks++;
+        };
+        const kick = () => {
+          if (!P.pending) {
+            P.pending = true;
+            requestAnimationFrame(frame);
+          }
+        };
+        const at = (ms, what, fn) =>
+          new Promise((done) =>
+            setTimeout(() => {
+              const now = performance.now();
+              const r = fn(now);
+              ev.push({ planned_ms: ms, applied_ms: r2(now - T0), what, result: r ?? "" });
+              kick();
+              done();
+            }, ms),
+          );
+        out.textContent = `playing ${entry}${CFG.reduce ? " (motion reduce)" : ""}… the prototype is not the engine`;
+        kick();
+        const pick = UNDO_PICK;
+        const plan = {
+          snap: [[3200, "drag ends", () => ((snaptext.style.display = "none"), "end")]],
+          select: [
+            [300, "select 2 (three overlap)", (n) => (setSelected(1), startHalo(1, n, "select"))],
+            [900, "select 1", (n) => (setSelected(0), startHalo(0, n, "select"))],
+            [1000, "press crosses the drag threshold: cut to rest", () => (dragCut(), "cut")],
+            [1700, "select 3", (n) => (setSelected(2), startHalo(2, n, "select"))],
+            [
+              1800,
+              "select 3 again inside 500 ms",
+              (n) => (setSelected(2), startHalo(2, n, "select")),
+            ],
+            [2600, "select 2", (n) => (setSelected(1), startHalo(1, n, "select"))],
+          ],
+          undo: [
+            [300, "delete one trendline (a cut)", () => (setAlive(pick, false), "cut")],
+            [1000, "Ctrl+Z: restore it", (n) => JSON.stringify(restore([pick], n))],
+            [1800, "delete it again (a cut)", () => (setAlive(pick, false), "cut")],
+            [2200, "Ctrl+Z: restore it", (n) => JSON.stringify(restore([pick], n))],
+            [2350, "press crosses the drag threshold: cut to rest", () => (dragCut(), "cut")],
+            [
+              3000,
+              `delete ${GROUP} (a cut)`,
+              () => (drawings.slice(0, GROUP).forEach((d) => setAlive(d.id, false)), "cut"),
+            ],
+            [
+              3600,
+              `Ctrl+Z: restore ${GROUP}`,
+              (n) =>
+                JSON.stringify(
+                  restore(
+                    drawings.slice(0, GROUP).map((d) => d.id),
+                    n,
+                  ),
+                ),
+            ],
+          ],
+        }[entry];
+        if (!plan) throw new Error(`unknown play mode ${entry}`);
+        await Promise.all(plan.map(([ms, what, fn]) => at(ms, what, fn)));
+        await new Promise((r) => setTimeout(r, 600));
+        const starts = S.ring.starts.map((s) => s - T0);
+        const per1s = Math.max(
+          0,
+          ...starts.map((s) => starts.filter((x) => x >= s && x < s + 1000).length),
+        );
+        const res = {
+          play: entry,
+          motion: CFG.reduce ? "reduce" : "normal",
+          drawings: N,
+          events: ev,
+          frames: P.frames,
+          parks: P.parks,
+        };
+        if (entry === "snap")
+          Object.assign(res, {
+            settles: S.ring.settles,
+            at_rest: S.ring.atRest,
+            max_starts_per_1s: per1s,
+          });
+        out.textContent = "RESULT" + JSON.stringify(res);
+      }
+      // ---- capture mode: one frozen frame (start / mid / end) as a small PNG, composited with its DOM half ----
+      function capture(entry, atWord) {
+        reset(!CFG.reduce);
+        const e = ENTRY[entry];
+        if (!e) throw new Error(`unknown capture ${entry}`);
+        const half = entry === "undo" ? e.tree / 2 : e.dur / 2; // undo: the middle of the tree half
+        const at = { start: 0, mid: half, end: e.dur }[atWord] ?? 0;
+        const T0 = 10000;
+        let focus,
+          overlay = 0;
+        if (entry === "snap") {
+          PTR = { x: bx(100), y: py(candles[100].h) + 2, i: 100 };
+          stepSnap(T0, 0, true);
+          stepSnap(T0 + at, 0, true);
+          focus = S.ring.at;
+        } else if (entry === "select") {
+          setSelected(1);
+          startHalo(1, T0, "select");
+          stepHalos(T0 + at);
+          focus = [640, 360];
+        } else {
+          setAlive(UNDO_PICK, false);
+          restore([UNDO_PICK], T0);
+          startOverlay(UNDO_PICK, T0, at);
+          overlay = S.animate ? 1 - EASING[e.treeEase](Math.min(1, at / e.tree)) : 0;
+          stepHalos(T0 + at);
+          focus = [drawings[UNDO_PICK].cx, drawings[UNDO_PICK].cy];
+        }
+        render();
+        const cw = 360,
+          ch = 200,
+          tw = entry === "undo" ? 200 : 0,
+          cap = 30;
+        const sx = Math.round(Math.min(W - cw, Math.max(0, focus[0] - cw / 2))),
+          sy = Math.round(Math.min(H - ch, Math.max(0, focus[1] - ch / 2)));
+        const c2 = document.createElement("canvas");
+        c2.width = cw + tw;
+        c2.height = ch + cap;
+        const x = c2.getContext("2d");
+        x.fillStyle = "#000000";
+        x.fillRect(0, 0, c2.width, cap);
+        x.drawImage(canvas, sx, sy, cw, ch, 0, cap, cw, ch);
+        x.font = "11px sans-serif";
+        x.textBaseline = "middle";
+        x.fillStyle = "#E8EAED";
+        const mo = CFG.reduce ? "reduce" : "normal";
+        x.fillText(`${e.row} ${entry} · ${atWord} ${at} ms · motion ${mo}`, 6, 8);
+        x.fillText("the prototype is not the engine", 6, 22);
+        if (entry === "snap" && S.ring.text)
+          x.fillText(S.ring.text, S.ring.at[0] - sx + 10, S.ring.at[1] - sy + cap - 12);
+        if (tw) {
+          x.fillStyle = "#161B22";
+          x.fillRect(cw, cap, tw, ch);
+          for (let r = 0; r < 8; r++) {
+            const id = Math.max(0, UNDO_PICK - 3) + r,
+              y = cap + r * 24,
+              sel = id === UNDO_PICK;
+            if (sel) {
+              x.fillStyle = "#2E363E";
+              x.fillRect(cw, y, tw, 24);
+              x.strokeStyle = "#8B949E";
+              x.strokeRect(cw + 0.5, y + 0.5, tw - 1, 23);
+              x.globalAlpha = overlay;
+              x.fillStyle = "#2E363E";
+              x.fillRect(cw, y, tw, 24);
+              x.globalAlpha = 1;
+            }
+            x.fillStyle = sel ? "#E8EAED" : "#B1BAC4";
+            x.fillText(`${id + 1}. ${drawings[id].name}`, cw + 8, y + 12);
+            if (sel) {
+              x.fillStyle = "#8B949E";
+              x.fillText(`restored · ${overlay.toFixed(2)}`, cw + 110, y + 12);
+            }
+          }
+        }
+        out.textContent =
+          "RESULT" +
+          JSON.stringify({
+            capture: entry,
+            at: atWord,
+            at_ms: at,
+            motion: mo,
+            ring_scale: r2(ringScale),
+            halo: S.halos.map((h) => r2(alpha[HALO0 + h.slot])),
+            overlay: r2(overlay),
+            png: c2.toDataURL("image/png"),
+          });
+      }
+      // ---- boot --------------------------------------------------------------------------------------------
+      try {
+        if (MODE === "measure") measure();
+        else if (MODE === "play") play(CFG.play);
+        else if (MODE === "capture") capture(CFG.capture, CFG.at);
+        else {
+          reset(!CFG.reduce);
+          render();
+        }
+      } catch (err) {
+        out.textContent = "RESULT" + JSON.stringify({ error: String(err) });
+      }
+    </script>
+  </body>
+</html>
