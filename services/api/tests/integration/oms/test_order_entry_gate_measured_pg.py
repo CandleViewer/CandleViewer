@@ -508,18 +508,6 @@ async def test_an_unreadable_flag_store_fails_order_entry_closed_within_the_ttl(
     _measured("flag store reachable, gate open", reopened)
 
 
-class _Uncounted(Exception):
-    """F1 observed, and only F1: the refusal happened but its series did not count it. Any other
-    failure, a fixture's included, is not this and so is not excused by the `xfail`."""
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=_Uncounted,
-    reason="F1, #4973 (docs/qa/perf/e29-order-entry-gate-measurements.md): a POST /orders "
-    "refusal is not counted in cv_order_entry_refusals_total; strict, so it turns red once "
-    "#4973 fixes it",
-)
 async def test_a_maintenance_refusal_is_counted_with_its_reason(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -530,5 +518,4 @@ async def test_a_maintenance_refusal_is_counted_with_its_reason(
         await stack.refusal_after(MAINTENANCE_MODE, lambda: _post(client, world.body))
         await stack.write(MAINTENANCE_MODE, False)
     delta = _counted() - counted
-    if delta != 1:
-        raise _Uncounted(f"cv_order_entry_refusals_total{{reason=maintenance}} +{delta:g}, not +1")
+    assert delta == 1, f"cv_order_entry_refusals_total{{reason=maintenance}} +{delta:g}, not +1"

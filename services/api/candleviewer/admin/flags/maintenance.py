@@ -66,6 +66,7 @@ class MaintenanceGate:
 
     def __init__(self) -> None:
         self._engaged = True  # engaged until both flags have been read (fail closed)
+        self._latched = False
         maintenance_mode_gauge.set(1)
 
     @property
@@ -75,8 +76,16 @@ class MaintenanceGate:
 
     @audit_exempt("caller_audits")
     def set(self, engaged: bool) -> None:
-        self._engaged = engaged
-        maintenance_mode_gauge.set(1 if engaged else 0)
+        self._engaged = engaged or self._latched  # a latched gate never opens
+        maintenance_mode_gauge.set(1 if self._engaged else 0)
+
+    @audit_exempt("lifecycle")
+    def latch(self) -> None:
+        """Engage for the rest of the process: the poll that keeps the gate in step died, so its
+        reading can no longer be trusted, and no later `set` (a write's hook) opens it again; only
+        a restart does (fail closed, C-2.21)."""
+        self._latched = True
+        self.set(True)
 
     @audit_exempt("read")
     def refusal(self, account_id: UUID | None = None) -> OrderEntryRefusal | None:

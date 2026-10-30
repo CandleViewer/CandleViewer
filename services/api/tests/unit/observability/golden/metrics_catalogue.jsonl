@@ -192,6 +192,7 @@
 ["cv_machine_ws_registry_full_total", "counter", ["entity_kind"], "live", "E17"]
 ["cv_machine_ws_scope_missing_total", "counter", ["entity_kind"], "live", "E17"]
 ["cv_maintenance_mode", "gauge", [], "live", "E42"]
+["cv_order_entry_gate_poll_dead_total", "counter", [], "live", "E42"]
 ["cv_order_entry_refusals_total", "counter", ["reason"], "live", "E42"]
 ["cv_outbox_dead_total", "counter", ["topic"], "planned", "E40"]
 ["cv_outbox_depth", "gauge", ["topic"], "planned", "E40"]
