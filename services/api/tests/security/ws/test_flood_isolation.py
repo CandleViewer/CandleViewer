@@ -198,8 +198,10 @@ class Raw:
         )
 
     def frames(self, *, of: str | None = None, id: str | None = None) -> list[dict[str, Any]]:
+        """The frames this socket was sent, the `system` channel left out as in `count` (#4992)."""
         parsed = [json.loads(text) for text in self.texts]
-        return [f for f in parsed if of in (None, f["t"]) and id in (None, f.get("id"))]
+        mine = [f for f in parsed if f.get("ch") != "system"]
+        return [f for f in mine if of in (None, f["t"]) and id in (None, f.get("id"))]
 
     async def close(self) -> None:
         with contextlib.suppress(ConnectionClosed):
