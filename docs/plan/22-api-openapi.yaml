@@ -7714,7 +7714,21 @@ paths:
               schema: { $ref: "#/components/schemas/OrderAcceptance" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            `idempotency_key_reuse` or `idempotency_in_flight` (see the description).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429":
+          description: >
+            `exchange_rate_limited` with `Retry-After`, or the per-user `rate_limited` of every
+            route. Nothing was sent.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "502": { $ref: "#/components/responses/OrderExchangeError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /positions/{positionId}/reverse:
@@ -7724,20 +7738,32 @@ paths:
       operationId: reversePosition
       summary: Reverse a position (flatten and open the opposite side)
       description: |
-        Executed, in one-way and hedge mode alike, as a reduce-only close of the position
-        followed by an entry on the opposite side. The entry is sized server-side by the
-        account profile (C-12.5) and carries a native stop derived from the profile (arch P4,
-        C-2.6); if the profile cannot produce one, the reversal is refused before any order is
-        sent. The close is never counted as new exposure; the entry is checked like any entry
-        (risk caps, rate reserve, kill switch). The entry is submitted only after the close is
-        confirmed filled (the position's closed size is gone), within a bounded wait; a close
-        still unfilled or partly filled at the deadline ends the reversal with no entry sent,
-        never an entry against a still-open position. The answer always names the close, and
-        `outcome` says how the reversal ended. One `Idempotency-Key` covers both orders: a
-        replay after the close filled resumes by sending the entry, never closing again, and a
-        replay after the entry was accepted returns the stored answer. Amended 2026-10-29 by
-        an orchestrator contract decision (#915), before the route was implemented: the
-        earlier text sent one order of `2 × size` in one-way mode.
+        Executed, in one-way and hedge mode alike, as a reduce-only market close of the whole
+        position followed by an entry on the opposite side. The entry is sized server-side by
+        the account profile (C-12.5), never by a client figure, and carries a native stop
+        derived from the profile (arch P4, C-2.6); if the profile cannot produce one, the
+        reversal is refused before any order is sent. `order_type` and `price` apply to the
+        entry only. The close is never counted as new exposure; the entry is checked like any
+        entry (risk caps, rate reserve, kill switch). The entry is submitted only after the
+        close is confirmed filled (the position's closed size is gone), within a bounded wait
+        measured from the first request; a close still unfilled or partly filled at the
+        deadline ends the reversal with no entry sent, never an entry against a still-open
+        position. A close the exchange rejects is a `502` and no entry is sent. The answer
+        always names the close, and `outcome` says how the reversal ended.
+
+        One `Idempotency-Key` covers both orders, and each order's `orderLinkId` derives from
+        it, so neither can be sent twice (C-2.10). Every `202`, whatever its `outcome`, is
+        stored and replayed verbatim (`Idempotency-Replayed: true`). Only a request that ended
+        before any answer was stored (between the close's fill and the entry's record) is
+        resumed by a replay: it sends the entry, never closing again, and only within the first
+        request's deadline; past it no entry is sent and the answer is `entry_refused` with
+        `reason` `timeout`. A replay still passes the arm check, which precedes the lookup.
+        Each order keeps its own write-ahead submit audit record (C-2.9); one
+        `position.reversed` record correlates the pair and the outcome.
+
+        Amended 2026-10-29 by an orchestrator contract decision (#915), before the route was
+        implemented: the earlier text sent one order of `2 × size` in one-way mode, and the
+        request let the client size the entry (`size_mode` `same` or `custom`).
       x-rbac: { permissions: [positions:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -7752,7 +7778,6 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ReversePositionRequest" }
             examples:
-              sameSize: { value: { size_mode: same, order_type: market } }
               profileSize: { value: { size_mode: profile, order_type: market } }
       responses:
         "202":
@@ -7762,7 +7787,21 @@ paths:
               schema: { $ref: "#/components/schemas/ReverseAcceptance" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            `idempotency_key_reuse` or `idempotency_in_flight` (see the description).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429":
+          description: >
+            `exchange_rate_limited` with `Retry-After`, or the per-user `rate_limited` of every
+            route. Nothing was sent.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "502": { $ref: "#/components/responses/OrderExchangeError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /positions/{positionId}/leverage:
@@ -20280,7 +20319,8 @@ components:
       required: [close, open, outcome]
       description: >
         `reversePosition`'s `202` (#915): the close it sent, the entry it sent if any, and how
-        the reversal ended. Both orders are covered by one `position.reversed` audit record.
+        the reversal ended. Besides each order's own submit audit record (C-2.9), one
+        `position.reversed` record correlates the pair and the outcome.
       properties:
         close: { $ref: "#/components/schemas/OrderAcceptance" }
         open:
@@ -20288,20 +20328,26 @@ components:
           description: The entry, or null when none was sent (`outcome` other than `reversed`).
         outcome:
           type: string
-          enum: [reversed, close_incomplete, entry_refused]
+          enum: [reversed, close_unfilled, close_partially_filled, entry_refused]
           description: >
-            `reversed`: the close filled and the entry was accepted. `close_incomplete`: the
-            close was still unfilled or partly filled at the deadline, so no entry was sent
-            and the position may be partly closed. `entry_refused`: the close filled but the
-            entry was refused (risk cap, rate reserve or kill switch), so the account is flat
-            on this symbol. The last two are outcomes, not failures to hide: a client shows
-            them as they are.
+            `reversed`: the close filled and the entry was accepted; while `open.reconciling`
+            is true the entry is not yet known to rest or fill, and reconciliation settles the
+            symbol's exposure. `close_unfilled`: the close had not filled at the deadline, so no
+            entry was sent and the position is as it was. `close_partially_filled`: the close
+            had partly filled at the deadline, so no entry was sent and the position is smaller.
+            `entry_refused`: the close filled but no entry rests: a check refused it (risk cap,
+            rate reserve, kill switch, the deadline) or the exchange rejected it, so the account
+            is flat on this symbol. The last three are outcomes, not failures to hide: a client
+            shows them as they are.
         reason:
-          oneOf: [{ type: string }, { type: "null" }]
+          oneOf:
+            - { type: string, pattern: "^[a-z][a-z0-9_]*$", maxLength: 64 }
+            - { type: "null" }
           description: >
-            For `entry_refused`, the refusing check's code from the `x-error-codes` catalogue
-            (for example `risk_limit_breached`, `trading_disabled`, `rate_limited`); null for
-            `reversed` and `close_incomplete`, whose `outcome` already says what happened.
+            For `entry_refused` only: the refusing check's code, or the exchange rejection's
+            mapped code, from the `x-error-codes` catalogue (for example `risk_limit_breached`,
+            `trading_disabled`, `rate_limited`, `timeout`). A code, never free text. Null for
+            every other `outcome`, which already says what happened.
     AmendTradeGroupRequest:
       type: object
       additionalProperties: false
@@ -20524,11 +20570,16 @@ components:
       type: object
       additionalProperties: false
       properties:
-        size_mode: { type: string, enum: [same, profile, custom], default: same }
-        qty:
-          { $ref: "#/components/schemas/Decimal", description: "Required when `size_mode=custom`." }
-        order_type: { $ref: "#/components/schemas/OrderType", default: market }
-        price: { $ref: "#/components/schemas/Decimal" }
+        size_mode:
+          type: string
+          enum: [profile]
+          default: profile
+          description: >
+            The entry is always sized by the account profile (C-12.5); `same` and `custom` were
+            removed before the route was implemented (#915).
+        order_type:
+          { $ref: "#/components/schemas/OrderType", default: market, description: "The entry's." }
+        price: { $ref: "#/components/schemas/Decimal", description: "The entry's limit price." }
     Execution:
       type: object
       properties:
@@ -20565,7 +20616,11 @@ components:
         qty: { $ref: "#/components/schemas/Decimal" }
         avg_entry_price: { $ref: "#/components/schemas/Decimal" }
         avg_exit_price: { $ref: "#/components/schemas/Decimal" }
-        closed_pnl: { $ref: "#/components/schemas/Decimal" }
+        closed_pnl:
+          {
+            $ref: "#/components/schemas/Decimal",
+            description: "Net of fees, as the venue's closed-PnL endpoint reports it (#915).",
+          }
         cum_entry_value: { $ref: "#/components/schemas/Decimal" }
         cum_exit_value: { $ref: "#/components/schemas/Decimal" }
         leverage: { $ref: "#/components/schemas/Decimal" }

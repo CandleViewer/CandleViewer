@@ -3271,6 +3271,17 @@ class Totals(BaseModel):
     realised_pnl: Decimal | None = None
 
 
+class Reason(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            description="For `entry_refused` only: the refusing check's code, or the exchange rejection's mapped code, from the `x-error-codes` catalogue (for example `risk_limit_breached`, `trading_disabled`, `rate_limited`, `timeout`). A code, never free text. Null for every other `outcome`, which already says what happened.\n",
+            max_length=64,
+            pattern="^[a-z][a-z0-9_]*$",
+        ),
+    ]
+
+
 class Leg(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -3650,25 +3661,22 @@ class ReversePositionRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    size_mode: Literal["same", "profile", "custom"] = "same"
-    qty: Annotated[
-        str | None,
+    size_mode: Annotated[
+        Literal["profile"],
         Field(
-            description="Required when `size_mode=custom`.",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+            description="The entry is always sized by the account profile (C-12.5); `same` and `custom` were removed before the route was implemented (#915).\n"
         ),
-    ] = None
-    order_type: Literal["market", "limit"] = "market"
+    ] = "profile"
+    order_type: Annotated[Literal["market", "limit"], Field(description="The entry's.")] = "market"
     price: Annotated[
         str | None,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="The entry's limit price.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    __null_refused = field_validator("qty", "price", mode="before")(_refuse_null)
+    __null_refused = field_validator("price", mode="before")(_refuse_null)
 
 
 class Execution(BaseModel):
@@ -3785,7 +3793,7 @@ class ClosedPnl(BaseModel):
     closed_pnl: Annotated[
         str | None,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="Net of fees, as the venue's closed-PnL endpoint reports it (#915).",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
@@ -7359,15 +7367,15 @@ class ReverseAcceptance(BaseModel):
         ),
     ]
     outcome: Annotated[
-        Literal["reversed", "close_incomplete", "entry_refused"],
+        Literal["reversed", "close_unfilled", "close_partially_filled", "entry_refused"],
         Field(
-            description="`reversed`: the close filled and the entry was accepted. `close_incomplete`: the close was still unfilled or partly filled at the deadline, so no entry was sent and the position may be partly closed. `entry_refused`: the close filled but the entry was refused (risk cap, rate reserve or kill switch), so the account is flat on this symbol. The last two are outcomes, not failures to hide: a client shows them as they are.\n"
+            description="`reversed`: the close filled and the entry was accepted; while `open.reconciling` is true the entry is not yet known to rest or fill, and reconciliation settles the symbol's exposure. `close_unfilled`: the close had not filled at the deadline, so no entry was sent and the position is as it was. `close_partially_filled`: the close had partly filled at the deadline, so no entry was sent and the position is smaller. `entry_refused`: the close filled but no entry rests: a check refused it (risk cap, rate reserve, kill switch, the deadline) or the exchange rejected it, so the account is flat on this symbol. The last three are outcomes, not failures to hide: a client shows them as they are.\n"
         ),
     ]
     reason: Annotated[
-        str | None,
+        Reason | None,
         Field(
-            description="For `entry_refused`, the refusing check's code from the `x-error-codes` catalogue (for example `risk_limit_breached`, `trading_disabled`, `rate_limited`); null for `reversed` and `close_incomplete`, whose `outcome` already says what happened.\n"
+            description="For `entry_refused` only: the refusing check's code, or the exchange rejection's mapped code, from the `x-error-codes` catalogue (for example `risk_limit_breached`, `trading_disabled`, `rate_limited`, `timeout`). A code, never free text. Null for every other `outcome`, which already says what happened.\n"
         ),
     ] = None
 
