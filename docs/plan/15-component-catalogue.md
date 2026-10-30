@@ -2773,11 +2773,13 @@ This band was added during the cross-document traceability reconciliation (see `
 ### CMP-215 FloatingWindowFrame
 
 - **Tier**: Organism (Electron) · **Purpose**: the chrome of a popped-out panel window (SCR-027) — minimal title bar, mandatory environment badge, re-dock control.
-- **Props**: `title` · `environment: "demo"|"live"` · `onRedock` · `onClose` · `alwaysOnTop?: boolean`.
+- **Props**: `title` · `environment: "demo"|"live"` · `syncGroup?` · `armState?` · `feed?` · `viewAs?` · `focused: boolean` · `onRedock` · `onClose` · `alwaysOnTop?: boolean` (default `true`, US-LAY-005); the title bar's collapse order, the view-as banner slot and the two chrome surfaces are E15-D10's (E15-D10 §2, §5; `feed`, `viewAs` and `focused` PROPOSED names).
 - **A11y**: the window title includes the environment word so the OS window list and screen-reader window switcher both disclose Demo vs Live; re-dock and close are named buttons. The environment word is mandatory in every window and every window state (CMP-075's word, weight and glyph, never the colour alone); the badge's `color.env.*` rule measures ≥ 3:1 and the word ≥ 4.5:1 against both the focused and the unfocused title-bar surface (`docs/design/E15/E15-D13.md` §6, measured); no consuming epic redefines `color.env.*` or drops the word.
-- **Tokens**: `color.surface.base`, `color.env.*`.
-- **Storybook**: Demo, Live, AlwaysOnTop.
-- **Tests**: unit, visual, axe; Electron E2E (pop-out, re-dock, badge presence in every window).
+- **Tokens**: `color.surface.raised` focused / `color.surface.app` unfocused (E15-D10 §5.1, PROPOSED), `elevation.chrome`, the `border.hairline` rule in `color.border.default`, `color.text.primary` / `.secondary`, `color.env.*` on the badge's rule only (E10-D03 §8; E15-D13 §6 measured). (Replaces `color.surface.base`, a retired name never shipped.)
+- **Storybook**: `Organisms/Dock/FloatingWindowFrame` — Demo · Live · Unfocused · AlwaysOnTop · PinInOverflow · Unconfirmed · ViewAs · NarrowStep1 · NarrowStep2 · NarrowStep3 · NarrowStep4 · DisplayGone (every story in dark / light × compact / comfortable; no BrowserFallback — the component does not exist in the browser build, E15-D10 §6; PROPOSED).
+- **Tests**: unit, visual, axe, interaction (Return and × re-dock the panel; Pin on top toggles `aria-pressed`), performance (static chrome: no per-frame repaint); Electron E2E (pop-out, re-dock, the badge in both chrome states, the OS title string's environment word) (E15-D10 §5, §7, §9; PROPOSED).
+- **Performance**: static chrome: no per-frame repaint; the bar restyles on focus / blur as a cut (E15-D10 §5.1, §10); each window a separate renderer with its own GL context, the combined budget `14-screens-catalogue.md` SCR-027's (PROPOSED).
+- **Motion spec**: [E15-D10.md](../design/E15/E15-D10.md) (E15-D10 §10; E10-D04 T-26 and E15-D14 I-20 — PROPOSED): none in-app; open, close, minimise and restore are the window manager's; Pin on top, Return and the focus restyle are cuts in both modes; the badge never transitions; the carrier is the bar's words and the OS title.
 
 ### CMP-216 PanelMenu
 
