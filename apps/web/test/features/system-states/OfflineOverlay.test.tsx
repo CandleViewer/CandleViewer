@@ -152,7 +152,9 @@ describe("SCR-159 in the canvas: offline and tailnet-unreachable", () => {
         .map((li) => li.textContent),
     ).toEqual(TAILNET_CHECKS.slice(0, checks));
     expect(within(page()).getByText(SCR159_COPY.retryIn(4))).toBeInTheDocument();
-    expect(within(page()).getByText(SCR159_COPY.fallback)).toBeInTheDocument();
+    expect(within(page()).getByText(SCR159_COPY.fallback).style.fontWeight).toBe(
+      "var(--font-weight-semibold)", // board 10, as on SCR-157's dialog
+    );
     expect(within(page()).getByText(SCR159_COPY.command).tagName).toBe("CODE");
     expect(within(page()).getByRole("button", { name: SCR159_COPY.copyCommand })).toBeVisible();
     expect(within(page()).getByRole("button", { name: SCR159_COPY.retryNow })).toBeVisible();

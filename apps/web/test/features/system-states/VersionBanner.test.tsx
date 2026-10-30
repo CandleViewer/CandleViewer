@@ -65,6 +65,15 @@ function Shell({ banner }: { readonly banner: ReactNode }): JSX.Element {
   );
 }
 
+/** The shell with the band for 0.2.0, then Later pressed from the band. */
+function later(): void {
+  render(<Shell banner={<ShellBannerSlot />} />);
+  welcome("cv.v1", "0.2.0");
+  const button = screen.getByRole("button", { name: "Later" });
+  button.focus();
+  fireEvent.click(button);
+}
+
 let heard: unknown[];
 const listen = (event: Event): void => void heard.push((event as CustomEvent).detail);
 const said = (serverVersion: string) => ({
@@ -127,23 +136,43 @@ describe("SCR-157 update-available banner", () => {
     await expectNoSeriousAxe();
   });
 
-  it("Later: gone for the session, focus on the search trigger (E10-D04 T-19), the StatusBar reminds", () => {
+  it("Later: no reminder while the band shows", () => {
     render(<Shell banner={<ShellBannerSlot />} />);
     welcome("cv.v1", "0.2.0");
-    expect(reminder()).toBeNull(); // the reminder follows Later, never the banner
-    const later = screen.getByRole("button", { name: "Later" });
-    later.focus();
-    fireEvent.click(later);
+    expect(reminder()).toBeNull();
+  });
+
+  it("Later: removes the band", () => {
+    later();
     expect(screen.queryByRole("button", { name: "Later" })).toBeNull();
-    // no next banner: the TopBar's search trigger, never the canvas's next control
+  });
+
+  it("Later: focus on the search trigger when no banner follows, never the canvas (E10-D04 T-19)", () => {
+    later();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Search commands/ }));
+  });
+
+  it("Later: the StatusBar reminds, as text outside its live part (never re-announced)", () => {
+    later();
     expect(reminder()?.textContent).toBe("Update available");
-    // plain text beside the version, outside the StatusBar's live part: never re-announced
     expect(screen.getByRole("status", { name: "System status" }).contains(reminder())).toBe(false);
-    welcome("cv.v1", "0.3.0"); // another build this session: still postponed
+  });
+
+  it("Later: another build this session stays postponed", () => {
+    later();
+    welcome("cv.v1", "0.3.0");
     expect(screen.queryByRole("button", { name: "Later" })).toBeNull();
-    expect(heard).toEqual([said("0.2.0"), said("0.3.0")]); // the mismatch is still said
-    welcome("cv.v1", "0.1.0"); // the same build again: nothing to remind of
+  });
+
+  it("Later: the mismatch of another build is still reported", () => {
+    later();
+    welcome("cv.v1", "0.3.0");
+    expect(heard).toEqual([said("0.2.0"), said("0.3.0")]);
+  });
+
+  it("Later: the reminder goes once the builds match", () => {
+    later();
+    welcome("cv.v1", "0.1.0");
     expect(reminder()).toBeNull();
   });
 
@@ -196,6 +225,28 @@ describe("SCR-157 update-available banner", () => {
 });
 
 describe("SCR-157's words (E17-D02 §11: polite, once, never cutting another writer)", () => {
+  it("says them in a visually hidden region, the band showing them already", () => {
+    render(<VersionBannerSlot />);
+    welcome("cv.v1", "0.2.0");
+    expect(screen.getByRole("status")).toHaveClass("cv-visually-hidden");
+  });
+
+  it("leaves focus where it was, at mount and at its turn to speak", () => {
+    render(
+      <>
+        <VersionBannerSlot />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+    const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+    elsewhere.focus();
+    speak("assertive", "Disconnected.");
+    welcome("cv.v1", "0.2.0");
+    expect(document.activeElement).toBe(elsewhere);
+    advance(REGION_BUDGET_MS);
+    expect([spoken(), document.activeElement]).toEqual([SPOKEN, elsewhere]);
+  });
+
   it("shows the band at once and says its words when the window after CMP-077's row 1 is over", () => {
     render(<VersionBannerSlot />);
     speak("assertive", "Disconnected. New orders off.");
