@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const PKG = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO = join(PKG, "..", "..");
 const C216_RULES = ["no-restricted-imports", "no-restricted-globals", "no-restricted-syntax"];
+const GL = ["src/gl/probe.ts"]; // E11-S02: the WebGL2 backend joins every DOM-free list below
 // Generous per-test budget for the loops, the tsc programs and the project-service lint: they
 // pass in ~2 s alone but share the runner with the whole unit project under load (C-9.3).
 const SLOW = 20_000;
@@ -58,7 +59,7 @@ async function lint(path: string, code: string): Promise<string[]> {
 }
 
 describe("Scenario: The framework-free boundary is enforced, not just documented", () => {
-  const files = ["src/api/chart.ts", "src/index.ts", "src/core/x.ts", "src/layers/x.ts"];
+  const files = ["src/api/chart.ts", "src/index.ts", "src/core/x.ts", "src/layers/x.ts", ...GL];
 
   it.each(files)(
     "%s: importing react fails, naming the import and C-2.16",
@@ -136,19 +137,29 @@ describe("Scenario: The framework-free boundary is enforced, not just documented
     ["ResizeObserver", "export const f = () => new ResizeObserver(() => undefined);"],
   ];
 
-  it.each(["src/core/x.ts", "src/layers/x.ts", "src/scene/x.ts", "src/model/x.ts"])(
+  it.each(["src/core/x.ts", "src/layers/x.ts", "src/scene/x.ts", "src/model/x.ts", ...GL])(
     "%s: every browser global fails naming C-2.16, not only document/window",
     async (path) => {
       for (const [name, code] of domProbes) {
         const out = await lint(path, code);
         expect(out, name).toEqual([
           `no-restricted-globals: Unexpected use of '${name}'. C-2.16: no DOM globals in ` +
-            "src/core|layers|scene|model (DOM glue is the host adapter's).",
+            "src/core|layers|scene|model|gl (DOM glue is the host adapter's).",
         ]);
       }
     },
     SLOW,
   );
+
+  it("a shader source may not interpolate: a static string only (E11-S02 Security)", async () => {
+    const path = "src/gl/shaders/line.ts";
+    expect(await lint(path, "export const vs = `#version 300 es\nvoid main() {}`;")).toEqual([]);
+    expect(await lint(path, "export const fs = (n: string) => `uniform float ${n};`;")).toEqual([
+      "no-restricted-syntax: E11-S02: shader sources are static strings; no `${}` interpolation " +
+        "(no dynamic GLSL).",
+    ]);
+    expect(await lint("src/gl/x.ts", "export const s = (n: string) => `${n}`;")).toEqual([]);
+  });
 
   it("the worker keeps its OffscreenCanvas globals but not the network", async () => {
     expect(await lint("src/worker/x.ts", "export const w = () => self.postMessage(1);")).toEqual(
@@ -193,7 +204,7 @@ describe("Scenario: The framework-free boundary is enforced (tsc, no DOM lib in 
       .map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"));
   }
 
-  it.each(["src/core/probe.ts", "src/layers/probe.ts", "src/scene/probe.ts", "src/model/probe.ts"])(
+  it.each([...["core", "layers", "scene", "model"].map((d) => `src/${d}/probe.ts`), ...GL])(
     "a DOM type or global in %s fails tsc under tsconfig.core.json",
     (rel) => {
       expect(compile("tsconfig.core.json", rel)).toEqual([
@@ -290,6 +301,10 @@ describe("Scenario: The framework-free boundary is enforced (dependency-cruiser)
     write("packages/chart-engine/src/host/mount.ts", "export const m = 1;\n");
     write("packages/chart-engine/src/scene/uses-host.ts", 'import "../host/mount";\n');
     write("packages/chart-engine/src/model/uses-host.ts", 'import "../host/mount";\n');
+    write("packages/chart-engine/src/gl/registry.ts", "export const r = 1;\n");
+    write("packages/chart-engine/src/scene/uses-gl.ts", 'import "../gl/registry";\n');
+    write("packages/chart-engine/src/gl/uses-worker.ts", 'import "../worker/protocol";\n');
+    write("packages/chart-engine/src/worker/protocol.ts", "export const p = 1;\n");
     const require = createRequire(import.meta.url);
     const config = require(join(REPO, ".dependency-cruiser.js")) as IConfiguration;
     const out = await cruise(
@@ -343,6 +358,18 @@ describe("Scenario: The framework-free boundary is enforced (dependency-cruiser)
       ]);
     },
   );
+
+  it("src/scene importing src/gl fails chart-engine-core-no-gl (E11-S02)", () => {
+    expect(violations("packages/chart-engine/src/scene/uses-gl.ts")).toEqual([
+      "chart-engine-core-no-gl -> packages/chart-engine/src/gl/registry.ts",
+    ]);
+  });
+
+  it("src/gl importing the worker glue fails chart-engine-gl-no-host (E11-S02)", () => {
+    expect(violations("packages/chart-engine/src/gl/uses-worker.ts")).toEqual([
+      "chart-engine-gl-no-host -> packages/chart-engine/src/worker/protocol.ts",
+    ]);
+  });
 
   it("each rule cites C-2.16 in its comment", () => {
     const require = createRequire(import.meta.url);

@@ -131,6 +131,24 @@ module.exports = {
       to: { path: "^packages/chart-engine/src/host" },
     },
     {
+      name: "chart-engine-core-no-gl",
+      severity: "error",
+      comment:
+        "C-2.16 / 26 §3.1: src/core|layers|scene|model never reach GL; nodes append to batches " +
+        "and only the WebGL2 backend (src/gl) issues GL calls (E11-S02).",
+      from: { path: "^packages/chart-engine/src/(core|layers|scene|model)" },
+      to: { path: "^packages/chart-engine/src/gl" },
+    },
+    {
+      name: "chart-engine-gl-no-host",
+      severity: "error",
+      comment:
+        "C-2.16: src/gl is DOM-free and sits below the host adapter, the facade and the worker " +
+        "glue, which import it, never the reverse (E11-S02).",
+      from: { path: "^packages/chart-engine/src/gl" },
+      to: { path: "^packages/chart-engine/src/(host|api|worker)" },
+    },
+    {
       name: "chart-engine-harness-no-spike",
       severity: "error",
       comment:

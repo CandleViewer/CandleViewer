@@ -188,6 +188,14 @@ DrawingStore
 
 WebGL2 (required for instancing, VAOs, `texSubImage2D` with PBO-like patterns, `R16F`, integer attributes). Capability probe at startup records: max texture size, max texture units, `EXT_color_buffer_float`, `OES_texture_float_linear`, max vertex attributes; the result selects a `RenderProfile` (`full` | `reduced` | `degraded-2d`).
 
+The profile rule (E11-S02, package README BQ-50); each `reduced` limit adds one plain-language reason to the `ready` capability report:
+
+| `RenderProfile` | When                                                                                                                                         |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `full`          | WebGL2 with `MAX_TEXTURE_SIZE` ≥ 4096, `MAX_VERTEX_ATTRIBS` ≥ 16 and `MAX_TEXTURE_IMAGE_UNITS` ≥ 8 (float extensions recorded, not required) |
+| `reduced`       | WebGL2 below any of those limits                                                                                                             |
+| `degraded-2d`   | No WebGL2, a failed context or a shader compile failure                                                                                      |
+
 | Concern       | Decision                                                                                                                                                    |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Context loss  | `webglcontextlost` handled: stop the loop, mark all GPU resources invalid, rebuild from `DataModel` on restore; user sees a 1-frame flash, no data loss     |
@@ -367,7 +375,7 @@ Worker → main:
 | `a11y`     | `{ cursorSummary }` — the text the live region should announce                                |
 | `error`    | `{ code, message, recoverable }`                                                              |
 
-Shipped by E11-T02 (package README "Design deltas" BQ-10 to BQ-19): worker → main also sends `ack { id, store }` per `data` (the host keeps ≤ 2 unacknowledged per store) and `exported { id, reqId, blob }` (the `export` reply); main → worker `command { release }` deregisters a chart; `frame` carries `runMode` and `renderProfile`. Every message carries the chart `id` (`null` on a worker-wide `error`); `ready`'s capability report is the selected `RenderProfile` until E11-T05; `pick` has no `cell` before E11-S08 / E12. One dedicated worker serves every chart on the page.
+Shipped by E11-T02 (package README "Design deltas" BQ-10 to BQ-19): worker → main also sends `ack { id, store }` per `data` (the host keeps ≤ 2 unacknowledged per store) and `exported { id, reqId, blob }` (the `export` reply); main → worker `command { release }` deregisters a chart; `frame` carries `runMode` and `renderProfile`. Every message carries the chart `id` (`null` on a worker-wide `error`); `ready` carries `capabilities` (profile, reasons, caps; E11-S02 BQ-50, probe owned by S02 per BQ-57) beside `renderProfile`; `pick` has no `cell` before E11-S08 / E12. One dedicated worker serves every chart on the page.
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 

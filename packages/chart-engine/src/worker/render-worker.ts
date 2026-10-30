@@ -2,8 +2,9 @@
 // page, bundled same-origin (no `blob:` URL), so the Electron CSP keeps `worker-src 'self'`.
 // It only wires the runtime to the worker scope; the runtime is the same module `RunMode.inline`
 // runs on the main thread. No DOM, no network (C-2.16).
+import { probeCanvas, selectProfile } from "../gl/capability.js";
 import { createRenderRuntime } from "./runtime.js";
-import type { FromWorker, RenderProfile } from "./protocol.js";
+import type { CapabilityReport, FromWorker } from "./protocol.js";
 
 /** The dedicated-worker scope members used here (typed structurally: no WebWorker lib). */
 interface WorkerScope {
@@ -13,13 +14,16 @@ interface WorkerScope {
   OffscreenCanvas?: new (w: number, h: number) => { getContext(id: string): unknown };
 }
 
-/** WebGL2 on a throwaway OffscreenCanvas means `full`, anything else `degraded-2d` (E11-T05). */
-export function probeWorker(scope: WorkerScope): RenderProfile {
+/**
+ * The capability probe on a throwaway OffscreenCanvas (E11-S02 owns detection and the profile
+ * rule, README BQ-50 and BQ-57; E11-T05 owns the 2D drawing `degraded-2d` hands over to).
+ */
+export function probeWorker(scope: WorkerScope): CapabilityReport {
   try {
     const Ctor = scope.OffscreenCanvas;
-    return Ctor !== undefined && new Ctor(1, 1).getContext("webgl2") ? "full" : "degraded-2d";
+    return Ctor === undefined ? selectProfile(null) : probeCanvas(new Ctor(1, 1));
   } catch {
-    return "degraded-2d";
+    return selectProfile(null);
   }
 }
 

@@ -2,15 +2,22 @@
 // both directions, the worker-boundary validation and the pure helpers both sides share. No DOM,
 // no I/O, no exchange knowledge (C-2.16): this file compiles under tsconfig.core.json, so the
 // canvas is typed structurally (an OffscreenCanvas in worker mode, the HTMLCanvasElement inline).
+import type { CapabilityReport, RenderProfile } from "../gl/capability.js";
+
+export type { CapabilityReport, RenderProfile };
 
 /** The token the renderer clears the canvas with (§5 rule 1: colour comes from tokens only). */
 export const BACKGROUND_TOKEN = "color.chart.background";
 
 export const ENGINE_DECODE_ERROR = "ENGINE_DECODE_ERROR";
 export const ENGINE_WORKER_LOST = "ENGINE_WORKER_LOST";
+// E11-S02's codes (ticket Observability), each posted with `recoverable` (README BQ-48).
+export const ENGINE_CONTEXT_LOST = "ENGINE_CONTEXT_LOST";
+export const ENGINE_CONTEXT_RESTORE_FAILED = "ENGINE_CONTEXT_RESTORE_FAILED";
+export const ENGINE_NO_WEBGL2 = "ENGINE_NO_WEBGL2";
+export const ENGINE_SHADER_COMPILE_FAILED = "ENGINE_SHADER_COMPILE_FAILED";
 
 export type RunMode = "worker" | "inline";
-export type RenderProfile = "full" | "reduced" | "degraded-2d";
 /** One chart instance on the shared worker, minted by the host. */
 export type ChartId = number;
 /** The `DataModel` stores a `data` message can mutate (§3.3; the stores themselves are E11-T03). */
@@ -103,6 +110,8 @@ export type FromWorker =
       readonly id: ChartId;
       readonly runMode: RunMode;
       readonly renderProfile: RenderProfile;
+      /** The probe's limits and the plain-language reasons for a reduced profile (BQ-50). */
+      readonly capabilities: CapabilityReport;
     }
   | {
       readonly t: "frame";

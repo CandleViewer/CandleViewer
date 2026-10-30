@@ -11,13 +11,13 @@ import {
   INPUT_MAX_ROWS,
   INPUT_STRIDE,
   type BufferLayout,
+  type CapabilityReport,
   type ChartId,
   type Command,
   type DataOp,
   type FromWorker,
   type InputKind,
   type PendingData,
-  type RenderProfile,
   type RunMode,
   type StoreId,
   type ThemeLut,
@@ -39,7 +39,7 @@ export interface HostEnv {
   requestFrame(cb: () => void): void;
   setTimer(cb: () => void, ms: number): void;
   now(): number;
-  probe(): RenderProfile;
+  probe(): CapabilityReport;
   correlationId(): string;
 }
 

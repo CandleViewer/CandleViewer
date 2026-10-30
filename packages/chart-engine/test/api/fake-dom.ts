@@ -1,5 +1,6 @@
 // A minimal structural DOM for the node-environment unit project: just what src/host touches.
 // The package has no jsdom (no new dependency); apps/web's binding tests run the real thing.
+import { FakeGl, ROOMY } from "../gl/fake-gl.js";
 
 export interface FakeContext2D {
   fillStyle: string;
@@ -9,10 +10,8 @@ export interface FakeContext2D {
   fillRect(x: number, y: number, w: number, h: number): void;
 }
 
-export interface FakeWebGl2 {
-  lost: boolean;
-  getExtension(name: string): { loseContext(): void } | null;
-}
+/** WebGL2 here is the E11-S02 fake with every BQ-50 floor met (the `full` profile). */
+export type FakeWebGl2 = FakeGl;
 
 export class FakeElement {
   readonly tagName: string;
@@ -178,16 +177,5 @@ export function fakeContainer(width = 400, height = 300): FakeElement {
 export const asHtml = (el: FakeElement): HTMLElement => el as unknown as HTMLElement;
 
 function makeWebGl2(): FakeWebGl2 {
-  const gl: FakeWebGl2 = {
-    lost: false,
-    getExtension(name: string) {
-      if (name !== "WEBGL_lose_context") return null;
-      return {
-        loseContext(): void {
-          gl.lost = true;
-        },
-      };
-    },
-  };
-  return gl;
+  return new FakeGl({ params: ROOMY });
 }

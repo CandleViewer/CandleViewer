@@ -3,7 +3,7 @@
 // (iframe, Electron view) and stays inside the `no-restricted-globals` rule. src/core and
 // src/layers never import this module (.dependency-cruiser.js `chart-engine-core-no-dom-host`).
 
-import type { RenderProfile } from "../worker/protocol.js";
+import { probeCanvas, type CapabilityReport } from "../gl/capability.js";
 
 export interface HostSurface {
   /**
@@ -83,20 +83,18 @@ export function mountSurface(container: HTMLElement): HostSurface {
   };
 }
 
-const probes = new WeakMap<object, RenderProfile>();
+const probes = new WeakMap<object, CapabilityReport>();
 
 /**
- * Lazy capability probe, once per document: WebGL2 on a throwaway canvas means the `full`
- * profile, anything else `degraded-2d` (E11-T05 owns the real detection rule and the `reduced`
- * step). The probe context is released at once, so a multi-chart layout never spends the
- * browser's live-context budget (about 16) on probes.
+ * Lazy capability probe, once per document, on a throwaway canvas (E11-S02 owns detection and
+ * the profile rule, README BQ-50 and BQ-57; E11-T05 owns the 2D drawing). The probe context is
+ * released at once, so a multi-chart layout never spends the browser's live-context budget
+ * (about 16) on probes.
  */
-export function probeRenderProfile(doc: Document): RenderProfile {
+export function probeRenderProfile(doc: Document): CapabilityReport {
   const known = probes.get(doc);
   if (known !== undefined) return known;
-  const gl = doc.createElement("canvas").getContext("webgl2");
-  gl?.getExtension("WEBGL_lose_context")?.loseContext();
-  const profile = gl === null ? "degraded-2d" : "full";
-  probes.set(doc, profile);
-  return profile;
+  const report = probeCanvas(doc.createElement("canvas"));
+  probes.set(doc, report);
+  return report;
 }
