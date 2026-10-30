@@ -120,6 +120,7 @@ D12_RULING = "6522684771"  # #366's ruling of record (E15-D12)
 DELEGATION_ID = "6490317249"  # the 2026-10-29 delegation directive on #2701
 D13_RULING = "6519042539"  # #367's ruling of record (E15-D13)
 DRYRUN_ID = "6525266596"  # #365: the deputy's dry run, the run of record (lesson 3)
+D12_SPEC_SHA = "28aecd3609"  # E15-D12's PR 1, merged as #5071: its spec is read there
 E15 = "docs/design/E15/E15-"
 KEYS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -142,6 +143,8 @@ KEYS: dict[str, str] = {
     "E11D02": "docs/design/E11/E11-D02.md",
     "E05D03": "docs/design/E05/E05-D03.md",
     "E30D05": "docs/design/E30/E30-D05.md",
+    "E09D09": "docs/design/E09/E09-D09.md",
+    "D12spec": "docs/design/specs/e15-responsive-and-degraded.md",
     "M0": "docs/plan/spikes/E06-M0-report.md",
     "keymap": "apps/web/src/keymap/keymap.json",
     "E15.json": "docs/plan/backlog/E15.json",
@@ -191,8 +194,12 @@ def at_base(rel: str) -> str | None:
     return at_rev(BASE, rel)
 
 
+# A key read at its own merge, not at BASE (it merged after the base; cited by content).
+KEY_REV: dict[str, str] = {"D12spec": D12_SPEC_SHA}
+
+
 def key_text(key: str) -> str:
-    return at_rev(BASE, KEYS[key]) or ""
+    return at_rev(KEY_REV.get(key, BASE), KEYS[key]) or ""
 
 
 def read(rel: str) -> str:
@@ -389,7 +396,16 @@ def slot(name: str, dens: str) -> tuple[int, int]:
             int(parent_anchor("D03", f"BUDGET:scalping.split.1280.{dens}").split(" / ")[0]),
             dock[1],
         )
-    # 200 %: the 1280x800 window is 640x400 CSS px; the shell's chrome keeps its CSS size
+    # 200 %: the 1280x800 window is 640x400 CSS px, E15-D12's W3 · H3 frame under the tabbed
+    # collapse: its canvas less the workspace tab strip and the dock tab row (the grid is one tab)
+    w, h = z200_canvas()
+    tabs = int(parent_anchor("D03", f"BUDGET:v.tabstrip.{dens}"))
+    return w, h - tabs - switcher_h(dens)
+
+
+def z200_canvas() -> tuple[int, int]:
+    """The 640x400 canvas: the window less the NavRail, the RightRail strip, the TopBar and the
+    StatusBar (E15-D03's budget), which E15-D12 measures as 528x272 (`D12spec`:34)."""
     nav, rail = (
         int(parent_anchor("D03", "BUDGET:h.navrail")),
         int(parent_anchor("D03", "BUDGET:h.rightrail-strip")),
@@ -398,8 +414,7 @@ def slot(name: str, dens: str) -> tuple[int, int]:
         int(parent_anchor("D03", "BUDGET:v.topbar")),
         int(parent_anchor("D03", "BUDGET:v.statusbar")),
     )
-    tabs = int(parent_anchor("D03", f"BUDGET:v.tabstrip.{dens}"))
-    return 1280 // 2 - nav - rail, 800 // 2 - top - bottom - tabs
+    return 1280 // 2 - nav - rail, 800 // 2 - top - bottom
 
 
 def frame() -> int:
@@ -550,8 +565,13 @@ ANATOMY: tuple[tuple[str, int, int], ...] = (
 )
 NODE_BUDGET, INTERACTIVE_BUDGET = 24, 7
 # a maximised cell's row adds the chart panel's arm control (A44; E15-D03 row 9)
-ARM_PART = ("the arm state (CMP-229, maximised only): button, glyph, word, countdown", 4, 1)
+# CMP-229 counts as status, not an action, as a chart panel's header counts it (`D03`:305)
+ARM_PART = ("the arm state (CMP-229, maximised only): pill, glyph, word, countdown", 4, 0)
 ANATOMY_MAX = (*ANATOMY, ARM_PART)
+# its T2 form (rendering 2b): no countdown (it cannot arm), the CMP-019 `lock` badge and the
+# reason node in the DOM at mount; `aria-disabled` keeps it in the Tab order (G-T2.1b)
+ARM_RO_PART = ("the arm state, T2 (2b): pill, glyph, word, `lock` badge, reason node", 5, 1)
+ANATOMY_RO = (*ANATOMY, ARM_RO_PART)
 
 
 # (case, arrangement, slot, density): the hostile cases the pack draws (BQ-07)
@@ -579,6 +599,9 @@ def budget_values() -> dict[str, str]:
         "BUDGET:interactive.budget": str(INTERACTIVE_BUDGET),
         "BUDGET:nodes.max": str(sum(n for _, n, _ in ANATOMY_MAX)),
         "BUDGET:interactive.max": str(sum(i for _, _, i in ANATOMY_MAX)),
+        "BUDGET:nodes.ro": str(sum(n for _, n, _ in ANATOMY_RO)),
+        "BUDGET:interactive.ro": str(sum(i for _, _, i in ANATOMY_RO)),
+        "BUDGET:canvas.z200": wh(z200_canvas()),
         "BUDGET:col.width": str(slot("col", "compact")[0]),
     }
     for dens in DENSITIES:
@@ -611,6 +634,9 @@ def budget_problems() -> list[str]:
     for dens in DENSITIES:
         if slot("1280", dens) != pair(parent_anchor("D03", f"BUDGET:dock.1280.{dens}")):
             bad.append(f"the 1280 {dens} slot is not E15-D03's dock area")
+    if wh(z200_canvas()) != parent_anchor("D12spec", "BUDGET:f.640x400.canvas"):
+        bad.append("the 200 % canvas is not E15-D12's 640 × 400 measurement")
+    for dens in DENSITIES:
         for name in SLOTS:
             w, h = slot(name, dens)
             for arr, (r, c) in ARRANGEMENTS.items():
@@ -656,6 +682,10 @@ def header_problems() -> list[str]:
         bad.append("the maximised cell's row is over its DOM-node budget")
     if sum(i for _, _, i in ANATOMY_MAX) > INTERACTIVE_BUDGET:
         bad.append("the maximised cell's row is over its interactive-element budget")
+    if sum(n for _, n, _ in ANATOMY_RO) > NODE_BUDGET:
+        bad.append("the read-only maximised cell's row is over its DOM-node budget")
+    if sum(i for _, _, i in ANATOMY_RO) > INTERACTIVE_BUDGET:
+        bad.append("the read-only maximised cell's row is over its interactive-element budget")
     for case, arr, name, dens in CASES:
         small = cells(arr, name, dens)[1]
         got = verdict(small, dens)
@@ -1294,6 +1324,17 @@ CITED: dict[tuple[str, int], str] = {
     ("E11D02", 127): "The E06 spike gate is not met",
     ("E15.json", 470): '"key": "E15-K01"',
     ("E15.json", 822): '"key": "E15-S06"',
+    ("14", 85): "rendered **disabled with a visible reason**",
+    ("14", 734): "drag an SL/TP line to amend",
+    ("D03", 321): "the arm toggle T2 `rbac.permission`",
+    ("D03", 598): "a viewer's DOM arm toggle and order affordances",
+    ("D03", 600): "a manager's DOM arm toggle on an unassigned account",
+    ("D15", 69): "row **A36** (the environment in order-capable panel regions' _names_",
+    ("D15", 282): "never a live value",
+    ("E09D09", 32): "### 2.1 The decision rule",
+    ("E09D09", 49): "**(2b) tooltip echo**",
+    ("D12spec", 34): "| 640 × 400   | W3 · H3 | collapse",
+    ("D12spec", 143): "### 6.4 Never shed",
 }
 
 
@@ -1337,7 +1378,7 @@ def cite_problems(t: Texts) -> list[str]:
 
 SHA_OR_ID = re.compile(r"(?<![\w#/-])([0-9a-f]{10})(?![\w-])")
 D13_TOKENS_SHA = "18d92caf3f"  # E15-D13's token PR, merged as #5075 (2026-10-30 14:15Z)
-KNOWN_SHAS = frozenset({BASE, BQ_BASE, D13_TOKENS_SHA})
+KNOWN_SHAS = frozenset({BASE, BQ_BASE, D13_TOKENS_SHA, D12_SPEC_SHA})
 KNOWN_IDS = frozenset(
     {RULING_ID, LEDGER_ID, BQ_ID, D12_RULING, DELEGATION_ID, D13_RULING, DRYRUN_ID}
 )
@@ -1640,7 +1681,7 @@ DEPUTY_LINE = (
 )
 DRYRUN_LINE = f"The run of record is #365 comment {DRYRUN_ID}"
 DRYRUN_MET = f"MET: the deputy's run of record, #365 comment {DRYRUN_ID}"
-APPENDIX = "## Appendix — the dry-run and blind-check brief (verbatim)"
+APPENDIX = "## Appendix — the dry-run brief"
 BLIND_WORDS = re.compile(r"blind check", re.IGNORECASE)
 DRY_WORDS = re.compile(r"dry run", re.IGNORECASE)
 
@@ -1897,7 +1938,83 @@ GATES: tuple[tuple[str, Callable[[Texts], list[Finding]]], ...] = (
     ("G-DEPUTY", lambda t: fails("G-DEPUTY", deputy_problems(t.pack))),
     ("G-MUTLIST", lambda t: fails("G-MUTLIST", mutlist_problems(t.pack))),
     ("G-ARM", lambda t: fails("G-ARM", arm_problems(t))),
+    ("G-DESC", lambda t: fails("G-DESC", desc_problems(t))),
+    ("G-T2", lambda t: fails("G-T2", t2_problems(t))),
 )
+
+
+# E15-D15 R-5 item 2 (`D15`:282): a description is never a live value. A cell's description is
+# its position, its sync group and axes, the feed's state word and its state words: after the
+# position sentence no number, no mark and no last; the environment word only in the name.
+DESC_RULE = "- **The description, assembled in one order:**"
+DESC_QUOTE = re.compile(r'"(Chart [^"]*)"')
+POSITION = re.compile(r"Chart (?:\{position\} of \{count\}|\d of \d)\. ")
+LIVE_VALUE = re.compile(r"\d|\bmark\b|\blast\b|\bDemo\b|\bMixed\b|, Live\b", re.IGNORECASE)
+
+
+def descriptions(t: Texts) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for ln in lines(t.spec):
+        if ln.startswith(DESC_RULE):
+            out += [("spec §6", d) for d in DESC_QUOTE.findall(ln)]
+    for r in name_rows(t.hand):
+        if r[1] == "`region`":
+            out += [(f"hand-off {r[0]}", d) for d in DESC_QUOTE.findall(r[3])]
+    return out
+
+
+def desc_problems(t: Texts) -> list[str]:
+    got = descriptions(t)
+    bad: list[str] = []
+    for where in ("spec §6", "hand-off"):
+        if sum(w.startswith(where) for w, _ in got) < 2:
+            bad.append(f"{where}: fewer than two cell descriptions to check")
+    for where, d in got:
+        m = POSITION.match(d)
+        if m is None:
+            bad.append(f"{where}: the description does not open with the position: {d[:40]!r}")
+            continue
+        hit = LIVE_VALUE.search(d[m.end() :])
+        if hit:
+            bad.append(f"{where}: {hit.group(0)!r} after the position (a live value): {d[:50]!r}")
+    return bad
+
+
+# G-T2 (`.claude/rules/32-design-specs.md`): the maximised cell's CMP-229 has its read-only form
+# for the role legs, `14` §0.5 rule 5 and E09-D09 §2.1 cited, rendering 2b named, and the
+# component rows naming CMP-229, CMP-079 and CMP-019's `lock`.
+T2_WORDS = (
+    "`14` §0.5 rule 5",
+    "E09-D09 §2.1",
+    "rendering 2b",
+    "CMP-079 RbacGate",
+    "CMP-019 `lock`",
+    "CMP-016",
+    'aria-disabled="true"',
+    "in the DOM at mount",
+    "one grid-header notice",
+    "`rbac.view_as`",
+    "`rbac.permission`",
+    "`rbac.account`",
+)
+T2_ROWS = ("A-4", "A-8", "A-11")
+T2_COMPONENTS = ("CMP-229", "CMP-079", "CMP-019", "`lock`")
+
+
+def t2_problems(t: Texts) -> list[str]:
+    bad: list[str] = []
+    s8 = section(t.spec, "8.")
+    for w in T2_WORDS:
+        if w not in s8:
+            bad.append(f"spec §8: the T2 form lacks {w!r}")
+    if "T2" not in section(t.hand, "3."):
+        bad.append("hand-off §3: no T2 row for the maximised cell's arm control")
+    for row in T2_ROWS:
+        block = t.pack.split(f"#### {row} ", 1)[-1].split("#### A-", 1)[0]
+        for c in T2_COMPONENTS:
+            if c not in block:
+                bad.append(f"{row}: {c} is not named (G-T2.6)")
+    return bad
 
 
 CARVE_OUT = (
@@ -2134,6 +2251,18 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "remove the C-2.6 carve-out sentence from the spec",
         _sub("spec", CARVE_OUT, "LOCKED covers every chart action."),
     ),
+    (
+        "G-DESC",
+        "put the mark back into the spec's description copy",
+        _sub(
+            "spec", "Feed: Live. Chart trading locked", "Feed: Live; mark 64,011.5. Chart trading"
+        ),
+    ),
+    (
+        "G-T2",
+        "drop rendering 2b from the spec's T2 form",
+        _sub("spec", "rendering 2b", "a rendering"),
+    ),
 )
 
 
@@ -2203,6 +2332,16 @@ PROBES: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-ARM",
         "drop the disarm-failure path from the spec",
         _sub("spec", "**If the disarm fails**", "**Later**"),
+    ),
+    (
+        "G-DESC",
+        "a demo cell's description repeats its environment",
+        _sub("hand", "Sync group B: interval and crosshair.", "Demo. Sync group B: interval."),
+    ),
+    (
+        "G-T2",
+        "A-4 drops CMP-079",
+        _sub("pack", "CMP-079 RbacGate (the maximised", "(the maximised"),
     ),
     (
         "G-NAME",
