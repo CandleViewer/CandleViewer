@@ -49,6 +49,7 @@ def test_rules_update_ends_for_a_rule_naming_a_withdrawn_grant() -> None:
         w.grants = (AccountGrant(ACC_A, True, False, False),)  # account B is withdrawn
         w.call(w.registry.grants_changed, USER)
         c.next_of("permission_change")
+        w.clock.now += 1.0  # past the window the first `d` opened (§8.1): the next leaves at once
         assert [_send(w, r) for r in (both, on_a)] == [0, 1]
         assert c.recv()["p"]["rules"][0]["id"] == on_a.id
 

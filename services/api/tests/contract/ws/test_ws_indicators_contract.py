@@ -72,7 +72,9 @@ class _Rig:
         services.snapshots = SnapshotRouter({"indicators": source})
 
     def close(self, b: Bar, *, generation: int = 0, amended: bool = False) -> None:
+        """One close, past the 250 ms window the last one opened (§8.1), so it leaves at once."""
         update = BarUpdate(kind="close", bar=b, amended=amended)
+        self.w.clock.now += 0.25
         self.w.call(self.router.emit, M1, (update,), generation)
 
 

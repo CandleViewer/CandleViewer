@@ -385,6 +385,7 @@ def test_integration_upstream_u_gap_produces_snap_with_reason_upstream_desync() 
         assert snap["t"] == "snap" and snap["s"] == 3  # no delta crossed the gap, no reuse
         assert snap["meta"] == {"reason": "upstream_desync", "source": "live", "previous_seq": 2}
         assert guard.observe(SYM, 14, snapshot=False) == "drop"  # held until the rebuild
+        w.clock.now += 0.1  # past the window the first `d` opened (§8.1): this one leaves at once
         publish(w, "book", "book.BTCUSDT.50")
         assert c.recv()["s"] == 4
 
@@ -426,11 +427,16 @@ def test_integration_token_expiry_reauth_in_place_preserves_subscriptions_and_se
         ok = c.next_of("auth_ok")
         assert ok["id"] == "re" and ok["p"]["token_expires_at_ms"] == w.clock.wall_ms() + 600_000
         publish(w, "trades", "trades.BTCUSDT")
-        d = c.recv()
+        # a `system` notice of the connection's class, which `advance`'s steps can cause (§8.3),
+        # may come first
+        while (d := c.recv()).get("ch") == "system":
+            pass
         assert (d["t"], d["s"]) == ("d", 3)  # no snap, no new sub_ok; the sequence continued
         w.advance(c, 700.0)  # past the FIRST token's expiry, inside the second
         publish(w, "orders", "orders", account=ACC_A)
-        assert (c.recv()["ch"]) == "orders"
+        while (d := c.recv()).get("ch") == "system":
+            pass
+        assert d["ch"] == "orders"
 
 
 def test_integration_without_reauth_an_expired_token_closes_with_bye_4401() -> None:
@@ -457,6 +463,7 @@ def test_integration_replay_subscribe_and_seek_emit_the_documented_series() -> N
             ("initial", "replay", 1)
         ] * 2
         for tick in (1000, 2000, 3000):
+            w.clock.now += 0.1  # each past the last one's window (§8.1), so none is merged
             publish(w, "trades", topics[0]["ch"], replay=RS, ts_ms=tick)
         ds = c.drain(3)
         assert [(d["s"], d["ts"], d["rs"]) for d in ds] == [

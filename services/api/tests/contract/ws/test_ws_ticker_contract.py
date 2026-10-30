@@ -3,8 +3,8 @@ validates every frame against `23-ws-protocol.md` §13-§15, the §14.8 `TickerU
 
 Recorded BTCUSDT ticker frames replay through the production `TickerStream` and `TickerTopic`; the
 ETHUSDT and SOLUSDT frames are those frames re-keyed in-test (`tests/_tickers.py`). Time is the
-harness's fake clock, and `CV_WS_BACKPRESSURE_ENABLED` is off (the World's default), so the topic's
-own 250 ms window is the only throttle.
+harness's fake clock, and `CV_WS_BACKPRESSURE_ENABLED` is on (the World's default), so the
+outbound pipeline's window paces each subscription behind the topic's own 250 ms window (§8.1).
 """
 
 from __future__ import annotations
@@ -117,13 +117,20 @@ def test_ac1_a_ticker_subscription_is_snapped_then_streamed_no_faster_than_250_m
             rig.feed(raw)
         rig.w.clock.now += WINDOW_S
         rig.feed()  # the last window closes
-        deltas = [f for f in _until_pong(c) if f["t"] == "d"]
+        rig.w.clock.now += 1.0  # and the pipeline's, which holds its update (§8.1)
+        final = rig.stream.latest("BTCUSDT")
+        assert final is not None and final.last_price is not None
+        last = format(final.last_price, "f")
+        # the topic's own `d`s up to the one holding the final state, read as a fence (a `pong`
+        # rides the priority lane, so it can pass a window); a `system` notice may ride along
+        deltas: list[dict[str, Any]] = []
+        while not deltas or _items(deltas[-1])[0]["last_price"] != last:
+            if (f := c.recv())["t"] == "d" and f["ch"] == "ticker.BTCUSDT":
+                deltas.append(f)
+        assert [f for f in _until_pong(c) if f.get("ch") == "ticker.BTCUSDT"] == []
     assert len(deltas) >= 5
     assert min(b["ts"] - a["ts"] for a, b in pairwise(deltas)) >= WINDOW_S * 1000
     assert [d["s"] for d in deltas] == list(range(snap["s"] + 1, snap["s"] + 1 + len(deltas)))
-    final = rig.stream.latest("BTCUSDT")
-    assert final is not None and final.last_price is not None
-    assert _items(deltas[-1])[0]["last_price"] == format(final.last_price, "f")
 
 
 @pytest.mark.parametrize("offer", h.OFFERS.values(), ids=h.OFFERS.keys())

@@ -18,7 +18,6 @@ import pytest
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.binary import FLAG_ESTIMATED, FLAG_REPLAY
 from candleviewer.ws.sequencing import TopicEmitter, causal_sort
 from candleviewer.ws.topics import FAMILIES
@@ -29,6 +28,7 @@ from tests.contract.ws._harness import (
     PRIVATE_ORDER,
     SCHEMAS,
     SYM,
+    Client,
     World,
     all_private,
     assert_contiguous,
@@ -142,8 +142,20 @@ def test_s2_snapshot_false_without_continuity_is_forced_to_snap_first() -> None:
 # -- S3 ----------------------------------------------------------------------------------------
 
 
+def _until(c: Client, *wanted: tuple[str, str]) -> None:
+    """Read until a frame has arrived for each `(t, ch)` of `wanted`, as often as it is named: a
+    fence on the paced lanes that reads no `s`, which the mutation below shifts."""
+    left = list(wanted)
+    while left:
+        f = c.recv()
+        if (f["t"], f.get("ch")) in left:
+            left.remove((f["t"], f["ch"]))
+
+
 def _s3_scenario(w: World, offer: list[str] | None = None) -> list[dict[str, Any]]:
-    """Concurrent writers on several topics plus resync/reconfigure re-snapshots mid-stream."""
+    """Concurrent writers on several topics plus resync/reconfigure re-snapshots mid-stream. Paced
+    (§8.1): each topic's first update leaves at once, the rest of the burst as one window once the
+    clock passes it; the last `trades` update waits for its re-snapshot, then for its window."""
     a, b = "trades.BTCUSDT", "ticker.BTCUSDT"
     with connect(w, offer) as c:
         c.sub({"ch": a}, {"ch": b}, {"ch": "heatmap.BTCUSDT"})
@@ -157,9 +169,14 @@ def _s3_scenario(w: World, offer: list[str] | None = None) -> list[dict[str, Any
         jobs = [("trades", a), ("ticker", b)] * 4
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(writer, jobs))
+        w.clock.now += 1.0  # past both windows: each topic's first update, then its window
+        _until(c, *[("d", a), ("d", b)] * 2)
         c.send({"t": "resync", "id": "r", "ch": a, "p": {"reason": "manual"}})
         c.send({"t": "ctl", "id": "k", "ch": "heatmap.BTCUSDT", "p": {"time_bucket_ms": 1000}})
+        _until(c, ("snap", a), ("snap", "heatmap.BTCUSDT"))
         publish(w, "trades", a, "structured")
+        w.clock.now += 1.0
+        _until(c, ("d", a))
         c.send({"t": "ping", "id": "fence"})
         while c.recv()["t"] != "pong":
             pass
@@ -176,9 +193,14 @@ def test_s3_sequence_increments_by_exactly_one_per_topic_under_concurrent_writes
     for f in frames:
         if f["t"] in {"snap", "d"}:
             by_topic.setdefault(f["ch"], []).append(f["s"])
-    assert len(by_topic["trades.BTCUSDT"]) == 1 + 80 + 1 + 1  # snap, 80 d, resync snap, last d
-    assert by_topic["ticker.BTCUSDT"] == list(range(1, 82))
+    # snap, the first update, the other 79 as one window, the resync snap, the last update
+    assert by_topic["trades.BTCUSDT"] == [1, 2, 3, 4, 5]
+    assert by_topic["ticker.BTCUSDT"] == [1, 2, 3]  # snap, the first update, the other 79
     assert by_topic["heatmap.BTCUSDT"] == [1, 2]  # reconfigure snap continues the domain
+    # no update is lost to the windows: every print rides a `d`, and each ticker update is counted
+    ds = {ch: [f["p"] for f in frames if (f["t"], f.get("ch")) == ("d", ch)] for ch in by_topic}
+    assert sum(len(p["trades"]) for p in ds["trades.BTCUSDT"]) == 80 + 1
+    assert [p.get("coalesced_count", 1) for p in ds["ticker.BTCUSDT"]] == [1, 79]
 
 
 def test_s3_sequence_survives_resync_and_reconfigure_without_reuse() -> None:
@@ -197,13 +219,14 @@ def test_s3_mutation_a_skipped_sequence_number_fails_the_oracle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC "the suite catches a real regression": the generator is deliberately changed to skip a
-    number under concurrency; the S3 oracle must fail on it."""
+    number under concurrency; the S3 oracle must fail on it. Five deltas leave the pacer (two per
+    burst topic, then the last `trades` one), so it skips every third."""
     real = TopicEmitter.delta
     calls = {"n": 0}
 
     def skipping(self: TopicEmitter, sub: Any, *a: Any, **k: Any) -> bool:
         calls["n"] += 1
-        if calls["n"] % 7 == 0:
+        if calls["n"] % 3 == 0:
             sub.seq += 1  # skip one
         return real(self, sub, *a, **k)
 
@@ -253,15 +276,11 @@ def test_s4_orders_and_executions_are_never_coalesced_or_throttled(family: str) 
         assert not any("coalesced" in f["p"] or "coalesced_count" in f["p"] for f in frames)
 
 
-@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
-def test_s4_coalescable_topics_do_mark_coalesced_deltas(
-    backpressure: BackpressureConfig | None,
-) -> None:
+def test_s4_coalescable_topics_do_mark_coalesced_deltas() -> None:
     """Control for S4: coalescing exists on market data and is flagged, so its absence on
-    orders/executions above is a real property and not an artefact of the harness. With the flag
-    on (#3268) the producer's own count goes through its window: the update leaves at once (the
-    leading edge, D12) with the same frame as with the flag off."""
-    w = World(backpressure=backpressure)
+    orders/executions above is a real property and not an artefact of the harness. The producer's
+    own count goes through its window (#3268): the update leaves at once (the leading edge, D12)."""
+    w = World()
     with connect(w) as c:
         c.sub({"ch": "bars.BTCUSDT.time.1", "opts": {"encoding": "structured"}})
         c.recv()
@@ -291,7 +310,9 @@ def test_s5_private_frames_for_one_account_event_arrive_in_causal_order() -> Non
         sent = w.call(w.hub.publish_private, ACC_A, scrambled) + w.call(viewed)
         assert sent == 4
         assert [c.recv()["ch"] for _ in range(4)] == PRIVATE_ORDER
-        # a second event keeps the order, and sequence numbers stay per topic
+        # a second event keeps the order, and sequence numbers stay per topic; it comes once the
+        # windows the first opened have closed (§8.1), so it leaves at once as the first did
+        w.clock.now += 1.0
         w.call(w.hub.publish_private, ACC_A, list(reversed(scrambled)))
         w.call(viewed)
         second = c.drain(4)
@@ -321,7 +342,7 @@ def test_s5_events_for_another_account_never_reach_this_subscription() -> None:
 # -- S6 ----------------------------------------------------------------------------------------
 
 
-#: §16.2 / §8.4: the SPEC's outbound budget (not the flag-off gateway's constant, 1 024: #2410).
+#: §16.2 / §8.4: the SPEC's outbound budget (#2410).
 SPEC_QUEUE_FRAMES = 2_000
 
 
@@ -330,19 +351,16 @@ def _flood(w: World, family: str, ch: str, n: int) -> int:
     return int(w.call(lambda: sum(w.hub.publish(ch, body, account=ACC_A) for _ in range(n))))
 
 
-@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
-def test_s6_orders_overflow_is_bounded_by_the_spec_budget_then_slow_consumer_4429(
-    backpressure: BackpressureConfig | None,
-) -> None:
+def test_s6_orders_overflow_is_bounded_by_the_spec_budget_then_slow_consumer_4429() -> None:
     """§8.4 step 3: `orders` cannot be dropped, so on overflow the socket is closed with
     `bye slow_consumer` / 4429. Bound asserted against the SPEC budget (2 000 frames), produced in
-    one event-loop turn so the writer cannot drain. Memory itself is E17-Q02. With the flag on
-    (#412) the `orders` snapshot follows its `sub_ok` on the priority lane (§8.4 Lanes)."""
-    w = World(backpressure=backpressure)
+    one event-loop turn so the writer cannot drain. Memory itself is E17-Q02. The `orders`
+    snapshot follows its `sub_ok` on the priority lane (§8.4 Lanes, #412)."""
+    w = World()
     with connect(w) as c:
         all_private(c, "orders")
-        # Flag on, nothing is taken after the close (WS-D01): the update over budget is the last.
-        taken = SPEC_QUEUE_FRAMES + (500 if backpressure is None else 1)
+        # Nothing is taken after the close (WS-D01): the update over budget is the last.
+        taken = SPEC_QUEUE_FRAMES + 1
         assert _flood(w, "orders", "orders", SPEC_QUEUE_FRAMES + 500) == taken
         deltas = 0
         while (f := c.recv())["t"] != "bye":
@@ -353,10 +371,10 @@ def test_s6_orders_overflow_is_bounded_by_the_spec_budget_then_slow_consumer_442
 
 
 def test_s6_coalescable_overflow_gets_backpressure_snap_and_no_close() -> None:
-    """§8.4 steps 1-2 (#2409, with `CV_WS_BACKPRESSURE_ENABLED` on): a coalescable topic over
-    budget is dropped and re-snapshotted with `reason: "backpressure"`; the socket is NOT closed
-    (only orders/executions close it), so a `ping` still gets its `pong`."""
-    w = World(backpressure=BackpressureConfig())
+    """§8.4 steps 1-2 (#2409): a coalescable topic over budget is dropped and re-snapshotted with
+    `reason: "backpressure"`; the socket is NOT closed (only orders/executions close it), so a
+    `ping` still gets its `pong`."""
+    w = World()
     with connect(w) as c:
         c.sub({"ch": "trades.BTCUSDT"})
         c.drain(1)
@@ -377,9 +395,9 @@ def test_s6_coalescable_overflow_gets_backpressure_snap_and_no_close() -> None:
 
 
 def test_s6_coalescable_topic_is_not_cut_below_the_spec_budget() -> None:
-    """§16.2 (#2410, with `CV_WS_BACKPRESSURE_ENABLED` on): up to 2 000 queued frames are
-    legitimate; a burst of exactly that must all arrive."""
-    w = World(backpressure=BackpressureConfig())
+    """§16.2 (#2410): up to 2 000 queued frames are legitimate; a burst of exactly that must all
+    arrive."""
+    w = World()
     with connect(w) as c:
         c.sub({"ch": "trades.BTCUSDT"})
         c.drain(1)
@@ -409,9 +427,13 @@ def test_s7_grant_withdrawal_emits_revoked_and_other_topics_continue() -> None:
         assert (revoked["ch"], revoked["p"]["reason"]) == ("positions", "account_scope_changed")
         assert revoked["p"]["removed_accounts"] == [str(ACC_B)]
         assert revoked["p"]["resubscribe_allowed"] is True  # scope narrowed, account A kept
+        # #415: the narrowed topic is re-pended and snapped under its new scope (§9.5)
+        snap = c.recv()
+        assert (snap["t"], snap["ch"], snap["s"]) == ("snap", "positions", 2)
+        assert snap["meta"]["reason"] == "reconfigure"
+        publish(w, "orders", "orders", "structured", account=ACC_A)  # the priority lane (§8.4)
         publish(w, "trades", "trades.BTCUSDT", "structured")
-        publish(w, "orders", "orders", "structured", account=ACC_A)
-        assert [(f["ch"], f["s"]) for f in c.drain(2)] == [("trades.BTCUSDT", 2), ("orders", 2)]
+        assert [(f["ch"], f["s"]) for f in c.drain(2)] == [("orders", 2), ("trades.BTCUSDT", 2)]
 
 
 #: §16.4 (S7, §9.5): a grant change reaches the socket as `revoked` within this many real seconds.
