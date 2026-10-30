@@ -6,5 +6,15 @@
     "checkJs": false
   },
   "include": ["src", "bench", "test", "tsup.config.ts"],
-  "exclude": ["dist", "node_modules", "coverage", "src/index.ts", "src/api", "src/host", "test/api"]
+  "exclude": [
+    "dist",
+    "node_modules",
+    "coverage",
+    "src/index.ts",
+    "src/api",
+    "src/host",
+    "src/worker/host.ts",
+    "test/api",
+    "test/worker"
+  ]
 }

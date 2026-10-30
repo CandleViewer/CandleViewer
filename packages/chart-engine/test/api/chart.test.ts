@@ -24,6 +24,11 @@ function mount(extra: Partial<ChartOptions> = {}): ChartInternal {
   return createChart({ container: asHtml(container), theme, ...extra }) as ChartInternal;
 }
 
+/** Runs the render runtime's next frame (inline mode: the page's frame callback, faked). */
+const nextFrame = (): void => {
+  vi.advanceTimersByTime(16);
+};
+
 const canvasOf = (c: FakeElement): FakeElement => {
   const canvas = c.children.find((el) => el.tagName === "CANVAS");
   if (canvas === undefined) throw new Error("no canvas mounted");
@@ -48,6 +53,8 @@ describe("Scenario: A chart mounts and reports frame stats through the stub", ()
     expect(canvas.style["width"]).toBe("400px");
     expect(canvas.style["height"]).toBe("300px");
     expect(canvas.attributes.get("aria-hidden")).toBe("true");
+    expect(chart.runMode).toBe("inline"); // the fake realm has no OffscreenCanvas
+    nextFrame(); // the runtime paints on its frame (26 §3.2), not inside createChart
     expect(canvas.context2d?.fills).toEqual([{ color: "#0b0e11", w: 800, h: 600 }]);
     chart.dispose();
   });
@@ -96,13 +103,18 @@ describe("Scenario: A chart mounts and reports frame stats through the stub", ()
 
   it("clears without filling when the theme lacks the background token or 2D is absent", () => {
     const chart = mount({ theme: { ...theme, colors: {} } });
+    nextFrame();
     expect(canvasOf(container).context2d?.fills).toEqual([]);
     expect(canvasOf(container).context2d?.clears).toBe(1);
     chart.dispose();
 
     container = fakeContainer();
     container.ownerDocument.context2dAvailable = false;
-    expect(() => mount().dispose()).not.toThrow();
+    expect(() => {
+      const c = mount();
+      nextFrame();
+      c.dispose();
+    }).not.toThrow();
   });
 });
 
@@ -136,6 +148,7 @@ describe("createChart facade", () => {
     const chart = mount();
     chart.setTheme({ ...theme, colors: { "color.chart.background": "#ffffff" } });
     chart.setDensity("dense");
+    nextFrame();
     expect(canvasOf(container).context2d?.fills.at(-1)?.color).toBe("#ffffff");
     expect(chart.theme.colors["color.chart.background"]).toBe("#ffffff");
     expect(chart.density).toBe("dense");

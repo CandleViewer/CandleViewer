@@ -228,6 +228,25 @@ describe("Scenario: The framework-free boundary is enforced (tsc, no DOM lib in 
   );
 
   it(
+    "the render worker compiles without the DOM lib; only its main-thread host carries it",
+    () => {
+      // E11-T02: the worker entry, runtime and protocol stay in the no-DOM program.
+      expect(compile("tsconfig.core.json", "src/worker/probe.ts")).toEqual([
+        "Cannot find name 'requestAnimationFrame'.",
+        "Cannot find name 'HTMLElement'.",
+        "Cannot find name 'Document'.",
+      ]);
+      expect(compile("tsconfig.dom.json", "src/worker/host.ts")).toEqual([]);
+      const core = ts.readConfigFile(join(PKG, "tsconfig.core.json"), ts.sys.readFile).config as {
+        exclude: string[];
+      };
+      expect(core.exclude).toContain("src/worker/host.ts");
+      expect(core.exclude).not.toContain("src/worker");
+    },
+    SLOW,
+  );
+
+  it(
     "ESLint lints the text it is given (stdin, editors), not the file on disk",
     async () => {
       eslint ??= new ESLint({ cwd: PKG });

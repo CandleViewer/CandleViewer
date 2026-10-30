@@ -1,7 +1,9 @@
 // Pane facade (stub). Series, overlay and indicator handles record their lifecycle only; the
 // stores, batches and plugin hosting behind them are E11-T03 / E11-S01 / E12+.
+import { encodeCandles, type BufferLayout, type DataOp, type StoreId } from "../worker/protocol.js";
 import { createPriceScale } from "./scales.js";
 import type {
+  CandleData,
   IndicatorHandle,
   OverlayHandle,
   Pane,
@@ -17,6 +19,8 @@ export interface PaneHost {
   onRemoved(id: PaneId): void;
   /** Throws once the owning chart is disposed. */
   assertLive(): void;
+  /** Hands a batch to the render runtime (buffer transferred). */
+  data(store: StoreId, op: DataOp, layout: BufferLayout, buffer: ArrayBuffer): void;
 }
 
 /** A series handle plus the state the stub records (read by tests; no renderer yet). */
@@ -65,6 +69,18 @@ export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneI
       live();
       let options: SeriesOptionsMap[T] = { ...opts };
       let visible = true;
+      // Candle and OHLC bars feed the `bars` store; the other stores' encoders arrive with them
+      // (E11-T03 / E12, README BQ-13). The batch's buffer is transferred: after `setData`,
+      // `append` or `prependHistory` the caller's arrays are detached (length 0), so the same
+      // object cannot be sent twice.
+      const send =
+        type === "candles" || type === "bars"
+          ? (op: DataOp, d: unknown): void => {
+              live();
+              const { layout, buffer } = encodeCandles(d as CandleData);
+              host.data("bars", op, layout, buffer);
+            }
+          : (): void => undefined;
       const handle: SeriesInternal<T> = {
         type,
         get options(): SeriesOptionsMap[T] {
@@ -73,9 +89,9 @@ export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneI
         get visible(): boolean {
           return visible;
         },
-        setData: () => undefined,
-        append: () => undefined,
-        prependHistory: () => undefined,
+        setData: (d) => send("replace", d),
+        append: (d) => send("append", d),
+        prependHistory: (d) => send("prepend", d),
         setOptions(next: Partial<SeriesOptionsMap[T]>): void {
           options = { ...options, ...next };
         },
