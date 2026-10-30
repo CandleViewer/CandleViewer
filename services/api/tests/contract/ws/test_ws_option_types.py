@@ -5,7 +5,7 @@ and the gateway answers a raise by closing the connection `internal_error` (1011
 The frames that carry the bad value are sent unvalidated: §13.5 and §13.6 do not allow them, which
 is the point. Every other frame sent here is validated before it goes out, and the harness validates
 every frame the server sends on receipt. The module runs under both subprotocols (`conftest.py`),
-each with the backpressure flag off and on: with it on, the replies are queued on the §8.4 lanes.
+on the budgeted pipeline: the replies are queued on the §8.4 lanes (#2409: the flag-off rows went).
 """
 
 from __future__ import annotations
@@ -14,19 +14,16 @@ from typing import Any
 
 import pytest
 
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from tests.contract.ws._harness import World, connect, json_only
 
 HEATMAP = "heatmap.BTCUSDT"
-_FLAGS = pytest.mark.parametrize("flag", [None, BackpressureConfig()], ids=["flag-off", "flag-on"])
 
 
-@_FLAGS
 @pytest.mark.parametrize(("key", "value"), [("depth", []), ("time_bucket_ms", {})])
 def test_contract_a_ctl_option_of_the_wrong_type_is_refused_and_the_socket_is_served(
-    key: str, value: Any, flag: BackpressureConfig | None
+    key: str, value: Any
 ) -> None:
-    with connect(World(backpressure=flag)) as c:
+    with connect(World()) as c:
         c.sub(HEATMAP)
         c.send({"t": "ctl", "id": "k", "ch": HEATMAP, "p": {key: value}}, conform=False)
         err = c.next_of("err")  # frames read on the way are validated too
@@ -44,13 +41,12 @@ def test_contract_a_ctl_option_of_the_wrong_type_is_refused_and_the_socket_is_se
 
 
 @json_only
-@_FLAGS
-def test_contract_a_ctl_option_of_nan_on_the_json_wire_is_refused_and_the_socket_is_served(
-    flag: BackpressureConfig | None,
-) -> None:
+def test_contract_a_ctl_option_of_nan_on_the_json_wire_is_refused_and_the_socket_is_served() -> (
+    None
+):
     """`NaN` is no JSON, but the JSON path decodes it to a float (`json.loads`); MessagePack refuses
     it before any option is read, so only this wire carries it to the check."""
-    with connect(World(backpressure=flag)) as c:
+    with connect(World()) as c:
         c.sub(HEATMAP)
         c.send_text('{"t":"ctl","id":"k","ch":"heatmap.BTCUSDT","p":{"depth":NaN}}')
         err = c.next_of("err")
@@ -62,7 +58,6 @@ def test_contract_a_ctl_option_of_nan_on_the_json_wire_is_refused_and_the_socket
         assert c.next_of("pong")["id"] == "p"  # no `bye`, no close: the connection is open
 
 
-@_FLAGS
 @pytest.mark.parametrize(
     ("bad", "key"),
     [
@@ -71,9 +66,9 @@ def test_contract_a_ctl_option_of_nan_on_the_json_wire_is_refused_and_the_socket
     ],
 )
 def test_contract_a_sub_entry_with_an_option_of_the_wrong_type_is_refused_alone(
-    bad: dict[str, Any], key: str, flag: BackpressureConfig | None
+    bad: dict[str, Any], key: str
 ) -> None:
-    with connect(World(backpressure=flag)) as c:
+    with connect(World()) as c:
         results = c.sub("book.BTCUSDT.50", bad, "ticker.BTCUSDT", conform=False)["p"]["results"]
         assert [(r["ch"], r["ok"]) for r in results] == [
             ("book.BTCUSDT.50", True),
@@ -86,7 +81,7 @@ def test_contract_a_sub_entry_with_an_option_of_the_wrong_type_is_refused_alone(
         )
         assert error["message"] == f"Option '{key}' is out of range."
         # The other two entries are served: the first two `snap`s are theirs. They are read before
-        # the `ping`: with the flag on, a `pong` may overtake a `snap` (§8.4 Lanes).
+        # the `ping`: a `pong` may overtake a `snap` (§8.4 Lanes).
         snapped = {c.next_of("snap")["ch"] for _ in range(2)}
         assert snapped == {"book.BTCUSDT.50", "ticker.BTCUSDT"}
         c.send({"t": "ping", "id": "p"})

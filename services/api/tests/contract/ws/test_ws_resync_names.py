@@ -12,16 +12,12 @@ from typing import Any
 import pytest
 
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
-from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.limits import SUB_ID_MAX_LEN
 from tests.contract.ws._harness import SCHEMAS, Client, World, connect, current_offer, publish
 
 BOOK, TICKER, TRADES = "book.BTCUSDT.50", "ticker.BTCUSDT", "trades.BTCUSDT"
 RS, OTHER_RS = "bb000000-0000-4000-8000-000000000001", "bb000000-0000-4000-8000-000000000002"
 LIMIT = 5  # §7.5: resyncs a minute per stream
-FLAGS = pytest.mark.parametrize(
-    "backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"]
-)
 #: §7.5: not the §13 `$defs/uuid` form, though `uuid.UUID` reads all of them but the last.
 NOT_UUIDS = {
     "urn": f"urn:uuid:{RS}",
@@ -50,8 +46,8 @@ def _replay(c: Client, *topics: str, rs: Any = RS, conform: bool = True) -> list
 
 def _fenced(c: Client) -> list[dict[str, Any]]:
     """Every frame sent before a fresh topic's first `snap`, but that topic's `sub_ok`. The `snap`
-    queues behind every earlier one, on the normal lane too, so this fence holds with the
-    backpressure flag on, where a `pong` could overtake a `snap` (§8.4 Lanes)."""
+    queues behind every earlier one, on the normal lane too, so this fence holds where a `pong`
+    could overtake a `snap` (§8.4 Lanes)."""
     fence = f"trades.F{len(c.seen)}USDT"
     c.send({"t": "sub", "id": "fence", "p": {"topics": [{"ch": fence}]}})
     out: list[dict[str, Any]] = []
@@ -107,19 +103,16 @@ def test_the_sub_id_bound_is_the_schema_s() -> None:
     assert (sub_id["minLength"], sub_id["maxLength"]) == (1, SUB_ID_MAX_LEN)
 
 
-@FLAGS
-def test_a_loss_on_the_replay_stream_resnapshots_the_replay_stream_only(
-    backpressure: BackpressureConfig | None,
-) -> None:
+def test_a_loss_on_the_replay_stream_resnapshots_the_replay_stream_only() -> None:
     """Gherkin: a `resync` naming the replay stream by `rs` (with its `sub_id` pin) gets one `snap`
     with that `rs`; the live stream gets none, and none of its limit is spent."""
-    with connect(World(backpressure=backpressure)) as c:
+    with connect(World()) as c:
         _, replay = _twins(c)
         _resync(c, "c-92", rs=RS, sub_id=replay, reason="sequence_gap", last_seq=1)
         assert _snaps(_fenced(c)) == [("snap", RS, 2, "client_resync", 1)]
         for i in range(LIMIT):
             _resync(c, f"l{i}")
-        frames = _fenced(c)  # a later `snap` may replace a queued one with the flag on (§8.4)
+        frames = _fenced(c)  # a later `snap` may replace a queued one (§8.4)
         assert {(f["t"], f.get("rs")) for f in frames} == {("snap", None)}
 
 
@@ -312,15 +305,12 @@ def test_the_control_frames_name_their_subscription() -> None:
         ]
 
 
-@FLAGS
-def test_ctl_and_unsub_name_their_stream_like_resync(
-    backpressure: BackpressureConfig | None,
-) -> None:
+def test_ctl_and_unsub_name_their_stream_like_resync() -> None:
     """Gherkin (W10): a `ctl` or `unsub` with the envelope `rs` retunes or ends that replay stream
     alone, the live one unchanged; with no `rs`, each reaches the live one only (§5.3, §5.4), so
     with only a replay stream left a `ctl` gets `not_subscribed` and an `unsub` is a `noop`. An
     `rs` naming no stream: `not_subscribed` carrying it in lower case, or a `noop`."""
-    w = World(backpressure=backpressure)
+    w = World()
     with connect(w) as c:
         live, replay = _twins(c)
         c.send({"t": "ctl", "id": "k1", "ch": BOOK, "rs": RS.upper(), "p": {"paused": True}})
@@ -339,7 +329,7 @@ def test_ctl_and_unsub_name_their_stream_like_resync(
         assert noop["p"]["results"] == [{"ch": BOOK, "ok": True, "noop": True}]
         ended = [{"sub_id": replay, "rs": RS}]
         assert done["p"]["results"] == [{"ch": BOOK, "ok": True, "ended": ended}]
-        w.clock.now += 0.1  # flag on: past the 50 ms window the first delta opened (§8.1)
+        w.clock.now += 0.1  # past the 50 ms window the first delta opened (§8.1)
         publish(w, "book", BOOK)
         assert [(f["t"], f.get("rs"), f["s"]) for f in _fenced(c)] == [("d", None, 3)]
         c.send({"t": "unsub", "id": "u3", "p": {"topics": [BOOK]}})
