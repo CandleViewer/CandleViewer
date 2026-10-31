@@ -108,6 +108,7 @@ from candleviewer.oms.exits import (
     OrderExits,
 )
 from candleviewer.oms.fanout.guard import LegGuard, S4SGuard
+from candleviewer.oms.handovers import StoreHandovers
 from candleviewer.oms.idempotency import AnchorService, Lookup, Replay
 from candleviewer.oms.leverage import (
     LeverageDeps,
@@ -131,6 +132,7 @@ from candleviewer.oms.ports import (
     NO_TIER_REQUESTS,
     ArmRecords,
     ClockHealth,
+    ExecutionHandovers,
     Instruments,
     Interim,
     KeyedRecord,
@@ -138,6 +140,7 @@ from candleviewer.oms.ports import (
     NoDayFigures,
     NoHandoverStore,
     OrderFigures,
+    OrderHandovers,
     Profiles,
     RequestRecord,
     RuntimePortName,
@@ -156,6 +159,7 @@ from candleviewer.oms.position_writes import (
     PositionWritesDeps,
     VenuePosition,
 )
+from candleviewer.oms.reconcile_standing import STALE_AFTER_S, ReconcileStanding
 from candleviewer.oms.repository import (
     ExecutionRepository,
     IdempotencyAnchorRepository,
@@ -193,9 +197,19 @@ from candleviewer.oms.ws_topics import (
     View,
 )
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, Lane, LaneStopped, OrderLane, Serving
+from candleviewer.oms_reconcile_wiring import (
+    ReconcileReads,
+    ReconcileWiring,
+    build_reconciliation,
+    job_persistence,
+)
 from candleviewer.oms_stream_wiring import (
     ExchangeWallClock,
     HealthAccounts,
+    NoIntentWriter,
+    PagedNoIntentRecords,
+    PagingForeignOrderLockout,
+    ServedEvidence,
     StreamWiring,
     SystemBroadcast,
     TrackedAccounts,
@@ -231,6 +245,8 @@ from candleviewer.storage.repositories.idempotency_anchors import (
 from candleviewer.storage.repositories.idempotency_anchors_sqlalchemy import (
     SqlAlchemyIdempotencyAnchorStore,
 )
+from candleviewer.storage.repositories.oms_handovers import OmsHandoverStore
+from candleviewer.storage.repositories.oms_handovers_sqlalchemy import SqlAlchemyHandoverStore
 from candleviewer.storage.repositories.orders import (
     NewOrder,
     NewOrderEvent,
@@ -248,6 +264,7 @@ from candleviewer.storage.repositories.positions import (
     PositionStore,
 )
 from candleviewer.storage.repositories.positions_sqlalchemy import SqlAlchemyPositionStore
+from candleviewer.storage.repositories.reconcile_sqlalchemy import SqlAlchemyReconcileStore
 from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
     RecordedStopStore,
@@ -862,6 +879,7 @@ class OmsAudit:
 
 
 #: The notices whose owners have not landed: an ERROR and a page each until they do.
+#: `request_reconciliation` is E29-T06's once the runtime binds its jobs (`bind_reconciliation`).
 UNOWNED_NOTICES: Final = MappingProxyType(
     {"request_reconciliation": "E29-T06", "request_fallback_sl": "E32"}
 )
@@ -906,8 +924,21 @@ class OrderNoticesRouter:
 
     def __init__(self, pager: Pager) -> None:
         self._pager = pager
+        self._reconcile: Callable[[AccountId], Awaitable[object]] | None = None
+
+    def bind_reconciliation(self, trigger: Callable[[AccountId], Awaitable[object]]) -> None:
+        """E29-T06 #914: B1's `request_reconciliation` is the `unknown` trigger (24 Sec.8.5's
+        table) from now on, sent to the account's job; no longer an unowned notice."""
+        self._reconcile = trigger
 
     async def notify(self, notice: OrderNotice) -> None:
+        if notice.kind == "request_reconciliation" and self._reconcile is not None:
+            try:
+                await self._reconcile(AccountId(notice.account_id))
+                return
+            except Exception as exc:  # no job took it: the page an unowned notice raises
+                _log().error("oms_reconcile_request_refused", account_id=str(notice.account_id),
+                             error=type(exc).__name__)  # fmt: skip
         try:
             self._route(notice)
         except Exception as exc:  # not routed, maybe page-worthy: logged and paged, never raised
@@ -1559,6 +1590,10 @@ class OmsStores:
     unclaimed: Callable[[], int]
     lock: EnvironmentLock
     release: Callable[[], Coroutine[Any, Any, None]]
+    #: E29-T06 #914: `oms_handovers` (21 Sec.3.3.12) and the pass's own reads and watermark;
+    #: a composition without them binds `NoHandoverStore` and `NoReconciliation`.
+    handovers: OmsHandoverStore | None = None
+    reconcile: ReconcileReads | None = None
 
 
 #: The name prefix of the order lane's own WAL files, each beside the serving loop's (#913 L2, D6).
@@ -1710,6 +1745,8 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
             timeout_s=ENVIRONMENT_LOCK_TIMEOUT_S,
         ),
         release=pool.dispose,
+        handovers=SqlAlchemyHandoverStore(pool, statement_timeout_ms=cap_ms),
+        reconcile=SqlAlchemyReconcileStore(pool, statement_timeout_ms=cap_ms),
     )
 
 
@@ -1882,6 +1919,12 @@ class _Parts:
     topic_reads: TopicReads | None = None
     #: The observed group facade, when a `trade_groups` topic is wired (E28-T05).
     groups: ObservedGroups | None = None
+    #: E29-T06 #914: the reconciliation jobs, started where the sweep ends, before `ready`
+    #: (BQ-14); None where the stores compose none.
+    reconcile: ReconcileWiring | None = None
+    #: The accounts a job opens for at start: the environment's that resolve to a trading
+    #: account (an active key, not deleted); the rest open on their stream's first trigger.
+    tradable: Callable[[Sequence[UUID]], Awaitable[list[AccountId]]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2284,8 +2327,12 @@ class OmsRuntime:
         watch: Callable[[float], Awaitable[None]] = asyncio.sleep,
         serving_tick: Callable[[], ServingTick] = ServingTick,
         trade_groups: GroupTopic | None = None,
+        standing: ReconcileStanding | None = None,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
+        #: E29-T06 #914: the reconciliation standing the order-entry gate reads (`account_stale`,
+        #: composed into the gate by the root), which the jobs set and clear (BQ-5, C-2.21).
+        self._standing = ReconcileStanding() if standing is None else standing
         self._trade_groups = trade_groups  # E28-T05: seeded, and handed each group write
         #: The wait of the fencing grace (SEC-S3L2-01), apart from `sleep`'s retries, and the
         #: serving loop's between its watch's reads of the lane's state (SEC-S3L2-04).
@@ -2748,6 +2795,8 @@ class OmsRuntime:
                 continue
             if swept and not self._stopping:
                 await self._seeded(parts)  # before `ready`, so before any group write (E28-T05)
+            if swept and not self._stopping:  # E29-T06: STARTUP before `ready` (BQ-14)
+                await self._reconcile_started(parts)
             if swept and not self._stopping:  # a stop that began meanwhile clears `ready` for good
                 self._ready.set()
                 _log().info("oms_ready")
@@ -2755,6 +2804,29 @@ class OmsRuntime:
                     self._topics.attach(OnLaneTopicReads(parts))
                 await self._stream_started(parts)
             return
+
+    async def _reconcile_started(self, parts: _Parts) -> None:
+        """E29-T06 #914 (24 Sec.8.5, BQ-14): the reconciliation jobs open on the lane, each sent
+        `startup`, before `ready` is set; order entry never waits for their passes. The accounts
+        are the environment's that resolve to a trading account; another opens on its stream's
+        first trigger. A start that fails is logged CRITICAL and paged, and the runtime goes on to
+        `ready`: each account whose job did not open is refused order entry (its standing set),
+        never left unreconciled silently."""
+        if parts.reconcile is None or parts.tradable is None:
+            return
+        jobs, tradable = parts.reconcile.jobs, parts.tradable
+
+        async def opened() -> None:
+            ids = await self._bounded(parts.sweep.environment_accounts(self._env))
+            await jobs.start(await tradable(ids))
+
+        try:
+            await parts.lane.call(opened())
+        except Exception as exc:
+            if self._stopping:
+                raise asyncio.CancelledError from exc
+            _log().critical("oms_reconcile_unstarted", error=type(exc).__name__)
+            _page(self._pager, "oms_reconcile_unstarted")
 
     async def _stream_started(self, parts: _Parts) -> None:
         """S8b (20 Sec.6.2, the orchestrator's Q4), where `ready` is set: account health's boot
@@ -3042,9 +3114,13 @@ class OmsRuntime:
             rejections = CredentialRejectionsBinding(
                 standings, key_refusal=self._venue.key_refusal, pager=self._pager
             )
+            # E29-T06 #914: a lookup's hand-over goes to `oms_handovers` (24 Sec.8.3 rule 3)
+            lookups: OrderHandovers = NoHandoverStore()
+            if stores.handovers is not None:
+                lookups = StoreHandovers(stores.handovers, source="rest")
             commands = OmsCommandPort(
                 router=router, accounts=command_accounts, orders=orders, stops=stops,
-                handovers=NoHandoverStore(), credentials=rejections, clock_halt=halt,
+                handovers=lookups, credentials=rejections, clock_halt=halt,
                 switches=submits, audit=audit, submit_audit=audit, gate=gate, notices=notices,
                 now_us=self._now_us, submit_timeout_s=bounds.submit_timeout_s, figures=figures,
             )  # fmt: skip
@@ -3097,20 +3173,53 @@ class OmsRuntime:
             # E29-T05 S8b (24 Sec.8.12): the private-stream consumer over the facade, built and not
             # started (`_stream_started`), its stop the stop's first step (`_stream_stop`); its
             # position store on this pool over the exchange-synced clock its projection reads too
-            # (CG14). Its stand-ins refuse a live process here, on the bindings as bound, until
-            # E29-T06 (D4; the orchestrator's Q8) and, for the paging foreign-order lockout, until
-            # E39-T04 (the security sign-off on #848, M1): the runtime fails closed, never ready.
+            # (CG14). A live process is refused here, on the bindings as bound, until E45-T01's
+            # carries register (#914, BQ-2; the reconciliation is E29-T06's) and, for the paging
+            # foreign-order lockout, until E39-T04 (the security sign-off on #848, M1): the
+            # runtime fails closed, never ready.
             wall = ExchangeWallClock(ingestion.clock_offset_snapshot_ms)
             positions = stores.positions(wall)
+            stored_positions = _published(PositionRepository(positions, timer), published)
+            snapshot_rows = PositionSnapshotRepository(positions, timer)
+            # E29-T06 #914: the foreign-order freeze's stand-in (E39-T04's setter, BQ-16) and the
+            # exchange-placed records, one of each for the stream and the pass alike
+            no_intent_writer = NoIntentWriter(writer, environment=settings.environment.value)
+            lockout = PagingForeignOrderLockout(no_intent_writer, self._pager)
+            placed = PagedNoIntentRecords(no_intent_writer, self._pager)
+            self._phase = "reconcile"
+            reconcile: ReconcileWiring | None = None
+            fill_handovers: ExecutionHandovers | None = None
+            if stores.handovers is not None and stores.reconcile is not None:
+                fill_handovers = StoreHandovers(stores.handovers, source="ws_private")
+                reconcile = build_reconciliation(
+                    environment=env, standing=self._standing, router=router, accounts=accounts,
+                    reads=stores.reconcile, orders=stores.orders, fills=fills,
+                    handovers=StoreHandovers(stores.handovers, source="reconcile"),
+                    machines=machines, positions=PositionRepository(positions, timer),
+                    published=stored_positions, snapshots=snapshot_rows,
+                    gate=gate, audit=audit, emitter=writer, lockout=lockout,
+                    exchange_placed=placed, hub=self._hub, serving=serving,
+                    feed=ServedEvidence(self._health.feed, serving), metrics=metrics,
+                    pager=self._pager, sink=sink, persistence=job_persistence(bundle),
+                    now_us=self._now_us, stale_after_s=STALE_AFTER_S,
+                    remediates=lambda e: router.port_for(e).capabilities.auto_remediate,
+                )  # fmt: skip
+                notices.bind_reconciliation(
+                    functools.partial(reconcile.jobs.trigger, trigger="unknown")
+                )
+                closers.insert(0, ("reconciliation", lambda: lane.call(reconcile.jobs.stop())))
+            self._phase = "stream"
             stream = build_stream_consumer(
-                facade=machines, orders=orders, stops=stops,
-                positions=_published(PositionRepository(positions, timer), published),
-                snapshots=PositionSnapshotRepository(positions, timer),
-                accounts=HealthAccounts(self._health), trading=accounts, ports=router,
-                health=self._health.feed, hub=self._hub, serving=serving, credentials=rejections,
-                audit=audit, emitter=writer, environment=settings.environment, pager=self._pager,
-                metrics=metrics, now=self._now, offset_ms=ingestion.clock_offset_snapshot_ms,
+                facade=machines, orders=orders, stops=stops, positions=stored_positions,
+                snapshots=snapshot_rows, accounts=HealthAccounts(self._health), trading=accounts,
+                ports=router, health=self._health.feed, hub=self._hub, serving=serving,
+                credentials=rejections, audit=audit, emitter=writer,
+                environment=settings.environment, pager=self._pager, metrics=metrics,
+                now=self._now, offset_ms=ingestion.clock_offset_snapshot_ms,
                 clock_health=clock_health, clock=wall,
+                reconciliation=None if reconcile is None else reconcile.jobs,
+                handovers=fill_handovers, lockout=lockout, no_intent=placed,
+                evidence=None if reconcile is None else reconcile.marks,
             )  # fmt: skip
             self._phase = "pipeline"
             anchors = AnchorService(
@@ -3210,10 +3319,26 @@ class OmsRuntime:
                 orders, PositionRepository(positions, timer), fills, accounts=accounts,
                 environment=env, clock=lane_clock,
             )  # fmt: skip
+
+            async def tradable(ids: Sequence[UUID]) -> list[AccountId]:
+                """The accounts that resolve to a trading account now, each read bounded."""
+                found: list[AccountId] = []
+                for account_id in ids:
+                    try:
+                        async with asyncio.timeout(ACCOUNT_READ_TIMEOUT_S):
+                            found.append(
+                                (await accounts.trading_account(AccountId(account_id))).account_id
+                            )
+                    except Exception as exc:  # deleted, keyless or unread: its stream opens it
+                        _log().info("oms_reconcile_account_skipped", account_id=str(account_id),
+                                    reason=type(exc).__name__)  # fmt: skip
+                return found
+
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
-                stream, admit_after, preview, leverage, writes, reads, observed,
+                stream, admit_after, preview, leverage, writes, reads, observed, reconcile,
+                tradable,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping
@@ -3269,6 +3394,7 @@ def build_oms_runtime(
     lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
     topics: AttachedTopics | None = None,
     trade_groups: GroupTopic | None = None,
+    standing: ReconcileStanding | None = None,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
     `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order
@@ -3287,5 +3413,5 @@ def build_oms_runtime(
         standings=standings, oms_enabled=oms_enabled, live_enabled=live_enabled,
         profiles=profiles, persistence=persistence, feed=feed, lane_signing=lane_signing,
         health=health, hub=hub, lane_transport=lane_transport, topics=topics,
-        trade_groups=trade_groups,
+        trade_groups=trade_groups, standing=standing,
     )  # fmt: skip
