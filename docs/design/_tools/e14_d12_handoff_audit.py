@@ -93,9 +93,15 @@ DECK_REL = "docs/design/E14/E14-D12-copy.json"
 TOOL_REL = "docs/design/_tools/e14_d12_handoff_audit.py"
 PIN_REL = "docs/design/_tools/e14_d12_ruled_pins.txt"
 PLAN14_REL = "docs/plan/14-screens-catalogue.md"
-OWN_PATHS = (SPEC_REL, DECK_REL, TOOL_REL, PIN_REL, PLAN14_REL)
 IMG_REL = "docs/design/E14/img"
 D10_REL = "docs/design/E14/E14-D10.md"
+# v1.1: the D10 Minors (approval of record 6549312022) ride in this PR, ruled 2026-10-31 22:57Z.
+D10_V11 = (
+    D10_REL,
+    "docs/design/_tools/e14_d10_a11y_review_audit.py",
+    "docs/design/_tools/e14_d10_ruled_pins.txt",
+)
+OWN_PATHS = (SPEC_REL, DECK_REL, TOOL_REL, PIN_REL, PLAN14_REL, *D10_V11)
 
 PATHS: dict[str, str] = {
     "02": "docs/plan/02-definition-of-ready-done.md",
