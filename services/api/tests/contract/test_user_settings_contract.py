@@ -5,11 +5,10 @@ bodies round-trip through the generated `Settings`, and the edge guards the rout
 real: CSRF on the write (SR-041), the view-as guard (#3085), RBAC per role, and `settings.change`
 in the world's audit sink. `GET /me/preferences` answers what `GET /settings` answers.
 
-`updateSettings` omits the shared `401` from its responses although its RBAC row (and the ticket)
-answer an unauthenticated caller `401`: here CSRF refuses that write first (`403
-csrf_token_invalid`, which the matrix reads as its `401`), and an expired bearer bound to a live
-session reaches the route's `401` (`test_user_settings_router.py`). The gap is reported, not
-changed: no contract change in E02-T13."""
+`updateSettings` declares the shared `401` (E02-T13's contract commit). A write with no session at
+all is refused by CSRF first (`403 csrf_token_invalid`, which the matrix reads as its `401`); an
+expired access token whose live session the SR-041 pair is bound to passes CSRF and reaches the
+route's `401`, asserted here in the declared shape."""
 
 from __future__ import annotations
 
@@ -23,6 +22,7 @@ from jsonschema import Draft202012Validator
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.auth.csrf import CSRF_HEADER
+from candleviewer.auth.errors import SessionNotFound
 from tests.contract.rbac.rbac_harness import (
     ACTORS,
     World,
@@ -30,6 +30,7 @@ from tests.contract.rbac.rbac_harness import (
     bearer_viewing,
     build_world,
     session_id_of,
+    session_record,
     user_id_of,
 )
 from tests.openapi_helpers import deref
@@ -39,8 +40,11 @@ from tests.unit.storage.user_settings_contract import noop
 _SPEC: Any = load_openapi_spec()
 _PATH = "/settings"
 _ROLES = ACTORS[:4]
-#: Every status the routes answer in this world, per operation (`updateSettings`' `401`: above).
-_ANSWERED = {"get": {"200", "401", "403", "422", "503"}, "patch": {"200", "403", "422", "503"}}
+#: Every status the routes answer in this world, per operation.
+_ANSWERED = {
+    "get": {"200", "401", "403", "422", "503"},
+    "patch": {"200", "401", "403", "422", "503"},
+}
 
 
 @pytest.fixture(scope="module")
@@ -168,6 +172,32 @@ async def test_settings_an_unauthenticated_caller_reads_401_and_its_write_is_ref
     )
     assert _conforms("patch", refused)["code"] == "csrf_token_invalid"  # SR-041 decides first
     assert store.rows == {} and store.calls == []
+
+
+async def test_patch_settings_an_expired_access_token_with_its_csrf_pair_is_401(
+    world: World, store: FakeUserSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `401` `updateSettings` declares. The access token has expired and its session lives, so
+    the CSRF guard still finds the session the pair is bound to (`peek_access_token` reads it past
+    the token's TTL, as the session service does) and lets the write through to the route, where
+    authentication fails: `401 unauthenticated`, nothing written, no record."""
+    await _seed(store, "owner", {"appearance.theme": "dark"})
+    sessions = world.app.state.app_context.auth.sessions
+
+    async def peek(token: str) -> Any:
+        return session_record(token)
+
+    async def authenticate(token: str, **_kw: Any) -> Any:
+        raise SessionNotFound("access token expired")
+
+    monkeypatch.setattr(sessions, "peek_access_token", peek)
+    monkeypatch.setattr(sessions, "authenticate_access_token", authenticate)
+    resp = _patch(world, {"appearance": {"theme": "light"}}, bearer("owner"))
+    body = _conforms("patch", resp)
+    assert (resp.status_code, body["code"]) == (401, "unauthenticated")
+    assert body["detail"] == "No verified session for this request."  # the route's own
+    assert _values(store, "owner") == {"appearance.theme": "dark"}
+    assert not [r for r in world.audit.records if r["action"] == "settings.change"]
 
 
 @pytest.mark.parametrize("case", ["missing", "mismatched"])
