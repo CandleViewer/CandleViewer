@@ -5686,8 +5686,9 @@ export interface paths {
      *     warnings do not block saving but do block arming.
      *
      *     **Limit (E35, #4834).** `validateRule` and `compileRule` share one token bucket per user,
-     *     for every role, the Owner included, across all of the user's sessions: `rules_check_rate_per_user_per_second` (default 10 a
-     *     second) with a burst of twice the rate (20 by default). A call over it is
+     *     for every role, the Owner included, across all of the user's sessions:
+     *     `rules_check_rate_per_user_per_second` (default 10 a second) with a burst of twice the rate
+     *     (20 by default). A call over it is
      *     `429 rate_limited` with `Retry-After` (whole seconds, at least 1, which the body's
      *     `retry_after_seconds` repeats) and writes no audit record. The bucket is taken after
      *     authentication and the permission check and before the body is read, so a refused caller

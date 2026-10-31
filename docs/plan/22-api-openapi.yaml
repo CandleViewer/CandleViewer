@@ -362,18 +362,19 @@ info:
 
     ### Rule authoring refusal records (E35, #4834)
     A refused write on the rule routes that the server records (`rules.scope_denied`, and
-    `rules.arm` for a refused mode change) is held to a budget per acting user, across all of the
-    user's sessions, by the mechanism of "Audit budget" in `queryAuditLog` and apart from its
-    `/admin/audit*` budget and from the view-as one: at most `rules_refusal_budget_per_hour`
-    (default 120) records in a rolling hour, the same for every role, the Owner included. The
-    tracking, in-flight and summary limits of that mechanism apply. Over the cap a refusal is
-    answered with its own status, unchanged (the scope refusal's `403` or `404`, a mode refusal's
-    own `4xx`), and writes no record: it is counted, and its
-    count is carried by the user's next record or, when none follows, by one summary record per
-    user and window (`suppressed_summary`, outside the cap), so a refusal is never dropped. A due
-    record that cannot be written turns the refusal into `503 audit_unavailable`, and nothing
-    changes. A refusal of a limit writes no record and is counted: the `429` of `validateRule`
-    and `compileRule`, the condition-node bound (`RuleIr`), the `note` and `reason` bound and the
+    `rules.arm` for a refused mode change) is held to a budget per acting user and per action,
+    across all of the user's sessions, by the mechanism of "Audit budget" in `queryAuditLog` and
+    apart from its `/admin/audit*` budget and from the view-as one: `rules.scope_denied` and
+    `rules.arm` each keep their own count, at most `rules_refusal_budget_per_hour` (default 120)
+    records of each in a rolling hour, the same for every role, the Owner included. The tracking,
+    in-flight and summary limits of that mechanism apply. Over the cap a refusal is answered with
+    its own status, unchanged (the scope refusal's `403` or `404`, a mode refusal's own `4xx`),
+    and writes no record: it is counted, and its count is carried by the user's next record of
+    that action or, when none follows, by one summary record per user, action and window
+    (`suppressed_summary`, outside the cap), so a refusal is never dropped. A due record that
+    cannot be written turns the refusal into `503 audit_unavailable`, and nothing changes. A
+    refusal of a limit writes no record and is counted: the `429` of `validateRule` and
+    `compileRule`, the condition-node bound (`RuleIr`), the `note` and `reason` bound and the
     stored-rule cap (`createRule`). A rule action's own denial while the rule runs and the
     boot-time check of the system rules are never held to the cap.
 
@@ -8586,8 +8587,9 @@ paths:
         warnings do not block saving but do block arming.
 
         **Limit (E35, #4834).** `validateRule` and `compileRule` share one token bucket per user,
-        for every role, the Owner included, across all of the user's sessions: `rules_check_rate_per_user_per_second` (default 10 a
-        second) with a burst of twice the rate (20 by default). A call over it is
+        for every role, the Owner included, across all of the user's sessions:
+        `rules_check_rate_per_user_per_second` (default 10 a second) with a burst of twice the rate
+        (20 by default). A call over it is
         `429 rate_limited` with `Retry-After` (whole seconds, at least 1, which the body's
         `retry_after_seconds` repeats) and writes no audit record. The bucket is taken after
         authentication and the permission check and before the body is read, so a refused caller

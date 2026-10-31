@@ -158,6 +158,11 @@ def test_each_write_documents_the_note_or_reason_refusal(operation_id: str) -> N
     assert f"`errors[].field` `{field}`" in prose and "`errors[].rule` `max_length`" in prose
     assert "stays `400 validation_failed`" in prose
     assert "refused whole" in prose and "before the scope check" in prose
+    if operation_id == "setRuleMode":  # a refused `reason` spends no one-shot grant
+        spent = "before the live-enablement step-up is consumed, so a refused `reason` spends"
+        assert spent in prose and "no grant, raises no challenge" in prose
+    if operation_id == "setActiveRuleVersion":  # its `422` is the shared rule-document refusal
+        assert _OPS[operation_id]["responses"]["422"] == _RULE_IR_INVALID
     assert "no audit record" in prose
     refusal = _example("createRule", "422", "noteTooLong")
     assert (refusal["status"], refusal["code"]) == (422, "rule_ir_invalid")
@@ -181,6 +186,9 @@ def test_the_condition_node_bound_is_named_with_its_two_answers() -> None:
     answer = "`200` with `valid: false` and one error, code `schema_error`, class `syntax`, path"
     assert f"{answer} `conditions`" in _prose("validateRule")
     assert "is refused `422 rule_ir_invalid` (example `conditionNodes`)" in _prose("compileRule")
+    assert "for either editor" in _prose("compileRule")
+    assert "runs before the schema and semantic checks" in bound
+    assert "found before the schema and semantic checks" in _prose("validateRule")
     for operation_id in _CHECKS:
         assert f"{nodes:,} condition nodes" in _prose(operation_id)
     for operation_id in ("createRule", "updateRule", "compileRule"):
@@ -250,8 +258,12 @@ def test_the_refusal_record_budget_is_named_with_its_default_and_its_exclusions(
     assert budget == 120
     for phrase in (
         "(`rules.scope_denied`, and `rules.arm` for a refused mode change)",
-        "a budget per acting user, across all of the user's sessions",
-        "records in a rolling hour, the same for every role, the Owner included",
+        "a budget per acting user and per action, across all of the user's sessions",
+        "`rules.scope_denied` and `rules.arm` each keep their own count",
+        "records of each in a rolling hour, the same for every role, the Owner included",
+        "answered with its own status, unchanged (the scope refusal's `403` or `404`, a mode "
+        "refusal's own `4xx`)",
+        "one summary record per user, action and window",
         "(`suppressed_summary`, outside the cap), so a refusal is never dropped",
         "turns the refusal into `503 audit_unavailable`, and nothing changes",
         "A refusal of a limit writes no record and is counted",
@@ -262,14 +274,16 @@ def test_the_refusal_record_budget_is_named_with_its_default_and_its_exclusions(
     records = text(_RAW_24.split("\n### 15.5 ", 1)[1].split("\n### 15.6 ", 1)[0])
     sentence = records.split("The `rules.scope_denied` and `rules.arm` records of a refused", 1)[1]
     sentence = sentence.split(" never held to it.", 1)[0]
-    assert f"`rules_refusal_budget_per_hour` per acting user (default {budget} in a rolling" in (
+    each = "per acting user and per action, each action keeping its own count"
+    assert f"`rules_refusal_budget_per_hour` {each} (default {budget} in a rolling" in sentence
+    assert "answered with its own status, unchanged (the scope refusal's `403` or `404`" in sentence
+    assert "one `suppressed_summary` record per user, action and window, outside the cap" in (
         sentence
     )
-    assert "one `suppressed_summary` record per user and window, outside the cap" in sentence
     assert "`rule.system_rule_tampered` record" in sentence
     title = r"^### 19\.(\d+) 2026-10-30 — 22 `/rules`, §15\.5: the authoring limits"
     heading = re.search(title, _RAW_24, re.MULTILINE)
     assert heading is not None
     entry = text(_RAW_24[heading.start() :].split("\n### ", 1)[0])
-    assert f"This number follows `main`'s last entry, §19.{int(heading.group(1)) - 1};" in entry
+    assert "The orchestrator allocated this number on 2026-10-31" in entry
     assert f"`rules_refusal_budget_per_hour` (default {budget})" in entry
