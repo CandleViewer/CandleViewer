@@ -9,8 +9,8 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -44,7 +44,7 @@ from candleviewer.oms.position_writes import (
     is_full_close,
     reversal_refs,
 )
-from candleviewer.storage.repositories.positions import PositionRow
+from candleviewer.storage.repositories.positions import PositionRow, PositionState
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from candleviewer.storage.repositories.trade_groups import GroupAnchor
 from tests.unit.api.oms_reads_world import position
@@ -215,6 +215,26 @@ class Stops:
 
 
 @dataclass
+class Store:
+    """The position store's upsert: each state it took; `stale` answers a newer stored row (a
+    stale write changes nothing), `fail` raises."""
+
+    states: list[PositionState] = field(default_factory=list)
+    stale: bool = False
+    fail: bool = False
+
+    async def upsert(self, state: PositionState) -> PositionRow:
+        if self.fail:
+            raise RuntimeError("down")
+        self.states.append(state)
+        stored = state.exchange_updated_ts
+        if self.stale and stored is not None:
+            stored += timedelta(seconds=1)
+        values = asdict(state) | {"exchange_updated_ts": stored}
+        return PositionRow(**values, id=uuid.uuid4(), recv_ts=T0, updated_at=T0)
+
+
+@dataclass
 class GroupKeys:
     """The groups' anchor read: `found` for every ref; `error` raised instead; each ask kept."""
 
@@ -254,6 +274,7 @@ class Rig:
     accounts: Accounts = field(default_factory=Accounts)
     groups: GroupKeys = field(default_factory=GroupKeys)
     instruments: Instruments = field(default_factory=Instruments)
+    store: Store = field(default_factory=Store)
     clock: list[float] = field(default_factory=lambda: [0.0])
     audit: Audit = field(init=False)
 
@@ -264,7 +285,7 @@ class Rig:
         deps = PositionWritesDeps(
             accounts=self.accounts, profiles=self.profiles, machines=self.machines,
             stops=self.stops, groups=self.groups, ports=lambda env: self.port, audit=self.audit,
-            environment="demo", instruments=self.instruments,
+            environment="demo", instruments=self.instruments, positions=self.store,
         )  # fmt: skip
         return PositionWrites(deps, monotonic=lambda: self.clock[0], **kw)
 

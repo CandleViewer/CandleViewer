@@ -263,6 +263,9 @@ class Positions:
 
     listed: dict[str, Instrument] = field(default_factory=dict)
     instrument_error: OmsError | None = None
+    #: A rejected close's re-reads (BQ-7), by position id; `refresh_error` raised instead.
+    refreshes: list[uuid.UUID] = field(default_factory=list)
+    refresh_error: OmsError | None = None
     fill: CloseFill = "filled"
     fill_error: OmsError | None = None
     venue: VenuePosition = "flat"
@@ -306,6 +309,12 @@ class Positions:
         if self.log is not None:
             self.log.append(f"venue:{self.venue}")
         return self.venue
+
+    async def refresh(self, row: PositionRow) -> bool:
+        self.refreshes.append(row.id)
+        if self.refresh_error is not None:
+            raise self.refresh_error
+        return True
 
     async def record(self, record: RequestRecord) -> bool:
         self.records.append(record)
