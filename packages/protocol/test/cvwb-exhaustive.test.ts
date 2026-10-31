@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { CVWB_HEADER } from "../src/generated/cvwb/index.js";
 import * as R from "../src/runtime/index.js";
 import { breach, report } from "./support/fuzzReport.js";
@@ -32,6 +32,11 @@ const RECORD_COUNT = CVWB_HEADER.offsets.recordCount;
 // here costs next to nothing; the caps sit above a legitimate decode of the largest frame (a valid
 // 256 KiB one: about 10 ms and a few MiB).
 const CAPS = { ms: 1000, bytes: 16 * 1024 * 1024 };
+// The file's test timeout is a hang guard, not a budget: CAPS is the trip-wire for every single
+// decode. The four blocks cost about a second uninstrumented on a quiet host, but the unit lane
+// runs them under V8 coverage on a shared runner, where the first block alone crossed the 5 s
+// default (#5158); the perf project's figure leaves that far behind.
+vi.setConfig({ testTimeout: 60_000 });
 
 const failures: string[] = [];
 afterEach(() => void (failures.length = 0));
