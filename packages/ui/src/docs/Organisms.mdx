@@ -15,3 +15,18 @@ live under `Organisms/<Component>` and ship with the component (E05-S01..S04).
 No keys of their own: the links follow APG Link and "Copy details" APG Button. On navigation the
 host's route focus lands on the `h1` (`tabindex="-1"`); the components never move focus themselves.
 An admin route without `admin:read` renders NotFoundState with the same copy as any unknown route.
+
+## Admin chrome
+
+### AdminLayout (CMP-087)
+
+The chrome of every `/admin/*` page (E42-D03 §4), built to variant (b) of the re-auth decision: the
+server challenges each protected action, so there is no admin window and no "Admin locked" state.
+No keys of its own; nothing moves focus, on a route change or when the grace line ends.
+
+| Element    | Role               | Name                                                 | ARIA                                                                    |
+| ---------- | ------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| band       | region             | "Admin area"                                         | never focusable; the ◆ glyph is `aria-hidden`                           |
+| grace line | text (CMP-035)     | —                                                    | CMP-035's polite status speaks at 60 s and 10 s, once, naming the class |
+| strip      | region with a list | "Needs your action"                                  | not live: the shell announces a new item once                           |
+| strip item | link (CMP-021)     | "Attention:" (warning, critical) + label + env badge | Tab reaches the items in order, then the route content                  |

@@ -166,6 +166,16 @@ export type {
   GlobalErrorScope,
 } from "./GlobalErrorBoundaryFallback.js";
 
+export { ADMIN_COPY, AdminLayout, sortAdminStrip } from "./AdminLayout.js";
+export type {
+  AdminEnv,
+  AdminGrace,
+  AdminLayoutProps,
+  AdminStripItem,
+  AdminStripKind,
+  AdminStripSeverity,
+} from "./AdminLayout.js";
+
 export { Avatar } from "./Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Avatar.js";
 
