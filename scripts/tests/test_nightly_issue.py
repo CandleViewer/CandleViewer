@@ -10,7 +10,8 @@ scheduled one, so the per-signal group sits on the seconds-long report job inste
 #410 (E17-Q02): chaos-ws-nightly.yml is a caller too: its `chaos-ws-issue` job reports a failed
 `chaos-ws` job, and registers here or this suite fails. So is e2e-auth-real.yml (#2490, E09-Q02's
 real-backend auth lane), from main only. So is perf-recorder-nightly.yml (#481, E16-Q04): its
-`recorder-perf-issue` job reports a failed recorder budget."""
+`recorder-perf-issue` job reports a failed recorder budget, and chaos-recorder-nightly.yml, whose
+`chaos-recorder-issue` job reports a failed `chaos-recorder` job."""
 
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ NIGHTLIES = (
     "chaos-ws-nightly.yml",
     "e2e-auth-real.yml",
     "perf-recorder-nightly.yml",
+    "chaos-recorder-nightly.yml",
 )
 BOT = "github-actions[bot]"
 #: Jobs that read more than `contents` and write nothing: #2825's guard lists runs and jobs.
@@ -107,7 +109,15 @@ SIGNALS = {
         "test: e2e-auth-real nightly failed",
         "type/test,area/auth-rbac",
     ),
-    # #481 (E16-Q04): the recorder perf pack; a failed leg (smoke, ingest, soak, API) is the verdict.
+    # #481 (E16-Q04): the recorder chaos suite; any failed step of its one job is the verdict.
+    ("chaos-recorder-nightly.yml", "chaos-recorder-issue"): (
+        "chaos-recorder",
+        "${{ always() && needs.chaos-recorder.result == 'failure' }}",
+        "chaos-recorder",
+        "chaos: recorder nightly failed",
+        "qa,area/recorder-replay,priority/p1",
+    ),
+    # #481 (E16-Q04): the recorder perf pack; a failed leg (smoke, ingest, soak, API) is a verdict.
     ("perf-recorder-nightly.yml", "recorder-perf-issue"): (
         "recorder-perf",
         "${{ always() && needs.recorder-perf.outputs.regressed == 'true' }}",
