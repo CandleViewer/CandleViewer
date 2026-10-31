@@ -28,6 +28,7 @@ from candleviewer.rules import service as rules_service
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir.models import MetricRef, RuleScope
 from candleviewer.rules.manager import (
+    TICK_DISARM_TIMEOUT_S,
     Actor,
     InMemoryRuleStore,
     RuleRow,
@@ -177,9 +178,14 @@ async def test_a_mode_change_between_evaluation_and_dispatch_is_honoured_at_disp
     await rig.fire()  # evaluated as armed: its action's task is scheduled and has not run
     assert rig.svc._tasks and rig.executor == []
     (await rig.row(rid)).mode = target  # the stored row is switched before dispatch
-    await rig.settle()
+    with capture_logs() as logs:
+        await rig.settle()
     assert rig.executor == [] and rig.simulated == []  # dropped: it reached neither sink
     assert dict(rig.svc.actions_blocked_total) == {"mode_changed": 1}
+    skipped = {"event": "rules.action_skipped", "log_level": "info"}
+    assert [e for e in logs if e.get("rule_id") == rid] == [
+        skipped | {"rule_id": rid, "reason": "mode_changed"}
+    ]
 
 
 def _new_active_version(row: RuleRow) -> None:
@@ -246,6 +252,11 @@ async def _store_down() -> None:
     raise ConnectionError("the rule store is unreachable")
 
 
+async def _store_broken() -> None:
+    """A failure outside `OSError`, as a driver or a malformed row raises it."""
+    raise RuntimeError("the rule store answered with an error")
+
+
 async def _store_stalled() -> None:
     """Never answers: only the read's bound ends it (0 s here, at its first wait)."""
     await asyncio.Event().wait()
@@ -253,7 +264,11 @@ async def _store_stalled() -> None:
 
 @pytest.mark.parametrize(
     ("failure", "bound", "reason"),
-    [(_store_down, 2.0, "store_error"), (_store_stalled, 0.0, "timeout")],
+    [
+        (_store_down, 2.0, "store_error"),
+        (_store_broken, 2.0, "store_error"),
+        (_store_stalled, 0.0, "timeout"),
+    ],
 )
 async def test_a_failed_reread_at_dispatch_sends_nothing_and_is_counted(
     rig: Rig,
@@ -330,6 +345,14 @@ def test_action_request_has_no_default_mode() -> None:
     for name in ("mode", "rule_id", "version", "ir_hash", "run_id", "armed_by"):
         with pytest.raises(TypeError, match=name):
             ActionRequest(**{k: v for k, v in fields.items() if k != name})
+    with pytest.raises(TypeError):  # keyword-only: a positional build is refused
+        ActionRequest(*fields.values())
+
+
+def test_the_dispatch_reread_bound_is_the_tick_disarm_bound() -> None:
+    """The re-read waits as long as the tick's own disarm does (2 s), so a stuck store holds an
+    action's task no longer than that."""
+    assert rules_service.REREAD_TIMEOUT_S == TICK_DISARM_TIMEOUT_S == 2.0
 
 
 async def test_dry_run_only_action_is_recorded_as_simulated_in_an_armed_rule(rig: Rig) -> None:
