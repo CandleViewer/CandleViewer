@@ -64,8 +64,10 @@ export function FilterBar({
       return;
     pending.current = null;
     // Only focus the bar held, or lost to the body with the removed control, is handed on: never taken from elsewhere.
-    const active = document.activeElement;
-    if (active !== null && active !== document.body && !bar.contains(active)) return;
+    // The bar's own document, so a popped-out panel hands focus on as a docked one does.
+    const doc = bar.ownerDocument;
+    const active = doc.activeElement;
+    if (active !== null && active !== doc.body && !bar.contains(active)) return;
     const removes = [...bar.querySelectorAll<HTMLElement>(":scope > .cv-tag button")];
     const sibling =
       asked.kind === "chip" ? (removes[asked.index] ?? removes[asked.index - 1]) : undefined;

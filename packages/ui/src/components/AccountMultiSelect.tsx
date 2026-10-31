@@ -108,10 +108,10 @@ export function AccountMultiSelect({
   const current = held >= 0 ? held : chosen >= 0 ? chosen : firstIndex(accounts, NONE);
   const optionId = (index: number): string => `${id}-option-${String(index)}`;
 
-  // The active option stays in view in a long list.
+  // The active option stays in view in a long list (its own document, so a popped-out panel works too).
   useEffect(() => {
     if (!open || current < 0) return;
-    document
+    list.current?.ownerDocument
       .getElementById(`${id}-option-${String(current)}`)
       ?.scrollIntoView?.({ block: "nearest" });
   }, [open, current, id]);
