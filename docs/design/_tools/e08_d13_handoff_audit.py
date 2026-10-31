@@ -144,6 +144,7 @@ RULING_QUOTES = (
     "no walkthrough session was held or recorded, and none is claimed",
     "a written protocol replaces it",
     "named, unsourced",
+    "none at the base",
 )
 REPORT_WIDTH = 100
 QUOTE_MIN = 12
@@ -332,7 +333,7 @@ ROLES = ("owner", "manager", "viewer")
 # hand-written bodies, normalised; changed only with a design and security read and a re-pin
 FROZEN_HEADS = ("6.1 The role matrix", "6.2 What is never rendered")
 FROZEN_SHA = {
-    "6.1 The role matrix": "8a4d4c8d5a8fad3c",
+    "6.1 The role matrix": "07a5ca228e3f45b4",
     "6.2 What is never rendered": "e1be4a08f3dd986e",
 }
 # the contract, tree, catalogue and seed probes (STATUS): key -> (kind, where, needle, yes, no)
@@ -432,6 +433,8 @@ GEN_HEADS = {
     "d03map": D03MAP_HEAD,
     "matrix": MATRIX_HEAD,
     "redline": REDLINE_HEAD,
+    "copycites": "7.4a The `14` cites inside the copies",
+    "qacases": "5.6 QA cases per screen",
 }
 WALK_ROLES = (
     "E08-S10",
@@ -1057,7 +1060,8 @@ def count_values(spec: str, deck: str) -> Values:
         "checklist.open": str(sum(o for _l, _t, o in cl.values())),
         "deck.total": str(len(entries)),
         "deck.proposed": str(sum(1 for e in entries.values() if e.get("status") == "PROPOSED")),
-        "deck.slotted": str(sum(1 for e in entries.values() if str_list(e.get("slots")))),
+        "deck.slotted": str(sum(1 for e in entries.values() if e.get("slots"))),
+        "deck.static": str(sum(1 for e in entries.values() if e.get("kind") == "static-example")),
         "states.total": str(len(rows)),
         "walk.items": str(numbered_items(spec, PROTO_HEAD)),
     }
@@ -1085,7 +1089,35 @@ def in_code(line: str, pos: int) -> bool:
     return any(m.start() <= pos < m.end() for m in CODE.finditer(line))
 
 
+def regen_sections(text: str) -> str:
+    """Put each generated block back to its GEN marker, so `--fill` rebuilds it from the base
+    (a later delta re-renders the block instead of hand-editing it)."""
+    lines = text.split("\n")
+    out: list[str] = []
+    skip_level = 0
+    for ln in lines:
+        m = HEADING.match(ln)
+        if skip_level and m and len(m[1]) <= skip_level:
+            skip_level = 0
+        if skip_level:
+            continue
+        out.append(ln)
+        if m:
+            key = next((k for k, h in GEN_HEADS.items() if m[2].startswith(h)), None)
+            if key:
+                out += ["", f"<!-- GEN:{key} -->", ""]
+                skip_level = len(m[1])
+    return "\n".join(out)
+
+
+def unanchor(text: str) -> str:
+    """Turn every `VALUE<!--=KEY-->` back into `{{KEY}}` so `--fill` re-derives it."""
+    vals = ANCHOR_VALUE.pattern.removesuffix(")$").removeprefix("(")
+    return re.sub(rf"(?:{vals})<!--=([A-Z0-9]+:[^>]+?)-->", r"{{\1}}", text)
+
+
 def fill(text: str, values: Values) -> tuple[str, list[str]]:
+    text = unanchor(regen_sections(text))
     unknown: list[str] = []
     out = []
     for ln in text.split("\n"):
@@ -1147,7 +1179,7 @@ CLIENT_WORDS = re.compile(
     r"|\bclient\b|\bpress|\bopen|\bfocus|\bclick|\bdrag|\bpaste|\btyp|\bscroll|\bhover"
     r"|\bmenu\b|\bdialog\b|\brows?\b|\blist\b|\bin flight\b|\bresponse\b|\banswer"
     r"|\breturns?\b|\berrors?\b|\bfail|\breads?\b|\bdensity\b|\bmanual order\b"
-    r"|\bsession\b|\bage\b|\bT[12]\b|\bstore\b|\bwindow\b|\bfilter|\bmatches\b",
+    r"|\bsession\b|\bage\b|\bT[12]\b|\bstore\b|\bwindow\b|\bfilter|\bmatches\b|\babsence\b",
     re.IGNORECASE,
 )
 INHERIT = re.compile(
@@ -1164,51 +1196,118 @@ def find_line(cid: str, pat: re.Pattern[str]) -> int:
     return next((i for i, ln in enumerate(base_lines(cid), 1) if pat.search(ln)), 0)
 
 
-def wire_hit(tok: str) -> tuple[str, int] | None:
-    t = tok.strip().split(" ")[0] if not re.match(r"^(?:GET|POST|PUT|DELETE|PATCH) ", tok) else tok
-    http = re.match(r"^(?:GET|POST|PUT|DELETE|PATCH) (/\S+)", t.strip())
-    if http:
-        path = http[1].split("?")[0]
-        n = next((i for i, ln in enumerate(base_lines("22"), 1) if ln == f"  {path}:"), 0)
-        return ("22", n) if n else None
-    pats: list[re.Pattern[str]] = []
+@functools.cache
+def def_patterns(name: str) -> dict[str, list[re.Pattern[str]]]:
+    """The anchored definition forms of `name` (BQ-07): a `22` schema, property or enum line,
+    or a `23` / `24` table first cell, heading or typed field. A bare mention never counts."""
+    e = re.escape(name)
+    table = re.compile(rf"^\|\s*`?{e}`?\s*\|")
+    head = re.compile(rf"^#{{2,6}} .*`{e}`")
+    schema_keys = r"type|enum|\$ref|items|oneOf|anyOf|const|description|properties"
+    field = re.compile(rf"^\s+\"{e}\": \{{\s*(?:$|\"(?:{schema_keys})\")|^\s+{e}\??: [^;=]+;\s*$")
+    return {
+        "22": [
+            re.compile(rf"^ {{4}}{e}:\s*$"),
+            re.compile(rf"^ {{6,}}{e}:\s*(?:$|\{{\s*(?:\$ref|type)|#)"),
+            re.compile(rf"^\s+- {e}\s*$"),
+            re.compile(rf"^\s+['\"]{e}['\"]:"),
+            re.compile(rf"^ {{6,}}\w+: \{{ type: string, enum: \[[^\]]*\b{e}\b"),
+        ],
+        "23": [table, head, field],
+        "24": [table, head, field],
+    }
+
+
+def strong_name(tok: str) -> str | None:
+    """The identifier a token defines: an HTTP path, a numeric code, or a snake_case, CamelCase
+    or dotted name (its strongest segment); a plain lower-case word is never an emitter."""
+    t = tok.strip()
+    if re.match(r"^(?:GET|POST|PUT|DELETE|PATCH) /", t):
+        return t.split(" ", 1)[1].split("?")[0].split(" ")[0]
+    t = t.split(" ")[0]
     if re.fullmatch(r"\d{3,5}", t):
-        pats.append(re.compile(rf"(?<![\w.]){t}(?![\w.])"))
-    elif re.fullmatch(r"[A-Za-z_][\w]*(?:[.:][\w{}]+)*", t) and len(t) >= 4:
-        segs = [s for s in re.split(r"[.:]", t) if s]
-        strong = [s for s in segs if "_" in s or re.search(r"[a-z][A-Z]", s) or s[:1].isupper()]
-        if "." in t:
-            pats.append(re.compile(re.escape(t)))
-        if strong:
-            pats.append(re.compile(rf"(?<![\w/]){re.escape(max(strong, key=len))}(?![\w/])"))
-        pats.append(re.compile(rf"`{re.escape(t)}`|^\s+- {re.escape(t)}$"))
-    for pat in pats:
-        for cid in WIRE_DOCS:
-            n = find_line(cid, pat)
-            if n:
-                return cid, n
+        return t
+    if not re.fullmatch(r"[A-Za-z_][\w]*(?:[.:][\w{}]+)*", t):
+        return None
+    segs = [x for x in re.split(r"[.:]", t) if x]
+    strong = [x for x in segs if "_" in x or re.search(r"[a-z][A-Z]", x) or x[:1].isupper()]
+    return max(strong, key=len) if strong else None
+
+
+def defines(cid: str, n: int, name: str) -> bool:
+    ln = base_line(cid, n)
+    if name.startswith("/"):
+        return cid == "22" and ln == f"  {name}:"
+    return any(p.search(ln) for p in def_patterns(name).get(cid, []))
+
+
+@functools.cache
+def wire_hit(tok: str) -> tuple[str, int, str] | None:
+    name = strong_name(tok)
+    if not name:
+        return None
+    for cid in WIRE_DOCS:
+        for i, ln in enumerate(base_lines(cid), 1):
+            if name in ln and defines(cid, i, name):
+                return cid, i, name
     return None
+
+
+THRESHOLD = re.compile(r"\b\d+(?:\.\d+)?\s?(?:ms|s|%|rows?|symbols|subscriptions|min)\b|\bT[12]\b")
 
 
 def classify(trigger: str, screen: str) -> str:
     plain = strip_comments(trigger)
-    toks = re.findall(r"`([^`]+)`", plain)
+    toks = [
+        m[1] for m in re.finditer(r"`([^`]+)`", plain) if not plain[: m.start()].endswith("no ")
+    ]
     toks += re.findall(r"\b[A-Z][a-z]+[A-Z]\w+\b", re.sub(r"`[^`]*`", "", plain))
     for tok in toks:
         hit = wire_hit(tok)
         if hit:
-            return f"wire: `{tok.strip()}` (`{hit[0]}`:{hit[1]})"
+            return f"wire: `{hit[2]}` (`{hit[0]}`:{hit[1]})"
     st = HTTP_STATUS.search(re.sub(r"`[^`]*`", "", plain))
     if st:
         n = find_line("22", re.compile(rf"^\s+['\"]{st[1]}['\"]:"))
         if n:
             return f"wire: HTTP {st[1]} (`22`:{n})"
+    th = THRESHOLD.search(plain)
+    if th:
+        return f"client-computed: {th[0]}"
     if screen == "SCR-101" or CLIENT_WORDS.search(plain):
-        return "client-computed (the parent's rule)"
+        return "client-computed: the parent's rule"
     m = INHERIT.search(plain)
     if m:
         return f"inherited: {m[0].strip('`')}"
     return "G-row: D13-G-6"
+
+
+# the rows whose emitter the generic reading gets wrong, each with its reason (RULED BQ-07;
+# round-1 lens F1 / F2): a wire entry names the field and the file, and the tool finds and
+# re-checks its definition line; a client entry says what the client computes
+EMITTER_MAP: dict[str, tuple[str, str, str]] = {
+    "SCR-102/checking-a-symbol": ("client", "300 ms after the last keystroke", ""),
+    "SCR-152/2": ("client", "the transport state (no served field)", ""),
+    "SCR-152/3": ("client", "the transport's retry schedule", ""),
+    "SCR-152/5": ("wire", "connection_quality", "23"),
+    "SCR-152/7": ("client", "the shell's connection state", ""),
+    "SCR-152/12": ("wire", "snap", "23"),
+    "SCR-152/14": ("wire", "snap", "23"),
+    "SCR-152/18": ("client", "the client's `system` stream state", ""),
+}
+
+
+def emitter_of(rid: str, trigger: str, screen: str) -> str:
+    kind, what, cid = EMITTER_MAP.get(rid, ("", "", ""))
+    if kind == "client":
+        return f"client-computed: {what}"
+    if kind == "wire":
+        n = next(
+            (i for i, ln in enumerate(base_lines(cid), 1) if what in ln and defines(cid, i, what)),
+            0,
+        )
+        return f"wire: `{what}` (`{cid}`:{n})" if n else "G-row: D13-G-6"
+    return classify(trigger, screen)
 
 
 def rank_of(name: str) -> str:
@@ -1271,13 +1370,20 @@ def state_rows() -> tuple[StateRow, ...]:
                 copy = f"{cid.lower()}.{wn[0]}"
             elif f"{prefix}.{rid}.1" in keys:
                 copy = f"{prefix}.{rid}.1"
-            handle = "role + name (deck)" if copy != "—" else "`data-cmp` + `data-state`"
+            handle = "`data-cmp` + `data-state`"
+            if copy != "—":
+                text = str(build_deck()["strings"][copy].get("text", ""))
+                handle = (
+                    f'accessible name "{text}"'
+                    if len(text) <= 60 and '"' not in text
+                    else f"accessible name: deck `{copy}`"
+                )
             out.append(
                 StateRow(
                     rid=f"{first}/{rid}",
                     name=name,
                     cite=f"`{cid}`:{line}",
-                    emitter=classify(trigger, first),
+                    emitter=emitter_of(f"{first}/{rid}", trigger, first),
                     rank=rank_of(name),
                     copy=copy,
                     announce=ANNOUNCE.get(first, "—"),
@@ -1327,7 +1433,11 @@ def gen_d03map() -> str:
 T2_KEY = re.compile(r"`([a-z]+\.[a-z_.]+)`")
 
 
-def matrix_cells(legs: str, keys: list[str]) -> tuple[list[str], str]:
+def matrix_cells(legs: str, keys: list[str], cls: str = "T2") -> tuple[list[str], str]:
+    """BQ-11's cell vocabulary from the parent row's class: `absence` hides (T3) with the
+    parent's words; `validity` is n/a; `sentence` keeps the sentence form (lens F4)."""
+    if cls == "validity":
+        return ["n/a (validity)"] * 4, "input validity"
     perms = re.findall(r"`([a-z]+:[a-z]+)`", legs)
     if "/admin" in legs:
         perms.append("admin:read")
@@ -1336,6 +1446,10 @@ def matrix_cells(legs: str, keys: list[str]) -> tuple[list[str], str]:
     perm_keys = [k for k in keys if k.startswith("rbac.") and k != "rbac.view_as"]
     state_keys = [k for k in keys if not k.startswith("rbac.")]
     reason = f"T2 `{perm_keys[0]}`" if perm_keys else "T2"
+    if cls == "absence":
+        reason = "hidden (T3); the sentence replaces the link"
+    elif cls == "sentence":
+        reason += " (the sentence form)"
     cells: list[str] = []
     for role in ROLES:
         if perms and not all(role_holds(role, p) for p in perms):
@@ -1357,7 +1471,8 @@ def gen_matrix() -> str:
         if c[0] in SUPERSEDED:
             rows.append([c[0], f"`D12`:{line}", "n/a", "n/a", "n/a", "n/a", "superseded"])
             continue
-        cells, gate = matrix_cells(c[2], T2_KEY.findall(c[3]))
+        cls = c[4].strip() if len(c) > 4 else "T2"
+        cells, gate = matrix_cells(c[2], T2_KEY.findall(c[3]), cls)
         rows.append([c[0], f"`D12`:{line}", *cells, gate])
     gate_line = line_of("D09", "- **The gate.**")
     nonowner = "hidden (T3)" if not probe("seed", "manager,viewer", "admin:read") else "CHECK"
@@ -1368,7 +1483,7 @@ def gen_matrix() -> str:
             "enabled",
             nonowner,
             nonowner,
-            "T2 `rbac.view_as`",
+            "enabled for the read; writes T2 `rbac.view_as`",
             "`admin:read`",
         ]
     )
@@ -1404,6 +1519,72 @@ def gen_redline() -> str:
     )
 
 
+D12_BASE = "6298e962e"  # the base D12 read `14` at (`D12` D-7); its copies keep those numbers
+
+
+def copied_14_cites() -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    for key in COPIES:
+        for ln in lift_text(key).split("\n"):
+            for m in re.finditer(r"`14`:(\d+)((?:[–-]:?\d+|, :\d+)*)", ln):
+                for n in [int(m[1]), *(int(x) for x in re.findall(r"\d+", m[2]))]:
+                    if (key, n) not in out:
+                        out.append((key, n))
+    return out
+
+
+def refind_14(n: int) -> int:
+    """D12's `14` line n, re-found by content at the base (0 when not unique)."""
+    old = (git_show(D12_BASE, PLAN14_REL) or "").split("\n")
+    text = old[n - 1] if 1 <= n <= len(old) else ""
+    hits = [i for i, ln in enumerate(base_lines("14"), 1) if text.strip() and ln == text]
+    return hits[0] if len(hits) == 1 else 0
+
+
+def line_label(n: int) -> str:
+    lines = base_lines("14")
+    scr = next(
+        (m[1] for i in range(n, 0, -1) if (m := re.match(r"^### (SCR-\d{3}) ", lines[i - 1]))),
+        "the `14` preamble",
+    )
+    f = re.match(r"^\d*\.? ?(?:- )?\*\*([^*]+?):?\*\*", lines[n - 1].lstrip())
+    label = f[1].rstrip(":").rstrip(".") if f else "the line"
+    return f"{scr}, {label}"
+
+
+def gen_copycites() -> str:
+    rows = []
+    for key, n in copied_14_cites():
+        new = refind_14(n)
+        now = f"`14`:{new}" if new else "not re-found"
+        rows.append(
+            [
+                f"§{GEN_HEADS[key].split(' ')[0]}",
+                f"{n} (D12's base)",
+                now,
+                line_label(new) if new else "—",
+            ]
+        )
+    return table(["Copy", "`14` line in the copy", "Now at", "The line"], rows)
+
+
+def qa_cases(screen: str) -> list[str]:
+    out: list[str] = []
+    for ln in base_lines("QAP"):
+        m = re.match(r"^\| (E08-TC-[A-Z]\d+) ", ln)
+        if m and re.search(rf"\b{screen}\b", ln) and m[1] not in out:
+            out.append(m[1])
+    return out
+
+
+def gen_qacases() -> str:
+    rows = []
+    for scr in SCREENS:
+        ids = qa_cases(scr)
+        rows.append([scr, ", ".join(ids) if ids else "none at the base"])
+    return table(["Screen", "QA cases in `QAP` naming the screen"], rows)
+
+
 def gen_block(key: str) -> str | None:
     if key in COPIES:
         return lift_text(key)
@@ -1412,6 +1593,8 @@ def gen_block(key: str) -> str | None:
         "d03map": gen_d03map,
         "matrix": gen_matrix,
         "redline": gen_redline,
+        "copycites": gen_copycites,
+        "qacases": gen_qacases,
     }
     fn = gens.get(key)
     return fn() if fn else None
@@ -1420,7 +1603,22 @@ def gen_block(key: str) -> str | None:
 # ---------------------------------------------------------------------------- the deck
 
 
-def slots_of(text: str) -> list[str]:
+SLOT_NAME = re.compile(r"[^{}\n]*[A-Za-z][^{}\n]*")
+# the owner lane of each source's PROPOSED strings (RULED BQ-09: "PROPOSED + owner")
+DECK_OWNERS = {
+    "d05": "E08-D05 (#126)",
+    "d06": "E08-D06 (#174)",
+    "d07": "E08-D07 (#175)",
+    "d07m": "E08-D07 (#175)",
+    "d08": "E08-D08 (#176)",
+    "d09": "E08-D09 (#177)",
+    "e16d5": "E16-D05 (#373)",
+    "e17d2": "E17-D02 (#325)",
+    "d07.q0": "E08-D13 (#181), taken as written from D12 Q-01 / Q-02",
+}
+
+
+def braced(text: str) -> list[str]:
     out: list[str] = []
     for m in re.finditer(r"\{([^{}\n]{1,30})\}|<([a-z][a-z ]{0,20})>", text):
         name = m[1] or m[2]
@@ -1429,19 +1627,61 @@ def slots_of(text: str) -> list[str]:
     return out
 
 
-def deck_entry(text: str, cid: str, line: int, status: str, var_line: int) -> dict[str, object]:
-    slots = slots_of(text)
+def slots_of(text: str) -> list[str]:
+    """The named variables of a string; a braced worked value with no letter (a number, a
+    time, a date) is an example, not a variable (round-1 lens F6)."""
+    return [n for n in braced(text) if SLOT_NAME.fullmatch(n)]
+
+
+def examples_of(text: str) -> list[str]:
+    return [n for n in braced(text) if not SLOT_NAME.fullmatch(n)]
+
+
+def unmark(text: str) -> str:
+    """The rendered string: the parent's enclosing quotes or code span removed."""
+    t = text.strip()
+    for q in ('"', "`"):
+        if len(t) > 1 and t.startswith(q) and t.endswith(q) and q not in t[1:-1]:
+            return t[1:-1]
+    return t
+
+
+def owner_of(key: str) -> str:
+    return next(
+        (
+            o
+            for p, o in sorted(DECK_OWNERS.items(), key=lambda kv: -len(kv[0]))
+            if key.startswith(p)
+        ),
+        "",
+    )
+
+
+def deck_entry(
+    key: str, text: str, cid: str, line: int, status: str, var_line: int
+) -> dict[str, object]:
     entry: dict[str, object] = {"text": text, "source": f"`{cid}`:{line}", "status": status}
+    if status == "PROPOSED":
+        entry["owner"] = owner_of(key)
+    slots, examples = slots_of(text), examples_of(text)
     if slots:
         fmt = f"`{cid}`:{var_line}" if var_line else "not stated by the parent (D13-G-5)"
-        entry["slots"] = [{"name": s, "format": fmt} for s in slots]
+        entry["slots"] = [{"name": x, "format": fmt} for x in slots]
         entry["plural"] = "none stated by the parent (D13-G-5)"
+    if examples:
+        entry["examples"] = examples
+        if not slots:
+            entry["kind"] = "static-example"
     return entry
 
 
 @functools.cache
 def build_deck() -> dict[str, dict[str, dict[str, object]]]:
     strings: dict[str, dict[str, object]] = {}
+
+    def put(key: str, text: str, cid: str, line: int, status: str, var_line: int) -> None:
+        strings[key] = deck_entry(key, text, cid, line, status, var_line)
+
     for prefix, cid, head, idc, strc, rule in DECK_TABLES:
         a, b = base_block(cid, head)
         var_line = next(
@@ -1459,21 +1699,26 @@ def build_deck() -> dict[str, dict[str, dict[str, object]]]:
                 continue
             row_text = " | ".join(cells)
             if rule in ("source", "source-new") and len(cells) > strc:
-                text = cells[strc].strip()
-                if not text or text == "—":
+                cell = cells[strc].strip()
+                if not cell or cell == "—":
                     continue
                 if rule == "source":
                     status = "verbatim" if "verbatim" in row_text.lower() else "PROPOSED"
                 else:
                     status = "PROPOSED" if re.search(r"`new`", row_text) else "verbatim"
-                strings[f"{prefix}.{rid}"] = deck_entry(text, cid, line, status, var_line)
+                quoted = [q for q in QUOTED.findall(cell) if q.strip()]
+                if rule == "source-new" and quoted:
+                    for n, q in enumerate(quoted, 1):
+                        put(f"{prefix}.{rid}.{n}", q, cid, line, status, var_line)
+                else:
+                    put(f"{prefix}.{rid}", unmark(cell), cid, line, status, var_line)
                 continue
             src = cells[strc] if 0 <= strc < len(cells) else row_text
             for n, q in enumerate(QUOTED.findall(src), 1):
                 if not q.strip():
                     continue
-                status = "PROPOSED" if f'"{q}" (proposed)' in src.lower() else rule
-                strings[f"{prefix}.{rid}.{n}"] = deck_entry(q, cid, line, status, 0)
+                status = "PROPOSED" if f'"{q}" (proposed)'.lower() in src.lower() else rule
+                put(f"{prefix}.{rid}.{n}", q, cid, line, status, 0)
     a, b = base_block("E17D2", E17_DECK_HEAD)
     for n in range(a, b + 1):
         ln = base_line("E17D2", n)
@@ -1482,10 +1727,9 @@ def build_deck() -> dict[str, dict[str, dict[str, object]]]:
             continue
         for k, q in enumerate(QUOTED.findall(ln), 1):
             status = "PROPOSED" if f'"{q}" (PROPOSED)' in ln else "verbatim"
-            strings[f"e17d2.{m[1]}.{k}"] = deck_entry(q, "E17D2", n, status, 0)
+            put(f"e17d2.{m[1]}.{k}", q, "E17D2", n, status, 0)
     for key, (cid, text, status) in DECK_LINES.items():
-        n = line_of(cid, text)
-        strings[key] = deck_entry(text, cid, n, status, 0)
+        put(key, text, cid, line_of(cid, text), status, 0)
     return {"strings": strings}
 
 
@@ -1738,7 +1982,9 @@ def g_version(t: Texts) -> list[Finding]:
 
 
 def g_copy(t: Texts) -> list[Finding]:
-    bad: list[Finding] = []
+    bad: list[Finding] = gen_findings(t, ("copycites",), "G-COPY")
+    if any(refind_14(n) == 0 for _k, n in copied_14_cites()):
+        bad.append(F("G-COPY", "a `14` cite inside a copy is not re-found", "spec", None))
     joined = "\n" + t.spec + "\n"
     for key in COPIES:
         cid, a, b = lift_range(key)
@@ -1776,10 +2022,34 @@ def gen_findings(t: Texts, keys: tuple[str, ...], tag: str) -> list[Finding]:
     return bad
 
 
+def wire_cell_problems(spec: str) -> list[str]:
+    """Every `wire:` cell of the state table names a field and the line that DEFINES it (a
+    `22` schema, property or enum line; a `23` / `24` table first cell, heading or typed
+    field; an HTTP path or status key); a bare mention fails (round-1 lens F1, F2)."""
+    out: list[str] = []
+    for r in table_rows(section(spec, STATES_HEAD)):
+        if len(r) < 4 or not r[3].startswith("wire:"):
+            continue
+        m = re.match(r"wire: (?:`([^`]+)`|HTTP (\d{3})) \(`(\d\d)`:(\d+)\)", unesc(r[3]))
+        if not m:
+            out.append(f"{r[0]}: an unreadable wire cell")
+            continue
+        cid, n = m[3], int(m[4])
+        if m[2]:
+            ok = bool(re.match(rf"^\s+['\"]{m[2]}['\"]:", base_line(cid, n)))
+        else:
+            ok = defines(cid, n, m[1])
+        if not ok:
+            out.append(f"{r[0]}: `{cid}`:{n} does not define {m[1] or m[2]}")
+    return out
+
+
 def g_states(t: Texts) -> list[Finding]:
-    bad = gen_findings(t, ("states", "d03map"), "G-STATES")
+    bad = gen_findings(t, ("states", "d03map", "qacases"), "G-STATES")
+    sec = spec_sec(t, STATES_HEAD)
+    bad += [F("G-STATES", m, "spec", sec) for m in wire_cell_problems(t.spec)]
     body = norm_text(section(t.spec, "5.3 Test identifiers"))
-    for need in ("PROPOSED", "scr103-drawer", "role and accessible name"):
+    for need in ("PROPOSED", "scr103-drawer", "the accessible name"):
         if need not in body:
             msg = f"§5.3 lacks {need!r}"
             bad.append(F("G-STATES", msg, "spec", spec_sec(t, "5.3 Test identifiers")))
@@ -1833,6 +2103,8 @@ def g_deck(t: Texts) -> list[Finding]:
         src_line = base_line(refs[0][0], refs[0][1]) if refs else ""
         if not refs or text.replace("\\|", "|") not in src_line.replace("\\|", "|"):
             bad.append(F("G-DECK", f"{key}: not verbatim at its source line", "deck", "(deck)"))
+        if e.get("status") == "PROPOSED" and not str(e.get("owner", "")).strip():
+            bad.append(F("G-DECK", f"{key}: PROPOSED with no owner", "deck", "(deck)"))
         raw = e.get("slots", [])
         slots = raw if isinstance(raw, list) else []
         declared = [str(s.get("name")) for s in slots if isinstance(s, dict)]
@@ -2552,6 +2824,10 @@ def word_mutation() -> Edit:
     return sub("No new page and no boards", f"No new page, nothing {word}, and no boards")
 
 
+def drop_owner(s: dict[str, dict[str, object]]) -> None:
+    s["d07.q01.removal"].pop("owner", None)
+
+
 def first_deck_key(prefix: str) -> str:
     return next((k for k in build_deck()["strings"] if k.startswith(prefix)), "")
 
@@ -2680,7 +2956,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "an agent name",
         spec=sub(
             "The orchestrator's deputy reads at READY",
-            "The orchestrator's deputy, worker-2, reads at READY",
+            "The orchestrator's deputy, " + "work" + "er-2, reads at READY",
         ),
     ),
     Mutation(
@@ -2695,6 +2971,39 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-SESSION",
         "a session claimed",
         spec=sub("**Protocol**", "The session was held with the leads. **Protocol**"),
+    ),
+    Mutation(
+        "M-34",
+        "G-STATES",
+        "lens F1: a bare-token wire cell (a word on an unrelated line)",
+        spec=cell_set("`SCR-102/loading`", 3, "wire: `code` (`22`:11962)"),
+    ),
+    Mutation(
+        "M-35",
+        "G-STATES",
+        "lens F2: a wire cell citing a scope sentence, not a definition",
+        spec=cell_set("`SCR-102/checking-a-symbol`", 3, "wire: `USDT` (`23`:4)"),
+    ),
+    Mutation(
+        "M-36",
+        "G-DECK",
+        "lens F3: a PROPOSED entry with no owner",
+        deck=deck_edit(drop_owner),
+    ),
+    Mutation(
+        "M-37",
+        "G-COPY",
+        "lens F8: a re-found `14` cite moved",
+        spec=rx_sub(r"(\| §6\.3 +\| 2329 \(D12's base\) +\| `14`:)2334", r"\g<1>2335"),
+    ),
+    Mutation(
+        "M-38",
+        "G-RBAC",
+        "lens F4: a hidden (T3) cell read as T2",
+        spec=rx_sub(
+            r"(\| T2-08 .*?\| enabled +\| )hidden \(T3\); the sentence replaces the link",
+            r"\g<1>T2",
+        ),
     ),
     Mutation(
         "M-33",
@@ -2780,6 +3089,7 @@ def selftest(spec: str, deck: str, paths: tuple[Path, ...]) -> tuple[bool, list[
 
 
 def main(argv: list[str]) -> int:
+    global HEAD
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="E08-D13 hand-off pack audit (module docstring)")
@@ -2789,7 +3099,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--self-test", "--selftest", action="store_true", help="apply every mutation")
     ap.add_argument("--repin-ruled", action="store_true", help=f"rewrite {PIN_REL}")
     ap.add_argument("--strict-walk", action="store_true", help="a pending dry-run row FAILs")
+    ap.add_argument(
+        "--head", default=HEAD, help="the ref G-VERSION compares against (default origin/main)"
+    )
     args = ap.parse_args(argv)
+    HEAD = args.head
     if args.strict_walk:
         STRICT_WALK.append(True)
     spec_path = ROOT / (args.check or SPEC_REL)
