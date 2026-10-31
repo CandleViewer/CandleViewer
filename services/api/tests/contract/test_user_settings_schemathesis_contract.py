@@ -6,19 +6,21 @@ guard stays on). The only hook is the session: the Owner's bearer and its SR-041
 which a write needs; no hook maps or filters a body. `ignored_auth` resends a request without its
 token after a 2xx, which both operations give.
 
-Every built-in check runs but those `_EXCLUDED` names, each left out for a reason outside this
-route, recorded on #5181:
+Every built-in check runs but those `_EXCLUDED` names, each left out for the reason given here,
+which lies outside this route's answer:
 
-- `positive_data_acceptance`: `SettingsPatch` is `additionalProperties: true`, so 22's schema
-  accepts any object while the route stores only the leaves 22's `Settings` declares and refuses
-  the rest `422` (E02-T13's scope).
-- `allow_header_conformance`: Starlette answers a method no route of a path serves (`OPTIONS`)
-  from the first route that matched the path, so its `405` names that route's method alone
-  (`Allow: GET`). It holds app-wide for a path whose methods are separate routes (`/watchlists`
-  too): the app's routing, not this route's answer.
+- `allow_header_conformance`, on both operations: Starlette answers a method no route of a path
+  serves (`OPTIONS`) from the first route that matched the path, so its `405` names that route's
+  method alone (`Allow: GET`). It holds app-wide for a path whose methods are separate routes
+  (`/watchlists` too): the app's routing, not this route's answer.
+- `positive_data_acceptance`, on `updateSettings` only: its body, `SettingsPatch`, is
+  `additionalProperties: true`, so 22's schema accepts any object while the route stores only the
+  leaves 22's `Settings` declares and refuses the rest `422` (E02-T13's scope). `getSettings`
+  takes no body and no parameter, so it keeps the check.
 - `missing_required_header`, on `updateSettings` only: SR-041's CSRF guard refuses an unsafe
   request with no session `403 csrf_token_invalid` before authentication (22 "CSRF"), so a write
-  that drops `Authorization` never reaches the `401` that check hard-codes. `GET` keeps it.
+  that drops `Authorization` never reaches the `401` that check hard-codes. `getSettings` keeps
+  it.
 
 `negative_data_rejection` expects 400, 401, 403 or 422: a write whose `Authorization` header a
 negative case drops or mangles meets the CSRF guard's `403` first, since its token is bound to the
@@ -48,8 +50,8 @@ from tests.unit.storage.fakes_user_settings import FakeUserSettings
 
 _OPERATIONS: Final = ("getSettings", "updateSettings")
 _EXCLUDED: Final = {
-    "GET": [positive_data_acceptance, allow_header_conformance],
-    "PATCH": [positive_data_acceptance, allow_header_conformance, missing_required_header],
+    "GET": [allow_header_conformance],
+    "PATCH": [allow_header_conformance, positive_data_acceptance, missing_required_header],
 }
 _CONFIG: Final = schemathesis.Config.from_str(
     "seed = 5181\n[checks]\nnegative_data_rejection.expected-statuses = [400, 401, 403, 422]\n"
