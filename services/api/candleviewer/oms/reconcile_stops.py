@@ -5,15 +5,16 @@ the record in force on a position over the exchange's `trading-stop`, which the 
 derives what it sends from its own read, never from the pass's:
 
 * **attach** (rule 4, a missing stop): the record's trigger, where the writer's read still shows
-  the position open with no stop and the trigger can still be placed (below the mark for a long,
-  above it for a short, rule 3); audited `sl.attached` with the reason `record_in_force` ahead of
-  the send (C-2.9). A read that shows the position flat or protected sends nothing
-  (`not_looser`: no longer naked); a trigger the market is through, or a gate that holds the
-  key, sends nothing (`not_sent`), which the pass pages, the fallback being E32-T02's.
+  the position open on the record's side with no stop and the trigger can still be placed (below
+  the mark for a long, above it for a short, rule 3); audited `sl.attached` with the reason
+  `record_in_force` ahead of the send (C-2.9). A read that shows the position flat, reversed (the
+  record is the other side's) or protected sends nothing (`not_looser`: not naked on its side); a
+  trigger the market is through, or a gate that holds the key, sends nothing (`not_sent`), which
+  the pass pages, the fallback being E32-T02's.
 * **restore** (a looser Full-mode stop set outside the OMS): the record's trigger, where the
-  writer's read still shows a stop looser than it; audited `sl.modified` with both values and the
-  reason `reconcile_restore` ahead of the send. A read that shows it no longer looser sends nothing
-  (`not_looser`).
+  writer's read still shows the position open on the record's side, its stop looser than the
+  record; audited `sl.modified` with both values and the reason `reconcile_restore` ahead of the
+  send. A read that shows it flat, reversed or no longer looser sends nothing (`not_looser`).
 
 Each send keeps the take-profit the read shows (24 Sec.8.9: one call writes both sides). The
 record in force is the stop it sends, so no new record is written: its terms already say what is
@@ -40,6 +41,7 @@ from .push_mapping import money_text
 from .reconciler import StopWrite
 from .routing import read_position
 from .stop_ratchet import loosens
+from .stop_shown import position_state
 
 __all__ = ["ATTACH_REASON", "RESTORE_REASON", "RecordedStopWriter"]
 
@@ -102,8 +104,8 @@ class RecordedStopWriter:
         read = await self._bounded(
             read_position(port, account, position.symbol, position.position_idx), READ_TIMEOUT_S
         )
-        if read is None or read.qty <= 0 or read.side is None or _stop(read) is not None:
-            return self._done(key, "attach", "not_looser")  # flat or protected now: not naked
+        if read is None or position_state(record, read) != "open" or _stop(read) is not None:
+            return self._done(key, "attach", "not_looser")  # flat, reversed or protected now
         if not _placeable(read, record.trigger_price):
             return self._done(key, "attach", "not_sent")  # the fallback is E32-T02's (rule 3)
         if not await self._cleared(key):
@@ -121,9 +123,9 @@ class RecordedStopWriter:
         read = await self._bounded(
             read_position(port, account, position.symbol, position.position_idx), READ_TIMEOUT_S
         )
-        shown = None if read is None or read.qty <= 0 else _stop(read)
+        shown = None if read is None or position_state(record, read) != "open" else _stop(read)
         if read is None or shown is None:
-            return self._done(key, "restore", "not_looser")  # flat, or naked: the attach's
+            return self._done(key, "restore", "not_looser")  # flat or reversed, or naked now
         if not loosens(record.position_side, record.trigger_price, shown):
             return self._done(key, "restore", "not_looser")  # no longer looser: left as it is
         if not await self._cleared(key):

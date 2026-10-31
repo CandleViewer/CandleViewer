@@ -83,6 +83,9 @@ async def test_an_attach_sends_the_record_in_force_on_the_critical_lane_its_reco
     [
         {"stop_loss": Decimal(61000)},  # protected since step 1's read
         {"qty": Decimal(0), "side": None, "stop_loss": None},  # flat
+        # reversed since step 1's read: a naked short the long's trigger could be placed on (above
+        # the mark), which is the other side's record, never this one's
+        {"side": "sell", "stop_loss": None, "mark_price": Decimal(61900)},
     ],
 )
 async def test_an_attach_the_writers_own_read_finds_unneeded_sends_nothing(
@@ -158,6 +161,7 @@ async def test_a_restore_puts_the_record_back_over_a_looser_stop_with_both_value
         {"stop_loss": Decimal(62000)},  # the record's own: nothing to put back
         {"stop_loss": None},  # naked now: the attach's, next pass
         {"qty": Decimal(0), "side": None, "stop_loss": None},  # flat
+        {"side": "sell", "stop_loss": Decimal(61000)},  # reversed: looser for a long, not a short's
     ],
 )
 async def test_a_restore_the_writers_own_read_finds_unneeded_sends_nothing(
