@@ -265,6 +265,7 @@
       "context": "Chart",
       "defaultBinding": "Ctrl+drag",
       "destructive": false,
+      "requiresArm": true,
       "validWhen": "chart trading armed",
       "visibleControl": "Order ticket"
     },
@@ -274,6 +275,7 @@
       "context": "Chart",
       "defaultBinding": "Alt+click",
       "destructive": false,
+      "requiresArm": true,
       "validWhen": "chart trading armed",
       "visibleControl": "Order ticket"
     },
@@ -301,6 +303,7 @@
       "defaultBinding": "Del",
       "destructive": true,
       "audited": true,
+      "confirm": true,
       "validWhen": "drawing selected",
       "visibleControl": true,
       "shadows": [
@@ -336,6 +339,7 @@
       "context": "DOM",
       "defaultBinding": "Ctrl+click",
       "destructive": false,
+      "requiresArm": true,
       "validWhen": "DOM armed",
       "visibleControl": "Order ticket",
       "screens": ["SCR-050"]
@@ -346,6 +350,7 @@
       "context": "DOM",
       "defaultBinding": "Shift+click",
       "destructive": false,
+      "requiresArm": true,
       "validWhen": "DOM armed",
       "visibleControl": "Order ticket"
     },
@@ -356,6 +361,7 @@
       "defaultBinding": "Ctrl+Shift+X",
       "destructive": true,
       "audited": true,
+      "confirm": true,
       "validWhen": "working orders exist",
       "visibleControl": true,
       "decision": "E49-S07: bare Esc removed (destructive needs a modifier; Esc stays Close/Cancel). Owner approval of the replacement key is requested on PR #1768 (not yet granted); until then it is a proposed default, user-rebindable via SCR-113 and audited."
@@ -411,6 +417,7 @@
       "defaultBinding": "Ctrl+Shift+T",
       "destructive": false,
       "audited": true,
+      "confirm": true,
       "validWhen": "always",
       "visibleControl": true,
       "shadows": [
@@ -470,6 +477,8 @@
       "defaultBinding": "Ctrl+Enter",
       "destructive": false,
       "audited": true,
+      "confirm": true,
+      "requiresArm": true,
       "validWhen": "always",
       "visibleControl": true,
       "shadows": [
@@ -546,6 +555,7 @@
       "defaultBinding": "Ctrl+Shift+T",
       "destructive": false,
       "audited": true,
+      "confirm": true,
       "validWhen": "always",
       "visibleControl": true,
       "shadows": [
@@ -585,6 +595,7 @@
       "defaultBinding": "Ctrl+W",
       "destructive": true,
       "audited": true,
+      "confirm": true,
       "validWhen": "always",
       "visibleControl": true,
       "reservedOverride": {
@@ -598,6 +609,7 @@
       "defaultBinding": "Ctrl+Shift+W",
       "destructive": true,
       "audited": true,
+      "confirm": true,
       "validWhen": "always",
       "visibleControl": true,
       "reservedOverride": {
@@ -704,6 +716,7 @@
       "defaultBinding": "Del",
       "destructive": true,
       "audited": true,
+      "confirm": true,
       "validWhen": "always",
       "visibleControl": true,
       "screens": ["SCR-082"],

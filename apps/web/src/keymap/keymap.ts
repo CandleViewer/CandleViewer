@@ -37,6 +37,17 @@ export interface KeymapCommand {
   readonly editable?: boolean;
   /** The dangerous set's commands: a rebind is audited (#305, D10; SEC-305A-01). */
   readonly audited?: boolean;
+  /**
+   * The dangerous set's commands: the command declares that its handler opens the confirm flow (E30 SCR-076, E39
+   * CMP-044); the registry runs none (BQ-5; `22` `confirm`). On an arm toggle it means the arming flow: a disarm never
+   * confirms.
+   */
+  readonly confirm?: boolean;
+  /**
+   * An order entry `22`'s `ArmToken` forces the arm on (BQ-5; `requires_arm`): inert while the session reads unarmed.
+   * Never a protective command, whose cancel, close or stop no arm may hold back (C-2.6).
+   */
+  readonly requiresArm?: boolean;
 }
 
 interface KeymapFile {
@@ -73,6 +84,8 @@ export const DANGEROUS_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 export const isDangerous = (c: KeymapCommand): boolean => DANGEROUS_COMMANDS.has(c.id);
+/** BQ-5's arm set: the five order entries `keymap.json` declares `requiresArm` on (the contract pin holds them). */
+export const requiresArm = (c: KeymapCommand): boolean => c.requiresArm === true;
 
 /** A single unmodified letter (AC5); Shift only picks its capital, so `Shift+Y` is one too (A-D05-2's bare key). */
 export function isSingleLetter(binding: string): boolean {
