@@ -129,7 +129,12 @@ class _Rig:
         self.scales: tuple[int, int] | None = (1, 3)
         self.quarantined: set[tuple[str, str]] = set()  # (symbol, spec_hash) of a failed builder
         self.reader = BarReader(_Storage(rows), _no_rebuild, now_us=lambda: _NOW)
-        self.store = SeriesStore(self.reader.read_tail, release_grace_s=0.0, clock=lambda: 0.0)
+        # #4839: the store's clock is fake, but a read's deadline runs on the loop's own time. At
+        # the 2 s default a starved loop timed the 540-row hydration out, and the snapshot came
+        # back empty; at 60 s no run meets it (the cold-series and heal rigs' bound).
+        self.store = SeriesStore(
+            self.reader.read_tail, release_grace_s=0.0, clock=lambda: 0.0, timeout_s=60.0
+        )
         publisher = BarsPublisher(self.w.hub, lambda _s: self.scales, swap_reason="generation_swap")
         self.router = EmitRouter([self.store, publisher])
         self.leases = _Bars()
@@ -318,9 +323,6 @@ def _wire_item(item: dict[str, Any]) -> dict[str, Any]:
     return {k: Decimal(v) if k in _DECIMALS else v for k, v in item.items()}
 
 
-# The snapshot and the REST window disagree intermittently under load (C-9.3).
-# ticket: GH-4839 quarantined: 2026-10-28
-@pytest.mark.flaky
 @pytest.mark.parametrize("flow", [False, True], ids=["plain", "include_delta"])
 @pytest.mark.parametrize("mode", h.MODES)
 @pytest.mark.parametrize("history", [3, 500])
