@@ -81,8 +81,9 @@ describe("PreviewTile (CMP-228)", () => {
     const img = within(host).getByRole("img");
     for (const text of Object.values(PREVIEW_TILE_COPY.themeSample))
       expect(img).toHaveTextContent(text);
-    const { bid, ask, position } = PREVIEW_TILE_COPY.themeSample;
-    expect(img).toHaveAccessibleDescription(`${bid} ${ask} ${position}`);
+    const { chart, bid, ask, position } = PREVIEW_TILE_COPY.themeSample;
+    expect(img).toHaveAccessibleDescription(`${chart} ${bid} ${ask} ${position}`);
+    expect(img.querySelectorAll('.cv-preview-tile__candles[aria-hidden="true"]')).toHaveLength(1);
     expect(img.querySelectorAll('[data-cmp="CMP-031"][aria-hidden="true"]')).toHaveLength(2);
   });
 

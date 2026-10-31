@@ -7,6 +7,16 @@ const { normal, forced } = css;
 describe("previewtile.css contract", () => {
   itIsTokenOnlyAndStatic(css);
 
+  it("theme sample chart cell: buy / sell token candles, no animation or transition", () => {
+    expect(find(normal, ".cv-preview-tile__candle--buy", "background")).toContain(
+      "--color-buy-default",
+    );
+    expect(find(normal, ".cv-preview-tile__candle--sell", "background")).toContain(
+      "--color-sell-default",
+    );
+    expect(css.all).not.toMatch(/animation|transition/);
+  });
+
   it("frame: sunken fill, radius.card, the border.default hairline (J2), primary text", () => {
     const frame = find(normal, ".cv-preview-tile__frame", "background");
     expect(frame).toContain("background: var(--color-surface-sunken)");

@@ -20,7 +20,14 @@ export const PREVIEW_TILE_COPY = {
   sample: "Sample bars: not this chart",
   contrastWarning: (ratio: string): string =>
     `Low contrast: text on this preview measures ${ratio}:1, below 4.5:1`,
-  themeSample: { bid: "Bid 64,210.5", ask: "Ask 64,211.0", position: "BTCUSDT long 0.500 BTC" },
+  // Theme sample = a chart cell, a ladder row and a positions row (14-screens-catalogue ~L2435).
+  // The numbers are illustrative, not market data.
+  themeSample: {
+    chart: "Chart sample",
+    bid: "Bid 64,210.5",
+    ask: "Ask 64,211.0",
+    position: "BTCUSDT long 0.500 BTC",
+  },
 } as const;
 
 /**
@@ -61,7 +68,12 @@ export interface PreviewTileProps {
   readonly unavailableName?: string;
   readonly sampleText?: string;
   readonly contrastWarning?: (ratio: string) => string;
-  readonly themeSample?: { readonly bid: string; readonly ask: string; readonly position: string };
+  readonly themeSample?: {
+    readonly chart: string;
+    readonly bid: string;
+    readonly ask: string;
+    readonly position: string;
+  };
 }
 
 /** `color.text.primary` -> `--color-text-primary`. */
@@ -181,9 +193,19 @@ export function PreviewTile({
     );
   } else if (kind === "theme" && children === undefined) {
     // One id per row, so the description reads the rows as separate words ("… 64,210.5 Ask …").
-    description = ["bid", "ask", "position"].map((row) => `${descriptionId}-${row}`).join(" ");
+    description = ["chart", "bid", "ask", "position"]
+      .map((row) => `${descriptionId}-${row}`)
+      .join(" ");
     image = (
       <span className="cv-preview-tile__sample">
+        <span id={`${descriptionId}-chart`} className="cv-preview-tile__row">
+          <span className="cv-preview-tile__candles" aria-hidden="true">
+            <span className="cv-preview-tile__candle cv-preview-tile__candle--buy" />
+            <span className="cv-preview-tile__candle cv-preview-tile__candle--sell" />
+            <span className="cv-preview-tile__candle cv-preview-tile__candle--buy" />
+          </span>
+          {themeSample.chart}
+        </span>
         <span id={`${descriptionId}-bid`} className="cv-preview-tile__row">
           <ColorSwatch decorative color="var(--color-buy-default)" label="" />
           {themeSample.bid}

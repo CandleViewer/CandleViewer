@@ -65,6 +65,28 @@
   gap: var(--space-inset-xs);
 }
 
+/* Chart cell of the theme sample: three static candles in the buy / sell tokens (no motion). */
+.cv-preview-tile__candles {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: var(--space-inset-xs);
+  height: var(--size-row-compact);
+}
+
+.cv-preview-tile__candle {
+  width: var(--space-inset-xs);
+  height: 70%;
+}
+
+.cv-preview-tile__candle--buy {
+  background: var(--color-buy-default);
+}
+
+.cv-preview-tile__candle--sell {
+  height: 50%;
+  background: var(--color-sell-default);
+}
+
 /* Ladder: the value in type.num.base, primary; the collapsed form is one line: it never wraps, never truncates the name. */
 .cv-preview-tile__value {
   overflow: visible;
