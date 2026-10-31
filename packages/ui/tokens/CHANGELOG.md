@@ -4,6 +4,15 @@ Versioned independently from `@candleviewer/ui` (docs/plan/16-design-system-brie
 "the `tokens/` directory is versioned independently ... since a token-only
 change should be shippable and reviewable without touching component code").
 
+## [Unreleased]
+
+### Fixed
+
+Light-theme status inks reach WCAG 2.2 AA on their subtle fills (#5134). `color.status.danger.strong`
+now points at `palette.light.red.350`, `warning.strong` at the new `palette.light.amber.700`
+(#8A5F04), `info.strong` at `palette.cyan.700` and `success.strong` at `palette.light.green.500`.
+Dark and high-contrast are unchanged.
+
 ## [0.1.2] - 2026-10-30
 
 ### Added

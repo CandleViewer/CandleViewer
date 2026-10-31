@@ -214,9 +214,27 @@ export const PAIRS = [
   { fg: "color.env.demo", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.neutral.default", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.neutral.default", bg: "color.surface.sunken", threshold: THRESHOLD.NON_TEXT },
+  // Status inks on their own subtle fill (E04 #5134): the DegradedModeBanner severity word
+  // (CMP-092) and the ConnectionRegion age line are text; the StatusBar ok glyph is non-text.
+  // All themes: dark and high-contrast already pass these with room to spare.
+  {
+    fg: "color.status.danger.strong",
+    bg: "color.status.danger.subtle",
+    threshold: THRESHOLD.TEXT,
+  },
   {
     fg: "color.status.warning.strong",
     bg: "color.status.warning.subtle",
+    threshold: THRESHOLD.TEXT,
+  },
+  {
+    fg: "color.status.info.strong",
+    bg: "color.status.info.subtle",
+    threshold: THRESHOLD.TEXT,
+  },
+  {
+    fg: "color.status.success.strong",
+    bg: "color.surface.sunken",
     threshold: THRESHOLD.NON_TEXT,
   },
 
