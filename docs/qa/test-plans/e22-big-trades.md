@@ -87,7 +87,7 @@ note (C02, section 4); "threshold percentile 0-100" (the engine refuses 0 and 10
 The before-writing question list (BQ-01 to BQ-25, posted on #713 as comment 6536429292, read from `main` `93025160e`) proposed a default for every
 question, and the orchestrator's ruling of record (#713 comment 6537475047, 2026-10-31, under the 2026-10-29 delegation) rules **all 25 as proposed**, with
 these riders: cites by operation id, schema and field, with lines only where a rule is quoted (BQ-02); the deck's PROPOSED percentile range against the
-engine's bounds was a C-row, now resolved by #5141 (E22-D05 v1.1; BQ-08: C-PCT, C21); the ETHUSDT and SOLUSDT windows scanned before the plan says no
+engine's bounds was a C-row, now resolved by #5141 (E22-D05 v1.1: `d05.05.range` reads "Enter 0 or more; a percentile is above 0 and below 100."; BQ-08: C-PCT, C21); the ETHUSDT and SOLUSDT windows scanned before the plan says no
 recorded print reaches the default (BQ-11, U5: C16); the counters' read path on staging an open question to the observability owner (BQ-16: OQ-1); the
 metrics leg one row blocked on #645 / #658 with an aggregate stand-in (BQ-05: C55, G-M1); the PR closes #713 on the document (BQ-14). The seven departures
 from #422 are confirmed by name (BQ-25; listed in its row). A later ruling that changes a row changes the sections it names in one pass.
