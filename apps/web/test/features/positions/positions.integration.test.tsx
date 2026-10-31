@@ -325,10 +325,12 @@ describe("the locked chip (B20, S-21)", () => {
 });
 
 describe("Manager scope is enforced server-side (the client half; BQ-13)", () => {
-  it("a manager granted only B reads B's rows; a crafted filter naming A is refused, audited, with no rows", async () => {
+  it("a manager granted only B subscribes to B and holds B's rows only; a filter naming A is answered account_scope_denied, with no rows", async () => {
     await open("owner", [SUB2]);
     expect(ws.live("positions")[0]?.spec.opts).toEqual({ exchange_account_ids: [SUB2] });
     expect(groupNames()).toEqual([`group ${SUB2}`]);
+    expect(store.getSnapshot().rows.map((r) => r.accountId)).toEqual([SUB2, SUB2]);
+    // the refusal carries no rows (its audit row and the server's own no-rows are E29-T07's tests)
     expect(await positionsApi.listPositions({ accountIds: [MAIN] })).toEqual({
       kind: "account_scope_denied",
     });

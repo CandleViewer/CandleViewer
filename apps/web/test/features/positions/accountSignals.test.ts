@@ -4,6 +4,7 @@
  * the B20 risk lockout (a refused subscription reads unknown, never clear); the kill switch from
  * `WsState`. The resyncing frame is the shipped producer's golden; E29-T06's rows follow `23`'s table.
  */
+import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { SystemUpdate } from "../../../src/lib/ws/protocol/frames";
 import type { KillSwitchView } from "../../../src/lib/ws/state/types";
@@ -14,6 +15,8 @@ import {
   killSwitchBanner,
   killSwitchCovers,
   startAccountSignals,
+  useAccountSignals,
+  type AccountSignalsStore,
 } from "../../../src/features/positions/accountSignals";
 import { bindDeck } from "../../../src/features/positions/copy";
 import { delta, golden, MAIN, reset, snap, SUB1, SUB2 } from "./support/fakes";
@@ -164,6 +167,41 @@ describe("the kill switch (WsState; 23 §15.9)", () => {
     signals.setKillSwitch(engaged("global"), 1);
     signals.setKillSwitch(engaged("accounts", [MAIN]), 1);
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("teardown (every subscription lets go)", () => {
+  it("a listener that unsubscribed hears no later change", () => {
+    const signals = createAccountSignals();
+    const listener = vi.fn();
+    const unsubscribe = signals.subscribe(listener);
+    signals.setKillSwitch(engaged("global"), 1);
+    unsubscribe();
+    unsubscribe(); // twice is harmless
+    signals.setKillSwitch(engaged("accounts", [MAIN]), 2);
+    signals.applyNotice(resyncing, 3);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("useAccountSignals unsubscribes on unmount", () => {
+    const signals = createAccountSignals();
+    const released = vi.fn();
+    const watched: AccountSignalsStore = {
+      ...signals,
+      subscribe: (listener) => {
+        const off = signals.subscribe(listener);
+        return () => {
+          released();
+          off();
+        };
+      },
+    };
+    const { result, unmount } = renderHook(() =>
+      useAccountSignals(watched, (s) => s.killSwitch.view.state),
+    );
+    expect(result.current).toBe("unknown");
+    unmount();
+    expect(released).toHaveBeenCalledTimes(1);
   });
 });
 
