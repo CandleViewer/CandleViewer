@@ -116,10 +116,13 @@ class Events:
 class Bus:
     offered: list[OmsIncident] = field(default_factory=list)
     calls: list[str] | None = None
+    refuse: bool = False
 
     def offer(self, found: OmsIncident) -> None:
         if self.calls is not None:
             self.calls.append("bus")
+        if self.refuse:
+            raise RuntimeError("the serving loop has closed")
         self.offered.append(found)
 
 
@@ -168,7 +171,9 @@ def build(
     limit: int = 200,
     reads: InMemoryStuckReads | None = None,
     sink_timeout_s: float = 2.0,
+    **scan: Any,
 ) -> StuckRig:
+    """The rig; `scan` goes to the detector as it is (`timeout_s`, `interval_s`, `chores`)."""
     clock, reads = Clock(), reads if reads is not None else InMemoryStuckReads()
     records, events, bus, pager, metrics = Records(), Events(), Bus(), Pager(), Metrics("dev")
     counted = DetectorMetrics(metrics)
@@ -177,7 +182,7 @@ def build(
         timeout_s=sink_timeout_s,
     )  # fmt: skip
     held = standing if standing is not None else Standing()
-    extra: dict[str, Any] = {} if sleep is None else {"sleep": sleep}
+    extra: dict[str, Any] = scan if sleep is None else {"sleep": sleep, **scan}
     detector = StuckDetector(
         reads, environment="demo", thresholds=thresholds or Thresholds(), stale=held, sinks=sinks,
         metrics=counted, ready=ready, monotonic=clock.monotonic, now=clock.now, limit=limit,
