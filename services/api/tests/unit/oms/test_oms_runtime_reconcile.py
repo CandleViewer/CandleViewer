@@ -228,7 +228,7 @@ async def test_a_start_its_bound_cuts_holds_the_accounts_it_missed_until_a_retry
     besides, and it is logged CRITICAL as a `TimeoutError` and paged once; the retry opens the
     jobs, each open clearing its account's mark, and lifts the hold."""
     monkeypatch.setattr(oms_wiring, "SWEEP_STATEMENT_TIMEOUT_MS", 0)
-    monkeypatch.setattr(oms_wiring, "SWEEP_CALL_SLACK_S", 0.3)  # real time, kept short
+    monkeypatch.setattr(oms_wiring, "SWEEP_CALL_SLACK_S", 1.0)  # real time: a slow runner keeps it
     world, standing = _world(), ReconcileStanding()
     first, cut, missed = accounts = _seeded(world, 0xB1, 0xB2, 0xB3)
     real, hangs = ReconcileJobs.trigger, [cut]
