@@ -40,6 +40,7 @@ from candleviewer.storage.repositories.drawings import (
     DrawingFields,
     DrawingIdUnavailableError,
     DrawingNotFoundError,
+    DrawingQuotaExceededError,
     DrawingRow,
     DrawingVersionConflictError,
     UpdateOp,
@@ -880,6 +881,19 @@ def _timed(label: str, timings: list[float]) -> float:
     return p99
 
 
+#: Runs per owner in the perf tests: the #2727 quota bounds a real owner's rows (500 a symbol,
+#: 5 000 a user), so the runs rotate over owners, each run on its own symbol, under the real quota.
+_RUNS_PER_OWNER = 20
+
+
+def _perf_owners(dsn: str, runs: int) -> list[str]:
+    return [_user(dsn) for _ in range(-(-runs // _RUNS_PER_OWNER))]
+
+
+def _perf_symbol(run: int) -> str:  # one symbol per run of an owner: at most 200 creates on it
+    return f"S{run % _RUNS_PER_OWNER:02d}USDT"
+
+
 @pytest.mark.perf
 # Client wall clock on shared CI runners (C-9.3). ticket: GH-2986 quarantined: 2026-10-16
 @pytest.mark.flaky
@@ -903,23 +917,26 @@ async def test_batch_of_200_creates_p99_under_50ms(pg_dsn: str) -> None:
     tests ALSO run there in the full-file context; they are judged in both jobs. Local runs on
     a shared laptop are informational only. The time includes the commit, which is what a
     caller experiences.
+
+    Owners rotate every `_RUNS_PER_OWNER` runs, each run on its own symbol (4 000 live rows per
+    owner at most), so every batch passes the real #2727 quota and pays its count.
     """
-    owner = _user(pg_dsn)
+    owners = _perf_owners(pg_dsn, _WARMUP + _BATCH_RUNS)
     _vacuum(pg_dsn)
     rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-batch-perf")
     repo = SqlAlchemyDrawingRepository(rel)
-    fields = _f()
 
-    def ops() -> list[BatchOp]:
+    def ops(run: int) -> list[BatchOp]:
+        fields = _f(_perf_symbol(run))
         return [CreateOp(str(uuid.uuid4()), fields) for _ in range(200)]
 
     try:
-        for _ in range(_WARMUP):  # warm-up: connection, statement cache
-            await repo.apply_batch(owner, ops())
+        for run in range(_WARMUP):  # warm-up: connection, statement cache
+            await repo.apply_batch(owners[run // _RUNS_PER_OWNER], ops(run))
         _checkpoint(pg_dsn)
         timings: list[float] = []
-        for _ in range(_BATCH_RUNS):
-            batch = ops()
+        for run in range(_WARMUP, _WARMUP + _BATCH_RUNS):
+            owner, batch = owners[run // _RUNS_PER_OWNER], ops(run)
             t0 = time.perf_counter()
             result = await repo.apply_batch(owner, batch)
             timings.append((time.perf_counter() - t0) * 1000)
@@ -949,27 +966,31 @@ async def test_mixed_batch_of_200_p99_under_50ms(pg_dsn: str) -> None:
     tests ALSO run there in the full-file context; they are judged in both jobs. Local runs on
     a shared laptop are informational only. The time includes the commit, which is what a
     caller experiences.
+
+    Owners rotate every `_RUNS_PER_OWNER` runs, each run on its own symbol; a run's update and
+    delete targets are its owner's own seeded rows on that symbol. An owner peaks at 3 000 live
+    rows and a symbol at 150, so every batch passes the real #2727 quota and pays its count.
     """
-    owner = _user(pg_dsn)
+    runs = _WARMUP + _BATCH_RUNS
+    owners = _perf_owners(pg_dsn, runs)
     _vacuum(pg_dsn)
     rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-batch-perf-mixed")
     repo = SqlAlchemyDrawingRepository(rel)
-    fields = _f()
-    runs = _WARMUP + _BATCH_RUNS
-    pool: list[DrawingRow] = []  # 50 update targets + 50 delete targets per run
-    for _ in range(100 * runs // MAX_BATCH_OPS_STORAGE):
-        seeded = await repo.apply_batch(
-            owner, [CreateOp(str(uuid.uuid4()), fields) for _ in range(MAX_BATCH_OPS_STORAGE)]
-        )
-        pool.extend(seeded.created)
+    pool: list[DrawingRow] = []  # 50 update targets + 50 delete targets per run, run order
+    per_seed = MAX_BATCH_OPS_STORAGE // 100  # runs seeded by one batch (same owner: 20 % 2 == 0)
+    for first in range(0, runs, per_seed):
+        seed = [CreateOp(str(uuid.uuid4()), _f(_perf_symbol(r)))
+                for r in range(first, min(first + per_seed, runs)) for _ in range(100)]  # fmt: skip
+        pool.extend((await repo.apply_batch(owners[first // _RUNS_PER_OWNER], seed)).created)
     try:
         timings: list[float] = []
         for run in range(runs):
             if run == _WARMUP:  # seed + warm-up are flushed before the first measured run
                 _checkpoint(pg_dsn)
+            owner, fields = owners[run // _RUNS_PER_OWNER], _f(_perf_symbol(run))
             chunk = pool[run * 100 : (run + 1) * 100]
             batch: list[BatchOp] = [CreateOp(str(uuid.uuid4()), fields) for _ in range(100)]
-            batch += [UpdateOp(r.id, r.updated_at, _f(label="m")) for r in chunk[:50]]
+            batch += [UpdateOp(r.id, r.updated_at, _f(r.symbol, label="m")) for r in chunk[:50]]
             batch += [DeleteOp(r.id, r.updated_at) for r in chunk[50:]]
             t0 = time.perf_counter()
             result = await repo.apply_batch(owner, batch)
@@ -981,3 +1002,47 @@ async def test_mixed_batch_of_200_p99_under_50ms(pg_dsn: str) -> None:
         await rel.dispose()
     p99 = _timed("(100 creates, 50 updates, 50 deletes)", timings)
     assert p99 < 50.0, f"mixed batch p99 {p99:.3f} ms"
+
+
+@pytest_asyncio.fixture
+async def small_quota(pg_dsn: str) -> AsyncIterator[SqlAlchemyDrawingRepository]:
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-quota-it")
+    try:
+        yield SqlAlchemyDrawingRepository(rel, per_symbol=2, per_user=3)
+    finally:
+        await rel.dispose()
+
+
+async def test_quota_is_counted_in_sql_per_owner_and_never_raced(
+    small_quota: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    """#2727: n allowed, n + 1 refused before the insert; B's rows never count against A."""
+    repo, (a, b) = small_quota, (_user(pg_dsn), _user(pg_dsn))
+    for _ in range(2):
+        await repo.create(b, str(uuid.uuid4()), _f())
+    results = await asyncio.gather(
+        *(repo.create(a, str(uuid.uuid4()), _f()) for _ in range(6)), return_exceptions=True
+    )  # concurrent: the per-owner lock lets exactly the quota through
+    refused = [r for r in results if isinstance(r, DrawingQuotaExceededError)]
+    assert len(refused) == 4 and {e.scope for e in refused} == {"symbol"}
+    await repo.create(a, str(uuid.uuid4()), _f("ETHUSDT"))  # the third, under the user quota
+    lost = str(uuid.uuid4())
+    with pytest.raises(DrawingQuotaExceededError) as err:
+        await repo.create(a, lost, _f("SOLUSDT"))
+    assert err.value.scope == "user" and await repo.get(a, lost) is None
+    (old, *_) = await repo.list_page(a, symbol="BTCUSDT", layout_id=None, after_id=None, limit=5)
+    swap = [DeleteOp(old.id, old.updated_at), CreateOp(lost, _f("SOLUSDT"))]  # net zero
+    assert [r.id for r in (await repo.apply_batch(a, swap)).created] == [lost]
+    with pytest.raises(DrawingQuotaExceededError):
+        await repo.apply_batch(a, [CreateOp(str(uuid.uuid4()), _f("SOLUSDT"))])
+
+
+async def test_live_rows_per_user_reports_the_max_and_p95_of_live_rows(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    """Bounds, not absolutes: other tests share the module database (C-13.7)."""
+    a = _user(pg_dsn)
+    for _ in range(40):
+        await repo.create(a, str(uuid.uuid4()), _f("XRPUSDT"))
+    top, p95 = await repo.live_rows_per_user()
+    assert top >= 40 and 1 <= p95 <= top

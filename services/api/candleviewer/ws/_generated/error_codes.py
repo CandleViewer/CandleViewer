@@ -44,6 +44,7 @@ class ErrorCode(StrEnum):
     CONFLICT = "conflict"
     VIEW_AS_ACTIVE = "view_as_active"
     IDEMPOTENCY_KEY_REUSE = "idempotency_key_reuse"
+    DRAWINGS_QUOTA_EXCEEDED = "drawings_quota_exceeded"
     IDEMPOTENCY_IN_FLIGHT = "idempotency_in_flight"
     OPEN_EXPOSURE = "open_exposure"
     EXPOSURE_UNKNOWN = "exposure_unknown"
@@ -153,6 +154,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.CONFLICT: ErrorMeta(("rest",), None, False, None, None, "Concurrent modification or state conflict"),
     ErrorCode.VIEW_AS_ACTIVE: ErrorMeta(("rest",), None, False, None, None, "Session already holds a view-as context; end it with DELETE /auth/session/view-as"),
     ErrorCode.IDEMPOTENCY_KEY_REUSE: ErrorMeta(("rest",), None, False, None, None, "Idempotency-Key reused with a different request payload"),
+    ErrorCode.DRAWINGS_QUOTA_EXCEEDED: ErrorMeta(("rest",), None, False, None, None, "The caller's live drawings quota (per symbol or in all) is reached; nothing was written"),
     ErrorCode.IDEMPOTENCY_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A request with this Idempotency-Key is still being processed"),
     ErrorCode.OPEN_EXPOSURE: ErrorMeta(("rest",), None, False, None, None, "The account holds open positions, working orders or running algos that the request does not resolve; resend with an open_exposure choice"),
     ErrorCode.EXPOSURE_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "The account's open exposure cannot be read because none of its keys can be used to read it"),

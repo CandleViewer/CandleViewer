@@ -6,7 +6,7 @@ predicate. The few that are unscoped by design carry a reviewed `nosemgrep`, so 
 shows none. This scans `services/api/candleviewer` with the five persistence rules and
 `--disable-nosem`, names each finding by its rule, its file and the statement it starts at (the
 assigned constant's name, else `line N`), and compares them with
-`tools/ci/drawings-exception-sites.json`. A fifth unscoped statement fails here; an annotation moved
+`tools/ci/drawings-exception-sites.json`. A sixth unscoped statement fails here; an annotation moved
 to another statement of the same file fails the job, here or in the whole-tree scan beside it. A
 count of (file, rule) pairs would pass both. A scan that read no file, or left a target unread for
 any reason but configuration (the skips `security_gate.py` allows), fails too: an exception there

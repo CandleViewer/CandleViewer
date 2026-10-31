@@ -130,6 +130,7 @@ from candleviewer.api.deny_by_default import (
     rbac_permissions,
 )
 from candleviewer.api.drawings import make_drawings_router
+from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.api.drawings_models import TOOLS
 from candleviewer.api.enrolment_guard import (
     EnrolmentRefusals,
@@ -2346,7 +2347,14 @@ def create_app(
         rows=metrics_facade.gauge(
             "cv_drawings_rows", "Live drawings by tool.", ("tool",), max_series=len(TOOLS)
         ),
+        rows_per_user=metrics_facade.gauge(
+            "cv_drawings_rows_per_user",
+            "Live drawings per owner: max, p95.",
+            ("kind",),
+            max_series=2,
+        ),
     )
+    app.state.drawings_write_limiter = DrawingsWriteLimiter()  # #2727: per-user write bucket
     # `drawings` has no forbid-delete trigger, so the app DSN may purge.
     app.state.drawings_purge_task = DrawingsPurgeTask(
         SqlAlchemyDrawingRepository(
@@ -2356,6 +2364,7 @@ def create_app(
         app.state.drawings_metrics.purged,
         app.state.drawings_metrics.rows,
         TOOLS,
+        rows_per_user=app.state.drawings_metrics.rows_per_user,
     )
     app.state.incidents_purge_task = _build_incidents_purge(resolved)
     # E09-S06: server-evaluated first-run checklist. Steps whose owning epic
@@ -3334,6 +3343,7 @@ def create_app(
             _LazyAuditEmitter(ctx.audit),
             metrics=app.state.drawings_metrics,
             layouts=lambda: app.state.workspaces_repository,  # E15-T01: GET ?layout_id
+            write_limiter=lambda: app.state.drawings_write_limiter,  # #2727
         )
     )
     # E15-T01: workspaces metrics (conflicts/panes/duration recorded by the router) + 90-day

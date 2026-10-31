@@ -1,7 +1,7 @@
 """E14-X03 (#549): the drawings persistence rules. Each names its DR and SR ids, is scoped to the
 drawings files and has a section in docs/plan/security/ci-gates-e14.md. On the production tree they
-are quiet, and without `nosemgrep` fire on exactly the four reviewed exceptions of
-tools/ci/drawings-exception-sites.json, each by its path and statement: a fifth unscoped statement
+are quiet, and without `nosemgrep` fire on exactly the five reviewed exceptions of
+tools/ci/drawings-exception-sites.json, each by its path and statement: a sixth unscoped statement
 must be listed there (an annotation moved to another statement of its file fails the job, in the
 pin or the whole-tree scan). The scan needs the
 `semgrep` binary: CI's governance shards have none, so that test skips there (as
@@ -116,9 +116,9 @@ def test_found_sites_read_the_statement_each_result_opens(tmp_path: Path) -> Non
     ]
 
 
-def test_the_committed_list_names_four_statements_each_with_its_reviewed_annotation() -> None:
+def test_the_committed_list_names_five_statements_each_with_its_reviewed_annotation() -> None:
     listed = pin.load_sites(ROOT / pin.SITES)
-    assert len(listed) == 4 and {rule for rule, _, _ in listed} == {RULE}
+    assert len(listed) == 5 and {rule for rule, _, _ in listed} == {RULE}
     assert (RULE, "services/api/candleviewer/storage/repositories/workspaces_sqlalchemy.py",
             "_PURGE_LAYOUTS") in listed  # fmt: skip
     annotated = []

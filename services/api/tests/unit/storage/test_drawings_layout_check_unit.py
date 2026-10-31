@@ -29,6 +29,7 @@ from candleviewer.storage.repositories.drawings import (
     DrawingFields,
     DrawingIdUnavailableError,
     DrawingLayoutNotFoundError,
+    DrawingQuotaExceededError,
     UpdateOp,
 )
 
@@ -78,6 +79,8 @@ class _Rel:
         self.script, self.calls = list(script), list[tuple[str, dict[str, Any]]]()
         self.opened = self.commits = 0
         self.session = self
+        self.order: list[str] = []  # every statement, #2727's quota ones included
+        self.live: list[dict[str, object]] = []  # `_LIVE_BY_SYMBOL`'s rows (not scripted)
 
     def unit_of_work(self) -> _Rel:
         return self
@@ -93,6 +96,9 @@ class _Rel:
         self.commits += 1
 
     async def execute(self, stmt: sa.TextClause, params: dict[str, Any]) -> _Result:
+        self.order.append(_NAMES[id(stmt)])
+        if stmt in (mod._QUOTA_LOCK, mod._LIVE_BY_SYMBOL):
+            return _Result(self.live if stmt is mod._LIVE_BY_SYMBOL else [{"lock": ""}])
         self.calls.append((_NAMES[id(stmt)], params))
         step = self.script.pop(0)
         if isinstance(step, BaseException):
@@ -278,3 +284,33 @@ def test_a_deadlock_is_read_from_the_wrapper_or_the_driver_cause() -> None:
     assert mod._is_deadlock(DBAPIError("s", {}, wrapper))
     assert mod._is_deadlock(_deadlock())
     assert not mod._is_deadlock(DBAPIError("s", {}, _Driver("40001")))
+
+
+_ORDER = {
+    "create": ["_QUOTA_LOCK", "_LIVE_BY_SYMBOL", "_LAYOUTS_SHARE", "_INSERT"],
+    "update": ["_LAYOUTS_SHARE", "_UPDATE"],
+    "batch": ["_QUOTA_LOCK", "_LAYOUTS_SHARE", "_SNAPSHOT", "_LIVE_BY_SYMBOL", "_INSERT_MANY"],
+    "batch_update": ["_LAYOUTS_SHARE", "_SNAPSHOT", "_UPDATE_MANY"],
+}
+
+
+@pytest.mark.parametrize("call", CALLS)
+async def test_a_creating_write_takes_the_quota_lock_first_and_counts_before_the_insert(
+    call: str,
+) -> None:
+    """#2727: the advisory lock before every other lock, the count before the insert."""
+    rel = _Rel(*_ok(call))
+    await _write(rel, call)
+    assert rel.order == _ORDER[call]
+
+
+@pytest.mark.parametrize("call", ["create", "batch"])
+async def test_a_create_past_the_quota_is_refused_before_its_insert(call: str) -> None:
+    rel = _Rel(*_ok(call))
+    rel.live = [{"symbol": "BTCUSDT", "n": 1}]
+    repo = mod.SqlAlchemyDrawingRepository(rel, per_symbol=1)  # type: ignore[arg-type]  # stub UoW
+    with pytest.raises(DrawingQuotaExceededError) as err:
+        await (repo.create("o", "d", _f("l1")) if call == "create"
+               else repo.apply_batch("o", [CreateOp("d", _f("l1"))]))  # fmt: skip
+    assert (err.value.scope, err.value.limit, rel.commits) == ("symbol", 1, 0)
+    assert not {"_INSERT", "_INSERT_MANY"} & set(rel.order)

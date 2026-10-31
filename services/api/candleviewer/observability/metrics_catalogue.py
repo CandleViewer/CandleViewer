@@ -2564,6 +2564,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=25,
     ),
     _s(
+        "cv_drawings_rows_per_user",
+        "gauge",
+        "rows",
+        ("kind",),
+        "Live drawings per owner across all owners, kind=max|p95 only, no per-user label "
+        "(#2727, SR-E14-11).",
+        "dashboard only",
+        _P,
+        "E14",
+        max_series=2,
+    ),
+    _s(
         "cv_workspace_conflicts_total",
         "counter",
         "conflicts",

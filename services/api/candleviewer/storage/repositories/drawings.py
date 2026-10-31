@@ -17,10 +17,14 @@ update/delete aimed at a foreign or missing id reports the internal `target_not_
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
+
+#: Live drawings one owner may hold on one symbol, and in all (#2727, SR-E14-05, DR32).
+MAX_DRAWINGS_PER_SYMBOL: Final = 500
+MAX_DRAWINGS_PER_USER: Final = 5000
 
 
 class DrawingNotFoundError(Exception):
@@ -33,6 +37,29 @@ class DrawingVersionConflictError(Exception):
 
 class DrawingIdUnavailableError(Exception):
     """A create reused an id held by ANY row, any owner, any state (HTTP 409)."""
+
+
+class DrawingQuotaExceededError(Exception):
+    """A write would take the owner past a quota (HTTP 409 `drawings_quota_exceeded`); nothing
+    was written. `scope` is `symbol` or `user`, `limit` the quota that was hit."""
+
+    def __init__(self, scope: str, limit: int) -> None:
+        super().__init__(f"drawings quota per {scope} ({limit}) reached")
+        self.scope, self.limit = scope, limit
+
+
+def quota_breach(
+    live: Mapping[str, int], delta: Mapping[str, int], *, per_symbol: int, per_user: int
+) -> DrawingQuotaExceededError | None:
+    """The refusal for a write adding `delta` live rows per symbol to the owner's `live` ones, or
+    None. Only growth is refused, so a clean-up passes even over a lowered quota."""
+    for symbol, n in sorted(delta.items()):
+        if n > 0 and live.get(symbol, 0) + n > per_symbol:
+            return DrawingQuotaExceededError("symbol", per_symbol)
+    net = sum(delta.values())
+    if net > 0 and sum(live.values()) + net > per_user:
+        return DrawingQuotaExceededError("user", per_user)
+    return None
 
 
 class DrawingLayoutNotFoundError(Exception):
@@ -191,8 +218,9 @@ class DrawingRepository(Protocol):
 
 
 __all__ = [
-    "BATCH_RULES", "BatchOp", "BatchOpFailed", "BatchResult", "CreateOp", "DeleteOp",
-    "DrawingFields", "DrawingIdUnavailableError", "DrawingLayoutNotFoundError",
-    "DrawingNotFoundError", "DrawingRepository", "DrawingRow", "DrawingVersionConflictError",
-    "UpdateOp", "format_token",
+    "BATCH_RULES", "MAX_DRAWINGS_PER_SYMBOL", "MAX_DRAWINGS_PER_USER", "BatchOp", "BatchOpFailed",
+    "BatchResult", "CreateOp", "DeleteOp", "DrawingFields", "DrawingIdUnavailableError",
+    "DrawingLayoutNotFoundError", "DrawingNotFoundError", "DrawingQuotaExceededError",
+    "DrawingRepository", "DrawingRow", "DrawingVersionConflictError", "UpdateOp", "format_token",
+    "quota_breach",
 ]  # fmt: skip
