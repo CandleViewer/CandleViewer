@@ -3486,9 +3486,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "gauge",
         "accounts",
         (),
-        "Accounts whose reconciliation job is locked stale (E29-T06, B19 stale_lockout): 2 "
-        "minutes of failed fetches, order entry refused with account_stale until the Owner "
-        "resolves it (24 Sec.8.5). No account label: the logs name the account.",
+        "Accounts the reconciliation standing marks stale, refused order entry with "
+        "account_stale (E29-T06, 24 Sec.8.5): a job locked stale (B19 stale_lockout, after 2 "
+        "minutes of failed fetches or a refused snapshot) until the Owner resolves it, or an "
+        "account whose job has not opened yet. No account label: the logs name the account.",
         "> 0 (page)",
         _P,
         "E29",
