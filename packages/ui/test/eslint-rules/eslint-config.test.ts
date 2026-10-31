@@ -47,6 +47,26 @@ describe("packages/ui's eslint.config.mjs", { timeout: 60_000 }, () => {
     }
   });
 
+  it("holds src/, stories and .storybook/ to react/no-danger at error (E05-X02)", async () => {
+    for (const file of [
+      "src/components/MaskedValue.tsx",
+      "src/components/MaskedValue.stories.tsx",
+      "src/icons/IconSvg.tsx",
+      ".storybook/decorators.tsx",
+    ]) {
+      const { rules } = (await eslint.calculateConfigForFile(file)) as {
+        rules: Record<string, unknown>;
+      };
+      expect(rules["react/no-danger"], file).toEqual([2]);
+    }
+    const html =
+      "export const Raw = ({ t }: { t: string }) => <div dangerouslySetInnerHTML={{ __html: t }} />;\n";
+    const [result] = await eslint.lintText(html, {
+      filePath: path.join(UI, "src/components/MaskedValue.tsx"),
+    });
+    expect(result?.messages.map(({ ruleId }) => ruleId)).toContain("react/no-danger");
+  });
+
   it("lets src/icons/, the registry, draw the raw <svg> that no other src/ file may", async () => {
     const svg = 'export const Glyph = () => <svg viewBox="0 0 24 24" />;\n';
     const raw = async (file: string) => {
