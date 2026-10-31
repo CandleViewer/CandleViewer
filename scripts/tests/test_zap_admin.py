@@ -1085,6 +1085,23 @@ def test_a_run_secret_too_short_to_search_for_fails_closed_without_its_value(
     assert "t1ny-s3cr3t" not in shown.out + shown.err
 
 
+def test_the_error_title_is_zap_admin_unless_a_lane_names_itself_in_one_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#2086: e2e-auth-real.yml names itself; a title could otherwise end the `::error` early."""
+    monkeypatch.setenv("ZAP_MANAGER_PASSWORD", _PASSWORD)
+    work = _artefact_log(tmp_path, f"{_PASSWORD}\n")
+    args = ["--env-dir", str(tmp_path / "no"), "--env", "ZAP_MANAGER_PASSWORD", str(work)]
+    assert artefacts.main(args) == 1
+    assert "::error title=zap-admin::a secret of the run" in capsys.readouterr().out
+    assert artefacts.main(["--title", "e2e-auth-real", *args]) == 1
+    shown = capsys.readouterr().out
+    assert "::error title=e2e-auth-real::a secret of the run" in shown and "zap-admin" not in shown
+    for title in ("x::y", "Lane", "a,b", ""):
+        with pytest.raises(SystemExit):
+            artefacts.main(["--title", title, *args])
+
+
 # --- the nightly workflow -----------------------------------------------------------------------
 
 

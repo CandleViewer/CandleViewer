@@ -87,6 +87,16 @@ describe("watchForLeaks", () => {
     await expect(guard.flush()).resolves.toBeUndefined();
   });
 
+  it("fails closed on the API's 304, whose cached body it cannot read, not on a static file's", async () => {
+    const { page, start } = fakePage();
+    const guard = watchForLeaks(page, ["secret-value"]);
+    const unreadable = new Error("Response body is unavailable for redirect responses");
+    start("/assets/index-abc123.js").finish(304, unreadable); // the SPA's own build, revalidated
+    await expect(guard.flush()).resolves.toBeUndefined();
+    start().finish(304, unreadable);
+    await expect(guard.flush()).rejects.toThrow("GET /api/v1/probe (304): its body was not read");
+  });
+
   it("refuses an empty forbidden value, which every body contains", () => {
     expect(() => watchForLeaks(fakePage().page, ["x", ""])).toThrow(/empty forbidden value/u);
   });

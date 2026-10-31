@@ -1,16 +1,29 @@
 // @vitest-environment node
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { Page } from "@playwright/test";
+import { join, resolve } from "node:path";
+import type { BrowserContext, Page, Request, Response } from "@playwright/test";
 import type { UserConfig } from "vite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import stubConfig from "../e2e/playwright.config";
 import realConfig from "../e2e/playwright.real.config";
 import { expires, same, setCookieNames, tamperOneByte } from "../e2e/support/real/cookies";
-import { auditSliceSql } from "../e2e/support/real/failureArtefacts";
-import { completeMfa, submitPassword } from "../e2e/support/real/signIn";
+import {
+  REFRESH_BUDGET,
+  REFRESH_LIMIT,
+  SLICE_COLUMNS,
+  auditSliceSql,
+  checkRefreshTally,
+  keepFailureArtefacts,
+  paceRefreshes,
+  presentsRefresh,
+  recordRefresh,
+  refreshCounter,
+  refreshesInWindow,
+} from "../e2e/support/real/failureArtefacts";
+import { answerTo, completeMfa, submitPassword } from "../e2e/support/real/signIn";
 import { claimFrom, parseUsers } from "../e2e/support/real/stack";
+import { tapWebSocket } from "../e2e/support/real/wsTap";
 
 /**
  * E09-Q02 (#293) PR 2 (#2490): the real lane's wiring, pinned where a slip would not fail a spec.
@@ -173,6 +186,377 @@ describe("the audit slice", () => {
     ["an id that is not a UUID", [], ["1; DROP TABLE users"]],
   ])("refuses %s before building any SQL", (_what, users, ids) => {
     expect(() => auditSliceSql(since, users, ids)).toThrow();
+  });
+
+  it("selects exactly the columns a row is checked against", () => {
+    const sql = auditSliceSql(since, [], []);
+    const select = sql.slice(sql.indexOf("SELECT a."), sql.indexOf(" FROM audit_log"));
+    const names = [...select.matchAll(/(?:a\.(\w+)|AS (\w+))(?=,|$)/gu)].map((m) => m[1] ?? m[2]);
+    expect(names).toEqual([...SLICE_COLUMNS]);
+  });
+});
+
+// #5103's code look m7: the failure branch, with its reader and test info stood in for.
+describe("the failure artefacts", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "cv-real-artefacts-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const id = "18bc2887-37b0-42e9-9c6a-7a01419e5ac4";
+  const failed = {
+    since: new Date("2026-10-30T16:00:00.000Z"),
+    users: ["e2e-1a2b3c4d-1"],
+    seen: [
+      {
+        at: "2026-10-30T16:00:01.000Z",
+        method: "GET",
+        path: "/me",
+        status: 200,
+        correlationId: id,
+      },
+    ],
+  };
+  const row = Object.fromEntries(
+    SLICE_COLUMNS.map((c) => [c, c === "action" ? "auth.login" : null]),
+  );
+  const settle = { timeout: 200, intervals: [5] };
+  const sink = () => {
+    const attached: string[] = [];
+    const outputPath = (name: string): string => join(dir, name);
+    const attach = async (name: string): Promise<void> => void attached.push(name);
+    return { attached, outputPath, attach };
+  };
+  const slice = (): Record<string, unknown> =>
+    JSON.parse(readFileSync(join(dir, "audit-log-slice.json"), "utf8")) as Record<string, unknown>;
+
+  it("keeps the correlation ids, then the slice once two reads agree", async () => {
+    const info = sink();
+    const reads: string[] = [];
+    const read = async (sql: string): Promise<unknown[]> => {
+      reads.push(sql);
+      return [row];
+    };
+    await keepFailureArtefacts(info, failed, read, settle);
+    expect(info.attached).toEqual(["correlation-ids.json", "audit-log-slice.json"]);
+    expect(slice()).toMatchObject({ note: "settled", rows: [row] });
+    expect(reads.length).toBeGreaterThanOrEqual(2);
+    expect(reads[0]).toContain(`ARRAY['${id}']::uuid[]`);
+  });
+
+  it("keeps an empty slice with a note when no row lands in time", async () => {
+    await keepFailureArtefacts(sink(), failed, async () => [], settle);
+    expect(slice()).toMatchObject({ rows: [] });
+    expect(String(slice()["note"])).toMatch(/^not settled: /u);
+  });
+
+  it("fails loudly when a renamed column fails the query, once, after keeping what it has", async () => {
+    const info = sink();
+    let reads = 0;
+    const psql = Object.assign(new Error("Command failed: docker compose exec -T postgres psql"), {
+      stderr: "ERROR:  column a.reason does not exist\nLINE 1: SELECT a.id",
+    });
+    const read = async (): Promise<unknown[]> => {
+      reads += 1;
+      throw psql;
+    };
+    await expect(keepFailureArtefacts(info, failed, read, settle)).rejects.toThrow(
+      "the audit slice could not be read: ERROR:  column a.reason does not exist",
+    );
+    expect(reads).toBe(1); // a query that failed is not read again
+    expect(info.attached).toEqual(["correlation-ids.json", "audit-log-slice.json"]);
+    expect(slice()).toMatchObject({ note: "read failed: ERROR:  column a.reason does not exist" });
+  });
+
+  it("fails loudly on a row whose columns are not the slice's, a renamed one", async () => {
+    const { reason, ...rest } = row;
+    const read = async (): Promise<unknown[]> => [{ ...rest, reason_code: reason }];
+    await expect(keepFailureArtefacts(sink(), failed, read, settle)).rejects.toThrow(
+      /could not be read: audit slice row 0 has the columns \[.*reason_code/u,
+    );
+  });
+});
+
+// #5103's code look m6: every request comes from the proxy's 127.0.0.1: the run shares one budget.
+describe("the refresh ledger", () => {
+  let ledger: string;
+  beforeEach(() => {
+    ledger = join(mkdtempSync(join(tmpdir(), "cv-real-ledger-")), "refresh-ledger");
+  });
+  afterEach(() => rmSync(join(ledger, ".."), { recursive: true, force: true }));
+  const timing = (): { timeout: number; setTimeout: (ms: number) => void } => {
+    const info = { timeout: 60_000, setTimeout: (ms: number) => void (info.timeout = ms) };
+    return info;
+  };
+
+  it("counts what the server may still count: the last minute and a second of slack", () => {
+    expect(refreshesInWindow(ledger, 100_000)).toBe(0); // no ledger yet
+    for (const at of [10_000, 38_999, 39_000, 99_000]) recordRefresh(ledger, at);
+    expect(refreshesInWindow(ledger, 100_000)).toBe(2);
+  });
+
+  it("knows a cookie-presenting refresh by the cookie's name", () => {
+    expect(presentsRefresh("a=1; cv_refresh=xyz; __Host-cv_csrf=q")).toBe(true);
+    expect(presentsRefresh("__Host-cv_csrf=q; cv_refresh_x=1")).toBe(false);
+    expect(presentsRefresh(undefined)).toBe(false);
+  });
+
+  it("waits, on top of the test's own timeout, until the window has room under the budget", async () => {
+    for (let i = 0; i < REFRESH_BUDGET - 1; i += 1) recordRefresh(ledger, 1_000);
+    let now = 50_000; // the window holds 7: no room for 2 more under 8 until they leave it
+    const info = timing();
+    await paceRefreshes(ledger, 2, info, { now: () => (now += 5_000), intervalMs: 1 });
+    expect(now).toBeGreaterThanOrEqual(62_001); // 1_000 + the window + the slack
+    expect(info.timeout).toBe(135_000);
+  });
+
+  it("waits for nothing when none are declared, and refuses more than the budget", async () => {
+    const info = timing();
+    await paceRefreshes(ledger, 0, info);
+    expect(info.timeout).toBe(60_000);
+    await expect(paceRefreshes(ledger, REFRESH_BUDGET + 1, info)).rejects.toThrow(RangeError);
+  });
+});
+
+// #5170's code look m1: a test's count waits for its refreshes still in flight, within a bound.
+describe("the refresh count at a test's end", () => {
+  let ledger: string;
+  beforeEach(() => {
+    ledger = join(mkdtempSync(join(tmpdir(), "cv-real-count-")), "refresh-ledger");
+  });
+  afterEach(() => rmSync(join(ledger, ".."), { recursive: true, force: true }));
+
+  /** A context whose request events the test fires, watched by a counter with a short wait. */
+  const watched = (timeout: number) => {
+    const counter = refreshCounter(ledger, { timeout, intervals: [5] });
+    const handlers = new Map<string, (request: Request) => void>();
+    const on = (event: string, handler: (request: Request) => void) => handlers.set(event, handler);
+    counter.watch({ on } as unknown as BrowserContext);
+    const fire = (event: string, request: Request): void => handlers.get(event)?.(request);
+    return { counter, fire };
+  };
+  const refresh = (cookie: string): Request =>
+    ({
+      url: () => "http://127.0.0.1:4173/api/v1/auth/refresh",
+      method: () => "POST",
+      headerValue: async () => cookie,
+    }) as unknown as Request;
+  const turn = (): Promise<void> => new Promise((done) => setImmediate(done));
+  const messageOf = (check: () => void): string => {
+    try {
+      check();
+      return "";
+    } catch (error) {
+      return String(error);
+    }
+  };
+
+  it("counts a refresh still in flight when the test ends, once it settles", async () => {
+    const { counter, fire } = watched(4_000);
+    const sent = refresh("cv_refresh=x; __Host-cv_csrf=y");
+    fire("request", sent);
+    const counting = counter.count();
+    await turn(); // the count is under way, and only now does the refresh settle
+    fire("requestfinished", sent);
+    const tally = await counting;
+    expect(tally).toEqual({ presented: 1, unsettled: 0 });
+    expect(refreshesInWindow(ledger, Date.now())).toBe(1);
+    expect(() => checkRefreshTally(tally, 1)).not.toThrow();
+  });
+
+  it("fails a test whose refresh never settles as that, not as one to recount", async () => {
+    const { counter, fire } = watched(50);
+    fire("request", refresh("cv_refresh=x"));
+    const tally = await counter.count();
+    expect(tally).toEqual({ presented: 0, unsettled: 1 });
+    const message = messageOf(() => checkRefreshTally(tally, 1));
+    expect(message).toMatch(/a refresh never settled: 1 POST \/auth\/refresh this test sent was/u);
+    expect(message).not.toMatch(/recount/u);
+  });
+
+  it("counts only the cookie-presenting ones, and fails a miscount as one to recount", async () => {
+    const { counter, fire } = watched(1_000);
+    for (const cookie of ["__Host-cv_csrf=y", "cv_refresh=x"]) {
+      const sent = refresh(cookie);
+      fire("request", sent);
+      fire("requestfailed", sent);
+    }
+    const tally = await counter.count();
+    expect(tally).toEqual({ presented: 1, unsettled: 0 });
+    expect(messageOf(() => checkRefreshTally(tally, 2))).toMatch(
+      /1 times and declares 2 \(lane\.refreshes\): recount it/u,
+    );
+  });
+});
+
+// #5170's code look m2 and security look N3: the pace is per worker, so `real`'s two workers can
+// pass it at once. Its declared total, and their worst case in one window, stay within the limit.
+describe("the refreshes the real project declares", () => {
+  const E2E = resolve(import.meta.dirname, "../e2e");
+  const specs = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const path = join(dir, e.name);
+      if (e.isDirectory()) return specs(path);
+      return e.name.endsWith(".real.ts") ? [path] : [];
+    });
+  const CALL = /\blane\.refreshes\((\d+)\)/gu;
+
+  /** A spec's tests: each title, and the count its `lane.refreshes(N)` declares (0 without one). */
+  function declarations(text: string): { title: string; count: number }[] {
+    const starts = [...text.matchAll(/^test\("([^"]+)"/gmu)];
+    // a test or a declaration this parse cannot read would leave the sum short
+    expect(starts).toHaveLength(text.match(/\btest\(/gu)?.length ?? 0);
+    expect(text.match(/\brefreshes\(/gu)?.length ?? 0).toBe(text.match(CALL)?.length ?? 0);
+    expect(text.slice(0, starts[0]?.index).match(CALL)).toBeNull();
+    return starts.map((start, i) => {
+      const calls = [...text.slice(start.index, starts[i + 1]?.index).matchAll(CALL)];
+      expect(calls.length, start[1]).toBeLessThanOrEqual(1);
+      return { title: start[1] ?? "", count: Number(calls[0]?.[1] ?? 0) };
+    });
+  }
+
+  /** What each test of the `real` project declares, and how many workers it runs on. */
+  function realProject(): { counts: number[]; workers: number } {
+    const real = realConfig.projects?.find((p) => p.name === "real");
+    const clock = real?.grepInvert;
+    if (!(clock instanceof RegExp) || typeof real?.workers !== "number") {
+      throw new Error("`real` names its workers and inverts one grep");
+    }
+    const counts = specs(E2E)
+      .flatMap((file) => declarations(readFileSync(file, "utf8")))
+      .filter((t) => !clock.test(t.title))
+      .map((t) => t.count);
+    expect(counts, "the parse found the real project's tests").not.toHaveLength(0);
+    return { counts, workers: real.workers };
+  }
+
+  it("total what cold-start.real.ts states, within the limit", () => {
+    const total = realProject().counts.reduce((sum, n) => sum + n, 0);
+    const coldStart = readFileSync(join(E2E, "auth", "cold-start.real.ts"), "utf8");
+    expect(/These tests present it (\d+) times in all\./u.exec(coldStart)?.[1]).toBe(`${total}`);
+    expect(total).toBeLessThanOrEqual(REFRESH_LIMIT);
+  });
+
+  it("keep two workers' worst case in one window within the limit too", () => {
+    // a test passes the pace while one on another worker has yet to send what it declares
+    const { counts, workers } = realProject();
+    const worst = REFRESH_BUDGET + (workers - 1) * Math.max(...counts);
+    expect(worst).toBeLessThanOrEqual(REFRESH_LIMIT);
+  });
+});
+
+// #5103's security look N4: no `toEqual(step)` can print the single-use MFA handle.
+describe("the password step's MFA handle", () => {
+  it("is not on the record: printed whole, the step shows no handle", async () => {
+    const handle = `mfa-handle-${"7".repeat(32)}`;
+    const answer = {
+      json: async () => ({ status: "mfa_required", methods: ["totp"], mfa_token: handle }),
+      status: () => 200,
+      headersArray: async () => [],
+    };
+    const page = {
+      waitForResponse: async () => answer,
+      getByLabel: () => ({ fill: async () => undefined }),
+      getByRole: () => ({ click: async () => undefined }),
+    } as unknown as Page;
+    const step = await submitPassword(page, { username: "e2e-1a2b3c4d-1", seed: () => "" }, "pw");
+    expect(step.mfaToken()).toBe(handle);
+    expect(JSON.stringify(step)).not.toContain(handle);
+    expect(Object.values(step)).not.toContain(handle);
+    const printed = (() => {
+      try {
+        expect(step).toEqual({});
+        return "";
+      } catch (error) {
+        return String(error);
+      }
+    })();
+    expect(printed).toContain("mfaRequired"); // the record was printed whole
+    expect(printed).not.toContain(handle);
+  });
+});
+
+describe("the socket tap", () => {
+  it("records the server's frames and closes, forwards them untouched, and keeps no client frame", async () => {
+    type Handler = (route: unknown) => void;
+    let route: Handler = () => undefined;
+    const scripts: unknown[] = [];
+    const page = {
+      routeWebSocket: async (_url: string, handler: Handler) => void (route = handler),
+      addInitScript: async (...args: unknown[]) => void scripts.push(args),
+    } as unknown as Page;
+    const tap = await tapWebSocket(page);
+    const toPage: unknown[] = [];
+    const pageCloses: unknown[] = [];
+    let fromServer: (message: string | Buffer) => void = () => undefined;
+    let serverClosed: (code: number | undefined, reason: string | undefined) => void = () =>
+      undefined;
+    const server = {
+      onMessage: (h: typeof fromServer) => void (fromServer = h),
+      onClose: (h: typeof serverClosed) => void (serverClosed = h),
+    };
+    // no `onMessage` on the page's side: the tap must leave the client's frames to Playwright
+    route({
+      connectToServer: () => server,
+      send: (m: unknown) => toPage.push(m),
+      close: async (o: unknown) => void pageCloses.push(o),
+    });
+    const binary = Buffer.from([1, 2]);
+    for (const message of ['{"t":"bye","p":{"code":4401}}', binary, "not json"])
+      fromServer(message);
+    serverClosed(4401, "");
+    expect(tap.frames).toEqual([{ t: "bye", p: { code: 4401 } }]);
+    expect(toPage).toEqual(['{"t":"bye","p":{"code":4401}}', binary, "not json"]);
+    expect([tap.closes, pageCloses]).toEqual([
+      [{ code: 4401, reason: "" }],
+      [{ code: 4401, reason: "" }],
+    ]);
+    expect([tap.connections(), scripts.length]).toEqual([1, 1]);
+  });
+
+  it("leaves no rejection unhandled when the page is gone before the server's close", async () => {
+    type Handler = (route: unknown) => void;
+    let route: Handler = () => undefined;
+    const page = {
+      routeWebSocket: async (_url: string, handler: Handler) => void (route = handler),
+      addInitScript: async () => undefined,
+    } as unknown as Page;
+    const tap = await tapWebSocket(page);
+    let serverClosed: (code: number | undefined, reason: string | undefined) => void = () =>
+      undefined;
+    route({
+      connectToServer: () => ({
+        onMessage: () => undefined,
+        onClose: (h: typeof serverClosed) => void (serverClosed = h),
+      }),
+      send: () => undefined,
+      close: () => Promise.reject(new Error("Target page, context or browser has been closed")),
+    });
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => void unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    try {
+      serverClosed(4401, "");
+      await new Promise((done) => setImmediate(done)); // Node reports an unhandled one by now
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+    expect(unhandled).toEqual([]);
+    expect(tap.closes).toEqual([{ code: 4401, reason: "" }]);
+  });
+});
+
+// #5170's code look nit 5: every spec waits for an answer by its path and its method.
+describe("the answer a spec waits for", () => {
+  const answer = (url: string, method: string): Response =>
+    ({ url: () => url, request: () => ({ method: () => method }) }) as unknown as Response;
+
+  it("is the one to that method and path, whatever the query", () => {
+    const toInvite = answerTo("/api/v1/users", "POST");
+    expect(toInvite(answer("http://127.0.0.1:4173/api/v1/users?x=1", "POST"))).toBe(true);
+    expect(toInvite(answer("http://127.0.0.1:4173/api/v1/users", "GET"))).toBe(false);
+    expect(toInvite(answer("http://127.0.0.1:4173/api/v1/users/me", "POST"))).toBe(false);
   });
 });
 

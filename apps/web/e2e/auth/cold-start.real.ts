@@ -24,8 +24,9 @@ import { completeMfa, signIn, submitPassword } from "../support/real/signIn";
 // a refresh rotating both; a one-byte tamper getting `401`. MFA is completed by in-page `fetch` until
 // SCR-002's OTP form lands (#2711, BQ-2). Each test signs in a fixture user of its own. Values are
 // compared as booleans (`same`), never printed: a failure shows flags, statuses and codes only.
-// The per-address refresh budget is 10 a minute (`api/sessions.py`): these tests present a cookie to
-// `POST /auth/refresh` 8 times in all, the page loads that carry one included.
+// The per-address refresh budget is 10 a minute (`api/sessions.py`): each test declares how often
+// it presents `cv_refresh` to `POST /auth/refresh`, the page loads that carry one included
+// (`lane.refreshes`, held to the count by the fixture). These tests present it 8 times in all.
 
 const SIGN_IN = "Sign in to CandleViewer";
 const SHELL = /R-101/u;
@@ -88,6 +89,7 @@ test("E09-TC-C01 GET /auth/session gives the user and permissions, the cold star
   context,
   lane,
 }) => {
+  await lane.refreshes(2); // the page load into the shell, then the refresh read after it
   const user = lane.user();
   const secrets = [lane.stack.password(), user.seed()];
   const signingIn = watchForLeaks(page, secrets);
@@ -129,6 +131,7 @@ test("E09-TC-C07 a refresh rotates both cookies; the spent cv_refresh is refused
   lane,
   baseURL,
 }) => {
+  await lane.refreshes(2); // the rotation, then the spent cookie's replay
   const origin = originOf(baseURL);
   await signIn(page, lane.stack, lane.user());
   const spent = await requiredValue(context, REFRESH_COOKIE);
@@ -159,6 +162,7 @@ test("E09-TC-C09 a planted cv_refresh is replaced at sign-in, never adopted", as
   lane,
   baseURL,
 }) => {
+  await lane.refreshes(2); // SCR-001's page load with the planted cookie, then that cookie again
   const origin = originOf(baseURL);
   const user = lane.user();
   const planted = randomBytes(32).toString("hex");
@@ -173,7 +177,7 @@ test("E09-TC-C09 a planted cv_refresh is replaced at sign-in, never adopted", as
     same(await valueOf(context, REFRESH_COOKIE), planted),
     "the planted cv_refresh was in the jar when MFA completed",
   ).toBe(true);
-  const mfa = await completeMfa(page, step.mfaToken, lane.stack.clock.totpAt(user.seed()));
+  const mfa = await completeMfa(page, step.mfaToken(), lane.stack.clock.totpAt(user.seed()));
   expect(mfa.authenticated, "MFA by in-page fetch authenticated the session").toBe(true);
   const issued = await requiredValue(context, REFRESH_COOKIE);
   expect(same(issued, planted), "MFA replaced the planted cv_refresh").toBe(false);
@@ -192,6 +196,7 @@ test("E09-TC-C09 a stripped or one-byte-tampered cv_refresh gets 401 and resolve
   lane,
   baseURL,
 }) => {
+  await lane.refreshes(1); // the tampered cookie (the stripped jar presents none)
   const origin = originOf(baseURL);
   await signIn(page, lane.stack, lane.user());
   const issued = await requiredValue(context, REFRESH_COOKIE);
@@ -216,6 +221,7 @@ test("E09-TC-C09 Sign out expires both cookies, and the ended session's cookie g
   lane,
   baseURL,
 }) => {
+  await lane.refreshes(1); // the page load (the logout expires the cookie SCR-001's would send)
   await signIn(page, lane.stack, lane.user());
   await page.goto("/terminal/last");
   await expect(page.getByRole("heading", { name: SHELL })).toBeVisible();
@@ -241,12 +247,11 @@ test("E09-TC-C09 a deep link with no session lands on SCR-001 with next, from th
   context,
 }) => {
   // The boot's refresh has no cv_refresh to present: the real API's 401 is what sends the SPA to
-  // SCR-001. Registered before `goto`, so the answer cannot be missed.
-  const refreshed = page.waitForResponse(
-    (r) => new URL(r.url()).pathname === "/api/v1/auth/refresh",
-  );
-  await page.goto("/positions");
-  const res = await refreshed;
+  // SCR-001. Awaited with the `goto`, so it cannot be missed, nor left pending if `goto` throws.
+  const [res] = await Promise.all([
+    page.waitForResponse((r) => new URL(r.url()).pathname === "/api/v1/auth/refresh"),
+    page.goto("/positions"),
+  ]);
   expect(res.status()).toBe(401);
   const body = (await res.json().catch(() => ({}))) as { code?: unknown };
   expect(body.code).toBe("refresh_token_invalid");

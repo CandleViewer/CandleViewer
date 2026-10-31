@@ -8,7 +8,9 @@ variable that is unset or empty, so a credential made here and left out of its `
 spelt differently there, passes silently: only these tests would notice. They pin the triggers and
 permissions, the generated names against the scan's, the scan directly before the upload and
 gating it, the upload sending what the scan read, the teardown, the bounded waits, and no
-repository secret, persisted credential or unpinned action. Names are compared, never values.
+repository secret, persisted credential or unpinned action; #2086 adds that no secret is made or
+traced outside the pinned lines, that the clocked API runs on the job's own throwaway database,
+and that the specs pace their refreshes to the API's own budget. Names are compared, never values.
 (test_nightly_issue.py owns the report job and lists this workflow as a caller; test_zap_admin.py
 pins the same properties for dast-admin-nightly.yml.)
 """
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +27,16 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "e2e-auth-real.yml"
+#: The API's refresh budget, and the specs' copy of it that paces the run (`lane.refreshes`).
+SESSIONS = ROOT / "services" / "api" / "candleviewer" / "api" / "sessions.py"
+LEDGER = ROOT / "apps" / "web" / "e2e" / "support" / "real" / "failureArtefacts.ts"
 JOB = "e2e-auth-real"
 CRON = "51 3 * * *"
+#: A write to the job's env file: `>>`, `>` or `tee`, then its name quoted or not, braced or not,
+#: or the `github.env` expression.
+ENV_WRITE = re.compile(
+    r"(?:>>?|\btee(?:\s+-[\w-]+)*)\s*[\"']?(?:\$\{?GITHUB_ENV\b|\$\{\{\s*github\.env\s*\}\})"
+)
 #: Every value the credentials step makes into $GITHUB_ENV, masked: the scan must search each one.
 GENERATED = frozenset(
     {
@@ -105,13 +116,16 @@ def test_the_scan_searches_every_secret_the_run_makes_the_totp_seeds_and_the_lan
     assert set(re.findall(r"--env (\w+)", scrub)) == generated  # none left out, none misspelt
     assert '--secret-file "$RUNNER_TEMP/cv/*.totp"' in scrub  # where seed_fixture_user.py writes
     assert '--secret-file "$RUNNER_TEMP/cv-lane/lane.key"' in scrub  # the audit lane key
+    assert "--title e2e-auth-real" in scrub  # its errors name this lane, not zap-admin
     assert not re.search(r"\$\{?(" + "|".join(sorted(generated)) + r")\b", scrub)  # names only
 
 
 def test_every_secret_is_masked_the_moment_it_exists() -> None:
-    # the passwords, pepper and keys are masked before they reach $GITHUB_ENV; each TOTP seed
-    # right after its file is written
-    assert 'echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"' in _step("Make this run's")["run"]
+    # the passwords, pepper and keys are masked before they reach $GITHUB_ENV, the lane key right
+    # after its file is written, and each TOTP seed right after its file is
+    made = _step("Make this run's")["run"]
+    assert 'echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"' in made
+    assert 'lane.key")\necho "::add-mask::$(cat "$RUNNER_TEMP/cv-lane/lane.key")"' in made
     assert (
         'echo "::add-mask::$(cat "$RUNNER_TEMP/cv/e2e-$i.totp")"'
         in _step("Migrate, then seed")["run"]
@@ -203,3 +217,51 @@ def test_the_workflow_pins_every_action_by_commit() -> None:
         or re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", use)
         for use in uses
     )
+
+
+def test_one_upload_and_no_secret_made_or_traced_beside_the_pinned_ones() -> None:
+    """#5103's security delta L3: an upload, a secret or a trace beside the pinned ones would pass
+    every test above, and a shell trace prints a value before its mask exists."""
+    upload = "actions/upload-artifact@"
+    uploads = [s for s in _steps().values() if str(s.get("uses", "")).startswith(upload)]
+    assert uploads == [_step("Upload the failure artefacts")]
+    text, made = WORKFLOW.read_text(encoding="utf-8"), _step("Make this run's")["run"]
+    assert not re.search(r"\bset\s+-\w*x|\bxtrace\b|\bbash\s+-\w*x", text)
+    assert len(ENV_WRITE.findall(text)) == 1  # only secret() writes it, by any redirect or tee
+    assert text.count('"$GITHUB_ENV"') <= 1  # and nothing else names the file quoted
+    assert len(re.findall(r"\bsecret\b", made)) == 2  # its definition and the loop's call
+    assert len(re.findall(r"openssl rand -hex 32", text)) == 2  # secret() and the lane key
+
+
+def test_the_text_only_check_admits_four_kinds_of_file_and_fails_the_step_on_any_other() -> None:
+    scrub = _step("No secret of this run")["run"]
+    (names,) = re.findall(r"find \S+ -type f ((?:! -name '[^']+' )+)\|", scrub)
+    assert re.findall(r"'\*\.(\w+)'", names) == ["json", "md", "log", "txt"]
+    assert re.search(r'if \[ -n "\$other" \]; then\n[^\n]*\n\s*exit 1\n\s*fi\n', scrub)
+
+
+def test_the_clocked_api_runs_on_the_job_s_own_throwaway_database() -> None:
+    """#2086 (carried from #2728's QA, C-2.11): rows written under a moved clock (sessions,
+    lockouts, invites) must die with the run, so the clocked API's database is the Postgres this
+    job starts on loopback, never one a demo or live process uses. `docker compose down -v` then
+    removes the project's containers, its network and every named volume the compose file
+    declares, among them Postgres's data (`cv-postgres-data`) and QuestDB's (`cv-questdb-data`)."""
+    assert re.search(r"docker compose up [^\n]* postgres\b", _step("Start Postgres")["run"])
+    api = _step("Start the API")
+    assert api["env"]["CV_ENVIRONMENT"] == "testnet" and api["env"]["CV_TEST_CLOCK"] == "true"
+    own = "postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+    assert re.findall(r'CV_PG_DSN="([^"]+)"', api["run"]) == [own]  # the password made per run
+    assert re.findall(r'CV_PG_DSN="([^"]+)"', _step("Migrate, then seed")["run"]) == [own]
+    assert "docker compose down -v" in _step("Tear down")["run"]
+
+
+def test_the_specs_pace_their_refreshes_to_the_api_s_own_budget() -> None:
+    """#5170's code look nit 2: the real lane's ledger copies `api/sessions.py`'s refresh budget,
+    which a change there would otherwise reach only as a nightly 429 or a needlessly slow pace."""
+    api = SESSIONS.read_text(encoding="utf-8")
+    (limit,) = re.findall(r"^REFRESH_MAX_PER_WINDOW = (\d+)$", api, re.MULTILINE)
+    (window_s,) = re.findall(r"^REFRESH_WINDOW_S = (\d+(?:\.\d+)?)$", api, re.MULTILINE)
+    lane = LEDGER.read_text(encoding="utf-8")
+    assert re.findall(r"^export const REFRESH_LIMIT = (\d+);$", lane, re.MULTILINE) == [limit]
+    (window_ms,) = re.findall(r"^export const REFRESH_WINDOW_MS = ([\d_]+);$", lane, re.MULTILINE)
+    assert Decimal(window_ms.replace("_", "")) == Decimal(window_s) * 1000

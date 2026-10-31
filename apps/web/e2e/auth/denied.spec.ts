@@ -90,10 +90,11 @@ test("E09-TC-E06 a viewer's deep link to a denied route fetches none of the data
     // the shell reads these after its heading: once it has asked, the flush waits for their bodies and checks them
     await expect.poll(calls).toEqual(expect.arrayContaining(SHELL_READS));
     expect(calls()).toContain("/api/v1/me"); // positive control: the watcher sees the SPA's own reads
-    expect(calls().filter((call) => GUARDED.test(call.split("?")[0] ?? ""))).toEqual([]);
     await expect(page.getByText(SECRET)).toHaveCount(0);
     await guard.flush();
     await page.close();
+    // after the close, so no guarded call the page started can fall between this check and it
+    expect(calls().filter((call) => GUARDED.test(call.split("?")[0] ?? ""))).toEqual([]);
   }
 });
 

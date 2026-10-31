@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Page, type Response } from "@playwright/test";
 import { setCookieNames } from "./cookies";
 import type { FixtureUser, RealStack } from "./stack";
 
@@ -8,18 +8,25 @@ import type { FixtureUser, RealStack } from "./stack";
 // made at the server's time (`serverClock.ts`). The access token stays inside the page: what it
 // reads with it comes back as facts (statuses, counts, booleans), never as the token.
 
-const API_PATH = (path: string) => (r: { url(): string }) => new URL(r.url()).pathname === path;
+/** A `waitForResponse` predicate: the answer to a `method` request for `path` (path only). */
+export const answerTo =
+  (path: string, method: string) =>
+  (r: Response): boolean =>
+    new URL(r.url()).pathname === path && r.request().method() === method;
 export const LOGIN = "/api/v1/auth/login";
 export const MFA_VERIFY = "/api/v1/auth/mfa/verify";
 
-/** The password step as the browser saw it. `mfaToken` is a single-use handle: never print it. */
+/**
+ * The password step as the browser saw it. The `mfa_token` handle is single-use, so it is not on
+ * the record: a function hands it out, and a record printed whole (`toEqual(step)`) shows none.
+ */
 export interface PasswordStep {
   readonly status: number;
   readonly mfaRequired: boolean;
   readonly methods: readonly string[];
   /** How many `Set-Cookie` headers the answer carried. */
   readonly setCookies: number;
-  readonly mfaToken: string;
+  readonly mfaToken: () => string;
 }
 
 /** Fills SCR-001 on the current page with `user`'s username and the password, and submits it. */
@@ -28,7 +35,7 @@ export async function submitPassword(
   user: FixtureUser,
   password: string,
 ): Promise<PasswordStep> {
-  const answered = page.waitForResponse(API_PATH(LOGIN));
+  const answered = page.waitForResponse(answerTo(LOGIN, "POST"));
   const submit = async (): Promise<void> => {
     await page.getByLabel("Username or email").fill(user.username);
     await page.getByLabel("Password", { exact: true }).fill(password);
@@ -39,12 +46,13 @@ export async function submitPassword(
   const [res] = await Promise.all([answered, submit()]);
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   const methods = Array.isArray(body["methods"]) ? (body["methods"] as unknown[]) : [];
+  const handle = typeof body["mfa_token"] === "string" ? body["mfa_token"] : "";
   return {
     status: res.status(),
     mfaRequired: body["status"] === "mfa_required",
     methods: methods.filter((m): m is string => typeof m === "string"),
     setCookies: setCookieNames(await res.headersArray()).length,
-    mfaToken: typeof body["mfa_token"] === "string" ? body["mfa_token"] : "",
+    mfaToken: () => handle,
   };
 }
 
@@ -70,7 +78,7 @@ export interface MfaOutcome {
 
 /** Completes MFA from the page with `code`, then reads `/auth/session` and `/me` with the token. */
 export async function completeMfa(page: Page, mfaToken: string, code: string): Promise<MfaOutcome> {
-  const answered = page.waitForResponse(API_PATH(MFA_VERIFY));
+  const answered = page.waitForResponse(answerTo(MFA_VERIFY, "POST"));
   const read = page.evaluate(
     async ({ verifyPath, token: handle, totp }) => {
       const verify = await fetch(verifyPath, {
@@ -142,7 +150,7 @@ export async function signIn(page: Page, stack: RealStack, user: FixtureUser): P
   const password = await submitPassword(page, user, stack.password());
   expect(password.mfaRequired, "the password step asks for the second factor").toBe(true);
   await expect(page.getByRole("heading", { name: "Two-factor code" })).toBeVisible();
-  const mfa = await completeMfa(page, password.mfaToken, stack.clock.totpAt(user.seed()));
+  const mfa = await completeMfa(page, password.mfaToken(), stack.clock.totpAt(user.seed()));
   expect(mfa.authenticated, "MFA by in-page fetch authenticated the session").toBe(true);
   return { password, mfa };
 }

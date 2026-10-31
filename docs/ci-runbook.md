@@ -268,10 +268,26 @@ refuses to start off a keyless testnet); a red "The real lane" is a spec: the
 fixture users and of those ids, read once they settled), and the API's log. The lane keeps no trace,
 video or screenshot. "No secret of this run in the failure artefacts" means a file was not text, or a
 password, key or TOTP seed the run generated reached the artefact, which is then not uploaded. A
-failure on SCR-001 with the password filled uploads nothing, because the scan refuses
-`error-context.md` (Playwright writes the typed password into it): read the job log instead, where
-the value is masked. A spec that fails on the product is a defect to file, never a test to weaken
-(#293 BQ-4).
+failure on SCR-001, SCR-005 or SCR-006 with the password typed uploads nothing, because the scan
+refuses `error-context.md` (Playwright writes the typed password into it): read the job log instead,
+where the value is masked. A spec that fails on the product is a defect to file, never a test to
+weaken (#293 BQ-4). Every request reaches the API from the preview's proxy on 127.0.0.1, which the
+API allows 10 cookie-presenting refreshes a minute: each test declares its count (`lane.refreshes`)
+and the fixture paces the run under 8 a minute, so `real-clock` takes some minutes; "recount it"
+means a test presented the cookie a number of times it does not declare.
+
+To run the lane on a workstation, follow the workflow's steps on a compose project of your own, on
+free loopback ports: make the six credentials and the lane key, start `postgres` and `questdb`,
+`alembic upgrade head`, seed the users with `seed_fixture_user.py --totp-secret-out` and write the
+users file, start the API with the workflow's environment (testnet, the real storage backend, the
+synthetic feed, `CV_TEST_CLOCK` with its file, the preview's origin), and build `apps/web/dist`.
+Then, from `apps/web`, run `npx playwright test -c e2e/playwright.real.config.ts` with these set:
+`CV_E2E_REAL_USERS_FILE`, `CV_E2E_REAL_PASSWORD` and `CV_TEST_CLOCK_FILE`, which
+`e2e/support/real/stack.ts` reads; `CV_E2E_REAL_API`, which `e2e/vite.real.config.ts` reads;
+`CV_E2E_REAL_PREVIEW_PORT`, which `e2e/playwright.real.config.ts` reads; and the `COMPOSE_*`
+variables, with those the compose file requires, which the audit slice's `docker compose exec` in
+`e2e/support/real/failureArtefacts.ts` reads. The test clock moves auth time, so the database must
+be a throwaway one (C-2.11): `down -v` it after.
 
 To triage a red `dast-rules` or `dast-market` run (#3991: `dast-rules-nightly.yml` and
 `dast-market-nightly.yml`, through `_dast-low-priv.yml`, as a synthetic Viewer), find the step that
