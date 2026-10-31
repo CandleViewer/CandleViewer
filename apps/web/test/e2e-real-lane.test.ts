@@ -353,7 +353,7 @@ describe("the refresh count at a test's end", () => {
   };
 
   it("counts a refresh still in flight when the test ends, once it settles", async () => {
-    const { counter, fire } = watched(1_000);
+    const { counter, fire } = watched(4_000);
     const sent = refresh("cv_refresh=x; __Host-cv_csrf=y");
     fire("request", sent);
     const counting = counter.count();

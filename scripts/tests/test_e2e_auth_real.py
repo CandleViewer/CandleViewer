@@ -227,7 +227,8 @@ def test_one_upload_and_no_secret_made_or_traced_beside_the_pinned_ones() -> Non
     assert uploads == [_step("Upload the failure artefacts")]
     text, made = WORKFLOW.read_text(encoding="utf-8"), _step("Make this run's")["run"]
     assert not re.search(r"\bset\s+-\w*x|\bxtrace\b|\bbash\s+-\w*x", text)
-    assert len(ENV_WRITE.findall(text)) == 1  # only secret() writes it, in any spelling
+    assert len(ENV_WRITE.findall(text)) == 1  # only secret() writes it, by any redirect or tee
+    assert text.count('"$GITHUB_ENV"') <= 1  # and nothing else names the file quoted
     assert len(re.findall(r"\bsecret\b", made)) == 2  # its definition and the loop's call
     assert len(re.findall(r"openssl rand -hex 32", text)) == 2  # secret() and the lane key
 

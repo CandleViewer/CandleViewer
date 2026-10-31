@@ -329,7 +329,7 @@ export function checkRefreshTally(tally: RefreshTally, declared: number | undefi
     const were = n === 1 ? "was" : "were";
     throw new Error(
       `a refresh never settled: ${n} POST /auth/refresh this test sent ${were} still in flight ` +
-        `${REFRESH_SETTLE.timeout / 1_000} s after it ended, so its count could not be checked ` +
+        `when the wait after it ended ran out, so its count could not be checked ` +
         `(look at why it hung, not at lane.refreshes)`,
     );
   }
