@@ -102,6 +102,21 @@ QUOTE = re.compile(r'"([^"]*)"')
 ITALIC_QUOTE = re.compile(r'\*"[^"]*"\*')
 
 MECHANISMS = {"name", "role", "desc", "polite", "cell", "none", "text"}
+RATE_UNITS = (
+    "episode|entry|exit|change|press|action|key-down|release|focus entry|focus|group entry|open"
+    "|menu open|commit|switch|build|rebuild|return|arrival|amended bar|bar|Enter|key"
+)
+RATE = re.compile(
+    rf"^(?:never|on demand|once per (?:{RATE_UNITS})\b"
+    rf"|≤ \d+ per \d+ s (?:per (?:{RATE_UNITS}|region)\b|across RG-\d\d))"
+)
+G_T2 = re.compile(r"^(?:n/a|T2 · (?:2a|2b|sentence)|validity|availability)$")
+FOCUS = re.compile(r"^(?:n/a|(?:kept|moves to|restored to|returns to) · \S.*)$")
+OWNER = re.compile(r"^`E\d\d-D\d\d · area/[a-z-]+`$")
+HOST = re.compile(r"^(RG-\d\d)\b")
+NOTHING = "nothing is announced"
+CLOSE_MS = 1000  # §7.4: a bar close every second
+CLASS2 = ((10_000, "start"), (30_000, "overrun"), (45_000, "cancel"))
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
 # rot13 keeps the private list out of plain text; underscores stand for spaces.
 BANNED_ROT13 = (
@@ -231,6 +246,15 @@ def rows(block: str, family: str) -> list[list[str]]:
 
 def q07_rows(spec: str) -> list[list[str]]:
     return [cells(ln) for ln in spec.split("\n") if re.match(r"^\s+\| Q07-\d+ ", ln)]
+
+
+def table_body(block: str) -> list[str]:
+    """The body rows of the first table in a block: every row after its separator line."""
+    lines = [ln for ln in block.split("\n") if ln.startswith("|")]
+    for i, ln in enumerate(lines):
+        if re.match(r"^\|\s*:?-{3,}", ln):
+            return lines[i + 1 :]
+    return []
 
 
 def norm(s: str) -> str:
@@ -387,7 +411,7 @@ def simulate(combined: bool) -> dict[str, int]:
     for t in range(0, 60_000, 500):  # the repeat window carries the latest state
         cand.setdefault(t, []).append((4, "cursor"))
     cand.setdefault(60_100, []).append((4, "flush"))  # trailingFlush ≤ 250 ms after release
-    for t, what in ((10_000, "start"), (30_000, "overrun"), (45_000, "cancel")):
+    for t, what in CLASS2:
         cand.setdefault(t, []).append((2, what))
     for t, what in ((20_000, "lod-in"), (40_000, "lod-out")):
         cand.setdefault(t, []).append((3, what))
@@ -425,7 +449,7 @@ def simulate(combined: bool) -> dict[str, int]:
         "max": peak,
         "dropped_non4": sum(1 for d in dropped if d[0] != 4) + sum(1 for p in pending if p[0] != 4),
         "class2_spoken": sum(1 for s in spoken if s[1] == 2),
-        "class2_total": 3,
+        "class2_total": len(CLASS2),
         "flush_kept": int(any(s[2] == "flush" for s in spoken)),
     }
 
@@ -517,7 +541,7 @@ def compute(ctx: Ctx) -> dict[str, str]:
     clauses = section(spec, "10.1 ")
     v["clauses"] = str(sum(1 for ln in clauses.split("\n") if ln.startswith("| §")))
     car = section(spec, "10.4 ")
-    v["carriers"] = str(max(0, sum(1 for ln in car.split("\n") if ln.startswith("| ")) - 1))
+    v["carriers"] = str(len(table_body(car)))
     fr = rows(section(spec, "11. "), "F")
     v["f"] = v["f-summary"] = str(len(fr))
     for sev in SEVERITIES:
@@ -547,7 +571,7 @@ def compute(ctx: Ctx) -> dict[str, str]:
     v["sim.class2-spoken"] = str(sim["class2_spoken"])
     v["sim.class2-total"] = str(sim["class2_total"])
     v["sim.flush-kept"] = "kept" if sim["flush_kept"] else "lost"
-    v["flash.close-1s"] = "1"
+    v["flash.close-1s"] = str(round(1000 / CLOSE_MS))  # the ring moves once per close
     v["sd.account-word-hits"] = str(sum(len(ACCOUNT_WORDS.findall(r[3])) for r in q))
     v.update(contrast_values(ctx))
     ok = v["fail.union"] == "0"
@@ -599,6 +623,15 @@ def g_audit(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(("G02-AUDIT", f"{key}: the marker says {val!r}, the tool {vals[key]!r}"))
         if not ctx.spec[: m.start()].rstrip().rstrip("`").endswith(val):
             f.append(("G02-AUDIT", f"{key}: the visible value before the marker is not {val!r}"))
+    # an independent count, not the helper `compute` uses: one state per row, header excluded
+    states = [
+        cells(ln)[0]
+        for ln in section(ctx.spec, "10.4 ").split("\n")
+        if ln.startswith("| ") and not set(cells(ln)[0]) <= set("-: ")
+    ][1:]
+    shown = re.search(r"(\d+) <!-- audit:carriers=", ctx.spec)
+    if not shown or int(shown[1]) != len(states):
+        f.append(("G02-AUDIT", f"carriers: the table holds {len(states)} states, not the marker's"))
 
 
 def g_cite(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -628,17 +661,25 @@ def g_verbatim(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             continue
         hay: list[str] = []
         for key, a, b in cite_spans(r[-1], bare=True):
-            span = [ctx.base_line(key, n) or "" for n in range(max(1, a - 1), b + 2)]
+            span = [ctx.base_line(key, n) or "" for n in range(a, b + 1)]
             hay.append(norm(" ".join(span)).replace("{", "").replace("}", ""))
-        for q in QUOTE.findall(ITALIC_QUOTE.sub("", r[3])):
-            if len(q) < 10:
-                continue
-            if not any(norm(q) in h for h in hay):
+        plain = ITALIC_QUOTE.sub("", r[3])
+        quotes = QUOTE.findall(plain)
+        if not quotes and not r[3].startswith(NOTHING) and "none merged — PROPOSED" not in r[3]:
+            f.append(("G05-VERBATIM", f"{r[0]}: no quoted string and no {NOTHING!r}"))
+        for q in quotes:
+            nq = norm(q)
+            if len(nq) >= 10:
+                ok = any(nq in h for h in hay)
+            else:
+                ok = any(re.search(rf"(?<!\w){re.escape(nq)}(?!\w)", h) for h in hay)
+            if not ok:
                 f.append(("G05-VERBATIM", f"{r[0]}: {q[:48]!r} stands on no line the row cites"))
 
 
 def g_script(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     q = q07_rows(ctx.spec)
+    regions = {x[0] for x in rows(section(ctx.spec, "5.1 "), "RG")}
     if not q:
         f.append(("G06-SCRIPT", "no Q07 row found"))
     for r in q:
@@ -651,6 +692,18 @@ def g_script(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         for i, what in ((5, "host"), (6, "rate"), (7, "source")):
             if not r[i]:
                 f.append(("G06-SCRIPT", f"{r[0]}: no {what}"))
+        if r[6] and not RATE.match(r[6]):
+            f.append(("G06-SCRIPT", f"{r[0]}: rate {r[6]!r} is not from the vocabulary"))
+        host = HOST.match(r[5])
+        if host and host[1] not in regions:
+            f.append(("G06-SCRIPT", f"{r[0]}: host {host[1]} is not a region of section 5.1"))
+        if not host and not (r[5] == "—" and mech == {"none"}):
+            f.append(("G06-SCRIPT", f"{r[0]}: host {r[5]!r} names no region"))
+    shell = rows(section(ctx.spec, "5.1 "), "RG")
+    pair = [x for x in shell if x[0] == "RG-06"]
+    line = ctx.base_line("E17-D02", 249) or ""
+    if not pair or "`E17-D02`:249" not in pair[0][-1] or "live-region pair" not in line:
+        f.append(("G06-SCRIPT", "RG-06 is not E17-D02's shell announcer pair"))
 
 
 def g_budget(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -658,8 +711,8 @@ def g_budget(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         if len(r) < 7:
             f.append(("G07-BUDGET", f"{r[0]}: {len(r)} cells"))
             continue
-        if not r[3] or r[3].strip().lower() in ("n/a", "—"):
-            f.append(("G07-BUDGET", f"{r[0]}: no enforceable max_rate"))
+        if not RATE.match(r[3]) or r[3].startswith("n/a"):
+            f.append(("G07-BUDGET", f"{r[0]}: max_rate {r[3]!r} is not an enforceable rate"))
         if not r[4] or not r[6]:
             f.append(("G07-BUDGET", f"{r[0]}: no object or no source"))
 
@@ -673,14 +726,20 @@ def g_findings(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             continue
         if r[1] not in SEVERITIES:
             f.append(("G08-FINDINGS", f"{r[0]}: severity {r[1]!r}"))
-        if " · area/" not in r[4] and r[1] != "Info":
-            f.append(("G08-FINDINGS", f"{r[0]}: the owner is not a spec and its area"))
-        for i, what in ((5, "target"), (6, "G-T2"), (7, "Focus"), (8, "Rate")):
-            if not r[i]:
-                f.append(("G08-FINDINGS", f"{r[0]}: the {what} cell is empty"))
+        if not OWNER.match(r[4]):
+            f.append(("G08-FINDINGS", f"{r[0]}: the owner is not one spec and its area"))
+        if not r[5]:
+            f.append(("G08-FINDINGS", f"{r[0]}: the target cell is empty"))
+        if not G_T2.match(r[6]):
+            f.append(("G08-FINDINGS", f"{r[0]}: G-T2 {r[6]!r} is not from the set"))
+        if not FOCUS.match(r[7]):
+            f.append(("G08-FINDINGS", f"{r[0]}: Focus {r[7]!r} is not from the set"))
+        if r[8] != "n/a" and not RATE.match(r[8]):
+            f.append(("G08-FINDINGS", f"{r[0]}: Rate {r[8]!r} is not from the set"))
     blocking = any(len(r) > 1 and r[1] == "Blocking" for r in fr)
-    if blocking and "**not armed**" in sec:
-        f.append(("G08-FINDINGS", "a Blocking row stands while the hold reads not armed"))
+    armed = "cannot be Done until fixed" in sec and "**not armed**" not in sec
+    if blocking != armed:
+        f.append(("G08-FINDINGS", "the hold sentence does not match the Blocking rows"))
 
 
 def g_ids(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -821,7 +880,7 @@ def g_keymap(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         for cid in re.findall(r"`((?:chart|global)\.[\w.]+)`", r[4] if len(r) > 4 else ""):
             if cid not in ids:
                 f.append(("G18-KEYMAP", f"{r[0]}: {cid} is not a command of the key map"))
-        if len(r) > 4 and "not in `KM`" in r[4]:
+        if len(r) > 4 and re.match(r"^(?:`05 row`|PROPOSED[^;]*); not in `KM`", r[4]):
             for key in re.findall(r"`([^`]+)`", r[2]):
                 if key.replace(" ", "") in bound:
                     f.append(("G18-KEYMAP", f"{r[0]}: {key} is bound in the key map"))
@@ -927,11 +986,11 @@ def _swap(text: str, old: str, new: str) -> str:
     return text.replace(old, new, 1)
 
 
-def set_cell(text: str, row_id: str, index: int, value: str) -> str:
+def set_cell(text: str, row_id: str, index: int, value: str, indent: int = 0) -> str:
     out = []
     done = False
     for ln in text.split("\n"):
-        if not done and re.match(rf"^\|\s*{re.escape(row_id)}\s*\|", ln):
+        if not done and re.match(rf"^ {{{indent}}}\|\s*{re.escape(row_id)}\s*\|", ln):
             parts = ln.split("|")
             parts[index + 1] = f" {value} "
             ln = "|".join(parts)
@@ -985,6 +1044,47 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
     ),
     ("G07-BUDGET", lambda c: dataclasses.replace(c, spec=set_cell(c.spec, "BG-01", 3, "n/a"))),
     ("G08-FINDINGS", lambda c: dataclasses.replace(c, spec=set_cell(c.spec, "F-02", 1, "Severe"))),
+    (
+        "G02-AUDIT",
+        lambda c: dataclasses.replace(
+            c,
+            spec=c.spec.replace(
+                f"{len(table_body(section(c.spec, '10.4 ')))} <!-- audit:carriers=",
+                f"{len(table_body(section(c.spec, '10.4 '))) + 1} <!-- audit:carriers=",
+            ),
+            combined_rule=c.combined_rule,
+        ),
+    ),
+    (
+        "G06-SCRIPT",
+        lambda c: dataclasses.replace(c, spec=set_cell(c.spec, "Q07-49", 6, "whenever", 4)),
+    ),
+    (
+        "G06-SCRIPT",
+        lambda c: dataclasses.replace(c, spec=set_cell(c.spec, "Q07-48", 5, "RG-99", 4)),
+    ),
+    (
+        "G08-FINDINGS",
+        lambda c: dataclasses.replace(
+            c,
+            spec=set_cell(
+                set_cell(set_cell(c.spec, "F-02", 6, "bogus"), "F-02", 7, "whatever"),
+                "F-02",
+                8,
+                "sometimes",
+            ),
+        ),
+    ),
+    (
+        "G05-VERBATIM",
+        lambda c: dataclasses.replace(
+            c, spec=set_cell(c.spec, "Q07-48", 3, "the chip text, in words of its own", 4)
+        ),
+    ),
+    (
+        "G05-VERBATIM",
+        lambda c: dataclasses.replace(c, spec=set_cell(c.spec, "Q07-65", 3, '"Back"', 4)),
+    ),
     ("G09-IDS", lambda c: dataclasses.replace(c, spec=_swap(c.spec, "| KB-03 |", "| KB-02 |"))),
     (
         "G10-HYGIENE",
