@@ -2,7 +2,7 @@
 the composition root wires it, with 50 open groups of 5 legs on a real hub, each group changing one
 leg every 100 ms for 10 s, 5 000 changes in all. Each change's delta is rendered and handed to its
 subscriber within SCR-062's 4 ms frame budget, and carries that one leg, never the group re-sent
-(the backpressure flag off, the production default, so no window holds a frame). `perf`-marked, so
+(a plain `TopicEmitter` sink, no pacing window, so no window holds a frame). `perf`-marked, so
 the unit lane deselects it and `py-perf` runs it without coverage; as `test_machines_perf`, GC is
 off and the fastest round's p95 counts."""
 

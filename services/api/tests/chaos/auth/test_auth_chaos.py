@@ -36,6 +36,7 @@ from candleviewer.auth.session_service import (
 )
 from candleviewer.auth.totp import generate_code, time_step_for, verify_code
 from candleviewer.auth.totp_skew import SKEW_HOLD_S, TotpSkewReporter
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
@@ -99,6 +100,7 @@ def _gateway(svc: SessionService, hub: RevocationHub, clock: _Clock) -> FastAPI:
             revocation_hub=hub,
             wall_ms=lambda: int(clock.now.timestamp() * 1000),
             allowed_origins=frozenset({_ORIGIN}),
+            backpressure=BackpressureConfig(),  # #2409: the budgeted pipeline
         )
     )
     return app

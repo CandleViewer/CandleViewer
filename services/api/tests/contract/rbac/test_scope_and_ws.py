@@ -1106,13 +1106,12 @@ def test_account_scope_topic_cell_matches_the_matrix(
     assert got == _SCOPE[key]["cells"][role][where], f"{key} {role} {where}: {result}"
 
 
-@pytest.fixture(params=["flag-off", "flag-on"])
-def flag_world(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[World]:
-    """A world of its own with `CV_WS_BACKPRESSURE_ENABLED` off or on (the default), so a test
-    proves both outbound paths; the module's shared `world` runs with the Settings default."""
+@pytest.fixture
+def own_world(tmp_path: Path) -> Iterator[World]:
+    """A world of its own, on the budgeted outbound pipeline (the Settings default; #2409: the
+    flag-off row went); the module's shared `world` runs with the Settings default too."""
     mp = pytest.MonkeyPatch()
     try:
-        mp.setenv("CV_WS_BACKPRESSURE_ENABLED", "true" if request.param == "flag-on" else "false")
         (root := tmp_path / "bars-state").mkdir()
         yield build_world(mp, bars_state_root=root)
     finally:
@@ -1121,13 +1120,13 @@ def flag_world(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[World
 
 @pytest.mark.parametrize("role", ["manager", "viewer"])
 def test_a_raw_frame_naming_a_foreign_account_never_receives_its_frames(
-    flag_world: World, role: str
+    own_world: World, role: str
 ) -> None:
     """AC 'A raw WS frame cannot widen scope': `[A, B, absent]` narrows to A, the refusal of a
     foreign and of an absent account is one entry, and a delta for B never arrives. `wallet`
     only: the CI app has no `positions` source, so a `positions` subscription stays pending its
     snap and receives nothing for A either (a vacuous pass); both go through `in_scope`."""
-    world = flag_world
+    world = own_world
     topic = "wallet"
     if role == "viewer":
         grant_viewer_a(world)

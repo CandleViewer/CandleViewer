@@ -5,14 +5,13 @@ the snapshot source on the conformance world's hub, and a lease service that rec
 client validates every frame on receipt, under `cv.v1.json` and `cv.v1.msgpack`. Stored rows and
 emissions come from the recorded BTCUSDT tape (C-13.5), built by the real builders.
 
-Rows: the snapshot against REST (§6.1); the forming flag and one close per bar; scenario 3, with
-`CV_WS_BACKPRESSURE_ENABLED` on (40 updates in one 250 ms window, a close beside the next open) and
-off (every update a frame); with the flag on, a merged window on a binary subscription as kind 4,
-or structured for an amended close (#3353); a client resync after a lost delta; a generation swap
-(C14); the structured fallback of a binary subscription, of a snapshot and of deltas (C15, C17,
-C19); the scales of each kind-4 frame (C16); a dotted `param`; `meta.stale` on a quarantined
-series' snapshots, whole and in chunks (§7.2, C21); no `marketdata:read`, at subscribe and
-mid-stream."""
+Rows: the snapshot against REST (§6.1); the forming flag and one close per bar; scenario 3 (40
+updates in one 250 ms window, a close beside the next open); a merged window on a binary
+subscription as kind 4, or structured for an amended close (#3353); a client resync after a lost
+delta; a generation swap (C14); the structured fallback of a binary subscription, of a snapshot and
+of deltas (C15, C17, C19); the scales of each kind-4 frame (C16); a dotted `param`; `meta.stale` on
+a quarantined series' snapshots, whole and in chunks (§7.2, C21); no `marketdata:read`, at subscribe
+and mid-stream."""
 
 from __future__ import annotations
 
@@ -66,8 +65,10 @@ CH: Final = "bars.BTCUSDT.time.1"
 _Emission = list[BarUpdate]
 #: A bar as scenario 3 reads it: index, closed, close price, trades.
 _State = tuple[int, bool, Decimal, int]
-#: `CV_WS_BACKPRESSURE_ENABLED` on: the gateway pipeline with its 250 ms windows (§8.1, §8.2).
+#: The gateway pipeline's contract budget, with its 250 ms windows (§8.1, §8.2).
 _ON: Final = BackpressureConfig()
+#: The `bars` window (§8.1): one `d` per 250 ms, its first update leaving at once.
+_WINDOW_S: Final = 0.25
 #: (bar type, param, trades built and not published, trades inside the one window): 40 trades
 #: updating a tick bar, then the boundary trade of a time bar (its close and the next open are one
 #: emission) and of a tick bar (two emissions: the close, then the open).
@@ -115,16 +116,16 @@ async def _no_rebuild(*_: object) -> None: ...
 
 class _Rig:
     """The conformance world with the bars wiring of `create_app` over `rows` (`bar_param` ->
-    stored rows). `scales` is the instrument catalogue's answer (`None`: symbol not listed). With
-    a `backpressure` config the gateway runs with `CV_WS_BACKPRESSURE_ENABLED` on (§8.4)."""
+    stored rows). `scales` is the instrument catalogue's answer (`None`: symbol not listed). The
+    gateway runs on the `backpressure` budget (§8.4)."""
 
     def __init__(
         self,
         rows: dict[str, list[dict[str, object]]],
         *,
-        backpressure: BackpressureConfig | None = None,
+        backpressure: BackpressureConfig = _ON,
     ) -> None:
-        self.w, self.paced = h.World(backpressure=backpressure), backpressure is not None
+        self.w = h.World(backpressure=backpressure)
         self.scales: tuple[int, int] | None = (1, 3)
         self.quarantined: set[tuple[str, str]] = set()  # (symbol, spec_hash) of a failed builder
         self.reader = BarReader(_Storage(rows), _no_rebuild, now_us=lambda: _NOW)
@@ -143,23 +144,29 @@ class _Rig:
         services.snapshots = SnapshotRouter({"bars": source})
 
     def emit(self, spec: BarSpec, *updates: BarUpdate, generation: int = 0) -> None:
+        """One emission in a window of its own (§8.1): the fake clock moves past the last window's
+        close first, so its `d` leaves at once, as the window's leading edge (D12)."""
+        self.w.clock.now += _WINDOW_S
+        self._emit(spec, *updates, generation=generation)
+
+    def _emit(self, spec: BarSpec, *updates: BarUpdate, generation: int = 0) -> None:
         self.w.call(self.router.emit, spec, updates, generation)
 
     def play(
         self, c: h.Client, mine: _Series, spec: BarSpec, windows: list[list[_Emission]]
     ) -> list[dict[str, Any]]:
         """Publish `windows` on the fake clock and apply the `d` frames they cause: each window's
-        emissions 1 ms before it closes (the first, at 0, leaves at once), then the close. One
-        frame a window with the flag on, else one an emission; the caller asserts their `s`."""
+        emissions 1 ms before it closes (the first, past any earlier window, leaves at once), then
+        the close. One frame a window; the caller asserts their `s`."""
         frames: list[dict[str, Any]] = []
+        start = self.w.clock.now + _WINDOW_S  # past any window an earlier `emit` opened
         for n, window in enumerate(windows):
-            self.w.clock.now = 0.25 * n - 0.001 if n else 0.0
+            self.w.clock.now = start + _WINDOW_S * n - 0.001 if n else start
             for emission in window:
-                self.emit(spec, *emission)
-            self.w.clock.now = 0.25 * n
-            for _ in range(1 if self.paced else len(window)):
-                frames.append(c.next_of("d"))
-                mine.apply(frames[-1])
+                self._emit(spec, *emission)
+            self.w.clock.now = start + _WINDOW_S * n
+            frames.append(c.next_of("d"))
+            mine.apply(frames[-1])
         return frames
 
     def rest(self, bar_type: str, param: str, **query: object) -> list[dict[str, Any]]:
@@ -375,14 +382,13 @@ def test_contract_bars_forming_bar_is_unconfirmed_in_every_frame_and_confirmed_e
 def test_contract_bars_40_updates_in_one_window_leave_as_one_coalesced_d_with_the_latest_state(
     mode: str,
 ) -> None:
-    """Scenario 3, first half, with `CV_WS_BACKPRESSURE_ENABLED` on (§8.1, §8.2): a bar opens, 40
-    trades update it inside one 250 ms window, two more follow in the next. The open leaves at
-    once, the 40 as ONE `d` with the bar's latest state, `coalesced` and `coalesced_count` 40, the
-    two as the next window's, which counts its own. On a binary subscription every one of the three
-    is kind 4, the merged ones included (#3353), with bit1 as `coalesced` and no count, for which
-    kind 4 has no slot (§3.4)."""
+    """Scenario 3, first half (§8.1, §8.2): a bar opens, 40 trades update it inside one 250 ms
+    window, two more follow in the next. The open leaves at once, the 40 as ONE `d` with the bar's
+    latest state, `coalesced` and `coalesced_count` 40, the two as the next window's, which counts
+    its own. On a binary subscription every one of the three is kind 4, the merged ones included
+    (#3353), with bit1 as `coalesced` and no count, for which kind 4 has no slot (§3.4)."""
     script = _script("forty_updates")
-    rig, mine = _Rig({}, backpressure=_ON), _Series(binary=mode == "binary")
+    rig, mine = _Rig({}), _Series(binary=mode == "binary")
     with h.connect(rig.w) as c:
         c.sub({"ch": script.ch, "opts": {"encoding": mode, "include_delta": True}})
         assert mine.apply(c.next_of("snap"))
@@ -406,13 +412,13 @@ def test_contract_bars_40_updates_in_one_window_leave_as_one_coalesced_d_with_th
 def test_contract_bars_a_close_and_the_next_open_in_one_window_both_arrive_the_close_once(
     mode: str, script: str
 ) -> None:
-    """Scenario 3, second half, flag on: a bar closes and the next one opens inside one window.
-    The window's `d` carries both, the close with `confirm: true` and the open with `confirm:
-    false`, and the close is delivered once, in no later window's frame. A time bar's boundary
-    trade is one emission, a tick bar's two; the bars and `s` are asserted on both encodings, and
-    on a binary subscription each frame is kind 4 (#3353, as above)."""
+    """Scenario 3, second half: a bar closes and the next one opens inside one window. The
+    window's `d` carries both, the close with `confirm: true` and the open with `confirm: false`,
+    and the close is delivered once, in no later window's frame. A time bar's boundary trade is
+    one emission, a tick bar's two; the bars and `s` are asserted on both encodings, and on a
+    binary subscription each frame is kind 4 (#3353, as above)."""
     s = _script(script)
-    rig, mine = _Rig({}, backpressure=_ON), _Series(binary=mode == "binary")
+    rig, mine = _Rig({}), _Series(binary=mode == "binary")
     with h.connect(rig.w) as c:
         c.sub({"ch": s.ch, "opts": {"encoding": mode}})
         assert mine.apply(c.next_of("snap"))
@@ -427,33 +433,10 @@ def test_contract_bars_a_close_and_the_next_open_in_one_window_both_arrive_the_c
     assert client == store
 
 
-@pytest.mark.parametrize("script", list(_SCRIPTS))
-@pytest.mark.parametrize("mode", h.MODES)
-def test_contract_bars_without_the_flag_every_update_is_a_frame_and_the_series_ends_the_same(
-    mode: str, script: str
-) -> None:
-    """The same emissions with `CV_WS_BACKPRESSURE_ENABLED` off (§8.4): no window, one `d` per
-    emission, none coalesced, `s` contiguous. The client's series ends equal to the store's and to
-    the one the flag-on windows leave, so the two paths agree on it."""
-    s, ends = _script(script), []
-    for backpressure in (_ON, None):
-        rig, mine = _Rig({}, backpressure=backpressure), _Series(binary=mode == "binary")
-        with h.connect(rig.w) as c:
-            c.sub({"ch": s.ch, "opts": {"encoding": mode}})
-            assert mine.apply(c.next_of("snap"))
-            frames = rig.play(c, mine, s.spec, s.windows)  # the second pass's: flag off
-            ends.append(_ends(rig, s.spec, mine))
-    assert [f["s"] for f in frames] == list(range(2, 2 + sum(map(len, s.windows))))
-    assert not any(h.structured_of(f)["coalesced"] for f in frames)
-    (on_client, on_store), (off_client, off_store) = ends
-    assert on_client == on_store == off_client == off_store
-
-
 def test_contract_bars_a_merged_window_is_structured_only_for_an_amended_close_c15_c17() -> None:
-    """§3.4, flag on (#3353): on a binary subscription each window leaves as kind 4 but the one
-    holding an amended close, which kind 4 has no bit for. That one is structured, with
-    `coalesced` and its count; `s` runs on across both encodings and the client applies every
-    frame (C15, C17)."""
+    """§3.4 (#3353): on a binary subscription each window leaves as kind 4 but the one holding an
+    amended close, which kind 4 has no bit for. That one is structured, with `coalesced` and its
+    count; `s` runs on across both encodings and the client applies every frame (C15, C17)."""
     spec, bars = _SERIES[_MINUTE], _closed(*_MINUTE)
     amended = bars[3].model_copy(update={"close": bars[3].open})
     later = bars[4].model_copy(update={"close": bars[4].high})
@@ -462,7 +445,7 @@ def test_contract_bars_a_merged_window_is_structured_only_for_an_amended_close_c
         [[_up("close", amended, amended=True)], [_up("open", bars[4])]],
         [[_up("update", bars[4])], [_up("update", later)]],
     ]
-    rig, mine = _Rig({}, backpressure=_ON), _Series(binary=True)
+    rig, mine = _Rig({}), _Series(binary=True)
     with h.connect(rig.w) as c:
         c.sub({"ch": CH, "opts": {"encoding": "binary"}})
         assert mine.apply(c.next_of("snap"))
@@ -534,18 +517,17 @@ def test_contract_bars_a_generation_change_is_a_swap_snapshot_never_a_delta(mode
 
 
 @pytest.mark.parametrize("quarantined", [True, False], ids=["quarantined", "healthy"])
-@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag-off", "flag-on"])
 @pytest.mark.parametrize("mode", h.MODES)
 def test_contract_bars_meta_stale_rides_the_snapshots_of_a_quarantined_series_and_no_d_c21(
-    mode: str, backpressure: BackpressureConfig | None, quarantined: bool
+    mode: str, quarantined: bool
 ) -> None:
     """§6.1, §7.2, §16.4 (C21): the first `snap` of a series whose builder is quarantined, and a
-    `client_resync` one, carry `meta.stale: true`, in either encoding and on either wire, with
-    `CV_WS_BACKPRESSURE_ENABLED` on or off, and the reference client holds the badge from the
-    first until the last. A healthy series' snapshots carry no key (never `false`), no `d` does,
-    and none of the payloads has a `stale` (a binary `p` has no field)."""
+    `client_resync` one, carry `meta.stale: true`, in either encoding and on either wire, and the
+    reference client holds the badge from the first until the last. A healthy series' snapshots
+    carry no key (never `false`), no `d` does, and none of the payloads has a `stale` (a binary `p`
+    has no field)."""
     spec, bars = _SERIES[_MINUTE], _closed(*_MINUTE)
-    rig = _Rig({"1m": _STORE["1m"][:3]}, backpressure=backpressure)
+    rig = _Rig({"1m": _STORE["1m"][:3]})
     mine = _Series(binary=mode == "binary")
     if quarantined:
         rig.quarantined.add(("BTCUSDT", spec.spec_hash))
@@ -578,16 +560,14 @@ def _cut_snapshots_at(monkeypatch: pytest.MonkeyPatch, limit: int) -> None:
     monkeypatch.setattr(TopicEmitter, "__init__", small)
 
 
-@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag-off", "flag-on"])
 @pytest.mark.parametrize("mode", h.MODES)
 def test_contract_bars_every_chunk_of_a_quarantined_series_snapshot_carries_meta_stale_c21(
-    mode: str, backpressure: BackpressureConfig | None, monkeypatch: pytest.MonkeyPatch
+    mode: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """§3.6, §7.2: a snapshot cut into chunks repeats `meta.stale: true` in each, so a client
-    reading them one by one has it with the first, with `CV_WS_BACKPRESSURE_ENABLED` on or off.
-    The 500 bars of the long one-minute series are cut at 20 kB; every chunk is validated on
-    receipt, and none of them is missing."""
-    rig = _Rig({"1m": _long_minute()}, backpressure=backpressure)
+    reading them one by one has it with the first. The 500 bars of the long one-minute series are
+    cut at 20 kB; every chunk is validated on receipt, and none of them is missing."""
+    rig = _Rig({"1m": _long_minute()})
     rig.quarantined.add(("BTCUSDT", _SERIES[_MINUTE].spec_hash))
     _cut_snapshots_at(monkeypatch, 20_000)
     with h.connect(rig.w) as c:

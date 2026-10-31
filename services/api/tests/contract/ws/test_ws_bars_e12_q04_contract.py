@@ -39,7 +39,7 @@ from tests.contract._market_world import _bars as tape_bars
 from tests.contract.test_market_bars_contract import _SERIES, _TAPE
 from tests.contract.test_market_e12_q04_contract import _alternative
 from tests.contract.ws import _harness as h
-from tests.contract.ws.test_ws_bars_contract import _ON, CH, _closed, _Rig, _script, _Series, _up
+from tests.contract.ws.test_ws_bars_contract import CH, _closed, _Rig, _script, _Series, _up
 
 _REPO: Final = Path(__file__).resolve().parents[5]
 if str(_REPO) not in sys.path:
@@ -197,7 +197,7 @@ def _encoding_rig() -> _Rig:
 
 def _encoded(rig: _Rig, c: h.Client, mode: str) -> list[dict[str, Any]]:
     """The frames a subscription in `mode` gets for `_encoding_script`, the two stored bars as its
-    snapshot; `include_delta` on, `CV_WS_BACKPRESSURE_ENABLED` off."""
+    snapshot; `include_delta` on, each update in a 250 ms window of its own (§8.1)."""
     hold = _hydrate(rig, _TICK)
     try:
         c.sub({"ch": "bars.BTCUSDT.tick.100", "opts": {"encoding": mode, "include_delta": True}})
@@ -281,7 +281,7 @@ def _sent(payload: dict[str, Any]) -> set[str]:
 def _member_run() -> list[dict[str, Any]]:
     """The structured payloads of a run that sends every member a `bars` frame can carry: time and
     non-time, `include_delta` on and off, a binary subscription (whose structured frames alone
-    count: kind 4 has no member names), an amended close and a merged window with the flag on."""
+    count: kind 4 has no member names), an amended close and a merged window."""
     payloads: list[dict[str, Any]] = []
     rig = _Rig({})
     with h.connect(rig.w) as c:
@@ -294,7 +294,7 @@ def _member_run() -> list[dict[str, Any]]:
         rig = _encoding_rig()
         with h.connect(rig.w) as c:
             payloads += [h.structured_of(f) for f in _encoded(rig, c, mode) if f["e"] == "j"]
-    rig, mine = _Rig({}, backpressure=_ON), _Series(binary=False)
+    rig, mine = _Rig({}), _Series(binary=False)
     script = _script("forty_updates")
     with h.connect(rig.w) as c:
         c.sub({"ch": script.ch, "opts": {"encoding": "structured"}})

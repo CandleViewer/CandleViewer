@@ -25,6 +25,7 @@ surrogate: an ASGI server delivers only valid UTF-8. A failure reports as `test_
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -41,6 +42,7 @@ from fastapi import WebSocket
 from hypothesis import strategies as st
 
 from candleviewer.ws import gateway, topics
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import _OVERSIZE, _Connection
 from candleviewer.ws.limits import (
     MAX_INBOUND_FRAME_BYTES,
@@ -240,12 +242,19 @@ def _frames(draw: st.DrawFn) -> list[object]:
 
 
 def _decode(arg: list[Any]) -> object:
+    """`decode` on a fresh connection, in a loop of its own: a frame that closes the socket
+    starts the pipeline's flush deadline on the running loop (§8.4)."""
+    return asyncio.run(_decoded(arg))
+
+
+async def _decoded(arg: list[Any]) -> object:
     conn = _Connection(
         cast(WebSocket, None),  # `decode` never touches the socket
         encoding="cv.v1.json",
         clock=lambda: 0.0,
         wall_ms=lambda: 0,
         auth_timeout_s=10.0,
+        backpressure=BackpressureConfig(),  # #2409: the budgeted pipeline
     )
     conn.user_id = uuid.UUID(int=1) if arg[0] else None
     return conn.decode({"text": arg[1]}, MAX_INBOUND_FRAME_BYTES)

@@ -28,21 +28,17 @@ def wire(request: pytest.FixtureRequest) -> Iterator[str]:
         reset_wire(token)
 
 
-_FLAGS = {"flag-off": None, "flag-on": BackpressureConfig()}
-
-
-@pytest.fixture(params=list(_FLAGS.values()), ids=list(_FLAGS))
-def flag(request: pytest.FixtureRequest) -> BackpressureConfig | None:
-    """The outbound budget the gateway runs with: none (the backpressure flag off, the 1 024-frame
-    push bound) or a default `BackpressureConfig` (the flag on, the default). Each test with a
-    `world` runs under both; a test that parametrizes `flag` itself overrides this."""
-    return request.param  # type: ignore[no-any-return]  # params are typed by `_FLAGS`
+@pytest.fixture
+def flag() -> BackpressureConfig:
+    """The outbound budget the gateway runs with: the default `BackpressureConfig` (§8.4; #2409:
+    the flag-off rows went). A test that parametrizes `flag` itself overrides this."""
+    return BackpressureConfig()
 
 
 @pytest.fixture
 def world(
     wire: str,
-    flag: BackpressureConfig | None,
+    flag: BackpressureConfig,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> Iterator[RawWorld]:

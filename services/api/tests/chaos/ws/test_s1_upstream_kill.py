@@ -14,7 +14,8 @@ Three clients hold a full workspace (the book, the tape, account A's orders filt
 symbol), a chart, and a chart of ETHUSDT, a mirror of the recorded book. Through a 10 s outage the
 venue keeps moving: each tick's delta reaches `book_step` as a stray that no subscription may take
 (a pending one takes no `d`). That is asserted at the publish, which sees what a wait on a socket
-cannot (a delta arriving late), and on the frames. Flag off, and on (E17-T03's pipeline).
+cannot (a delta arriving late), and on the frames. On E17-T03's pipeline (#2409: the flag-off row
+went).
 """
 
 from __future__ import annotations
@@ -30,11 +31,10 @@ import pytest
 from candleviewer.ws.pacing import _MULTIPLIER
 from candleviewer.ws.sequencing import cv_ws_resync_total, window_delta
 from candleviewer.ws.topics import effective_throttle_ms, parse_topic
-from tests.chaos.ingestion._clock import VirtualClock
 from tests.chaos.ws._book import replay, structured
 from tests.chaos.ws._client import Client, each
 from tests.chaos.ws._server import BOOK, DEPTH, ORDERS, SEED, SYM, TRADES, A, Stack, flag_on
-from tests.unit.ws._seq_support import ACC_A, ACC_B, Book, validate
+from tests.unit.ws._seq_support import ACC_A, Book, validate
 
 pytestmark = pytest.mark.chaos
 
@@ -63,11 +63,11 @@ FULL, CHART, OTHER = (uuid.UUID(int=n) for n in (0x301, 0x302, 0x303))
 Frame = dict[str, Any]
 
 
-@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
-async def world(request: pytest.FixtureRequest) -> AsyncIterator[Stack]:
-    """The gateway with E17-T03's flag off (a `TopicEmitter` per connection) and on (a pipeline)."""
-    stack = flag_on() if request.param else Stack(VirtualClock(), ACC_A, ACC_B)
-    async with stack as running:
+@pytest.fixture
+async def world() -> AsyncIterator[Stack]:
+    """The gateway on E17-T03's pipeline (#2409: the flag-off row, a `TopicEmitter` per
+    connection, went)."""
+    async with flag_on() as running:
         yield running
 
 
