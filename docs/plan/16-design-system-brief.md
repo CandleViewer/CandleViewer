@@ -116,7 +116,7 @@ Product-wide chrome promoted from E15's hi-fi (E15-D03, E15-D04, E15-D06; `docs/
 
 ### 2.6 Motion
 
-- `motion.duration.{instant,fast,normal,slow}` (0/100/200/400ms) and `motion.easing.{standard,decelerate,accelerate}` — every animatable token pairs with `motion-safe`/`motion-reduce` alternates (§7). No animation is ever load-bearing for information (i.e. a user with `prefers-reduced-motion` never misses information, only the transition polish).
+- `motion.duration.{instant,fast,normal,slow}` (0/100/200/400ms) and `motion.easing.{standard,decelerate,accelerate}` — every animated property has a safe and a reduce value, selected by `data-motion` (§7). No animation is ever load-bearing for information (i.e. a user with `prefers-reduced-motion` never misses information, only the transition polish).
 
 ---
 
@@ -204,8 +204,9 @@ These rules bind every chart-engine primitive (CMP-180..199) and every non-canva
 Per-property table, rules and override: `docs/design/E05/E05-D03.md`.
 
 - **Purposeful motion only**: transitions communicate state change (panel focus, value update, dialog open/close) — motion is never purely decorative in a dense trading UI where distracting animation actively costs attention during fast markets.
-- **Every animated property ships a `motion-safe`/`motion-reduce` pair** (per `05-accessibility-standard.md` §7.4 and `15-component-catalogue.md` §0.3 rule 5): `motion-reduce` either removes the transition (instant state change) or substitutes a non-motion cue (a static glyph with its in-flight label for spinners, static tone-shift instead of shimmer for skeletons).
+- **Every animated property ships a safe and a reduce value**, realised as the recipe custom-property pair `--cv-recipe-<name>-safe` / `-reduce` in `packages/ui/src/theme/theme.css`, resolved by `:root[data-motion="reduce"]` (with `:root:not([data-motion])` as the OS fallback): one mechanism, no literal token pair (E05-D03 §3, C-7). The motion lint, `packages/ui/test/theme/motion-scan.test.ts`, fails the build on an animated or transitioned rule with no `data-motion` counterpart that is not on its committed shrink-only baseline (four rules pending per-rule recipes, MX-07 in `docs/qa/a11y/e47-motion-exception-register.md`) (per `05-accessibility-standard.md` §7.4 and `15-component-catalogue.md` §0.3 rule 5). The reduce value either removes the transition (instant state change) or substitutes a non-motion cue (a static glyph with its in-flight label for spinners, static tone-shift instead of shimmer for skeletons).
 - **No flashing content exceeding 3 times per second**, and no motion lasting more than 5 seconds without a pause control — binding for any looping animation (live-price pulse), as three checkable statements (`docs/design/E05/E05-D03.md` §4): MR-1, no element starts more than 3 flashes in any 1 000 ms window, and a hot-surface cell waits at least 500 ms between starts (≤ 20 emphasised cells per frame, latest wins; in light, HS-1b (A23a): any 341 × 256 px rectangle, anywhere on screen, holds at most 21 824 px² of emphasised area and sees at most 3 flash starts); MR-2, nothing loops past 5 s without a pause control or its own stop, except a request- or job-bound busy indicator with its in-flight label; MR-3, motion is never the sole carrier of meaning: every recipe names a carrier present in its reduce end state.
+- **Hot cells meet MR-1 through the flash coalescer** (`packages/ui/src/components/flashCoalescer.ts`, HS-1), and the G005 flash gate is calibrated against it: `docs/qa/a11y/e47-flash-calibration.md`. Unmet or excepted surfaces: `docs/qa/a11y/e47-motion-exception-register.md`.
 - **Standard motion recipes** (each with explicit safe/reduce pair):
   - Panel focus/mount: `opacity` 0 → 1 and `translateY(8px)` → 0 over `fast` / `decelerate`; focus and its ring at frame 0, never inside the fade; reduce → instant.
   - Dialog/drawer open: the dialog card a cut and its scrim a `normal` fade (E09-D08 D2) / the drawer a `normal` slide; both close over `fast` / `accelerate`; reduce → instant (E10-D04 T-03, T-10).
@@ -214,7 +215,7 @@ Per-property table, rules and override: `docs/design/E05/E05-D03.md`.
   - Toast enter/exit: `fast` slide+fade, reduce → instant (E10-D04 T-06 to T-08; SCR-015).
   - Node-graph connection made: `fast` `opacity` fade, never a line-draw (a stroke-dash draw reads as direction); stagger 0; no pulse on the connecting port; reduce → instant (E37-D03 BQ-08, RULED on #876).
   - Loading shimmer (Skeleton): `slow` looping shimmer, reduce → static two-tone fill, no loop.
-- **Respects `prefers-reduced-motion`** at the OS/browser level automatically, plus an explicit in-app override (Settings → Accessibility (SCR-117) → Reduced motion: system / on / off; `Ctrl+Shift+M` toggles it) for users on shared/unconfigured machines (Electron shell) where the OS-level signal may not be set; the latest explicit choice wins over the OS in both directions and `system` defers to the OS.
+- **Respects `prefers-reduced-motion`** at the OS/browser level automatically, plus an explicit in-app override (Settings → Accessibility (SCR-117) → Reduced motion: system / on / off; `Ctrl+Shift+M` toggles it) for users on shared/unconfigured machines (Electron shell) where the OS-level signal may not be set; the latest explicit choice wins over the OS in both directions and `system` defers to the OS. `Ctrl+Shift+M` writes the persisted preference to an explicit `on` or `off` (never back to `system`; that is SCR-117) and announces it once, politely (E05-D03 §6.5).
 
 ### 7.1 Connection, resync and freshness motion (E08-D11; PROPOSED until the owner's prototype run)
 
