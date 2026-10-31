@@ -358,6 +358,10 @@ class ExchangeCapabilities(BaseModel):
     order_retention_days: int | None
     has_public_ws: bool
     trailing_stop_unit: Literal["price_distance"] = "price_distance"
+    #: §14.3: whether reconciliation acts on what it finds (B19's `auto_remediate`, INV-B19-d);
+    #: testnet reports drift and never acts. Live and demo always act (C-2.6): the OMS refuses
+    #: to compose a job there whose record says otherwise.
+    auto_remediate: bool = True
 
 
 class AccountRef(BaseModel):

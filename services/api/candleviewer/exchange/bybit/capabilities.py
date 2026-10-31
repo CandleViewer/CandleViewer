@@ -73,6 +73,7 @@ def _record(environment: Environment, *, demo: bool) -> ExchangeCapabilities:
         trigger_sources=("last", "mark", "index"),
         order_retention_days=7 if demo else None,
         has_public_ws=not demo,
+        auto_remediate=True,  # §14.3: live and demo always remediate
     )
 
 
