@@ -54,7 +54,7 @@ Logs carry account ids, pass ids, triggers and states only (C-12.6).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 from uuid import uuid4
@@ -62,6 +62,7 @@ from uuid import uuid4
 import structlog
 
 from candleviewer.domain.primitives import AccountId, Environment
+from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.statechart import build
@@ -531,9 +532,8 @@ class ReconcileJobs:
                     return
                 await asyncio.sleep(QUIESCE_POLL_S)
 
-    def _spawn(self, coro: Awaitable[None], name: str) -> asyncio.Task[None]:
-        task: asyncio.Task[None] = asyncio.ensure_future(coro)
-        task.set_name(name)
+    def _spawn(self, coro: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
+        task = spawn(coro, name=name)
         self._tasks.add(task)
         task.add_done_callback(self._ended)
         return task
