@@ -70,7 +70,7 @@
   display: inline-flex;
   align-items: flex-end;
   gap: var(--space-inset-xs);
-  height: var(--size-row-compact);
+  height: var(--size-icon);
 }
 
 .cv-preview-tile__candle {
@@ -87,9 +87,11 @@
   background: var(--color-sell-default);
 }
 
-/* Ladder: the value in type.num.base, primary; the collapsed form is one line: it never wraps, never truncates the name. */
+/* Ladder: the value in type.num.base, primary. The collapsed form is one line and never scrolls (E32-D04 :376); a
+   figure wider than the tile clips at its tail, never its start, and the pinned totals row repeats every figure
+   (E32-D04 :366), so no number lives only in a tile. */
 .cv-preview-tile__value {
-  overflow: visible;
+  flex: none;
   white-space: nowrap;
   color: var(--color-text-primary);
   font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
@@ -97,10 +99,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Compact density: the ladder tile is one 24 px row (E32-D04 §8, size.row.compact); the frame keeps its own padding in the box. */
-[data-density="compact"] .cv-preview-tile[data-kind="ladder"] .cv-preview-tile__frame {
-  height: var(--size-row-compact);
+/* The ladder tile is one row: size.row.height, 24 px compact and 32 px comfortable (E32-D04 :376), its value from the start. */
+.cv-preview-tile[data-kind="ladder"] .cv-preview-tile__frame {
+  height: var(--size-row-height);
   padding-block: 0;
+  justify-content: flex-start;
 }
 
 /* Empty and error: caption type in text.secondary; the error glyph in status.danger.strong. */

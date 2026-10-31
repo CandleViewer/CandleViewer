@@ -42,15 +42,17 @@ describe("previewtile.css contract", () => {
     expect(value).toContain("tabular-nums");
   });
 
-  it("ladder value never wraps; compact density makes the ladder tile 24 px (size.row.compact)", () => {
+  it("ladder value is one line from the start; the ladder tile is one row (size.row.height, 24 / 32 px)", () => {
     expect(find(normal, ".cv-preview-tile__value", "white-space")).toContain("nowrap");
     expect(find(normal, ".cv-preview-tile__value", "font")).not.toContain("anywhere");
+    expect(find(normal, ".cv-preview-tile__value", "flex")).toContain("flex: none");
     const row = find(
       normal,
-      '[data-density="compact"] .cv-preview-tile[data-kind="ladder"] .cv-preview-tile__frame',
+      '.cv-preview-tile[data-kind="ladder"] .cv-preview-tile__frame',
       "height",
     );
-    expect(row).toContain("height: var(--size-row-compact)");
+    expect(row).toContain("height: var(--size-row-height)");
+    expect(row).toContain("justify-content: flex-start");
   });
 
   it("glyphs: danger.strong for the error, warning.strong for the contrast warning", () => {
