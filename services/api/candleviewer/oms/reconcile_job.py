@@ -352,7 +352,7 @@ class ReconcileJobs:
         the running one's id (`joined`); `write_ahead` records the request first (`oms.reconcile`,
         `stage: requested`) and a raise sends nothing. A trigger like any other, it opens the
         account's job when it has none (24 Sec.8.5), so `ReconciliationUnavailable` when none can
-        open; `JobLocked` while locked."""
+        open, or when B19 does not take the pass (`_took`); `JobLocked` while locked."""
         job = await self._job(account)
         async with job.lock:
             state = leaf_of(job.interp)
@@ -365,6 +365,7 @@ class ReconcileJobs:
             taken = PassTaken(str(uuid4()), joined=False)
             await write_ahead(taken)
             await self._send_job(job, "SWEEP_DUE", {"trigger": "manual", "pass_id": taken.pass_id})
+            self._took(job, state)
             self._pass_ids[account] = taken.pass_id
             self._reached(job, state)
             return taken
@@ -375,7 +376,8 @@ class ReconcileJobs:
         """`resolveReconciliation` (22, BQ-7): `OPERATOR_RESOLVED`, the one event that leaves
         `stale_lockout` (INV-B19-b), or ends `divergent`'s wait; `write_ahead` records the
         decision first (`stage: resolved`) and a raise sends nothing. The state it left, once B19
-        recorded it, so the standing has cleared (BQ-5). `NoSuchJob`, or `NothingToResolve`."""
+        recorded it, so the standing has cleared (BQ-5). `NoSuchJob`, or `NothingToResolve`;
+        `ReconciliationUnavailable` when B19 does not take it (`_took`), nothing unlocked."""
         job = self._jobs.get(account)
         if job is None:
             raise NoSuchJob(str(account))
@@ -385,6 +387,7 @@ class ReconcileJobs:
                 raise NothingToResolve(str(account))
             await write_ahead(state)
             await self._send_job(job, "OPERATOR_RESOLVED", {"decided_by": decided_by[:64]})
+            self._took(job, state)
             return state
 
     def state(self, account: AccountId) -> str | None:
@@ -578,6 +581,15 @@ class ReconcileJobs:
         Sec.8.5): no series counts it, as 24 names none."""
         _log().info("reconcile_trigger_skipped", account_id=str(job.account), trigger=trigger,
                     state=state or "none", reason=why)  # fmt: skip
+
+    @staticmethod
+    def _took(job: _Job, state: str) -> None:
+        """A route's event, read by B19's state after its send (CV-C06: a receipt is no gate):
+        a job still resting in `state` did not take it, its send refused, so
+        `ReconciliationUnavailable`, which the route answers 503, keeping nothing; the record it
+        wrote ahead stands (the code look's n1 on the final PR)."""
+        if leaf_of(job.interp) == state:
+            raise ReconciliationUnavailable("B19 did not take the event")
 
     @staticmethod
     def _resting(job: _Job, state: str) -> bool:
