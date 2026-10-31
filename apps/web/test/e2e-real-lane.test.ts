@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { Page } from "@playwright/test";
+import { join, resolve } from "node:path";
+import type { BrowserContext, Page, Request } from "@playwright/test";
 import type { UserConfig } from "vite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import stubConfig from "../e2e/playwright.config";
@@ -10,12 +10,15 @@ import realConfig from "../e2e/playwright.real.config";
 import { expires, same, setCookieNames, tamperOneByte } from "../e2e/support/real/cookies";
 import {
   REFRESH_BUDGET,
+  REFRESH_LIMIT,
   SLICE_COLUMNS,
   auditSliceSql,
+  checkRefreshTally,
   keepFailureArtefacts,
   paceRefreshes,
   presentsRefresh,
   recordRefresh,
+  refreshCounter,
   refreshesInWindow,
 } from "../e2e/support/real/failureArtefacts";
 import { completeMfa, submitPassword } from "../e2e/support/real/signIn";
@@ -313,6 +316,133 @@ describe("the refresh ledger", () => {
     await paceRefreshes(ledger, 0, info);
     expect(info.timeout).toBe(60_000);
     await expect(paceRefreshes(ledger, REFRESH_BUDGET + 1, info)).rejects.toThrow(RangeError);
+  });
+});
+
+// #5170's code look m1: a test's count waits for its refreshes still in flight, within a bound.
+describe("the refresh count at a test's end", () => {
+  let ledger: string;
+  beforeEach(() => {
+    ledger = join(mkdtempSync(join(tmpdir(), "cv-real-count-")), "refresh-ledger");
+  });
+  afterEach(() => rmSync(join(ledger, ".."), { recursive: true, force: true }));
+
+  /** A context whose request events the test fires, watched by a counter with a short wait. */
+  const watched = (timeout: number) => {
+    const counter = refreshCounter(ledger, { timeout, intervals: [5] });
+    const handlers = new Map<string, (request: Request) => void>();
+    const on = (event: string, handler: (request: Request) => void) => handlers.set(event, handler);
+    counter.watch({ on } as unknown as BrowserContext);
+    const fire = (event: string, request: Request): void => handlers.get(event)?.(request);
+    return { counter, fire };
+  };
+  const refresh = (cookie: string): Request =>
+    ({
+      url: () => "http://127.0.0.1:4173/api/v1/auth/refresh",
+      method: () => "POST",
+      headerValue: async () => cookie,
+    }) as unknown as Request;
+  const turn = (): Promise<void> => new Promise((done) => setImmediate(done));
+  const messageOf = (check: () => void): string => {
+    try {
+      check();
+      return "";
+    } catch (error) {
+      return String(error);
+    }
+  };
+
+  it("counts a refresh still in flight when the test ends, once it settles", async () => {
+    const { counter, fire } = watched(1_000);
+    const sent = refresh("cv_refresh=x; __Host-cv_csrf=y");
+    fire("request", sent);
+    const counting = counter.count();
+    await turn(); // the count is under way, and only now does the refresh settle
+    fire("requestfinished", sent);
+    const tally = await counting;
+    expect(tally).toEqual({ presented: 1, unsettled: 0 });
+    expect(refreshesInWindow(ledger, Date.now())).toBe(1);
+    expect(() => checkRefreshTally(tally, 1)).not.toThrow();
+  });
+
+  it("fails a test whose refresh never settles as that, not as one to recount", async () => {
+    const { counter, fire } = watched(50);
+    fire("request", refresh("cv_refresh=x"));
+    const tally = await counter.count();
+    expect(tally).toEqual({ presented: 0, unsettled: 1 });
+    const message = messageOf(() => checkRefreshTally(tally, 1));
+    expect(message).toMatch(/a refresh never settled: 1 POST \/auth\/refresh this test sent was/u);
+    expect(message).not.toMatch(/recount/u);
+  });
+
+  it("counts only the cookie-presenting ones, and fails a miscount as one to recount", async () => {
+    const { counter, fire } = watched(1_000);
+    for (const cookie of ["__Host-cv_csrf=y", "cv_refresh=x"]) {
+      const sent = refresh(cookie);
+      fire("request", sent);
+      fire("requestfailed", sent);
+    }
+    const tally = await counter.count();
+    expect(tally).toEqual({ presented: 1, unsettled: 0 });
+    expect(messageOf(() => checkRefreshTally(tally, 2))).toMatch(
+      /1 times and declares 2 \(lane\.refreshes\): recount it/u,
+    );
+  });
+});
+
+// #5170's code look m2 and security look N3: the pace is per worker, so `real`'s two workers can
+// pass it at once. Its declared total, and their worst case in one window, stay within the limit.
+describe("the refreshes the real project declares", () => {
+  const E2E = resolve(import.meta.dirname, "../e2e");
+  const specs = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const path = join(dir, e.name);
+      if (e.isDirectory()) return specs(path);
+      return e.name.endsWith(".real.ts") ? [path] : [];
+    });
+  const CALL = /\blane\.refreshes\((\d+)\)/gu;
+
+  /** A spec's tests: each title, and the count its `lane.refreshes(N)` declares (0 without one). */
+  function declarations(text: string): { title: string; count: number }[] {
+    const starts = [...text.matchAll(/^test\("([^"]+)"/gmu)];
+    // a test or a declaration this parse cannot read would leave the sum short
+    expect(starts).toHaveLength(text.match(/\btest\(/gu)?.length ?? 0);
+    expect(text.match(/\brefreshes\(/gu)?.length ?? 0).toBe(text.match(CALL)?.length ?? 0);
+    expect(text.slice(0, starts[0]?.index).match(CALL)).toBeNull();
+    return starts.map((start, i) => {
+      const calls = [...text.slice(start.index, starts[i + 1]?.index).matchAll(CALL)];
+      expect(calls.length, start[1]).toBeLessThanOrEqual(1);
+      return { title: start[1] ?? "", count: Number(calls[0]?.[1] ?? 0) };
+    });
+  }
+
+  /** What each test of the `real` project declares, and how many workers it runs on. */
+  function realProject(): { counts: number[]; workers: number } {
+    const real = realConfig.projects?.find((p) => p.name === "real");
+    const clock = real?.grepInvert;
+    if (!(clock instanceof RegExp) || typeof real?.workers !== "number") {
+      throw new Error("`real` names its workers and inverts one grep");
+    }
+    const counts = specs(E2E)
+      .flatMap((file) => declarations(readFileSync(file, "utf8")))
+      .filter((t) => !clock.test(t.title))
+      .map((t) => t.count);
+    expect(counts, "the parse found the real project's tests").not.toHaveLength(0);
+    return { counts, workers: real.workers };
+  }
+
+  it("total what cold-start.real.ts states, within the limit", () => {
+    const total = realProject().counts.reduce((sum, n) => sum + n, 0);
+    const coldStart = readFileSync(join(E2E, "auth", "cold-start.real.ts"), "utf8");
+    expect(/These tests present it (\d+) times in all\./u.exec(coldStart)?.[1]).toBe(`${total}`);
+    expect(total).toBeLessThanOrEqual(REFRESH_LIMIT);
+  });
+
+  it("keep two workers' worst case in one window within the limit too", () => {
+    // a test passes the pace while one on another worker has yet to send what it declares
+    const { counts, workers } = realProject();
+    const worst = REFRESH_BUDGET + (workers - 1) * Math.max(...counts);
+    expect(worst).toBeLessThanOrEqual(REFRESH_LIMIT);
   });
 });
 

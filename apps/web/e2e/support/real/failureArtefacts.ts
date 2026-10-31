@@ -27,6 +27,11 @@ import { realStack, type FixtureUser, type RealStack } from "./stack";
 // Each test declares how often it presents the cookie (`lane.refreshes`); the fixture waits until
 // the run's ledger leaves room for that under REFRESH_BUDGET, and fails a test that presents it
 // any other number of times, so the count is pinned in each spec and a change has to recount it.
+// The pace is per worker: a test's refreshes enter the ledger as they settle, so two workers that
+// check at once both see room for their own. `real-clock` runs one worker, so its pace is exact.
+// `real` runs two, so its declared total must stay within REFRESH_LIMIT, and so must their worst
+// case in one window, REFRESH_BUDGET plus the largest count one `real` test declares: no `real`
+// test may declare more than REFRESH_LIMIT - REFRESH_BUDGET (`test/e2e-real-lane.test.ts` checks).
 
 /** One API answer a page saw. */
 export interface Seen {
@@ -258,8 +263,24 @@ export async function paceRefreshes(
 
 const REFRESH_PATH = "/api/v1/auth/refresh";
 
-/** Counts the cookie-presenting refreshes of the contexts it watches, writing each to `ledger`. */
-function refreshCounter(ledger: string) {
+/** How long a test's end waits for the refreshes it sent to settle, and how often it looks. */
+export const REFRESH_SETTLE = { timeout: 3_000, intervals: [100, 250, 500] };
+
+/** A test's refreshes at its end: those that presented the cookie, and those still in flight. */
+export interface RefreshTally {
+  readonly presented: number;
+  readonly unsettled: number;
+}
+
+/**
+ * Counts the cookie-presenting refreshes of the contexts it watches, writing each to `ledger` as
+ * it settles. `count` first waits, within `settle`, for those still in flight, and returns at once
+ * when none is.
+ */
+export function refreshCounter(
+  ledger: string,
+  settle: { timeout: number; intervals: number[] } = REFRESH_SETTLE,
+) {
   const sent = new Map<Request, number>();
   const checks: Promise<boolean>[] = [];
   const settled = (request: Request): void => {
@@ -282,11 +303,43 @@ function refreshCounter(ledger: string) {
       context.on("requestfinished", settled);
       context.on("requestfailed", settled);
     },
-    /** How many refreshes presented the cookie, once every one sent has settled. */
-    async count(): Promise<number> {
-      return (await Promise.all(checks)).filter(Boolean).length;
+    /** The tally once every refresh sent has settled, or the wait for them has run out. */
+    async count(): Promise<RefreshTally> {
+      if (sent.size > 0) {
+        try {
+          await expect.poll(() => sent.size, settle).toBe(0);
+        } catch {
+          // one is still in flight: the tally says so, and checkRefreshTally reports it as that
+        }
+      }
+      const presented = (await Promise.all(checks)).filter(Boolean).length;
+      return { presented, unsettled: sent.size };
     },
   };
+}
+
+/**
+ * Fails a passing test whose refreshes are not what it declares. One still in flight at its end
+ * fails it too, as a refresh that never settled: its count cannot be checked, and the declaration
+ * is not what to change.
+ */
+export function checkRefreshTally(tally: RefreshTally, declared: number | undefined): void {
+  if (tally.unsettled > 0) {
+    const n = tally.unsettled;
+    const were = n === 1 ? "was" : "were";
+    throw new Error(
+      `a refresh never settled: ${n} POST /auth/refresh this test sent ${were} still in flight ` +
+        `${REFRESH_SETTLE.timeout / 1_000} s after it ended, so its count could not be checked ` +
+        `(look at why it hung, not at lane.refreshes)`,
+    );
+  }
+  if (tally.presented !== (declared ?? 0)) {
+    const told = `${declared ?? "none"} (lane.refreshes)`;
+    throw new Error(
+      `this test presented ${REFRESH_COOKIE} to POST /auth/refresh ${tally.presented} times and ` +
+        `declares ${told}: recount it against the ${REFRESH_LIMIT}-a-minute budget`,
+    );
+  }
 }
 
 function recorder(seen: Seen[]): (res: Response) => void {
@@ -341,19 +394,13 @@ export const test = base.extend<{ lane: Lane }>({
           return sliceRows(await readAuditSlice(auditSliceSql(since, users, ids)));
         },
       });
-      const presented = await refreshes.count();
+      const tally = await refreshes.count();
       for (const ctx of others) await ctx.close();
       if (testInfo.status !== testInfo.expectedStatus) {
         await keepFailureArtefacts(testInfo, { since, users, seen });
         return;
       }
-      if (presented !== (declared ?? 0)) {
-        const told = `${declared ?? "none"} (lane.refreshes)`;
-        throw new Error(
-          `this test presented ${REFRESH_COOKIE} to POST /auth/refresh ${presented} times and ` +
-            `declares ${told}: recount it against the ${REFRESH_LIMIT}-a-minute budget`,
-        );
-      }
+      checkRefreshTally(tally, declared);
     },
     { auto: true },
   ],
