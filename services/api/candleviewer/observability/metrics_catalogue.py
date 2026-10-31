@@ -2043,12 +2043,13 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     # --- Recorded heatmap read (E21-T03, #606): `orderflow.heatmap_metrics`, re-exported by
-    # export_heatmap_metrics. `source` is the closed `BackfillSource` set (5 values).
+    # export_heatmap_metrics. `tier` is the closed `BackfillSource` set (5 values); not `source`,
+    # which the OMS transition counter alone may use (C-2.18).
     _s(
         "heatmap_backfill_requests_total",
         "counter",
         "pages",
-        ("source",),
+        ("tier",),
         "Recorded heatmap pages served, by each segment source (none: no recorded history).",
         "dashboard only",
         _L,

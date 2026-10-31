@@ -272,9 +272,9 @@ def _sample(name: str, **labels: str) -> float:
 
 
 def test_metrics_count_sources_clamps_and_unverified_rebuilds() -> None:
-    hot = _sample("heatmap_backfill_requests_total", source="hot")
+    hot = _sample("heatmap_backfill_requests_total", tier="hot")
     _get(_app(Reader(_rows(T0, T0 + 10 * S))))
-    assert _sample("heatmap_backfill_requests_total", source="hot") == hot + 1
+    assert _sample("heatmap_backfill_requests_total", tier="hot") == hot + 1
     level = ((Decimal("100.0"), Decimal("1")),)
     anchor = BookAnchor(T0 - S, 1, level, level, None)
     unverified = _sample("heatmap_reconstruct_unverified_total")

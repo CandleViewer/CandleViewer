@@ -13,7 +13,7 @@ series are module-level, bound at import to their closed label sets where they h
 - `heatmap_cell_faults_total`: sizes that are negative or not finite, never written (24 §6.5);
 - `heatmap_pinned_symbols`: symbols whose native column is kept without a lease (E21-T04, the
   liquidity tracker's configured symbols; at most `liquidity_pin_max`);
-- E21-T03 (#606), `GET /market/heatmap`: `heatmap_backfill_requests_total{source}` (served
+- E21-T03 (#606), `GET /market/heatmap`: `heatmap_backfill_requests_total{tier}` (served
   pages by each segment source, `none` for no recorded history), `heatmap_backfill_duration_ms`,
   `heatmap_backfill_clamped_total` (pages served at a coarser bucket) and
   `heatmap_reconstruct_unverified_total` (snapshots rebuilt from with no stored checksum, BQ-4).
@@ -72,7 +72,7 @@ heatmap_cell_faults_total = Counter(
 heatmap_backfill_requests_total = Counter(
     "heatmap_backfill_requests_total",
     "Recorded heatmap pages served, by each segment source (none: no recorded history).",
-    labelnames=("source",),
+    labelnames=("tier",),
 )
 heatmap_backfill_duration_ms = Histogram(
     "heatmap_backfill_duration_ms",
@@ -90,7 +90,7 @@ heatmap_reconstruct_unverified_total = Counter(
 
 #: The bound children, one per closed label value (no other value is ever minted).
 EMITTED: Final = {s: heatmap_columns_emitted_total.labels(state=s) for s in STATES}
-BACKFILLS: Final = {s: heatmap_backfill_requests_total.labels(source=s) for s in BACKFILL_SOURCES}
+BACKFILLS: Final = {s: heatmap_backfill_requests_total.labels(tier=s) for s in BACKFILL_SOURCES}
 
 
 def missing(symbol: str, n: int = 1) -> None:

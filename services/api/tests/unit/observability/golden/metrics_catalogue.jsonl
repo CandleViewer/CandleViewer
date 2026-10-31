@@ -289,7 +289,7 @@
 ["fe_ws_decode_ms", "histogram", ["screen"], "live", "E04"]
 ["heatmap_backfill_clamped_total", "counter", [], "live", "E21"]
 ["heatmap_backfill_duration_ms", "histogram", [], "live", "E21"]
-["heatmap_backfill_requests_total", "counter", ["source"], "live", "E21"]
+["heatmap_backfill_requests_total", "counter", ["tier"], "live", "E21"]
 ["heatmap_cell_faults_total", "counter", [], "live", "E21"]
 ["heatmap_column_publish_latency_ms", "histogram", [], "live", "E21"]
 ["heatmap_columns_emitted_total", "counter", ["state"], "live", "E21"]
