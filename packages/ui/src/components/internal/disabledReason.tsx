@@ -1,4 +1,5 @@
 import { useId, type JSX } from "react";
+import { announcePolite } from "../../theme/a11y.js";
 
 export interface DisabledReasonAttrs {
   /** True when a non-empty reason is given: the control is gated (T2), not natively disabled. */
@@ -28,6 +29,17 @@ export function useDisabledReason(
     ariaDisabled: gated ? true : undefined,
     ariaDescribedBy: gated ? reasonId : undefined,
   };
+}
+
+/**
+ * D09 2.2: a refused activation re-shows the reason with one polite announcement. The region is cleared, then set
+ * in a microtask: an unchanged sentence would not announce again on a repeat press, and a microtask (unlike a
+ * frame) runs deterministically under fake timers.
+ */
+export function announceGatedReason(reason: string | undefined): void {
+  if (reason === undefined) return;
+  announcePolite("");
+  queueMicrotask(() => announcePolite(reason));
 }
 
 /**

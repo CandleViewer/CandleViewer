@@ -6,6 +6,7 @@ import { describe, it } from "vitest";
 import { Toggle } from "../src/components/index.js";
 import * as stories from "../src/components/Toggle.stories.js";
 import { mount } from "./theme/mount.js";
+import { clearPolite, politeText } from "./theme/polite.js";
 
 const REASON = "Owner only";
 const get = (host: HTMLElement, name = "Arm"): HTMLButtonElement =>
@@ -133,5 +134,27 @@ describe("Toggle stories", () => {
   it.each(Object.entries(composeStories(stories)))("%s renders", async (_name, Story) => {
     const host = await mount(<Story />);
     expect(within(host).getAllByRole("switch").length).toBeGreaterThan(0);
+  });
+});
+
+describe("Toggle gated announcement (D09 2.2)", () => {
+  it("announces the reason on a gated click or Space, announces nothing when allowed", async () => {
+    const onChange = fn();
+    const host = await mount(<Toggle label="Arm" disabledReason={REASON} onChange={onChange} />);
+    const t = within(host).getByRole("switch", { name: "Arm" });
+    await userEvent.click(t);
+    expect(await politeText()).toBe(REASON);
+    clearPolite();
+    const g2 = await mount(<Toggle label="Arm" disabledReason={REASON} onChange={onChange} />);
+    await userEvent.tab();
+    await userEvent.keyboard(" ");
+    expect(await politeText()).toBe(REASON);
+    expect(within(g2).getByRole("switch")).toHaveAttribute("aria-checked", "false");
+    expect(onChange).not.toHaveBeenCalled();
+    clearPolite();
+    const open = await mount(<Toggle label="Arm" onChange={onChange} />);
+    await userEvent.click(within(open).getByRole("switch"));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(await politeText()).toBe("");
   });
 });

@@ -1,7 +1,7 @@
 import type { ComponentPropsWithoutRef, JSX, MouseEvent } from "react";
 import { Icon, type IconSizeFor } from "../icons/Icon.js";
 import type { IconName } from "../icons/registry.js";
-import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonText, announceGatedReason, useDisabledReason } from "./internal/disabledReason.js";
 import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { cx } from "./internal/cx.js";
 import { useFocusRing } from "./FocusRing.js";
@@ -61,6 +61,7 @@ export function IconButton<N extends IconName>({
     // Enter and Space reach here as clicks: a gated button stays focusable but does nothing.
     if (reason.gated) {
       event.preventDefault();
+      announceGatedReason(reason.reason);
       return;
     }
     onClick?.(event);

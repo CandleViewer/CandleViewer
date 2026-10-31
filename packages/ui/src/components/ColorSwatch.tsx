@@ -1,6 +1,6 @@
 import { useEffect, type CSSProperties, type JSX, type MouseEvent } from "react";
 import { Icon } from "../icons/Icon.js";
-import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonText, announceGatedReason, useDisabledReason } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
 import { useRoving, type RovingItemProps } from "./internal/useRoving.js";
 
@@ -84,6 +84,7 @@ interface SwatchRadioProps {
   readonly checked: boolean;
   readonly groupDisabled: boolean;
   readonly groupReasonId: string | undefined;
+  readonly groupReason: string | undefined;
   readonly roving: RovingItemProps;
   readonly onPick: (value: string) => void;
 }
@@ -93,6 +94,7 @@ function SwatchRadio({
   checked,
   groupDisabled,
   groupReasonId,
+  groupReason,
   roving,
   onPick,
 }: SwatchRadioProps): JSX.Element {
@@ -104,6 +106,7 @@ function SwatchRadio({
   const handleClick = (event: MouseEvent<HTMLElement>): void => {
     // A refused swatch changes nothing. A gated one still takes focus from the browser's own focus on a
     // tabindex element (so its reason is read); this handler never calls focus() for it.
+    if (gated) announceGatedReason(groupReason ?? reason.reason);
     if (disabled || gated) return;
     event.currentTarget.focus();
     onPick(option.value);
@@ -185,6 +188,10 @@ export function ColorSwatchPicker({
     checked: value,
     onSelect: onPick,
     gated: refused,
+    onRefused: (v) =>
+      announceGatedReason(
+        group.reason ?? swatches.find((s) => s.value === v)?.disabledReason?.trim(),
+      ),
   });
   return (
     <>
@@ -204,6 +211,7 @@ export function ColorSwatchPicker({
             checked={option.value === value}
             groupDisabled={groupDisabled}
             groupReasonId={group.gated ? group.reasonId : undefined}
+            groupReason={group.reason}
             roving={roving.itemProps(option.value)}
             onPick={onPick}
           />

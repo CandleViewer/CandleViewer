@@ -16,6 +16,8 @@ export interface UseRovingOptions {
   readonly onSelect: (value: string) => void;
   /** The whole group is refused (T2): keys move nothing and select nothing; the tab stop stays put. */
   readonly gated?: boolean;
+  /** A key that would have selected was refused (gated group, or Space on a locked item): the caller announces why. */
+  readonly onRefused?: (value: string) => void;
   /**
    * `false` = manual activation (APG Tabs): the arrows, Home and End move focus only, and Enter or Space selects
    * the focused item. Default `true`: the item an arrow lands on is selected (the radio pattern).
@@ -68,6 +70,7 @@ export function useRoving({
   checked,
   onSelect,
   gated = false,
+  onRefused,
   selectOnFocus = true,
   groupRole = "radiogroup",
   orientation,
@@ -120,7 +123,7 @@ export function useRoving({
           event.preventDefault();
           if (!gated && items.find((item) => item.value === value)?.locked !== true) {
             onSelect(value);
-          }
+          } else onRefused?.(value);
           return;
         } else {
           return;
@@ -128,8 +131,9 @@ export function useRoving({
         // A handled key never scrolls the page or submits a form, even when the group refuses it.
         event.preventDefault();
         if (!gated && target !== undefined) land(target.value);
+        else if (gated) onRefused?.(value);
       },
-    [reachable, items, gated, land, onSelect, selectOnFocus, orientation],
+    [reachable, items, gated, land, onSelect, onRefused, selectOnFocus, orientation],
   );
 
   const itemProps = useCallback(

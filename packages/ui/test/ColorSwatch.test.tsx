@@ -9,6 +9,7 @@ import {
   type ColorSwatchPickerBaseProps,
 } from "../src/components/index.js";
 import { mount } from "./theme/mount.js";
+import { clearPolite, politeText } from "./theme/polite.js";
 
 const REASON = "Owner only";
 const SWATCHES: ColorSwatchOption[] = [
@@ -248,5 +249,26 @@ describe("ColorSwatch, static (CMP-031)", () => {
     expect(el).not.toHaveAttribute("role");
     expect(el).not.toHaveAttribute("aria-label");
     expect(el?.getAttribute("data-density")).toBe("compact");
+  });
+});
+
+describe("ColorSwatchPicker gated announcement (D09 2.2)", () => {
+  it("announces the picker reason on a value key or a swatch click; nothing when allowed", async () => {
+    const onChange = fn();
+    await mount(<Host value="amber" disabledReason={REASON} onChange={onChange} />);
+    await userEvent.tab();
+    expect(await politeText()).toBe("");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(await politeText()).toBe(REASON);
+    clearPolite();
+    const again = await mount(<Host value="amber" disabledReason={REASON} onChange={onChange} />);
+    await userEvent.click(within(again).getAllByRole("radio")[2]!);
+    expect(await politeText()).toBe(REASON);
+    expect(onChange).not.toHaveBeenCalled();
+    clearPolite();
+    const open = await mount(<Host value="amber" onChange={onChange} />);
+    await userEvent.click(within(open).getAllByRole("radio")[2]!);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(await politeText()).toBe("");
   });
 });

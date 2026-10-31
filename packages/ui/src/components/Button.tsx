@@ -1,7 +1,7 @@
 import type { ComponentPropsWithoutRef, JSX, MouseEvent, ReactNode } from "react";
 import { Icon } from "../icons/Icon.js";
 import type { IconName } from "../icons/registry.js";
-import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonText, announceGatedReason, useDisabledReason } from "./internal/disabledReason.js";
 import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { cx } from "./internal/cx.js";
 import { useFocusRing } from "./FocusRing.js";
@@ -56,6 +56,7 @@ export function Button({
     // Enter and Space reach here as clicks: a gated or busy button stays focusable but does nothing.
     if (reason.gated || loading) {
       event.preventDefault();
+      if (reason.gated) announceGatedReason(reason.reason);
       return;
     }
     onClick?.(event);
