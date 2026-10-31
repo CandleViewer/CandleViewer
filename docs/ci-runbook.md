@@ -317,6 +317,13 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   `run-audit-spike` label) and went red is still CI-GATE-001, and the lane red on a group drops its
   PR from the queue. A PR can therefore be green and still fail in the queue on `integration`:
   read the group's `integration` log, not the PR's.
+- #5154: while a pull request is a **draft**, the `e2e`, `a11y` and `engine-bench` lanes skip by their
+  own `if:` and the resolver reads the skip as deferred ("runs when the pull request leaves draft",
+  `DRAFT_DEFERRED` in `scripts/ci_gate_resolver.mjs`, fed `PR_DRAFT`), never as CI-GATE-002; a deferred
+  lane that ran red on a draft is still CI-GATE-001. `ready_for_review` re-runs `pr.yml` with the
+  three lanes, and a merge group carries no draft flag, so a queue run executes every lane. The
+  recording-only `perf-engine-matrix.yml` chromium job skips a draft the same way and runs at
+  `ready_for_review`. Un-draft early enough for the full run to finish before READY.
 - #4605: the lane is three job definitions. `integration-shard (N/4)` runs one shard of
   `pytest tests/integration -m "integration and not perf and not flaky"`, split by measured per-file
   duration (`tools/ci/integration_shards.py`; about 5-7 minutes a shard on the five runs its table
