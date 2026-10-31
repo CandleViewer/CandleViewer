@@ -144,3 +144,49 @@ shared with E03-T14.
 No R1 re-cut follows: the fallback did not fire (`30-release-roadmap.md` §4.3 item 4). The E11 tickets that
 inherit these findings are listed in the report's §13 and are commented on after merge (filing freeze: no new
 tickets).
+
+## O2 atlas configuration, re-confirmed with real font rasterisation — 2026-10-31
+
+Amendment by E11-K01 (#332). E06-K03 closed O2 on a procedural stand-in rasteriser (`spikes/E06-K03.md`
+"Honest limits"). E11-K01 re-measures it in headless Chromium with OffscreenCanvas `fillText`, the real
+IndexedDB and a SwiftShader WebGL2 context. The record is `docs/plan/spikes/E11-K01.md`; its figures live in
+`E11-K01-results.json`, and this section repeats none of them.
+
+- **Parameterised on the font.** The family choice is final (`16` §2.2, owner decision 2026-09-25), but the
+  font files are not vendored yet and no ticket vendors them (G-42), so the recorded run used named
+  stand-in files. The harness reads the shipped variable WOFF2 files as they ship, so once they are vendored
+  the rerun is one command on the bytes the cache key hashes (`spikes/E11-K01-harness/README.md`); a rerun
+  on TTF builds counts only when their version string matches. A rerun that changes a decision below is
+  recorded as a further amendment here.
+- **Families:** JetBrains Mono 400 for cell text, axis ticks and GL pills; Inter 600 for the watermark
+  (E11-D02 D13). Both share **one R8 texture**, so the axis batch binds one texture (BQ-171).
+- **Glyph set:** printable ASCII (U+0020–U+007E) for each family, plus `×`, `▲`, `▼` (mono) and `·` (Inter):
+  194 glyphs (BQ-172). A glyph the font lacks is taken from the other family when it has it, else the set
+  is rejected (BQ-180). An out-of-set character draws `?` from the same family and trips a dev assertion.
+  The atlas never grows at runtime (BQ-181).
+- **Atlas size: 1024×1024, 1 MiB**, a stated deviation from the ticket's "smallest size that meets every
+  gate" rule, which cannot select while no size meets the cold gate (inconclusive here). Every candidate
+  packs all 194 glyphs; 512² has about 1.7× height headroom and 1024² about 6.6×. E11-S11 re-applies the
+  rule on the shipped fonts, and 512² wins if it meets every gate (BQ-173).
+- **Raster sizes:** mono 24 px with spread 4, Inter 32 px with spread 6 (BQ-174). There is **one raster per
+  family**. The 24 px mono base is **provisional**: the 16 px base met the pair-ratio gate in more of its
+  measured cases, so E11-S11 chooses between 24 px, 16 px and two mono rasters by the rule in the spike note
+  ("Requirements" item 7). Size classes 0 / 1 / 2 and DPR are shader scales, so a DPR change never regenerates the atlas
+  (BQ-175).
+- **Packer:** shelf, sorted by height then codepoint. 1024² never overflowed, so no skyline packer was tried
+  (BQ-183).
+- **Cache:** the IndexedDB key covers family, font-bytes SHA-256, weight, raster size, spread, glyph-set
+  hash, atlas size and generator version (BQ-176). The record stores only the packed rows, not the whole
+  texture, which is what brings the warm read near the B9 secondary gate.
+- **Shader:** §3.7's `fwidth` band. It beat the shipped fixed 0.45–0.55 band on median SSIM and on the worst
+  cell glyph in all nine measured cases; the fixed band separated the closest pair better in three
+  (BQ-184, C-56).
+- **Open, under the #220 evidence rule:** cold generation and the computed legibility proxies miss their
+  gates on this below-class, contended host. That is inconclusive, not a rejection: E11-S11 re-measures
+  them on the shipped fonts with pass/fail rules (spike note, "Requirements" items 5–9). MSDF was not
+  evaluated: its trigger moves to E11-S11's K3 A/B, the owner's call on the packet E11-S11 renders, and
+  11 px dpr 1 does fail the proxies. That MSDF would not restore hinting under minification is
+  `(heuristic)`: argued, not measured.
+- **Open interpretation, not decided here:** whether the 60 ms cold gate excludes the font load and the
+  worker spawn. A cache hit avoids the bytes-to-`FontFace` load but not the font-bytes fetch and hash for
+  the key; E11-S11 K2 reports the figure both ways, and the architect and the orchestrator decide.

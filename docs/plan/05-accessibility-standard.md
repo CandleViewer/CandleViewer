@@ -199,6 +199,12 @@ This is the highest-risk area: the chart engine, footprint grid, DOM heatmap, an
 
 - All surrounding chrome (toolbars, dialogs, forms, order ticket, admin screens, journal, watchlist) is built with semantic HTML/native controls or full ARIA-pattern-compliant custom components (WAI-ARIA APG patterns for combobox, listbox, tabs, dialog, menu, grid) — **not** re-implemented as unlabeled `<div>` soup. This is a design-system requirement (§8).
 
+### 6.6 Canvas text legibility floor
+
+- Footprint cell text hides at the frozen `LOD_PROFILE_M0` cell heights: **12 px** for two numbers and **10 px** for one, at the 10 px cell class, plus the density's `lodBias` and × the text scale (`docs/design/E06/E06-D01.md` §2, `docs/design/E11/E11-D02.md` §6). E11-S12 implements the threshold.
+- E11-K01 (`docs/plan/spikes/E11-K01.md`, "LOD floor") found that **the ink plus a 1 px outline does not fit a 10 px cell** (geometric check, stand-in font): from `measureText` ink extents, the smallest one-row cell that holds the cell glyphs with a 1 px outline above and below is **11 px** at the 10 px class, 12 px at 11 px and 15 px at 13 px. It is a fit check, not a legibility test; E06-D01 §2 validated L1 = 10 px with readers. It assumes the outline lies inside the cell (the spike's assumption, frozen nowhere) and takes the 1 px width from E06-D01 §5's resolution text (no token freezes it). The figures depend on the font, so E11-S11 re-reads them on the shipped font; a change request goes to E06-D01 only on the shipped font and with a legibility check (E11-S11 K4), never on geometry alone and never as a silent edit here.
+- Text drawn into the canvas is never the accessible copy: the DOM mirror and the table alternative (§6.1, §6.3) carry every value.
+
 ## 7. Reduced motion
 
 1. The app respects OS-level `prefers-reduced-motion: reduce` by default (WCAG 2.3.3, AAA — adopted here as a hard requirement given trading-UI seizure/vestibular risk from flashing price/heatmap updates).
