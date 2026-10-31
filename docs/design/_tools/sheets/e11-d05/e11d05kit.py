@@ -643,6 +643,24 @@ class Crop:
         self.status_left: list[Node] = []
         self.status_right: list[Node] = []
         self.slot_w = self.pw / (n + 2)  # two empty slots: the right offset
+        # r3c: the time axis is derived from the series. With a clock in the zone tag and bars drawn, the newest bar
+        # opens at the clock's minute (anchor()); every bar is `mpb` minutes wide, so the axis runs slot_w / mpb px per
+        # minute, and the time labels sit at their times' x (not evenly spaced): bar pitch == px per minute x mpb.
+        self.t_new: int | None = None  # the newest bar's open, minutes after midnight
+        self.mpb = 1  # minutes per bar (column)
+        self.drop_under: list[str] = []  # strip items whose covered time labels drop (D8 collisions)
+        if zone and data and strip and re.fullmatch(r"UTC \d\d:\d\d:\d\d", zone):
+            self.anchor(zone[4:9])
+
+    def anchor(self, newest: str, *, mpb: int = 1, step: int = 5) -> None:
+        """r3c: put the newest bar (index n - 1) at `newest` (hh:mm, its open), `mpb` minutes per bar, and label the
+        axis every `step` minutes across the pane (labels outside the strip's label area are not drawn)."""
+        self.t_new, self.mpb = int(newest[:2]) * 60 + int(newest[3:5]), mpb
+        self.t_idx = len(self.bars) - 1
+        # labels stop at the latest bar (E11-D02 L267: no future-time labels in the right margin)
+        lo, hi = self.minutes_at(0), self.t_new
+        first = math.ceil(lo / step) * step
+        self.times = [f"{t // 60:02d}:{t % 60:02d}" for t in range(first, hi + 1, step)]
 
     def y(self, p: float) -> int:
         return round((self.hi - p) / (self.hi - self.lo) * (self.ph - 1))
@@ -664,14 +682,26 @@ class Crop:
         ends = [float(k["x"]) for k in self.strip if k.get("name") == "cluster"]
         return a, min([float(self.pw), *[e - 8 for e in ends]])
 
+    def x_at(self, minutes: float) -> float:
+        """r3c (anchored axis): the x of a time, minutes after midnight (the inverse of minutes_at)."""
+        assert self.t_new is not None
+        xn = self.t_idx * self.slot_w + self.slot_w / 2
+        return xn + (minutes - (self.t_new + self.mpb / 2)) * self.slot_w / self.mpb
+
     def time_x(self, i: int) -> float:
-        """The centre of time label i (labels evenly spaced in the strip's label area, dropped ones included)."""
+        """The centre of time label i (anchored: at its time's x; else evenly spaced in the strip's label area,
+        dropped ones included)."""
+        if self.t_new is not None:
+            return self.x_at(int(self.times[i][:2]) * 60 + int(self.times[i][3:5]))
         a, b = self.strip_area()
         return a + (b - a) * (i + 0.5) / len(self.times)
 
     def minutes_at(self, x: float) -> float:
         """The axis time at x (minutes after midnight), linear through the frame's own time labels (m3: every pill
         value is read off the axis it sits on, so it falls between the ticks it sits between)."""
+        if self.t_new is not None:
+            xn = self.t_idx * self.slot_w + self.slot_w / 2
+            return self.t_new + self.mpb / 2 + (x - xn) * self.mpb / self.slot_w
         t = [int(s[:2]) * 60 + int(s[3:5]) for s in self.times]
         step = t[1] - t[0] if len(t) > 1 else 5
         a, b = self.strip_area()
@@ -684,6 +714,8 @@ class Crop:
 
     def bars_per_column(self) -> int:
         """1m bars per column on this frame's time axis (minutes per px through its labels x the column width)."""
+        if self.t_new is not None:
+            return self.mpb
         t = [int(s[:2]) * 60 + int(s[3:5]) for s in self.times]
         a, b = self.strip_area()
         return max(1, round((t[1] - t[0]) / ((b - a) / len(t)) * self.slot_w))
@@ -764,10 +796,20 @@ class Crop:
                 if self.zone:
                     st.append(text("zone tag", self.zone, NUM, ax, x=4, y=6, note="1 Hz, the WS-corrected server "
                                    "time; aria-live off; 8 px exclusion zone to its right (E11-D02 D8)"))
+                a, b = self.strip_area()
+                cover = [(float(n["x"]), float(n["x"]) + est_width(n)) for n in self.strip
+                         if n.get("name") in self.drop_under]
                 for i, t in enumerate(self.times):
                     if i in self.drop_times:
                         continue
                     cx = self.time_x(i)
+                    hw = text_w(t, NUM) / 2
+                    # r3c: an anchored axis draws only the labels inside the strip's label area (E11-D02 L171 / L172
+                    # exclusion zones) and drops those an item in drop_under covers (D8: collisions drop)
+                    if self.t_new is not None and (cx - hw < a or cx + hw > b):
+                        continue
+                    if any(cx + hw > c0 and cx - hw < c1 for c0, c1 in cover):
+                        continue
                     st.append(text(f"time {i}", t, NUM, ax, x=round(cx - text_w(t, NUM) / 2), y=6))
             st += self.strip
             kids.append(box("time strip", st, {"fill": pbg, "clip": True}, w=self.w, h=self.sh, x=0,

@@ -142,3 +142,28 @@ now 13, all by design (crosshair over tick 9, replay frame 3, watermark under th
   axis (minutes per px x the column width, `Crop.bars_per_column`).
 
 Checks: the offline overlap check and the axis sweep stay at 0; the rebuild is idempotent.
+
+## Review fold r3c (2026-10-31, values agree with the axis and the clock)
+
+- The time axis is derived from the series (`Crop.anchor`): in every frame with a zone-tag clock and bars, the newest
+  bar opens at a set minute, each bar is `mpb` minutes wide, so the axis runs `slot_w / mpb` px per minute and each time
+  label sits at its own time's x (bar pitch == px per minute x minutes per bar). Labels stop at the latest bar (E11-D02
+  L267) and draw only inside the strip's label area (L171 / L172); `Crop.drop_under` drops the labels a placed strip
+  item covers (D8 collisions), replacing the index-based drops of the boundary, maintenance-band and virtual-now frames.
+- Board 09, CMP-180 against the 13:47:05 clock: streaming, reduced detail, context lost and recovering put the newest
+  bar at 13:47; stale at 13:46 (`last 13:46:58`); disconnected at 13:46 (clock - the 00:12 age); aggregated is 4 bars a
+  column, the newest column opening at 13:44 (it holds the clock's minute), 30-minute labels, the chip's `1 column = 4
+bars` read off the axis; replay keeps the virtual now read off the axis (13:42:59) in the zone tag and the chip.
+- Board 09, CMP-189: following-type frames put the newest bar at 13:47; paused holds the view two minutes back
+  (`Paused at 13:45`, the newest bar on screen). The maintenance band moves right of the 13:40 label (x 194, 90 px wide),
+  its label reads `13:40 – 13:44 maintenance` (the spaced dash of E11-D02 L272) and covers only 13:45; 37 hatch lines.
+- Board 10, CMP-197: the newest bar is 13:46 (no follow cluster; the view is one bar back), so the time pill held at the
+  zone tag's edge sits left of the next label's centre and its value lies between the labels around it.
+- Board 10, CMP-226: the readout is `last <the shared series' last close>` (the seeded 14 bars, 64,014.0, CMP-199's
+  legend value), not a constant; the four frames draw no clock, so the countdown keeps the spec's values (D11).
+- CMP-188 / 198 / 199 draw no time strip and no clock; CMP-190's frames show one time label (13:45) on the anchored
+  axis.
+
+Checks: the offline overlap check and the axis sweep stay at 0; a global value sweep (every clock, `last` / age,
+countdown, paused time, column count, last-price, crosshair price, legend value and readout against the frame's drawn
+axis and series) finds 0 of 94 checked values off; the rebuild is idempotent.

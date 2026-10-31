@@ -68,6 +68,10 @@ def tip_h(overflow: bool = False) -> int:
 
 def f197(state: str) -> k.Node:
     c = k.Crop(W197, H197, gutter=72, n=14, times=("13:30", "13:35"))
+    # r3c: the axis is anchored a minute before the zone tag's clock (no follow cluster in these frames: the view is
+    # held one bar back), so the crosshair's time pill, held at the zone tag's edge, sits left of the next time label's
+    # centre and its value lies between the labels around it (E11-D02 L206: the pill may cover that label)
+    c.anchor(k.clock_minus(k.CLOCK, 60)[:5])
     th = tip_h(state == "overflow")
     shift = 0.0
     if state in ("overflow", "docked"):  # widen the price range so the last-price band sits low and the 12 rows clear it
@@ -297,7 +301,10 @@ def f226(state: str) -> k.Node:
     key = {"normal": "normal", 'warn "closing"': "warn", "closed": "closed", "non-time —": "na"}[state]
     cd = k.countdown(key)
     cw = k.est_width(cd)
-    row = k.box("status row", [k.text("readout", "last 64,011.0", k.NUM, k.TEXT_1, x=8, y=5),
+    # r3c: the readout is the shared series' last close (CMP-199's legend value, the seeded 14 bars), not a constant;
+    # these frames draw no clock, so the countdown keeps the spec's values (E11-D02 D11)
+    last = k.f_price(k.bars(14)[-1].c)
+    row = k.box("status row", [k.text("readout", f"last {last}", k.NUM, k.TEXT_1, x=8, y=5),
                                dict(cd, x=round(W226 - 8 - cw), y=2 if key == "warn" or key == "normal" else 5)],
                 {"fill": k.RAISED}, w=W226, h=24, x=0, y=12)
     return k.box("f", [row], {"fill": k.APP, "clip": True}, w=W226, h=H226)

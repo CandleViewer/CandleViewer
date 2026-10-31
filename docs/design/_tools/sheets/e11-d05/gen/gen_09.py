@@ -58,10 +58,10 @@ def f180_streaming() -> k.Node:
 
 def f180_stale() -> k.Node:
     c = base180()
-    # r3b: the age and the "last" time agree with the zone tag's clock (last = clock - age), and the axis puts the
-    # newest drawn bar in that last update's minute (the feed stopped before the next bar formed)
+    # r3b: the age and the "last" time agree with the zone tag's clock (last = clock - age); r3c: the axis is anchored
+    # so the newest drawn bar opens in that last update's minute (the feed stopped before the next bar formed)
     last = k.clock_minus(k.CLOCK, 7)
-    c.times = ["13:35", "13:40", "13:45"]
+    c.anchor(last[:5])
     streaming(c)
     if c.clock_at(c.x(len(c.bars) - 1)) != last[:5]:
         raise ValueError(f"CMP-180 stale: newest bar {c.clock_at(c.x(len(c.bars) - 1))} is not the last update's minute")
@@ -83,13 +83,15 @@ def f180_stale() -> k.Node:
 
 def f180_disconnected() -> k.Node:
     c = base180()
+    age = 12  # "last data 00:12": r3c, the newest drawn bar opens in the minute of the last data (clock - age)
+    c.anchor(k.clock_minus(k.CLOCK, age)[:5])
     streaming(c)
     c.status_left.append(k.chip("feed chip · reconnecting", "Reconnecting (3)", fill=k.CANVAS,
                                 color="color.data-confidence.reconnecting.text",
                                 dot="color.data-confidence.reconnecting.indicator"))
     c.top.append(k.rect("scrim", c.w, c.ph + c.sh, k.APP, {"opacity": k.OPACITY_SCRIM}, x=0, y=c.st,
                         note="DOM scrim color.surface.app at opacity.scrim over the pane stack; frozen last-good frame"))
-    tx = "Disconnected — last data 00:12"
+    tx = f"Disconnected — last data {age // 60:02d}:{age % 60:02d}"
     sw = k.text_w(tx, k.BODY) + 8 + 8 + 16
     c.top.append(k.hbox("disconnected strip", [k.node("ellipse", "dot", w=8, h=8,
                                                       o={"fill": "color.data-confidence.disconnected.indicator"}),
@@ -135,9 +137,11 @@ def f180_reduced() -> k.Node:
 
 def f180_aggregated() -> k.Node:
     c = base180(n=30)
-    # r3b: a zoomed-out axis (30-minute labels), so the newest column sits at the clock and the chip's bars per column
-    # is read off it (minutes per px x the column width)
-    c.times = ["12:30", "13:00", "13:30"]
+    # r3b / r3c: a zoomed-out axis (30-minute labels), 4 bars per column; the newest column holds the clock's minute
+    # (columns open on 4-minute boundaries) and the chip's bars per column is the axis's minutes per column
+    t = int(k.CLOCK[:2]) * 60 + int(k.CLOCK[3:5])
+    t -= t % 4
+    c.anchor(f"{t // 60:02d}:{t % 60:02d}", mpb=4, step=30)
     streaming(c)
     c.status_left.append(k.chip("aggregation chip", f"Zoomed out · 1 column = {c.bars_per_column()} bars",
                                 note="disclosure button; the merge glyph is not in the local set (text carries it)"))
@@ -294,6 +298,8 @@ def hatch(name: str, w: int, h: int) -> k.Node:
 
 def f189(state: str) -> k.Node:
     c = base189()
+    if state == "paused":
+        c.anchor(k.clock_minus(k.CLOCK, 120)[:5])  # r3c: follow is off, the view held two minutes back
     cl = "paused" if state == "paused" else "following"
     if state not in ("virtual-now",):
         c.strip.append(k.cluster(cl, x=round(c.w - k.cluster_w(cl)), y=0))
@@ -307,21 +313,20 @@ def f189(state: str) -> k.Node:
         c.pane.append(k.dashes("session boundary", xb, 0, c.ph, k.slot("color.chart.boundary"), vertical=True,
                                note="the D1 boundary line through every pane (US-CHART-009), dash.4-4"))
         k.fallback("num-medium")
-        c.times = ["13:35", "13:40"]
-        c.drop_times = {0}  # live fold: the date replaces the time under the boundary label
+        c.drop_under = ["boundary label"]  # live fold: the date replaces the time under the boundary label
         c.strip.append(k.text("boundary label", "14 Oct", k.NUM, k.slot("color.chart.axis"), x=xb - 19, y=6,
                               note="priority 0, medium weight"))
     elif state == "maintenance band":
-        # r3 axis sweep: the band runs 13:31-13:38 on this axis, so its label sits between the 13:30 and 13:40 ticks
-        # and covers only 13:35 (the one dropped label); both its times lie on the visible ticks
-        x0, bw = 157, 150
+        # r3 axis sweep / r3c: the band's label covers only the time labels under it, which drop (D8 collisions);
+        # both its times are read off the anchored axis
+        x0, bw = 194, 90  # r3c: right of the 13:40 label on the anchored axis; the band label covers only 13:45
         c.pane.append(dict(hatch("maintenance band", bw, c.ph), x=x0, y=0))
         c.strip.append(dict(hatch("maintenance band · strip", bw, c.sh - 1), x=x0, y=1))
         # m3: the band's times are read off this frame's axis (13:30 / 13:35 / 13:40)
         t0, t1 = c.clock_at(x0), c.clock_at(x0 + bw)
-        c.strip.append(k.text("band label", f"{t0}–{t1} maintenance", k.CAPTION, k.TEXT_3, x=x0 + 6, y=5,
+        c.strip.append(k.text("band label", f"{t0} – {t1} maintenance", k.CAPTION, k.TEXT_3, x=x0 + 6, y=5,
                               note="shown when the band is >= 48 px wide"))
-        c.drop_times = {1}  # live fold: the band label covers this time label (dropped as a collision, D8)
+        c.drop_under = ["band label"]  # live fold: the band label's covered time labels drop as collisions (D8)
         k.live("CMP-189 maintenance band: every rect named 'hatch line · NN' (pane and strip) is rotated 45° about its "
                "centre by the post-render step (post-live.js; the post-export step's hatch line rotation); read back "
                "rotation 45 on each and 1 px lines 6 px apart across the stroke, clipped to the band")
@@ -336,7 +341,6 @@ def f189(state: str) -> k.Node:
         mk = k.slot("color.chart.marker.goto")
         c.pane.append(k.dashes("go-to-date line", xg, 0, c.ph, mk, vertical=True))
         c.strip.append(k.rect("go-to-date line · strip", 1, 4, mk, x=xg, y=0))
-        c.times = ["13:40"]
         c.strip.append(c.strip_pill(k.pill("go-to-date pill", c.clock_at(xg), mk,
                                            k.slot("color.chart.pill.text.on-marker"), y=4,
                                            note="GL pill; until the next navigation input, no timeout"), xg))
@@ -344,7 +348,6 @@ def f189(state: str) -> k.Node:
         xr = c.x(11)
         c.pane.append(k.dashes("remote crosshair", xr, 0, c.ph, k.slot("color.chart.crosshair"), vertical=True,
                                o={"opacity": k.OPACITY_MUTED}))
-        c.times = ["13:30", "13:35"]
         c.strip.append(c.strip_pill(k.pill("remote time pill", c.clock_at(xr), k.slot("color.chart.pill.bg"),
                                            k.TEXT_2, stroke=k.slot("color.chart.pill.border"), y=4,
                                            note="neutral so it never reads as the local pill (D8: "
@@ -356,9 +359,8 @@ def f189(state: str) -> k.Node:
         xv = c.x(vn) + round(c.slot_w / 2)
         c.pane.append(k.rect("future dim", c.pw - xv, c.ph, k.APP, {"opacity": k.OPACITY_SCRIM}, x=xv, y=0))
         c.pane.append(k.dashes("virtual-now line", xv, 0, c.ph, rp, vertical=True))
-        c.times = ["13:30", "13:35", "13:40", "13:45"]
-        # live fold r2: the clock pill covers 13:35 / 13:40, which drop as collisions (E11-D02 D4, L111)
-        c.drop_times = {1, 2}
+        # live fold r2 / r3c: the time labels the clock pill covers drop as collisions (E11-D02 D4, L111)
+        c.drop_under = ["virtual-now clock pill"]
         # m3: the virtual now is read off this frame's axis; the zone tag's clock shows it (E11-D02 L276)
         now = c.clock_at(xv, secs=True)
         c.zone = f"UTC {now}"
