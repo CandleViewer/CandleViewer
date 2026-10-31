@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { recipeSafe } from "./css-contract.js";
 
 const read = (name: string): string =>
   readFileSync(resolve(import.meta.dirname, `../src/components/${name}`), "utf-8").replace(
@@ -62,10 +63,12 @@ describe("skeleton.css motion", () => {
 
   it("the shimmer is a transform on the band, 1,200 ms a sweep, stopped before 5 s", () => {
     const body = rule(normalOf(css), band);
-    expect(body).toMatch(
-      /animation: cv-skeleton-sweep calc\(var\(--motion-duration-slow\) \* 3\) linear (\d+)/,
+    expect(body).toContain("animation: var(--cv-recipe-skeleton-sweep)");
+    const safe = recipeSafe("skeleton-sweep");
+    expect(safe).toMatch(
+      /^cv-skeleton-sweep calc\(var\(--motion-duration-slow\) \* 3\) linear (\d+)$/,
     );
-    const sweeps = Number(/linear (\d+)/.exec(body)?.[1]);
+    const sweeps = Number(/linear (\d+)/.exec(safe)?.[1]);
     expect(sweeps * 1200).toBeLessThanOrEqual(5000);
     const frames = /@keyframes cv-skeleton-sweep\s*\{([\s\S]*?)\}\s*\}/.exec(css)?.[1] ?? "";
     expect(frames.replace(/[^:]*\{|\}/g, "").trim()).toMatch(/^transform:/);

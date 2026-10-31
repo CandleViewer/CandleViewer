@@ -103,8 +103,14 @@
   bottom: calc(100% + var(--cv-select-gap));
 }
 
+/* The fade runs under `data-motion="safe"`, or under the OS no-preference query only until the runtime writes it (E05-D03 G-1). */
+:root[data-motion="safe"] .cv-select__popup {
+  animation: cv-select-fade var(--motion-duration-fast)
+    cubic-bezier(var(--motion-easing-decelerate));
+}
+
 @media (prefers-reduced-motion: no-preference) {
-  .cv-select__popup {
+  :root:not([data-motion]) .cv-select__popup {
     animation: cv-select-fade var(--motion-duration-fast)
       cubic-bezier(var(--motion-easing-decelerate));
   }

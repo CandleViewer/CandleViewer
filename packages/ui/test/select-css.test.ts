@@ -178,7 +178,11 @@ describe("select.css popup", () => {
   it("fades only when motion is allowed, over the fast token", () => {
     const raw = readFileSync(resolve(SRC, "select.css"), "utf-8");
     expect(raw).toMatch(
-      /prefers-reduced-motion: no-preference\)\s*\{[^@]*var\(--motion-duration-fast\)/,
+      /:root\[data-motion="safe"\] \.cv-select__popup\s*\{\s*animation: cv-select-fade var\(--motion-duration-fast\)/,
+    );
+    // The OS query only carries the fade while data-motion is absent (E05-D03 G-1).
+    expect(raw).toMatch(
+      /prefers-reduced-motion: no-preference\)\s*\{\s*:root:not\(\[data-motion\]\) \.cv-select__popup/,
     );
   });
 

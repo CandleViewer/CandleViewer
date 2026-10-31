@@ -18,6 +18,14 @@ export const loadCss = (file: string): Stylesheet => {
   return { all, normal, forced };
 };
 
+/** The safe value of a motion recipe in `theme.css` (E05-D03): `--cv-recipe-<name>-safe`. */
+export const recipeSafe = (name: string): string => {
+  const theme = readFileSync(resolve(import.meta.dirname, "../src/theme/theme.css"), "utf-8");
+  return (
+    new RegExp(`--cv-recipe-${name}-safe:\\s*([^;]+);`).exec(theme)?.[1]?.replace(/\s+/g, " ") ?? ""
+  );
+};
+
 /**
  * The body of the first block whose selector list includes `selector` and which sets `prop`, as the
  * merged atoms' CSS tests read it: the list splits on top-level commas only (`:not(a, b)` is one selector).

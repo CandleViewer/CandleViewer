@@ -115,20 +115,16 @@
 }
 
 /* The slide in: opaque and interactive from frame 0; the scrim fades in with it. */
-@media (prefers-reduced-motion: no-preference) {
-  .cv-drawer {
-    animation: cv-drawer-in-right var(--motion-duration-normal)
-      cubic-bezier(var(--motion-easing-decelerate));
-  }
+.cv-drawer {
+  animation: var(--cv-recipe-drawer-in);
+}
 
-  .cv-drawer[data-side="left"] {
-    animation-name: cv-drawer-in-left;
-  }
+.cv-drawer[data-side="left"] {
+  animation: var(--cv-recipe-drawer-in-left);
+}
 
-  .cv-drawer__scrim {
-    animation: cv-drawer-scrim-in var(--motion-duration-normal)
-      cubic-bezier(var(--motion-easing-standard));
-  }
+.cv-drawer__scrim {
+  animation: var(--cv-recipe-drawer-scrim-in);
 }
 
 @keyframes cv-drawer-in-right {
@@ -157,7 +153,7 @@
 
 .cv-drawer-layer[data-state="closing"] > .cv-drawer {
   transform: translateX(100%);
-  transition: transform var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate));
+  transition: var(--cv-recipe-drawer-out);
 }
 
 .cv-drawer-layer[data-state="closing"] > .cv-drawer[data-side="left"] {
@@ -166,28 +162,10 @@
 
 .cv-drawer-layer[data-state="closing"] > .cv-drawer__scrim {
   opacity: 0;
-  transition: opacity var(--motion-duration-fast) cubic-bezier(var(--motion-easing-accelerate));
+  transition: var(--cv-recipe-fade-out);
 }
 
-/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): a cut both ways. */
-:root[data-motion="reduce"] .cv-drawer,
-:root[data-motion="reduce"] .cv-drawer__scrim {
-  animation: none;
-}
-
-:root[data-motion="reduce"] .cv-drawer-layer[data-state="closing"] > .cv-drawer,
-:root[data-motion="reduce"] .cv-drawer-layer[data-state="closing"] > .cv-drawer__scrim {
-  transition: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion]) .cv-drawer-layer[data-state="closing"] > .cv-drawer,
-  :root:not([data-motion]) .cv-drawer-layer[data-state="closing"] > .cv-drawer__scrim {
-    transition: none;
-  }
-}
-
-/* The universal reduce pair (as theme.css applies it), kept here so the file is self-contained. */
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): the recipes resolve to `none`, a cut both ways. */
 :root[data-motion="reduce"] *,
 :root[data-motion="reduce"] *::before,
 :root[data-motion="reduce"] *::after {
