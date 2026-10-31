@@ -3,7 +3,9 @@
 BQ-08: an alert whose series nothing produces can never fire, and reads as "healthy" (RSK-047,
 observability gaps); this is how `PostgresDown` (`pg_up`) slipped through, since the dashboard
 lint checks panels, not rules. Each series in each alert expression, guards included, must be
-(1) in the metric catalogue the dashboard lint uses (histogram families by name), (2) a recorded
+(1) a catalogue series that is emitted: `status="live"` or `exported=True` (a `planned` entry
+records an owner epic, not an emitter; `register_r0` registers live ones only), histogram
+families by name, (2) a recorded
 rule, or (3) an external name whose producing job is a scrape target in `prometheus.yml`. The
 lookup is `infra/grafana/lint_dashboards.py`'s, loaded by path, plus the scrape-job condition.
 Today's violations are listed with reasons in `e04_q02_alert_series_baseline.json`; the check
@@ -20,6 +22,7 @@ from typing import Any, Final
 
 import pytest
 
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from tests._alert_rules import (
     Rule,
     base_name,
@@ -54,9 +57,34 @@ def producer_job(name: str) -> str | None:
     return None
 
 
+# Catalogue entries still marked `planned` whose owner module already creates the series from its
+# catalogue spec (the status is stale, or the module registers it when wired). Each is a cite the
+# test below re-checks, so a name leaves this table when its emitter does.
+_PLANNED_BUT_EMITTED: Final = {
+    "cv_outbox_dead_total": "app.py",  # bound at start by the alert.deliver dispatcher
+    "cv_outbox_depth": "app.py",
+    "oms_position_reading_owed_age_seconds": "oms_stream_wiring.py",
+    "oms_unknown_orders": "oms/order_machine.py",
+}
+
+
+def planned_names() -> frozenset[str]:
+    """Catalogue entries nothing emits yet: `planned`, not `exported`, no emitter module."""
+    return frozenset(
+        s.name
+        for s in CATALOGUE
+        if s.status == "planned" and not s.exported and s.name not in _PLANNED_BUT_EMITTED
+    )
+
+
+def emitted_names() -> frozenset[str]:
+    """Catalogue names the dashboard lint finds, minus the planned ones."""
+    return frozenset(lint_module().catalogue_names()) - planned_names()
+
+
 def violations(rules: list[Rule]) -> set[Pair]:
     lint = lint_module()
-    known, recorded, jobs = lint.catalogue_names(), recorded_names(), scrape_jobs()
+    known, recorded, jobs = emitted_names(), recorded_names(), scrape_jobs()
     bad: set[Pair] = set()
     for r in rules:
         for s in series_in(r.expr, with_process=True):
@@ -143,6 +171,22 @@ def test_self_test_catalogue_recorded_and_pushed_names_resolve() -> None:
         Rule("x.yml", "D", "process_start_time_seconds > 1"),
     ]
     assert violations(mutated) == set()
+
+
+def test_self_test_planned_catalogue_name_does_not_count_as_emitted() -> None:
+    planned = sorted(planned_names())
+    assert planned, "the catalogue lists planned series"
+    mutated = [Rule("x.yml", "P", f"{planned[0]} > 1")]
+    assert violations(mutated) == {("P", planned[0])}
+    assert planned[0] in lint_module().catalogue_names()
+
+
+def test_planned_but_emitted_names_still_have_an_emitter_outside_the_catalogue() -> None:
+    root = Path(__file__).resolve().parents[2] / "candleviewer"
+    planned = {s.name for s in CATALOGUE if s.status == "planned"}
+    for name, module in _PLANNED_BUT_EMITTED.items():
+        assert name in planned, f"{name} is no longer planned: drop it from the table"
+        assert name in (root / module).read_text("utf-8"), (name, module)
 
 
 def test_self_test_fixed_expression_makes_its_baseline_entry_stale() -> None:

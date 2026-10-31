@@ -15,56 +15,56 @@
     {
       "alert": "AlertmanagerNotificationsFailed",
       "series": "alertmanager_notifications_failed_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "Alertmanager is not a scrape target in prometheus.yml, so nothing supplies it; absent() would fire for good (see the series baseline)"
     },
     {
       "alert": "AuditLaneAnomaly",
       "series": "cv_audit_lane_anomalies_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "served at 0 for every reason on each scrape (audit/metrics.py lane_families), so a guard is feasible; routed to E09"
     },
     {
       "alert": "AuditLaneBacklogAged",
       "series": "cv_audit_lane_oldest_age_seconds",
-      "class": "unclassified-routed",
-      "reason": "emission when the lane is unwired not traced; routed to E09"
+      "class": "lazy-series",
+      "reason": "served only once the audit lane is wired: audit/metrics.py:58–59 returns early without the cv_audit_lane_oldest_age_seconds gauge while the lane or journal is unwired, so a guard would fire on a healthy unwired process; routed to E09"
     },
     {
       "alert": "AuditLaneBootOvershoot",
       "series": "cv_audit_lane_boot_overshoot_frames_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "served at 0 on each scrape (audit/metrics.py lane_families); a guard is feasible; routed to E09"
     },
     {
       "alert": "AuditLaneCreated",
       "series": "cv_audit_lane_created_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "served at 0 on each scrape (audit/metrics.py lane_families); a guard is feasible; routed to E09"
     },
     {
       "alert": "AuditLaneDrainHeld",
       "series": "cv_audit_lane_state",
-      "class": "unclassified-routed",
-      "reason": "served for every state on each scrape (audit/metrics.py:75); routed to E09"
+      "class": "lazy-series",
+      "reason": "served only once the audit lane is wired: audit/metrics.py:58–59 returns early without the cv_audit_lane_state gauge while the lane or journal is unwired, so a guard would fire on a healthy unwired process; routed to E09"
     },
     {
       "alert": "AuditLaneQuarantineGrowing",
       "series": "cv_audit_lane_quarantine_bytes",
-      "class": "unclassified-routed",
-      "reason": "emission when the lane is unwired not traced; routed to E09"
+      "class": "lazy-series",
+      "reason": "served only once the audit lane is wired: audit/metrics.py:58–59 returns early without the cv_audit_lane_quarantine_bytes gauge while the lane or journal is unwired, so a guard would fire on a healthy unwired process; routed to E09"
     },
     {
       "alert": "AuditLaneRefusing",
       "series": "cv_audit_lane_refused_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "served at 0 for every class and reason on each scrape (audit/metrics.py:50); routed to E09"
     },
     {
       "alert": "AuditLaneRefusing",
       "series": "cv_audit_lane_state",
-      "class": "unclassified-routed",
-      "reason": "served for every state on each scrape (audit/metrics.py:75); routed to E09"
+      "class": "lazy-series",
+      "reason": "served only once the audit lane is wired: audit/metrics.py:58–59 returns early without the cv_audit_lane_state gauge while the lane or journal is unwired, so a guard would fire on a healthy unwired process; routed to E09"
     },
     {
       "alert": "AuditLaneSeqRegressed",
@@ -75,25 +75,25 @@
     {
       "alert": "AuditLaneTornTail",
       "series": "cv_audit_lane_anomalies_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "served at 0 for every reason on each scrape (audit/metrics.py lane_families), so a guard is feasible; routed to E09"
     },
     {
       "alert": "AuditSinkRefusing",
       "series": "cv_audit_writer_refused_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "served at 0 for every domain on each scrape (audit/metrics.py:49); routed to E09"
     },
     {
       "alert": "AuditVerifyNotPassing",
       "series": "cv_audit_verify_runs_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "catalogue help: 0 from the start; AuditVerifyNotPassing already reads a guarded gauge for its other arm; routed to E09"
     },
     {
       "alert": "AuthBreakGlassStateReadFailing",
       "series": "auth_break_glass_state_read_failures_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "unlabelled Counter, exposed at 0 from import (auth/metrics.py:308); a guard is feasible; routed to E09"
     },
     {
@@ -135,19 +135,19 @@
     {
       "alert": "CsrfRefusalAuditDegraded",
       "series": "auth_csrf_refused_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "closed reason set bound at import (auth/metrics.py:87-88), so a guard is feasible; routed to E09"
     },
     {
       "alert": "CsrfRefusalAuditUnavailable",
       "series": "auth_csrf_refused_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "closed reason set bound at import (auth/metrics.py:87-88), so a guard is feasible; routed to E09"
     },
     {
       "alert": "CsrfRefusalsHigh",
       "series": "auth_csrf_refused_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "closed reason set bound at import (auth/metrics.py:87-88), so a guard is feasible; routed to E09"
     },
     {
@@ -237,25 +237,25 @@
     {
       "alert": "KeyExpiringWithin14Days",
       "series": "cv_key_soonest_expiry_seconds",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "set by the key self-check tick (accounts/selfcheck.py:360); whether it exists before the first tick not traced"
     },
     {
       "alert": "KeyExpiringWithin1Day",
       "series": "cv_key_soonest_expiry_seconds",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "set by the key self-check tick (accounts/selfcheck.py:360); whether it exists before the first tick not traced"
     },
     {
       "alert": "KeyExpiringWithin7Days",
       "series": "cv_key_soonest_expiry_seconds",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "set by the key self-check tick (accounts/selfcheck.py:360); whether it exists before the first tick not traced"
     },
     {
       "alert": "LatencyBudgetBreach",
       "series": "cv:e2e_tick_to_paint_seconds:p95_1m",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "recorded rule (latency_budget.yml) over the e2e_tick_to_paint_seconds histogram; it has no absent() guard and the source's emission was not traced; routed to the latency owner"
     },
     {
@@ -267,13 +267,13 @@
     {
       "alert": "RecorderDiskBudgetSampleStale",
       "series": "recorder_disk_budget_last_sample_timestamp_seconds",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "unlabelled Gauge, exposed at 0 from import (recorder/metrics.py:96); a guard is feasible; routed to E16"
     },
     {
       "alert": "RecorderDiskPressureAutostop",
       "series": "recorder_disk_pressure_level",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "unlabelled Gauge, exposed at 0 from import (recorder/metrics.py:82); a guard is feasible; routed to E16"
     },
     {
@@ -315,31 +315,31 @@
     {
       "alert": "RecorderSpilling",
       "series": "recorder_spill_bytes",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "unlabelled Gauge, exposed at 0 from import (recorder/metrics.py:57); a guard is feasible; routed to E16"
     },
     {
       "alert": "RecorderWriteGateClosed",
       "series": "recorder_disk_pressure_level",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "unlabelled Gauge, exposed at 0 from import (recorder/metrics.py:82); a guard is feasible; routed to E16"
     },
     {
       "alert": "ReplayLoopShareHigh",
       "series": "replay_loop_seconds_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "unlabelled Counter at import (replay/budget.py:85); a guard is feasible; routed to E26"
     },
     {
       "alert": "ReplayLoopShareHigh",
       "series": "replay_loop_share_ratio",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "unlabelled Gauge at import (replay/budget.py:94); a guard is feasible; routed to E26"
     },
     {
       "alert": "RollOffStreamUnlisted",
       "series": "recorder_rolloff_streams_unlisted_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "every stream child bound at import (recorder/rolloff.py:80); a guard is feasible; routed to E16"
     },
     {
@@ -357,61 +357,61 @@
     {
       "alert": "TickToPaintSloFastBurn",
       "series": "cv:slo_tick_to_paint:burn_rate_1h",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "recorded rule (latency_budget.yml) over the e2e_tick_to_paint_seconds histogram; it has no absent() guard and the source's emission was not traced; routed to the latency owner"
     },
     {
       "alert": "TickToPaintSloFastBurn",
       "series": "cv:slo_tick_to_paint:burn_rate_6h",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "recorded rule (latency_budget.yml) over the e2e_tick_to_paint_seconds histogram; it has no absent() guard and the source's emission was not traced; routed to the latency owner"
     },
     {
       "alert": "UserDisableFailed",
       "series": "cv_user_lifecycle_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "every action/result series bound at import (admin/lifecycle_metrics.py); a guard is feasible; routed to E09"
     },
     {
       "alert": "WsAuditWriteFailed",
       "series": "cv_ws_audit_failures_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "rule-file header: every series is bound at import (ws/metrics.py); a guard is feasible; routed to E17"
     },
     {
       "alert": "WsFanoutP95OverBudget",
       "series": "cv_ws_fanout_seconds_bucket",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "rule-file header: bound at import (ws/metrics.py); routed to E17"
     },
     {
       "alert": "WsFanoutP95OverBudget",
       "series": "cv_ws_fanout_seconds_count",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "rule-file header: bound at import (ws/metrics.py); routed to E17"
     },
     {
       "alert": "WsOriginRefusalsHigh",
       "series": "cv_ws_closes_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "rule-file header: bound at import (ws/metrics.py); routed to E17"
     },
     {
       "alert": "WsSequenceGapDetected",
       "series": "cv_ws_sequence_gaps_detected_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "rule-file header: bound at import (ws/sequencing.py); routed to E17"
     },
     {
       "alert": "WsSlowConsumerClosed",
       "series": "cv_ws_closes_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "rule-file header: bound at import (ws/metrics.py); routed to E17"
     },
     {
       "alert": "WsUpstreamDesyncHigh",
       "series": "cv_ws_resync_total",
-      "class": "unclassified-routed",
+      "class": "routed",
       "reason": "rule-file header: bound at import (ws/sequencing.py); routed to E17"
     }
   ]

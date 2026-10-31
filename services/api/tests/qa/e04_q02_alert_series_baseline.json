@@ -6,9 +6,24 @@
       "reason": "on the dashboard lint's EXTERNAL list, but Alertmanager is not a scrape target in infra/prometheus/prometheus.yml (jobs: candleviewer-api, pushgateway), so nothing supplies it (static finding, not yet confirmed live)"
     },
     {
+      "alert": "ClockDriftBlockingTrading",
+      "series": "bybit_clock_drift_ms",
+      "reason": "planned, owner E08, no emitter: the emitted series is exchange_clock_drift_ms and bybit_clock_drift_ms appears only in a comment in observability/latency.py; the alert can never fire (static finding, not yet confirmed live)"
+    },
+    {
       "alert": "CredentialExpiryApproaching",
       "series": "credential_expiry_days",
       "reason": "no emitter in services/api/candleviewer and no catalogue entry; only promtool synthetic series feed it (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "CredentialVerificationFailures",
+      "series": "credential_verification_failures_total",
+      "reason": "planned, owner E27, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "EgressIpChanged",
+      "series": "egress_ip_changes_total",
+      "reason": "planned, owner E43, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
     },
     {
       "alert": "EnvMismatchAttempt",
@@ -16,9 +31,24 @@
       "reason": "no emitter in services/api/candleviewer and no catalogue entry (the code logs key_selfcheck_env_mismatch / account_health.env_mismatch only); promtool synthetic series only (static finding, not yet confirmed live)"
     },
     {
+      "alert": "ExpectedMetricMissingBybitClockDriftMs",
+      "series": "bybit_clock_drift_ms",
+      "reason": "planned, owner E08, no emitter: the emitted series is exchange_clock_drift_ms and bybit_clock_drift_ms appears only in a comment in observability/latency.py; the alert can never fire (static finding, not yet confirmed live)"
+    },
+    {
       "alert": "ExpectedMetricMissingCredentialExpiryDays",
       "series": "credential_expiry_days",
       "reason": "no emitter in services/api/candleviewer and no catalogue entry; only promtool synthetic series feed it (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "ExpectedMetricMissingCredentialVerificationFailuresTotal",
+      "series": "credential_verification_failures_total",
+      "reason": "planned, owner E27, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "ExpectedMetricMissingEgressIpChangesTotal",
+      "series": "egress_ip_changes_total",
+      "reason": "planned, owner E43, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
     },
     {
       "alert": "ExpectedMetricMissingEnvMismatchAttemptsTotal",
@@ -26,14 +56,34 @@
       "reason": "no emitter in services/api/candleviewer and no catalogue entry (the code logs key_selfcheck_env_mismatch / account_health.env_mismatch only); promtool synthetic series only (static finding, not yet confirmed live)"
     },
     {
+      "alert": "ExpectedMetricMissingNakedPositionAlertsTotal",
+      "series": "naked_position_alerts_total",
+      "reason": "planned, owner E32, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
+    },
+    {
       "alert": "ExpectedMetricMissingPgUp",
       "series": "pg_up",
       "reason": "no emitter in services/api/candleviewer, no catalogue entry, and prometheus.yml scrapes no postgres exporter; the PostgresDown page and its inhibition cannot fire on a running stack (static finding, not yet confirmed live)"
     },
     {
+      "alert": "ExpectedMetricMissingRuleAutodisarmTotal",
+      "series": "rule_autodisarm_total",
+      "reason": "planned, owner E35, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "NakedPositionDetected",
+      "series": "naked_position_alerts_total",
+      "reason": "planned, owner E32, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
+    },
+    {
       "alert": "PostgresDown",
       "series": "pg_up",
       "reason": "no emitter in services/api/candleviewer, no catalogue entry, and prometheus.yml scrapes no postgres exporter; the PostgresDown page and its inhibition cannot fire on a running stack (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "RuleAutodisarm",
+      "series": "rule_autodisarm_total",
+      "reason": "planned, owner E35, module not shipped (RSK-047): no emitter in services/api/candleviewer, catalogue status planned only (static finding, not yet confirmed live)"
     }
   ]
 }
