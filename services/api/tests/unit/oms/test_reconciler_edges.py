@@ -19,7 +19,7 @@ from candleviewer.oms.errors import OrderStepRefused, ReconcileAnomaly
 from candleviewer.oms.fakes import InMemoryTradingAccounts
 from candleviewer.oms.handovers import WaitingOrder
 from candleviewer.oms.reconcile_phases import ReconcilePhases
-from candleviewer.oms.reconcile_report import PassError
+from candleviewer.oms.reconcile_report import PassError, watermark_us
 from candleviewer.oms.reconciler import FetchError, PositionDriftSeen, Reconciler, found_sends
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.bindings import b19_reconciliation as b19
@@ -272,6 +272,62 @@ async def test_3d_a_fill_of_a_stop_3c_materialises_goes_to_its_row_once_it_exist
     report = await w.run()
     assert [e[0] for e in w.oms.log if e[0] in ("materialise", "push")] == ["materialise", "push"]
     assert (w.oms.effects("push")[0][2], report.corrected) == ("EXEC", (ext_key("x7"),))
+
+
+async def _reread_meets_another(w: World, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any]:
+    """The pass planned, then applied with the store answering the re-read of a fill's row (3d)
+    with a row of another account (BQ-12, C-2.11): the report, and the critical log it met."""
+    plan = await w.plan()
+
+    async def foreign(*_a: Any) -> Any:
+        return row(7, exchange_account_id=OTHER)
+
+    monkeypatch.setattr(w.oms, "get_by_exchange_order_id", foreign)
+    with capture_logs() as logs:
+        await w.reconciler.remediate(plan)
+    [met] = [e for e in logs if e["event"] == "reconcile_row_of_another_account"]
+    return w.reconciler.finish(plan), met
+
+
+def _refused_as_the_diff_refuses(w: World, report: Any, met: Any) -> None:
+    """Logged by the read and the id asked for, never the row; paged once; listed against the
+    fill, which holds the watermark; and the fill kept for the next pass, never applied."""
+    assert report.errors == (PassError("3d", "_AnotherAccount", "e7"),)
+    assert watermark_us(report) is None
+    assert (met["log_level"], met["read"], met["subject"]) == (
+        "critical", "get_by_exchange_order_id", "x7",
+    )  # fmt: skip
+    assert w.oms.pages == [_ANOTHER_PAGE]
+    assert (w.oms.effects("push"), w.oms.effects("hand_over_execution")) == (
+        [], [("hand_over_execution", "e7", False)],
+    )  # fmt: skip
+
+
+async def test_3d_a_late_fills_reread_answering_another_accounts_row_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fill of an order 3c records this pass is read again once the row exists (`LateFill`)."""
+    w = World()
+    w.venue.seed_order(remote(7, order_link_id=ext_key("x7")), uid="1001")
+    w.venue.seed_execution(fill("e7", n=7, order_link_id=ext_key("x7")))
+    report, met = await _reread_meets_another(w, monkeypatch)
+    assert report.untracked == (ext_key("x7"),)
+    _refused_as_the_diff_refuses(w, report, met)
+
+
+async def test_3d_a_materialised_stops_fill_reread_answering_another_accounts_row_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recorded stop's order 3d materialises is read again for the fill that showed it."""
+    w = World()
+    w.oms.records = [_pending_record()]
+    w.venue.seed_order(_stop_order(7, state="filled", filled_qty=Decimal("0.2")), uid="1001")
+    w.venue.seed_execution(
+        fill("e7", n=7, side="sell", qty=Decimal("0.2"), order_link_id=ext_key("x7"))
+    )
+    report, met = await _reread_meets_another(w, monkeypatch)
+    assert [e[2] for e in w.oms.effects("materialise")] == ["x7"]
+    _refused_as_the_diff_refuses(w, report, met)
 
 
 async def test_a_recorded_stop_under_our_own_id_keeps_it_while_no_row_holds_it() -> None:

@@ -20,6 +20,8 @@ root binds any of it yet (PR 2b), so nothing here runs in production.
   rate-limit answer too: the rows not read are listed and wait for the next pass.
 * `remediate` applies the plan in 24's order (steps 2, 3a, 3b, 3c, 3d, 4, 5). Each action's
   failure goes to `errors` and never ends the pass; step 5 runs whatever came before it (C-2.6).
+  A fill's row it reads again that is another account's is paged and listed as the diff's reads
+  do, and the fill is kept for the next pass.
 
 **What B1 is sent** (24 Sec.8.5's table): only the facade commands it already takes, as
 `actor="system"`. A bound live row takes the exchange's facts as the private stream sends them,
@@ -1627,10 +1629,9 @@ class _Remediation:
             case PushFill(_, row, e, entry_id):
                 await self._fill(row, e, entry_id)
             case LateFill(e, entry_id):
-                call = p.orders.get_by_exchange_order_id(self._account, e.exchange_order_id)
-                recorded = await _bounded(call, PORT_TIMEOUT_S)
-                if recorded is None or recorded.exchange_account_id != self._account:
-                    await self._keep(e, empty_read=False)  # its order was not recorded: kept
+                recorded = await self._reread(e.exchange_order_id, e)
+                if recorded is None:  # its order not recorded, or another account's row: kept
+                    await self._keep(e, empty_read=False)
                 elif recorded.state == "untracked":  # its finding carries it, next pass
                     await self._keep(e, empty_read=False)
                 else:
@@ -1726,6 +1727,23 @@ class _Remediation:
         call = self._p.handovers.hand_over_execution(self._account, e, empty_read=empty_read)
         await _bounded(call, PORT_TIMEOUT_S)
 
+    async def _reread(self, xid: str, e: Execution) -> OrderRow | None:
+        """The row bound to the order of a fill (3d), read again once 3a to 3c recorded the order.
+        A row of another account (BQ-12, C-2.11) is answered as none, as the diff's reads refuse
+        one: logged by the read and the id asked for, never the row, paged once per episode, and
+        listed against the fill, which holds the watermark; the caller keeps the fill."""
+        call = self._p.orders.get_by_exchange_order_id(self._account, xid)
+        row = await _bounded(call, PORT_TIMEOUT_S)
+        if row is None or row.exchange_account_id == self._account:
+            return row
+        _log().critical(
+            "reconcile_row_of_another_account", account_id=str(self._account),
+            read="get_by_exchange_order_id", subject=xid, pass_id=self._pid,
+        )  # fmt: skip
+        self._r.page_once(_ANOTHER, self._account)
+        self._draft.error("3d", _AnotherAccount.__name__, e.exec_id)
+        return None
+
     async def _no_intent(self, finding: Finding, key: str, exchange_placed: bool) -> None:
         """No OMS intent (SR-E27-19): the freeze, E39-T04's one setter, or for an order the
         venue placed itself its audit and page alone (24 Sec.8.10). A failure pages and ends
@@ -1805,10 +1823,8 @@ class _Remediation:
         if entry_id is not None:
             self._settled.append(entry_id)
         if fill is not None:
-            row = await _bounded(
-                p.orders.get_by_exchange_order_id(self._account, xid), PORT_TIMEOUT_S
-            )
-            if row is None or row.exchange_account_id != self._account:
+            row = await self._reread(xid, fill)
+            if row is None:
                 await self._keep(fill, empty_read=False)
             else:
                 await self._fill(row, fill, None)
