@@ -57,6 +57,7 @@ import "../src/components/popover.css";
 import "../src/components/previewtile.css";
 import "../src/components/progress.css";
 import "../src/components/radio.css";
+import "../src/components/recorderstatusrow.css";
 import "../src/components/searchbox.css";
 import "../src/components/segmented.css";
 import "../src/components/select.css";

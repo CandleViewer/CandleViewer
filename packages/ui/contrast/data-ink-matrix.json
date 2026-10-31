@@ -1959,6 +1959,28 @@
       "pass": true
     },
     {
+      "kind": "text",
+      "theme": "dark",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.sunken",
+      "key": "dark:comfortable:color.text.primary on color.surface.sunken",
+      "ratio": 17.42,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.sunken",
+      "key": "dark:compact:color.text.primary on color.surface.sunken",
+      "ratio": 17.42,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
       "kind": "cvd",
       "cvdKind": "buy-sell",
       "theme": "dark",
@@ -4409,6 +4431,28 @@
       "pass": true
     },
     {
+      "kind": "text",
+      "theme": "light",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.sunken",
+      "key": "light:comfortable:color.text.primary on color.surface.sunken",
+      "ratio": 12.82,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.sunken",
+      "key": "light:compact:color.text.primary on color.surface.sunken",
+      "ratio": 12.82,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
       "kind": "cvd",
       "cvdKind": "buy-sell",
       "theme": "light",
@@ -6855,6 +6899,28 @@
       "id": "color.text.tertiary on color.surface.hover",
       "key": "high-contrast:compact:color.text.tertiary on color.surface.hover",
       "ratio": 9.54,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.sunken",
+      "key": "high-contrast:comfortable:color.text.primary on color.surface.sunken",
+      "ratio": 19.73,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.sunken",
+      "key": "high-contrast:compact:color.text.primary on color.surface.sunken",
+      "ratio": 19.73,
       "threshold": 7,
       "pass": true
     },

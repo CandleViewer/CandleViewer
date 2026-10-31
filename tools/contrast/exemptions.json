@@ -225,6 +225,11 @@
       "pair": "light:color.heatmap.ask.4 vs color.heatmap.ask.5:protanopia",
       "reason": "Adjacent light-theme heatmap ramp stops collapse under protanopia simulation (dE76 2.64 < floor 5.0); tracked as follow-up design debt to retune the light-theme heatmap ramp spacing.",
       "owner": "basiltt"
+    },
+    {
+      "pair": "dark:color.status.danger.default on color.surface.hover",
+      "reason": "CMP-177's danger state icon (an octagon) on a hovered CMP-049 row measures 2.92:1 against the 3:1 non-text floor in the dark theme (E16-D02 §10.4); the state's word in color.text.primary and the octagon's shape carry the state, never the hue alone. Registered so the gate prints it (B-5309-14); retuning the pair or the hover fill is E16-D02's call.",
+      "owner": "E16-D02"
     }
   ]
 }
