@@ -1,5 +1,15 @@
-import { useLayoutEffect, type CSSProperties, type JSX, type ReactNode, type Ref } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type CSSProperties,
+  type JSX,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+} from "react";
 import { SKIP_LINK_COPY, SkipLink } from "@candleviewer/ui";
+import { installFocusInsets, registerFocusInset } from "./focusInsets";
 import { REFLOW_QUERY } from "./reflow";
 
 /**
@@ -102,15 +112,38 @@ function useScrimInsets(mainId: string): void {
   }, [mainId]);
 }
 
+/**
+ * Focus not obscured (E47-S05): the header and the footer are the registered chrome, the canvas
+ * scroller the container. In the grid they sit beside it, so the insets read 0 until chrome overlays
+ * it (a sticky bar, a reflow); then `scroll-padding` and the `focusin` scroll clear it.
+ */
+function useFocusInsets(
+  header: RefObject<HTMLElement>,
+  footer: RefObject<HTMLElement>,
+  scroller: RefObject<HTMLElement>,
+): void {
+  useEffect(() => {
+    const undo: Array<() => void> = [];
+    if (header.current !== null) undo.push(registerFocusInset(header.current, "top"));
+    if (footer.current !== null) undo.push(registerFocusInset(footer.current, "bottom"));
+    if (scroller.current !== null) undo.push(installFocusInsets(scroller.current));
+    return () => undo.reverse().forEach((f) => f());
+  }, [header, footer, scroller]);
+}
+
 export function AppShell(props: AppShellProps): JSX.Element {
   const { mainId, mainRef, nav, connection, panic, banner, canvasOverlay, status, children } =
     props;
   const { rightRail, rightRailLabel } = props;
   useScrimInsets(mainId);
+  const headerRef = useRef<HTMLElement>(null);
+  const footerRef = useRef<HTMLElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useFocusInsets(headerRef, footerRef, scrollRef);
   return (
     <div style={FRAME}>
       <SkipLink targets={[{ id: mainId, label: SKIP_LINK_COPY.main }]} />
-      <header data-cv-inert-exempt="" style={{ ...CHROME, gridArea: "header" }}>
+      <header ref={headerRef} data-cv-inert-exempt="" style={{ ...CHROME, gridArea: "header" }}>
         {(props.topBar ?? ((slot) => slot))(<div data-shell-slot="connection">{connection}</div>)}
         {panic}
       </header>
@@ -121,7 +154,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
         {banner}
       </div>
       <main id={mainId} ref={mainRef} tabIndex={-1} style={MAIN}>
-        <div data-shell-canvas="" style={SCROLL}>
+        <div ref={scrollRef} data-shell-canvas="" style={SCROLL}>
           {children}
         </div>
         <div data-shell-slot="canvas-overlay" style={OVERLAY}>
@@ -131,7 +164,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
       <aside aria-label={rightRailLabel} style={{ ...CHROME, gridArea: "aside" }}>
         {rightRail}
       </aside>
-      <footer data-cv-inert-exempt="" style={{ ...CHROME, gridArea: "footer" }}>
+      <footer ref={footerRef} data-cv-inert-exempt="" style={{ ...CHROME, gridArea: "footer" }}>
         {status}
       </footer>
     </div>

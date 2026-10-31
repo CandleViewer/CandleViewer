@@ -57,7 +57,10 @@ describe("AppShell owns the modal scrim's band (E05-D02 H23)", () => {
 
   it("follows main as it resizes (its ResizeObserver), and disconnects on unmount", () => {
     const view = shell();
-    const observer = observers.at(-1);
+    // AppShell's focus insets observe too: pick the one watching `main`.
+    const observer = observers.find((o) =>
+      o.observed.includes(view.container.querySelector("main") as Element),
+    );
     expect(observer?.observed).toEqual([view.container.querySelector("main")]);
     band = { top: 120, bottom: 700 };
     observer?.report([], observer as unknown as ResizeObserver);
