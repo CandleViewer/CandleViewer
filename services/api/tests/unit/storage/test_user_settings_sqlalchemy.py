@@ -53,8 +53,8 @@ class _Result:
 
 class _Rel:
     """Fake unit of work: `held` answers both SELECTs, `upserted` the keys an upsert changes,
-    `deleted` the keys a delete finds. Records what ran (and the hook) and raises `error` at the
-    step `fail_at`: `"enter"`, a statement, `"hook"` or `"commit"`."""
+    `deleted` the keys a delete finds. Records what ran (the hook and the commit too, in order)
+    and raises `error` at the step `fail_at`: `"enter"`, a statement, `"hook"` or `"commit"`."""
 
     def __init__(self, held: list[dict[str, Any]] | None = None) -> None:
         self.held = held if held is not None else [_row("appearance.theme", "dark")]
@@ -86,6 +86,7 @@ class _Rel:
             return _Result(self._answer(stmt, params))
 
         async def commit() -> None:
+            self.ran.append(("COMMIT", None))
             if self.fail_at == "commit":
                 raise self.error
             self.committed = True
@@ -161,6 +162,7 @@ async def test_user_settings_apply_locks_reads_writes_by_key_then_hooks_before_t
         m._DELETE,
         m._UPSERT,
         "HOOK",
+        "COMMIT",  # the record is written ahead of the commit, never after it
     ]
     assert [params for _, params in rel.ran[:4]] == [
         {"user_id": uid}, {"user_id": uid}, {"user_id": uid, "key": "appearance.density"},
