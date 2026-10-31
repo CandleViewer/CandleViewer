@@ -1,0 +1,39 @@
+{
+  "entries": [
+    {
+      "alert": "AlertmanagerNotificationsFailed",
+      "series": "alertmanager_notifications_failed_total",
+      "reason": "on the dashboard lint's EXTERNAL list, but Alertmanager is not a scrape target in infra/prometheus/prometheus.yml (jobs: candleviewer-api, pushgateway), so nothing supplies it (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "CredentialExpiryApproaching",
+      "series": "credential_expiry_days",
+      "reason": "no emitter in services/api/candleviewer and no catalogue entry; only promtool synthetic series feed it (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "EnvMismatchAttempt",
+      "series": "env_mismatch_attempts_total",
+      "reason": "no emitter in services/api/candleviewer and no catalogue entry (the code logs key_selfcheck_env_mismatch / account_health.env_mismatch only); promtool synthetic series only (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "ExpectedMetricMissingCredentialExpiryDays",
+      "series": "credential_expiry_days",
+      "reason": "no emitter in services/api/candleviewer and no catalogue entry; only promtool synthetic series feed it (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "ExpectedMetricMissingEnvMismatchAttemptsTotal",
+      "series": "env_mismatch_attempts_total",
+      "reason": "no emitter in services/api/candleviewer and no catalogue entry (the code logs key_selfcheck_env_mismatch / account_health.env_mismatch only); promtool synthetic series only (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "ExpectedMetricMissingPgUp",
+      "series": "pg_up",
+      "reason": "no emitter in services/api/candleviewer, no catalogue entry, and prometheus.yml scrapes no postgres exporter; the PostgresDown page and its inhibition cannot fire on a running stack (static finding, not yet confirmed live)"
+    },
+    {
+      "alert": "PostgresDown",
+      "series": "pg_up",
+      "reason": "no emitter in services/api/candleviewer, no catalogue entry, and prometheus.yml scrapes no postgres exporter; the PostgresDown page and its inhibition cannot fire on a running stack (static finding, not yet confirmed live)"
+    }
+  ]
+}

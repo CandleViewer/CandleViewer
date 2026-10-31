@@ -1,0 +1,418 @@
+{
+  "entries": [
+    {
+      "alert": "AlertOutboxBacklog",
+      "series": "cv_outbox_depth",
+      "class": "flag-gated",
+      "reason": "alert.deliver series bound at start only when the dispatcher runs, behind alerts_evaluator_enabled (default off, settings.py:784); rule comment declines a guard"
+    },
+    {
+      "alert": "AlertOutboxDeadLettered",
+      "series": "cv_outbox_dead_total",
+      "class": "flag-gated",
+      "reason": "alert.deliver series bound at start only when the dispatcher runs, behind alerts_evaluator_enabled (default off, settings.py:784); rule comment declines a guard"
+    },
+    {
+      "alert": "AlertmanagerNotificationsFailed",
+      "series": "alertmanager_notifications_failed_total",
+      "class": "unclassified-routed",
+      "reason": "Alertmanager is not a scrape target in prometheus.yml, so nothing supplies it; absent() would fire for good (see the series baseline)"
+    },
+    {
+      "alert": "AuditLaneAnomaly",
+      "series": "cv_audit_lane_anomalies_total",
+      "class": "unclassified-routed",
+      "reason": "served at 0 for every reason on each scrape (audit/metrics.py lane_families), so a guard is feasible; routed to E09"
+    },
+    {
+      "alert": "AuditLaneBacklogAged",
+      "series": "cv_audit_lane_oldest_age_seconds",
+      "class": "unclassified-routed",
+      "reason": "emission when the lane is unwired not traced; routed to E09"
+    },
+    {
+      "alert": "AuditLaneBootOvershoot",
+      "series": "cv_audit_lane_boot_overshoot_frames_total",
+      "class": "unclassified-routed",
+      "reason": "served at 0 on each scrape (audit/metrics.py lane_families); a guard is feasible; routed to E09"
+    },
+    {
+      "alert": "AuditLaneCreated",
+      "series": "cv_audit_lane_created_total",
+      "class": "unclassified-routed",
+      "reason": "served at 0 on each scrape (audit/metrics.py lane_families); a guard is feasible; routed to E09"
+    },
+    {
+      "alert": "AuditLaneDrainHeld",
+      "series": "cv_audit_lane_state",
+      "class": "unclassified-routed",
+      "reason": "served for every state on each scrape (audit/metrics.py:75); routed to E09"
+    },
+    {
+      "alert": "AuditLaneQuarantineGrowing",
+      "series": "cv_audit_lane_quarantine_bytes",
+      "class": "unclassified-routed",
+      "reason": "emission when the lane is unwired not traced; routed to E09"
+    },
+    {
+      "alert": "AuditLaneRefusing",
+      "series": "cv_audit_lane_refused_total",
+      "class": "unclassified-routed",
+      "reason": "served at 0 for every class and reason on each scrape (audit/metrics.py:50); routed to E09"
+    },
+    {
+      "alert": "AuditLaneRefusing",
+      "series": "cv_audit_lane_state",
+      "class": "unclassified-routed",
+      "reason": "served for every state on each scrape (audit/metrics.py:75); routed to E09"
+    },
+    {
+      "alert": "AuditLaneSeqRegressed",
+      "series": "cv_audit_lane_last_seq",
+      "class": "lazy-series",
+      "reason": "catalogue help: absent while the lane holds or before it opens (metrics_catalogue.py)"
+    },
+    {
+      "alert": "AuditLaneTornTail",
+      "series": "cv_audit_lane_anomalies_total",
+      "class": "unclassified-routed",
+      "reason": "served at 0 for every reason on each scrape (audit/metrics.py lane_families), so a guard is feasible; routed to E09"
+    },
+    {
+      "alert": "AuditSinkRefusing",
+      "series": "cv_audit_writer_refused_total",
+      "class": "unclassified-routed",
+      "reason": "served at 0 for every domain on each scrape (audit/metrics.py:49); routed to E09"
+    },
+    {
+      "alert": "AuditVerifyNotPassing",
+      "series": "cv_audit_verify_runs_total",
+      "class": "unclassified-routed",
+      "reason": "catalogue help: 0 from the start; AuditVerifyNotPassing already reads a guarded gauge for its other arm; routed to E09"
+    },
+    {
+      "alert": "AuthBreakGlassStateReadFailing",
+      "series": "auth_break_glass_state_read_failures_total",
+      "class": "unclassified-routed",
+      "reason": "unlabelled Counter, exposed at 0 from import (auth/metrics.py:308); a guard is feasible; routed to E09"
+    },
+    {
+      "alert": "BackupLastSuccessStale",
+      "series": "cv_backup_last_success_age_seconds",
+      "class": "lazy-series",
+      "reason": "rule comment: no sample until a backup engine records runs (BACKUPS_CATALOGUED, #3319); a guard would stand for good"
+    },
+    {
+      "alert": "BookResyncStorm",
+      "series": "ingest_book_resyncs_total",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "BybitClockDriftCritical",
+      "series": "exchange_clock_drift_ms",
+      "class": "module-guard",
+      "reason": "unlabelled series in the ingestion registry, exported with it; IngestionMetricsAbsent (absent(ingest_enabled)) covers the registry"
+    },
+    {
+      "alert": "BybitClockDriftWarning",
+      "series": "exchange_clock_drift_ms",
+      "class": "module-guard",
+      "reason": "unlabelled series in the ingestion registry, exported with it; IngestionMetricsAbsent (absent(ingest_enabled)) covers the registry"
+    },
+    {
+      "alert": "BybitClockOffsetStale",
+      "series": "clock_offset_age_seconds",
+      "class": "module-guard",
+      "reason": "unlabelled series in the ingestion registry, exported with it; IngestionMetricsAbsent (absent(ingest_enabled)) covers the registry"
+    },
+    {
+      "alert": "BybitRowsRefusedAccount",
+      "series": "bybit_rows_refused_total",
+      "class": "lazy-series",
+      "reason": "labelled (reason) adapter counter: no sample until the first refused row"
+    },
+    {
+      "alert": "CsrfRefusalAuditDegraded",
+      "series": "auth_csrf_refused_total",
+      "class": "unclassified-routed",
+      "reason": "closed reason set bound at import (auth/metrics.py:87-88), so a guard is feasible; routed to E09"
+    },
+    {
+      "alert": "CsrfRefusalAuditUnavailable",
+      "series": "auth_csrf_refused_total",
+      "class": "unclassified-routed",
+      "reason": "closed reason set bound at import (auth/metrics.py:87-88), so a guard is feasible; routed to E09"
+    },
+    {
+      "alert": "CsrfRefusalsHigh",
+      "series": "auth_csrf_refused_total",
+      "class": "unclassified-routed",
+      "reason": "closed reason set bound at import (auth/metrics.py:87-88), so a guard is feasible; routed to E09"
+    },
+    {
+      "alert": "GADefectArrivalExceedsClosure",
+      "series": "ga_defects_arrived_7d",
+      "class": "lazy-series",
+      "reason": "pushed through the pushgateway by tools/ga_defects: no sample until the first push"
+    },
+    {
+      "alert": "GADefectArrivalExceedsClosure",
+      "series": "ga_defects_closed_7d",
+      "class": "lazy-series",
+      "reason": "pushed through the pushgateway by tools/ga_defects: no sample until the first push"
+    },
+    {
+      "alert": "GADefectArrivalExceedsClosure",
+      "series": "push_time_seconds",
+      "class": "lazy-series",
+      "reason": "pushgateway's own series per pushed group: no sample until the first push"
+    },
+    {
+      "alert": "GADefectForecastSlipping",
+      "series": "ga_defect_forecast_days_to_zero",
+      "class": "lazy-series",
+      "reason": "pushed through the pushgateway by tools/ga_defects: no sample until the first push"
+    },
+    {
+      "alert": "GADefectForecastSlipping",
+      "series": "ga_defects_open",
+      "class": "lazy-series",
+      "reason": "pushed through the pushgateway by tools/ga_defects: no sample until the first push"
+    },
+    {
+      "alert": "GADefectSLABreached",
+      "series": "ga_defects_sla_state",
+      "class": "lazy-series",
+      "reason": "pushed through the pushgateway by tools/ga_defects: no sample until the first push"
+    },
+    {
+      "alert": "GADefectSLABreached",
+      "series": "push_time_seconds",
+      "class": "lazy-series",
+      "reason": "pushgateway's own series per pushed group: no sample until the first push"
+    },
+    {
+      "alert": "IngestionBookResyncRateHigh",
+      "series": "ingest_book_resyncs_total",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "IngestionFramesRejectedSustained",
+      "series": "ingest_rejected_total",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "IngestionNeverDropQueueFull",
+      "series": "ingest_queue_full_total",
+      "class": "lazy-series",
+      "reason": "labelled (class), declared in the ingestion registry and owned by bus: no sample until the first full-queue event"
+    },
+    {
+      "alert": "IngestionRateLimitHeadroomExhausted",
+      "series": "bybit_rate_limit_remaining",
+      "class": "lazy-series",
+      "reason": "labelled (scope, endpoint_class) adapter gauge (exchange/bybit/metrics.py:30): no sample until the first response headers"
+    },
+    {
+      "alert": "IngestionStoppedReporting",
+      "series": "ingest_events_total",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "IngestionTopicStale",
+      "series": "ws_topic_staleness_seconds",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "IngestionTradeGapUnrecovered",
+      "series": "trade_gaps_total",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "KeyExpiringWithin14Days",
+      "series": "cv_key_soonest_expiry_seconds",
+      "class": "unclassified-routed",
+      "reason": "set by the key self-check tick (accounts/selfcheck.py:360); whether it exists before the first tick not traced"
+    },
+    {
+      "alert": "KeyExpiringWithin1Day",
+      "series": "cv_key_soonest_expiry_seconds",
+      "class": "unclassified-routed",
+      "reason": "set by the key self-check tick (accounts/selfcheck.py:360); whether it exists before the first tick not traced"
+    },
+    {
+      "alert": "KeyExpiringWithin7Days",
+      "series": "cv_key_soonest_expiry_seconds",
+      "class": "unclassified-routed",
+      "reason": "set by the key self-check tick (accounts/selfcheck.py:360); whether it exists before the first tick not traced"
+    },
+    {
+      "alert": "LatencyBudgetBreach",
+      "series": "cv:e2e_tick_to_paint_seconds:p95_1m",
+      "class": "unclassified-routed",
+      "reason": "recorded rule (latency_budget.yml) over the e2e_tick_to_paint_seconds histogram; it has no absent() guard and the source's emission was not traced; routed to the latency owner"
+    },
+    {
+      "alert": "RecorderAnchorSkipped",
+      "series": "recorder_anchor_skipped_total",
+      "class": "lazy-series",
+      "reason": "labelled (reason) Counter (recorder/metrics.py:64); no child bound at import"
+    },
+    {
+      "alert": "RecorderDiskBudgetSampleStale",
+      "series": "recorder_disk_budget_last_sample_timestamp_seconds",
+      "class": "unclassified-routed",
+      "reason": "unlabelled Gauge, exposed at 0 from import (recorder/metrics.py:96); a guard is feasible; routed to E16"
+    },
+    {
+      "alert": "RecorderDiskPressureAutostop",
+      "series": "recorder_disk_pressure_level",
+      "class": "unclassified-routed",
+      "reason": "unlabelled Gauge, exposed at 0 from import (recorder/metrics.py:82); a guard is feasible; routed to E16"
+    },
+    {
+      "alert": "RecorderGapBurst",
+      "series": "trade_gaps_total",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "RecorderMessagesDropped",
+      "series": "book_writes_dropped_total",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "RecorderMessagesDropped",
+      "series": "ticker_writes_dropped_total",
+      "class": "module-guard",
+      "reason": "unlabelled series in the ingestion registry, exported with it; IngestionMetricsAbsent (absent(ingest_enabled)) covers the registry"
+    },
+    {
+      "alert": "RecorderMessagesDropped",
+      "series": "trade_writes_dropped_total",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "RecorderSilentStop",
+      "series": "ingest_events_total",
+      "class": "lazy-series",
+      "reason": "labelled series in the ingestion registry (ingestion/metrics.py SPECS): no sample until its first child; no value pre-bound"
+    },
+    {
+      "alert": "RecorderSilentStop",
+      "series": "recorder_bytes_written_total",
+      "class": "lazy-series",
+      "reason": "labelled (symbol, stream) Counter (recorder/metrics.py:52); no sample until the first write"
+    },
+    {
+      "alert": "RecorderSpilling",
+      "series": "recorder_spill_bytes",
+      "class": "unclassified-routed",
+      "reason": "unlabelled Gauge, exposed at 0 from import (recorder/metrics.py:57); a guard is feasible; routed to E16"
+    },
+    {
+      "alert": "RecorderWriteGateClosed",
+      "series": "recorder_disk_pressure_level",
+      "class": "unclassified-routed",
+      "reason": "unlabelled Gauge, exposed at 0 from import (recorder/metrics.py:82); a guard is feasible; routed to E16"
+    },
+    {
+      "alert": "ReplayLoopShareHigh",
+      "series": "replay_loop_seconds_total",
+      "class": "unclassified-routed",
+      "reason": "unlabelled Counter at import (replay/budget.py:85); a guard is feasible; routed to E26"
+    },
+    {
+      "alert": "ReplayLoopShareHigh",
+      "series": "replay_loop_share_ratio",
+      "class": "unclassified-routed",
+      "reason": "unlabelled Gauge at import (replay/budget.py:94); a guard is feasible; routed to E26"
+    },
+    {
+      "alert": "RollOffStreamUnlisted",
+      "series": "recorder_rolloff_streams_unlisted_total",
+      "class": "unclassified-routed",
+      "reason": "every stream child bound at import (recorder/rolloff.py:80); a guard is feasible; routed to E16"
+    },
+    {
+      "alert": "RollOffWatermarkLag",
+      "series": "recorder_watermark_lag_days",
+      "class": "lazy-series",
+      "reason": "labelled (stream) Gauge set per stream at the end of a roll-off run (recorder/rolloff.py:428)"
+    },
+    {
+      "alert": "SupportBundleSecretDetected",
+      "series": "support_bundle_generations_total",
+      "class": "lazy-series",
+      "reason": "labelled (result) Counter: no sample until the first generation (observability/support_bundle_wiring.py:95)"
+    },
+    {
+      "alert": "TickToPaintSloFastBurn",
+      "series": "cv:slo_tick_to_paint:burn_rate_1h",
+      "class": "unclassified-routed",
+      "reason": "recorded rule (latency_budget.yml) over the e2e_tick_to_paint_seconds histogram; it has no absent() guard and the source's emission was not traced; routed to the latency owner"
+    },
+    {
+      "alert": "TickToPaintSloFastBurn",
+      "series": "cv:slo_tick_to_paint:burn_rate_6h",
+      "class": "unclassified-routed",
+      "reason": "recorded rule (latency_budget.yml) over the e2e_tick_to_paint_seconds histogram; it has no absent() guard and the source's emission was not traced; routed to the latency owner"
+    },
+    {
+      "alert": "UserDisableFailed",
+      "series": "cv_user_lifecycle_total",
+      "class": "unclassified-routed",
+      "reason": "every action/result series bound at import (admin/lifecycle_metrics.py); a guard is feasible; routed to E09"
+    },
+    {
+      "alert": "WsAuditWriteFailed",
+      "series": "cv_ws_audit_failures_total",
+      "class": "unclassified-routed",
+      "reason": "rule-file header: every series is bound at import (ws/metrics.py); a guard is feasible; routed to E17"
+    },
+    {
+      "alert": "WsFanoutP95OverBudget",
+      "series": "cv_ws_fanout_seconds_bucket",
+      "class": "unclassified-routed",
+      "reason": "rule-file header: bound at import (ws/metrics.py); routed to E17"
+    },
+    {
+      "alert": "WsFanoutP95OverBudget",
+      "series": "cv_ws_fanout_seconds_count",
+      "class": "unclassified-routed",
+      "reason": "rule-file header: bound at import (ws/metrics.py); routed to E17"
+    },
+    {
+      "alert": "WsOriginRefusalsHigh",
+      "series": "cv_ws_closes_total",
+      "class": "unclassified-routed",
+      "reason": "rule-file header: bound at import (ws/metrics.py); routed to E17"
+    },
+    {
+      "alert": "WsSequenceGapDetected",
+      "series": "cv_ws_sequence_gaps_detected_total",
+      "class": "unclassified-routed",
+      "reason": "rule-file header: bound at import (ws/sequencing.py); routed to E17"
+    },
+    {
+      "alert": "WsSlowConsumerClosed",
+      "series": "cv_ws_closes_total",
+      "class": "unclassified-routed",
+      "reason": "rule-file header: bound at import (ws/metrics.py); routed to E17"
+    },
+    {
+      "alert": "WsUpstreamDesyncHigh",
+      "series": "cv_ws_resync_total",
+      "class": "unclassified-routed",
+      "reason": "rule-file header: bound at import (ws/sequencing.py); routed to E17"
+    }
+  ]
+}
