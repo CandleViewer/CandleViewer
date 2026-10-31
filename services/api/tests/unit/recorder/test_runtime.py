@@ -17,6 +17,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.observability.health import HealthStatus
+from candleviewer.recorder.metrics import recorder_up
 from candleviewer.recorder.models import PRIORITY, EffectiveEntry, Reason
 from candleviewer.recorder.runtime import TICK_S, RecorderRuntime, RuntimeBounds
 from candleviewer.recorder.service import RecorderService
@@ -217,6 +218,50 @@ async def test_stop_cancels_the_task_then_stops_the_writer_the_sessions_and_the_
         ("writer", "TimeoutError"), ("sessions", "OSError")]  # fmt: skip
     assert not [t for t in asyncio.all_tasks() if t.get_name() == "recorder-runtime"]
     assert rig.rt.health().status is HealthStatus.STOPPED
+
+
+def _up() -> float:
+    (family,) = recorder_up.collect()
+    return float(family.samples[0].value)
+
+
+async def test_recorder_up_is_one_from_start_to_stop_even_while_the_startup_fails(
+    rig: Rig,
+) -> None:
+    """E16-T09 (#567): RecorderDown reads it. A failing startup still runs (health degrades),
+    so the gauge says the runtime runs; a stop, even a cut one, sets it to 0 first."""
+    recorder_up.set(0)
+    rig.m.writer.start.side_effect = OSError("wal")
+    await rig.rt.start()
+    await rig.sleep.parked()  # the first attempt failed: in its backoff
+    assert _up() == 1.0
+    await asyncio.wait_for(rig.rt.stop(0.4), 2)
+    assert _up() == 0.0
+
+
+async def _boom() -> None:
+    await asyncio.sleep(0)
+    raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize("how", ["cancelled", "raising"])
+async def test_recorder_up_is_zero_when_the_run_task_ends_without_a_stop(
+    rig: Rig, how: str
+) -> None:
+    """E16-T09 (#567): a task that dies on its own must not leave RecorderDown silent."""
+    recorder_up.set(0)
+    if how == "raising":
+        rig.rt._run = _boom  # type: ignore[method-assign]  # an error that escapes the loop
+    await rig.rt.start()
+    assert _up() == 1.0
+    task = next(t for t in asyncio.all_tasks() if t.get_name() == "recorder-runtime")
+    if how == "cancelled":
+        task.cancel()
+    await asyncio.wait([task])  # the done callback is queued before this wait's own
+    await asyncio.sleep(0)
+    assert _up() == 0.0
+    if how == "raising":
+        rig.rt._task = None  # the fixture's stop need not re-raise the test's error
 
 
 async def test_health_shows_a_positions_source_that_is_not_deployed_with_its_env(rig: Rig) -> None:

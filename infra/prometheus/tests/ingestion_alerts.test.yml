@@ -322,6 +322,80 @@ tests:
               runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderwritegateclosed"
               summary: "The recorder write gate is closed (disk-pressure level 3)."
               tracker: "#567"
+  # RecorderDown (#567): demo's runtime stops at 2 m, pending at 6 m, firing at 7 m (`for: 5m`);
+  # live stays up and never fires.
+  - interval: 1m
+    input_series:
+      - series: 'recorder_up{env="demo"}'
+        values: "1 1 0+0x10"
+      - series: 'recorder_up{env="live"}'
+        values: "1+0x12"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: RecorderDown
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: RecorderDown
+        exp_alerts:
+          - exp_labels: { severity: page, component: recorder, env: demo }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderdown"
+              summary: "The recorder runtime is not running, or its exporter is not scraped."
+  # RecorderDown, exporter absent: no recorder_up series at all; the guard fires after 5 m.
+  - interval: 1m
+    input_series:
+      - series: 'recorder_spill_bytes{env="demo"}'
+        values: "0+0x10"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: RecorderDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: RecorderDown
+        exp_alerts:
+          - exp_labels: { severity: page, component: recorder }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderdown"
+              summary: "The recorder runtime is not running, or its exporter is not scraped."
+  # RetentionStale (#567): demo's pass succeeds at 1 h (3600), then a restart at 12 h resets the
+  # gauge to 0; the 7-day maximum still reads 3600, so the age is 48 h at 49 h (silent) and 49 h at
+  # 50 h (fires). live never succeeded (0 throughout) and stays silent.
+  - interval: 1h
+    input_series:
+      - series: 'retention_last_success_timestamp{env="demo"}'
+        values: "0 3600+0x10 0+0x50"
+      - series: 'retention_last_success_timestamp{env="live"}'
+        values: "0+0x60"
+    alert_rule_test:
+      - eval_time: 49h
+        alertname: RetentionStale
+        exp_alerts: []
+      - eval_time: 50h
+        alertname: RetentionStale
+        exp_alerts:
+          - exp_labels: { severity: ticket, component: recorder, env: demo }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-retentionstale"
+              summary: "The last successful recorder retention pass is more than 48 hours old."
+  # RetentionStale known limit (#567), pinned on purpose: the gauge is process-local. Success at
+  # 1 h, a restart at 12 h (gauge 0 from then): it fires at 170 h (169 h old, inside the 7-day
+  # window) and is silent again at 180 h, when the success leaves the window. Dropping the `> 0`
+  # guard and the window (once the nightly retention is scheduled) must change this case.
+  - interval: 1h
+    input_series:
+      - series: 'retention_last_success_timestamp{env="demo"}'
+        values: "0 3600+0x10 0+0x180"
+    alert_rule_test:
+      - eval_time: 170h
+        alertname: RetentionStale
+        exp_alerts:
+          - exp_labels: { severity: ticket, component: recorder, env: demo }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-retentionstale"
+              summary: "The last successful recorder retention pass is more than 48 hours old."
+      - eval_time: 180h
+        alertname: RetentionStale
+        exp_alerts: []
   # Seek anchors (#2223): no_book keeps rising from 1 m, so the 10 m hold fires it at 11 m, not 10 m;
   # late rises the whole time and never fires; error rises for 5 m only and stays silent.
   - interval: 1m

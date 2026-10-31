@@ -102,6 +102,11 @@ disk_budget_sample_failed_total = Counter(
     "DiskBudget passes that raised (the write gate fails closed once the samples go stale).",
 )
 
+# --- Liveness (E16-T09, #567) -------------------------------------------------------------
+#: 1 from `RecorderRuntime.start()` to its `stop()`; 0 before, after, and where no runtime is
+#: composed (the fake backend). Served with the rest, so an absent exporter reads as no series.
+recorder_up = Gauge("recorder_up", "1 while the recorder runtime runs, else 0 (E16-T09).")
+
 # --- Recording status (E16-T08) -----------------------------------------------------------
 recorder_status_cache_age_seconds = Gauge(
     "recorder_status_cache_age_seconds",
@@ -126,6 +131,9 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "recorder_disk_budget_breakdown_age_seconds",
         "disk_budget_sample_failed_total",
         "recorder_status_cache_age_seconds",
+        "recorder_up",
+        # E16-T06's reaper (`recorder/retention.py`), read by RetentionStale (#567).
+        "retention_last_success_timestamp",
         # The nightly roll-off (`recorder/rolloff.py`, E16-T05): unscraped until #3794.
         "recorder_rolloff_bytes_total",
         "recorder_rolloff_duration_seconds",
@@ -139,10 +147,12 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
 
 
 def export_recorder_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
-    """Serve the StreamWriter, disk-budget and roll-off series on `registry` (the scraped one)
-    with `env`. The roll-off series are defined in `recorder.rolloff`; importing it here registers
-    them, so every exported name is served whatever the caller imported first."""
+    """Serve the StreamWriter, disk-budget, liveness, retention and roll-off series on `registry`
+    (the scraped one) with `env`. The roll-off and retention series are defined in
+    `recorder.rolloff` and `recorder.retention`; importing them here registers them, so every
+    exported name is served whatever the caller imported first."""
     importlib.import_module("candleviewer.recorder.rolloff")
+    importlib.import_module("candleviewer.recorder.retention")
     return ReexportCollector(registry, names=EXPORTED_NAMES, const_labels={"env": env})
 
 

@@ -63,6 +63,8 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "recorder_bytes_per_day",
         "recorder_projected_full_timestamp",
         "recorder_watermark_lag_days",  # E16-T05's, named in its runbook; catalogued by #3794
+        "recorder_up",  # named by the E16-T09 ticket's Observability section (#567)
+        "retention_last_success_timestamp",  # named by E16-T06 and the E16-T09 ticket (#567)
         "bars_symbol_cardinality",
         "indicator_subscriptions",  # named by the E13-T02 ticket's Observability section (#426)
         "cv_ws_connection_class",
@@ -605,6 +607,34 @@ def test_disk_budget_failed_pass_counter_is_live_exported_and_carries_no_label()
     assert row == ("counter", (), "live", "E16", True)
     (family,) = disk_budget_sample_failed_total.collect()
     assert spec.name in EXPORTED_NAMES and family.documentation == spec.help
+
+
+def test_recorder_up_and_retention_success_are_live_exported_and_served_with_env() -> None:
+    """E16-T09 (#567): RecorderDown and RetentionStale read these, so both are catalogued live and
+    served by `export_recorder_metrics` with `env`, under the catalogue's HELP, with no label."""
+    from candleviewer.recorder.metrics import EXPORTED_NAMES, export_recorder_metrics, recorder_up
+
+    names = ("recorder_up", "retention_last_success_timestamp")
+    for name in names:
+        spec = next(s for s in CATALOGUE if s.name == name)
+        row = spec.kind, spec.labels, spec.status, spec.owner_epic, spec.exported
+        assert row == ("gauge", (), "live", "E16", True), name
+        assert name in EXPORTED_NAMES, name
+    m = Metrics("demo")
+    collector = export_recorder_metrics(m.registry, env="demo")
+    try:
+        recorder_up.set(1)
+        families = {
+            f.name: f for f in text_string_to_metric_families(generate_latest(m.registry).decode())
+        }
+        for name in names:
+            spec = next(s for s in CATALOGUE if s.name == name)
+            assert families[name].documentation == spec.help, name
+            assert [s.labels for s in families[name].samples] == [{"env": "demo"}], name
+        assert [s.value for s in families["recorder_up"].samples] == [1.0]
+    finally:
+        recorder_up.set(0)
+        collector.close()
 
 
 def test_exported_replay_metrics_served_with_env() -> None:

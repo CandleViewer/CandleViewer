@@ -4224,6 +4224,29 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E16",
         exported=True,
     ),
+    # --- Liveness and retention (E16-T09, #567); served by export_recorder_metrics -----------
+    _s(
+        "recorder_up",
+        "gauge",
+        "state",
+        (),
+        "1 while the recorder runtime runs, else 0 (E16-T09).",
+        "0 or absent for 5 min (page, RecorderDown)",
+        _L,
+        "E16",
+        exported=True,
+    ),
+    _s(
+        "retention_last_success_timestamp",
+        "gauge",
+        "seconds",
+        (),
+        "Unix time of the last successful retention pass.",
+        "older than 48 h after a first success (ticket, RetentionStale)",
+        _L,
+        "E16",
+        exported=True,
+    ),
     # --- Roll-off (E16-T05); served by recorder.metrics.export_recorder_metrics (#3794) -------
     # `stream`: a roll-off or downsample stream; `reason`: a closed set of archive, drop and run
     # outcomes (`recorder/rolloff.py`).

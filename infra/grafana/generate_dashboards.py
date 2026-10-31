@@ -1204,7 +1204,7 @@ def ga_defects() -> Board:
 
 def recorder() -> Board:
     """E16-T09 (#567) board for infra/prometheus/alerts/recorder.yml (docs/ops/runbooks/recorder.md).
-    Declared series only: no retention or recorder-gap series is exported yet."""
+    Declared series only: no recorder-gap series by cause is exported yet."""
     b = Board("cv-recorder", "CV / Recorder", ["recorder", "storage"])
     b.row("Writes")
     by_symbol = rate("recorder_bytes_written_total", "symbol")
@@ -1235,6 +1235,10 @@ def recorder() -> Board:
     b.ts("Gaps per interval by symbol", gaps, "short", legend="{{symbol}} {{recovered}}")
     mark = f"max by (stream) (recorder_watermark_lag_days{{{E}}})"
     b.ts("Roll-off watermark lag (days)", mark, "d", legend="{{stream}}")
+    # 0 until a pass succeeds (no line then), as RetentionStale reads it; warn at its 48 h.
+    age = f"(time() - (max(retention_last_success_timestamp{{{E}}}) > 0)) / 3600"
+    b.ts("Retention last success age (h)", age, "h", 48)
+    _describe(b, "Hours since the last successful retention pass; RetentionStale fires over 48.")
     b.flush()
     return b
 

@@ -337,6 +337,12 @@
       "reason": "unlabelled Gauge at import (replay/budget.py:94); a guard is feasible; routed to E26"
     },
     {
+      "alert": "RetentionStale",
+      "series": "retention_last_success_timestamp",
+      "class": "routed",
+      "reason": "unlabelled Gauge, exposed at 0 from import (recorder/retention.py:88) and served by export_recorder_metrics; a guard is feasible; routed to E16"
+    },
+    {
       "alert": "RollOffStreamUnlisted",
       "series": "recorder_rolloff_streams_unlisted_total",
       "class": "routed",
