@@ -46,7 +46,9 @@ only then is B19's port unwired.
 
 **`auto_remediate`** (INV-B19-d, 24 Sec.14.3, C-4.14) comes only from the account's environment's
 capability record (`remediates`), never a setting, a flag or a role, and a live or demo record
-that says `False` refuses `start`: such a job would never repair a naked position (C-2.6).
+that says `False` refuses `start`: such a job would never repair a naked position (C-2.6). A
+job whose snapshot restores another value than the record's does not open, as one whose store
+fails does not.
 
 Logs carry account ids, pass ids, triggers and states only (C-12.6).
 """
@@ -430,7 +432,10 @@ class ReconcileJobs:
     ) -> tuple[Any | None, tuple[tuple[str, dict[str, Any]], ...]]:
         """The job restored, with what it is owed (`redrive_after_restore`), or None to build
         afresh: no persistence, no snapshot, a refused one (the `Restorer` quarantines and pages
-        it), or one restored mid-diff or remediation, which no event leaves."""
+        it), or one restored mid-diff or remediation, which no event leaves. A snapshot whose
+        `auto_remediate` is not the record's is a `ValueError`, its machine stopped, so the job
+        does not open (INV-B19-d, 24 Sec.14.3: the record is the only source, never False on live
+        or demo)."""
         if self._persistence is None:
             return None, ()
         sealed = await _opening_step(self._persistence.load(key))
@@ -441,6 +446,9 @@ class ReconcileJobs:
         except RestoreRefusedError:
             _log().error("reconcile_job_restore_refused", account_id=str(account))
             return None, ()
+        if interp.context.get("auto_remediate") is not self._remediate:
+            await interp.stop()
+            raise ValueError("a restored job's auto_remediate is not its record's (24 Sec.14.3)")
         owed = b19.redrive_after_restore(leaf_of(interp), interp.context)
         if owed is None:
             await interp.stop()
