@@ -86,6 +86,10 @@ export interface BufferLayout {
 export type ScaleModeName = "linear" | "log" | "percent" | "indexed";
 const SCALE_MODES: ReadonlySet<unknown> = new Set(["linear", "log", "percent", "indexed"]);
 
+/** The pointer a pick's tolerance comes from (E11-S08, BQ-130): 10 px, 16 px for touch. */
+export type PickPointer = "mouse" | "pen" | "touch";
+const PICK_POINTERS: ReadonlySet<unknown> = new Set(["mouse", "pen", "touch"]);
+
 export type Command =
   | { readonly k: "setViewport"; readonly timeStart: number; readonly timeEnd: number }
   | { readonly k: "setSeriesOptions"; readonly series: number; readonly options: object }
@@ -94,7 +98,14 @@ export type Command =
   | { readonly k: "setLod"; readonly candles: 0 | 1 | 2; readonly footprint: 0 | 1 | 2 | 3 }
   /** The app's resolved motion mode changed (E11-S04 BQ-104): `reduce` stops a glide. */
   | { readonly k: "setMotion"; readonly reduce: boolean }
-  | { readonly k: "pickAt"; readonly x: number; readonly y: number }
+  /** E11-S08 (BQ-135, additive): `pointer` sets the tolerance (mouse by default); `reqId` echoes. */
+  | {
+      readonly k: "pickAt";
+      readonly x: number;
+      readonly y: number;
+      readonly pointer?: PickPointer;
+      readonly reqId?: number;
+    }
   /** E11-S05 (BQ-124, additive): one pane's scale; `auto: false` is the lock. */
   | {
       readonly k: "setPriceScale";
@@ -184,9 +195,16 @@ export type FromWorker =
       readonly t: "pick";
       readonly id: ChartId;
       readonly objectId: string | null;
+      /** The object's kind; `none` on a miss, `axis` in a gutter (BQ-136). */
       readonly kind: string;
+      /** `screenToIndex` and the integer tick level under the point, on every reply. */
       readonly bar: number;
       readonly price: number;
+      /** E11-S08 (BQ-136, additive): on a hit, the body or one of the object's handles. */
+      readonly part?: "body" | "handle";
+      readonly handle?: number;
+      /** A `pickAt`'s own `reqId`; hover picks carry none. */
+      readonly reqId?: number;
     }
   | {
       readonly t: "viewport";
@@ -345,7 +363,12 @@ function validCommand(cmd: unknown): boolean {
     case "setMotion":
       return typeof cmd["reduce"] === "boolean";
     case "pickAt":
-      return finite(cmd["x"]) && finite(cmd["y"]);
+      return (
+        finite(cmd["x"]) &&
+        finite(cmd["y"]) &&
+        optional(cmd["pointer"], (v) => PICK_POINTERS.has(v)) &&
+        optional(cmd["reqId"], Number.isSafeInteger)
+      );
     case "export":
       return Number.isSafeInteger(cmd["reqId"]);
     case "setPriceScale":
