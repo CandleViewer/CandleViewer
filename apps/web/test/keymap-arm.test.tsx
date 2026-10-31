@@ -181,7 +181,7 @@ describe("the wired host: E30 injects the session's arm with setArmPort", () => 
     vi.resetModules();
     m = await load();
   });
-  const toast = (): HTMLElement => screen.getByTestId("toast-host");
+  const toast = (): HTMLElement => screen.getByRole("region", { name: "Notifications" });
   /** Ctrl+Enter from the focused ticket; false when the host took the key (`preventDefault`). */
   const submit = (): boolean => fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
   function mountTicket(run: () => void): void {

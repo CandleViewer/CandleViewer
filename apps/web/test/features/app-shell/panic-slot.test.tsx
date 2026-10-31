@@ -126,7 +126,7 @@ describe("E10-S01 S7: Ctrl+Shift+K is reserved for the freeze confirmation, with
     const notPrevented = fireEvent.keyDown(window, { key: "k", ctrlKey: true, shiftKey: true });
     expect(notPrevented).toBe(true);
     expect(run).not.toHaveBeenCalled();
-    expect(screen.getByTestId("toast-host").childNodes).toHaveLength(0);
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
     off();
   });
 });

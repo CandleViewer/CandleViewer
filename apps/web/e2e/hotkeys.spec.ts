@@ -159,9 +159,8 @@ test("inert press of an unregistered destructive binding explains once, politely
   await expect(page.getByRole("main")).toBeVisible();
   await expect(page.getByTestId("toast-host")).toBeAttached();
   for (let i = 0; i < 3; i++) await page.keyboard.press("Control+Shift+X");
-  const host = page.getByTestId("toast-host");
-  await expect(host).toHaveAttribute("role", "status");
-  await expect(host.locator("p")).toHaveCount(1);
+  const host = page.getByRole("region", { name: "Notifications" });
+  await expect(host.getByRole("group")).toHaveCount(1);
   await expect(host).toContainText(
     "Cancel all working orders for symbol is not available here (DOM view)",
   );
@@ -175,7 +174,9 @@ test("inert press of a context-gated command (drawing selected) explains what it
   await page.goto("/terminal/last");
   await expect(page.getByRole("main")).toBeVisible();
   await page.keyboard.press("Delete");
-  await expect(page.getByTestId("toast-host")).toContainText("needs drawing selected");
+  await expect(page.getByRole("region", { name: "Notifications" })).toContainText(
+    "needs drawing selected",
+  );
 });
 
 test("a rebind persists across reload", async ({ page }) => {

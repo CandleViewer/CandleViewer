@@ -190,7 +190,10 @@ const polite = (): string =>
 /** CMP-160's polite region: the surface's one (§9.2). */
 const region = (): Element | null =>
   dialog().querySelector('[data-cmp="CMP-160"] > [role="status"]');
-const toasts = (): number => screen.getByTestId("toast-host").childNodes.length;
+const toasts = (): number => {
+  const stack = screen.queryByRole("region", { name: "Notifications" });
+  return stack === null ? 0 : within(stack).queryAllByRole("group").length;
+};
 /** The preview's tick ("tick 0.10"), if a preview shows. */
 const tick = (): string | undefined => dialog().textContent?.match(/tick [\d.]+/)?.[0];
 /** Lets an answer land on the fake clock. */

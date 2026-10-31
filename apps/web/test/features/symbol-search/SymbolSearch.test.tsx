@@ -322,7 +322,7 @@ describe("SCR-102 symbol search (E08-S09 PR C1)", () => {
     press(trigger());
     type("btc");
     for (const k of ["b", " ", "Enter", "ArrowLeft", "Tab", "Delete", "c", "PageDown"]) key(k);
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
     act(() => input().focus()); // Tab went round to Close, whose tooltip would take the first Esc
     key("Escape");
     expect(trigger()).toHaveAttribute("aria-expanded", "false");
@@ -374,8 +374,10 @@ describe("SCR-102 symbol search (E08-S09 PR C1)", () => {
     await shell(undefined);
     for (let i = 0; i < 2; i++) act(() => void fireEvent.keyDown(document.body, { key: "/" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByTestId("toast-host").childNodes).toHaveLength(1);
-    expect(screen.getByTestId("toast-host")).toHaveTextContent(
+    expect(
+      within(screen.getByRole("region", { name: "Notifications" })).getAllByRole("group"),
+    ).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Notifications" })).toHaveTextContent(
       /^Symbol search is not available here/,
     );
   });

@@ -71,9 +71,8 @@ describe("inert press explains itself (wired host)", () => {
     for (let i = 0; i < 3; i++)
       fireEvent.keyDown(window, { key: "X", ctrlKey: true, shiftKey: true });
     expect(run).not.toHaveBeenCalled();
-    const host = screen.getByTestId("toast-host");
-    expect(host).toHaveAttribute("role", "status");
-    expect(host.querySelectorAll("p")).toHaveLength(1);
+    const host = screen.getByRole("region", { name: "Notifications" });
+    expect(within(host).getAllByRole("group")).toHaveLength(1);
     expect(host.textContent).toMatch(/Cancel all working orders/);
     off();
   });
@@ -265,7 +264,7 @@ describe("profile persistence + Rules-context inert explanation", () => {
     );
     screen.getByLabelText("rule editor").focus();
     fireEvent.keyDown(window, { key: "s", ctrlKey: true });
-    expect(screen.getByTestId("toast-host")).toHaveTextContent(
+    expect(screen.getByRole("region", { name: "Notifications" })).toHaveTextContent(
       /Save draft is not available here \(Rules view\)/,
     );
     off();
@@ -293,7 +292,7 @@ describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)"
     // A key dispatched at the window reads the focused element as its target.
     expect(fireEvent.keyDown(window, { key: "/", code: "Slash" })).toBe(true);
     expect(open).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
     off();
   });
 
@@ -312,7 +311,7 @@ describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)"
     const row = screen.getByRole("button", { name: "Journal row" });
     row.focus();
     for (let i = 0; i < 2; i++) fireEvent.keyDown(row, { key: "Escape", code: "Escape" });
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
   });
 
   it("D6: in a ticket a typed `b` stays text, and so does a key a control took first or an IME composes", () => {
@@ -386,7 +385,7 @@ describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)"
         fireEvent.keyDown(focused, { key });
       }
     }
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
   });
 
   it("G-07: a held Ctrl+/ opens the cheatsheet once; its auto-repeat is taken, not toggled", () => {
@@ -419,7 +418,7 @@ describe("#305 PR A: the typing guard in the wired host (AC6, D6, D7, D8, G-07)"
     chart.focus();
     expect(fireEvent.keyDown(chart, { key: "F11", code: "F11" })).toBe(false);
     expect(panel).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
     off();
   });
 
