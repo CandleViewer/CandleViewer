@@ -2,14 +2,15 @@
 
 `main` runs in process. The shared seeder is a fake that writes the TOTP file as the real one does
 and hashes nothing (argon2id is slow, and no database is needed), and the database probe is a fake.
-Generated values are read back from the run directory, so a leak can be searched for. No network,
-no sleep.
+Generated values are read back from the run directory, so every output can be searched for them.
+No network, no sleep.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import inspect
 import json
 import logging
@@ -17,7 +18,7 @@ import os
 import re
 import secrets
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -35,7 +36,7 @@ from scripts import seed_fixture_user
 
 KEY_HEX, PEPPER = "11" * 32, "unit-pepper-marker"
 DSN_MARK, DB_MARK, RUN_MARK = "dsn-marker-7", "dbmark_prod", "runmark-7f3"
-DSN = f"postgresql+asyncpg://cv:{DSN_MARK}@db.invalid:5432/fixture_test"
+DSN = f"postgresql+asyncpg://cv:{DSN_MARK}@x.invalid/fixture_test"
 MARKS = {PEPPER, KEY_HEX, DSN, DSN_MARK, DB_MARK, RUN_MARK, "attest"}  # what a refusal never echoes
 #: The plan's roster (`qa/plans/e27-accounts-test-plan.md` 9.1 and two more Owners), spelled out
 #: here apart from the module's own.
@@ -129,8 +130,9 @@ def _go(
 # --- Refusals: one fixed line, exit 2, nothing written, nothing echoed -------------------------
 
 
-def _run_arg(kind: str, tmp: Path, run: Path) -> str:
-    """The `--run-dir` argument for `kind`, the filesystem prepared as that refusal needs."""
+def _run_arg(kind: str, tmp: Path, run: Path, patch: pytest.MonkeyPatch) -> str:
+    """The `--run-dir` argument for `kind`, the filesystem (or the effective uid) prepared as that
+    refusal needs."""
     match kind:
         case "relative":
             return "run"
@@ -153,6 +155,13 @@ def _run_arg(kind: str, tmp: Path, run: Path) -> str:
             (run / "pw-qa-owner-2").write_text("kept")
         case "dangling-link":
             (run / "totp-qa-owner-1").symlink_to(tmp / "nowhere")
+        case "other-owner":  # the directory is the current user's; the effective uid is not
+            other = os.geteuid() + 1
+            patch.setattr(os, "geteuid", lambda: other)
+        case "group-access":
+            run.chmod(0o750)
+        case "other-access":
+            run.chmod(0o707)
     return str(run)
 
 
@@ -180,6 +189,9 @@ REFUSALS: dict[str, tuple[dict[str, Any], str]] = {
     "dangling-marker-link": ({"dir": "dangling-marker"}, seed.ALREADY_SEEDED),
     "existing-file": ({"dir": "existing-file"}, seed.FILE_EXISTS),
     "dangling-link-in-the-way": ({"dir": "dangling-link"}, seed.FILE_EXISTS),
+    "run-dir-of-another-owner": ({"dir": "other-owner"}, seed.RUN_DIR_SHARED),
+    "run-dir-open-to-the-group": ({"dir": "group-access"}, seed.RUN_DIR_SHARED),
+    "run-dir-open-to-others": ({"dir": "other-access"}, seed.RUN_DIR_SHARED),
     "no-pepper": ({"auth_pepper": SecretStr("")}, seed.NO_PEPPER),
     "no-totp-key": ({"auth_totp_key_hex": None}, seed.BAD_TOTP_KEY),
     "totp-key-not-hex": ({"auth_totp_key_hex": SecretStr("zz" * 32)}, seed.BAD_TOTP_KEY),
@@ -212,7 +224,7 @@ def test_seed_refuses_outside_the_dev_gate(
         monkeypatch.setenv(key, value)
     settings, seeder = _settings(tmp_path, **fields), FakeSeeder()
     probe, command = FakeProbe(*extra.get("db", ())), extra.get("command", "users")
-    run_arg = _run_arg(extra.get("dir", ""), tmp_path, run_dir)
+    run_arg = _run_arg(extra.get("dir", ""), tmp_path, run_dir, monkeypatch)
     before = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
 
     with structlog.testing.capture_logs() as events:
@@ -227,7 +239,7 @@ def test_seed_refuses_outside_the_dev_gate(
     assert seeder.calls == [] and len(probe.calls) == (2 if "db" in extra else 0)
     shown = [out, err, str(raised.value), repr(raised.value), *map(str, events)]
     shown += [record.getMessage() for record in caplog.records]
-    assert not any(mark in text for mark in MARKS for text in shown)
+    assert not any(mark in text for mark in (*MARKS, str(tmp_path)) for text in shown)
 
 
 # --- A good run: the roster, the files, their modes -----------------------------------------
@@ -246,9 +258,12 @@ def test_users_seeds_the_roster_through_the_shared_seeder(
     assert [(a[1], k["role"]) for a, k in seeder.calls] == list(zip(USERS, ROLES, strict=True))
     passwords = {user: (run_dir / f"pw-{user}").read_text() for user in USERS}
     assert all(re.fullmatch(r"[A-Za-z0-9_-]{32}", p) for p in passwords.values())
-    assert len(set(passwords.values())) == 6  # one password a user
+    distinct = len(set(passwords.values())) == 6  # one password a user: a boolean, never a value
+    assert distinct
     for args, kwargs in seeder.calls:
-        assert (args[0], args[2], args[3]) == (DSN, passwords[args[1]], PEPPER)
+        handed = args[2] == passwords[args[1]]  # a boolean: a failure never shows the password
+        assert handed, args[1]
+        assert (args[0], args[3]) == (DSN, PEPPER)
         assert kwargs["totp_out"] == run_dir / f"totp-{args[1]}"
     encryptor = seeder.calls[0][1]["totp"]
     assert isinstance(encryptor, TotpEncryptor) and encryptor.key_ref == LOCAL_KEY_REF
@@ -308,20 +323,35 @@ def test_seed_writes_only_inside_the_run_dir(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The spy sees every `os.open` that creates or writes (the module's one creation primitive,
-    which the AST test below pins); the tree comparison sees a file made by any route."""
-    settings, created, real_open = _settings(tmp_path), [], os.open
+    """Spies see every route a write can take, wherever it is aimed: `os.open` (the module's one
+    creation primitive, which the AST test below pins), `builtins.open` in a writing mode, and
+    `Path.write_text` and `write_bytes`. The tree comparison sees a file made by any other route
+    inside `tmp_path`."""
+    settings, created, real_open, other_routes = _settings(tmp_path), [], os.open, []
 
     def spy(path: Any, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
         if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT):
             created.append((Path(path), flags))
         return real_open(path, flags, mode, **kwargs)
 
+    def watch(patch: pytest.MonkeyPatch, owner: Any, name: str, when: Callable[..., bool]) -> None:
+        real = getattr(owner, name)
+
+        def spy_write(first: Any, *args: Any, **kwargs: Any) -> Any:
+            if when(*args, **kwargs):
+                other_routes.append(f"{name}: {first}")
+            return real(first, *args, **kwargs)
+
+        patch.setattr(owner, name, spy_write)
+
     with monkeypatch.context() as patch:
         patch.setattr(os, "open", spy)
+        watch(patch, builtins, "open", lambda mode="r", *_a, **_k: bool(set(mode) & set("wax+")))
+        watch(patch, Path, "write_text", lambda *_a, **_k: True)
+        watch(patch, Path, "write_bytes", lambda *_a, **_k: True)
         code = _go(capsys, run_dir, settings)[0]
 
-    assert code == 0
+    assert code == 0 and other_routes == []
     assert sorted(path.name for path, _ in created) == sorted(CLOSED)  # each once, no other
     assert {path.parent for path, _ in created} == {run_dir}
     exclusive = os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
@@ -365,7 +395,7 @@ def test_no_generated_value_reaches_a_log_or_output(
     runs["existing"] = FakeSeeder(existing=frozenset({"qa-owner-3"}))
     with structlog.testing.capture_logs() as events:
         for name, seeder in runs.items():
-            (tmp_path / name / "run").mkdir(parents=True)
+            (tmp_path / name / "run").mkdir(parents=True, mode=0o700)
             code, out, err = _go(
                 capsys, tmp_path / name / "run", _settings(tmp_path / name), seeder
             )
@@ -454,16 +484,23 @@ async def test_the_database_probe_reads_in_a_read_only_transaction(
     engine.dispose.assert_awaited_once()
 
 
-def _calls(function: ast.AST) -> list[str]:
-    """The dotted names called inside `function`, in source order."""
-    calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)]
+#: The attribute of any call that writes, makes, moves or removes a file, or opens one to do so.
+WRITE_ATTRS = frozenset(
+    "write_text write_bytes open touch mkdir rename replace symlink_to unlink".split()
+)
+
+
+def _calls(node: ast.AST) -> list[str]:
+    """The dotted names called inside `node` (a function or the module), in source order."""
+    calls = [child for child in ast.walk(node) if isinstance(child, ast.Call)]
     return [ast.unparse(c.func) for c in sorted(calls, key=lambda c: (c.lineno, c.col_offset))]
 
 
 def test_the_seed_gate_runs_before_any_io() -> None:
     """In `run`, the gate comes before every call that reaches a file, a database or an event loop;
-    in `seed_users`, the probe and its check come before the first write and the shared seeder; and
-    the module's own I/O sits in three functions only."""
+    in `seed_users`, the probe and its check come before the first write and the shared seeder; the
+    module's own I/O sits in three functions only, and no write form appears anywhere else in the
+    module; and `seed_users` takes the gate's own result type, which only `gate` makes."""
     tree = ast.parse(Path(seed.__file__).read_text("utf-8"))
     functions = {
         n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
@@ -481,3 +518,8 @@ def test_the_seed_gate_runs_before_any_io() -> None:
         "probe_database": ["create_async_engine"],
         "run": ["asyncio.run"],
     }
+    # every write form of the whole module, `Path(...).write_text` and the rest included
+    assert [name for name in _calls(tree) if name.rsplit(".", 1)[-1] in WRITE_ATTRS] == ["os.open"]
+    taken = inspect.signature(seed.seed_users).parameters["run_dir"].annotation
+    assert [n for n, f in functions.items() if "RunDir" in _calls(f)] == ["gate"]
+    assert taken == inspect.signature(seed.gate).return_annotation == "RunDir"

@@ -17,8 +17,9 @@ never a value or a traceback:
 1. ADR-0036's structural gate (`cli.armed`): demo, the synthetic feed, no `CV_BYBIT_API_*` variable
    of any name, no test clock, the scenario and its state directory set. There is no `CV_ENV=dev`.
 2. The run directory: absolute, no `..`, its own real path (no link in or above it), an existing
-   directory with no `.seeded` marker and none of the files this command makes. Both come before
-   any file or database access of this module's own.
+   directory that the effective uid owns and that has no group or other permission bit, with no
+   `.seeded` marker and none of the files this command makes. Both come before any file or
+   database access of this module's own, and `seed_users` takes only the `RunDir` that `gate` makes.
 3. One read-only transaction before the first write: the database is named `test` or ends `_test`,
    and `users`, `exchange_accounts` and `api_keys` hold no row.
 
@@ -36,7 +37,7 @@ import secrets
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Final, NamedTuple
+from typing import Final, NamedTuple, NewType
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -53,6 +54,9 @@ INVALID_SETTINGS: Final = "invalid settings; nothing changed"
 RUN_DIR_RELATIVE: Final = "the run directory must be an absolute path without '..'"
 RUN_DIR_LINKED: Final = "the run directory must be a real directory, not a symlink or under one"
 RUN_DIR_MISSING: Final = "the run directory does not exist"
+RUN_DIR_SHARED: Final = (
+    "the run directory must be owned by the invoking user, with no group or other access"
+)
 ALREADY_SEEDED: Final = "the run directory already holds a seed marker: a run is seeded once"
 FILE_EXISTS: Final = "the run directory already holds a file the seed would create"
 NO_PEPPER: Final = "CV_AUTH_PEPPER must be set to seed users"
@@ -61,7 +65,7 @@ NOT_THROWAWAY: Final = "the database is not a throwaway one: its name is not 'te
 NOT_EMPTY: Final = "the database already holds users, exchange accounts or API keys"
 USER_EXISTS: Final = "a user of the roster already exists: the run is incomplete, start a new run"
 NOT_BUILT: Final = "this command is not built yet: only 'users' is available"
-FAILED: Final = "the seed could not be completed: start a new run"
+FAILED: Final = "the seed did not complete: start a new run"
 
 SEEDED_MARKER: Final = ".seeded"
 ROSTER_FILE: Final = "roster.json"
@@ -71,6 +75,7 @@ TOTP_PREFIX: Final = "totp-"
 PASSWORD_BYTES: Final = 24
 PASSWORD_MODE: Final = 0o400
 PUBLIC_MODE: Final = 0o444
+GROUP_OTHER_BITS: Final = 0o077  # any of these on the run directory refuses it
 _CREATE_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
 _READ_ONLY: Final = sa.text("SET TRANSACTION READ ONLY")
 _FACTS: Final = sa.text(
@@ -121,6 +126,9 @@ class DatabaseFacts(NamedTuple):
 #: database probe, both injected so that a test needs neither Postgres nor argon2id.
 Seeder = Callable[..., Awaitable[str | None]]
 Probe = Callable[[str], Awaitable[DatabaseFacts]]
+#: A run directory that `gate` passed: the one type `seed_users` takes, made by `gate` and nowhere
+#: else, so a caller cannot reach the seed without the gate (a test pins both).
+RunDir = NewType("RunDir", Path)
 
 
 def _fresh_run_dir(value: str) -> Path:
@@ -131,6 +139,9 @@ def _fresh_run_dir(value: str) -> Path:
         raise SeedRefused(RUN_DIR_LINKED)
     if not path.is_dir():
         raise SeedRefused(RUN_DIR_MISSING)
+    info = path.stat()
+    if info.st_uid != os.geteuid() or info.st_mode & GROUP_OTHER_BITS:
+        raise SeedRefused(RUN_DIR_SHARED)
     if os.path.lexists(path / SEEDED_MARKER):
         raise SeedRefused(ALREADY_SEEDED)
     if any(os.path.lexists(path / name) for name in USER_FILES if name != SEEDED_MARKER):
@@ -138,14 +149,14 @@ def _fresh_run_dir(value: str) -> Path:
     return path
 
 
-def gate(settings: Settings, run_dir: str) -> Path:
+def gate(settings: Settings, run_dir: str) -> RunDir:
     """The gate's first two checks, before any file or database access of this module's own: the
     run directory, checked, or `SeedRefused`."""
     try:
         armed(settings)
     except CliRefused as refused:
         raise SeedRefused(str(refused)) from None  # Settings' fixed messages: a rule, never a value
-    return _fresh_run_dir(run_dir)
+    return RunDir(_fresh_run_dir(run_dir))
 
 
 def check_database(facts: DatabaseFacts) -> None:
@@ -196,7 +207,7 @@ def _create(directory: Path, name: str, content: str, mode: int) -> None:
 
 
 async def seed_users(
-    run_dir: Path, settings: Settings, *, seeder: Seeder = seed, probe: Probe = probe_database
+    run_dir: RunDir, settings: Settings, *, seeder: Seeder = seed, probe: Probe = probe_database
 ) -> tuple[str, ...]:
     """Seed `ROSTER` into the stack's database and `run_dir`; the usernames, in roster order."""
     pepper, encryptor = _auth_material(settings)
