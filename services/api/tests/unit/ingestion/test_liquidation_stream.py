@@ -13,7 +13,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.bus.bus import Bus
-from candleviewer.bus.models import QueuePolicy
+from candleviewer.bus.models import QueuePolicy, Topic
 from candleviewer.exchange.base.models import LiquidationEvent
 from candleviewer.exchange.bybit.liquidations import liquidation_topic, parse_liquidation_frame
 from candleviewer.ingestion.liquidation_stream import LiquidationStream
@@ -194,3 +194,26 @@ async def test_stream_start_and_stop_own_their_tasks() -> None:
     assert len(rig.stream._tasks) == 3
     await rig.stream.stop()
     assert rig.stream._tasks == []
+
+
+async def test_stream_health_loop_counts_a_drop_and_release_frees_demand() -> None:
+    rig = Rig()
+    gate = asyncio.Event()
+
+    async def block(_s: float) -> None:
+        await gate.wait()  # the sync loop parks here: no busy turn
+
+    rig.stream._sleep = block
+    rig.stream.acquire("c", "BTCUSDT")
+    assert rig.stream.is_listed("BTCUSDT")
+    await rig.stream.start()
+    health = Topic(env="live", domain="health", detail="feed")
+    await rig.bus.publish(health, feed_health("*", "degraded", 0.0, now_us=NOW_US))
+    for _ in range(50):
+        if rig.obs.reconnects:
+            break
+        await asyncio.sleep(0)
+    await rig.stream.stop()
+    assert rig.obs.reconnects == 1
+    rig.stream.release("c", "BTCUSDT")
+    rig.stream.note_gap("dispatch_overflow", "BTCUSDT")
