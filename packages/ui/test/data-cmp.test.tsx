@@ -22,6 +22,7 @@ import {
   NumericStepperInput,
   PageHeader,
   RadioGroup,
+  RecorderStatusRow,
   SearchBox,
   SegmentedControl,
   Select,
@@ -162,6 +163,7 @@ const molecules: [string, () => JSX.Element][] = [
       </AuditRowList>
     ),
   ],
+  ["CMP-177", () => <RecorderStatusRow symbol="BTCUSDT" reason="manual" state="recording" />],
   ["CMP-178", () => <SystemHealthTile label="Users" href="#users" state="ready" tone="ok" />],
 ];
 
