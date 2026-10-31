@@ -17,6 +17,7 @@ condition); a refusal is a 403, audited first as `alert.scope_refused`.
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
 # handler signatures at definition time (string annotations cannot see the closures).
 
+import re
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -101,6 +102,12 @@ class AlertInput(BaseModel):
 SNOOZE_MAX = timedelta(days=30)
 
 
+#: `YYYY-MM-DDTHH:MM[:SS[.f]]` plus `Z` or `+hh:mm`: pydantic's lax parser also takes "4102444800".
+_ISO_INSTANT = re.compile(
+    r"\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}([.,]\d+)?)?([Zz]|[+-]\d{2}(:?\d{2})?)?"
+)
+
+
 class _SnoozeBody(BaseModel):
     """`setAlertSnooze`: `until` is required; `null` clears the snooze."""
 
@@ -113,6 +120,8 @@ class _SnoozeBody(BaseModel):
         """A numeric epoch (or bool) is not an instant on the wire: only an ISO string or null."""
         if value is not None and not isinstance(value, str):
             raise ValueError("until must be an ISO 8601 string or null")
+        if value is not None and not _ISO_INSTANT.fullmatch(value):
+            raise ValueError("until must be an ISO 8601 date-time with a UTC offset")
         return value
 
 
