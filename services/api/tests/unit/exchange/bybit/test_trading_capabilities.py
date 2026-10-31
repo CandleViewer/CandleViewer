@@ -84,6 +84,7 @@ SECTION_14_1: dict[str, Any] = {
     "position_modes": ("one_way", "hedge"),
     "trigger_sources": ("last", "mark", "index"),
     "trailing_stop_unit": "price_distance",
+    "auto_remediate": True,
 }
 VENUES: dict[str, dict[str, Any]] = {
     "live": {
