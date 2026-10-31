@@ -5,8 +5,9 @@ cut the same way, on a first `auth` and on a re-`auth` (§4.3). Flag keys are cu
 `visibility` through the predicate the router is given (E42-T03), and by nothing without one.
 
 The real `/ws` router runs on the test's loop behind a fake socket: no threads, no sleeps. A client
-`ping` is the barrier: one FIFO queue (flag off), so its `pong` follows every frame queued before
-it, and a `pong` first proves nothing was."""
+`ping` is the barrier: `system` frames and the `pong` share the pipeline's priority lane, which is
+FIFO (§8.4), so its `pong` follows every `system` frame queued before it, and a `pong` first
+proves none was."""
 
 from __future__ import annotations
 
