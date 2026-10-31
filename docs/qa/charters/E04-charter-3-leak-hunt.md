@@ -1,7 +1,7 @@
 # E04-C3 Charter: leak hunt (output surfaces)
 
 - Ticket: E04-Q02 (#257) · Format: session-based test management · Date: 2026-10-31
-- Plan: `docs/qa/test-plans/e04-observability-charters.md` (base, rulings, regression pack, blind-spot report, sign-off draft).
+- Plan: `docs/qa/test-plans/e04-observability-charters.md` (base, rulings, sign-off draft); regression pack `qa/plans/e04-regression-pack.md`; blind-spot report `docs/qa/e04-blind-spots.md`.
 - Tester: AI agent. The "Security engineer" seat is the security-reviewer lens on these notes (BQ-03, ruled). **Deviation (honest scope):** an agent ran the static and in-process work. It is not a human session, and the lens has not run yet. No stack ran, so no real log stream, alert payload, bundle or dashboard was read.
 - Canary values only (`CANARY-SECRET-` prefix, as E04-Q01). No real credential was used, read or printed. No network (C-13.5).
 - **If a real secret is found on any surface, it is reported privately under `SECURITY.md` (C-12.13), never as a public issue.** The exposure-window assessment goes in that private report (BQ-03, ruled). None was found.

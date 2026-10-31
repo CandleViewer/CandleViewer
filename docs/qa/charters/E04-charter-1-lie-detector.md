@@ -1,7 +1,7 @@
 # E04-C1 Charter: lie detector (health reporting)
 
 - Ticket: E04-Q02 (#257) · Format: session-based test management · Date: 2026-10-31
-- Plan: `docs/qa/test-plans/e04-observability-charters.md` (base, rulings, regression pack, blind-spot report, sign-off draft).
+- Plan: `docs/qa/test-plans/e04-observability-charters.md` (base, rulings, sign-off draft); regression pack `qa/plans/e04-regression-pack.md`; blind-spot report `docs/qa/e04-blind-spots.md`.
 - Tester: AI agent. **Deviation (honest scope):** an agent ran the static and in-process work. It is not a human session. There was no running stack, no docker, no browser and no Grafana. Every live technique is **not attempted — blocked on the PRR staging re-run** (BQ-01, ruled; #210's exception is extended to these legs under the delegation). Nothing here was observed on a running system.
 - No credentials used. No network: the suites and probes ran in-process against fakes and a fake clock (C-13.5).
 
