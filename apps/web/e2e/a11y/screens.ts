@@ -22,6 +22,7 @@ export const PR_IDS: ReadonlySet<string> = new Set(["R-001", "R-901", "R-902", "
 const SIGNED_IN = new Map<string, NonNullable<A11yScreen["signedIn"]>>([
   ["R-201", { role: "owner", heading: "Security settings" }],
   ["R-203", { role: "owner", heading: "Appearance" }],
+  ["R-111", { role: "owner", heading: "Watchlist" }],
 ]);
 
 export const FULL = process.env["A11Y_SWEEP"] === "full";

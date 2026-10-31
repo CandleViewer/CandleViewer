@@ -1,10 +1,11 @@
 import { expect, type Page } from "@playwright/test";
-import { stubSession, stubSessionsList } from "../support/api";
+import { stubSession, stubSessionsList, stubWatchlists } from "../support/api";
 import type { A11yScreen } from "./screens";
 
 /** Per-screen data stubs, so the collectors audit the populated state, not an error. */
 const SCREEN_STUBS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "R-201": stubSessionsList, // SCR-112 sessions: the table with the current session marked
+  "R-111": stubWatchlists, // SCR-100: a list and its instruments
 };
 
 /**
@@ -34,4 +35,5 @@ export async function openScreen(page: Page, s: A11yScreen): Promise<void> {
     `${s.id}: its h1 did not render`,
   ).toBeVisible();
   if (s.id === "R-201") await page.getByRole("table").waitFor(); // the list state, not loading
+  if (s.id === "R-111") await page.getByRole("grid", { name: /^Watchlist Majors/ }).waitFor();
 }

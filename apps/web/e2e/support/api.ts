@@ -155,6 +155,44 @@ export function sessionsPage(): unknown {
   return { items, meta: { next_cursor: null, has_more: false, count: items.length } };
 }
 
+/**
+ * SCR-100 on R-111 (E08-S08): `GET /watchlists` as 22 `listWatchlists` answers it, with one list whose id is the a11y
+ * collectors' path segment (`/watchlist/x`), and `GET /instruments` (`listInstruments`, one page) with the Trading
+ * instruments it holds, so the page is audited populated, not as its error state. No ticker frame: the rows read as
+ * the client holds no value.
+ */
+export async function stubWatchlists(page: Page): Promise<void> {
+  const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+  const watchlist: Schemas["Watchlist"] = {
+    id: "x",
+    name: "Majors",
+    symbols,
+    columns: [],
+    version: 1,
+    created_at: "2026-10-30T10:00:00Z",
+    updated_at: "2026-10-30T10:00:00Z",
+  };
+  await stubGet(page, "/api/v1/watchlists", () => ({ items: [watchlist] }));
+  const instrument = (symbol: string): Schemas["Instrument"] => ({
+    symbol,
+    category: "linear",
+    status: "Trading",
+    price_scale: 2,
+    tick_size: "0.01",
+    qty_step: "0.001",
+  });
+  await stubGet(page, "/api/v1/instruments", () => ({
+    items: symbols.map(instrument),
+    meta: {
+      next_cursor: null,
+      has_more: false,
+      count: symbols.length,
+      cache_age_s: 1,
+      stale_since: null,
+    },
+  }));
+}
+
 /** Answers `GET /auth/sessions` (any cursor or limit) with `sessionsPage()`. */
 export async function stubSessionsList(page: Page): Promise<void> {
   await page.route(
