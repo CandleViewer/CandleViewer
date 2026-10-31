@@ -19,7 +19,7 @@ import ast
 import asyncio
 import inspect
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 import pytest
@@ -88,7 +88,7 @@ async def rig(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Rig]:
     await built.facade.stop()
 
 
-def _unscoped(lines: list[Mapping[str, Any]]) -> list[str]:
+def _unscoped(lines: Sequence[Mapping[str, Any]]) -> list[str]:
     """The events of lines that name an order but miss one of its fields."""
     return [
         str(line.get("event"))

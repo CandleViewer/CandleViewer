@@ -37,15 +37,14 @@ from candleviewer.oms_detect_wiring import (
     IncidentEventRows,
     RateRemaining,
     ServedIncidentBus,
-    build_detect_stores,
     stop_detection,
     thresholds_of,
 )
+from candleviewer.oms_wiring import build_detect_stores
 from candleviewer.settings import Settings
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT
 from candleviewer.storage.repositories.stuck import InMemoryStuckReads
 from candleviewer.storage.repositories.stuck_sqlalchemy import SqlAlchemyStuckReads
-from candleviewer.storage.repositories.trading_accounts import InMemoryTradingAccountReads
 from tests.unit.oms.order_rig import Pager
 from tests.unit.oms.stuck_rig import ACCOUNT, OTHER, T0, link
 
@@ -203,7 +202,7 @@ def _rate(port: Port, refs: dict[UUID, AccountRef | Exception]) -> tuple[RateRem
         return got
 
     rate = RateRemaining(
-        metrics, port, environment="demo", environment_accounts=accounts, resolve=resolve,
+        metrics, port, environment="demo", account_ids=accounts, resolve=resolve,
         monotonic=lambda: clock[0],
     )  # fmt: skip
     return rate, metrics
@@ -248,12 +247,21 @@ def test_the_gauge_names_the_closed_lane_set_and_no_account() -> None:
 
 
 def test_its_stores_are_on_a_pool_of_their_own_at_the_stores_cap() -> None:
+    """The runtime's module builds them, as it alone names the principal-free account reads the
+    rate gauge resolves its accounts through (C-12.4)."""
     stores = build_detect_stores(Settings(oms_statement_timeout_ms=1800))
     assert isinstance(stores.reads, SqlAlchemyStuckReads)
     pool = stores.reads._relational
     assert pool._application_name_suffix == DETECT_POOL_NAME == "oms-detect"
-    assert (pool.engine.pool.size(), pool.engine.pool._max_overflow) == (DETECT_POOL_SIZE, 0)
+    queue: Any = pool.engine.pool  # the async engine's queue pool, sized as built
+    assert (queue.size(), queue._max_overflow) == (DETECT_POOL_SIZE, 0)
     assert stores.reads._timeout == "1800"
+    events: Any = stores.events  # `PgSystemEventWriter`, typed as the port
+    assert events._repo is pool  # its rows on the same pool, never the OMS's
+
+
+async def _unread(_account_id: AccountId) -> AccountRef:
+    raise OrderRefused("no account resolves in this test")
 
 
 @dataclass
@@ -283,8 +291,8 @@ def _runtime(released: Released, pager: Pager, loop: Loop | None = None) -> Dete
         return ()
 
     stores = DetectStores(
-        reads=InMemoryStuckReads(), events=EventWriter(), environment_accounts=accounts,
-        accounts=InMemoryTradingAccountReads(), release=released.release,
+        reads=InMemoryStuckReads(), events=EventWriter(), account_ids=accounts, resolve=_unread,
+        release=released.release,
     )  # fmt: skip
     publisher = BusIncidents(Bus(), environment="demo")
     return DetectRuntime(loop or Loop(), stores, publisher, pager)
@@ -349,8 +357,8 @@ async def test_the_runtime_composes_it_closes_it_first_and_degrades_on_its_stall
         return ()
 
     stores = DetectStores(
-        reads=InMemoryStuckReads(), events=EventWriter(), environment_accounts=accounts,
-        accounts=InMemoryTradingAccountReads(), release=released.release,
+        reads=InMemoryStuckReads(), events=EventWriter(), account_ids=accounts, resolve=_unread,
+        release=released.release,
     )  # fmt: skip
     world = World(handover_store=_Store(), reconcile_reads=Reads())
     for flag in world.flags:

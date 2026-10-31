@@ -26,7 +26,7 @@ from uuid import UUID
 
 import psycopg
 import pytest
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine import Dialect, make_url
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.admin.wiring import system_event_redactor
@@ -47,6 +47,7 @@ pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
 Conn = psycopg.Connection[tuple[Any, ...]]
+_POSTGRES: Dialect = make_url("postgresql+psycopg://").get_dialect()()
 
 
 def _alembic(dsn: str, *args: str) -> subprocess.CompletedProcess[str]:
@@ -120,8 +121,7 @@ def _position(
 
 
 def _plan(c: Conn, stmt: Any) -> str:
-    sql = str(stmt.compile(dialect=postgresql.psycopg.dialect(),
-                           compile_kwargs={"literal_binds": True}))  # fmt: skip
+    sql = str(stmt.compile(dialect=_POSTGRES, compile_kwargs={"literal_binds": True}))
     c.execute("SET enable_seqscan = off")
     try:
         return "\n".join(row[0] for row in c.execute(f"EXPLAIN {sql}").fetchall())

@@ -6,10 +6,11 @@ The OMS runtime (`oms_wiring`) builds it in one block of its composition, on the
 the private-stream consumer, where its stores carry the detector's own (`DetectStores`, none on a
 composition with no Postgres). `build_stuck_detection` binds the detector's ports:
 
-* its reads (`SqlAlchemyStuckReads`), its `system_events` rows (`PgSystemEventWriter`, through the
-  redaction serializer every row passes) and the account reads `bybit_rate_remaining` needs, all on
-  a pool of its own (`oms-detect`, `DETECT_POOL_SIZE` connections, no overflow), never the OMS pool
-  the submit path writes through (the ticket's performance notes);
+* its reads, its `system_events` rows (through the redaction serializer every row passes) and the
+  account reads `bybit_rate_remaining` needs, all on a pool of its own (`oms-detect`,
+  `DETECT_POOL_SIZE` connections, no overflow), never the OMS pool the submit path writes through
+  (the ticket's performance notes): `DetectStores`, which `oms_wiring.build_detect_stores` builds,
+  as that module alone names the OMS's principal-free account reads (C-12.4);
 * the write-ahead `oms.incident` record through the lane's own audit writer, as `system:oms`
   (`IncidentAuditRecords`, C-2.9);
 * the bus topic `{env}.oms.incident`: the lane hands each incident to the serving loop
@@ -45,12 +46,10 @@ from uuid import UUID
 
 import structlog
 
-from candleviewer.admin.wiring import system_event_redactor
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import Topic
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.models import AccountRef, RateLane
-from candleviewer.health_wiring import PgSystemEventWriter
 from candleviewer.observability import spawn
 from candleviewer.observability.health_probes import SystemEvent
 from candleviewer.observability.metrics import Metrics
@@ -75,14 +74,7 @@ from candleviewer.oms.stuck_detector import (
 )
 from candleviewer.oms_stream_wiring import SYSTEM_ACTOR, AuditEmitter, Notify
 from candleviewer.settings import Settings
-from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
-from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.stuck import StuckReadStore
-from candleviewer.storage.repositories.stuck_sqlalchemy import SqlAlchemyStuckReads
-from candleviewer.storage.repositories.trading_accounts import TradingAccountReads
-from candleviewer.storage.repositories.trading_accounts_sqlalchemy import (
-    SqlAlchemyTradingAccountReads,
-)
 
 __all__ = [
     "DETECT_POOL_NAME",
@@ -99,7 +91,6 @@ __all__ = [
     "IncidentEventRows",
     "RateRemaining",
     "ServedIncidentBus",
-    "build_detect_stores",
     "build_stuck_detection",
     "stop_detection",
     "thresholds_of",
@@ -145,34 +136,15 @@ class EventWriter(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class DetectStores:
-    """What the detector reads and writes on its own pool, and the pool's release."""
+    """What the detector reads and writes on its own pool, and the pool's release: its reads, its
+    `system_events` rows, and for `bybit_rate_remaining` the environment's account ids and each
+    one's trading account (an active key, not deleted), which no route reaches."""
 
     reads: StuckReadStore
     events: EventWriter
-    environment_accounts: Callable[[Environment], Awaitable[Sequence[UUID]]]
-    accounts: TradingAccountReads
+    account_ids: Callable[[Environment], Awaitable[Sequence[UUID]]]
+    resolve: Callable[[AccountId], Awaitable[AccountRef]]
     release: Callable[[], Coroutine[Any, Any, None]]
-
-
-def build_detect_stores(settings: Settings) -> DetectStores:
-    """The detector's stores over a pool of its own, each statement at the OMS stores' cap. Lazy:
-    building them connects nothing; its first scan, once the runtime is `ready`, does."""
-    pool = SqlAlchemyRelationalRepository(
-        settings.pg_dsn.get_secret_value(),
-        DETECT_POOL_NAME,
-        pool_size=DETECT_POOL_SIZE,
-        max_overflow=0,
-    )
-    cap = settings.oms_statement_timeout_ms
-    return DetectStores(
-        reads=SqlAlchemyStuckReads(pool, statement_timeout_ms=cap),
-        events=PgSystemEventWriter(pool, redact_details=system_event_redactor()),
-        environment_accounts=SqlAlchemyOrderStore(
-            pool, statement_timeout_ms=cap
-        ).environment_accounts,
-        accounts=SqlAlchemyTradingAccountReads(pool, statement_timeout_ms=cap),
-        release=pool.dispose,
-    )
 
 
 # --- The sinks' adapters (24 Sec.8.13 "Where an incident goes") -----------------------------------
@@ -284,13 +256,13 @@ class RateRemaining:
         port: Headroom,
         *,
         environment: Environment,
-        environment_accounts: Callable[[Environment], Awaitable[Sequence[UUID]]],
+        account_ids: Callable[[Environment], Awaitable[Sequence[UUID]]],
         resolve: Callable[[AccountId], Awaitable[AccountRef]],
         monotonic: Callable[[], float],
         refresh_s: float = RATE_REFRESH_S,
     ) -> None:
         self._port, self._env = port, environment
-        self._accounts, self._resolve, self._monotonic = environment_accounts, resolve, monotonic
+        self._accounts, self._resolve, self._monotonic = account_ids, resolve, monotonic
         self._refresh_s = refresh_s
         self._refs: tuple[AccountRef, ...] = ()
         self._read_at: float | None = None
@@ -409,7 +381,6 @@ def build_stuck_detection(
     pager: AlertPager,
     metrics: Metrics,
     rate: Headroom,
-    resolve: Callable[[AccountId], Awaitable[AccountRef]],
     ready: Callable[[], bool],
     monotonic: Callable[[], float],
     now: Callable[[], datetime],
@@ -425,8 +396,8 @@ def build_stuck_detection(
         metrics=counted,
     )
     remaining = RateRemaining(
-        metrics, rate, environment=environment, environment_accounts=stores.environment_accounts,
-        resolve=resolve, monotonic=monotonic,
+        metrics, rate, environment=environment, account_ids=stores.account_ids,
+        resolve=stores.resolve, monotonic=monotonic,
     )  # fmt: skip
     jitter = random.SystemRandom()
     detector = StuckDetector(
