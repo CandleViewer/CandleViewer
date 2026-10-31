@@ -13,6 +13,8 @@ from decimal import Decimal
 from typing import Final, Literal
 
 type ClosingSide = Literal["buy", "sell"]
+#: One side's resume point in the dedup key's order, inclusive: `(ts, price, size, batch_index)`.
+type Cut = tuple[int, Decimal, Decimal, int]
 
 STREAM_ALL: Final = "all"
 
@@ -38,4 +40,4 @@ class LiqPrint:
         return (self.ts_us, self.side, self.price, self.size, self.batch_index)
 
 
-__all__ = ["STREAM_ALL", "ClosingSide", "LiqPrint", "closing_side"]
+__all__ = ["STREAM_ALL", "ClosingSide", "Cut", "LiqPrint", "closing_side"]

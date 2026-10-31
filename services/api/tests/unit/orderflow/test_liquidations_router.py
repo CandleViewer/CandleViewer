@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import jsonschema
@@ -200,3 +202,30 @@ def test_liquidations_403_without_marketdata_read() -> None:
         URL, params=_PARAMS
     )
     assert (r.status_code, r.json()["code"], store.queries) == (403, "forbidden", 0)
+
+
+def _nan_after(cursor: str) -> str:
+    raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+    raw["a"][2] = "NaN"
+    return base64.urlsafe_b64encode(json.dumps(raw).encode()).decode().rstrip("=")
+
+
+async def test_liquidations_nan_cursor_is_400_invalid_cursor_not_500() -> None:
+    """r1 HIGH: a client-edited cursor carrying NaN reached a Decimal compare and 500'd."""
+    store = await _seeded()
+    client = _client(_service(store))
+    first = client.get(URL, params={**_PARAMS, "limit": 1}).json()
+    store.queries = 0
+    r = client.get(
+        URL, params={**_PARAMS, "limit": 1, "cursor": _nan_after(first["meta"]["next_cursor"])}
+    )
+    assert (r.status_code, r.json()["code"], store.queries) == (400, "invalid_cursor", 0)
+
+
+def test_liquidations_decimal_fault_below_the_service_is_400_invalid_cursor() -> None:
+    class _Faulty:
+        async def page(self, symbol: str, **kw: object) -> object:
+            raise InvalidOperation("crafted cursor")
+
+    r = _client(_Faulty()).get(URL, params=_PARAMS)
+    assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor")

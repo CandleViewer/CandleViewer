@@ -13,10 +13,16 @@ structural Protocol the composition root injects.
 - **Bounds** (`deriv_limits`, G1) are checked before any store read.
 - **Paging.** Items are ordered by their first print's dedup-key order (a total order). A page
   reads each side from its own cut, at most `SCAN_PRINTS` prints a side. The cursor carries the
-  last item's key and, per side, the first `ts` of that side's first unreturned cluster: one
-  side's clusters never overlap, so a scan restarted there rebuilds every later cluster exactly.
+  last item's key and, per side, a cut: the full key (`Cut`) of that side's first unreturned
+  print, inclusive. One side's clusters are contiguous runs of its prints in key order, so a scan
+  restarted there rebuilds every later cluster exactly, however many prints share one `ts`.
   A side cut short by the cap keeps only the clusters no unread print can join, and the page stops
-  below the first item it could not keep. A single cluster of more prints than the cap is split.
+  below the first item it could not keep. A single cluster of more prints than the cap is split
+  after the last print read.
+- **Cursor trust.** A cursor is client input: its numbers are bounded (finite, `0..MAX_PRICE` /
+  `MAX_QTY`, at most 32 characters, a bounded exponent) before any arithmetic, it is bound to the
+  request (symbol, side, window, floor, `from`, `to`), and a next cursor is built only from keys
+  the store returned, never from the one the client sent.
 """
 
 from __future__ import annotations
@@ -30,7 +36,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final, Protocol
 
-from candleviewer.domain.liquidations import ClosingSide, LiqPrint, closing_side
+from candleviewer.domain.liquidations import ClosingSide, Cut, LiqPrint, closing_side
+from candleviewer.exchange.base.frame_guard import MAX_FUTURE_SKEW_MS, MAX_PRICE, MAX_QTY
 from candleviewer.exchange.base.models import LiquidationEvent
 from candleviewer.orderflow.deriv_limits import (
     CLUSTER_WINDOW_MS_MAX_REST,
@@ -55,7 +62,10 @@ from candleviewer.orderflow.funding_metrics import deriv_upstream_schema_rejecte
 SCAN_PRINTS: Final = 5000
 _SIDES: Final[tuple[ClosingSide, ClosingSide]] = ("buy", "sell")
 _BAD_CURSOR: Final = "pagination cursor is malformed or expired"
-_NEG: Final = Decimal(-1)
+_ZERO: Final = Decimal(0)
+_SKEW_US: Final = MAX_FUTURE_SKEW_MS * 1000
+#: A cursor number: at most this many characters and fractional digits.
+_CURSOR_NUM_CHARS: Final = 32
 type Key = tuple[int, str, Decimal, Decimal, int]
 
 
@@ -63,8 +73,10 @@ class LiquidationStore(Protocol):
     async def write_prints(self, rows: Sequence[LiqPrint]) -> None: ...
 
     async def read_prints(
-        self, symbol: str, rng: Any, side: str | None, limit: int
-    ) -> Sequence[LiqPrint]: ...
+        self, symbol: str, rng: Any, side: str | None, limit: int, from_key: Cut | None = None
+    ) -> Sequence[LiqPrint]:
+        """`symbol`'s prints in `rng`, dedup-key order, those at or above `from_key` only."""
+        ...
 
     async def first_ts(self, symbol: str) -> int | None: ...
 
@@ -123,8 +135,11 @@ class Clusterer:
         self.window_us = window_ms * 1000
         self.open: dict[str, LiqItem] = {}
 
-    def add(self, p: LiqPrint) -> LiqItem | None:
-        """Take one print; the item it closed (window 0: its own), or None."""
+    def add(self, p: LiqPrint, now_us: int | None = None) -> LiqItem | None:
+        """Take one print; the item it closed (window 0: its own), or None. With `now_us` (the
+        live topic), a cluster ends by `now + skew + window` at the latest (`skew` the ingest
+        window's future tolerance, so an accepted print is never cut short): a print stamped
+        further ahead cannot hold its side open past that."""
         if self.window_us == 0:
             return LiqItem.open(p, 0)
         held = self.open.get(p.side)
@@ -133,7 +148,9 @@ class Clusterer:
             held.notional += p.notional
             held.count += 1
             return None
-        self.open[p.side] = LiqItem.open(p, self.window_us)
+        item = self.open[p.side] = LiqItem.open(p, self.window_us)
+        if now_us is not None:
+            item.end_us = min(item.end_us, now_us + _SKEW_US + self.window_us)
         return held
 
     def expire(self, now_us: int) -> list[LiqItem]:
@@ -170,15 +187,21 @@ class _Window:
 @dataclass(slots=True)
 class _Cursor:
     after: Key | None
-    cuts: dict[str, int] = field(default_factory=dict)
+    cuts: dict[str, Cut] = field(default_factory=dict)
+
+
+def _cut_of(p: LiqPrint) -> Cut:
+    return (p.ts_us, p.price, p.size, p.batch_index)
 
 
 def encode_cursor(binding: str, cur: _Cursor, *, now_s: float) -> str:
+    """Only ever called with keys the store returned (module docstring, cursor trust)."""
     after = None
     if cur.after is not None:
         ts, side, price, size, bi = cur.after
         after = [ts, side, format(price, "f"), format(size, "f"), bi]
-    raw = {"k": binding, "a": after, "c": cur.cuts, "i": int(now_s)}
+    cuts = {s: [t, format(p, "f"), format(z, "f"), b] for s, (t, p, z, b) in cur.cuts.items()}
+    raw = {"k": binding, "a": after, "c": cuts, "i": int(now_s)}
     text = json.dumps(raw, separators=(",", ":"))
     return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
 
@@ -189,8 +212,30 @@ def _int(v: object) -> int:
     return v
 
 
+def _num(v: object, cap: Decimal) -> Decimal:
+    """A cursor's price or size, bounded before any arithmetic: a string of at most 32
+    characters, finite, `0..cap`, at most 32 fractional digits (so `format(.., "f")` is short)."""
+    if not isinstance(v, str) or len(v) > _CURSOR_NUM_CHARS:
+        raise ValueError("cursor number")
+    d = Decimal(v)
+    if not d.is_finite() or d.adjusted() > cap.adjusted() or not _ZERO <= d <= cap:
+        raise ValueError("cursor number out of range")
+    exponent = d.as_tuple().exponent
+    if not isinstance(exponent, int) or exponent < -_CURSOR_NUM_CHARS:
+        raise ValueError("cursor number precision")
+    return d
+
+
+def _cut(v: object) -> Cut:
+    if not isinstance(v, list) or len(v) != 4:
+        raise ValueError("cut")
+    ts, price, size, bi = v
+    return (_int(ts), _num(price, MAX_PRICE), _num(size, MAX_QTY), _int(bi))
+
+
 def decode_cursor(cursor: str, *, binding: str, now_s: float) -> _Cursor:
-    """Malformed, foreign, oversized or expired cursors raise `invalid_cursor` (400)."""
+    """Malformed, foreign, oversized, out-of-range or expired cursors raise `invalid_cursor`
+    (400)."""
     bad = DerivInvalidRequest("invalid_cursor", _BAD_CURSOR)
     if not cursor or len(cursor) > CURSOR_MAX_LEN:
         raise bad
@@ -204,10 +249,10 @@ def decode_cursor(cursor: str, *, binding: str, now_s: float) -> _Cursor:
             ts, side, price, size, bi = after
             if side not in _SIDES:
                 raise ValueError("side")
-            key = (_int(ts), str(side), Decimal(str(price)), Decimal(str(size)), _int(bi))
+            key = (_int(ts), str(side), _num(price, MAX_PRICE), _num(size, MAX_QTY), _int(bi))
         if not isinstance(cuts, dict) or set(cuts) - set(_SIDES):
             raise ValueError("cuts")
-        return _Cursor(key, {str(s): _int(t) for s, t in cuts.items()})
+        return _Cursor(key, {str(s): _cut(c) for s, c in cuts.items()})
     except (ValueError, KeyError, TypeError, InvalidOperation, binascii.Error) as exc:
         raise bad from exc
 
@@ -275,7 +320,9 @@ class LiquidationService:
         start, end = check_window(start_us, end_us, now_us=now_us, max_days=MAX_WINDOW_DAYS_LIQ)
         if self._listed(symbol) is False:
             raise DerivSymbolUnlisted(symbol)
-        binding = f"{symbol}:{side}:{cluster_window_ms}:{min_notional}"
+        # Bound to every option and to the window as the client sent it (an omitted `to` is
+        # "now" on each page, so paging a live window still works).
+        binding = f"{symbol}:{side}:{cluster_window_ms}:{min_notional}:{start_us}:{end_us}"
         cur = _Cursor(None)
         if cursor is not None:
             cur = decode_cursor(cursor, binding=binding, now_s=now_s)
@@ -285,12 +332,12 @@ class LiquidationService:
         coverage = Coverage(first, max(start, first), min(end, now_us), False)
         merged: list[LiqItem] = []
         horizon: Key | None = None
-        rest: dict[str, int] = {}
+        rest: dict[str, Cut] = {}
         for s in (side,) if side is not None else _SIDES:
-            scan = await self._scan_side(symbol, s, max(start, cur.cuts.get(s, start)), end,
+            scan = await self._scan_side(symbol, s, _Window(start, end), cur.cuts.get(s),
                                          cluster_window_ms)  # fmt: skip
             merged += scan.items
-            rest[s] = scan.resume if scan.resume is not None else end
+            rest[s] = scan.resume if scan.resume is not None else (end, _ZERO, _ZERO, 0)
             if scan.horizon is not None and (horizon is None or scan.horizon < horizon):
                 horizon = scan.horizon
         merged = sorted((i for i in merged if cur.after is None or i.key() > cur.after),
@@ -300,44 +347,42 @@ class LiquidationService:
         page = eligible[:limit]
         if len(eligible) <= limit and horizon is None:
             return LiquidationPage(symbol, tuple(page), None, False, coverage)
-        after = page[-1].key() if page else (avail[-1].key() if avail else cur.after)
+        # The next cursor holds only keys read from the store this page (never `cur.after`).
+        after = page[-1].key() if page else (avail[-1].key() if avail else None)
         left = [i for i in merged if after is None or i.key() > after]
-        cuts = {
-            s: next((i.first.ts_us for i in left if i.first.side == s), r) for s, r in rest.items()
-        }
+        cuts = {s: next((_cut_of(i.first) for i in left if i.first.side == s), r)
+                for s, r in rest.items()}  # fmt: skip
         more = horizon is not None or any(_passes(i, min_notional) for i in left)
         nxt = encode_cursor(binding, _Cursor(after, cuts), now_s=now_s) if more else None
         return LiquidationPage(symbol, tuple(page), nxt, more, coverage)
 
     async def _scan_side(
-        self, symbol: str, side: str, start: int, end: int, window_ms: int
+        self, symbol: str, side: str, window: _Window, cut: Cut | None, window_ms: int
     ) -> _SideScan:
-        """One side's prints from its cut. Cut short by the cap at `h` (the last `ts` read), it
-        keeps the clusters no unread print can join (`end_us <= h`) and names where the side
-        resumes (its first unkept cluster, else `h`) and the key below which every item of the
-        side is known (`horizon`)."""
-        rows = list(await self._store.read_prints(symbol, _Window(start, end), side, self._scan))
+        """One side's prints from its cut. Cut short by the cap after the print `last`, it keeps
+        the clusters no unread print (key above `last`, so `ts >= last.ts`) can join, and names
+        where the side resumes (its first unkept cluster's first print) and the key below which
+        every item of the side is known (`horizon`). When every item read is final (window 0),
+        or one cluster holds every row read (more prints than the cap in one window: split), it
+        resumes just after `last`, never re-reading a row."""
+        rows = list(await self._store.read_prints(symbol, window, side, self._scan, cut))
         items = cluster_scan(rows, window_ms, {})
         if len(rows) < self._scan:
             return _SideScan(items, None, None)
-        h = rows[-1].ts_us
-        kept = [i for i in items if i.end_us <= h]
-        if kept:
-            dropped = items[len(kept) :]
-            resume = dropped[0].first.ts_us if dropped else h
-            return _SideScan(kept, resume, dropped[0].key() if dropped else (h, "", _NEG, _NEG, -1))
-        # One cluster holds every row read: split it at `h` rather than stall (a cluster of more
-        # than `SCAN_PRINTS` prints in one window), never re-reading a row.
-        early = [p for p in rows if p.ts_us < h]
-        resume = h if early else h + 1
-        return _SideScan(cluster_scan(early or rows, window_ms, {}), resume,
-                         (resume, "", _NEG, _NEG, -1))  # fmt: skip
+        last = rows[-1]
+        kept = [i for i in items if window_ms == 0 or i.end_us <= last.ts_us]
+        if kept and len(kept) < len(items):
+            dropped = items[len(kept)]
+            return _SideScan(kept, _cut_of(dropped.first), dropped.key())
+        # The least key above `last` (batch_index is an int, the key's last column).
+        nxt = (last.ts_us, last.price, last.size, last.batch_index + 1)
+        return _SideScan(items, nxt, (last.ts_us, last.side, *nxt[1:]))
 
 
 @dataclass(frozen=True, slots=True)
 class _SideScan:
     items: list[LiqItem]
-    resume: int | None  # where the side's next scan starts; None when it read to the end
+    resume: Cut | None  # where the side's next scan starts (inclusive); None: read to the end
     horizon: Key | None  # every item of the side with a smaller key is in `items`
 
 
