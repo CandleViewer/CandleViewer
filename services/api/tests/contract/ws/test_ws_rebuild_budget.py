@@ -33,6 +33,30 @@ def _until_pong(c: Client) -> list[dict[str, Any]]:
     return out
 
 
+def _owed(frames: list[dict[str, Any]]) -> int:
+    """The `snap`s the replies in `frames` promise: one per accepted `sub` entry that is
+    `snapshot_pending` (§5.2) and one per `ctl_ok` with `resnapshot` (§5.4)."""
+    subs = [r for f in frames if f["t"] == "sub_ok" for r in f["p"]["results"] if r["ok"]]
+    ctls = [f for f in frames if f["t"] == "ctl_ok" and f["p"].get("resnapshot") is True]
+    return sum(r["snapshot_pending"] for r in subs) + len(ctls)
+
+
+def _settled(c: Client, since: int) -> list[dict[str, Any]]:
+    """Every frame read from `c.seen[since]` on, but the `ping`s and `pong`s and the `system`
+    notices `_until_pong` leaves out, once each `snap` their replies owe (`_owed`) is in. A `pong`
+    rides the priority lane and may overtake a queued `snap` (§8.4 Lanes, #5139), so a fence
+    `ping` alone leaves the count to the writer's timing; the replies' own promise does not."""
+
+    def kept() -> list[dict[str, Any]]:
+        frames = c.seen[since:]
+        return [f for f in frames if f["t"] not in ("ping", "pong") and f.get("ch") != "system"]
+
+    _until_pong(c)
+    while sum(f["t"] == "snap" for f in kept()) < _owed(kept()):
+        c.recv()
+    return kept()
+
+
 @pytest.mark.parametrize("offer", OFFERS.values(), ids=OFFERS.keys())
 def test_a_resync_loop_is_revoked_and_its_topic_cannot_restart_within_the_window(
     offer: list[str],
@@ -59,18 +83,21 @@ def test_ac30_a_ctl_loop_and_a_50_topic_churn_for_60_s_stay_within_the_budget(
     offer: list[str],
 ) -> None:
     """AC-30 on the fake clock: a `ctl` flip each second and an `unsub` + `sub` of 50 topics every
-    2 s, under the inbound limits (§8.5), with a new generation each step so no `snap` is cached."""
+    2 s, under the inbound limits (§8.5), with a new generation each step so no `snap` is cached.
+    Each step is read until every `snap` its replies owe is in (`_settled`, #5139)."""
     w = World()
     churn = [f"trades.S{i:02d}USDT" for i in range(39)] + [
         f"ticker.S{i:02d}USDT" for i in range(11)
     ]
     with connect(w, offer) as c:
+        head = len(c.seen)
         c.sub(HEAT)
         c.sub(*churn)
-        _until_pong(c)
+        assert _owed(_settled(c, head)) == 1 + 50  # their `snap`s are read before the loop
         builds, frames = w.source.builds, list[dict[str, Any]]()
         for step in range(60):
             w.clock.now, w.source.gen = float(step), w.source.gen + 1
+            mark = len(c.seen)
             bucket = (1000, 500)[step % 2]
             c.send({"t": "ctl", "id": f"k{step}", "ch": HEAT, "p": {"time_bucket_ms": bucket}})
             if step % 2 == 0:
@@ -78,7 +105,7 @@ def test_ac30_a_ctl_loop_and_a_50_topic_churn_for_60_s_stay_within_the_budget(
                 c.send(
                     {"t": "sub", "id": f"s{step}", "p": {"topics": [{"ch": ch} for ch in churn]}}
                 )
-            frames += _until_pong(c)
+            frames += _settled(c, mark)
         snaps = [f["meta"]["reason"] for f in frames if f["t"] == "snap"]
         refused = [f["p"]["code"] for f in frames if f["t"] == "err"]
         results = [r for f in frames if f["t"] == "sub_ok" for r in f["p"]["results"]]
@@ -94,8 +121,9 @@ def test_ac30_a_ctl_loop_and_a_50_topic_churn_for_60_s_stay_within_the_budget(
         publish(w, "heatmap", HEAT)
         assert [f["t"] for f in _until_pong(c)] == ["d"]  # the refused `ctl`s changed nothing
         w.advance(c, 70.0)  # the socket stayed open, and the window slides
+        mark = len(c.seen)
         c.send({"t": "ctl", "id": "k-last", "ch": HEAT, "p": {"time_bucket_ms": 5000}})
-        assert [f["t"] for f in _until_pong(c)] == ["ctl_ok", "snap"]
+        assert [f["t"] for f in _settled(c, mark)] == ["ctl_ok", "snap"]
 
 
 @pytest.mark.parametrize("offer", OFFERS.values(), ids=OFFERS.keys())
