@@ -49,7 +49,8 @@ from typing import ClassVar, Final, Literal, Protocol, final, get_args
 from uuid import UUID
 
 #: `account_stale` (E29-T06 #914): the account's reconciliation has failed to fetch for 2 minutes
-#: and the operator has not resolved it (24 Sec.8.10); no check emits it until E29-T06's wiring.
+#: and the operator has not resolved it, or it has not started (24 Sec.8.5, Sec.8.10); the
+#: reconciliation standing, the gate's last account check, emits it (20 Sec.6.2).
 RefusalReason = Literal[
     "maintenance",
     "account_disabled_by_policy",
