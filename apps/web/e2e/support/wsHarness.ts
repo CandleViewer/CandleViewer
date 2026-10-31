@@ -83,7 +83,7 @@ const HEALTH = { kind: "health", health: "healthy" } as const;
 const ID = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 /** Runs in the page (serialised by Playwright): wraps `SharedWorker` and relays the worker's sockets. */
-function pageBridge({ name, shim }: { name: string; shim: string }): void {
+export function pageBridge({ name, shim }: { name: string; shim: string }): void {
   const Real = window.SharedWorker;
   const channel = new BroadcastChannel(name);
   const sockets = new Map<string, WebSocket>();
@@ -110,7 +110,7 @@ function pageBridge({ name, shim }: { name: string; shim: string }): void {
 }
 
 /** Runs in the worker before its entry: a `WebSocket` whose traffic is relayed to the page. */
-function workerShim(name: string): void {
+export function workerShim(name: string): void {
   const channel = new BroadcastChannel(name);
   const sockets = new Map<string, EventTarget>();
   let next = 0;

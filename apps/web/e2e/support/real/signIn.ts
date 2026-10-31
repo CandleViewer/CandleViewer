@@ -12,14 +12,17 @@ const API_PATH = (path: string) => (r: { url(): string }) => new URL(r.url()).pa
 export const LOGIN = "/api/v1/auth/login";
 export const MFA_VERIFY = "/api/v1/auth/mfa/verify";
 
-/** The password step as the browser saw it. `mfaToken` is a single-use handle: never print it. */
+/**
+ * The password step as the browser saw it. The `mfa_token` handle is single-use, so it is not on
+ * the record: a function hands it out, and a record printed whole (`toEqual(step)`) shows none.
+ */
 export interface PasswordStep {
   readonly status: number;
   readonly mfaRequired: boolean;
   readonly methods: readonly string[];
   /** How many `Set-Cookie` headers the answer carried. */
   readonly setCookies: number;
-  readonly mfaToken: string;
+  readonly mfaToken: () => string;
 }
 
 /** Fills SCR-001 on the current page with `user`'s username and the password, and submits it. */
@@ -39,12 +42,13 @@ export async function submitPassword(
   const [res] = await Promise.all([answered, submit()]);
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   const methods = Array.isArray(body["methods"]) ? (body["methods"] as unknown[]) : [];
+  const handle = typeof body["mfa_token"] === "string" ? body["mfa_token"] : "";
   return {
     status: res.status(),
     mfaRequired: body["status"] === "mfa_required",
     methods: methods.filter((m): m is string => typeof m === "string"),
     setCookies: setCookieNames(await res.headersArray()).length,
-    mfaToken: typeof body["mfa_token"] === "string" ? body["mfa_token"] : "",
+    mfaToken: () => handle,
   };
 }
 
@@ -142,7 +146,7 @@ export async function signIn(page: Page, stack: RealStack, user: FixtureUser): P
   const password = await submitPassword(page, user, stack.password());
   expect(password.mfaRequired, "the password step asks for the second factor").toBe(true);
   await expect(page.getByRole("heading", { name: "Two-factor code" })).toBeVisible();
-  const mfa = await completeMfa(page, password.mfaToken, stack.clock.totpAt(user.seed()));
+  const mfa = await completeMfa(page, password.mfaToken(), stack.clock.totpAt(user.seed()));
   expect(mfa.authenticated, "MFA by in-page fetch authenticated the session").toBe(true);
   return { password, mfa };
 }

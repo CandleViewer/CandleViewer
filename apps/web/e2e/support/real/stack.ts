@@ -26,6 +26,8 @@ export interface RealStack {
   readonly clock: ServerClock;
   /** A fixture user no other test of this run has claimed, across workers. */
   readonly claimUser: () => FixtureUser;
+  /** The run's refresh ledger, shared by every worker (`failureArtefacts.ts`). */
+  readonly refreshLedger: string;
 }
 
 const USERNAME = /^[a-z0-9][a-z0-9-]{0,62}$/u;
@@ -91,6 +93,7 @@ export function realStack(): RealStack {
       const { username, totpFile } = claimFrom(users, claims);
       return { username, seed: () => readFileSync(totpFile, "ascii").trim() };
     },
+    refreshLedger: join(dirname(usersFile), "refresh-ledger"),
   };
   return cached;
 }
