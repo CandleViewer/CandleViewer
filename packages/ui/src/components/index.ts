@@ -71,6 +71,15 @@ export type { DatePickerProps } from "./DatePicker.js";
 export { DateRangePicker } from "./DateRangePicker.js";
 export type { DateRangePickerProps, DateRangeValue } from "./DateRangePicker.js";
 
+export { DensityToggle, DensityToggleConnected, DENSITY_TOGGLE_COPY } from "./DensityToggle.js";
+export type {
+  DensityToggleConnectedProps,
+  DensityToggleCopy,
+  DensityToggleGlobalProps,
+  DensityTogglePanelProps,
+  DensityToggleProps,
+} from "./DensityToggle.js";
+
 export { Dialog } from "./Dialog.js";
 export type { DialogCloseReason, DialogProps, DialogRole, DialogSize } from "./Dialog.js";
 
@@ -213,6 +222,14 @@ export type {
   PopoverProps,
 } from "./Popover.js";
 
+export { PreviewTile, PREVIEW_TILE_CONTRAST_PAIRS, PREVIEW_TILE_COPY } from "./PreviewTile.js";
+export type {
+  PreviewTileKind,
+  PreviewTileProps,
+  PreviewTileSource,
+  PreviewTileStatus,
+} from "./PreviewTile.js";
+
 export { ProgressBar } from "./ProgressBar.js";
 export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";
 
@@ -284,6 +301,13 @@ export type { SymbolSearchInputProps, SymbolSearchTarget } from "./SymbolSearchI
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
+
+export { THEME_SWITCHER_COPY, ThemeSwitcher, ThemeSwitcherConnected } from "./ThemeSwitcher.js";
+export type {
+  ThemeSwitcherConnectedProps,
+  ThemeSwitcherCopy,
+  ThemeSwitcherProps,
+} from "./ThemeSwitcher.js";
 
 export { Toast, ToastRegion } from "./Toast.js";
 export type {

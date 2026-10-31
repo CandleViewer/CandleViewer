@@ -1,0 +1,154 @@
+/*
+ * CMP-228 PreviewTile (E05-D02 slice 5; J2, J21, conventions 44, 47-49). Tokens only. The frame is
+ * `color.surface.sunken` on `radius.card` with a 1px `border.default` hairline: decorative, invisible in
+ * light and accepted (J2), because the frame is a named img and never the only disclosure. Token
+ * overrides are scoped custom properties on the frame only (BQ-18), so the notes and caption keep the
+ * host theme. Not interactive, no motion of its own (a recompute is a cut in both modes), no spinner.
+ */
+.cv-preview-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+}
+
+.cv-preview-tile__frame {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--space-inset-sm);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-primary);
+}
+
+/* The empty state: the static CMP-015 silhouette behind the reason (decorative, aria-hidden by the atom). */
+.cv-preview-tile__empty {
+  position: relative;
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  width: 100%;
+}
+
+.cv-preview-tile__silhouette {
+  position: absolute;
+  inset: 0;
+  display: grid;
+}
+
+.cv-preview-tile__empty > .cv-preview-tile__status {
+  position: relative;
+}
+
+/* The host's image slot paints its own colours. */
+.cv-preview-tile__image {
+  display: contents;
+}
+
+/* The theme kind's built-in sample: a ladder bid, ask and a positions row in the previewed tokens. */
+.cv-preview-tile__sample {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-preview-tile__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+}
+
+/* Chart cell of the theme sample: three static candles in the buy / sell tokens (no motion). */
+.cv-preview-tile__candles {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: var(--space-inset-xs);
+  height: var(--size-icon);
+}
+
+.cv-preview-tile__candle {
+  width: var(--space-inset-xs);
+  height: 70%;
+}
+
+.cv-preview-tile__candle--buy {
+  background: var(--color-buy-default);
+}
+
+.cv-preview-tile__candle--sell {
+  height: 50%;
+  background: var(--color-sell-default);
+}
+
+/* Ladder: the value in type.num.base, primary. The collapsed form is one line and never scrolls (E32-D04 :376); a
+   figure wider than the tile clips at its tail, never its start, and the pinned totals row repeats every figure
+   (E32-D04 :366), so no number lives only in a tile. */
+.cv-preview-tile__value {
+  flex: none;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The ladder tile is one row: size.row.height, 24 px compact and 32 px comfortable (E32-D04 :376), its value from the start. */
+.cv-preview-tile[data-kind="ladder"] .cv-preview-tile__frame {
+  height: var(--size-row-height);
+  padding-block: 0;
+  justify-content: flex-start;
+}
+
+/* Empty and error: caption type in text.secondary; the error glyph in status.danger.strong. */
+.cv-preview-tile__status,
+.cv-preview-tile__note,
+.cv-preview-tile__caption {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-inset-xs);
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-preview-tile__glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--color-status-danger-strong);
+}
+
+/* The BQ-18 warning: text plus the warning glyph, never colour alone. */
+.cv-preview-tile__warning {
+  color: var(--color-text-primary);
+}
+
+.cv-preview-tile__warning > .cv-preview-tile__glyph {
+  color: var(--color-status-warning-strong);
+}
+
+@media (forced-colors: active) {
+  .cv-preview-tile__image {
+    forced-color-adjust: none;
+  }
+
+  .cv-preview-tile__frame {
+    border-color: CanvasText;
+  }
+
+  .cv-preview-tile__status,
+  .cv-preview-tile__note,
+  .cv-preview-tile__caption,
+  .cv-preview-tile__glyph,
+  .cv-preview-tile__warning > .cv-preview-tile__glyph {
+    color: CanvasText;
+  }
+}

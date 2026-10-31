@@ -1,0 +1,12 @@
+/* CMP-063 DensityToggle (E05-D02 rest §CMP-063): CMP-003's anatomy unchanged, no token of its own. The wrapper only
+   stacks the segmented group above CMP-003's reason line; no motion (the density swap is a one-frame cut). */
+.cv-density-toggle {
+  display: inline-grid;
+  justify-items: start;
+  gap: var(--space-stack-xs);
+}
+
+.cv-density-toggle[data-full-width] {
+  display: grid;
+  justify-items: stretch;
+}
