@@ -1,0 +1,15 @@
+/*
+ * A programmatic focus move (A11Y-P-02) puts the focus ring on a heading. Under reduced motion the theme
+ * leaves a 0.01 ms transition on it, and that still counts as a running animation (SC 2.3.3), so the ring
+ * on a view-change target appears with no transition at all when the user asked for reduced motion.
+ * App motion preference wins; the OS query applies only while the app has not set one.
+ */
+:root[data-motion="reduce"] [tabindex="-1"]:focus {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) [tabindex="-1"]:focus {
+    transition: none !important;
+  }
+}

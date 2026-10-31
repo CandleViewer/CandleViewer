@@ -1,4 +1,5 @@
 import { useEffect, useRef, type RefObject } from "react";
+import "./useFocusOnView.css";
 
 /**
  * Focus follows an in-place view change (A11Y-P-02, CMP-200; WCAG 2.4.3): when `view` changes, the
