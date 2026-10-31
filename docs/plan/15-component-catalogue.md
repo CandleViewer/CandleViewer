@@ -895,7 +895,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: n/a (behavioural wrapper; the wrapped control's T2 look binds `color.text.tertiary`, `color.text.secondary`, `color.surface.raised` and `color.border.default`).
 - **Storybook**: Allowed, Denied(Permission), Denied(OwnerOnly), Denied(Account), Denied(AccountReadOnly), Denied(Env), Denied(ReadOnly), Denied(ViewAs), Denied(EnvMismatch), FormInline, FormTooltip, FormNotice.
 - **Tests**: unit, visual, axe, RBAC-matrix interaction test (per role × action fixture).
-- **As built (E05-S04)**: `reason` is a typed vocabulary key with `fills`, not a free `requiredRole`; three forms, `inline` (the control's own `aria-disabled` and description), `tooltip` (icon-only controls) and `notice` (a Callout `id`). It is a UI affordance, not an authorisation control; the lock badge is a CMP-019 `img` named "Not available". No `Denied(EnvMismatch)` story shipped.
+- **As built (E05-S04)**: `reason` is a typed vocabulary key with `fills`, not a free `requiredRole`; three forms, `inline` (the control's own `aria-disabled` and description), `tooltip` (icon-only controls) and `notice` (a Callout `id`). It is a UI affordance, not an authorisation control; the lock badge is a CMP-019 `img` named "Not available". No `Denied(EnvMismatch)` story shipped (BQ-23): `guard.mismatch` is E30-D02's registered state key (E09-D09 §8), not in E09-D09 §3.1's vocabulary, so CMP-139 composes it with CMP-079 and no string is invented here.
 
 ### CMP-080 DockPanel (dockable container)
 
