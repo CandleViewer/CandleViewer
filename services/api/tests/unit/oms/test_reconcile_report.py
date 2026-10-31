@@ -299,18 +299,20 @@ def test_24_skips_and_logs_a_trigger_that_finds_the_job_locked() -> None:
 
 def test_24_lists_the_missed_fills_steps_2_and_3d_apply_as_corrections() -> None:
     """The `corrected` row names what the code lists there (`test_reconciler.py`'s step 2 pin):
-    a missed fill sent to an order is a correction (BQ-6, 23 Sec.15.9)."""
+    a missed fill sent to an order is a correction (BQ-6, 23 Sec.15.9), and a finding that leaves
+    a row `untracked` is sent but not listed (`test_reconcile_scenarios.py`'s resting order)."""
     section = _section("24-internal-schemas.md", "### 8.5 Reconciliation", "### 8.6 ")
     [row] = [line for line in section.splitlines() if line.startswith("| `corrected` ")]
     assert (
-        "Rows a 3a finding or fact moved, and rows steps 2 and 3d applied a missed fill to: a "
-        "step sent to an order is a correction (BQ-6, 23 §15.9)"
+        "Rows a 3a finding or fact moved or steps 2 and 3d sent a missed fill (BQ-6, 23 §15.9); "
+        "a finding leaving a row `untracked` is sent, not listed"
     ) in row
 
 
 def test_24_step_5_cites_bq_9_for_the_entry_it_does_not_hold() -> None:
     section = _section("24-internal-schemas.md", "### 8.5 Reconciliation", "### 8.6 ")
     assert "#   entry is not held for it (BQ-9)" in section and "(D4)" not in section
+    assert "# fallback: P1 once per episode," in section  # as its paragraph says
 
 
 def test_23_sends_desync_critical_for_a_pass_whose_only_finding_is_a_naked_position() -> None:
