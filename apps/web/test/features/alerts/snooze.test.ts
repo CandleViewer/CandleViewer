@@ -30,6 +30,12 @@ describe("snooze math", () => {
     expect(snoozeUntil(NOW, clock)).toEqual({ ok: false, reason: "past" });
     expect(snoozeUntil(NOW + 1, clock).ok).toBe(true);
   });
+  it("refuses an instant more than 30 days ahead, mirroring until_too_far", () => {
+    const max = 30 * 86_400_000;
+    expect(snoozeUntil(NOW + max, clock).ok).toBe(true);
+    expect(snoozeUntil(NOW + max + 1, clock)).toEqual({ ok: false, reason: "too_far" });
+    expect(snoozeFromIso("2027-01-01T00:00:00Z", clock)).toEqual({ ok: false, reason: "too_far" });
+  });
   it("refuses a non-finite instant", () => {
     expect(snoozeUntil(Number.NaN, clock)).toEqual({ ok: false, reason: "invalid" });
   });

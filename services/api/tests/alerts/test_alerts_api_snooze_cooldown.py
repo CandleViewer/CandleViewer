@@ -167,3 +167,22 @@ def test_snooze_of_an_alert_deleted_after_the_read_is_404_with_no_success_audit(
     assert r.status_code == 404
     assert env.repo.rows[aid].snoozed_until is None
     assert not {"alert.snoozed", "alert.unsnoozed"} & set(env.audit.actions()[n:])
+
+
+def test_snooze_numeric_epoch_is_422_and_changes_nothing(env: Env) -> None:
+    aid = env.create()["id"]
+    n = len(env.audit.calls)
+    for bad in (4102444800, 4102444800.5, True):
+        r = env.c.put(f"/alerts/{aid}/snooze", json={"until": bad})
+        assert r.status_code == 422
+    assert env.repo.rows[aid].snoozed_until is None and len(env.audit.calls) == n
+
+
+def test_snooze_beyond_30_days_is_422_until_too_far_and_30_days_is_accepted(env: Env) -> None:
+    aid = env.create()["id"]
+    n = len(env.audit.calls)
+    r = env.c.put(f"/alerts/{aid}/snooze", json={"until": "2026-12-01T12:00:01Z"})
+    assert r.status_code == 422 and r.json()["errors"][0]["rule"] == "until_too_far"
+    assert env.repo.rows[aid].snoozed_until is None and len(env.audit.calls) == n
+    ok = env.c.put(f"/alerts/{aid}/snooze", json={"until": "2026-11-30T12:00:00Z"})
+    assert ok.status_code == 200

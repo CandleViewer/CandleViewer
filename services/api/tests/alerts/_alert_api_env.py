@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from candleviewer.api.alerts import make_alerts_router
+from candleviewer.audit.actions import validate_action
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary import default_registry
 from candleviewer.storage.repositories.alerts import (
@@ -149,6 +150,7 @@ class Audit:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     async def emit(self, action: str, **kw: Any) -> None:
+        validate_action(action)  # the real writer refuses an unregistered name: so does this
         self.calls.append((action, kw))
 
     def actions(self) -> list[str]:

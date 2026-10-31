@@ -19,7 +19,7 @@ condition); a refusal is a 403, audited first as `alert.scope_refused`.
 
 import time
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
@@ -97,11 +97,23 @@ class AlertInput(BaseModel):
         return refuse_unstorable_text(value)
 
 
+#: The furthest a snooze may reach (a snooze is a pause, not a way to retire an alert).
+SNOOZE_MAX = timedelta(days=30)
+
+
 class _SnoozeBody(BaseModel):
     """`setAlertSnooze`: `until` is required; `null` clears the snooze."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     until: datetime | None
+
+    @field_validator("until", mode="before")
+    @classmethod
+    def _instant_text_only(cls, value: object) -> object:
+        """A numeric epoch (or bool) is not an instant on the wire: only an ISO string or null."""
+        if value is not None and not isinstance(value, str):
+            raise ValueError("until must be an ISO 8601 string or null")
+        return value
 
 
 class _EnabledBody(BaseModel):
@@ -432,6 +444,11 @@ def make_alerts_router(
                            "until must be a future instant with a UTC offset.",
                            errors=[{"field": "until", "rule": "until_in_past",
                                     "message": "until must be in the future"}])  # fmt: skip
+        if until is not None and until > d.clock() + SNOOZE_MAX:
+            raise _Problem(422, "validation_failed", "Invalid body",
+                           "until must be within 30 days.",
+                           errors=[{"field": "until", "rule": "until_too_far",
+                                    "message": "until must be within 30 days"}])  # fmt: skip
         # The dependency read the row earlier; re-confirm it still exists and is still the
         # caller's so a deleted/foreign alert never gets a success audit. The write below can
         # still race a delete: write-ahead (C-2.9) keeps the audit before the write, and that

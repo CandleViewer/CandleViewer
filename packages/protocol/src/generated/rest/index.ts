@@ -1506,7 +1506,8 @@ export interface paths {
     /**
      * Snooze an alert, or clear its snooze
      * @description `until` is a future tz-aware instant (snoozed until then) or `null` (snooze cleared); a
-     *     past or offset-less instant is `422 validation_failed`. Audited as `alert.snoozed` /
+     *     past or offset-less instant, or one more than 30 days ahead (rule `until_too_far`), is
+     *     `422 validation_failed`; a non-string `until` (e.g. a numeric epoch) is refused too. Audited as `alert.snoozed` /
      *     `alert.unsnoozed` (C-2.9). Another user's alert is `404`.
      */
     put: operations["setAlertSnooze"];
